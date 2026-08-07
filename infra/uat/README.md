@@ -72,7 +72,7 @@ Optional variables include `PUBLIC_DOMAIN_URL`, LINE links/images, and AI provid
 
 ## Isolated data services
 
-This creates a dedicated encrypted `db.t4g.micro` RDS instance, `cache.t4g.micro` Redis, S3 bucket, UAT-only security groups, secrets, and ECS cluster. It reuses only the existing private subnets/NAT and adds recurring AWS cost. Export UAT LINE secrets without putting them on the command line; temporary production values require explicit owner approval and mandatory production rotation after acceptance:
+This creates a dedicated encrypted `db.t4g.micro` RDS instance, `cache.t4g.micro` Redis, S3 bucket, UAT-only security groups, secrets, and ECS cluster. It reuses the existing subnets and adds recurring AWS cost. The RDS and Redis nodes sit in the two private subnets; the Fargate tasks run in the public ones and egress through the internet gateway, which is why the NAT gateway was removed on 2026-08-07 after a month of billing $43.90 for 0.4 GB of traffic. Recreate it before running anything in `ECS_EXPRESS_SUBNET_MODE=private` or the A5 clone/audit path. Export UAT LINE secrets without putting them on the command line; temporary production values require explicit owner approval and mandatory production rotation after acceptance:
 
 ```sh
 export LINE_LOGIN_CHANNEL_SECRET='...'
@@ -85,6 +85,18 @@ unset LINE_LOGIN_CHANNEL_SECRET LINE_MESSAGING_CHANNEL_SECRET LINE_MESSAGING_CHA
 ```
 
 Secrets are stored only under `watchdog-bms/uat/*`. The deployment runs containers with `APP_ENV=production` for production security validation while `DEPLOY_ENV=uat` selects isolated cloud resources.
+
+## Parking UAT between cycles
+
+UAT Fargate is the largest recurring line in the account (~$113/month including the three public IPv4 addresses its tasks hold). Park it at zero when no acceptance cycle is running:
+
+```sh
+ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 DEPLOY_ENV=uat bash infra/prod-ecs-express/deploy.sh all
+```
+
+Both default to `1`/`2`. Production rejects any other value, because `infra/security/collect-production-a5-current-health.sh` asserts the live service still reads exactly `{minTaskCount:1,maxTaskCount:2,AVERAGE_CPU,70}` when it collects signed evidence.
+
+Parking leaves the services `ACTIVE` with their image and configuration intact, so bringing UAT back is a capacity change rather than a redeploy. Tasks drain in about four minutes and the ENIs — and their public IPv4 charges — are released a few minutes after that. Note that `run-a5-capacity-mutating.sh` requires `minTaskCount >= 1`, so raise capacity before a U5 capacity run.
 
 ## M-01 actor-delegation acceptance
 
