@@ -1,6 +1,7 @@
 # Agent Memory: repo-migration-fresh-history
 
-Status: Phase 0 เสร็จแล้ว (local, ยังไม่ push) — ถัดไป 0.4 push แล้วต่อ Phase 1
+Status: Phase 0–5 + 6.1 เสร็จ — repo ใหม่ `MangmeeDev/mangmeeplus` CI เขียวแล้ว
+ถัดไป 6.2 deploy UAT
 Owner: thawatchai
 Scope: ย้าย `sandwich09/WatchDog-BMS` ไป repo ใหม่แบบไม่มี git history ยก CI/CD + environment config ไปด้วย
 
@@ -318,7 +319,44 @@ aws sts get-caller-identity
 ยังไม่ลบใน Phase 0 เพราะ merge ควรรักษาพฤติกรรมเดิมไว้ก่อน
 ตัดสินใจว่าจะลบทิ้งตอน Phase 1 หรือไม่ — ถ้าลบ ต้องแก้ `production-image-security.spec.sh` ที่ assert บล็อกพวกนี้ด้วย
 
+## Phase 1–5 + 6.1 — ผ่านครบ (2026-08-07)
+
+ปลายทาง: **`MangmeeDev/mangmeeplus`** (personal Pro, ย้ายเข้า org Team ภายหลัง)
+`OWNER_ACTOR` = `MangmeeDev`
+
+| Phase | ผล |
+|---|---|
+| 1 rename branch | 115 ไฟล์ · `develop-with-ai` เหลือ 0 · `ci.yml:43` ไม่มี develop ซ้ำ |
+| 2 rename owner | slug 23 ไฟล์ + actor 8 ไฟล์ใน `infra/` · spec **5/5 exit 0** |
+| 3 snapshot | commit `668a2d08` · **0 parents** · 2732 ไฟล์ · push เป็น `main` + `develop` · default=main · private |
+| 4 config | environments `production`/`uat` branch policy=main · vars **28/28** + **37/37** · branch protection ตรงทุกฟิลด์ |
+| 4c secret | `TYPHOON_OCR_API_KEY` ตั้งแล้วที่ env `uat` |
+| 5 IAM | 4 roles มี sub claim ทั้งเก่าและใหม่ |
+| 6.1 CI | run 31190822100 (main) + 31190823113 (develop) — **success ทั้งคู่** required checks 6/6 |
+
+IAM roles ที่แก้: `watchdog-bms-{ci,deploy}-{production,uat}`
+trust template ใน `infra/security/` อีก 3 ตัวยังไม่มี role จริงบน AWS — ไฟล์ถูก rename แล้ว
+ตอน bootstrap จริงจะได้ slug ใหม่เอง
+
+## บั๊กที่เจอในสคริปต์เอง (แก้แล้วทุกตัว)
+
+| อาการ | สาเหตุ |
+|---|---|
+| phase1/phase2 ตายตอน verify | `set -o pipefail` + `grep` ที่หาไม่เจอคืน exit 1 ซึ่งเป็นเคส**สำเร็จ** |
+| phase2 พลาด actor 8 ไฟล์ | แทนแค่ slug เต็ม `owner/repo` — `sandwich09` เดี่ยวๆ อยู่ใน gate จริง (`validate-u5-capacity-authorization.sh`, `run-a5-capacity-mutating.sh`) และ fixture ของ spec |
+| `\b` ใน sed ไม่ทำงาน | BSD sed บน macOS ไม่รู้จัก word boundary |
+| phase3 บอก "repo ไม่ว่าง" ทั้งที่ว่าง | repo ว่าง commits API ตอบ **409 + JSON error** ไม่ใช่ `[]` → `--jq length` พัง ใช้ branches API แทน |
+| phase4a ได้ uat มา 30/37 เงียบๆ | endpoint `environments/<env>/variables` ตัดที่ 30 ต่อหน้า `per_page=100` ไม่มีผล |
+| push/gh api ตอบ 404 ทั้งที่ repo มีอยู่ | git ใช้ `gh auth git-credential` → auth ด้วย **active gh account** |
+| phase5 AccessDenied | `watchdog-bedrock-dev` อ่าน IAM ได้แต่เขียนไม่ได้ ต้องใช้ `AWS_PROFILE=thawatchai` (root) |
+
 ## Next
 
-0.4 — push `develop-with-ai` (เจ้าของ repo เป็นคน push)
-แล้วต่อ Phase 1 (rename branch) เมื่อได้ชื่อ org/repo ปลายทาง
+**6.2** Actions → `deploy-uat.yml` — **Use workflow from = main**,
+`release_ref` = SHA ของ `develop` (`668a2d08...` เต็ม 40 ตัว), `target = all`
+
+**6.3** UAT acceptance → **6.4** deploy production → **6.5 soak 1–2 สัปดาห์**
+→ **6.6** `MODE=prune` → **6.7** archive repo เดิม
+
+local clone ย้ายมาทำงานบน branch `develop` ที่ track `newremote` แล้ว
+`origin` ยังชี้ repo เดิมไว้เป็นทางถอย
