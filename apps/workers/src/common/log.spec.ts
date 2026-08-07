@@ -5,7 +5,7 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { workerLog } from './log.js';
+import { FATAL_DETAIL_LIMIT, fatalDetail, workerLog } from './log.js';
 
 const originalEnv = { ...process.env };
 let written: Array<{ channel: 'log' | 'warn' | 'error'; line: string }> = [];
@@ -80,5 +80,27 @@ describe('workerLog', () => {
     process.env['LOG_REDACTION_ENABLED'] = 'false';
     workerLog('info', { event: 'raw', accessToken: 'visible' });
     assert.equal(last()['accessToken'], 'visible');
+  });
+});
+
+describe('fatalDetail', () => {
+  it('drops the Lua script BullMQ hangs off a Redis OOM error', () => {
+    // Shape of the real crash: a short message with the whole stalled-jobs script attached.
+    const err = Object.assign(new Error("OOM command not allowed when used memory > 'maxmemory'"), {
+      command: { name: 'eval', args: ['-- Move stalled jobs to wait.\nlocal rcall = redis.call\n'.repeat(20_000)] },
+    });
+    const detail = fatalDetail(err);
+    assert.ok(detail.includes('OOM command not allowed'), 'the reason must survive');
+    assert.ok(!detail.includes('Move stalled jobs'), 'the attached script must never reach the log');
+  });
+
+  it('bounds an oversized detail instead of streaming it to CloudWatch', () => {
+    const detail = fatalDetail(new Error('x'.repeat(50_000)));
+    assert.ok(detail.length <= FATAL_DETAIL_LIMIT + 20, `unbounded fatal detail: ${detail.length} chars`);
+    assert.ok(detail.endsWith('[truncated]'));
+  });
+
+  it('survives a rejection that is not an Error', () => {
+    assert.equal(fatalDetail('redis gone'), 'redis gone');
   });
 });

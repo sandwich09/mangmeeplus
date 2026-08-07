@@ -33,3 +33,16 @@ export function workerLog(level: WorkerLogLevel, fields: Record<string, unknown>
   const write = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
   write(JSON.stringify(payload));
 }
+
+/**
+ * A Redis OOM rejects deep inside BullMQ with the entire stalled-jobs Lua script hanging off the
+ * error as `command.args`. Node's default fatal handler inspects that whole object, so one crash
+ * loop wrote ~160 MB per restart and billed 137 GB of CloudWatch ingest in a single day. The stack
+ * alone answers "why did the task die"; the attached payload never did.
+ */
+export const FATAL_DETAIL_LIMIT = 2_000;
+
+export function fatalDetail(err: unknown): string {
+  const detail = err instanceof Error ? (err.stack ?? `${err.name}: ${err.message}`) : String(err);
+  return detail.length > FATAL_DETAIL_LIMIT ? `${detail.slice(0, FATAL_DETAIL_LIMIT)}…[truncated]` : detail;
+}
