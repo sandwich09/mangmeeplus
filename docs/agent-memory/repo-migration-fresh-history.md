@@ -350,6 +350,38 @@ trust template ใน `infra/security/` อีก 3 ตัวยังไม่�
 | push/gh api ตอบ 404 ทั้งที่ repo มีอยู่ | git ใช้ `gh auth git-credential` → auth ด้วย **active gh account** |
 | phase5 AccessDenied | `watchdog-bedrock-dev` อ่าน IAM ได้แต่เขียนไม่ได้ ต้องใช้ `AWS_PROFILE=thawatchai` (root) |
 
+## ⚠️ OIDC sub claim ของ repo ใหม่ใช้ format immutable-ID
+
+**อาการ:** deploy UAT ครั้งแรก (run 31193212550) ล้มที่ `Configure AWS credentials`
+`Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`
+ทั้งที่ trust policy มี `repo:MangmeeDev/mangmeeplus:environment:uat` แล้ว
+
+**สาเหตุ:** CloudTrail (`AssumeRoleWithWebIdentity` → `AccessDenied`) แสดง sub ที่ GitHub ส่งจริง:
+
+```
+repo:MangmeeDev@314278152/mangmeeplus@1326789216:environment:uat
+```
+
+GitHub แนบ numeric ID ของ owner และ repo เข้าไปใน sub claim เพื่อกัน hijack ด้วยการเปลี่ยนชื่อ
+repo ที่สร้างใหม่ได้ format นี้ ส่วน `sandwich09/WatchDog-BMS` (สร้างก่อนหน้า) ยังเป็น format เดิม
+
+**บทเรียน:** Phase 5 สร้าง sub ด้วยการแทนสตริง `<old-slug>` → `<new-slug>` ซึ่งผิด
+ต้องดึง `.owner.id` และ `.id` จาก `gh api repos/<owner>/<repo>` มาประกอบ
+ตรวจจาก template ในรีโปอย่างเดียวไม่มีทางเห็น — เห็นได้จาก CloudTrail เท่านั้น
+
+**แก้ด้วย** `phase5b-fix-oidc-sub.sh` — เพิ่ม sub รูปแบบ ID, คงของ repo เดิมไว้,
+ทิ้งรูปแบบ `owner/repo` ธรรมดาของ repo ใหม่ที่ไม่มีวัน match
+
+ผลลัพธ์ต่อ role:
+
+```json
+["repo:MangmeeDev@314278152/mangmeeplus@1326789216:environment:<env>",
+ "repo:sandwich09/WatchDog-BMS:environment:<env>"]
+```
+
+> ตอน 6.6 `prune` ต้องลบเฉพาะ prefix `repo:sandwich09/WatchDog-BMS` เท่านั้น
+> ห้ามลบตัว immutable-ID
+
 ## Next
 
 **6.2** Actions → `deploy-uat.yml` — **Use workflow from = main**,
