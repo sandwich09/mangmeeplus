@@ -1,8 +1,9 @@
 # Agent Memory: AWS cost spike, August 2026
 
-Status: Diagnosed. The spike is over — UAT workers stopped crash-looping on 2026-08-07 ~05:40 UTC
-and now runs 1/1. Bounded-fatal-log guard is committed to `develop` and untested in a real crash.
-The steady-state waste (idle NAT, schedule-less UAT) is still unaddressed.
+Status: Diagnosed and partly remediated. The spike is over — UAT workers stopped crash-looping on
+2026-08-07 ~05:40 UTC and now runs 1/1. Bounded-fatal-log guard is committed to `develop` and
+untested in a real crash. The idle NAT gateway and production Redis were deleted on 2026-08-07
+(~$60/month). **`watchdog-bms/production/redis-url` now points at a destroyed endpoint** — see Next.
 
 Owner: Opus 5, 2026-08-08.
 
@@ -58,15 +59,23 @@ Three estimates were wrong by 20-100x before Cost Explorer access landed. Do not
 - **Bedrock was never the problem** — $3.20 for all of July, despite the account being named
   `watchdog-bedrock-dev`.
 
-## Steady-state waste found (not yet fixed)
+## Steady-state waste
 
-- **NAT gateway is idle.** `NatGateway-Hours` $43.90/month against `NatGateway-Bytes` **$0.02**.
-  The private subnets hold only the RDS and ElastiCache ENIs, neither of which egresses. UAT Fargate
-  runs in public subnets via IGW (`ECS_EXPRESS_SUBNET_MODE` defaults to `public`, and
-  `deploy.sh` hard-rejects `private` for api-web). **Do not just delete it** — the A5 clone/audit
-  scripts run tasks in private subnets and need it to reach ECR.
-- **Public IPv4 $26-28/month across 8 addresses:** 3 ALB ENIs, 3 UAT Fargate tasks, 1 NAT, 1 bastion.
-- **UAT runs 24/7** with `uat-api-web` at 2 vCPU / 6 GB while production serves nobody.
+- **NAT gateway — DELETED 2026-08-07T18:17Z.** It was idle: `NatGateway-Hours` $43.90/month against
+  `NatGateway-Bytes` of **$0.02**. Only two ENIs sat behind it, UAT's RDS and UAT's Redis, and
+  neither egresses. Everything else runs in public subnets via IGW (`ECS_EXPRESS_SUBNET_MODE`
+  defaults to `public`; `deploy.sh` hard-rejects `private` for api-web). The A5 clone/audit path
+  would need it, but `/watchdog-bms/production/a5-network/task-subnet-ids` is `ParameterNotFound` —
+  that bootstrap was never run. Recreate the NAT before any A5 run or any `private`-mode deploy.
+  Teardown was three steps, not one: deleting the gateway from the console left the Elastic IP
+  allocated (still billing) and a `blackhole` default route in `rtb-07f3ced2ad683cd23`. Both cleaned
+  up manually afterwards.
+- **Production Redis — DELETED 2026-08-07** with no final snapshot; the data is unrecoverable. It
+  was full at 100% and unused (all prod ECS services at `desiredCount=0`). ~$13/month.
+- **Public IPv4 now 3 addresses**, all on the shared ALB. Was 8 (3 ALB, 3 UAT Fargate tasks, 1 NAT,
+  1 bastion). The three UAT task addresses disappear whenever UAT scales to zero.
+- **Still open: UAT runs 24/7** with `uat-api-web` at 2 vCPU / 6 GB while production serves nobody.
+  ~$102/month of Fargate, the largest remaining line.
 
 ## Verification
 
@@ -89,11 +98,16 @@ Three estimates were wrong by 20-100x before Cost Explorer access landed. Do not
    270k records that filled it return around 2026-08-18 without the retention fix deployed.
 2. `maxmemory-policy` is `volatile-lru` on **both** clusters; BullMQ needs `noeviction`. Both use
    `default.redis7`, which cannot be edited — needs a custom parameter group.
-3. Prod Redis is already at 100% with `watchdog-bms-workers` at `desiredCount=0`. It will crash the
-   same way the moment prod scales up on an image without the retention fix.
-4. Cost levers, roughly $150/month combined: NAT teardown with A5 re-create, UAT off-hours schedule,
-   `uat-api-web` resize. Scheduling UAT from a workstation conflicts with the
-   "rollouts only from the environment-owned workflow" rule in `prod-ecs-express/README.md` — do it
-   as a scheduled workflow.
+3. **Blocking any production deploy: `watchdog-bms/production/redis-url` still holds the endpoint of
+   the deleted cluster** (`watchdog-bms-prod-redis.tp6lu7.0001.apse1.cache.amazonaws.com`, secret
+   untouched since 2026-06-28). `deploy.sh` injects it into api-web and workers, so the next prod
+   rollout starts containers that cannot reach Redis. Recreate the cluster **empty** — never restore
+   a snapshot of the full one — attach a custom parameter group with `maxmemory-policy=noeviction`,
+   then update the secret. There is no prod bootstrap script in this repo; only `infra/uat/bootstrap-data.sh`
+   exists, so the recreate is manual and undocumented. Write it down when it happens.
+4. Remaining cost lever, ~$94/month: UAT off-hours schedule plus a `uat-api-web` resize. Scheduling
+   UAT from a workstation conflicts with the "rollouts only from the environment-owned workflow"
+   rule in `prod-ecs-express/README.md` — do it as a scheduled workflow. After the NAT and prod-Redis
+   deletions the steady state is roughly $160/month; this is what gets it under the $100 budget.
 5. No CloudWatch alarm exists on `IncomingBytes`. One would have caught this on 2026-08-05 for $7
    instead of $179.
