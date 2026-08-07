@@ -1,0 +1,24 @@
+export interface ResolvedAccess {
+  membershipId: string;
+  companyId: string;
+  roles: string[];        // role keys e.g. OWNER, ADMIN
+  permissions: string[];  // permission keys e.g. account.session.read
+  /** Otherwise-granted permissions removed only because their owning feature is OFF. */
+  entitlementDeniedPermissions?: Record<string, string>;
+  scopes: {
+    branchIds?: string[];
+    locationIds?: string[];
+    teamIds?: string[];
+  };
+}
+
+export interface ResolvePermissionsInput {
+  userId: string;
+  companyId?: string; // hint; server verifies
+}
+
+export interface IPermissionResolverPort {
+  resolveForUser(input: ResolvePermissionsInput): Promise<ResolvedAccess>;
+}
+
+export const PERMISSION_RESOLVER_TOKEN = 'PERMISSION_RESOLVER_TOKEN';

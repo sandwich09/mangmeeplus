@@ -1,0 +1,65 @@
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { generateRawToken, hashToken } from '../../domain/logic/secure-token.logic';
+import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../domain/ports/auth-mailer.port';
+import { AuditService } from '../../../audit/application/audit.service';
+import { AuditAction } from '../../../audit/domain/models/audit-action';
+
+const EMAIL_VERIFICATION_TTL_MS = 15 * 60 * 1000;
+
+@Injectable()
+export class ResendEmailVerificationUseCase {
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
+    @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
+  ) {}
+
+  async execute(input: { userId: string; requestId?: string }): Promise<{ email: string; expiresAt: string }> {
+    const now = new Date();
+    const pending = await this.prisma.client.emailVerificationToken.findFirst({
+      where: {
+        userId: input.userId,
+        status: 'PENDING',
+        expiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!pending) {
+      throw new NotFoundException('No pending email verification request was found.');
+    }
+
+    const rawToken = generateRawToken();
+    const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
+
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.emailVerificationToken.updateMany({
+        where: { userId: input.userId, status: 'PENDING' },
+        data: { status: 'REVOKED' },
+      });
+      await tx.emailVerificationToken.create({
+        data: {
+          userId: input.userId,
+          newEmail: pending.newEmail,
+          tokenHash: hashToken(rawToken),
+          expiresAt,
+        },
+      });
+    });
+
+    await this.mailer.sendEmailVerification({ toEmail: pending.newEmail, rawToken, expiresAt });
+    await this.audit?.log({
+      action: AuditAction.AUTH_EMAIL_CHANGE_REQUEST,
+      actorUserId: input.userId,
+      targetType: 'User',
+      targetId: input.userId,
+      requestId: input.requestId ?? 'system',
+      result: 'SUCCESS',
+      riskLevel: 'MEDIUM',
+      metadataJson: { email: pending.newEmail, resend: true },
+    });
+
+    return { email: pending.newEmail, expiresAt: expiresAt.toISOString() };
+  }
+}

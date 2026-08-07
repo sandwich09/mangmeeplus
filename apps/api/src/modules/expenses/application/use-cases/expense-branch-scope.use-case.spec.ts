@@ -1,0 +1,565 @@
+// 10D branch ABAC enforcement in the expense use-cases (web and LINE share these).
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import 'reflect-metadata';
+import {
+  ConfirmExpenseUseCase,
+  CreateExpenseDraftUseCase,
+  GetExpenseUseCase,
+  ListExpensesUseCase,
+  MarkExpenseReadyUseCase,
+  UpdateExpenseDraftUseCase,
+} from './expense-draft.use-case';
+import type { RequestContext } from '@watchdog-bms/contracts';
+import { ExpenseController } from '../../presentation/http/expense.controller';
+import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
+
+const audit = { log: async () => undefined } as any;
+const transactionTax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any;
+const numberServices = [
+  { execute: async () => ({ id: 'number-1', documentNumber: 'EXP-202607-00001' }) } as any,
+  { execute: async () => undefined } as any,
+  { execute: async () => undefined } as any,
+  // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
+  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
+  { get: async () => ({ status: 'UNKNOWN' }) } as any,
+] as const;
+
+function ctx(branchIds?: string[], permissions: string[] = ['expense.read', 'expense.create', 'expense.review']): RequestContext {
+  return {
+    requestId: 'req-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
+    membershipId: 'mem-1', roles: [], permissions,
+    scopes: branchIds ? { branchIds } : {}, authProvider: 'watchdog',
+  };
+}
+
+describe('ListExpensesUseCase branch scope', () => {
+  function makeRepo() {
+    const calls: any[] = [];
+    return {
+      calls,
+      repo: {
+        listExpenses: async (filter: any, scopes: any) => { calls.push({ filter, scopes }); return { data: [], total: 0, page: 1, pageSize: 20 }; },
+      } as any,
+    };
+  }
+
+  it('passes the caller scope to the repository', async () => {
+    const { repo, calls } = makeRepo();
+    await new ListExpensesUseCase(repo).execute(ctx(['b1']), {});
+    assert.deepEqual(calls[0].scopes, { branchIds: ['b1'] });
+  });
+
+  it('rejects an explicit branch filter outside the scope', async () => {
+    const { repo } = makeRepo();
+    await assert.rejects(
+      () => new ListExpensesUseCase(repo).execute(ctx(['b1']), { branchId: 'b2' }),
+      /branch scope/,
+    );
+  });
+
+  it('allows an explicit branch filter inside the scope', async () => {
+    const { repo, calls } = makeRepo();
+    await new ListExpensesUseCase(repo).execute(ctx(['b1', 'b2']), { branchId: 'b2' });
+    assert.equal(calls[0].filter.branchId, 'b2');
+  });
+});
+
+describe('CreateExpenseDraftUseCase branch tagging', () => {
+  function makeRepo() {
+    const created: any[] = [];
+    return {
+      created,
+      repo: {
+        createExpense: async (input: any) => { created.push(input); return { id: 'exp-1', ...input }; },
+        upsertLines: async () => undefined,
+      } as any,
+    };
+  }
+  const input = { captureSource: 'WEB_MANUAL', expenseDate: '2026-07-03', vatMode: 'NO_VAT', inputVatClaimStatus: 'NOT_CLAIMABLE' } as any;
+
+  it('tags a branch-restricted creator with their first scoped branch (default branch first)', async () => {
+    const { repo, created } = makeRepo();
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b-default', 'b-2']), input);
+    assert.equal(created[0].branchId, 'b-default');
+  });
+
+  it('leaves unrestricted creators on company-central (no branch)', async () => {
+    const { repo, created } = makeRepo();
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(undefined), input);
+    assert.equal(created[0].branchId, undefined);
+  });
+
+  it('rejects an explicit branch outside the scope', async () => {
+    const { repo } = makeRepo();
+    await assert.rejects(
+      () => new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b1']), { ...input, branchId: 'b9' }),
+      /branch scope/,
+    );
+  });
+});
+
+describe('GetExpenseUseCase branch scope', () => {
+  const record = (branchId: string | null) => ({ id: 'exp-1', branchId, createdByUserId: 'user-1', status: 'DRAFT' });
+
+  it('hides a record from another branch', async () => {
+    const repo = { findByIdWithRelations: async () => record('b9') } as any;
+    await assert.rejects(() => new GetExpenseUseCase(repo).execute(ctx(['b1']), 'exp-1'), /branch scope/);
+  });
+
+  it('shows company-central records to restricted scopes', async () => {
+    const calls: any[][] = [];
+    const repo = { findByIdWithRelations: async (...args: any[]) => { calls.push(args); return record(null); } } as any;
+    const r = await new GetExpenseUseCase(repo).execute(ctx(['b1']), 'exp-1');
+    assert.equal(r.id, 'exp-1');
+    assert.deepEqual(calls[0]?.[3], { branchIds: ['b1'] }, 'candidate relations are filtered before the detail leaves the repository');
+  });
+
+  it('allows the exact selected payer to open a non-owned signing task', async () => {
+    const repo = { findByIdWithRelations: async () => ({
+      ...record('b1'), createdByUserId: 'finance-1', substituteReceiptEvidence: { payerUserId: 'user-1' },
+    }) } as any;
+    const r = await new GetExpenseUseCase(repo).execute(ctx(['b1'], ['expense.read_own']), 'exp-1');
+    assert.equal(r.id, 'exp-1');
+  });
+});
+
+describe('UpdateExpenseDraftUseCase branch scope', () => {
+  it('blocks mutating a record from another branch', async () => {
+    const repo = { findById: async () => ({ id: 'exp-1', branchId: 'b9', createdByUserId: 'user-1', status: 'DRAFT' }) } as any;
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b1']), 'exp-1', { note: 'x' } as any),
+      /branch scope/,
+    );
+  });
+
+  it('blocks re-tagging a record to an out-of-scope branch', async () => {
+    const repo = { findById: async () => ({ id: 'exp-1', branchId: 'b1', createdByUserId: 'user-1', status: 'DRAFT' }) } as any;
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b1']), 'exp-1', { branchId: 'b9' } as any),
+      /branch scope/,
+    );
+  });
+
+  it('keeps document, tax, and accounting classification fields finance-only', async () => {
+    const repo = { findById: async () => ({ id: 'exp-1', branchId: 'b1', createdByUserId: 'user-1', status: 'DRAFT' }) } as any;
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(['b1'], ['expense.update']), 'exp-1', { sourceDocumentType: 'RECEIPT' } as any),
+      /expense.review/,
+    );
+  });
+
+  it('blocks an API bypass that keeps a Tax Code while classifying the draft as a receipt', async () => {
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'NEEDS_REVIEW', vatMode: 'VAT_EXCLUDED',
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']),
+        'exp-1',
+        {
+          sourceDocumentType: 'RECEIPT',
+          lines: [{
+            lineNumber: 1, description: 'อาหาร', quantity: '1', unitPrice: '100',
+            taxCodeDefinitionId: 'tax-o7', externalTaxCode: 'O7', transactionContext: 'DOMESTIC_PURCHASE',
+          }],
+        } as any,
+      ),
+      /cannot retain a Tax Code/,
+    );
+  });
+
+  it('blocks a document-only API bypass when persisted Tax Code snapshots would become stale', async () => {
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'NEEDS_REVIEW', vatMode: 'VAT_EXCLUDED',
+      }),
+      findByIdWithRelations: async () => ({
+        lines: [{ id: 'line-1', taxSnapshot: { taxCodeDefinitionId: 'tax-o7', taxContext: 'DOMESTIC_PURCHASE' } }],
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1', { sourceDocumentType: 'RECEIPT' },
+      ),
+      /Remove the existing Tax Code lines/,
+    );
+  });
+});
+
+describe('expense Tax Code confirmation guard', () => {
+  const readyRecord = {
+    id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
+    primaryAttachmentId: 'att-1', missingReceiptReason: null, vendorNameSnapshot: 'Supplier',
+    vendorTaxIdSnapshot: '0100000000001', vendorDocumentNumber: 'TAX-INV-1',
+    expenseDate: new Date('2026-07-13T00:00:00.000Z'), currency: 'THB',
+    grandTotalAmount: '107.00', vatMode: 'VAT_EXCLUDED', inputVatClaimStatus: 'CLAIMABLE',
+    vendorCounterpartyId: null, sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX',
+    substituteReceiptGeneratedAt: null, substituteReceiptEvidence: null,
+    updatedAt: new Date('2026-07-13T10:00:00.000Z'), aiVerificationSummaryJson: null,
+    lines: [{
+      id: 'line-1', lineNumber: 1, description: 'สินค้า', quantity: '1', unitPrice: '100',
+      discountAmount: '0', taxableAmount: '100', vatRate: '0.07', vatAmount: '7',
+      whtRate: null, whtAmount: '0', lineSubtotalAmount: '100', lineTotalAmount: '107',
+      expenseCategoryId: null, accountHintKey: null, taxCategory: 'INPUT_VAT',
+      taxSnapshot: {
+        taxCodeDefinitionId: 'tax-o7', externalTaxCode: 'O7', taxProfileKey: 'SAP-TH', taxProfileVersion: 1,
+        taxRegime: 'VAT', taxDirection: 'INPUT', taxTreatment: 'CLAIMABLE', taxContext: 'DOMESTIC_PURCHASE',
+        taxRate: '7', sourceCurrency: 'THB', taxCurrency: 'THB', exchangeRate: '1',
+        exchangeRateSource: 'FUNCTIONAL_CURRENCY', exchangeRateDate: '2026-07-13', taxBaseAmount: '100',
+        taxAmount: '7', claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED', accountRuleVersion: 1, reportRuleVersion: 1,
+      },
+      taxComponents: [{}],
+    }],
+  };
+
+  it('rejects confirmation when a receipt still has a Tax Code snapshot', async () => {
+    const repo = {
+      findByIdWithRelations: async () => ({
+        ...readyRecord,
+        sourceDocumentType: 'RECEIPT', inputVatClaimStatus: 'NON_CLAIMABLE', vatMode: 'NO_VAT',
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      /cannot retain a Tax Code/,
+    );
+  });
+
+  it('emits the finalized tax source ledger metadata after confirmation', async () => {
+    const auditEntries: any[] = [];
+    const repo = {
+      findByIdWithRelations: async () => readyRecord,
+      finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+        const finalized = await finalize({ db: {}, expense: readyRecord });
+        return {
+          expense: { ...input, expenseNumber: 'EXP-1', grandTotalAmount: '107.00' },
+          finalized: finalized.map((line: any) => ({ ...line, taxSnapshot: readyRecord.lines[0].taxSnapshot })),
+        };
+      },
+    } as any;
+    const recordingAudit = { log: async (entry: any) => { auditEntries.push(entry); } } as any;
+
+    await new ConfirmExpenseUseCase(repo, recordingAudit, transactionTax, ...numberServices)
+      .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+
+    const finalized = auditEntries.find((entry) => entry.action === 'tax.document_tax.finalize');
+    assert.equal(finalized.metadataJson.sourceDocumentType, 'TAX_INVOICE');
+    assert.deepEqual(finalized.metadataJson.lines[0], {
+      sourceLineId: 'line-1', lineNumber: 1, taxCodeDefinitionId: 'tax-o7', externalTaxCode: 'O7',
+      taxProfileKey: 'SAP-TH', taxProfileVersion: 1, taxContext: 'DOMESTIC_PURCHASE', taxTreatment: 'CLAIMABLE',
+      claimability: 'CLAIMABLE', evidenceStatus: 'VERIFIED', accountRuleVersion: 1, reportRuleVersion: 1,
+    });
+  });
+
+  it('rejects a usable tax-invoice header while its domestic Tax Code evidence is not verified', async () => {
+    const unverified = {
+      ...readyRecord,
+      lines: readyRecord.lines.map((line) => ({
+        ...line,
+        taxSnapshot: { ...line.taxSnapshot, evidenceStatus: 'DRAFT' },
+      })),
+    };
+    const repo = {
+      findByIdWithRelations: async () => unverified,
+      finalizeAndConfirmExpenseCas: async (_input: any, finalize: any) => {
+        const finalized = (await finalize({ db: {}, expense: unverified }))
+          .map((line: any) => ({ ...line, taxSnapshot: unverified.lines[0].taxSnapshot }));
+        if (finalized.some((line: any) => line.taxSnapshot?.taxContext === 'DOMESTIC_PURCHASE'
+          && line.taxSnapshot?.evidenceStatus !== 'VERIFIED')) {
+          throw new Error('Domestic input VAT requires verified Tax Code evidence before confirmation.');
+        }
+        throw new Error('Expected evidence validation to fail');
+      },
+    } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      /requires verified Tax Code evidence/,
+    );
+  });
+
+  it('tears down the reserved number and rethrows the original error when finalize fails', async () => {
+    // Regression: the catch once ran voidNumber on a still-RESERVED number,
+    // which 409'd ("Only COMMITTED document numbers can be voided"), masking
+    // the real failure and leaking the reservation. It must cancel instead,
+    // never commit, and surface the underlying cause unchanged.
+    const numberCalls: any[] = [];
+    const tracked = [
+      { execute: async () => ({ id: 'number-1', documentNumber: 'EXP-202607-00001' }) } as any,
+      { execute: async () => { numberCalls.push(['commit']); } } as any,
+      { execute: async (input: any) => { numberCalls.push(['cancel', input]); } } as any,
+      // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
+  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
+  { get: async () => ({ status: 'UNKNOWN' }) } as any,
+] as const;
+    const repo = {
+      findByIdWithRelations: async () => readyRecord,
+      finalizeAndConfirmExpenseCas: async () => { throw new Error('expense_confirmation_source_checksum_changed'); },
+    } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...tracked).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      /expense_confirmation_source_checksum_changed/,
+    );
+    assert.deepEqual(numberCalls, [['cancel', { id: 'number-1', companyId: 'company-1' }]]);
+  });
+});
+
+describe('manual web upload non-expense workflow guard', () => {
+  const nonExpenseSummary = {
+    status: 'NOT_EXPENSE_DOCUMENT',
+    classification: { contentKind: 'DOCUMENT', documentKind: 'QUOTATION' },
+    nextAction: 'review_attachment_or_upload_expense_evidence',
+  };
+
+  it('exposes the explicit override endpoint only to expense reviewers', () => {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.overrideNonExpenseClassification),
+      ['expense.review'],
+    );
+  });
+
+  it('guards shared accounting evidence with its dedicated permission', () => {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.getSharedEvidence),
+      ['expense.evidence.read'],
+    );
+  });
+
+  it('exposes a reviewer mark-ready route without weakening the own-update route', () => {
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.markReadyAsReviewer),
+      ['expense.review'],
+    );
+    assert.deepEqual(
+      Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, ExpenseController.prototype.markReady),
+      ['expense.update'],
+    );
+  });
+
+  it('blocks sending an unresolved non-expense draft for confirmation', async () => {
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        aiVerificationSummaryJson: nonExpenseSummary,
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new MarkExpenseReadyUseCase(repo).execute(ctx(undefined, ['expense.review']), 'exp-1'),
+      /classified as non-expense/,
+    );
+  });
+
+  it('blocks direct confirmation for an unresolved non-expense classification', async () => {
+    const repo = {
+      findByIdWithRelations: async () => ({
+        id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION',
+        aiVerificationSummaryJson: nonExpenseSummary,
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+        .execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      /classified as non-expense/,
+    );
+  });
+
+  it('allows finance to explicitly override the classification while preserving its history', async () => {
+    const updates: any[] = [];
+    const auditEntries: any[] = [];
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        vatMode: 'NO_VAT', aiVerificationSummaryJson: nonExpenseSummary,
+      }),
+      updateExpense: async (input: any) => { updates.push(input); return input; },
+    } as any;
+    const recordingAudit = { log: async (entry: any) => { auditEntries.push(entry); } } as any;
+
+    await new UpdateExpenseDraftUseCase(repo, recordingAudit, transactionTax).execute(
+      ctx(undefined, ['expense.review']),
+      'exp-1',
+      {
+        sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+        nonExpenseClassificationOverride: { acknowledged: true, reason: 'Verified against the final supplier bill.' },
+      },
+    );
+
+    assert.equal(updates[0].aiVerificationSummaryJson.status, 'NOT_EXPENSE_DOCUMENT');
+    assert.equal(updates[0].aiVerificationSummaryJson.classification.documentKind, 'QUOTATION');
+    assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.outcome, 'FINANCE_OVERRIDDEN_AS_EXPENSE');
+    assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.acknowledged, true);
+    assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.sourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
+    assert.equal(updates[0].aiVerificationSummaryJson.classificationResolution.reason, 'Verified against the final supplier bill.');
+    assert.deepEqual(auditEntries[0].metadataJson, {
+      classificationOverride: {
+        detectedDocumentKind: 'QUOTATION',
+        sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+        reason: 'Verified against the final supplier bill.',
+      },
+    });
+    assert.equal(auditEntries[0].action, 'expense.classification.override');
+    assert.equal(auditEntries[0].riskLevel, 'HIGH');
+  });
+
+  it('does not treat an incidental source document field as an override', async () => {
+    const updates: any[] = [];
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        vatMode: 'NO_VAT', aiVerificationSummaryJson: nonExpenseSummary,
+      }),
+      updateExpense: async (input: any) => { updates.push(input); return input; },
+    } as any;
+
+    await new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+      ctx(undefined, ['expense.review']),
+      'exp-1',
+      { sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT' },
+    );
+
+    assert.equal(updates[0].aiVerificationSummaryJson, undefined);
+  });
+
+  it('requires reviewer permission, a reviewed document type, and a bounded reason for override', async () => {
+    const record = {
+      id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+      vatMode: 'NO_VAT', sourceDocumentType: 'NEEDS_REVIEW', aiVerificationSummaryJson: nonExpenseSummary,
+    };
+    const repo = { findById: async () => record } as any;
+
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.update']), 'exp-1',
+        { sourceDocumentType: 'RECEIPT', nonExpenseClassificationOverride: { acknowledged: true, reason: 'Checked' } },
+      ),
+      /expense.review/,
+    );
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1',
+        {
+          sourceDocumentType: 'RECEIPT',
+          nonExpenseClassificationOverride: { reason: 'Checked' } as any,
+        },
+      ),
+      /acknowledgement is required/,
+    );
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1',
+        { nonExpenseClassificationOverride: { acknowledged: true, reason: 'Checked' } },
+      ),
+      /Select a reviewed expense source document type/,
+    );
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1',
+        { sourceDocumentType: 'RECEIPT', nonExpenseClassificationOverride: { acknowledged: true, reason: '   ' } },
+      ),
+      /reason is required/,
+    );
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase(repo, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1',
+        { sourceDocumentType: 'RECEIPT', nonExpenseClassificationOverride: { acknowledged: true, reason: 'x'.repeat(501) } },
+      ),
+      /must not exceed 500/,
+    );
+    await assert.rejects(
+      () => new UpdateExpenseDraftUseCase({
+        findById: async () => ({
+          ...record,
+          aiVerificationSummaryJson: { status: 'NOT_EXPENSE_DOCUMENT' },
+        }),
+      } as any, audit, transactionTax).execute(
+        ctx(undefined, ['expense.review']), 'exp-1',
+        { sourceDocumentType: 'RECEIPT', nonExpenseClassificationOverride: { acknowledged: true, reason: 'Checked' } },
+      ),
+      /Re-run document classification/,
+    );
+  });
+
+  it('allows the reviewed draft to advance after the explicit override', async () => {
+    const updates: any[] = [];
+    const repo = {
+      findById: async () => ({
+        id: 'exp-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
+        aiVerificationSummaryJson: {
+          ...nonExpenseSummary,
+          classificationResolution: {
+            outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE',
+            acknowledged: true,
+            reason: 'Verified against the final supplier bill.',
+            sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+            resolvedByUserId: 'user-1',
+            resolvedAt: '2026-07-13T10:00:00.000Z',
+          },
+        },
+      }),
+      updateExpense: async (input: any) => { updates.push(input); return input; },
+    } as any;
+
+    await new MarkExpenseReadyUseCase(repo).execute(ctx(undefined, ['expense.review']), 'exp-1');
+    assert.equal(updates[0].status, 'READY_FOR_CONFIRMATION');
+  });
+
+  it('allows confirmation after a valid finance resolution and emits one outbox event', async () => {
+    const updates: any[] = [];
+    const numberCalls: any[] = [];
+    const trackedNumberServices = [
+      { execute: async (input: any) => { numberCalls.push(['reserve', input]); return { id: 'number-1', documentNumber: 'EXP-202607-00001' }; } } as any,
+      { execute: async (input: any) => { numberCalls.push(['commit', input]); } } as any,
+      { execute: async (input: any) => { numberCalls.push(['void', input]); } } as any,
+      // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
+  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
+  { get: async () => ({ status: 'UNKNOWN' }) } as any,
+] as const;
+    const repo = {
+      findByIdWithRelations: async () => ({
+        id: 'exp-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
+        primaryAttachmentId: 'att-1', missingReceiptReason: null, vendorNameSnapshot: 'Supplier',
+        vendorDocumentNumber: 'BILL-1', expenseDate: new Date('2026-07-13T00:00:00.000Z'),
+        grandTotalAmount: '100.00', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+        vendorCounterpartyId: null, sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT', taxEvidenceStatus: 'SUPPORTING_ONLY',
+        substituteReceiptGeneratedAt: null, substituteReceiptEvidence: null, updatedAt: new Date('2026-07-13T10:00:00.000Z'),
+        aiVerificationSummaryJson: {
+          ...nonExpenseSummary,
+          classificationResolution: {
+            outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE',
+            acknowledged: true,
+            reason: 'Verified against the final supplier bill.',
+            sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+            resolvedByUserId: 'user-1',
+            resolvedAt: '2026-07-13T10:00:00.000Z',
+          },
+        },
+      }),
+      finalizeAndConfirmExpenseCas: async (input: any, finalize: any) => {
+        updates.push({ ...input, status: 'CONFIRMED' });
+        return {
+          expense: { ...input, status: 'CONFIRMED', expenseNumber: 'EXP-1', grandTotalAmount: '100.00' },
+          finalized: await finalize({ db: {}, expense: await repo.findByIdWithRelations() }),
+        };
+      },
+    } as any;
+    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...trackedNumberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+
+    assert.equal(updates[0].status, 'CONFIRMED');
+    assert.equal(updates[0].expenseNumber, 'EXP-202607-00001');
+    assert.equal(numberCalls[0][1].documentType, 'expense.record');
+    assert.deepEqual(numberCalls[1], ['commit', { id: 'number-1', companyId: 'company-1', ownerType: 'expense_record', ownerId: 'exp-1' }]);
+    assert.equal(updates[0].outboxEvent.payloadJson.data.expenseId, 'exp-1');
+    assert.match(updates[0].outboxEvent.eventKey, /^expense\.confirmed:expense_record:exp-1:/);
+  });
+});

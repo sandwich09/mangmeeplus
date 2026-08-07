@@ -1,0 +1,640 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { UnauthorizedException } from '@nestjs/common';
+import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_TOOL_REGISTRY, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
+import { SECURITY_EVENT } from '../../../../common/logger/security-event';
+import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { InternalToolsController } from './internal-tools.controller';
+
+// SEC-02/SEC-03: the internal route re-resolves authorization from DB and ignores
+// caller-supplied permissions. A fake resolver stands in for the DB-backed one.
+function fakeResolver(access: {
+  permissions: string[];
+  membershipId?: string;
+  companyId?: string;
+  branchIds?: string[];
+  locationIds?: string[];
+  roles?: string[];
+} | null) {
+  return {
+    resolveAccess: async (_userId: string, companyId?: string) => {
+      if (!access) throw new Error('No active company membership.');
+      return {
+        membershipId: access.membershipId ?? 'm1',
+        companyId: access.companyId ?? companyId ?? 'c1',
+        roles: access.roles ?? [],
+        permissions: access.permissions,
+        scopes: { branchIds: access.branchIds, locationIds: access.locationIds },
+      };
+    },
+  } as any;
+}
+
+const AI = 'ai.tool.invoke';
+const DELEGATION = 'signed-delegation';
+
+function fakeDelegation(membershipId = 'm1') {
+  return {
+    consume: async (_token: string, expected: any) => ({
+      v: 1,
+      iss: 'watchdog-api',
+      aud: 'watchdog-erp-core:internal-ai-tools',
+      workload: 'ai-gateway',
+      sub: expected.userId,
+      companyId: expected.companyId,
+      membershipId,
+      requestId: expected.requestId || 'r1',
+      toolName: expected.toolName,
+      jti: 'delegation-1',
+      iat: 1,
+      exp: 2,
+    }),
+  } as any;
+}
+
+/** M-02: the write lands on a later tick, so a captured entry proves the controller awaited the
+ *  audit write instead of firing it off and returning. Gates use `logOrThrow` (fail-closed);
+ *  the post-execution failure row uses `log`. */
+function recordingAudit() {
+  const events: any[] = [];
+  const write = async (entry: any) => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    events.push(entry);
+  };
+  return { events, audit: { log: write, logOrThrow: write } as any };
+}
+
+/** An audit store whose fail-closed writes reject (both insert attempts failed inside the service). */
+function failingAudit(failsOn: (entry: any) => boolean = () => true) {
+  return {
+    log: async () => undefined,
+    logOrThrow: async (entry: any) => { if (failsOn(entry)) throw new Error('audit insert failed'); },
+  } as any;
+}
+
+const okAudit = { log: async () => undefined, logOrThrow: async () => undefined } as any;
+
+const STUBS = Array.from({ length: 55 }, () => ({}) as any);
+
+describe('InternalToolsController', () => {
+  it('fails closed when internal secret is not configured', async () => {
+    const stub = {} as any;
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: '' } as any,
+      okAudit,
+      fakeResolver({ permissions: [AI] }),
+      fakeDelegation(),
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+
+    await assert.rejects(
+      () => controller.invoke('anything', DELEGATION, { toolName: 'company.get_current_context', context: { companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' } }),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+  });
+
+  it('denies at the execution boundary when the resolved access lacks ai.tool.invoke', async () => {
+    const stub = {} as any;
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      okAudit,
+      // Caller claims permissions, but the DB-resolved access lacks ai.tool.invoke.
+      fakeResolver({ permissions: ['crm.report.read'] }),
+      fakeDelegation(),
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'sales.get_sales_summary',
+      context: { companyId: 'c1', userId: 'u1', permissions: [AI, 'crm.report.read', 'anything'], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'AI_PERMISSION_DENIED');
+  });
+
+  it('fails closed when the caller has no active company membership', async () => {
+    const stub = {} as any;
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      okAudit,
+      fakeResolver(null),
+      fakeDelegation(),
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'company.get_current_context',
+      context: { companyId: 'c1', userId: 'u1', permissions: [AI], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'AI_PERMISSION_DENIED');
+  });
+
+  it('returns unsupported_module for known tools whose source module is not wired yet', async () => {
+    const stub = {} as any;
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      okAudit,
+      fakeResolver({ permissions: [AI, 'crm.customer.read'] }),
+      fakeDelegation(),
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'crm.suggest_sales_followups',
+      context: { companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'unsupported_module');
+    assert.equal(result.errorCode, 'SOURCE_MODULE_NOT_READY');
+  });
+
+  it('requires every registry permission before dispatching a tax tool', async () => {
+    const stub = {} as any;
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      okAudit,
+      // Missing tax.config.read: one of two required permissions is not enough.
+      fakeResolver({ permissions: [AI, 'tax.profile.read'] }),
+      fakeDelegation(),
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'tax.get_tax_code_profile',
+      context: { companyId: 'c1', userId: 'u1', permissions: [AI, 'tax.profile.read', 'tax.config.read'], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'ERP_PERMISSION_DENIED');
+    assert.deepEqual(result.sourceRefs, []);
+    assert.equal(result.data, undefined);
+  });
+
+  it('dispatches the wired tax-code profile tool with DB-resolved scope', async () => {
+    const tools: { execute: (ctx: any) => Promise<any> }[] = Array.from({ length: 32 }, () => ({ execute: async () => ({ status: 'ok' }) }));
+    let seenCtx: any = null;
+    tools[17] = {
+      execute: async (ctx: any) => {
+        seenCtx = ctx;
+        return { toolName: 'tax.get_tax_code_profile', status: 'ok', data: { reviewRequired: false }, sourceRefs: [], asOf: new Date().toISOString() };
+      },
+    };
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' },
+      okAudit,
+      fakeResolver({ permissions: [AI, 'tax.profile.read', 'tax.config.read'], branchIds: ['b1'] }),
+      fakeDelegation(),
+      ...tools,
+    ) as InternalToolsController;
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'tax.get_tax_code_profile',
+      context: { companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(seenCtx.branchIds, ['b1']);
+  });
+
+  it('dispatches with DB-resolved context, not caller-supplied permissions', async () => {
+    const tools: { execute: (ctx: any) => Promise<any> }[] = Array.from({ length: 32 }, () => ({ execute: async () => ({ status: 'ok' }) }));
+    let seenCtx: any = null;
+    tools[11] = {
+      execute: async (ctx: any) => {
+        seenCtx = ctx;
+        return { toolName: 'sales.get_sales_summary', status: 'ok', data: { totalSales: '50' }, sourceRefs: [], asOf: new Date().toISOString() };
+      },
+    };
+    const auditEvents: any[] = [];
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' },
+      { log: async (entry: any) => { auditEvents.push(entry); }, logOrThrow: async (entry: any) => { auditEvents.push(entry); } },
+      fakeResolver({ permissions: [AI, 'crm.report.read'], branchIds: ['b1'], membershipId: 'm9', companyId: 'c1', roles: ['SALES'] }),
+      fakeDelegation('m9'),
+      ...tools,
+    ) as InternalToolsController;
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'sales.get_sales_summary',
+      // Caller lies: claims extra permissions and a forged branch. Both must be ignored.
+      context: { requestId: 'r1', companyId: 'c1', userId: 'u1', membershipId: 'm9', permissions: ['everything'], branchIds: ['b-forged'], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'ok');
+    assert.equal((result.data as any).totalSales, '50');
+    // The tool received the DB-resolved permissions/scope, not the caller's.
+    assert.deepEqual(seenCtx.permissions, [AI, 'crm.report.read']);
+    assert.deepEqual(seenCtx.branchIds, ['b1']);
+    assert.equal(seenCtx.membershipId, 'm9');
+    assert.deepEqual(seenCtx.roles, ['SALES']);
+    assert.equal(auditEvents[0]?.action, 'ai.actor_delegation.consume');
+    assert.equal(auditEvents[0]?.actorUserId, 'u1');
+    assert.equal(auditEvents[0]?.companyId, 'c1');
+    assert.equal(auditEvents[0]?.requestId, 'r1');
+    assert.deepEqual(auditEvents[0]?.metadataJson, {
+      workload: 'ai-gateway',
+      audience: 'watchdog-erp-core:internal-ai-tools',
+      membershipId: 'm9',
+      toolName: 'sales.get_sales_summary',
+    });
+    // M-02: the sensitive-tool success audit stays, now carrying the measured handler duration.
+    assert.equal(auditEvents[1]?.action, 'ai.tool.invoke');
+    assert.equal(auditEvents[1]?.result, 'SUCCESS');
+    assert.equal(auditEvents[1]?.requestId, 'r1');
+    assert.equal(typeof auditEvents[1]?.metadataJson?.durationMs, 'number');
+  });
+
+  it('writes no durable audit row when the actor delegation itself is invalid', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver({ permissions: [AI] }),
+      { consume: async () => { throw new Error('bad delegation'); } } as any,
+      ...STUBS,
+    );
+
+    await assert.rejects(
+      () => controller.invoke('secret', DELEGATION, {
+        toolName: 'company.get_current_context',
+        // Nothing here is verified yet, so a durable row keyed to these ids would be audit spam.
+        context: { requestId: 'r-forged', companyId: 'c-forged', userId: 'u-forged', permissions: [], locale: 'th-TH' },
+      }),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+    assert.equal(events.length, 0);
+  });
+
+  it('does NOT execute the tool when the audit write fails (M-02 fail-closed)', async () => {
+    // L-10 made the post-commit `log()` never throw, which is right for a caller whose financial
+    // mutation already committed and wrong for a gate: without an explicit fail-closed path the
+    // tool would run and its provenance would be gone. `logOrThrow` is that path.
+    let executed = 0;
+    const tools: any[] = Array.from({ length: 55 }, () => ({}));
+    tools[11] = { execute: async () => { executed += 1; return { toolName: 'sales.get_sales_summary', status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } };
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      failingAudit(),
+      fakeResolver({ permissions: [AI, 'crm.report.read'] }),
+      fakeDelegation(),
+      ...tools,
+    );
+
+    await assert.rejects(
+      () => controller.invoke('secret', DELEGATION, {
+        toolName: 'sales.get_sales_summary',
+        context: { requestId: 'r-audit-down', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      }),
+      /audit insert failed/,
+    );
+    assert.equal(executed, 0, 'no durable provenance, no tool invocation');
+  });
+
+  it('does NOT return a quiet forbidden when the denial row cannot be written', async () => {
+    // Only the DENIED row fails: the delegation-consume row lands, so this exercises the gate.
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      failingAudit((entry) => entry.result === 'DENIED'),
+      fakeResolver({ permissions: ['crm.report.read'] }), // lacks the ai.tool.invoke gate
+      fakeDelegation(),
+      ...STUBS,
+    );
+
+    await assert.rejects(
+      () => controller.invoke('secret', DELEGATION, {
+        toolName: 'sales.get_sales_summary',
+        context: { requestId: 'r-deny-unrecordable', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      }),
+      /audit insert failed/,
+    );
+  });
+
+  it('audits a stale actor delegation as DENIED before rejecting the request', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      // Membership moved after the (still signature-valid, now consumed) delegation was issued.
+      fakeResolver({ permissions: [AI], membershipId: 'm-current' }),
+      fakeDelegation('m-stale'),
+      ...STUBS,
+    );
+
+    await assert.rejects(
+      () => controller.invoke('secret', DELEGATION, {
+        toolName: 'company.get_current_context',
+        context: { requestId: 'r-stale', companyId: 'c1', userId: 'u1', permissions: [AI], locale: 'th-TH' },
+      }),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+
+    assert.equal(events.length, 1, 'the burned jti must leave exactly one durable row');
+    assert.equal(events[0].action, 'ai.tool.invoke.denied');
+    assert.equal(events[0].result, 'DENIED');
+    assert.equal(events[0].riskLevel, 'MEDIUM');
+    assert.equal(events[0].companyId, 'c1', 'verified company, not the delegation claim');
+    assert.equal(events[0].actorUserId, 'u1');
+    assert.equal(events[0].requestId, 'r-stale');
+    assert.equal(events[0].targetId, 'company.get_current_context');
+    assert.equal(events[0].metadataJson.reasonCode, 'STALE_ACTOR_DELEGATION');
+    assert.equal(events[0].metadataJson.delegationCompanyId, 'c1');
+    assert.equal(events[0].metadataJson.delegationMembershipId, 'm-stale');
+    assert.equal(typeof events[0].metadataJson.durationMs, 'number');
+  });
+
+  it('audits the deny when the caller has no authoritative access, without a caller-claimed companyId', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver(null),
+      fakeDelegation(),
+      ...STUBS,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'company.get_current_context',
+      context: { requestId: 'r-no-access', companyId: 'c-claimed', userId: 'u1', permissions: [AI], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'forbidden');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].action, 'ai.tool.invoke.denied');
+    assert.equal(events[0].result, 'DENIED');
+    assert.equal(events[0].riskLevel, 'MEDIUM');
+    assert.equal(events[0].requestId, 'r-no-access');
+    assert.equal(events[0].companyId, undefined);
+    assert.equal(events[0].metadataJson.reasonCode, 'NO_AUTHORITATIVE_ACCESS');
+    assert.equal(events[0].metadataJson.claimedCompanyId, 'c-claimed');
+    assert.equal(typeof events[0].metadataJson.durationMs, 'number');
+  });
+
+  it('audits the deny when the resolved access lacks the ai.tool.invoke gate', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver({ permissions: ['crm.report.read'] }),
+      fakeDelegation(),
+      ...STUBS,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'sales.get_sales_summary',
+      context: { requestId: 'r-gate', companyId: 'c1', userId: 'u1', permissions: [AI], locale: 'th-TH' },
+    });
+
+    assert.equal(result.errorCode, 'AI_PERMISSION_DENIED');
+    assert.equal(events.length, 2, 'delegation consume plus the deny row');
+    assert.equal(events[1].action, 'ai.tool.invoke.denied');
+    assert.equal(events[1].result, 'DENIED');
+    assert.equal(events[1].riskLevel, 'MEDIUM');
+    assert.equal(events[1].requestId, 'r-gate');
+    assert.equal(events[1].companyId, 'c1');
+    assert.equal(events[1].targetId, 'sales.get_sales_summary');
+    assert.equal(events[1].metadataJson.reasonCode, 'AI_TOOL_GATE_MISSING');
+    assert.equal(typeof events[1].metadataJson.durationMs, 'number');
+  });
+
+  it('audits the deny when an ERP registry permission is missing', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver({ permissions: [AI, 'tax.profile.read'] }),
+      fakeDelegation(),
+      ...STUBS,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'tax.get_tax_code_profile',
+      context: { requestId: 'r-erp', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+
+    assert.equal(result.errorCode, 'ERP_PERMISSION_DENIED');
+    assert.equal(events.length, 2);
+    assert.equal(events[1].action, 'ai.tool.invoke.denied');
+    assert.equal(events[1].riskLevel, 'MEDIUM');
+    assert.equal(events[1].requestId, 'r-erp');
+    assert.equal(events[1].metadataJson.reasonCode, 'ERP_PERMISSION_DENIED');
+  });
+
+  it('audits unknown and not-yet-wired tools at LOW risk with distinct reason codes', async () => {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver({ permissions: [AI, 'crm.customer.read'] }),
+      fakeDelegation(),
+      ...STUBS,
+    );
+    const context = { requestId: 'r-unknown', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' };
+
+    const known = await controller.invoke('secret', DELEGATION, { toolName: 'crm.suggest_sales_followups', context });
+    const unknown = await controller.invoke('secret', DELEGATION, { toolName: 'not.a.real.tool', context });
+
+    assert.equal(known.errorCode, 'SOURCE_MODULE_NOT_READY');
+    assert.equal(unknown.errorCode, 'TOOL_NOT_FOUND');
+    const denies = events.filter((entry) => entry.action === 'ai.tool.invoke.denied');
+    assert.deepEqual(denies.map((entry) => entry.metadataJson.reasonCode), ['SOURCE_MODULE_NOT_READY', 'TOOL_NOT_FOUND']);
+    assert.deepEqual(denies.map((entry) => entry.riskLevel), ['LOW', 'LOW']);
+    assert.deepEqual(denies.map((entry) => entry.requestId), ['r-unknown', 'r-unknown']);
+  });
+
+  it('audits a sensitive tool execution error as FAILED at HIGH risk', async () => {
+    const tools: any[] = Array.from({ length: 55 }, () => ({}));
+    tools[11] = { execute: async () => { throw new Error('boom'); } };
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      audit,
+      fakeResolver({ permissions: [AI, 'crm.report.read'] }),
+      fakeDelegation(),
+      ...tools,
+    );
+
+    const result = await controller.invoke('secret', DELEGATION, {
+      toolName: 'sales.get_sales_summary',
+      context: { requestId: 'r-error', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+    });
+
+    assert.equal(result.status, 'error');
+    assert.equal(result.errorCode, 'TOOL_EXECUTION_ERROR');
+    assert.equal(events.length, 2);
+    assert.equal(events[1].action, 'ai.tool.invoke.failed');
+    assert.equal(events[1].result, 'FAILED');
+    assert.equal(events[1].riskLevel, 'HIGH', 'sales.get_sales_summary is sensitiveAudit');
+    assert.equal(events[1].requestId, 'r-error');
+    assert.equal(events[1].companyId, 'c1');
+    assert.equal(events[1].metadataJson.reasonCode, 'TOOL_EXECUTION_ERROR');
+    assert.equal(typeof events[1].metadataJson.durationMs, 'number');
+  });
+});
+
+/**
+ * L-08: this executor is authoritative. The gateway's ToolPolicyEnforcerService can be bypassed by
+ * anything holding the internal secret plus a valid delegation, so classification and the
+ * final-mutation kill switch have to be re-decided here.
+ */
+describe('InternalToolsController — L-08 mutation classification at the ERP executor', () => {
+  const OK_TOOL = { execute: async () => ({ status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }) };
+
+  function build(options: { permissions: string[]; finalMutationEnabled?: boolean; tools?: unknown[] }) {
+    const { events, audit } = recordingAudit();
+    const controller = new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret', aiFinalMutationEnabled: options.finalMutationEnabled ?? false } as any,
+      audit,
+      fakeResolver({ permissions: options.permissions }),
+      fakeDelegation(),
+      ...(options.tools ?? Array.from({ length: 55 }, () => OK_TOOL)),
+    );
+    return { controller, events };
+  }
+
+  /** Adds a registry entry for the duration of one test; the registry is a shared module singleton. */
+  function withRegistryEntry(entry: ToolMeta, run: () => Promise<ToolResult>): Promise<ToolResult> {
+    LINE_TOOL_REGISTRY.push(entry);
+    return run().finally(() => {
+      LINE_TOOL_REGISTRY.splice(LINE_TOOL_REGISTRY.indexOf(entry), 1);
+    });
+  }
+
+  const registryEntry = (name: string, category: string): ToolMeta => ({
+    name,
+    description: 'test-only entry',
+    businessSubjects: [],
+    questionKinds: ['summary'],
+    category: category as ToolMeta['category'],
+    // Deliberately empty: if classification ever ran *after* the permission check, an empty
+    // requirement list would let this tool through, so the test would fail loudly.
+    requiredPermissions: [],
+    sourceModule: 'test',
+    supportedAgents: ['general'],
+    sensitiveAudit: false,
+    requiresErpPermissionCheck: true,
+  });
+
+  const CONTEXT = { requestId: 'r-cat', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' };
+
+  it('denies a tool name with no registry entry before any permission or dispatch decision', async () => {
+    const { controller, events } = build({ permissions: [AI] });
+
+    const result = await controller.invoke('secret', DELEGATION, { toolName: 'not.a.real.tool', context: CONTEXT });
+
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.errorCode, 'TOOL_NOT_FOUND');
+    const denies = events.filter((entry: any) => entry.action === 'ai.tool.invoke.denied');
+    assert.equal(denies.length, 1);
+    assert.equal(denies[0].metadataJson.reasonCode, 'TOOL_NOT_FOUND');
+  });
+
+  it('keeps an unregistered name structurally undispatchable (every wired tool has a registry entry)', () => {
+    const { controller } = build({ permissions: [AI] });
+    const wired = [...((controller as any).toolMap as Map<string, unknown>).keys()];
+    const registered = new Set(LINE_TOOL_REGISTRY.map((entry) => entry.name));
+    const orphans = wired.filter((name) => !registered.has(name));
+    assert.deepEqual(orphans, [], 'a wired tool with no registry entry could never be classified');
+  });
+
+  it('denies a registry-known tool whose category is not in the LINE-allowed set', async () => {
+    const { controller, events } = build({ permissions: [AI] });
+
+    const result = await withRegistryEntry(registryEntry('test.draft_create', 'draft_create'), () =>
+      controller.invoke('secret', DELEGATION, { toolName: 'test.draft_create', context: CONTEXT }));
+
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'AI_TOOL_CATEGORY_DENIED');
+    const deny = events.find((entry: any) => entry.action === 'ai.tool.invoke.denied');
+    assert.equal(deny.metadataJson.reasonCode, 'TOOL_CATEGORY_NOT_ALLOWED');
+    assert.equal(deny.riskLevel, 'HIGH');
+    assert.equal(deny.result, 'DENIED');
+    assert.equal(deny.companyId, 'c1', 'the kill-switch trip is durable, not log-only');
+  });
+
+  it('denies an unrecognised category value', async () => {
+    const { controller, events } = build({ permissions: [AI] });
+
+    const result = await withRegistryEntry(registryEntry('test.nonsense', 'wildcard_everything'), () =>
+      controller.invoke('secret', DELEGATION, { toolName: 'test.nonsense', context: CONTEXT }));
+
+    assert.equal(result.errorCode, 'AI_TOOL_CATEGORY_DENIED');
+    const deny = events.find((entry: any) => entry.action === 'ai.tool.invoke.denied');
+    assert.equal(deny.metadataJson.reasonCode, 'TOOL_CATEGORY_UNKNOWN');
+    assert.equal(deny.riskLevel, 'HIGH');
+  });
+
+  for (const category of ['final_mutation', 'approval_request']) {
+    it(`denies the mutation category "${category}" while the ERP final-mutation switch is off`, async () => {
+      const { controller, events } = build({ permissions: [AI], finalMutationEnabled: false });
+
+      const result = await withRegistryEntry(registryEntry(`test.${category}`, category), () =>
+        controller.invoke('secret', DELEGATION, { toolName: `test.${category}`, context: CONTEXT }));
+
+      assert.equal(result.status, 'forbidden');
+      const deny = events.find((entry: any) => entry.action === 'ai.tool.invoke.denied');
+      assert.equal(deny.metadataJson.reasonCode, 'AI_FINAL_MUTATION_DISABLED');
+      assert.equal(deny.riskLevel, 'HIGH');
+    });
+  }
+
+  it('a kill-switch trip is alarmed, not just audited (L-14)', async () => {
+    const { controller, events } = build({ permissions: [AI], finalMutationEnabled: false });
+    const emitted: Record<string, unknown>[] = [];
+    (controller as any).logger = { warn: (line: any) => emitted.push(line), error: (line: any) => emitted.push(line) };
+
+    await withRegistryEntry(registryEntry('test.final_mutation', 'final_mutation'), () =>
+      controller.invoke('secret', DELEGATION, { toolName: 'test.final_mutation', context: CONTEXT }));
+
+    const alarm = emitted.find((line) => line['msg'] === 'ai.tool.invoke.denied');
+    assert.ok(alarm, 'the production metric filter keys on this exact msg literal');
+    assert.equal(alarm['riskLevel'], 'HIGH', 'riskLevel must be root-level for the existing alarm clause');
+    assert.equal(alarm['reasonCode'], 'AI_FINAL_MUTATION_DISABLED');
+    assert.equal(alarm['toolName'], 'test.final_mutation');
+    assert.ok(
+      events.some((entry: any) => entry.metadataJson?.reasonCode === 'AI_FINAL_MUTATION_DISABLED'),
+      'and the durable row still exists — a kill-switch trip is never log-only',
+    );
+  });
+
+  it('keeps the log event name and the audit action the same literal', () => {
+    // The alarm reads logs; the audit trail reads rows. If these two drift, one of them stops
+    // matching `$.msg = "ai.tool.invoke.denied"` silently.
+    assert.equal(SECURITY_EVENT.aiToolInvokeDenied, AuditAction.AI_TOOL_INVOKE_DENIED);
+  });
+
+  it('still denies a mutation category with the switch on — the switch is necessary, not sufficient', async () => {
+    const { controller, events } = build({ permissions: [AI], finalMutationEnabled: true });
+
+    const result = await withRegistryEntry(registryEntry('test.final_mutation', 'final_mutation'), () =>
+      controller.invoke('secret', DELEGATION, { toolName: 'test.final_mutation', context: CONTEXT }));
+
+    assert.equal(result.errorCode, 'AI_TOOL_CATEGORY_DENIED');
+    const deny = events.find((entry: any) => entry.action === 'ai.tool.invoke.denied');
+    assert.equal(deny.metadataJson.reasonCode, 'TOOL_CATEGORY_NOT_ALLOWED');
+  });
+
+  it('every wired read tool keeps working — walked from the registry, not a hardcoded list', async () => {
+    const { controller } = build({ permissions: [AI] });
+    const wired = [...((controller as any).toolMap as Map<string, unknown>).keys()];
+    assert.equal(wired.length, 54, 'the wired read-tool surface must not shrink');
+
+    for (const toolName of wired) {
+      const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;
+      assert.ok(
+        LINE_ALLOWED_TOOL_CATEGORIES.includes(meta.category),
+        `${toolName} is categorised "${meta.category}", which the executor now denies`,
+      );
+      // Grant exactly what the registry entry demands, nothing more.
+      const granted = [AI, ...meta.requiredPermissions, ...(meta.anyOfPermissions?.slice(0, 1) ?? [])];
+      const { controller: scoped } = build({ permissions: granted });
+      const result = await scoped.invoke('secret', DELEGATION, {
+        toolName,
+        context: { requestId: 'r-walk', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+      });
+      assert.equal(result.status, 'ok', `${toolName} must still execute (got ${result.errorCode ?? result.status})`);
+    }
+  });
+});

@@ -1,0 +1,261 @@
+// ---- Item 10C: Employee Access and Role Management ----
+
+export type EmployeeAccessStatus = 'DRAFT' | 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+export type EmployeeIdentityType = 'THAI_NATIONAL_ID' | 'PASSPORT';
+
+export type EmployeeRoleRef = {
+  id: string;
+  key: string;
+  name: string;
+};
+
+// 10D: membership branch scope (assignment-driven visibility; ALL_BRANCHES = unrestricted)
+export type BranchScopeMode = 'ALL_BRANCHES' | 'SELECTED_BRANCHES' | 'DEFAULT_BRANCH_ONLY';
+
+export type ThaiAddressOption = {
+  postalCode: string;
+  provinceCode: string;
+  provinceTh: string;
+  districtCode: string;
+  districtTh: string;
+  subdistrictCode: string;
+  subdistrictTh: string;
+};
+
+export type EmployeeSummary = {
+  id: string;
+  userId: string;
+  membershipId: string;
+  displayName: string;
+  legalName?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  nickname?: string;
+  dateOfBirth?: string;
+  addressLine?: string;
+  postalCode?: string;
+  province?: string;
+  district?: string;
+  subdistrict?: string;
+  identityType: EmployeeIdentityType;
+  identityMasked: string;
+  phoneNumber: string;
+  status: EmployeeAccessStatus;
+  roles: EmployeeRoleRef[];
+  branchScopeMode: BranchScopeMode;
+  defaultBranchId?: string;
+  branchScopeBranchIds: string[];
+  mustChangePassword: boolean;
+  lineLinked: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmployeeDetail = EmployeeSummary;
+
+export type CreateEmployeeInput = {
+  username: string;
+  displayName: string;
+  legalName?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  nickname?: string;
+  dateOfBirth: string;
+  addressLine?: string;
+  postalCode?: string;
+  province?: string;
+  district?: string;
+  subdistrict?: string;
+  identityType: EmployeeIdentityType;
+  identityNumber: string;
+  phoneNumber: string;
+  roleIds: string[];
+  // Set after the owner confirms an `employee_existing_user` prompt: attach a second company
+  // membership to the existing account (matched by username) instead of creating a new user.
+  linkExistingUser?: boolean;
+};
+
+export type UpdateEmployeeInput = {
+  displayName?: string;
+  legalName?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  nickname?: string | null;
+  dateOfBirth?: string | null;
+  addressLine?: string | null;
+  postalCode?: string | null;
+  province?: string | null;
+  district?: string | null;
+  subdistrict?: string | null;
+  identityType?: EmployeeIdentityType;
+  identityNumber?: string;
+  phoneNumber?: string;
+  roleIds?: string[];
+  branchScopeMode?: BranchScopeMode;
+  defaultBranchId?: string | null;
+  branchIds?: string[]; // replaces the SELECTED_BRANCHES scope set atomically
+};
+
+export type SetEmployeeStatusInput = {
+  status: 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+  reason?: string;
+};
+
+export type EmployeeCredentialHandoff = {
+  userId: string;
+  username: string;
+  temporaryPassword: string;
+  mustChangePassword: boolean;
+  expiresAt?: string;
+  lineLink?: EmployeeLineLinkPackage;
+  /** Regenerate only: true when the temporary password reached the employee's linked LINE. */
+  lineNotified?: boolean;
+  // true = attached to an existing account; the person keeps their current login, so no
+  // temporary password is issued and none is returned (temporaryPassword is empty).
+  reusedExistingAccount?: boolean;
+};
+
+export type EmployeeLineLinkPackage = {
+  linkUrl: string;
+  qrImageUrl: string;
+  expiresAt: string;
+};
+
+// ---- Roles and Permissions ----
+
+export type RoleStatus = 'ACTIVE' | 'DISABLED';
+
+export type RoleSummary = {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  isSystem: boolean;
+  status: RoleStatus;
+  permissionKeys: string[];
+  /** Permissions still usable after this company's feature entitlements — matches the access matrix. */
+  effectivePermissionCount?: number;
+};
+
+export type RoleDetail = RoleSummary;
+
+/**
+ * Roles a company may never rewrite. OWNER is excluded because an owner could strip
+ * access.role.manage from themselves and lock the company out of its own settings;
+ * SYSTEM_ADMIN and COMPANY_VIEW are platform-operator roles, not employee roles.
+ */
+export const NON_EDITABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW'] as const;
+
+export function isRoleEditableByCompany(role: Pick<RoleSummary, 'key'>): boolean {
+  return !NON_EDITABLE_ROLE_KEYS.some((key) => key === role.key);
+}
+
+export type CreateRoleInput = {
+  name: string;
+  description?: string;
+  permissionKeys?: string[];
+  capabilityPackKeys?: string[];
+  roleTemplateKey?: string;
+};
+
+export type UpdateRoleInput = {
+  name?: string;
+  description?: string;
+  permissionKeys?: string[];
+  capabilityPackKeys?: string[];
+};
+
+export type PermissionCatalogItem = {
+  key: string;
+  module: string;
+  description: string;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+};
+
+// ---- Item 10C+ Phase 1: Smart Roles (capability packs, job presets, effective access) ----
+
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export type CapabilityPack = {
+  key: string;
+  module: string;
+  nameTh: string;
+  nameEn: string;
+  description: string;
+  permissionKeys: string[];
+  riskLevel: RiskLevel;
+  featureEntitlementKey?: string;
+  isCore: boolean;
+};
+
+export type CapabilityPackView = CapabilityPack & {
+  locked: boolean; // not entitled for this company
+  lockReason?: string;
+  grantableByCurrentUser: boolean; // false if pack exceeds the granter's own permissions
+};
+
+export type CapabilityPackCatalog = {
+  modules: Array<{ module: string; packs: CapabilityPackView[] }>;
+};
+
+export type RoleTemplate = {
+  key: string;
+  nameTh: string;
+  nameEn: string;
+  description: string;
+  industryTag?: 'retail' | 'trading' | 'service' | 'ecommerce' | 'crosscutting';
+  capabilityPackKeys: string[];
+  isSystem: boolean;
+};
+
+export type EffectivePermission = {
+  key: string;
+  module: string;
+  description: string;
+  riskLevel: RiskLevel;
+};
+
+export type EffectiveCapability = {
+  packKey: string;
+  nameTh: string;
+  nameEn: string;
+  riskLevel: RiskLevel;
+};
+
+export type EffectiveAccessView = {
+  membershipId?: string;
+  displayName?: string;
+  roleKeys: string[];
+  capabilities: EffectiveCapability[];
+  permissions: EffectivePermission[];
+  permissionCount: number;
+};
+
+export type RolePreviewInput = {
+  capabilityPackKeys?: string[];
+  permissionKeys?: string[];
+  roleTemplateKey?: string;
+  roleId?: string; // when editing: compute added/removed vs current
+};
+
+export type RolePreviewResult = EffectiveAccessView & {
+  droppedKeys: Array<{ key: string; reason: 'not_entitled' | 'above_granter_scope' | 'unknown' }>;
+  addedVsCurrent?: string[];
+  removedVsCurrent?: string[];
+};
+
+export type CompanyAccessMatrixRow = {
+  membershipId: string;
+  displayName: string;
+  roleKeys: string[];
+  capabilitySummary: string[]; // human-readable pack names (Thai)
+  highRiskCount: number;
+};
+
+export type CompanyAccessMatrix = {
+  rows: CompanyAccessMatrixRow[];
+  total: number;
+};

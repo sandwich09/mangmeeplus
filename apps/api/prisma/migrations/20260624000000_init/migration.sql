@@ -1,0 +1,2 @@
+-- No-op baseline marker.
+-- The first real schema migration is 20260624000001_item02_schema.

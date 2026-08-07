@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "WriteExactA5LogGroupsOnly",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-bootstrap:log-stream:*",
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-clone:log-stream:*",
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-readonly:log-stream:*"
+      ],
+      "Condition": {
+        "ArnEquals": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+            "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+            "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
+          ]
+        }
+      }
+    }
+  ]
+}

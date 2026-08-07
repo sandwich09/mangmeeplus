@@ -1,0 +1,301 @@
+import { type Locator, type Page } from '@playwright/test';
+import { test, expect } from './harness/fixtures';
+import { expectNoClientError } from './harness/auth';
+import { expectMainReady } from './harness/e2e-utils';
+
+const ROUTES = [
+  '/dashboard',
+  '/inbox',
+  '/customers',
+  '/bookings',
+  '/sales-documents',
+  '/crm-reports',
+  '/settings/crm-catalog',
+  '/inventory',
+  '/inventory/products',
+  '/inventory/locations',
+  '/inventory/movements',
+  '/inventory/reports/stock',
+  '/expenses',
+  '/expenses/upload',
+  '/expenses/manual',
+  '/expenses/categories',
+  '/expenses/signatures',
+  '/settings/substitute-receipt',
+  '/expenses/evidence',
+  '/reimbursements',
+  '/journal',
+  '/accounting',
+  '/tax',
+  '/reports',
+  '/period-closing',
+  '/settings/permissions',
+  '/settings/access-overview',
+  '/settings/employees',
+  '/settings/po-approval',
+  '/settings/discount-policy',
+  '/settings/line-oa',
+  '/settings',
+  '/settings/accounting-tax-setup',
+  '/settings/chart-of-accounts',
+  '/settings/tax-codes',
+  '/settings/tax-accounts',
+  '/settings/branches',
+  '/settings/security',
+  '/crm',
+  '/crm/payment-proofs',
+  '/banking',
+  '/accounts-payable',
+  '/procurement',
+  '/workflow',
+  '/notifications',
+  '/ai-suggestions',
+] as const;
+
+const CARD_VIEW_CASES = [
+  {
+    route: '/reimbursements',
+    tableTestId: 'reimbursements-mine-table',
+    cardListTestId: 'reimbursements-mine-card-list',
+    cardTestId: 'reimbursements-mine-card',
+    url: /\/reimbursements\?tab=mine&focus=[^&]+$/,
+    columnCount: 8,
+  },
+  {
+    route: '/expenses',
+    tableTestId: 'expenses-grid',
+    cardListTestId: 'expenses-card-list',
+    cardTestId: 'expenses-card',
+    url: /\/expenses\/[^/?#]+$/,
+    columnCount: 5,
+  },
+  {
+    route: '/accounting',
+    tableTestId: 'accounting-documents-table',
+    cardListTestId: 'accounting-documents-card-list',
+    cardTestId: 'accounting-document-card',
+    url: /\/accounting\?documentId=[^&]+$/,
+    columnCount: 7,
+  },
+] as const;
+
+async function gotoAndSettle(page: Page, companyId: string, route: string) {
+  await page.goto(`/companies/${companyId}${route}`);
+  await expectMainReady(page);
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+}
+
+async function expectNoZoomFields(page: Page, location: string) {
+  const fields = page.locator('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):visible, select:visible, textarea:visible');
+  await expect(fields.first(), `INV-5 ${location}: expected at least one visible form field`).toBeVisible();
+  const tooSmall = await fields.evaluateAll((elements) => elements.flatMap((element) => {
+    const fontSize = Number.parseFloat(window.getComputedStyle(element).fontSize);
+    return fontSize >= 16 ? [] : [{
+      field: element.getAttribute('id') ?? element.getAttribute('name') ?? `${element.tagName.toLowerCase()}[type=${element.getAttribute('type') ?? 'text'}]`,
+      fontSize,
+    }];
+  }));
+  expect(tooSmall, `INV-5 ${location}: form fields below 16px trigger iOS focus zoom`).toEqual([]);
+}
+
+async function expectInViewport(selector: Locator, location: string) {
+  await expect(selector).toBeVisible();
+  const bounds = await selector.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, viewportWidth: window.innerWidth };
+  });
+  expect.soft(bounds.left, `INV-6 ${location}: popover left edge is outside the viewport`).toBeGreaterThanOrEqual(0);
+  expect.soft(bounds.right, `INV-6 ${location}: popover right edge is outside the viewport`).toBeLessThanOrEqual(bounds.viewportWidth);
+}
+
+// RESPONSIVE_VIEWPORT=375x667 re-runs the mobile suite at the 375px floor (R5 matrix).
+const viewportOverride = /^(\d+)x(\d+)$/.exec(process.env['RESPONSIVE_VIEWPORT'] ?? '');
+if (viewportOverride) {
+  test.use({ viewport: { width: Number(viewportOverride[1]), height: Number(viewportOverride[2]) } });
+}
+
+test.describe('Mobile responsive invariants', () => {
+  test.beforeEach(async ({ isMobile }) => {
+    test.skip(!isMobile, 'Responsive invariants run only in mobile-chromium.');
+  });
+
+  for (const route of ROUTES) {
+    test(`${route} — INV-1, INV-2, INV-4`, async ({ authedPage, companyId }) => {
+      await gotoAndSettle(authedPage, companyId, route);
+
+      await test.step('INV-1 no page overflow', async () => {
+        const dimensions = await authedPage.evaluate(() => ({
+          scrollWidth: document.scrollingElement?.scrollWidth ?? 0,
+          viewportWidth: window.innerWidth,
+        }));
+        expect.soft(
+          dimensions.scrollWidth,
+          `INV-1 ${route}: scrollWidth ${dimensions.scrollWidth}px exceeds viewport ${dimensions.viewportWidth}px`,
+        ).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+      });
+
+      await test.step('INV-2 no clipped table', async () => {
+        const clipped = await authedPage.locator('table, [data-testid="expenses-grid"]').evaluateAll((targets) =>
+          targets.flatMap((target, index) => {
+            const rect = target.getBoundingClientRect();
+            const fitsViewport = rect.left >= -1 && rect.right <= window.innerWidth + 1;
+            let ancestor: Element | null = target.matches('[data-testid="expenses-grid"]')
+              ? target
+              : target.parentElement;
+            let hasHorizontalScroller = false;
+            while (ancestor) {
+              const overflowX = window.getComputedStyle(ancestor).overflowX;
+              if (overflowX === 'auto' || overflowX === 'scroll') {
+                hasHorizontalScroller = true;
+                break;
+              }
+              ancestor = ancestor.parentElement;
+            }
+            return fitsViewport || hasHorizontalScroller
+              ? []
+              : [{ index, left: Math.round(rect.left), right: Math.round(rect.right) }];
+          }),
+        );
+        expect.soft(
+          clipped,
+          `INV-2 ${route}: clipped table(s) ${clipped.map(({ index }) => index).join(', ')}`,
+        ).toEqual([]);
+      });
+
+      await test.step('INV-4 no client error', async () => {
+        await expectNoClientError(authedPage);
+      });
+    });
+  }
+
+  test('INV-3 drawer works', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+
+    const hamburger = authedPage.locator('header button[class*="lg:hidden"]');
+    const drawer = authedPage.locator('aside').first();
+    await expect(hamburger).toBeVisible();
+
+    await hamburger.tap();
+    await expect(drawer).toHaveClass(/translate-x-0/);
+    expect.soft(
+      await authedPage.evaluate(() => window.getComputedStyle(document.body).overflow),
+      'INV-3 /dashboard: body scroll must be locked while the drawer is open',
+    ).toBe('hidden');
+
+    const backdrop = authedPage.locator('div[class~="fixed"][class~="inset-0"][class~="z-40"]');
+    await expect(backdrop).toBeVisible();
+    await backdrop.tap({
+      position: { x: (authedPage.viewportSize()?.width ?? 412) - 8, y: 100 },
+    });
+    await expect(drawer).toHaveClass(/-translate-x-full/);
+
+    await hamburger.tap();
+    await expect(drawer).toHaveClass(/translate-x-0/);
+    await authedPage.keyboard.press('Escape');
+    expect.soft(
+      await drawer.getAttribute('class'),
+      'INV-3 /dashboard: Escape must close the drawer',
+    ).toContain('-translate-x-full');
+  });
+
+  test('INV-5 login fields do not trigger iOS zoom', async ({ page }) => {
+    await page.goto('/login');
+    await expect(page.locator('#login-identifier')).toBeVisible();
+    await expectNoZoomFields(page, '/login');
+  });
+
+  test('INV-5 expenses manual fields do not trigger iOS zoom', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/expenses/manual');
+    await expectNoZoomFields(authedPage, '/expenses/manual');
+  });
+
+  test('INV-6 popovers stay inside the viewport', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+
+    const notificationBell = authedPage.getByRole('button', { name: 'การแจ้งเตือน' });
+    await notificationBell.tap();
+    await expectInViewport(notificationBell.locator('..').locator('div.fixed'), 'notification bell');
+
+    await gotoAndSettle(authedPage, companyId, '/expenses/evidence');
+
+    const branchSelector = authedPage.getByRole('button', { name: 'เลือกสาขา' });
+    await branchSelector.tap();
+    await expectInViewport(branchSelector.locator('..').locator('div.fixed'), 'branch selector');
+    await branchSelector.tap();
+
+    const rightmostExpenseFilter = authedPage.locator('[role="combobox"]').last();
+    await rightmostExpenseFilter.tap();
+    await expectInViewport(authedPage.getByRole('listbox'), 'expenses filter');
+  });
+
+  test('INV-8 tab bars reachable', async ({ authedPage, companyId }) => {
+    const cases = [
+      { route: '/banking', label: 'รายการปรับปรุง' },
+      { route: '/accounts-payable', label: 'AP Aging' },
+      { route: '/procurement', label: 'ใบรับสินค้า (GR)' },
+    ] as const;
+
+    for (const { route, label } of cases) {
+      await test.step(route, async () => {
+        await gotoAndSettle(authedPage, companyId, route);
+
+        const strip = authedPage.getByRole('button', { name: label, exact: true }).locator('..');
+        const lastTab = strip.getByRole('button').last();
+        await expect(lastTab).toHaveAccessibleName(label);
+        await lastTab.scrollIntoViewIfNeeded();
+        await lastTab.tap();
+
+        await expect.soft(lastTab, `INV-8 ${route}: last tab must report selected state`).toHaveClass(/border-brand-600/);
+        await expectNoClientError(authedPage);
+      });
+    }
+  });
+
+  for (const cardView of CARD_VIEW_CASES) {
+    test(`${cardView.route} — INV-7 mobile card view`, async ({ authedPage, companyId }) => {
+      await gotoAndSettle(authedPage, companyId, cardView.route);
+
+      await expect(authedPage.getByTestId(cardView.tableTestId)).toBeHidden();
+      await expect(authedPage.getByTestId(cardView.cardListTestId)).toBeVisible();
+      const card = authedPage.getByTestId(cardView.cardTestId).first();
+      await expect(card).toBeVisible();
+
+      const dimensions = await authedPage.evaluate(() => ({
+        scrollWidth: document.scrollingElement?.scrollWidth ?? 0,
+        viewportWidth: window.innerWidth,
+      }));
+      expect(
+        dimensions.scrollWidth,
+        `INV-7 ${cardView.route}: scrollWidth ${dimensions.scrollWidth}px exceeds viewport ${dimensions.viewportWidth}px`,
+      ).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+
+      await card.click();
+      await expect(authedPage).toHaveURL(cardView.url);
+    });
+  }
+});
+
+test.describe('Desktop card-view parity', () => {
+  test.beforeEach(async ({ isMobile }) => {
+    test.skip(isMobile === true, 'Desktop card-view parity runs only in chromium.');
+    // A RESPONSIVE_VIEWPORT override shrinks every test in this file, so desktop
+    // assertions would run at a mobile width and fail by design — skip them there.
+    test.skip(Boolean(viewportOverride), 'Desktop parity is meaningless under a viewport override.');
+  });
+
+  for (const cardView of CARD_VIEW_CASES) {
+    test(`${cardView.route} — INV-7 desktop table view`, async ({ authedPage, companyId }) => {
+      await gotoAndSettle(authedPage, companyId, cardView.route);
+
+      const table = authedPage.getByTestId(cardView.tableTestId);
+      await expect(table).toBeVisible();
+      await expect(authedPage.getByTestId(cardView.cardListTestId)).toBeHidden();
+
+      if (cardView.route === '/expenses') {
+        await expect(table.locator('[class*="uppercase"][class*="tracking-wide"]').first().locator(':scope > div')).toHaveCount(cardView.columnCount);
+      } else {
+        await expect(table.locator('th')).toHaveCount(cardView.columnCount);
+      }
+    });
+  }
+});

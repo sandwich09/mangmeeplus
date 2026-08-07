@@ -1,0 +1,6 @@
+companyId,scanStatus,errorCode,chartTemplateApplied,chartTemplateKey,chartTemplateVersion,chartTemplateChecksum,chartAccountCount,exact,missing,unusedConflicts,inUseConflicts,dependencyCount,dependencySources,conflictSampleCodes,requiredPostingRolesMissing,taxConfigurationRequired,requiredTaxAccountRolesMissing,taxProfilesNeedingReview,bankLedgerLinksInvalid,legacyTaxHeaderMismatches,sourcePostingErrors,readyForManualLedger,readyForAutomaticPosting
+cmrqi2gcx0002j9qtq72utehs,OK,,false,,,,0,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false
+h04_probe,OK,,false,,,,1,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false
+seed-local-company,OK,,true,TH_SME_COA_V1,1,1a92339d4d0d74ce36882a34a616b76b62c0f6567d07f59c4e27a83a708e86eb,180,175,0,0,0,20,ExpenseLineAssignment=2|TaxAccountRule=18,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,1,0,0,true,false
+seed-local-company-2,OK,,false,,,,0,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false
+seed-watchdog-system-company,OK,,false,,,,0,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false

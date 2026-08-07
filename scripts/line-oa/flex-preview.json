@@ -1,0 +1,270 @@
+{
+  "01_switched_user": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "md",
+      "paddingAll": "14px",
+      "contents": [
+        {
+          "type": "text",
+          "wrap": true,
+          "size": "md",
+          "contents": [
+            {
+              "type": "span",
+              "text": "เปลี่ยนผู้ใช้งานเป็น "
+            },
+            {
+              "type": "span",
+              "text": "คุณภา · เจ้าของ",
+              "weight": "bold"
+            },
+            {
+              "type": "span",
+              "text": " แล้วค่ะ 🔄"
+            }
+          ]
+        }
+      ]
+    },
+    "styles": {
+      "body": {
+        "backgroundColor": "#FFFFFF"
+      }
+    }
+  },
+  "02_welcome": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "md",
+      "paddingAll": "14px",
+      "contents": [
+        {
+          "type": "text",
+          "wrap": true,
+          "size": "md",
+          "contents": [
+            {
+              "type": "span",
+              "text": "สวัสดีค่ะ "
+            },
+            {
+              "type": "span",
+              "text": "คุณภา · เจ้าของ",
+              "weight": "bold"
+            },
+            {
+              "type": "span",
+              "text": " 👋"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "wrap": true,
+          "size": "md",
+          "contents": [
+            {
+              "type": "span",
+              "text": "ตำแหน่ง "
+            },
+            {
+              "type": "span",
+              "text": "เจ้าของ",
+              "weight": "bold"
+            },
+            {
+              "type": "span",
+              "text": " · ดูข้อมูลได้ "
+            },
+            {
+              "type": "span",
+              "text": "ทุกสาขา",
+              "weight": "bold"
+            },
+            {
+              "type": "span",
+              "text": " · เข้าถึง "
+            },
+            {
+              "type": "span",
+              "text": "10 เมนู",
+              "weight": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "เมนูด้านล่างแสดงเฉพาะสิ่งที่ตำแหน่งคุณมีสิทธิ์เข้าถึง",
+          "wrap": true,
+          "size": "xs",
+          "color": "#667085"
+        }
+      ]
+    },
+    "styles": {
+      "body": {
+        "backgroundColor": "#FFFFFF"
+      }
+    }
+  },
+  "03_receipt_card": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "paddingAll": "14px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "แนบรูปใบเสร็จเข้าระบบ",
+          "weight": "bold",
+          "size": "md",
+          "color": "#101828"
+        },
+        {
+          "type": "text",
+          "text": "แนบรูปใบเสร็จให้เห็นข้อมูลครบทั้งใบ ส่งมาในแชทนี้ได้เลยค่ะ 🖼\nระบบจะบันทึกเป็นรายการรอตรวจสอบ ไม่อนุมัติหรือชำระเงินอัตโนมัติ",
+          "size": "sm",
+          "color": "#667085",
+          "wrap": true
+        },
+        {
+          "type": "image",
+          "url": "https://example.com/assets/line/receipt-dropzone.png",
+          "size": "full",
+          "aspectRatio": "260:150",
+          "aspectMode": "fit",
+          "margin": "md"
+        },
+        {
+          "type": "text",
+          "text": "แตะปุ่ม \"แนบรูปใบเสร็จ\" ด้านล่าง",
+          "align": "center",
+          "size": "xs",
+          "weight": "bold",
+          "color": "#12B76A",
+          "margin": "sm"
+        }
+      ]
+    },
+    "styles": {
+      "body": {
+        "backgroundColor": "#FFFFFF"
+      }
+    }
+  },
+  "04_receipt_result": {
+    "type": "bubble",
+    "size": "kilo",
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "paddingAll": "14px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "✅ บันทึกใบเสร็จแล้ว",
+          "weight": "bold",
+          "size": "md",
+          "color": "#169152"
+        },
+        {
+          "type": "box",
+          "layout": "vertical",
+          "margin": "md",
+          "spacing": "sm",
+          "contents": [
+            {
+              "type": "box",
+              "layout": "baseline",
+              "spacing": "sm",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ร้าน",
+                  "size": "sm",
+                  "color": "#8A94A6",
+                  "flex": 2
+                },
+                {
+                  "type": "text",
+                  "text": "ร้านตัวอย่าง สาขาสีลม",
+                  "size": "sm",
+                  "flex": 4,
+                  "wrap": true,
+                  "weight": "bold"
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "baseline",
+              "spacing": "sm",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "ยอดรวม",
+                  "size": "sm",
+                  "color": "#8A94A6",
+                  "flex": 2
+                },
+                {
+                  "type": "text",
+                  "text": "1,250.00 บาท",
+                  "size": "sm",
+                  "flex": 4,
+                  "wrap": true,
+                  "weight": "bold"
+                }
+              ]
+            },
+            {
+              "type": "box",
+              "layout": "baseline",
+              "spacing": "sm",
+              "contents": [
+                {
+                  "type": "text",
+                  "text": "วันที่",
+                  "size": "sm",
+                  "color": "#8A94A6",
+                  "flex": 2
+                },
+                {
+                  "type": "text",
+                  "text": "5/8/2569",
+                  "size": "sm",
+                  "flex": 4,
+                  "wrap": true,
+                  "weight": "bold"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "รหัสอ้างอิง: a1b2c3",
+          "size": "xxs",
+          "color": "#8A94A6",
+          "margin": "md"
+        }
+      ]
+    },
+    "styles": {
+      "body": {
+        "backgroundColor": "#FFFFFF"
+      }
+    }
+  }
+}

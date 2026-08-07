@@ -1,0 +1,13 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "ExactProductionClusterTasksOnly",
+    "Effect": "Allow",
+    "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+    "Action": "sts:AssumeRole",
+    "Condition": {
+      "StringEquals": {"aws:SourceAccount": "311414082667"},
+      "ArnLike": {"aws:SourceArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*"}
+    }
+  }]
+}

@@ -1,0 +1,678 @@
+name: Production Deploy
+run-name: Deploy ${{ inputs.release_ref }} → ${{ inputs.target }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: release-* tag or lowercase full commit SHA from main
+        required: true
+        type: string
+      target:
+        description: Production target (all=coordinated release; choose one for incident)
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - api-web
+          - ai-gateway
+          - workers
+      promote_from_run_id:
+        description: Required for target=all; exact successful all-target UAT run ID
+        required: false
+        default: ''
+        type: string
+      bridge_uat_run_id:
+        description: Promotion only; exact prior UAT run for the already-live quiesced bridge
+        required: false
+        default: ''
+        type: string
+      bridge_uat_run_attempt:
+        description: Promotion only; exact bridge UAT run attempt
+        required: false
+        default: ''
+        type: string
+      bridge_source_sha:
+        description: Promotion only; exact full source SHA served by the bridge
+        required: false
+        default: ''
+        type: string
+      bridge_api_image:
+        description: Promotion only; exact bridge API digest reference
+        required: false
+        default: ''
+        type: string
+      direct_partial_incident:
+        description: Allow a source build only for a single-service incident deploy
+        required: true
+        default: false
+        type: boolean
+      incident_ref:
+        description: Required for a direct partial incident deploy (INC-...)
+        required: false
+        default: ''
+        type: string
+      incident_approval_ref:
+        description: Required approval reference for a direct partial incident deploy (approval://...)
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchdog-bms-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  resolve-release:
+    name: Resolve Approved Release
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      release_mode: ${{ steps.intent.outputs.release_mode }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Require the neutral default-branch controller
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "ERROR: choose main in 'Use workflow from'; release_ref selects the production application commit" >&2
+            exit 1
+          }
+      - name: Validate release intent before build or AWS access
+        id: intent
+        env:
+          TARGET: ${{ inputs.target }}
+          PROMOTE_FROM_RUN_ID: ${{ inputs.promote_from_run_id }}
+          DIRECT_PARTIAL_INCIDENT: ${{ inputs.direct_partial_incident }}
+          INCIDENT_REF: ${{ inputs.incident_ref }}
+          INCIDENT_APPROVAL_REF: ${{ inputs.incident_approval_ref }}
+        run: |
+          set -euo pipefail
+          release_mode="$(bash infra/docker/validate-production-release-intent.sh \
+            "$TARGET" "$PROMOTE_FROM_RUN_ID" "$DIRECT_PARTIAL_INCIDENT" \
+            "$INCIDENT_REF" "$INCIDENT_APPROVAL_REF")"
+          echo "release_mode=$release_mode" >> "$GITHUB_OUTPUT"
+      # The U5-C capacity result is NOT a dispatch input: it reaches this deploy only as
+      # `.payload.u5Capacity.resultRef` inside the owner-approved PRE aggregate, which
+      # `validate-u5-production-chain.sh validate-pre` rebuilds and compares byte-for-byte.
+      # Accepting a run id here would let the operator choose their own capacity evidence.
+      - name: Validate exact U5 bridge bindings
+        env:
+          RELEASE_MODE: ${{ steps.intent.outputs.release_mode }}
+          BRIDGE_RUN: ${{ inputs.bridge_uat_run_id }}
+          BRIDGE_ATTEMPT: ${{ inputs.bridge_uat_run_attempt }}
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+          BRIDGE_IMAGE: ${{ inputs.bridge_api_image }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_MODE" = promotion ]; then
+            [[ "$BRIDGE_RUN" =~ ^[1-9][0-9]*$ ]]
+            [[ "$BRIDGE_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            [[ "$BRIDGE_SOURCE" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$BRIDGE_IMAGE" =~ ^311414082667\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/watchdog-bms-api@sha256:[0-9a-f]{64}$ ]]
+          else
+            test -z "$BRIDGE_RUN$BRIDGE_ATTEMPT$BRIDGE_SOURCE$BRIDGE_IMAGE"
+          fi
+      - name: Resolve tag or commit
+        id: release
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags --force
+          source_sha="$(bash infra/docker/resolve-production-release-ref.sh "$RELEASE_REF" origin/main)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved $RELEASE_REF to $source_sha"
+
+  build_and_publish:
+    name: Test and Publish Immutable Release
+    # Promotion reuses the immutable images a UAT run already published for this
+    # exact commit, so there is nothing to build or test again.
+    if: needs.resolve-release.outputs.release_mode == 'partial-incident'
+    needs: resolve-release
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.resolve-release.outputs.source_sha }}
+    secrets: inherit
+
+  deploy:
+    name: Deploy ${{ inputs.target }}
+    # A skipped build_and_publish is only acceptable when promoting; every other
+    # skip or failure must still block the deploy.
+    if: >-
+      always() &&
+      needs.resolve-release.result == 'success' &&
+      ((needs.resolve-release.outputs.release_mode == 'partial-incident' &&
+      needs.build_and_publish.result == 'success') ||
+      (needs.resolve-release.outputs.release_mode == 'promotion' &&
+      needs.build_and_publish.result == 'skipped'))
+    needs:
+      - resolve-release
+      - build_and_publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    environment: production
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECS_DEPLOY_MANAGE_IAM: "false"
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+      PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}
+      LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}
+      LINE_LIFF_ID: ${{ vars.LINE_LIFF_ID }}
+      LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}
+      WEB_LINE_ACCOUNT_LINK_URL: ${{ vars.WEB_LINE_ACCOUNT_LINK_URL }}
+      LINE_OA_ADD_URL: ${{ vars.LINE_OA_ADD_URL }}
+      LINE_OA_QR_IMAGE_URL: ${{ vars.LINE_OA_QR_IMAGE_URL }}
+      LINE_ACCOUNT_LINK_QR_IMAGE_URL: ${{ vars.LINE_ACCOUNT_LINK_QR_IMAGE_URL }}
+      CRM_AUTO_REPLY_ENABLED: ${{ vars.CRM_AUTO_REPLY_ENABLED }}
+      CRM_AI_MIN_CONFIDENCE: ${{ vars.CRM_AI_MIN_CONFIDENCE }}
+      CRM_AI_OUTBOUND_ALLOWED_DOMAINS: ${{ vars.CRM_AI_OUTBOUND_ALLOWED_DOMAINS || 'mangmeeplus.com' }}
+      WORKFLOW_WEBHOOK_ALLOWED_HOSTS: ${{ vars.WORKFLOW_WEBHOOK_ALLOWED_HOSTS }}
+      CLAMAV_HOST: ${{ vars.CLAMAV_HOST }}
+      CLAMAV_PORT: ${{ vars.CLAMAV_PORT || '3310' }}
+      CLAMAV_TIMEOUT_MS: ${{ vars.CLAMAV_TIMEOUT_MS || '5000' }}
+      LOG_RETENTION_DAYS: ${{ vars.LOG_RETENTION_DAYS || '90' }}
+      LOG_KMS_KEY_ID: ${{ vars.LOG_KMS_KEY_ID }}
+      SECURITY_ALERT_TOPIC_ARN: ${{ vars.SECURITY_ALERT_TOPIC_ARN }}
+      AI_DATA_RETENTION_DAYS: ${{ vars.AI_DATA_RETENTION_DAYS || '90' }}
+      AI_LLM_MAX_PER_COMPANY: ${{ vars.AI_LLM_MAX_PER_COMPANY || '60' }}
+      AI_OCR_MAX_PER_COMPANY: ${{ vars.AI_OCR_MAX_PER_COMPANY || '20' }}
+      AI_RATE_LIMIT_WINDOW_SECONDS: ${{ vars.AI_RATE_LIMIT_WINDOW_SECONDS || '60' }}
+      AI_THB_PER_USD: ${{ vars.AI_THB_PER_USD || '33' }}
+      AI_MONTHLY_BUDGET_SATANG: ${{ vars.AI_MONTHLY_BUDGET_SATANG || '200000' }}
+      AI_MONTHLY_BUDGET_SATANG_CEILING: ${{ vars.AI_MONTHLY_BUDGET_SATANG_CEILING || '1000000' }}
+      PASSWORD_RESET_RESPONSE_MIN_MS: ${{ vars.PASSWORD_RESET_RESPONSE_MIN_MS || '300' }}
+      SESSION_REFRESH_MAX_PER_SESSION: ${{ vars.SESSION_REFRESH_MAX_PER_SESSION || '30' }}
+      SESSION_REFRESH_WINDOW_SECONDS: ${{ vars.SESSION_REFRESH_WINDOW_SECONDS || '60' }}
+      SESSION_REFRESH_REUSE_GRACE_SECONDS: ${{ vars.SESSION_REFRESH_REUSE_GRACE_SECONDS || '30' }}
+      MODEL_PROVIDER: ${{ vars.MODEL_PROVIDER }}
+      APPROVED_AI_PROVIDERS: ${{ vars.APPROVED_AI_PROVIDERS }}
+      APPROVED_AI_REGIONS: ${{ vars.APPROVED_AI_REGIONS }}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVED: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVED }}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
+      OPENAI_PROCESSING_REGION: ${{ vars.OPENAI_PROCESSING_REGION }}
+      TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}
+      BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
+      # No BEDROCK_MODEL_ID / DOCUMENT_AI_MODEL_ID / APPROVED_AI_MODEL_IDS here on purpose:
+      # deploy.sh assigns all three unconditionally, so a repository variable of the same
+      # name would look like it selected the production model while changing nothing.
+      LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}
+      AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
+      AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
+      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}
+      AGENTCORE_INVOKE_TIMEOUT_MS: ${{ vars.AGENTCORE_INVOKE_TIMEOUT_MS }}
+      AGENTCORE_MAX_BODY_BYTES: ${{ vars.AGENTCORE_MAX_BODY_BYTES || '1048576' }}
+      AGENTCORE_MAX_MESSAGE_CHARS: ${{ vars.AGENTCORE_MAX_MESSAGE_CHARS || '8000' }}
+      AGENTCORE_MAX_ATTACHMENTS: ${{ vars.AGENTCORE_MAX_ATTACHMENTS || '10' }}
+      AGENTCORE_MAX_CONCURRENT_INVOCATIONS: ${{ vars.AGENTCORE_MAX_CONCURRENT_INVOCATIONS || '16' }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.source_sha }}
+          fetch-depth: 0
+      - name: Set runner-owned deployment evidence directory
+        run: echo "DEPLOYMENT_EVIDENCE_DIR=$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
+      - name: Validate promoted run
+        id: promoted-run
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTE_FROM_RUN_ID: ${{ inputs.promote_from_run_id }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+        run: |
+          set -euo pipefail
+          [[ "$PROMOTE_FROM_RUN_ID" =~ ^[0-9]+$ ]]
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROMOTE_FROM_RUN_ID")"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --argjson runId "$PROMOTE_FROM_RUN_ID" '
+            .id == $runId
+            and .status == "completed"
+            and .conclusion == "success"
+            and .event == "workflow_dispatch"
+            and .path == ".github/workflows/deploy-uat.yml"
+            and .head_branch == "main"
+            and .repository.full_name == $repository
+          ' <<< "$run_json" >/dev/null
+          controller_sha="$(jq -er '.head_sha | select(test("^[0-9a-f]{40}$"))' <<< "$run_json")"
+          run_attempt="$(jq -er '.run_attempt | select(type == "number" and . >= 1 and floor == .)' <<< "$run_json")"
+          expected_ci_path="$GITHUB_REPOSITORY/.github/workflows/ci.yml@$controller_sha"
+          jq -e --arg path "$expected_ci_path" --arg sha "$controller_sha" '
+            [(.referenced_workflows // [])[]
+              | select(.path == $path and .sha == $sha and .ref == "refs/heads/main")]
+            | length == 1
+          ' <<< "$run_json" >/dev/null
+          git fetch origin main --force
+          git merge-base --is-ancestor "$controller_sha" origin/main || {
+            echo "ERROR: UAT controller commit is not reachable from main" >&2
+            exit 1
+          }
+          controller_ci_blob="$(git rev-parse "$controller_sha:.github/workflows/ci.yml")"
+          source_ci_blob="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"
+          controller_deploy_blob="$(git rev-parse "$controller_sha:.github/workflows/deploy-uat.yml")"
+          source_deploy_blob="$(git rev-parse "$SOURCE_SHA:.github/workflows/deploy-uat.yml")"
+          test "$controller_ci_blob" = "$source_ci_blob" || {
+            echo "ERROR: UAT called a different CI policy than the promoted source contains" >&2
+            exit 1
+          }
+          test "$controller_deploy_blob" = "$source_deploy_blob" || {
+            echo "ERROR: UAT used a different deploy controller than the promoted source contains" >&2
+            exit 1
+          }
+          validator_hash="$(sha256sum infra/docker/validate-uat-deployment-acceptance.sh | awk '{print $1}')"
+          test "$validator_hash" = "$EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256" || {
+            echo "ERROR: promoted source substituted the UAT acceptance validator" >&2
+            exit 1
+          }
+          acceptance_name="uat-deployment-acceptance-${SOURCE_SHA}-attempt-${run_attempt}"
+          release_name="uat-accepted-release-${SOURCE_SHA}-attempt-${run_attempt}"
+          artifacts_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROMOTE_FROM_RUN_ID/artifacts?per_page=100")"
+          jq -e --arg acceptance "$acceptance_name" --arg release "$release_name" '
+            ([.artifacts[] | select(.name == $acceptance and .expired == false)] | length) == 1
+            and ([.artifacts[] | select(.name == $release and .expired == false)] | length) == 1
+          ' <<< "$artifacts_json" >/dev/null
+          echo "controller_sha=$controller_sha" >> "$GITHUB_OUTPUT"
+          echo "run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
+          echo "ci_workflow_blob=$controller_ci_blob" >> "$GITHUB_OUTPUT"
+          echo "deploy_workflow_blob=$controller_deploy_blob" >> "$GITHUB_OUTPUT"
+          echo "Validated successful UAT controller run metadata for $PROMOTE_FROM_RUN_ID attempt $run_attempt"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        with:
+          name: uat-deployment-acceptance-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ steps.promoted-run.outputs.run_attempt }}
+          path: uat-acceptance
+          run-id: ${{ inputs.promote_from_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        with:
+          name: uat-accepted-release-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ steps.promoted-run.outputs.run_attempt }}
+          path: release
+          run-id: ${{ inputs.promote_from_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.resolve-release.outputs.release_mode == 'partial-incident'
+        with:
+          name: production-release-${{ needs.resolve-release.outputs.source_sha }}
+          path: release
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify signed UAT production acceptance
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          PROMOTE_FROM_RUN_ID: ${{ inputs.promote_from_run_id }}
+          UAT_RUN_ATTEMPT: ${{ steps.promoted-run.outputs.run_attempt }}
+          UAT_CONTROLLER_SHA: ${{ steps.promoted-run.outputs.controller_sha }}
+          CI_WORKFLOW_BLOB: ${{ steps.promoted-run.outputs.ci_workflow_blob }}
+          DEPLOY_WORKFLOW_BLOB: ${{ steps.promoted-run.outputs.deploy_workflow_blob }}
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+        run: |
+          set -euo pipefail
+          acceptance=uat-acceptance/uat-deployment-acceptance.json
+          cosign verify-blob \
+            --bundle uat-acceptance/uat-deployment-acceptance.bundle \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "$UAT_CONTROLLER_SHA" \
+            --certificate-github-workflow-trigger "workflow_dispatch" \
+            "$acceptance"
+          now_epoch="$(date -u +%s)"
+          bash infra/docker/validate-uat-deployment-acceptance.sh \
+            "$acceptance" release/production-image-manifest.json \
+            "$SOURCE_SHA" "$PROMOTE_FROM_RUN_ID" "$UAT_RUN_ATTEMPT" \
+            "$UAT_CONTROLLER_SHA" "$GITHUB_REPOSITORY" \
+            "$CI_WORKFLOW_BLOB" "$DEPLOY_WORKFLOW_BLOB" \
+            "$EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256" "$now_epoch"
+          echo "UAT_ACCEPTANCE_SHA256=$(sha256sum "$acceptance" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "RELEASE_MANIFEST_SHA256=$(sha256sum release/production-image-manifest.json | awk '{print $1}')" >> "$GITHUB_ENV"
+      - name: Verify exact prior UAT-attested bridge bytes
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRIDGE_RUN: ${{ inputs.bridge_uat_run_id }}
+          BRIDGE_ATTEMPT: ${{ inputs.bridge_uat_run_attempt }}
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+          BRIDGE_IMAGE: ${{ inputs.bridge_api_image }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/u5-bridge"
+          mkdir -m 700 "$root"
+          observed_source="$(bash infra/security/fetch-verified-uat-release.sh \
+            "$BRIDGE_RUN" "$GITHUB_RUN_ID" "$root" "$BRIDGE_SOURCE")"
+          test "$observed_source" = "$BRIDGE_SOURCE"
+          test "$(jq -er '.run_attempt' "$root/uat-run.json")" = "$BRIDGE_ATTEMPT"
+          observed_image="$(jq -er '.images[]|select(.service=="api-web")|.image' \
+            "$root/release/production-image-manifest.json")"
+          test "$observed_image" = "$BRIDGE_IMAGE"
+          test "$BRIDGE_SOURCE" != "$SOURCE_SHA"
+          test "$BRIDGE_IMAGE" != "$(jq -er '.images[]|select(.service=="api-web")|.image' \
+            release/production-image-manifest.json)"
+          echo "U5_BRIDGE_ROOT=$root" >> "$GITHUB_ENV"
+      # Sets U5_OWNER_APPROVAL_FILE, which the five later `validate-approval-current` rechecks
+      # already read — until this step existed they ran against an unset variable, so a promotion
+      # could not survive its own authority rechecks. Promotion-scoped to match those rechecks;
+      # the partial-incident path deliberately carries no owner approval.
+      - name: Wait for and fully verify independent U5 owner authority
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+        run: |
+          set -euo pipefail
+          # This whole chain rests on a UAT acceptance verdict, and the approval binds the security
+          # preflight's uatAcceptanceRef to it — so the validator that produced that verdict must be
+          # the reviewed one here too, exactly as the two steps above pin it.
+          test "$(sha256sum infra/docker/validate-uat-deployment-acceptance.sh | awk '{print $1}')" \
+            = "$EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256"
+          root="$RUNNER_TEMP/u5-authority"
+          mkdir -m 700 "$root"
+          # The artifact name carries this run id and attempt, so an approval cannot predate this
+          # job or be replayed from another attempt. Waiting longer than the 1800s an approval is
+          # valid for could only ever surface an expired one.
+          approval_run_id="$(bash infra/security/wait-for-production-evidence.sh \
+            OWNER_U5E_APPROVAL_V1 "$GITHUB_RUN_ID" APPROVAL 1800 "$root/approval")"
+          approval="$root/approval/evidence.json"
+          test "$(jq -er '.sourceCommit' "$approval")" = "$SOURCE_SHA"
+          # Every producer run id is read out of the signed approval, never from a dispatch input:
+          # an operator cannot aim this deploy at evidence the owner did not approve.
+          bash infra/security/fetch-verified-production-evidence.sh U5_SHADOW_AGGREGATE_V1 \
+            "$(jq -er '.payload.preAggregateRef.producerRunId' "$approval")" \
+            "$GITHUB_RUN_ID" PRE_AUTHORIZATION "$root/aggregate"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1 \
+            "$(jq -er '.payload.productionA5PreMutationRef.producerRunId' "$approval")" \
+            "$GITHUB_RUN_ID" PRE_MUTATION "$root/h2-pre"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_CLONE_REHEARSAL_V1 \
+            "$(jq -er '.payload.productionA5CloneRef.producerRunId' "$approval")" \
+            "$GITHUB_RUN_ID" CLONE "$root/clone"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_SECURITY_PREFLIGHT_V1 \
+            "$(jq -er '.payload.securityPreflightRef.producerRunId' "$approval")" \
+            "$GITHUB_RUN_ID" PRE_MUTATION "$root/h3"
+          # Fetching proves each artifact is signed and bound to this run; validate-pre proves the
+          # aggregate contains no self-authored facts, that the owner approved exactly these bytes,
+          # and that the approver is the repository owner.
+          bash infra/security/validate-u5-production-chain.sh validate-pre \
+            "$root/h2-pre/evidence.json" "$root/h2-pre/ref.json" \
+            "$root/clone/evidence.json" "$root/clone/ref.json" \
+            "$root/h3/evidence.json" "$root/h3/ref.json" \
+            "$root/aggregate/evidence.json" "$root/aggregate/ref.json" \
+            "$approval" "$root/approval/ref.json" \
+            "$REPOSITORY_OWNER" "$(date -u +%s)"
+          echo "U5_OWNER_APPROVAL_FILE=$approval" >> "$GITHUB_ENV"
+          echo "U5_AUTHORITY_ROOT=$root" >> "$GITHUB_ENV"
+          echo "U5_OWNER_APPROVAL_RUN_ID=$approval_run_id" >> "$GITHUB_ENV"
+      - name: Validate release artifact
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$SOURCE_SHA"
+          for service in api-web ai-gateway workers; do
+            jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" >/dev/null
+            test -s "release/cosign-${service}.json"
+          done
+      # Last gate before any credential exists: the approval is valid for 1800s, and everything
+      # between the wait and here (artifact validation, image checks) can burn that window.
+      - name: Recheck release authority immediately before AWS
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        run: |
+          set -euo pipefail
+          bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+            "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+      - name: Configure AWS deploy credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-deploy-${{ github.run_id }}
+      - name: Preserve active non-secret configuration
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          api_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-api-web-service-arn --query Parameter.Value --output text)"
+          ai_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-ai-gateway-service-arn --query Parameter.Value --output text)"
+          aws ecs describe-express-gateway-service --service-arn "$api_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/api-env.json
+          aws ecs describe-express-gateway-service --service-arn "$ai_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/ai-env.json
+          preserve() {
+            local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
+            value="${!output:-}"
+            if [ -z "$value" ]; then
+              value="$(jq -r --arg name "$source" '.[] | select(.name == $name) | .value' "$file")"
+            fi
+            # A fallback applies only when neither the repository variable nor the live service
+            # states a value, so an existing live setting is never overwritten by the default.
+            if [ -z "$value" ] && [ -n "$fallback" ]; then
+              echo "notice: $output is unset everywhere; deploying the default '$fallback'"
+              value="$fallback"
+            fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* || ( "$required" == "true" && -z "$value" ) ]]; then
+              echo "ERROR: missing or invalid production config: $output" >&2
+              exit 1
+            fi
+            echo "$output=$value" >> "$GITHUB_ENV"
+          }
+          preserve PUBLIC_DOMAIN_URL PUBLIC_BASE_URL /tmp/api-env.json
+          preserve LINE_LOGIN_CHANNEL_ID LINE_LOGIN_CHANNEL_ID /tmp/api-env.json
+          preserve LINE_LIFF_ID LINE_LIFF_ID /tmp/api-env.json
+          preserve LINE_MESSAGING_CHANNEL_ID LINE_MESSAGING_CHANNEL_ID /tmp/api-env.json
+          preserve WEB_LINE_ACCOUNT_LINK_URL LINE_ACCOUNT_LINK_URL /tmp/api-env.json false
+          preserve LINE_OA_ADD_URL LINE_OA_ADD_URL /tmp/api-env.json false
+          preserve LINE_OA_QR_IMAGE_URL LINE_OA_QR_IMAGE_URL /tmp/api-env.json false
+          preserve LINE_ACCOUNT_LINK_QR_IMAGE_URL LINE_ACCOUNT_LINK_QR_IMAGE_URL /tmp/api-env.json false
+          preserve CRM_AUTO_REPLY_ENABLED CRM_AUTO_REPLY_ENABLED /tmp/api-env.json
+          preserve CRM_AI_MIN_CONFIDENCE CRM_AI_MIN_CONFIDENCE /tmp/api-env.json
+          preserve CRM_AI_OUTBOUND_ALLOWED_DOMAINS CRM_AI_OUTBOUND_ALLOWED_DOMAINS /tmp/api-env.json
+          # M-09: with no allowlist stated by variable or live service, deploy the deny-all
+          # sentinel instead of blocking the release or inventing a placeholder host.
+          preserve WORKFLOW_WEBHOOK_ALLOWED_HOSTS WORKFLOW_WEBHOOK_ALLOWED_HOSTS /tmp/api-env.json true none
+          # M-14: no default — attachment scanning fails closed, so this must be a real scanner.
+          preserve CLAMAV_HOST CLAMAV_HOST /tmp/api-env.json
+          preserve MODEL_PROVIDER MODEL_PROVIDER /tmp/ai-env.json
+          preserve APPROVED_AI_PROVIDERS APPROVED_AI_PROVIDERS /tmp/ai-env.json
+          preserve APPROVED_AI_REGIONS APPROVED_AI_REGIONS /tmp/ai-env.json
+          preserve OPENAI_PROCESSING_REGION OPENAI_PROCESSING_REGION /tmp/ai-env.json false
+          preserve TYPHOON_PROCESSING_REGION TYPHOON_PROCESSING_REGION /tmp/ai-env.json false
+          preserve BEDROCK_REGION BEDROCK_REGION /tmp/ai-env.json
+          # BEDROCK_MODEL_ID, DOCUMENT_AI_MODEL_ID and APPROVED_AI_MODEL_IDS are deliberately
+          # NOT preserved. deploy.sh owns model selection for both environments
+          # (PROD_CHAT_MODEL / PROD_DOC_MODEL) and overwrites whatever is preserved here, so
+          # preserving them made APPROVED_AI_MODEL_IDS a *required* value that neither the
+          # repository variables nor the live service supplied — the run died here, before
+          # deploy.sh ever ran, over a value that would have been discarded anyway.
+          # Change the production models in deploy.sh, not by adding a variable back here.
+          preserve LINE_AI_AGENT_RUNTIME LINE_AI_AGENT_RUNTIME /tmp/ai-env.json
+          preserve AGENTCORE_REGION AGENTCORE_REGION /tmp/ai-env.json
+          preserve AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_ARN /tmp/ai-env.json
+          preserve AGENTCORE_RUNTIME_QUALIFIER AGENTCORE_RUNTIME_QUALIFIER /tmp/ai-env.json
+          preserve AGENTCORE_INVOKE_TIMEOUT_MS AGENTCORE_INVOKE_TIMEOUT_MS /tmp/ai-env.json
+      - name: Log in to ECR
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - name: Verify release image signatures
+        run: |
+          set -euo pipefail
+          for service in api-web ai-gateway workers; do
+            image="$(jq -r --arg service "$service" '.images[] | select(.service == $service) | .image' release/production-image-manifest.json)"
+            cosign verify \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$image" >/dev/null
+          done
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build and push exact-commit release task
+        id: release-image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: local
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:release-task-${{ needs.resolve-release.outputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ needs.resolve-release.outputs.source_sha }}
+          cache-from: type=gha,scope=release-task-api
+          cache-to: type=gha,mode=max,scope=release-task-api,ignore-error=true
+      - name: Sign the exact production release-task digest
+        env:
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+      - name: Verify and run release task
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          RELEASE_DEPLOY_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          release_image="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          docker pull --platform linux/amd64 "$release_image"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image")" = "$SOURCE_SHA"
+          docker run --rm --entrypoint /bin/sh "$release_image" -lc 'cd /app/apps/api && ./node_modules/.bin/prisma validate --schema prisma/schema.prisma'
+          if [ "$RELEASE_MODE" = promotion ]; then
+            bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+              "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          fi
+          bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
+      - name: Deploy immutable manifest
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          TARGET: ${{ inputs.target }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
+        run: |
+          set -euo pipefail
+          export RELEASE_TASK_IMAGE="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          if [ "$RELEASE_MODE" = promotion ]; then
+            bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+              "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          fi
+          RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" bash infra/prod-ecs-express/deploy.sh "$TARGET"
+      - name: Verify active digest and health
+        id: verify-health
+        env:
+          TARGET: ${{ inputs.target }}
+        run: bash infra/prod-ecs-express/verify-deployment.sh release/production-image-manifest.json "$TARGET"
+      # UAT r5 item 1 + r6 item 4b — retirement is a POST-deploy step that runs whether the rollout
+      # SUCCEEDED or FAILED. The release task before the deploy only APPENDS acceptance of the
+      # incoming build, so skipping this step on failure left a build that never served holding
+      # launch-gate authority. On success it retires what stopped serving; on failure or rollback it
+      # RECONCILES — the same rules against the post-rollback active list, which retires the incoming
+      # build and leaves the one the platform rolled back to. api-web is the only service that carries
+      # a launch-gate build id, so an ai-gateway/workers-only deploy skips it entirely rather than
+      # retiring against a list that never changed.
+      - name: Retire superseded launch builds
+        if: always() && (inputs.target == 'all' || inputs.target == 'api-web')
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_DIGEST:-}" ]; then
+            echo "[retire] the release task image was never built, so no build was pre-attested — nothing to retire"
+            exit 0
+          fi
+          mode=retire
+          [ "$HEALTH_VERIFIED" = "true" ] || mode=reconcile
+          # The builds SERVING right now, read from the platform — never inferred from the launch-gate
+          # history. ECS Express keeps one activeConfiguration per live build, so a converged rollout
+          # reports exactly one and a still-draining one reports two; active-launch-builds.sh waits for
+          # the platform's terminal deployment status, requires two agreeing reads, and fails the step
+          # rather than emitting a list unless EVERY active configuration names its revision and
+          # carries exactly one full GIT_SHA. retire-launch-builds.ts then halts if the list is empty,
+          # wider than the window, or unattested.
+          arn="$(aws ssm get-parameter --name "/watchdog-bms/${DEPLOY_ENV:-production}/ecs-express-api-web-service-arn" --query Parameter.Value --output text)"
+          # Exit 75 means the exact rollout is not settled. Retire nothing and fail this run; the
+          # durable parent stays unresolved until an operator reconciles its recorded task/evidence.
+          rc=0
+          evidence="$DEPLOYMENT_EVIDENCE_DIR/api-web.json"
+          cluster="${ECS_CLUSTER_NAME:-watchdog-bms-prod}"
+          validated="$(bash infra/prod-ecs-express/retirement-evidence.sh \
+            --file "$evidence" --service-arn "$arn" --source-sha "$SOURCE_SHA" \
+            --region "$AWS_REGION" --account "$AWS_ACCOUNT_ID" --cluster "$cluster")"
+          target_revision_arn="$(jq -r '.targetRevisionArn' <<< "$validated")"
+          shopt -s nullglob
+          evidence_files=("$DEPLOYMENT_EVIDENCE_DIR/history"/*.json)
+          [ "${#evidence_files[@]}" -gt 0 ]
+          export RELEASE_DEPLOYMENT_MANIFEST_JSON
+          RELEASE_DEPLOYMENT_MANIFEST_JSON="$(jq -cs 'sort_by([.service, (.deploymentArn // ""), .targetRevisionArn])' "${evidence_files[@]}")"
+          if [ "$(jq -r '.noOp' <<< "$validated")" = "true" ]; then
+            if [ "$HEALTH_VERIFIED" != "true" ]; then
+              echo "ERROR: api-web was a no-op but another targeted service did not pass health; release operation remains unresolved" >&2
+              exit 1
+            fi
+            echo "::notice::ECS proved this was a no-op; no launch-build authority is retired."
+            if [ "$RELEASE_MODE" = promotion ]; then
+              bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+                "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+            fi
+            bash infra/prod-ecs-express/run-release-task.sh \
+              "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" release-finalize
+            exit 0
+          fi
+          deployment_arn="$(jq -r '.deploymentArn' <<< "$validated")"
+          legacy_args=()
+          if [ -f "$DEPLOYMENT_EVIDENCE_DIR/legacy-api-web.json" ]; then
+            legacy_args=(--legacy-descriptor-file "$DEPLOYMENT_EVIDENCE_DIR/legacy-api-web.json")
+          fi
+          active="$(bash infra/prod-ecs-express/active-launch-builds.sh \
+            --service-arn "$arn" --deployment-arn "$deployment_arn" \
+            --target-revision-arn "$target_revision_arn" "${legacy_args[@]}")" || rc=$?
+          if [ "$rc" -eq 75 ]; then
+            echo "ERROR: launch-build retirement is not settled; held release operation remains unresolved" >&2
+            exit 75
+          fi
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "[retire] mode=$mode builds serving now: $active"
+          if [ "$RELEASE_MODE" = promotion ]; then
+            bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+              "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          fi
+          RETIRE_ACTIVE_BUILDS="$active" RETIRE_DEPLOYMENT_ARN="$deployment_arn" \
+            RETIRE_SERVICE_ARN="$arn" RETIRE_TARGET_REVISION_ARN="$target_revision_arn" \
+            bash infra/prod-ecs-express/run-release-task.sh \
+            "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" "$mode"
+      - name: Finalize non-api release operation
+        if: always() && steps.verify-health.outcome == 'success' && inputs.target != 'all' && inputs.target != 'api-web'
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          evidence_files=("$DEPLOYMENT_EVIDENCE_DIR/history"/*.json)
+          [ "${#evidence_files[@]}" -gt 0 ]
+          export RELEASE_DEPLOYMENT_MANIFEST_JSON
+          RELEASE_DEPLOYMENT_MANIFEST_JSON="$(jq -cs 'sort_by([.service, (.deploymentArn // ""), .targetRevisionArn])' "${evidence_files[@]}")"
+          if [ "$RELEASE_MODE" = promotion ]; then
+            bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+              "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          fi
+          bash infra/prod-ecs-express/run-release-task.sh \
+            "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" release-finalize

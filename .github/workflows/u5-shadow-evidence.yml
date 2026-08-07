@@ -1,0 +1,262 @@
+name: U5 Shadow Evidence
+run-name: U5 ${{ inputs.stage }} for production run ${{ inputs.parent_production_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Signed aggregate stage
+        required: true
+        type: choice
+        options: [PRE_AUTHORIZATION, POST_DEPLOYMENT]
+      parent_production_run_id:
+        description: Exact in-progress deploy-production run ID
+        required: true
+        type: string
+      uat_acceptance_run_id:
+        description: Exact successful all-target deploy-uat producer run ID
+        required: true
+        type: string
+      production_a5_pre_run_id:
+        description: Exact successful A5 PRE_MUTATION producer run ID
+        required: true
+        type: string
+      production_a5_clone_run_id:
+        description: Exact successful isolated production-clone rehearsal producer run ID
+        required: true
+        type: string
+      security_preflight_run_id:
+        description: Exact successful security-preflight producer run ID
+        required: true
+        type: string
+      production_a5_post_migration_run_id:
+        description: Required only for POST_DEPLOYMENT
+        required: false
+        default: ''
+        type: string
+      production_a5_post_deployment_run_id:
+        description: Required only for POST_DEPLOYMENT
+        required: false
+        default: ''
+        type: string
+      owner_approval_run_id:
+        description: Required only for POST_DEPLOYMENT; exact fresh U5 owner approval producer run ID
+        required: false
+        default: ''
+        type: string
+      u5_capacity_result_run_id:
+        description: Optional exact signed U5-C PASS producer run ID; blank keeps the explicit restriction
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: u5-shadow-evidence-${{ inputs.parent_production_run_id }}-${{ inputs.stage }}
+  cancel-in-progress: false
+
+jobs:
+  aggregate:
+    name: Verify children and sign ${{ inputs.stage }} aggregate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Bind current protected-main controller and run IDs
+        env:
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          UAT_RUN_ID: ${{ inputs.uat_acceptance_run_id }}
+          H2_PRE_RUN_ID: ${{ inputs.production_a5_pre_run_id }}
+          CLONE_RUN_ID: ${{ inputs.production_a5_clone_run_id }}
+          H3_RUN_ID: ${{ inputs.security_preflight_run_id }}
+          H2_POST_MIGRATION_RUN_ID: ${{ inputs.production_a5_post_migration_run_id }}
+          H2_POST_DEPLOYMENT_RUN_ID: ${{ inputs.production_a5_post_deployment_run_id }}
+          OWNER_APPROVAL_RUN_ID: ${{ inputs.owner_approval_run_id }}
+          CAPACITY_RUN_ID: ${{ inputs.u5_capacity_result_run_id }}
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/u5-shadow-evidence.yml@refs/heads/main"
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          for run_id in "$PARENT_RUN_ID" "$UAT_RUN_ID" "$H2_PRE_RUN_ID" "$CLONE_RUN_ID" "$H3_RUN_ID"; do
+            [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+          done
+          if [ "$STAGE" = PRE_AUTHORIZATION ]; then
+            test -z "$H2_POST_MIGRATION_RUN_ID" && test -z "$H2_POST_DEPLOYMENT_RUN_ID"
+            test -z "$OWNER_APPROVAL_RUN_ID"
+          else
+            [[ "$H2_POST_MIGRATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$H2_POST_DEPLOYMENT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$OWNER_APPROVAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          fi
+          [ -z "$CAPACITY_RUN_ID" ] || [[ "$CAPACITY_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          git fetch --no-tags origin '+refs/heads/main:refs/heads/main'
+          test "$GITHUB_SHA" = "$(git rev-parse refs/heads/main)" || {
+            echo "ERROR: obsolete U5 aggregate controller; dispatch current protected main" >&2
+            exit 1
+          }
+          root="$RUNNER_TEMP/u5-shadow-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -m 700 "$root"
+          echo "EVIDENCE_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Fully verify UAT acceptance/release and PRE children
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          UAT_RUN_ID: ${{ inputs.uat_acceptance_run_id }}
+          H2_PRE_RUN_ID: ${{ inputs.production_a5_pre_run_id }}
+          CLONE_RUN_ID: ${{ inputs.production_a5_clone_run_id }}
+          H3_RUN_ID: ${{ inputs.security_preflight_run_id }}
+        run: |
+          set -euo pipefail
+          bash infra/security/fetch-verified-uat-release.sh "$UAT_RUN_ID" "$PARENT_RUN_ID" "$EVIDENCE_ROOT/uat"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1 \
+            "$H2_PRE_RUN_ID" "$PARENT_RUN_ID" PRE_MUTATION "$EVIDENCE_ROOT/h2-pre"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_CLONE_REHEARSAL_V1 \
+            "$CLONE_RUN_ID" "$PARENT_RUN_ID" CLONE "$EVIDENCE_ROOT/clone"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_SECURITY_PREFLIGHT_V1 \
+            "$H3_RUN_ID" "$PARENT_RUN_ID" PRE_MUTATION "$EVIDENCE_ROOT/h3"
+          cmp -s "$EVIDENCE_ROOT/uat/uat-ref.json" \
+            <(jq -cS '.payload.uatAcceptanceRef' "$EVIDENCE_ROOT/h3/evidence.json") || {
+            echo "ERROR: security evidence and this producer did not verify the same UAT bytes" >&2
+            exit 1
+          }
+          cmp -s "$EVIDENCE_ROOT/clone/ref.json" \
+            <(jq -cS '.payload.verificationEvidence.migrationReview.productionA5CloneRef' \
+              "$EVIDENCE_ROOT/h3/evidence.json") || {
+            echo "ERROR: security evidence did not verify the exact clone bytes" >&2
+            exit 1
+          }
+      - name: Fully verify POST children
+        if: inputs.stage == 'POST_DEPLOYMENT'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          H2_POST_MIGRATION_RUN_ID: ${{ inputs.production_a5_post_migration_run_id }}
+          H2_POST_DEPLOYMENT_RUN_ID: ${{ inputs.production_a5_post_deployment_run_id }}
+          OWNER_APPROVAL_RUN_ID: ${{ inputs.owner_approval_run_id }}
+        run: |
+          set -euo pipefail
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1 \
+            "$H2_POST_MIGRATION_RUN_ID" "$PARENT_RUN_ID" POST_MIGRATION "$EVIDENCE_ROOT/h2-post-migration"
+          bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1 \
+            "$H2_POST_DEPLOYMENT_RUN_ID" "$PARENT_RUN_ID" POST_DEPLOYMENT "$EVIDENCE_ROOT/h2-post-deployment"
+          bash infra/security/fetch-verified-production-evidence.sh OWNER_U5E_APPROVAL_V1 \
+            "$OWNER_APPROVAL_RUN_ID" "$PARENT_RUN_ID" APPROVAL "$EVIDENCE_ROOT/approval"
+      - name: Verify optional capacity dependency
+        env:
+          CAPACITY_RUN_ID: ${{ inputs.u5_capacity_result_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$CAPACITY_RUN_ID" ]; then
+            source_sha="$(jq -er '.sourceCommit' "$EVIDENCE_ROOT/h2-pre/evidence.json")"
+            bash infra/security/fetch-verified-u5-capacity.sh \
+              "$CAPACITY_RUN_ID" "$source_sha" "$EVIDENCE_ROOT/capacity"
+            expected_api_image="$(jq -er \
+              '.payload.services[]|select(.service=="api-web")|.image' \
+              "$EVIDENCE_ROOT/h3/evidence.json")"
+            jq -e --arg source "$source_sha" --arg image "$expected_api_image" '
+              .source.sourceSha==$source and .source.releaseImage==$image
+            ' "$EVIDENCE_ROOT/capacity/evidence.json" >/dev/null || {
+              echo 'ERROR: U5-C result is not for the exact accepted production source/API image' >&2
+              exit 1
+            }
+            printf '%s\n' "$EVIDENCE_ROOT/capacity/ref.json" > "$EVIDENCE_ROOT/capacity-ref-path"
+          else
+            echo '-' > "$EVIDENCE_ROOT/capacity-ref-path"
+          fi
+      - name: Derive aggregate only from verified child bytes
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          post_migration=-
+          post_migration_ref=-
+          post_deployment=-
+          post_deployment_ref=-
+          approval=-
+          approval_ref=-
+          if [ "$STAGE" = POST_DEPLOYMENT ]; then
+            post_migration="$EVIDENCE_ROOT/h2-post-migration/evidence.json"
+            post_migration_ref="$EVIDENCE_ROOT/h2-post-migration/ref.json"
+            post_deployment="$EVIDENCE_ROOT/h2-post-deployment/evidence.json"
+            post_deployment_ref="$EVIDENCE_ROOT/h2-post-deployment/ref.json"
+            approval="$EVIDENCE_ROOT/approval/evidence.json"
+            approval_ref="$EVIDENCE_ROOT/approval/ref.json"
+          fi
+          capacity_ref="$(cat "$EVIDENCE_ROOT/capacity-ref-path")"
+          bash infra/security/validate-u5-production-chain.sh aggregate "$STAGE" \
+            "$EVIDENCE_ROOT/h2-pre/evidence.json" "$EVIDENCE_ROOT/h2-pre/ref.json" \
+            "$EVIDENCE_ROOT/clone/evidence.json" "$EVIDENCE_ROOT/clone/ref.json" \
+            "$EVIDENCE_ROOT/h3/evidence.json" "$EVIDENCE_ROOT/h3/ref.json" \
+            "$post_migration" "$post_migration_ref" "$post_deployment" "$post_deployment_ref" \
+            "$capacity_ref" "$approval" "$approval_ref" "$EVIDENCE_ROOT/payload.json"
+      - name: Canonicalize, validate, sign and verify aggregate
+        env:
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+        run: |
+          set -euo pipefail
+          source infra/security/signed-evidence.sh
+          parent="$EVIDENCE_ROOT/h2-pre/parent-run.json"
+          parent_attempt="$(jq -er '.run_attempt' "$parent")"
+          source_sha="$(jq -er '.head_sha' "$parent")"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$parent")"
+          issued_at="$(date -u +%s)"
+          producer_started="$issued_at"
+          producer_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/u5-shadow-evidence.yml")"
+          parent_blob="$(git rev-parse "$source_sha:.github/workflows/deploy-production.yml")"
+          evidence_dir="$EVIDENCE_ROOT/signed"
+          mkdir -m 700 "$evidence_dir"
+          jq -cnS --slurpfile payload "$EVIDENCE_ROOT/payload.json" \
+            --arg repository "$GITHUB_REPOSITORY" --arg source "$source_sha" \
+            --arg controller "$GITHUB_SHA" --arg producerBlob "$producer_blob" \
+            --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg actor "$GITHUB_ACTOR" --arg triggeringActor "$GITHUB_TRIGGERING_ACTOR" \
+            --arg parentController "$source_sha" --arg parentBlob "$parent_blob" \
+            --arg parentRun "$PARENT_RUN_ID" --argjson parentAttempt "$parent_attempt" \
+            --argjson issued "$issued_at" --argjson expires "$((issued_at + 3600))" '
+              {schemaVersion:1,artifactKind:"U5_SHADOW_AGGREGATE_V1",repository:$repository,
+               environment:"production",sourceCommit:$source,
+               producer:{workflowPath:".github/workflows/u5-shadow-evidence.yml",workflowRef:"refs/heads/main",
+                 controllerCommit:$controller,workflowBlob:$producerBlob,runId:$run,
+                 runAttempt:$attempt,event:"workflow_dispatch",actor:$actor,triggeringActor:$triggeringActor},
+               parentProductionRun:{workflowPath:".github/workflows/deploy-production.yml",
+                 controllerCommit:$parentController,workflowBlob:$parentBlob,runId:$parentRun,
+                 runAttempt:$parentAttempt},issuedAtEpoch:$issued,expiresAtEpoch:$expires,
+               payload:$payload[0],contentSha256:("0"*64)}
+            ' > "$EVIDENCE_ROOT/unhashed.json"
+          content_hash="$(signed_evidence_content_sha256 "$EVIDENCE_ROOT/unhashed.json")"
+          jq -cS --arg hash "$content_hash" '.contentSha256=$hash' "$EVIDENCE_ROOT/unhashed.json" \
+            > "$evidence_dir/evidence.json"
+          signed_evidence_validate_payload_contract "$evidence_dir/evidence.json"
+          test "$(signed_evidence_content_sha256 "$evidence_dir/evidence.json")" = "$content_hash"
+          cosign sign-blob --yes --bundle "$evidence_dir/evidence.bundle" "$evidence_dir/evidence.json"
+          cosign verify-blob --bundle "$evidence_dir/evidence.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/u5-shadow-evidence.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$GITHUB_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch "$evidence_dir/evidence.json" >/dev/null
+          test "$(find "$evidence_dir" -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ')" \
+            = 'evidence.bundle evidence.json '
+          artifact_name="U5_SHADOW_AGGREGATE_V1-${source_sha}-production-${PARENT_RUN_ID}-attempt-${parent_attempt}-producer-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          echo "U5_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "U5_SIGNED_DIR=$evidence_dir" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: ${{ env.U5_ARTIFACT_NAME }}
+          path: |
+            ${{ env.U5_SIGNED_DIR }}/evidence.json
+            ${{ env.U5_SIGNED_DIR }}/evidence.bundle
+          if-no-files-found: error
+          retention-days: 7

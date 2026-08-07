@@ -1,0 +1,5 @@
+.github/workflows/ci.yml
+.github/workflows/deploy-uat.yml
+.github/workflows/f2-normalize-apply.yml
+.github/workflows/f2-normalize.yml
+.github/workflows/recover-release-intent.yml

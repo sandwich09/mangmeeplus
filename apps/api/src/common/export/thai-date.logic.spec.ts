@@ -1,0 +1,103 @@
+import { createHash } from 'node:crypto';
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import {
+  ACCOUNTANT_INDEX_COLUMNS,
+  type AccountantPackageIndexRow,
+} from '@watchdog-bms/contracts';
+import {
+  buildAccountantIndexCsv,
+  buildAccountantIndexXlsx,
+} from '../../modules/expenses/domain/logic/expense-export.logic';
+import { buildTaxExportArtifact } from '../../modules/tax/domain/logic/tax-export.logic';
+import { formatThaiExportDate, isIsoDateLike } from './thai-date.logic';
+
+describe('Thai export date formatting', () => {
+  it('renders ISO dates with Thai months and Buddhist years', () => {
+    assert.equal(formatThaiExportDate('2026-07-28'), '28 ก.ค. 2569');
+    assert.equal(formatThaiExportDate('2026-01-05'), '5 ม.ค. 2569');
+    assert.equal(formatThaiExportDate('2026-12-31'), '31 ธ.ค. 2569');
+  });
+
+  it('renders timestamps in Bangkok time regardless of the host time zone', () => {
+    assert.equal(formatThaiExportDate('2026-07-28T23:59:00Z'), '29 ก.ค. 2569');
+  });
+
+  it('passes non-dates through unchanged', () => {
+    assert.equal(formatThaiExportDate('2026-07'), '2026-07');
+    assert.equal(formatThaiExportDate(''), '');
+    assert.equal(formatThaiExportDate('RB-202607-00005'), 'RB-202607-00005');
+    assert.equal(formatThaiExportDate(null), '');
+    assert.equal(formatThaiExportDate('not a date'), 'not a date');
+  });
+
+  it('recognizes only strict ISO date and date-time forms', () => {
+    for (const value of [
+      '2026-07-28',
+      '2026-07-28T23:59',
+      '2026-07-28 23:59:00',
+      '2026-07-28T23:59:00.123Z',
+      '2026-07-28T23:59:00+07:00',
+    ]) {
+      assert.equal(isIsoDateLike(value), true, value);
+    }
+    for (const value of ['2026-07', '2026-7-8', 20260728]) {
+      assert.equal(isIsoDateLike(value), false, String(value));
+    }
+  });
+});
+
+describe('XLSX-only Thai export dates', () => {
+  it('keeps the accountant CSV byte-identical while formatting XLSX date columns', () => {
+    const row = Object.fromEntries(
+      ACCOUNTANT_INDEX_COLUMNS.map((column) => [column, '']),
+    ) as AccountantPackageIndexRow;
+    Object.assign(row, {
+      accounting_period: '2026-07',
+      uploaded_at: '2026-07-28T23:59:00Z',
+      document_date: '2026-07-28',
+      expense_number: 'RB-202607-00005',
+      grand_total_amount: '100.0000',
+      paid_at: '2026-07-28T12:00:00Z',
+    });
+
+    const csv = buildAccountantIndexCsv([row]);
+    const xlsx = buildAccountantIndexXlsx([row], 'full').toString('utf8');
+
+    assert.equal(
+      createHash('sha256').update(csv).digest('hex'),
+      '14916f6f7161050794cd67ed9edd681d1c18e93d8273d76293f5aa8bfd06fa95',
+    );
+    assert.ok(xlsx.includes('29 ก.ค. 2569'));
+    assert.ok(xlsx.includes('28 ก.ค. 2569'));
+    assert.ok(xlsx.includes('2026-07'));
+    assert.ok(!xlsx.includes('2026-07-28'));
+  });
+
+  it('keeps the tax CSV byte-identical while formatting only ISO-like XLSX values', () => {
+    const rows = [{
+      eventDate: '2026-07-28',
+      accounting_period: '2026-07',
+      sourceId: 'RB-202607-00005',
+      amount: 100,
+    }];
+    const csv = Buffer.from(
+      buildTaxExportArtifact('CSV', 'tax', rows, {}).contentBase64,
+      'base64',
+    );
+    const xlsx = Buffer.from(
+      buildTaxExportArtifact('XLSX', 'tax', rows, {}).contentBase64,
+      'base64',
+    ).toString('utf8');
+
+    assert.equal(
+      createHash('sha256').update(csv).digest('hex'),
+      'ef2400c45089ba402d1ebad48d7c151cad520bb7799ff7b26815fbd25fac8ac1',
+    );
+    assert.ok(xlsx.includes('28 ก.ค. 2569'));
+    assert.ok(xlsx.includes('2026-07'));
+    assert.ok(xlsx.includes('RB-202607-00005'));
+    assert.ok(xlsx.includes('<v>100</v>'));
+    assert.ok(!xlsx.includes('2026-07-28'));
+  });
+});

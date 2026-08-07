@@ -1,0 +1,362 @@
+# F2 / CC7 legacy entitlement normalization — HALF ONE: the read-only PLAN (UAT r7 item 2).
+#
+# Why the plan and the write are two separate dispatches:
+#
+#   * A deploy's environment approval fires BEFORE the release task runs, so nobody approving a
+#     deploy is approving a plan they have seen. deploy-uat.yml and deploy-production.yml therefore
+#     never write entitlements — their release task runs the normalizer with an explicit --dry-run.
+#   * This workflow used to do both halves in one dispatch (dry-run job, then an `apply` job behind a
+#     SECOND environment gate). The uat and production GitHub environments carry NO required
+#     reviewers, so that second gate never pauses: dispatching with apply=true planned and then wrote
+#     in one uninterrupted run, and the "approval of the reviewed artifact" existed only on paper.
+#
+# So the pause is now structural rather than procedural: this workflow can only PLAN. It uploads an
+# immutable artifact (per-company plan hashes, the aggregate hash, and the summary), and the write is
+# a separate human dispatch of f2-normalize-apply.yml that names THIS run and reads the approved hash
+# out of THIS artifact — the operator never retypes a hash.
+#
+# The exact release-task image is published by the environment deploy, so UAT first receives this
+# build with enforcement/shadow policy unchanged and the package command intentionally read-only.
+# Run both halves before enabling commercial ON->OFF or any stronger enforcement; completion restores
+# the package command without asking customers to migrate or re-enter data.
+name: F2 Entitlement Normalization PLAN
+run-name: F2 plan ${{ inputs.environment }} @ ${{ inputs.release_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: uat
+        type: choice
+        options:
+          - uat
+          - production
+      release_ref:
+        description: Lowercase full commit SHA whose release-task image is already published
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+# UAT r7 item 3 — the SAME group string the deploy workflows use for this environment
+# (watchdog-bms-uat-deploy / watchdog-bms-production-deploy). GitHub serialises only identical group
+# names, so anything less exact would let a deploy's release task and a normalization run touch one
+# estate at the same time.
+concurrency:
+  group: watchdog-bms-${{ inputs.environment }}-deploy
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: F2 Plan (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ inputs.environment }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      DEPLOY_ENV: ${{ inputs.environment }}
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+    steps:
+      - name: Require the default-branch controller
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "ERROR: dispatch the F2 controller from main; release_ref selects the UAT/production application commit" >&2
+            exit 1
+          }
+          test "$DEPLOY_ENV" = "uat" || {
+            echo "ERROR: A5/F2 is locked to isolated UAT until a separate production read-only principal and promotion review exist" >&2
+            exit 1
+          }
+      # workflow_dispatch is loaded from default `main`; the checked-out application commit is
+      # independently constrained to develop for UAT and main for production.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Resolve the environment-owned source branch
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_REF" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "ERROR: release_ref must be a lowercase full commit SHA" >&2
+            exit 1
+          }
+          branch=main
+          [ "$DEPLOY_ENV" = "uat" ] && branch=develop
+          git fetch origin "$branch" --force
+          git merge-base --is-ancestor "$RELEASE_REF" "origin/$branch" || {
+            echo "ERROR: $RELEASE_REF is not reachable from origin/$branch for $DEPLOY_ENV" >&2
+            exit 1
+          }
+          git checkout --detach "$RELEASE_REF"
+          test "$(git rev-parse HEAD)" = "$RELEASE_REF"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-f2-plan-${{ github.run_id }}
+      - name: Verify exact UAT controller policies before mutation
+        if: inputs.environment == 'uat'
+        run: bash infra/uat/verify-control-plane-policies.sh
+      - name: Pin PLAN to the exact api-web build serving now
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: bash infra/prod-ecs-express/verify-serving-api-build.sh "$DEPLOY_ENV" "$RELEASE_REF"
+      - name: Resolve the published release-task image
+        id: image
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: |
+          set -euo pipefail
+          # The SAME image the deploy already built and pushed for this commit — never a fresh
+          # build, so the normalizer that plans is byte-identical to the one that applies.
+          prefix="release-task"
+          if [ "$DEPLOY_ENV" = "uat" ]; then prefix="uat-release-task"; fi
+          digest="$(aws ecr describe-images \
+            --repository-name watchdog-bms-api \
+            --image-ids "imageTag=${prefix}-${RELEASE_REF}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "ERROR: no ${prefix}-${RELEASE_REF} image in ECR — deploy that commit first" >&2
+            exit 1
+          }
+          release_image="$ECR_REGISTRY/watchdog-bms-api@$digest"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker pull --platform linux/amd64 "$release_image"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image")" = "$RELEASE_REF"
+          signer_workflow=deploy-production.yml
+          [ "$DEPLOY_ENV" = uat ] && signer_workflow=deploy-uat.yml
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${signer_workflow}@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$release_image" >/dev/null
+          echo "release_image=$release_image" >> "$GITHUB_OUTPUT"
+      - name: Collect the zero-write A5 precheck
+        id: a5
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_IMAGE: ${{ steps.image.outputs.release_image }}
+        run: |
+          set -euo pipefail
+          mkdir -p f2-artifact
+          # This task has no taskRoleArn, receives only the dedicated watchdog_a5_ro secret and
+          # enforces read-only at both the role and transaction layers. It emits aggregate evidence
+          # only; company ids/names and source tuples never leave the database.
+          bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_IMAGE" "$RELEASE_REF" a5-ro \
+            2>&1 | tee f2-artifact/a5-ro.log
+          tr '\t' '\n' < f2-artifact/a5-ro.log \
+            | awk '/^\{$/ && !seen {seen=1} seen {print} /^\}$/ && seen {exit}' \
+            > f2-artifact/a5-readonly-evidence.json
+          evidence=f2-artifact/a5-readonly-evidence.json
+          jq -e --arg sha "$RELEASE_REF" '
+            .artifact == "a5-readonly-evidence"
+            and .schemaVersion == 1
+            and .targetEnvironment == "uat"
+            and .sourceCommit == $sha
+            and .readOnly == true
+            and (.queryCatalogHash | type == "string" and test("^[0-9a-f]{64}$"))
+            and (.evidenceHash | type == "string" and test("^[0-9a-f]{64}$"))
+            and (.f2PrecheckReady | type) == "boolean"
+            and (.f2PrecheckBlockers | type) == "array"
+            and (.advisories | type) == "array"
+          ' "$evidence" >/dev/null
+          computed_hash="$(jq -cSj 'del(.generatedAt,.evidenceHash)' "$evidence" | sha256sum | awk '{print $1}')"
+          [ "$computed_hash" = "$(jq -r '.evidenceHash' "$evidence")" ] || {
+            echo "ERROR: A5 evidence hash does not match its canonical payload" >&2
+            exit 1
+          }
+          echo "evidence_hash=$computed_hash" >> "$GITHUB_OUTPUT"
+          echo "query_catalog_hash=$(jq -r '.queryCatalogHash' "$evidence")" >> "$GITHUB_OUTPUT"
+          if [ "$(jq -r '.f2PrecheckReady' "$evidence")" != "true" ]; then
+            echo "ERROR: A5 read-only precheck is not ready for F2 APPLY" >&2
+            jq -r '.f2PrecheckBlockers[] | "  - \(.)"' "$evidence" >&2
+            exit 1
+          fi
+      - name: Re-pin PLAN after A5 collection
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+        run: bash infra/prod-ecs-express/verify-serving-api-build.sh "$DEPLOY_ENV" "$RELEASE_REF"
+      - name: Plan the estate (writes nothing)
+        id: plan
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RELEASE_IMAGE: ${{ steps.image.outputs.release_image }}
+        run: |
+          set -euo pipefail
+          mkdir -p f2-artifact
+          # UAT r7 item 3 — the f2-plan MODE, not `release`: the normalizer CLI and nothing else, so
+          # planning cannot migrate the database or pre-attest this build's launch gate.
+          bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_IMAGE" "$RELEASE_REF" f2-plan \
+            2>&1 | tee f2-artifact/f2-plan.log
+          # The normalizer prints its whole reviewable artifact as pretty JSON. CloudWatch stores one
+          # event per line and `get-log-events --output text` re-joins them with tabs, so put the
+          # newlines back and lift out the single top-level object.
+          tr '\t' '\n' < f2-artifact/f2-plan.log \
+            | awk '/^\{$/ && !seen {seen=1} seen {print} /^\}$/ && seen {exit}' \
+            > f2-artifact/f2-normalizer.json
+          # A truncated log would otherwise become a plan with fewer companies than the estate has,
+          # and a build whose normalizer predates the per-company approval unit would produce an
+          # artifact the apply cannot bind to — both fail here rather than at the apply.
+          jq -e '
+            .artifact == "f2-entitlement-normalization"
+            and .mode == "dry-run"
+            and (.companies | length) == .total
+            and (.planHashes | type) == "object"
+            and (.approvalReady | type) == "boolean"
+            and all(.companies[];
+              ((.cohortKind == "LEGACY") or (.cohortKind == "EXPLICIT") or (.cohortKind == null))
+              and (.cohortEvidence as $e
+                | ["FIRST_NORMALIZATION_RULE", "EXISTING_MARKER", "LEGACY_NORMALIZATION_AUDIT",
+                   "COMPANY_ONBOARDING_RUN", "UNRESOLVED"] | index($e) != null)
+              and (((.cohortKind == "LEGACY") and
+                    ((.cohortEvidence == "FIRST_NORMALIZATION_RULE") or
+                     (.cohortEvidence == "EXISTING_MARKER") or
+                     (.cohortEvidence == "LEGACY_NORMALIZATION_AUDIT")))
+                or ((.cohortKind == "EXPLICIT") and
+                    ((.cohortEvidence == "EXISTING_MARKER") or
+                     (.cohortEvidence == "COMPANY_ONBOARDING_RUN")))
+                or ((.cohortKind == null) and (.cohortEvidence == "UNRESOLVED")))
+              and ((.orphanRows | type) == "array")
+              and all(.orphanRows[];
+                ((.featureKey | type) == "string") and ((.enabled | type) == "boolean"))
+              and (.orphansRemoved == (.orphanRows | length)))
+            and .cohortCounts == {
+              LEGACY: ([.companies[] | select(.cohortKind == "LEGACY")] | length),
+              EXPLICIT: ([.companies[] | select(.cohortKind == "EXPLICIT")] | length),
+              UNRESOLVED: ([.companies[] | select(.cohortKind == null)] | length)
+            }
+            and .unresolvedCohorts == .cohortCounts.UNRESOLVED
+            and .orphanRows == ([.companies[].orphanRows[]] | length)
+            and .approvalReady == ((.failed == 0)
+              and (.dependencyExceptions == 0)
+              and (.unresolvedCohorts == 0))
+          ' f2-artifact/f2-normalizer.json > /dev/null
+          hash="$(jq -r '.aggregateHash' f2-artifact/f2-normalizer.json)"
+          [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "ERROR: the plan artifact carries no aggregateHash — nothing to approve" >&2
+            exit 1
+          }
+          # The log line and the JSON must describe the same run, or one of them is from elsewhere.
+          grep -Fq "entitlement normalization: aggregateHash=$hash" f2-artifact/f2-plan.log
+          jq -n \
+            --arg environment "$DEPLOY_ENV" \
+            --arg releaseRef "$RELEASE_REF" \
+            --arg releaseImage "$RELEASE_IMAGE" \
+            --arg planRunId "$GITHUB_RUN_ID" \
+            --arg planRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg controllerSha "$GITHUB_SHA" \
+            --arg workflowRef "$GITHUB_WORKFLOW_REF" \
+            --arg actorId "$GITHUB_ACTOR_ID" \
+            --slurpfile a5 f2-artifact/a5-readonly-evidence.json \
+            --slurpfile normalizer f2-artifact/f2-normalizer.json \
+            '$normalizer[0] as $plan | $a5[0] as $a5Evidence | {
+              artifact: "f2-plan",
+              schemaVersion: 2,
+              environment: $environment,
+              releaseRef: $releaseRef,
+              releaseImage: $releaseImage,
+              planRunId: $planRunId,
+              planRunAttempt: $planRunAttempt,
+              repository: $repository,
+              controllerSha: $controllerSha,
+              workflowRef: $workflowRef,
+              planActorId: $actorId,
+              generatedAt: $plan.generatedAt,
+              normalizerVersion: $plan.normalizerVersion,
+              aggregateHash: $plan.aggregateHash,
+              # The apply is bound to the artifact, not just its hash: these five fields are what
+              # authorize a write, so the APPLY dispatch hands exactly them back to the normalizer.
+              approvalReady: ($plan.approvalReady and $a5Evidence.f2PrecheckReady),
+              a5: $a5Evidence,
+              approval: {
+                artifact: $plan.artifact,
+                normalizerVersion: $plan.normalizerVersion,
+                approvalReady: $plan.approvalReady,
+                aggregateHash: $plan.aggregateHash,
+                planHashes: $plan.planHashes
+              },
+              summary: {
+                total: $plan.total,
+                planned: $plan.completed,
+                skipped: $plan.skipped,
+                failed: $plan.failed,
+                dependencyExceptions: $plan.dependencyExceptions,
+                cohortCounts: $plan.cohortCounts,
+                unresolvedCohorts: $plan.unresolvedCohorts,
+                orphanRows: $plan.orphanRows,
+                normalizationIncomplete: $plan.normalizationIncomplete,
+                reasonCounts: $plan.reasonCounts
+              },
+              companyPlanHashes: ($plan.companies
+                | map({companyId, status, hash, cohortKind, cohortEvidence, wouldWrite, unchanged,
+                    provenanceStamped, orphansRemoved})),
+              dependencyExceptionCompanies: $plan.dependencyExceptionCompanies,
+              normalizer: $plan
+            }' > f2-artifact/f2-plan.json
+          echo "aggregate_hash=$hash" >> "$GITHUB_OUTPUT"
+      - name: Summarize the plan for the reviewer
+        env:
+          AGGREGATE_HASH: ${{ steps.plan.outputs.aggregate_hash }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## F2 entitlement normalization — PLAN for ${DEPLOY_ENV}"
+            echo
+            echo "Nothing was written. To apply this plan, dispatch **F2 Entitlement Normalization"
+            echo "APPLY** with \`environment=${DEPLOY_ENV}\` and \`plan_run_id=${GITHUB_RUN_ID}\`."
+            echo "That workflow reads the approved hash out of this run's artifact — do not retype it."
+            echo
+            echo "**Aggregate hash:** \`${AGGREGATE_HASH}\`"
+            echo "**A5 evidence hash:** \`$(jq -r '.a5.evidenceHash' f2-artifact/f2-plan.json)\`"
+            echo "**A5 query catalog:** \`$(jq -r '.a5.queryCatalogHash' f2-artifact/f2-plan.json)\`"
+            echo
+            if [ "$(jq -r '.approvalReady' f2-artifact/f2-plan.json)" = "true" ]; then
+              echo "**Appliable:** yes — every planned company has an agreed final state."
+            else
+              echo "**Appliable: NO.** This plan had failures, dependency exceptions, or unresolved"
+              echo "cohort evidence, so it cannot authorize a write. Resolve them, then re-plan."
+            fi
+            echo
+            echo '```'
+            jq -r '"companies=\(.summary.total) planned=\(.summary.planned) skipped=\(.summary.skipped) failed=\(.summary.failed) dependencyExceptions=\(.summary.dependencyExceptions) incomplete=\(.summary.normalizationIncomplete)"' f2-artifact/f2-plan.json
+            jq -r '"cohorts: LEGACY=\(.summary.cohortCounts.LEGACY) EXPLICIT=\(.summary.cohortCounts.EXPLICIT) UNRESOLVED=\(.summary.unresolvedCohorts)"' f2-artifact/f2-plan.json
+            jq -r '"orphan rows requiring review=\(.summary.orphanRows)"' f2-artifact/f2-plan.json
+            jq -r '.summary.reasonCounts | to_entries[] | "\(.key)=\(.value)"' f2-artifact/f2-plan.json
+            echo '```'
+            echo
+            echo "### Companies staff must fix by hand (dependency exceptions)"
+            echo
+            # Ruling 4b — these companies are left untouched and stay NOT COMPLETED. The apply
+            # cannot resolve them; support has to decide, and the deploy gate keeps failing until
+            # they do. Listing them here is the staff action list.
+            if [ "$(jq -r '.dependencyExceptionCompanies | length' f2-artifact/f2-plan.json)" != "0" ]; then
+              echo '```'
+              jq -r '.dependencyExceptionCompanies[] | "\(.companyId): \(.unmet | join(", "))"' f2-artifact/f2-plan.json
+              echo '```'
+            else
+              echo "No dependency exceptions. Cohort/orphan blockers may still remain; check the"
+              echo "counts above and the restricted full artifact before deciding."
+            fi
+            echo
+            echo "Full plan: the **f2-plan-${DEPLOY_ENV}** artifact on this run."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: f2-plan-${{ inputs.environment }}
+          path: f2-artifact/
+          retention-days: 30

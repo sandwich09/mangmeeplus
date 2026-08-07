@@ -1,0 +1,114 @@
+import { attachmentMimeTypeForFileName } from '@/common/files/upload-file.logic';
+
+export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
+export const RECEIPT_UPLOAD_ACCEPT =
+  '.pdf,.png,.jpg,.jpeg,.heic,.heif,application/pdf,image/png,image/jpeg,image/heic,image/heif';
+
+export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
+
+export class HeicDecodeError extends Error {
+  constructor() {
+    super('HEIC_DECODE_UNSUPPORTED');
+    this.name = 'HeicDecodeError';
+  }
+}
+
+export function classifyUploadFile(name: string, type: string): UploadFileKind {
+  const mime = type.toLowerCase();
+  const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  if (!mime) {
+    if (extension === 'pdf') return 'pdf';
+    if (extension === 'heic' || extension === 'heif') return 'heic';
+    if (['jpg', 'jpeg', 'png'].includes(extension ?? '')) return 'image';
+    return 'unsupported';
+  }
+  if (mime === 'application/pdf' && extension === 'pdf') return 'pdf';
+  if ((mime === 'image/heic' && extension === 'heic') || (mime === 'image/heif' && extension === 'heif')) return 'heic';
+  if (
+    (mime === 'image/jpeg' && (extension === 'jpg' || extension === 'jpeg'))
+    || (mime === 'image/png' && extension === 'png')
+  ) return 'image';
+  return 'unsupported';
+}
+
+async function decodeImage(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file); } catch { /* fall through */ }
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('IMAGE_DECODE_FAILED'));
+      image.src = url;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const canvasBlob = (canvas: HTMLCanvasElement, quality: number) =>
+  new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('IMAGE_ENCODE_FAILED')), 'image/jpeg', quality));
+
+// Chrome/Edge cannot decode HEIC natively — heic-to (libheif wasm) is lazy-loaded
+// only when a HEIC file actually fails native decode, so it never weighs the page.
+async function heicToJpegFile(file: File): Promise<File> {
+  const { heicTo } = await import('heic-to/csp');
+  const blob = await heicTo({ blob: file, type: 'image/jpeg', quality: 0.92 });
+  if (!blob) throw new HeicDecodeError();
+  const baseName = file.name.replace(/\.[^.]+$/, '') || 'receipt';
+  return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified });
+}
+
+export async function prepareReceiptFile(file: File): Promise<{ file: File; resized: boolean }> {
+  const kind = classifyUploadFile(file.name, file.type);
+  if (kind === 'unsupported') throw new Error('UNSUPPORTED_UPLOAD_FILE');
+  const inferredMimeType = attachmentMimeTypeForFileName(file.name)
+    ?? (file.name.toLowerCase().endsWith('.heic') ? 'image/heic' : 'image/heif');
+  const sourceFile = file.type
+    ? file
+    : new File([file], file.name, { type: inferredMimeType, lastModified: file.lastModified });
+  if (kind === 'pdf' || (kind === 'image' && sourceFile.size <= MAX_IMAGE_BYTES)) {
+    return { file: sourceFile, resized: false };
+  }
+
+  let image: ImageBitmap | HTMLImageElement;
+  try { image = await decodeImage(sourceFile); }
+  catch (error) {
+    if (kind !== 'heic') throw error;
+    let converted: File;
+    try { converted = await heicToJpegFile(sourceFile); }
+    catch { throw new HeicDecodeError(); }
+    if (converted.size <= MAX_IMAGE_BYTES) return { file: converted, resized: true };
+    image = await decodeImage(converted);
+  }
+
+  const sourceWidth = 'naturalWidth' in image ? image.naturalWidth : image.width;
+  const sourceHeight = 'naturalHeight' in image ? image.naturalHeight : image.height;
+  const initialScale = Math.min(1, 2560 / Math.max(sourceWidth, sourceHeight));
+  let width = Math.max(1, Math.round(sourceWidth * initialScale));
+  let height = Math.max(1, Math.round(sourceHeight * initialScale));
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('CANVAS_UNSUPPORTED');
+
+  let blob!: Blob;
+  while (true) {
+    canvas.width = width;
+    canvas.height = height;
+    context.drawImage(image, 0, 0, width, height);
+    for (let quality = 0.92; quality >= 0.5; quality -= 0.07) {
+      blob = await canvasBlob(canvas, quality);
+      if (blob.size <= MAX_IMAGE_BYTES) break;
+    }
+    if (blob.size <= MAX_IMAGE_BYTES) break;
+    width = Math.max(1, Math.round(width * 0.8));
+    height = Math.max(1, Math.round(height * 0.8));
+  }
+  if ('close' in image && typeof image.close === 'function') image.close();
+  const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'receipt';
+  return { file: new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: sourceFile.lastModified }), resized: true };
+}

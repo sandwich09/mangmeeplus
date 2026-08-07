@@ -1,0 +1,886 @@
+'use client';
+
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEventHandler, type ReactNode } from 'react';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { EmptyState } from '@/common/components/state/EmptyState';
+import { pageBounds } from '@/common/table/paging.logic';
+import {
+  listManageCategories, createExpenseCategory, updateExpenseCategory,
+  listSignatureAssets, initSignatureUpload, createSignatureAsset, approveSignatureAsset,
+  rejectSignatureAsset, archiveSignatureAsset, setSignatureDerivedAsset, uploadReceiptFile,
+  getSharedEvidence, createAccountantPackage, downloadIndexXlsx,
+} from './expenses.api';
+import {
+  SIGNATURE_ASSET_STATUS_LABELS, SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, TAX_EVIDENCE_REASON_LABELS,
+  EXPENSE_STATUS_LABELS, POSTING_STATUS_LABELS, removeLightBackground, expenseValueLabel,
+} from './expenses.model';
+import type { ExpenseCategorySummary, SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult } from './expenses.model';
+import type { ExpenseBackfillBlocker, ExpenseBackfillPreview } from '@watchdog-bms/contracts';
+import { MangmeeBadge, MangmeeCard, MangmeeStatCard, cx } from '@/common/components/mangmee';
+import { Modal } from '@/common/components/modal';
+import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
+import { IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
+import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
+import { err, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
+import {
+  deriveEvidenceRowFlags,
+  evidenceRowState,
+  filterRowsByFlag,
+  summarizeEvidenceFlags,
+  summarizeEvidenceRows,
+  TAX_EVIDENCE_TONE,
+  type EvidenceFlagKey,
+} from './evidence-audit.logic';
+import { generateSourceJournal, previewExpenseBackfill, runExpenseBackfill } from '../ledger/ledger.api';
+import { showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
+import { listTaxCodeDefinitions } from '../tax/transaction-tax.api';
+import { availableTaxDefinitions } from '../tax/transaction-tax.model';
+import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+import { useToast } from '@/common/components/toast';
+
+// A category is a label and an id. Nothing on it is inherited by an expense — the
+// accountHintKey/taxCategory the ledger reads live on the expense record and line,
+// not here — so the panel deliberately shows no per-category tax attribute.
+const BACKFILL_BLOCKER_LABELS: Record<ExpenseBackfillBlocker, string> = {
+  NO_ACTIVE_EVIDENCE: 'ไม่มีไฟล์หลักฐาน',
+  TAX_EVIDENCE_NEEDS_REVIEW: 'รอตรวจหลักฐานภาษี',
+  NOT_TAX_EVIDENCE: 'ไม่ใช่หลักฐานภาษี',
+  VENDOR_NAME_MISSING: 'ไม่ระบุผู้ขาย',
+};
+
+function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; onToggle: () => void }) {
+  return (
+    <button role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}
+      className={cx('relative h-6 w-11 flex-shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-40', on ? 'bg-brand-500' : 'bg-gray-300')}>
+      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+    </button>
+  );
+}
+export function IconBtn({ title, tone, onClick, children }: { title: string; tone?: 'primary' | 'danger'; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
+  return (
+    <button type="button" title={title} aria-label={title} onClick={onClick}
+      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white transition hover:bg-gray-50',
+        tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:bg-brand-600'
+          : tone === 'danger' ? 'text-error-500 hover:border-[#FECDCA]' : 'text-gray-500 hover:border-brand-200 hover:text-brand-600')}>
+      {children}
+    </button>
+  );
+}
+
+// ── Category management ───────────────────────────────────────────────────────
+export function CategoryManagePanel({ companyId }: { companyId: string }) {
+  const toast = useToast();
+  // Company-level screen with no document date, so the policy is read for today.
+  const showsTax = showsTaxCapture(useExpenseCapturePolicy(companyId).mode);
+  // Codes offered for a standing setting are the ones effective today. Resolution at use time is
+  // still per document date, in the line picker — this list only decides what can be chosen here.
+  const [taxCodes, setTaxCodes] = useState<Array<{ externalCode: string; displayName: string }>>([]);
+  const [newTaxCode, setNewTaxCode] = useState('');
+  const [categories, setCategories] = useState<ExpenseCategorySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try { setCategories(await listManageCategories(companyId)); }
+    catch (e) { setError(err(e)); }
+    finally { setLoading(false); }
+  }, [companyId]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!showsTax) return;
+    let cancelled = false;
+    listTaxCodeDefinitions(companyId, { transactionContext: 'DOMESTIC_PURCHASE', sourceType: 'expense.record' })
+      .then((items) => {
+        if (cancelled) return;
+        setTaxCodes(availableTaxDefinitions(items, {
+          context: 'DOMESTIC_PURCHASE', direction: 'INPUT', documentDate: todayCivilDate(),
+        }).map((item) => ({ externalCode: item.externalCode, displayName: item.displayName })));
+      })
+      .catch(() => { if (!cancelled) setTaxCodes([]); });
+    return () => { cancelled = true; };
+  }, [companyId, showsTax]);
+
+  const create = async () => {
+    const forbidden = findForbiddenChars(name);
+    if (forbidden.length > 0) { setCreateError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
+    setSaving(true); setCreateError(null);
+    try {
+      // ponytail: accountHintKey is an internal mapping slug, never user-authored — generate it.
+      await createExpenseCategory(companyId, {
+        name: name.trim(),
+        accountHintKey: `expense.custom.${Date.now()}`,
+        ...(showsTax && newTaxCode ? { defaultInputTaxCode: newTaxCode } : {}),
+      });
+      setName(''); setNewTaxCode('');
+      await load();
+      setShowCreate(false);
+      toast.success('เพิ่มหมวดหมู่เรียบร้อยแล้ว');
+    } catch (e) { setCreateError(err(e)); }
+    finally { setSaving(false); }
+  };
+
+  const runUpdate = async (id: string, body: Parameters<typeof updateExpenseCategory>[2], successMessage?: string) => {
+    setActionError(null);
+    try { await updateExpenseCategory(companyId, id, body); await load(); if (successMessage) toast.success(successMessage); }
+    catch (e) { setActionError(err(e)); }
+  };
+  const saveName = async (id: string) => {
+    const trimmed = editName.trim();
+    const forbidden = findForbiddenChars(editName);
+    if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
+    if (trimmed && trimmed !== categories.find((category) => category.id === id)?.name) await runUpdate(id, { name: trimmed }, 'บันทึกชื่อหมวดหมู่เรียบร้อยแล้ว');
+    if (trimmed) setEditId(null);
+  };
+
+  const confirmTarget = categories.find((c) => c.id === confirmId);
+
+  return (
+    <div>
+      <MangmeeCard className="overflow-hidden">
+        <div className="mangmee-card-header flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-base font-bold text-gray-900">หมวดหมู่ค่าใช้จ่าย</div>
+            <div className="mt-0.5 text-sm text-gray-500">AI จะเลือกได้เฉพาะหมวดหมู่ที่เปิดใช้งานเท่านั้น · ระบบไม่อนุญาตให้ AI สร้าง/แก้ไขหมวดหมู่เอง</div>
+          </div>
+          <button className={btnClass} onClick={() => { setCreateError(null); setShowCreate(true); }}>+ เพิ่มหมวดหมู่ใหม่</button>
+        </div>
+        {actionError && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
+        {error ? <div className="p-4"><StateBanner error={error} /></div> : loading ? (
+          <p className="p-6 text-sm text-gray-500">กำลังโหลด…</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="mangmee-table">
+              <thead><tr>{['ชื่อหมวดหมู่', ...(showsTax ? ['Tax Code เริ่มต้น'] : []), 'ที่มา', 'เปิดใช้', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'ที่มา' || h === 'เปิดใช้') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+              <tbody>
+                {categories.length === 0 && <tr><td colSpan={showsTax ? 5 : 4} className="py-8 text-center text-gray-500">ไม่มีหมวดหมู่</td></tr>}
+                {categories.map((c) => {
+                  const active = c.status === 'ACTIVE';
+                  const owned = !!c.companyId;
+                  return (
+                    <tr key={c.id} className={active ? '' : 'opacity-60'}>
+                      <td className="font-semibold text-gray-900">
+                        {editId === c.id ? (
+                          <span className="flex min-w-64 items-center gap-2">
+                            <input autoFocus className="mangmee-input h-9" value={editName} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
+                              onKeyDown={(e) => { if (e.key === 'Enter') void saveName(c.id); if (e.key === 'Escape') setEditId(null); }} />
+                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={!editName.trim() || editName.trim() === c.name} onClick={() => void saveName(c.id)}>บันทึก</button>
+                            <button className={cx(ghostClass, 'h-9 px-3 text-xs')} onClick={() => setEditId(null)}>ยกเลิก</button>
+                          </span>
+                        ) : c.name}
+                      </td>
+                      {showsTax && <td className="whitespace-nowrap text-xs">
+                        {owned ? (
+                          <ThemedSelect className={cx(inputClass, 'h-9 w-auto !text-xs')} value={c.defaultInputTaxCode ?? ''}
+                            onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
+                            <option value="">ไม่กำหนด</option>
+                            {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
+                          </ThemedSelect>
+                        ) : <span className="text-gray-400">{c.defaultInputTaxCode ?? '—'}</span>}
+                      </td>}
+                      <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
+                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
+                      <td className="w-px whitespace-nowrap text-right">
+                        {owned ? (
+                          <span className="inline-flex items-center justify-end gap-1.5">
+                            {editId !== c.id && <IconBtn title="แก้ชื่อ" onClick={() => { setEditId(c.id); setEditName(c.name); }}>{ICON.edit}</IconBtn>}
+                            {active && <IconBtn title="เก็บถาวร" tone="danger" onClick={() => setConfirmId(c.id)}>{ICON.trash}</IconBtn>}
+                          </span>
+                        ) : <span className="text-xs text-gray-300">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </MangmeeCard>
+
+      <Modal open={showCreate} title="เพิ่มหมวดหมู่ใหม่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
+        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? 'กำลังบันทึก…' : 'เพิ่มหมวดหมู่'}</button></>}>
+          <div className="space-y-3">
+          {createError && <ErrorBanner message={createError} />}
+          <label className="text-sm font-semibold text-gray-700">ชื่อหมวดหมู่ *</label>
+          <input className={inputClass} placeholder="เช่น ค่าโฆษณาออนไลน์" value={name} onChange={(e) => setName(stripDisallowed(e.target.value))} />
+          {showsTax && <>
+            <label className="text-sm font-semibold text-gray-700">Tax Code เริ่มต้น</label>
+            <ThemedSelect className={inputClass} value={newTaxCode} onChange={(e) => setNewTaxCode(e.target.value)}>
+              <option value="">ไม่กำหนด</option>
+              {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
+            </ThemedSelect>
+            <p className="text-xs text-gray-500">ใช้เป็นค่าตั้งต้นของรายการที่ยังไม่ได้เลือก Tax Code เท่านั้น ผู้ตรวจเปลี่ยนได้เสมอ</p>
+          </>}
+          </div>
+      </Modal>
+
+      {confirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setConfirmId(null)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-bold text-gray-900">เก็บถาวร “{confirmTarget.name}” ?</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-gray-500">หมวดหมู่ที่เก็บถาวรจะไม่แสดงให้ AI หรือผู้ใช้เลือกอีก แต่รายการเดิมที่ใช้หมวดนี้ยังอยู่ครบ · เปิดใช้ใหม่ได้ทุกเมื่อจากปุ่มสวิตช์</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button className={ghostClass} onClick={() => setConfirmId(null)}>ยกเลิก</button>
+              <button className={dangerClass} onClick={() => { void runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>เก็บถาวร</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Signature assets ──────────────────────────────────────────────────────────
+export function SignaturePanel({ companyId, canApprove }: { companyId: string; canApprove: boolean }) {
+  const toast = useToast();
+  const [assets, setAssets] = useState<SignatureAssetSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [label, setLabel] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [preview, setPreview] = useState<{ original: string; derived: string } | null>(null);
+  const [derivedBlob, setDerivedBlob] = useState<Blob | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
+  const [rejectId, setRejectId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try { setAssets(await listSignatureAssets(companyId)); }
+    catch (e) { setError(err(e)); }
+    finally { setLoading(false); }
+  }, [companyId]);
+  useEffect(() => { void load(); }, [load]);
+
+  const buildPreview = async () => {
+    const file = fileRef.current?.files?.[0];
+    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น (PNG/JPEG)'); return; }
+    try { assertAllowedUploadFile(file, 'image'); }
+    catch (cause) { setActionError(err(cause)); return; }
+    setActionError(null);
+    try {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('อ่านรูปไม่สำเร็จ')); image.src = url; });
+      const canvas = canvasRef.current ?? document.createElement('canvas');
+      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+      const ctx2d = canvas.getContext('2d');
+      if (!ctx2d) throw new Error('CANVAS_UNSUPPORTED');
+      ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+      ctx2d.drawImage(image, 0, 0);
+      const cleaned = removeLightBackground(ctx2d.getImageData(0, 0, canvas.width, canvas.height));
+      ctx2d.putImageData(cleaned, 0, 0);
+      const derivedUrl = canvas.toDataURL('image/png');
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      setDerivedBlob(blob);
+      setPreview({ original: url, derived: derivedUrl });
+    } catch (cause) {
+      setActionError(uploadErrorMessage(cause));
+    }
+  };
+
+  const submit = async (withDerived: boolean) => {
+    const file = fileRef.current?.files?.[0];
+    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
+    const forbidden = findForbiddenChars(label);
+    if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
+    setSaving(true); setActionError(null);
+    try {
+      const intent = await initSignatureUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size });
+      await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+      const asset = await createSignatureAsset(companyId, { attachmentId: intent.attachmentId, label: label.trim() || undefined, byteSize: file.size });
+      if (withDerived && derivedBlob) {
+        const derivedIntent = await initSignatureUpload(companyId, { originalFileName: `derived-${file.name.replace(/\.[a-z]+$/i, '')}.png`, mimeType: 'image/png', byteSize: derivedBlob.size });
+        await uploadReceiptFile(
+          derivedIntent.uploadUrl,
+          derivedIntent.uploadMethod,
+          new File([derivedBlob], 'derived.png', { type: 'image/png' }),
+          derivedIntent.uploadHeaders,
+        );
+        await setSignatureDerivedAsset(companyId, asset.id, { attachmentId: derivedIntent.attachmentId, byteSize: derivedBlob.size });
+      }
+      setLabel(''); setFileName(''); setPreview(null); setDerivedBlob(null);
+      if (fileRef.current) fileRef.current.value = '';
+      await load();
+      setShowUpload(false);
+      toast.success('อัปโหลดลายเซ็นเรียบร้อยแล้ว');
+    } catch (e) { setActionError(err(e)); }
+    finally { setSaving(false); }
+  };
+
+  const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
+    setActionError(null);
+    try { await fn(); await load(); if (successMessage) toast.success(successMessage); }
+    catch (e) { setActionError(err(e)); }
+  };
+
+  const pending = assets.filter((a) => a.status === 'PENDING_OWNER_APPROVAL');
+  const others = assets.filter((a) => a.status !== 'PENDING_OWNER_APPROVAL');
+
+  return (
+    <div className="space-y-4">
+      <HowItWorks title="ลายเซ็นและตราประทับทำงานอย่างไร" steps={['อัปโหลดรูปลายเซ็น/ตราประทับ (ระบบลบพื้นหลังให้)', 'เจ้าของกิจการอนุมัติก่อนใช้งาน', 'ประทับลงเอกสารค่าใช้จ่ายจากหน้ารีวิว']} />
+      {actionError && <ErrorBanner message={actionError} />}
+      <StateBanner error={error} />
+
+      {!error && (
+        <div className="space-y-4">
+          <div className="space-y-4">
+            {pending.length > 0 && (
+              <MangmeeCard className="border-warning-100 bg-warning-50 p-4">
+                <div className="text-sm font-bold text-warning-700">รอเจ้าของกิจการอนุมัติ ({pending.length})</div>
+                <div className="mt-3 space-y-2">
+                  {pending.map((a) => (
+                    <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warning-100 bg-white px-4 py-3 text-sm">
+                      <div>
+                        <span className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</span>
+                        <span className="ml-2 text-xs text-gray-500">ส่งจาก {a.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(a.createdAt)}</span>
+                      </div>
+                      {canApprove && (
+                        <div className="flex gap-2">
+                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว')}>อนุมัติ</button>
+                          <button className="mangmee-btn mangmee-btn-danger h-9 px-3 text-xs" onClick={() => { setRejectId(a.id); setRejectReason(''); }}>ปฏิเสธ</button>
+                        </div>
+                      )}
+                      {canApprove && rejectId === a.id && (
+                        <div className="flex basis-full gap-2 pt-2">
+                          <input className={cx(inputClass, 'h-9')} placeholder="เหตุผลการปฏิเสธ" value={rejectReason} onChange={(e) => setRejectReason(stripDisallowed(e.target.value))} />
+                          <button className={cx(ghostClass, 'h-9')} onClick={() => doAction(async () => {
+                            const forbidden = findForbiddenChars(rejectReason);
+                            if (forbidden.length > 0) throw new Error(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`);
+                            await rejectSignatureAsset(companyId, a.id, rejectReason.trim()); setRejectId(null);
+                          }, 'ปฏิเสธลายเซ็นเรียบร้อยแล้ว')} disabled={!rejectReason.trim()}>ยืนยันปฏิเสธ</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </MangmeeCard>
+            )}
+
+            <MangmeeCard className="overflow-hidden">
+              <div className="mangmee-card-header flex items-center justify-between gap-3 text-sm font-bold text-gray-800">
+                <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-[9px]" style={{ background: '#F4EBFF', color: '#6941C6' }}>{ICON.signature}</span>ลายเซ็นทั้งหมด</span>
+                <button className={btnClass} onClick={() => { setActionError(null); setShowUpload(true); }}>อัปโหลดลายเซ็นใหม่</button>
+              </div>
+              {loading ? <p className="p-6 text-sm text-gray-500">กำลังโหลด…</p> : (
+                <div className="overflow-x-auto">
+                  <table className="mangmee-table">
+                    <thead><tr>{['ลายเซ็น', 'สถานะ', 'ช่องทาง', 'อนุมัติเมื่อ', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'สถานะ' || h === 'ช่องทาง' || h === 'อนุมัติเมื่อ') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {others.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-gray-500">ยังไม่มีลายเซ็น</td></tr>}
+                      {others.map((a) => (
+                        <tr key={a.id} className={a.status === 'ARCHIVED' ? 'opacity-60' : ''}>
+                          <td className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}{a.derivedAttachmentId && <span className="ml-2 text-xs font-normal text-brand-600">(พื้นหลังโปร่งใส)</span>}</td>
+                          <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
+                          <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
+                          <td className="whitespace-nowrap text-xs text-gray-500">{a.approvedAt ? dateShort(a.approvedAt) : '-'}</td>
+                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว')}>{ICON.trash}</IconBtn>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </MangmeeCard>
+          </div>
+
+          <Modal open={showUpload} title="อัปโหลดลายเซ็นใหม่" size="md" onClose={() => { if (!saving) setShowUpload(false); }}>
+            {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}
+            <div className="mt-0.5 mb-3 text-sm text-gray-500">ต้องได้รับอนุมัติจากเจ้าของก่อนใช้งาน · การประทับทำจากหน้ารีวิวค่าใช้จ่าย</div>
+            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 hover:border-brand-300 hover:bg-brand-25">
+              <span className="text-2xl">✍️</span>
+              {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : 'เลือกรูปลายเซ็น (PNG/JPEG)'}
+              <input ref={fileRef} type="file" accept={IMAGE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => { setPreview(null); setDerivedBlob(null); setFileName(e.target.files?.[0]?.name ?? ''); }} />
+            </label>
+            <input className={cx(inputClass, 'mt-3')} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className={ghostClass} onClick={buildPreview} disabled={saving}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
+              <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังส่ง…' : derivedBlob ? 'ส่งขออนุมัติ (พร้อมไฟล์โปร่งใส)' : 'ส่งขออนุมัติ'}</button>
+            </div>
+            {preview && (
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div>
+                  <p className="mb-1 text-xs text-gray-500">ต้นฉบับ</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={preview.original} alt="original signature" className="max-h-32 rounded-lg border bg-white" />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs text-gray-500">พื้นหลังโปร่งใส</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={preview.derived} alt="derived signature" className="max-h-32 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} />
+                </div>
+              </div>
+            )}
+            <canvas ref={canvasRef} className="hidden" />
+          </Modal>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Accountant shared evidence + export package ───────────────────────────────
+export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedger, onOpenExpense }: {
+  companyId: string;
+  canExport: boolean;
+  canReadLedger: boolean;
+  canPostLedger: boolean;
+  onOpenExpense: (expenseId: string) => void;
+}) {
+  const toast = useToast();
+  // Company-level screen with no single document date, so the policy is read for today.
+  const showsTax = showsTaxCapture(useExpenseCapturePolicy(companyId).mode);
+  const [view, setView] = useState<SharedEvidenceView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  // Menu-scoped like the expense list's period: opening an expense from a folder and coming back
+  // keeps the folder. '' means "all months" and has to round-trip as a real stored value.
+  const [dateField, setDateField] = useMenuFilterState<'uploadedAt' | 'expenseDate'>('expenses.evidence.dateField', () => 'uploadedAt');
+  const [yearMonth, setYearMonth] = useMenuFilterState('expenses.evidence.yearMonth', () => '');
+  const [documentStatus, setDocumentStatus] = useState('CONFIRMED');
+  const [taxEvidenceStatus, setTaxEvidenceStatus] = useState('');
+  const [sourceDocumentType, setSourceDocumentType] = useState('');
+  // flagFilter replaces the old attentionOnly checkbox: 'attention' is one of its chips, and the
+  // other chips narrow to a specific problem. postingStatus stays a separate dimension.
+  const [flagFilter, setFlagFilter] = useState<EvidenceFlagKey | 'all' | 'attention'>('all');
+  const [postingStatus, setPostingStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [folderPage, setFolderPage] = useState(1);
+  const [packageResult, setPackageResult] = useState<AccountantPackageResult | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [confirmExport, setConfirmExport] = useState(false);
+  const [postingExpenseId, setPostingExpenseId] = useState<string | null>(null);
+  const [backfillPreview, setBackfillPreview] = useState<ExpenseBackfillPreview | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      setView(await getSharedEvidence(companyId, {
+        dateField,
+        status: documentStatus,
+        ...(yearMonth ? { yearMonth } : {}),
+        ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
+        ...(sourceDocumentType ? { sourceDocumentType } : {}),
+        ...(postingStatus ? { postingStatus } : {}),
+      }));
+    } catch (e) { setError(err(e)); }
+    finally { setLoading(false); }
+  }, [companyId, dateField, documentStatus, yearMonth, taxEvidenceStatus, sourceDocumentType, postingStatus]);
+  useEffect(() => { void load(); }, [load]);
+
+  const exportPackage = async () => {
+    setConfirmExport(false);
+    setExporting(true); setError(null);
+    try {
+      const result = await createAccountantPackage(companyId, {
+        dateField,
+        status: documentStatus,
+        // ponytail: this panel is the accounting-office view — always the full column set.
+        columnSet: 'full',
+        ...(yearMonth ? { yearMonth } : {}),
+        ...(taxEvidenceStatus ? { taxEvidenceStatus } : {}),
+        ...(sourceDocumentType ? { sourceDocumentType } : {}),
+        ...(postingStatus ? { postingStatus } : {}),
+      });
+      // Same guard as the list page (ebed6dfb): a header-only workbook reads as a broken export.
+      if (result.rowCount === 0) { toast.warning('ไม่มีรายการตามตัวกรองในช่วงนี้ จึงยังส่งออกไม่ได้'); return; }
+      setPackageResult(result);
+      downloadIndexXlsx(result, `expense-index-${yearMonth || 'all'}.xlsx`);
+    } catch (e) { setError(err(e)); }
+    finally { setExporting(false); }
+  };
+
+  const postExpense = async (
+    expenseId: string,
+    sourceType: 'expense.record' | 'expense.payment',
+  ) => {
+    setPostingExpenseId(expenseId); setError(null);
+    try {
+      await generateSourceJournal(companyId, sourceType, expenseId);
+      await load();
+      toast.success('สร้างสมุดรายวันเรียบร้อยแล้ว');
+    } catch (e) { setError(err(e)); }
+    finally { setPostingExpenseId(null); }
+  };
+
+  const previewHistoricalBackfill = async () => {
+    setBackfillBusy(true); setError(null); setBackfillMessage(null);
+    try {
+      setBackfillPreview(await previewExpenseBackfill(companyId));
+    } catch (e) { setError(err(e)); }
+    finally { setBackfillBusy(false); }
+  };
+
+  const confirmHistoricalBackfill = async () => {
+    if (!backfillPreview) return;
+    setBackfillBusy(true); setError(null);
+    try {
+      const result = await runExpenseBackfill(companyId, { confirmed: true, limit: 50 });
+      setBackfillMessage(`ลงบัญชีย้อนหลังสำเร็จ ${result.posted} รายการ · ไม่สำเร็จ ${result.failed} · คงเหลือที่พร้อมลง ${result.remaining} · รอตรวจโดยนักบัญชี ${result.skipped}`);
+      setBackfillPreview(null);
+      await load();
+    } catch (e) { setError(err(e)); }
+    finally { setBackfillBusy(false); }
+  };
+
+  const downloadManifest = () => {
+    if (!packageResult) return;
+    const blob = new Blob([JSON.stringify(packageResult.evidenceManifest, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'evidence_manifest.json';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const rows = view?.rows ?? [];
+  const total = rows.reduce((s, r) => s + Number(r.grandTotalAmount || 0), 0);
+  const summary = summarizeEvidenceRows(rows);
+  const flagSummary = summarizeEvidenceFlags(rows);
+  const visibleRows = filterRowsByFlag(rows, flagFilter);
+  const filterOptions: Array<{ key: EvidenceFlagKey | 'all' | 'attention'; label: string; count: number }> = [
+    { key: 'all', label: 'ทั้งหมด', count: rows.length },
+    ...(summary.attention > 0 ? [{ key: 'attention' as const, label: '⚠ ต้องตรวจ', count: summary.attention }] : []),
+    ...flagSummary,
+  ];
+  const activeFilterCount = flagFilter === 'all'
+    ? rows.length
+    : flagFilter === 'attention'
+      ? summary.attention
+      : flagSummary.find((flag) => flag.key === flagFilter)?.count ?? 0;
+  const bounds = useMemo(() => pageBounds(visibleRows.length, page), [visibleRows.length, page]);
+  const pagedRows = useMemo(() => visibleRows.slice(bounds.start, bounds.end), [visibleRows, bounds]);
+  const folderBounds = useMemo(() => pageBounds(view?.folders.length ?? 0, folderPage, 12), [view?.folders.length, folderPage]);
+  const pagedFolders = useMemo(() => (view?.folders ?? []).slice(folderBounds.start, folderBounds.end), [view?.folders, folderBounds]);
+  useEffect(() => { if (flagFilter !== 'all' && activeFilterCount === 0) setFlagFilter('all'); }, [activeFilterCount, flagFilter]);
+  useEffect(() => { setPage(1); }, [yearMonth, documentStatus, taxEvidenceStatus, sourceDocumentType, postingStatus, flagFilter, view?.dateField]);
+  useEffect(() => { setFolderPage(1); }, [view?.dateField]);
+
+  return (
+    <div className="space-y-4">
+      {/* Step 2 used to promise "คลิกเปิดแก้ได้ทันที". This tab only ever lists CONFIRMED
+          documents, and CONFIRMED is locked for editing everywhere — API and UI alike — so the
+          promise was false for every row it was shown on. */}
+      <HowItWorks title="ส่งหลักฐานให้สำนักงานบัญชีอย่างไร" steps={['ยืนยันเอกสารในแท็บรายการ', 'คลิกแถวที่ขึ้น ⚠ เพื่อเปิดดูรายละเอียด (เอกสารที่ยืนยันแล้วแก้ไขไม่ได้)', 'ส่งออก Excel พร้อมรายการลิงก์ดาวน์โหลดหลักฐานให้สำนักงานบัญชี']} />
+      <StateBanner error={error} />
+      {backfillMessage && <InfoBanner message={backfillMessage} />}
+
+      {!error && (
+        <>
+          <div className="flex flex-wrap gap-3">
+            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="brand" icon={ICON.doc} label={EXPENSE_STATUS_LABELS[documentStatus as keyof typeof EXPENSE_STATUS_LABELS] ?? 'เอกสาร'} value={`${view?.total ?? 0} รายการ`} sub={yearMonth ? formatThaiMonth(yearMonth) : 'ทั้งหมด'} /></div>
+            <div className="min-w-[180px] flex-1"><MangmeeStatCard tone="indigo" icon={ICON.wallet} label="มูลค่าในหน้าที่โหลด" value={baht0(total)} sub={`${view?.rows.length ?? 0} รายการล่าสุด`} /></div>
+            {/* Toggles the same 'attention' state the filter chips below use, so the card and the
+                chip row can never disagree about what is currently filtered. */}
+            <button type="button" aria-pressed={flagFilter === 'attention'}
+              onClick={() => setFlagFilter((current) => (current === 'attention' ? 'all' : 'attention'))}
+              className={cx('min-w-[180px] flex-1 rounded-2xl text-left', flagFilter === 'attention' && 'ring-2 ring-warning-500 ring-offset-2')}>
+              <MangmeeStatCard tone="amber" icon="⚠" label="ต้องตรวจเพิ่ม" value={`${summary.attention} รายการ`} sub="คลิกเพื่อดูเฉพาะรายการที่ต้องตรวจ" />
+            </button>
+          </div>
+
+          <MangmeeCard className="flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+            <div>
+              <div className="mb-1 text-xs font-semibold text-gray-600">เกณฑ์วันที่</div>
+              <div className="mangmee-segmented">
+                <button className={cx('mangmee-tab', dateField === 'uploadedAt' && 'mangmee-tab-active')} onClick={() => { setDateField('uploadedAt'); setYearMonth(''); }}>วันที่ส่งเข้า</button>
+                <button className={cx('mangmee-tab', dateField === 'expenseDate' && 'mangmee-tab-active')} onClick={() => { setDateField('expenseDate'); setYearMonth(''); }}>วันที่เอกสาร</button>
+              </div>
+            </div>
+            <label>
+              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะเอกสาร</span>
+              <ThemedSelect className={cx(inputClass, 'w-auto')} value={documentStatus} onChange={(e) => setDocumentStatus(e.target.value)}>
+                <option value="CONFIRMED">{EXPENSE_STATUS_LABELS.CONFIRMED}</option>
+                <option value="VOIDED">{EXPENSE_STATUS_LABELS.VOIDED}</option>
+              </ThemedSelect>
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-semibold text-gray-600">ประเภทเอกสาร</span>
+              <ThemedSelect className={cx(inputClass, 'w-auto')} value={sourceDocumentType} onChange={(e) => setSourceDocumentType(e.target.value)}>
+                <option value="">ทุกประเภทเอกสาร</option>
+                {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
+              </ThemedSelect>
+            </label>
+            <label>
+              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะลงบัญชี</span>
+              <ThemedSelect className={cx(inputClass, 'w-auto')} value={postingStatus} onChange={(e) => setPostingStatus(e.target.value)}>
+                <option value="">ทุกสถานะลงบัญชี</option>
+                {Object.entries(POSTING_STATUS_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
+              </ThemedSelect>
+            </label>
+            {showsTax && <label>
+              <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะหลักฐานภาษี</span>
+              <ThemedSelect className={cx(inputClass, 'w-auto')} value={taxEvidenceStatus} onChange={(e) => setTaxEvidenceStatus(e.target.value)}>
+                <option value="">ทุกสถานะหลักฐานภาษี</option>
+                {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
+              </ThemedSelect>
+            </label>}
+            {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
+            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy}>{backfillBusy ? 'กำลังตรวจ…' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
+            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting}>{exporting ? 'กำลังสร้าง…' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
+          </MangmeeCard>
+
+          {/* Themed confirm instead of window.confirm(): the browser dialog ignored the app theme. */}
+          <Modal
+            open={confirmExport}
+            title="ส่งออกชุดเอกสารให้บัญชี"
+            size="sm"
+            onClose={() => setConfirmExport(false)}
+            footer={
+              <>
+                <button className={ghostClass} onClick={() => setConfirmExport(false)}>ยกเลิก</button>
+                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting}>{exporting ? 'กำลังสร้าง…' : 'ยืนยันส่งออก'}</button>
+              </>
+            }
+          >
+            <div className="space-y-3 text-sm">
+              <p className="text-gray-600">ระบบจะส่งออกเอกสารตามตัวกรองปัจจุบัน</p>
+              {summary.attention > 0 ? (
+                <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-warning-800">
+                  ⚠ พบ {summary.attention} รายการที่มีคำเตือนในหน้าที่โหลด ระบบจะรวมรายการเหล่านี้ในชุดส่งออกด้วย
+                </div>
+              ) : (
+                <p className="text-gray-500">หากมีรายการที่มีคำเตือน ระบบจะรวมไว้ในชุดส่งออกด้วย</p>
+              )}
+            </div>
+          </Modal>
+
+          {loading && !view ? <p className="text-sm text-gray-500">กำลังโหลด…</p> : view && (
+            <div className={cx('grid grid-cols-1 gap-4 transition-opacity 2xl:grid-cols-[220px_1fr]', loading && 'pointer-events-none opacity-50')}>
+              <MangmeeCard className="space-y-1 p-3">
+                <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-gray-700"><span className="text-gray-400">{ICON.folder}</span>โฟลเดอร์ ({view.dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'})</div>
+                <FolderBtn active={yearMonth === ''} label="ทั้งหมด" onClick={() => setYearMonth('')} />
+                {pagedFolders.map((folder) => <FolderBtn key={folder.yearMonth} active={yearMonth === folder.yearMonth} label={formatThaiMonth(folder.yearMonth)} count={folder.expenseCount} incomplete={folder.evidenceCount < folder.expenseCount} onClick={() => setYearMonth(folder.yearMonth)} />)}
+                {view.folders.length === 0 && (
+                  <div className="px-2 py-6 text-center">
+                    <div className="text-gray-300">{ICON.folder}</div>
+                    <p className="mt-1 text-xs text-gray-400">ยังไม่มีเอกสารในช่วงนี้</p>
+                  </div>
+                )}
+                {folderBounds.totalPages > 1 && (
+                  <div className="flex items-center justify-between gap-2 px-1 pt-2 text-xs text-gray-500">
+                    <button type="button" aria-label="หน้าก่อนหน้า" className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40"
+                      disabled={folderBounds.page <= 1} onClick={() => setFolderPage(folderBounds.page - 1)}>‹</button>
+                    <span className="tabular-nums">{folderBounds.page} / {folderBounds.totalPages}</span>
+                    <button type="button" aria-label="หน้าถัดไป" className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40"
+                      disabled={folderBounds.page >= folderBounds.totalPages} onClick={() => setFolderPage(folderBounds.page + 1)}>›</button>
+                  </div>
+                )}
+              </MangmeeCard>
+
+              <MangmeeCard className="overflow-hidden">
+                <div className="flex w-full items-center gap-2 overflow-x-auto border-b border-gray-100 p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
+                  {filterOptions.map((filter) => (
+                    <button
+                      key={filter.key}
+                      type="button"
+                      aria-pressed={flagFilter === filter.key}
+                      onClick={() => setFlagFilter((current) => current === filter.key && filter.key !== 'all' ? 'all' : filter.key)}
+                      className={cx(
+                        'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                        flagFilter === filter.key
+                          ? 'border-brand-400 bg-brand-50 text-brand-700'
+                          : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
+                      )}
+                    >
+                      {filter.label}
+                      <span className={cx(
+                        'inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold tabular-nums',
+                        flagFilter === filter.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500',
+                      )}>{filter.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="overflow-x-auto">
+                  {/* เลขที่ค่าใช้จ่าย/ประเภท fold into เอกสาร, ส่งเข้า folds into วันที่, and ไฟล์ is
+                      covered by the ไม่มีไฟล์ chip — 12 columns down to 9 without losing a signal. */}
+                  <table className="mangmee-table [&_td]:!px-3 [&_th]:!px-3">
+                    {/* The หลักฐานภาษี header and its cell below are dropped together — dropping one
+                        alone silently shifts every column right of it. */}
+                    <thead><tr>{['สถานะ', 'เอกสาร', 'ลงบัญชี', 'วันที่', 'ผู้ขาย', 'ยอดรวม', ...(showsTax ? ['หลักฐานภาษี'] : []), 'สิ่งที่ต้องแก้', ''].map((heading) => <th key={heading} className={cx(
+                      '!text-[13px]',
+                      heading !== 'สิ่งที่ต้องแก้' && 'whitespace-nowrap',
+                      heading === 'ยอดรวม' && 'whitespace-nowrap text-right tabular-nums',
+                      heading === '' && 'w-px whitespace-nowrap',
+                    )}>{heading}</th>)}</tr></thead>
+                    <tbody>
+                      {visibleRows.length === 0 && (
+                        <tr><td colSpan={showsTax ? 9 : 8}>
+                          <EmptyState
+                            title={flagFilter === 'attention' ? 'ไม่มีรายการที่ต้องตรวจ' : flagFilter === 'all' ? 'ไม่มีรายการ' : 'ไม่มีรายการที่ตรงกับตัวกรอง'}
+                            description={flagFilter === 'attention' ? 'ทุกรายการในช่วงนี้มีหลักฐานครบแล้ว' : flagFilter === 'all' ? 'ลองเลือกเดือนอื่น หรือปรับตัวกรองด้านบน' : 'ลองเลือกทั้งหมด หรือปรับตัวกรองด้านบน'}
+                          />
+                        </td></tr>
+                      )}
+                      {pagedRows.map((r) => {
+                        const flags = deriveEvidenceRowFlags(r);
+                        const rowState = evidenceRowState(flags);
+                        const actionFlags = flags.filter((flag) => flag.key === 'NO_FILE' || flag.key === 'NO_VENDOR' || flag.key === 'NO_CATEGORY');
+                        const amount = Number(r.grandTotalAmount);
+                        return (
+                        <tr
+                          key={r.expenseId}
+                          role="link"
+                          tabIndex={0}
+                          aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber ?? r.expenseId}`}
+                          className={cx(
+                            'cursor-pointer hover:bg-brand-25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-500',
+                            rowState === 'attention' && 'border-l-4 border-warning-500',
+                          )}
+                          onClick={() => onOpenExpense(r.expenseId)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault();
+                              onOpenExpense(r.expenseId);
+                            }
+                          }}
+                        >
+                          <td className="whitespace-nowrap"><MangmeeBadge tone={rowState === 'attention' ? 'amber' : 'brand'}>{rowState === 'attention' ? '⚠ ต้องตรวจ' : '✓ ครบถ้วน'}</MangmeeBadge></td>
+                          <td className="whitespace-nowrap">
+                            <div className={cx('text-xs font-bold tabular-nums', r.expenseNumber ? 'text-brand-700' : 'text-gray-400')}>{r.expenseNumber || 'รายการเดิม'}</div>
+                            <div className="mt-1 text-xs text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</div>
+                          </td>
+                          <td className="whitespace-nowrap text-xs" title={r.postingError ?? undefined}><MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : r.postingStatus === 'posting_error' ? 'danger' : r.postingStatus === 'pending' ? 'amber' : 'slate'}>{POSTING_STATUS_LABELS[r.postingStatus]}</MangmeeBadge></td>
+                          <td className="whitespace-nowrap text-xs">
+                            <div>{dateShort(r.expenseDate)}</div>
+                            <div className="mt-1 text-gray-500">ส่งเข้า {dateShort(r.uploadedAt)}</div>
+                          </td>
+                          <td className="whitespace-nowrap text-xs">{r.vendorNameSnapshot?.trim() || <span className="text-gray-400">—</span>}</td>
+                          <td className="whitespace-nowrap text-right text-xs font-semibold tabular-nums">{amount === 0 ? <span className="font-normal text-gray-400">—</span> : amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
+                          {showsTax && <td className="whitespace-nowrap text-xs" title={r.taxEvidenceReasonCode ? TAX_EVIDENCE_REASON_LABELS[r.taxEvidenceReasonCode] : undefined}><MangmeeBadge tone={TAX_EVIDENCE_TONE[r.taxEvidenceStatus]}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, r.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge></td>}
+                          <td className="text-xs">
+                            {actionFlags.length > 0 && <div className="flex flex-wrap gap-1.5">{actionFlags.map((flag) => (
+                              <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
+                            ))}</div>}
+                          </td>
+                          <td className="w-px whitespace-nowrap text-xs">
+                            {canPostLedger && r.pendingPostingSourceType ? (
+                              <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId}
+                                onClick={(event) => { event.stopPropagation(); void postExpense(r.expenseId, r.pendingPostingSourceType!); }}>
+                                {postingExpenseId === r.expenseId ? 'กำลังลง…' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
+                              </button>
+                            ) : canReadLedger && r.journalEntryId ? (
+                              <a className="font-semibold text-brand-700 hover:underline"
+                                href={`/companies/${companyId}/journal?sourceId=${encodeURIComponent(r.expenseId)}`}
+                                onClick={(event) => event.stopPropagation()}>
+                                {r.journalEntryNumber ?? 'ดู JV'}
+                              </a>
+                            ) : <span className="text-gray-400">›</span>}
+                          </td>
+                        </tr>
+                      );})}
+                    </tbody>
+                  </table>
+                </div>
+                {visibleRows.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-gray-500">
+                    <div className="tabular-nums">แสดง {bounds.from}-{bounds.to} จาก {visibleRows.length} รายการ</div>
+                    {bounds.totalPages > 1 && (
+                      <div className="flex items-center gap-2">
+                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                          disabled={bounds.page <= 1} onClick={() => setPage(bounds.page - 1)}>ก่อนหน้า</button>
+                        <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">{bounds.page} / {bounds.totalPages}</span>
+                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                          disabled={bounds.page >= bounds.totalPages} onClick={() => setPage(bounds.page + 1)}>ถัดไป</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </MangmeeCard>
+            </div>
+          )}
+
+          {packageResult && (
+            <MangmeeCard className="border-brand-100 bg-brand-25 p-4 text-sm">
+              <p className="font-semibold text-brand-700">✓ สร้างชุดเอกสารแล้ว: {packageResult.rowCount} รายการ, ไฟล์หลักฐาน {packageResult.evidenceManifest.length} ไฟล์</p>
+              {packageResult.truncated && <p className="mt-1 font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ กรุณาแบ่งช่วงเดือนหรือปรับตัวกรองแล้วส่งออกอีกครั้ง</p>}
+              <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · ไฟล์รายการหลักฐานมีลิงก์ดาวน์โหลดที่ตรวจสิทธิ์รายไฟล์และมีวันหมดอายุ ({formatThaiDateTime(packageResult.generatedAt)})</p>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-gray-500">รายการหลักฐาน (JSON) — ลิงก์ดาวน์โหลดไฟล์แนบทุกไฟล์ มีวันหมดอายุ</span>
+                <button className={ghostClass} onClick={downloadManifest}>ดาวน์โหลดรายการหลักฐาน (JSON)</button>
+              </div>
+            </MangmeeCard>
+          )}
+
+          <Modal
+            open={backfillPreview !== null}
+            title="ตรวจรายการย้อนหลัง ก่อนลงบัญชี"
+            size="md"
+            onClose={() => { if (!backfillBusy) setBackfillPreview(null); }}
+            footer={backfillPreview ? (
+              <>
+                <button className={ghostClass} onClick={() => setBackfillPreview(null)} disabled={backfillBusy}>ยกเลิก</button>
+                <button className={btnClass} onClick={() => void confirmHistoricalBackfill()} disabled={backfillBusy || backfillPreview.eligibleCount === 0}>
+                  {backfillBusy ? 'กำลังลงบัญชี…' : `ยืนยันลงบัญชี ${Math.min(backfillPreview.eligibleCount, 50)} รายการ`}
+                </button>
+              </>
+            ) : null}
+          >
+            {backfillPreview && (
+              <div className="space-y-4 text-sm">
+                <p className="text-gray-600">เฉพาะเอกสารก่อนเปิด Auto-post เมื่อ {formatThaiDateTime(backfillPreview.activationAt)} ระบบจะไม่แตะรายการที่มีคำเตือน</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <MangmeeStatCard tone="brand" icon="✓" label="พร้อมลงบัญชี" value={`${backfillPreview.eligibleCount} รายการ`} sub="ทำครั้งละไม่เกิน 50 รายการ" />
+                  <MangmeeStatCard tone="amber" icon="⚠" label="รอนักบัญชีตรวจ" value={`${backfillPreview.manualReviewCount} รายการ`} sub="ไม่ถูก backfill" />
+                  <MangmeeStatCard tone="indigo" icon={ICON.doc} label="รอดำเนินการทั้งหมด" value={`${backfillPreview.totalHistoricalPending} รายการ`} sub="ก่อนวันเปิดใช้" />
+                </div>
+                {backfillPreview.manualReviewCount > 0 && (
+                  <div className="rounded-lg border border-warning-100 bg-warning-50 p-3 text-xs text-warning-800">
+                    {Object.entries(backfillPreview.blockerCounts)
+                      .filter(([, count]) => count > 0)
+                      .map(([blocker, count]) => `${BACKFILL_BLOCKER_LABELS[blocker as ExpenseBackfillBlocker]} ${count}`)
+                      .join(' · ')}
+                  </div>
+                )}
+                {backfillPreview.samples.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 font-semibold text-gray-800">ตัวอย่างรายการเก่า</h4>
+                    <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200">
+                      {backfillPreview.samples.map((sample) => (
+                        <div key={sample.expenseId} className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-3 py-2 last:border-b-0">
+                          <div>
+                            <div className="font-semibold text-gray-800">{sample.expenseNumber ?? sample.expenseId}</div>
+                            <div className="text-xs text-gray-500">{sample.vendorNameSnapshot?.trim() || 'ไม่ระบุผู้ขาย'} · {dateShort(sample.confirmedAt)}</div>
+                          </div>
+                          <MangmeeBadge tone={sample.blockers.length > 0 ? 'amber' : 'brand'}>
+                            {sample.blockers.length > 0 ? sample.blockers.map((blocker) => BACKFILL_BLOCKER_LABELS[blocker]).join(', ') : 'พร้อมลงบัญชี'}
+                          </MangmeeBadge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs font-semibold text-gray-600">การกด “ยืนยันลงบัญชี” จะผ่านกติกาผังบัญชี ภาษี และงวดบัญชีเดิมทุกข้อ รายการที่ไม่ผ่านจะค้างให้แก้ไขและลองใหม่</p>
+              </div>
+            )}
+          </Modal>
+        </>
+      )}
+    </div>
+  );
+}
+
+function FolderBtn({ active, label, count, incomplete, onClick }: { active: boolean; label: ReactNode; count?: number; incomplete?: boolean; onClick: () => void }) {
+  return (
+    <button className={cx('flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
+      <span>{label}</span>
+      {count != null && <span className="text-xs text-gray-400">{count} รายการ {incomplete && <span className="text-warning-700" title="บางรายการไม่มีไฟล์หลักฐาน">⚠</span>}</span>}
+    </button>
+  );
+}

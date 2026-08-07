@@ -1,0 +1,15 @@
+{
+  "name": "@watchdog-bms/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./theme.css": "./generated/web/theme.css"
+  },
+  "scripts": {
+    "build": "node scripts/build-tokens.mjs",
+    "lint": "node scripts/build-tokens.mjs --check",
+    "test": "node --test",
+    "typecheck": "node scripts/build-tokens.mjs --check"
+  }
+}

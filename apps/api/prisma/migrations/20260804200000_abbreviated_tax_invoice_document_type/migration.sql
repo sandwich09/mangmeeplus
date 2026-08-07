@@ -1,0 +1,15 @@
+-- Spec §19h — ใบกำกับภาษีอย่างย่อ becomes its own source document type.
+--
+-- ADDITIVE ONLY. One enum value; no existing row is rewritten, no column is added, and no
+-- constraint is tightened, so rolling back to the previous build keeps reading and writing
+-- ExpenseRecord normally — nothing stored can hold the new value until the new build writes it.
+-- The statement is idempotent, so a re-run or a partially applied deploy heals instead of failing.
+--
+-- Deliberately NOT included: a backfill of existing TAX_INVOICE rows. An abbreviated tax invoice is
+-- not distinguishable from a full-form one by any stored column — the discriminator is printed on
+-- the attachment — so any UPDATE here would be a guess written over confirmed accounting records.
+-- Existing rows are reviewed instead, via the `inputVatClaimStatus` column added to the
+-- `expense.accountant_evidence` report in this change (§19h decision 4).
+--
+-- `ADD VALUE` cannot be used inside the transaction that adds it; nothing here writes the value.
+ALTER TYPE "SourceDocumentType" ADD VALUE IF NOT EXISTS 'ABBREVIATED_TAX_INVOICE' AFTER 'TAX_INVOICE';

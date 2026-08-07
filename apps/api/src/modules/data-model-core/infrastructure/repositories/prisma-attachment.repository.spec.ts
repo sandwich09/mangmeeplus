@@ -1,0 +1,173 @@
+import assert from 'node:assert/strict';
+import { describe, it, mock } from 'node:test';
+import { PrismaAttachmentRepository } from './prisma-attachment.repository';
+
+function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: object | null; linkedExpenseIds?: string[]; sourceEvidence?: object | null }) {
+  const expenseSubstituteReceiptEvidence = {
+    findFirst: mock.fn(async (args: any) => args.where.OR.some((filter: object) => 'paymentEvidenceAttachmentIds' in filter)
+      ? input?.snapshotEvidence ?? null
+      : input?.directEvidence ?? null),
+  };
+  const attachmentLink = {
+    findMany: mock.fn(async () => (input?.linkedExpenseIds ?? []).map((targetId) => ({ targetId }))),
+  };
+  const expenseRecord = {
+    findFirst: mock.fn(async () => input?.sourceEvidence ?? null),
+  };
+  const client = { expenseSubstituteReceiptEvidence, attachmentLink, expenseRecord };
+  return {
+    repo: new PrismaAttachmentRepository({ client } as any),
+    expenseSubstituteReceiptEvidence,
+    attachmentLink,
+    expenseRecord,
+  };
+}
+
+describe('PrismaAttachmentRepository substitute-evidence retention', () => {
+  it('retains certified, issued, and superseded artifacts and signatures', async () => {
+    const { repo, expenseSubstituteReceiptEvidence, attachmentLink } = makeRepo({ directEvidence: { id: 'evidence-1' } });
+
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-1' }), 'SUBSTITUTE_ARTIFACT');
+    const where = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])[0]?.arguments[0].where;
+    assert.deepEqual(where.status.in, ['PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED']);
+    assert.deepEqual(where.OR, [
+      { certifiedArtifactAttachmentId: 'att-1' },
+      { artifactAttachmentId: 'att-1' },
+      { payerSignatureAttachmentId: 'att-1' },
+      { approverSignatureAttachmentId: 'att-1' },
+    ]);
+    assert.equal((attachmentLink.findMany.mock.calls as any[]).length, 0);
+  });
+
+  it('retains original and supporting attachments linked to an expense with signed or issued evidence', async () => {
+    const { repo, expenseRecord } = makeRepo({ linkedExpenseIds: ['expense-1', 'expense-1'], sourceEvidence: { id: 'expense-1' } });
+
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-source' }), 'SUBSTITUTE_SOURCE');
+    const where = (expenseRecord.findFirst.mock.calls as any[])[0]?.arguments[0].where;
+    assert.deepEqual(where.OR, [
+      { primaryAttachmentId: 'att-source' },
+      { id: { in: ['expense-1'] } },
+    ]);
+    assert.deepEqual(where.substituteReceiptEvidences.some.status.in, ['PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED']);
+  });
+
+  it('retains payment and supporting attachments captured in the immutable evidence snapshot', async () => {
+    const { repo, expenseSubstituteReceiptEvidence, attachmentLink } = makeRepo({ snapshotEvidence: { id: 'evidence-1' } });
+
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-payment' }), 'SUBSTITUTE_SOURCE');
+    const secondWhere = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])[1]?.arguments[0].where;
+    assert.deepEqual(secondWhere.OR, [
+      { paymentEvidenceAttachmentIds: { array_contains: ['att-payment'] } },
+      { supportingAttachmentIds: { array_contains: ['att-payment'] } },
+    ]);
+    assert.equal((attachmentLink.findMany.mock.calls as any[]).length, 0);
+  });
+
+  it('allows deletion when no retained substitute evidence references the attachment', async () => {
+    const { repo } = makeRepo({ linkedExpenseIds: ['expense-1'] });
+
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-unrelated' }), null);
+  });
+});
+
+describe('PrismaAttachmentRepository.markDeleted', () => {
+  it('uses the caller transaction for retention checks and soft-delete', async () => {
+    const now = new Date('2026-07-29T00:00:00Z');
+    const tx = {
+      $executeRaw: mock.fn(async () => 1),
+      expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
+      attachmentLink: { findMany: mock.fn(async () => []) },
+      expenseRecord: { findFirst: mock.fn(async () => null) },
+      attachmentObject: {
+        updateMany: mock.fn(async () => ({ count: 1 })),
+        findFirstOrThrow: mock.fn(async () => ({
+          id: 'att-1',
+          companyId: 'co-1',
+          originalFileName: 'receipt.pdf',
+          status: 'DELETED',
+          createdAt: now,
+          updatedAt: now,
+        })),
+      },
+    };
+    const client = {
+      $transaction: mock.fn(async () => {
+        throw new Error('must not open a nested transaction');
+      }),
+    };
+    const repo = new PrismaAttachmentRepository({ client } as any);
+
+    const result = await repo.markDeleted({ companyId: 'co-1', id: 'att-1' }, tx as any);
+
+    assert.equal(client.$transaction.mock.callCount(), 0);
+    assert.equal(tx.$executeRaw.mock.callCount(), 1);
+    assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 2);
+    assert.equal(tx.attachmentLink.findMany.mock.callCount(), 1);
+    assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
+      id: 'att-1',
+      companyId: 'co-1',
+      status: { not: 'DELETED' },
+    });
+    assert.equal(result.status, 'DELETED');
+  });
+});
+
+describe('PrismaAttachmentRepository.linkToTarget', () => {
+  function setup(input: { attachment?: object | null; target?: object | null } = {}) {
+    const attachmentObject = { findFirst: mock.fn(async () => input.attachment === undefined ? { id: 'att-1' } : input.attachment) };
+    const expenseRecord = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'expense-1' } : input.target) };
+    const attachmentLink = {
+      create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
+    };
+    const tx = { attachmentObject, expenseRecord, attachmentLink };
+    const client = { $transaction: (fn: (value: typeof tx) => unknown) => fn(tx) };
+    return { repo: new PrismaAttachmentRepository({ client } as any), attachmentObject, expenseRecord, attachmentLink };
+  }
+
+  it('validates ACTIVE attachment, tenant target, and owner inside one transaction', async () => {
+    const { repo, attachmentObject, expenseRecord, attachmentLink } = setup();
+    await repo.linkToTarget({
+      companyId: 'co-1',
+      attachmentId: 'att-1',
+      targetType: 'expense.record',
+      targetId: 'expense-1',
+      purpose: 'expense.receipt.supporting',
+      linkedByUserId: 'user-1',
+      targetOwnerUserId: 'user-1',
+    });
+    assert.deepEqual((attachmentObject.findFirst.mock.calls as any[])[0]?.arguments[0].where, {
+      id: 'att-1', companyId: 'co-1', status: 'ACTIVE',
+    });
+    assert.deepEqual((expenseRecord.findFirst.mock.calls as any[])[0]?.arguments[0].where, {
+      id: 'expense-1', companyId: 'co-1', createdByUserId: 'user-1',
+    });
+    assert.equal(attachmentLink.create.mock.callCount(), 1);
+  });
+
+  it('does not create a link when the target is outside the tenant or owner scope', async () => {
+    const { repo, attachmentLink } = setup({ target: null });
+    await assert.rejects(() => repo.linkToTarget({
+      companyId: 'co-1',
+      attachmentId: 'att-1',
+      targetType: 'expense.record',
+      targetId: 'expense-other',
+      purpose: 'expense.receipt.supporting',
+      linkedByUserId: 'user-1',
+    }), /not found/i);
+    assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+
+  it('revalidates the target-purpose pair inside the authoritative transaction', async () => {
+    const { repo, expenseRecord, attachmentLink } = setup();
+    await assert.rejects(() => repo.linkToTarget({
+      companyId: 'co-1',
+      attachmentId: 'att-1',
+      targetType: 'expense.record',
+      targetId: 'expense-1',
+      purpose: 'crm.profile.photo',
+      linkedByUserId: 'user-1',
+    }), /target or purpose/i);
+    assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
+    assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+});

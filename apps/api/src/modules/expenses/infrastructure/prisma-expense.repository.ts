@@ -1,0 +1,2158 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { PrismaService } from '../../../common/database/prisma.service';
+import type { Prisma } from '../../../generated/prisma/client';
+import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
+import type {
+  ExpenseRecord, ExpenseRecordWithRelations, CreateExpenseRecordInput,
+  UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
+  SubstituteReceiptPolicyRecord,
+} from '../domain/models/expense.model';
+import type {
+  ListExpensesFilter, ExpenseCategorySummary, DuplicateCandidateSummary,
+  CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
+  SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
+} from '@watchdog-bms/contracts';
+import { civilDayRangeToUtc, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
+import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
+
+export type ExpenseDb = Prisma.TransactionClient | PrismaService['client'];
+type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & { approvalMode: SubstituteReceiptApprovalMode };
+
+const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
+const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
+
+
+type ExpenseTaxFinalizer = (input: {
+  db: any;
+  expense: ExpenseRecordWithRelations;
+}) => Promise<ExpenseLineInput[]>;
+
+export function expenseDecimalToString(value: { toString(): string } | null | undefined): string {
+  return value?.toString() ?? '0';
+}
+
+function mapExpense(r: any): ExpenseRecord {
+  return {
+    ...r,
+    journalEntryNumber: r.journalEntryNumber ?? null,
+    pendingPostingSourceType: r.pendingPostingSourceType ?? null,
+    subtotalAmount: r.subtotalAmount?.toString() ?? '0',
+    discountAmount: r.discountAmount?.toString() ?? '0',
+    taxableAmount: r.taxableAmount?.toString() ?? '0',
+    vatAmount: r.vatAmount?.toString() ?? '0',
+    whtAmount: r.whtAmount?.toString() ?? '0',
+    grandTotalAmount: expenseDecimalToString(r.grandTotalAmount),
+    netPayableAmount: r.netPayableAmount?.toString() ?? '0',
+    paidAmount: r.paidAmount?.toString() ?? '0',
+    outstandingAmount: r.outstandingAmount?.toString() ?? '0',
+    vendorSnapshotJson: r.vendorSnapshotJson ?? null,
+    aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
+    aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
+  };
+}
+
+function mapLine(l: any) {
+  const taxSnapshot = l.taxCodeDefinitionId || l.externalTaxCodeSnapshot ? {
+    taxCodeDefinitionId: l.taxCodeDefinitionId ?? null, externalTaxCode: l.externalTaxCodeSnapshot ?? null,
+    taxProfileKey: l.taxProfileKeySnapshot ?? null, taxProfileVersion: l.taxProfileVersionSnapshot ?? null,
+    roundingMode: l.roundingModeSnapshot ?? undefined, roundingScale: l.roundingScaleSnapshot ?? undefined,
+    taxAmountTolerance: l.taxAmountToleranceSnapshot?.toString(),
+    taxRegime: l.taxRegimeSnapshot ?? null, taxDirection: l.taxDirectionSnapshot ?? null,
+    taxTreatment: l.taxTreatmentSnapshot ?? null, taxContext: l.taxContextSnapshot ?? null,
+    taxRate: l.taxRateSnapshot?.toString() ?? '0', sourceCurrency: l.sourceCurrencySnapshot ?? 'THB',
+    taxCurrency: l.taxCurrencySnapshot ?? 'THB', exchangeRate: l.exchangeRateSnapshot?.toString() ?? '1',
+    exchangeRateSource: l.exchangeRateSourceSnapshot ?? 'FUNCTIONAL_CURRENCY', exchangeRateDate: l.exchangeRateDateSnapshot?.toISOString?.().slice(0, 10) ?? '',
+    taxBaseAmount: l.taxBaseAmount?.toString() ?? '0',
+    taxAmount: l.transactionTaxAmount?.toString() ?? '0', claimability: l.claimabilitySnapshot ?? 'NOT_APPLICABLE',
+    evidenceStatus: l.taxEvidenceReviewStatus ?? 'REVIEW_REQUIRED', accountRuleVersion: l.accountRuleVersionSnapshot ?? null,
+    reportRuleVersion: l.reportRuleVersionSnapshot ?? null,
+  } : undefined;
+  return {
+    id: l.id,
+    lineNumber: l.lineNumber,
+    description: l.description,
+    quantity: l.quantity?.toString() ?? '0',
+    unitPrice: l.unitPrice?.toString() ?? '0',
+    discountAmount: l.discountAmount?.toString() ?? '0',
+    taxableAmount: l.taxableAmount?.toString() ?? '0',
+    vatRate: l.vatRate?.toString() ?? null,
+    vatAmount: l.vatAmount?.toString() ?? '0',
+    whtRate: l.whtRate?.toString() ?? null,
+    whtAmount: l.whtAmount?.toString() ?? '0',
+    lineSubtotalAmount: l.lineSubtotalAmount?.toString() ?? '0',
+    lineTotalAmount: l.lineTotalAmount?.toString() ?? '0',
+    expenseCategoryId: l.expenseCategoryId ?? null,
+    accountHintKey: l.accountHintKey ?? null,
+    taxCategory: l.taxCategory ?? null,
+    sourceLineText: l.sourceLineText ?? null,
+    aiLineConfidence: l.aiLineConfidence ?? null,
+    reviewStatus: l.reviewStatus ?? 'REVIEWED',
+    taxSnapshot,
+    taxComponents: Array.isArray(l.taxComponentsJson) ? l.taxComponentsJson : undefined,
+  };
+}
+
+function isDomesticTaxSnapshot(snapshot: ExpenseLineInput['taxSnapshot']): boolean {
+  return snapshot?.taxContext === 'DOMESTIC_PURCHASE' && ['CLAIMABLE', 'PENDING_EVIDENCE'].includes(snapshot.claimability);
+}
+
+function expenseLineTaxSnapshotData(line: ExpenseLineInput) {
+  const { taxSnapshot, taxComponents } = line;
+  return {
+    taxCodeDefinitionId: taxSnapshot?.taxCodeDefinitionId ?? null,
+    externalTaxCodeSnapshot: taxSnapshot?.externalTaxCode ?? null,
+    taxProfileKeySnapshot: taxSnapshot?.taxProfileKey ?? null,
+    taxProfileVersionSnapshot: taxSnapshot?.taxProfileVersion ?? null,
+    roundingModeSnapshot: taxSnapshot?.roundingMode ?? null,
+    roundingScaleSnapshot: taxSnapshot?.roundingScale ?? null,
+    taxAmountToleranceSnapshot: taxSnapshot?.taxAmountTolerance ?? null,
+    taxRegimeSnapshot: taxSnapshot?.taxRegime ?? null,
+    taxDirectionSnapshot: taxSnapshot?.taxDirection ?? null,
+    taxTreatmentSnapshot: taxSnapshot?.taxTreatment ?? null,
+    taxContextSnapshot: taxSnapshot?.taxContext ?? null,
+    taxRateSnapshot: taxSnapshot?.taxRate ?? null,
+    sourceCurrencySnapshot: taxSnapshot?.sourceCurrency ?? null,
+    taxCurrencySnapshot: taxSnapshot?.taxCurrency ?? null,
+    exchangeRateSnapshot: taxSnapshot?.exchangeRate ?? null,
+    exchangeRateSourceSnapshot: taxSnapshot?.exchangeRateSource ?? null,
+    exchangeRateDateSnapshot: taxSnapshot?.exchangeRateDate ? new Date(taxSnapshot.exchangeRateDate) : null,
+    taxBaseAmount: taxSnapshot?.taxBaseAmount ?? null,
+    transactionTaxAmount: taxSnapshot?.taxAmount ?? null,
+    claimabilitySnapshot: taxSnapshot?.claimability ?? null,
+    accountRuleVersionSnapshot: taxSnapshot?.accountRuleVersion ?? null,
+    reportRuleVersionSnapshot: taxSnapshot?.reportRuleVersion ?? null,
+    taxEvidenceReviewStatus: taxSnapshot?.evidenceStatus ?? null,
+    taxComponentsJson: taxComponents ?? null,
+    accountAssignmentsJson: taxComponents?.flatMap((component) => component.accountAssignments) ?? null,
+  };
+}
+
+function mapSignatureAsset(s: any): SignatureAssetRecord {
+  return {
+    id: s.id,
+    companyId: s.companyId,
+    label: s.label ?? null,
+    status: s.status,
+    originalAttachmentId: s.originalAttachmentId,
+    derivedAttachmentId: s.derivedAttachmentId ?? null,
+    submittedByUserId: s.submittedByUserId,
+    submittedFromChannel: s.submittedFromChannel,
+    lineMessageId: s.lineMessageId ?? null,
+    approvedByUserId: s.approvedByUserId ?? null,
+    approvedAt: s.approvedAt ?? null,
+    rejectedByUserId: s.rejectedByUserId ?? null,
+    rejectedAt: s.rejectedAt ?? null,
+    rejectReason: s.rejectReason ?? null,
+    archivedAt: s.archivedAt ?? null,
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+  };
+}
+
+function mapSubstituteEvidence(row: any): SubstituteReceiptEvidenceRecord {
+  return {
+    ...row,
+    snapshotJson: row.snapshotJson ?? null,
+    paymentEvidenceAttachmentIds: Array.isArray(row.paymentEvidenceAttachmentIds) ? row.paymentEvidenceAttachmentIds : [],
+    supportingAttachmentIds: Array.isArray(row.supportingAttachmentIds) ? row.supportingAttachmentIds : [],
+  };
+}
+
+export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord): import('@watchdog-bms/contracts').SubstituteReceiptEvidenceSummary {
+  return {
+    id: row.id,
+    expenseId: row.expenseId,
+    version: row.version,
+    status: row.status,
+    documentNumber: row.documentNumber,
+    originalSourceDocumentType: row.originalSourceDocumentType,
+    reasonCode: row.reasonCode,
+    missingReceiptReason: row.missingReceiptReason,
+    payeeName: row.payeeName,
+    payeeAddress: row.payeeAddress,
+    payeeTaxId: row.payeeTaxId,
+    payerUserId: row.payerUserId,
+    payerName: row.payerName,
+    businessPurpose: row.businessPurpose,
+    paymentEvidenceAttachmentIds: row.paymentEvidenceAttachmentIds,
+    supportingAttachmentIds: row.supportingAttachmentIds,
+    paymentDate: row.paymentDate?.toISOString() ?? null,
+    paymentMethod: row.paymentMethod,
+    note: row.note,
+    preparedByUserId: row.preparedByUserId,
+    preparedAt: row.preparedAt.toISOString(),
+    expenseUpdatedAtAtPreparation: row.expenseUpdatedAtAtPreparation.toISOString(),
+    payerPosition: row.payerPosition,
+    certifiedArtifactAttachmentId: row.certifiedArtifactAttachmentId,
+    certifiedArtifactChecksumSha256: row.certifiedArtifactChecksumSha256,
+    certifiedAt: row.certifiedAt?.toISOString() ?? null,
+    approverUserId: row.approverUserId,
+    approverName: row.approverName,
+    approverPosition: row.approverPosition,
+    approvedAt: row.approvedAt?.toISOString() ?? null,
+    artifactAttachmentId: row.artifactAttachmentId,
+    checksumSha256: row.checksumSha256,
+    issuedAt: row.issuedAt?.toISOString() ?? null,
+    supersedeReason: row.supersedeReason,
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+@Injectable()
+export class PrismaExpenseRepository {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async createExpense(input: CreateExpenseRecordInput): Promise<ExpenseRecord> {
+    const r = await this.prisma.client.expenseRecord.create({
+      data: {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        captureSource: input.captureSource as any,
+        expenseDate: new Date(input.expenseDate),
+        currency: input.currency ?? 'THB',
+        vatMode: input.vatMode as any,
+        inputVatClaimStatus: input.inputVatClaimStatus as any,
+        expenseCategoryId: input.expenseCategoryId,
+        accountHintKey: input.accountHintKey,
+        note: input.note,
+        missingReceiptReason: input.missingReceiptReason,
+        createdByUserId: input.createdByUserId,
+        lineMessageId: input.lineMessageId,
+        lineEventId: input.lineEventId,
+        vendorCounterpartyId: input.vendorCounterpartyId,
+        sourceDocumentType: (input.sourceDocumentType ?? 'NEEDS_REVIEW') as any,
+        sourceDocumentLanguage: input.sourceDocumentLanguage,
+        taxEvidenceStatus: (input.taxEvidenceStatus ?? 'NEEDS_REVIEW') as any,
+        taxEvidenceReasonCode: input.taxEvidenceReasonCode,
+        sourceChannelMetadataJson: input.sourceChannelMetadataJson as any,
+        vendorNameSnapshot: input.vendorNameSnapshot,
+        subtotalAmount: input.subtotalAmount,
+        discountAmount: input.discountAmount,
+        taxableAmount: input.taxableAmount,
+        vatAmount: input.vatAmount,
+        whtAmount: input.whtAmount,
+        grandTotalAmount: input.grandTotalAmount,
+        netPayableAmount: input.netPayableAmount,
+        outstandingAmount: input.outstandingAmount,
+      },
+    });
+    return mapExpense(r);
+  }
+
+  async findById(companyId: string, id: string): Promise<ExpenseRecord | null> {
+    const r = await this.prisma.client.expenseRecord.findFirst({ where: { id, companyId } });
+    return r ? mapExpense(r) : null;
+  }
+
+  async findAttachmentChecksum(companyId: string, attachmentId: string): Promise<string | null> {
+    const attachment = await this.prisma.client.attachmentObject.findFirst({
+      where: { id: attachmentId, companyId, status: 'ACTIVE' as any },
+      select: { checksumSha256: true },
+    });
+    return attachment?.checksumSha256 ?? null;
+  }
+
+  async findExpenseIdsByAttachmentChecksum(
+    companyId: string,
+    excludeId: string,
+    checksumSha256: string,
+    db: ExpenseDb = this.prisma.client,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<string[]> {
+    const attachments = await db.attachmentObject.findMany({
+      where: { companyId, checksumSha256, status: 'ACTIVE' as any },
+      select: { id: true },
+    });
+    if (attachments.length === 0) return [];
+    const links = await db.attachmentLink.findMany({
+      where: {
+        companyId,
+        targetType: 'expense.record',
+        targetId: { not: excludeId },
+        purpose: 'expense.receipt.primary',
+        attachmentId: { in: attachments.map((attachment) => attachment.id) },
+      },
+      select: { targetId: true },
+    });
+    if (links.length === 0) return [];
+    const expenses = await db.expenseRecord.findMany({
+      where: {
+        companyId,
+        id: { in: links.map((link) => link.targetId) },
+        status: { not: 'VOIDED' as any },
+        ...branchScopeWhere(scopes),
+      },
+      select: { id: true },
+    });
+    return expenses.map((expense) => expense.id);
+  }
+
+  async findReceiptExtractionAttachment(
+    companyId: string,
+    expenseId: string,
+    primaryAttachmentId: string | null,
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number } | null> {
+    const links = await this.prisma.client.attachmentLink.findMany({
+      where: {
+        companyId,
+        targetType: 'expense.record',
+        targetId: expenseId,
+        ...(primaryAttachmentId ? { attachmentId: primaryAttachmentId } : { purpose: 'expense.receipt.primary' }),
+        attachment: { companyId, status: 'ACTIVE' },
+      },
+      include: { attachment: true },
+      take: 2,
+    });
+    if (links.length !== 1) return null;
+    const attachment = links[0]!.attachment;
+    return {
+      id: attachment.id,
+      bucket: attachment.bucket,
+      objectKey: attachment.objectKey,
+      objectVersionId: attachment.objectVersionId ?? undefined,
+      mimeType: attachment.mimeType,
+      byteSize: Number(attachment.byteSize),
+    };
+  }
+
+  async findByIdWithRelations(
+    companyId: string,
+    id: string,
+    db: ExpenseDb = this.prisma.client,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<ExpenseRecordWithRelations | null> {
+    const r = await db.expenseRecord.findFirst({
+      where: { id, companyId },
+      include: {
+        lines: { orderBy: { lineNumber: 'asc' } },
+        // The category's suggested Tax Code rides on the row already being joined — the line
+        // picker needs it, and a second query for one string would be waste.
+        expenseCategory: { select: { defaultInputTaxCode: true } },
+        duplicateCandidates: {
+          where: {
+            status: { not: 'DISMISSED' as any },
+            candidateExpense: { companyId, ...branchScopeWhere(scopes) },
+          },
+        },
+      },
+    });
+    if (!r) return null;
+    const base = mapExpense(r);
+    const categoryDefaultInputTaxCode = r.expenseCategory?.defaultInputTaxCode ?? null;
+    const journals = await db.journalEntry.findMany({
+      where: {
+        companyId,
+        OR: [
+          ...(base.journalEntryId ? [{ id: base.journalEntryId }] : []),
+          { sourceId: id, sourceType: { in: ['expense.record', 'expense.payment'] }, entryType: 'GENERATED' as any },
+        ],
+      },
+      select: { id: true, sourceType: true, entryNumber: true },
+    });
+    const journal = (base.journalEntryId ? journals.find((entry) => entry.id === base.journalEntryId) : null)
+      ?? journals.find((entry) => entry.sourceType === 'expense.payment')
+      ?? journals.find((entry) => entry.sourceType === 'expense.record')
+      ?? null;
+    const generatedSourceTypes = new Set(journals.map((entry) => entry.sourceType).filter((sourceType): sourceType is string => !!sourceType));
+    // fetch attachment links for this expense
+    const links: Array<{ attachmentId: string; purpose: string; attachment: { originalFileName: string; mimeType: string; byteSize: bigint | number; checksumSha256: string | null; perceptualHash: string | null; status: string; createdAt: Date } }> = await db.attachmentLink.findMany({
+      where: { companyId, targetType: 'expense.record', targetId: id, attachment: { companyId } },
+      include: { attachment: true },
+    }) as any;
+    const attachments = links.map((l) => ({
+      id: l.attachmentId,
+      purpose: l.purpose as any,
+      originalFileName: l.attachment.originalFileName,
+      mimeType: l.attachment.mimeType,
+      byteSize: Number(l.attachment.byteSize),
+      checksumSha256: l.attachment.checksumSha256 ?? null,
+      perceptualHash: l.attachment.perceptualHash ?? null,
+      status: l.attachment.status,
+      createdAt: l.attachment.createdAt.toISOString(),
+    }));
+    const duplicateCandidates: DuplicateCandidateSummary[] = (r as any).duplicateCandidates.map((d: any) => ({
+      id: d.id,
+      candidateExpenseId: d.candidateExpenseId,
+      reasonCodesJson: (d.reasonCodesJson as string[]) ?? [],
+      score: d.score,
+      status: d.status,
+      resolvedAt: d.resolvedAt?.toISOString() ?? null,
+      resolutionReason: d.resolutionReason ?? null,
+    }));
+    const visibleDuplicateOfExpenseId = duplicateCandidates.some(
+      (candidate) => candidate.status === 'CONFIRMED_DUPLICATE'
+        && candidate.candidateExpenseId === base.duplicateOfExpenseId,
+    )
+      ? base.duplicateOfExpenseId
+      : null;
+    const substituteRow = await db.expenseSubstituteReceiptEvidence.findFirst({
+      where: { companyId, expenseId: id, status: { not: 'SUPERSEDED' } },
+      orderBy: { version: 'desc' },
+    });
+    return {
+      ...base,
+      categoryDefaultInputTaxCode,
+      duplicateOfExpenseId: visibleDuplicateOfExpenseId,
+      journalEntryId: journal?.id ?? null,
+      journalEntryNumber: journal?.entryNumber ?? null,
+      pendingPostingSourceType: nextExpensePostingSource({
+        paymentStatus: base.paymentStatus,
+        sourceReimbursementRequestId: base.sourceReimbursementRequestId,
+        generatedSourceTypes,
+      }),
+      lines: (r as any).lines.map(mapLine),
+      attachments,
+      duplicateCandidates,
+      substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
+    };
+  }
+
+  async findByLineMessageId(companyId: string, lineMessageId: string): Promise<ExpenseRecord | null> {
+    const r = await this.prisma.client.expenseRecord.findFirst({ where: { companyId, lineMessageId } });
+    return r ? mapExpense(r) : null;
+  }
+
+  async listExpenses(filter: ListExpensesFilter, scopes?: { branchIds?: string[] }): Promise<PaginatedExpenses> {
+    const { companyId, page = 1, pageSize = 20, ...rest } = filter;
+    const skip = (page - 1) * pageSize;
+    // 10D branch ABAC: restricted scope sees its branches plus company-central (null) rows.
+    // Explicit branchId filter (already scope-asserted by the use-case) is narrower and wins.
+    const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
+    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
+    const [data, total] = await Promise.all([
+      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy: { expenseDate: 'desc' } }),
+      this.prisma.client.expenseRecord.count({ where }),
+    ]);
+    return { data: data.map(mapExpense), total, page, pageSize };
+  }
+
+  async listCompanySubstituteReceipts(
+    companyId: string,
+    filter: SubstituteReceiptListFilter,
+    scope: { branchIds?: string[]; onlyPayerUserId: string | null },
+  ) {
+    const page = filter.page ?? 1;
+    const pageSize = filter.pageSize ?? 50;
+    let monthRange: { gte: Date; lt: Date } | null = null;
+    // Same shape and same guard as listSharedEvidence: an unvalidated yearMonth reaches Date.UTC as
+    // NaN and Prisma rejects the Invalid Date with a 500 instead of ignoring an unusable filter.
+    if (filter.yearMonth && /^\d{4}-\d{2}$/.test(filter.yearMonth)) {
+      const [year, month] = filter.yearMonth.split('-').map(Number);
+      monthRange = {
+        gte: new Date(Date.UTC(year!, month! - 1, 1)),
+        lt: new Date(Date.UTC(year!, month!, 1)),
+      };
+    }
+    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = {
+      companyId,
+      ...(scope.branchIds?.length ? { branchId: { in: scope.branchIds } } : {}),
+      ...(scope.onlyPayerUserId
+        ? { payerUserId: scope.onlyPayerUserId }
+        : filter.payerUserId ? { payerUserId: filter.payerUserId } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(monthRange ? {
+        OR: [
+          { paymentDate: monthRange },
+          { paymentDate: null, expense: { expenseDate: monthRange } },
+        ],
+      } : {}),
+    };
+    const [rows, total] = await this.prisma.client.$transaction([
+      this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
+        where,
+        select: {
+          id: true,
+          expenseId: true,
+          documentNumber: true,
+          version: true,
+          status: true,
+          paymentDate: true,
+          payeeName: true,
+          payeeAddress: true,
+          payeeTaxId: true,
+          payerUserId: true,
+          payerName: true,
+          approverUserId: true,
+          approverName: true,
+          artifactAttachmentId: true,
+          certifiedArtifactAttachmentId: true,
+          updatedAt: true,
+          expense: {
+            select: {
+              expenseNumber: true,
+              expenseDate: true,
+              vendorNameSnapshot: true,
+              currency: true,
+              grandTotalAmount: true,
+            },
+          },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { version: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.client.expenseSubstituteReceiptEvidence.count({ where }),
+    ]);
+    return { rows, total };
+  }
+
+  /** Run `work` on an injected transaction client when the caller owns one, otherwise open the
+   *  method's own transaction. Nesting a `$transaction` inside a caller's transaction would open a
+   *  SECOND connection that cannot roll back with it — and would block on this method's own
+   *  advisory lock. Re-taking `pg_advisory_xact_lock` inside the caller's transaction is safe
+   *  (same transaction, idempotent), so the lock discipline is unchanged either way. */
+  private async runInTx<T>(db: any | undefined, work: (tx: any) => Promise<T>): Promise<T> {
+    return db ? work(db) : (this.prisma.client as any).$transaction(work);
+  }
+
+  /**
+   * `withinTx` runs inside this method's existing transaction, after the row is written. It is
+   * the seam LINE intake uses to commit its consumption markers atomically with the mutation —
+   * an after-commit append would leave the exact window the markers exist to close. Throwing
+   * from it rolls the update back.
+   */
+  async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any): Promise<ExpenseRecord> {
+    const { id, companyId, ...rest } = input;
+    // H-04: VOIDED is intentionally rejected here — voids must go through
+    // voidExpenseTrueReversal so the GL reversal and status change stay atomic.
+    if (rest.status === 'VOIDED') {
+      throw new UnprocessableEntityException('Use voidExpenseTrueReversal for voids');
+    }
+    const data: any = {};
+    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    for (const f of fields) {
+      if (rest[f] !== undefined) data[f] = rest[f];
+    }
+    return this.runInTx(db, async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:substitute-receipt`}))`;
+      // `vendorEntityKindSnapshot` is deliberately NOT material. The payee taxpayer class is never
+      // printed on the ใบรับรองแทนใบเสร็จ artifact (`substitute-receipt.logic.ts`), so locking it buys
+      // no document integrity — and it deadlocks: confirming a substitute-reliant expense requires the
+      // evidence already ISSUED (`expense-draft.use-case.ts:380`), while `validateConfirm` REQUIRES the
+      // class whenever `whtAmount > 0` (`expense-status.logic.ts:199`). It must stay writable after
+      // PAYER_CERTIFIED/ISSUED or such an expense can never be confirmed at all.
+      const materialFields = new Set([
+        'branchId', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot',
+        'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate', 'currency', 'vatMode',
+        'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'primaryAttachmentId',
+        'missingReceiptReason', 'note', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount',
+        'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount',
+        'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'sourceDocumentType',
+        'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode',
+      ]);
+      if (Object.keys(data).some((field) => materialFields.has(field))) {
+        const signedEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+          where: { companyId, expenseId: id, status: { in: ['PAYER_CERTIFIED', 'ISSUED'] } },
+          select: { id: true },
+        });
+        if (signedEvidence) throw new ConflictException({ code: 'substitute_evidence_locks_expense', message: 'Signed substitute evidence locks material expense data. Prepare a corrected version before changing it.' });
+      }
+      if (rest.inputVatClaimStatus === 'CLAIMABLE' || rest.taxEvidenceStatus === 'USABLE_FOR_TAX' || rest.sourceDocumentType !== undefined) {
+        const internalEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+          where: { companyId, expenseId: id, status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] } },
+          select: { id: true, originalSourceDocumentType: true },
+        });
+        if (internalEvidence && (rest.inputVatClaimStatus === 'CLAIMABLE' || rest.taxEvidenceStatus === 'USABLE_FOR_TAX')) {
+          throw new ConflictException({ code: 'substitute_evidence_nonclaimable', message: 'Internal substitute evidence cannot be made VAT-claimable or usable for tax.' });
+        }
+        if (internalEvidence && rest.sourceDocumentType !== undefined && rest.sourceDocumentType !== internalEvidence.originalSourceDocumentType) {
+          throw new ConflictException({ code: 'substitute_evidence_doc_type_locked', message: 'The original source document type is locked while substitute evidence is active.' });
+        }
+      }
+      const updated = await tx.expenseRecord.updateMany({ where: { id, companyId }, data });
+      if (updated.count !== 1) throw new Error(`Expense ${id} not found in company ${companyId}`);
+      const record = mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId } }));
+      await withinTx?.(tx);
+      return record;
+    });
+  }
+
+  async findSubstituteEvidence(companyId: string, expenseId: string, evidenceId?: string): Promise<SubstituteReceiptEvidenceRecord | null> {
+    const row = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findFirst({
+      where: { companyId, expenseId, ...(evidenceId ? { id: evidenceId } : { status: { not: 'SUPERSEDED' } }) },
+      orderBy: { version: 'desc' },
+    });
+    return row ? mapSubstituteEvidence(row) : null;
+  }
+
+  async listSubstituteEvidenceHistory(companyId: string, expenseId: string): Promise<import('@watchdog-bms/contracts').SubstituteReceiptEvidenceSummary[]> {
+    const rows = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findMany({
+      where: { companyId, expenseId }, orderBy: { version: 'desc' },
+    });
+    return rows.map((row: any) => toSubstituteEvidenceSummary(mapSubstituteEvidence(row)));
+  }
+
+  async supersedeSubstituteEvidence(input: {
+    companyId: string;
+    expenseId: string;
+    evidenceId: string;
+    actorUserId: string;
+    reason: string;
+    expectedEvidenceUpdatedAt: Date;
+  }): Promise<import('@watchdog-bms/contracts').SubstituteReceiptEvidenceSummary> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: {
+          id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId,
+          status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] }, updatedAt: input.expectedEvidenceUpdatedAt,
+        },
+      });
+      if (!evidence) throw new ConflictException({ code: 'substitute_evidence_stale', message: 'Substitute evidence changed. Reload before cancelling or correcting it.' });
+      const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+      if (!expense || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
+        throw new ConflictException({ code: 'substitute_evidence_expense_confirmed', message: 'Only an unconfirmed expense can cancel or replace substitute evidence.' });
+      }
+      const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { id: evidence.id, status: evidence.status, updatedAt: input.expectedEvidenceUpdatedAt },
+        data: { status: 'SUPERSEDED', supersededAt: new Date(), supersedeReason: input.reason },
+      });
+      if (changed.count !== 1) throw new ConflictException({ code: 'substitute_evidence_stale', message: 'Substitute evidence changed while superseding.' });
+      if (evidence.status === 'ISSUED') {
+        await tx.expenseRecord.updateMany({ where: { id: input.expenseId, companyId: input.companyId }, data: {
+          missingReceiptReason: null,
+          substituteReceiptGeneratedAt: null,
+          substituteReceiptGeneratedByUserId: null,
+          updatedByUserId: input.actorUserId,
+        } });
+      }
+      return toSubstituteEvidenceSummary(mapSubstituteEvidence(
+        await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }),
+      ));
+    });
+  }
+
+  async findActiveMemberIdentity(companyId: string, userId: string, branchId: string | null): Promise<{ userId: string; displayName: string } | null> {
+    const membership = await (this.prisma.client as any).companyMembership.findFirst({
+      where: { companyId, userId, status: 'ACTIVE', user: { status: 'ACTIVE' } },
+      include: { user: { select: { displayName: true } }, branchScopes: { select: { branchId: true } } },
+    });
+    if (!membership) return null;
+    if (branchId && membership.branchScopeMode !== 'ALL_BRANCHES') {
+      const allowed = membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
+        ? membership.defaultBranchId === branchId
+        : membership.branchScopes.some((scope: { branchId: string }) => scope.branchId === branchId);
+      if (!allowed) return null;
+    }
+    return { userId, displayName: membership.user.displayName };
+  }
+
+  async listActiveMemberIdentities(companyId: string, branchId: string | null): Promise<Array<{ userId: string; displayName: string }>> {
+    const memberships = await (this.prisma.client as any).companyMembership.findMany({
+      where: { companyId, status: 'ACTIVE', user: { status: 'ACTIVE' } },
+      include: { user: { select: { displayName: true } }, branchScopes: { select: { branchId: true } } },
+      orderBy: { user: { displayName: 'asc' } },
+    });
+    return memberships
+      .filter((membership: any) => !branchId
+        || membership.branchScopeMode === 'ALL_BRANCHES'
+        || (membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
+          ? membership.defaultBranchId === branchId
+          : membership.branchScopes.some((scope: { branchId: string }) => scope.branchId === branchId)))
+      .map((membership: any) => ({ userId: membership.userId, displayName: membership.user.displayName }));
+  }
+
+  async getSubstituteReceiptPolicy(companyId: string): Promise<SubstituteReceiptPolicyWithApprovalMode | null> {
+    const row = await this.prisma.client.expenseSubstituteReceiptPolicy.findUnique({ where: { companyId } });
+    if (!row) return null;
+    return {
+      ...row,
+      approverUserIds: Array.isArray(row.approverUserIds)
+        ? row.approverUserIds.filter((userId): userId is string => typeof userId === 'string')
+        : [],
+      cashEvidenceInstructions: row.cashEvidenceInstructions ?? null,
+    };
+  }
+
+  async listEligibleSubstituteReceiptApprovers(
+    companyId: string,
+    branchId: string | null = null,
+  ): Promise<Array<{ userId: string; displayName: string }>> {
+    const memberships = await this.prisma.client.companyMembership.findMany({
+      where: {
+        companyId,
+        status: 'ACTIVE',
+        user: { status: 'ACTIVE' },
+        roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: 'expense.confirm' } } } } } },
+      },
+      include: { user: { select: { displayName: true } }, branchScopes: { select: { branchId: true } } },
+      orderBy: { user: { displayName: 'asc' } },
+    });
+    return memberships
+      .filter((membership) => !branchId
+        || membership.branchScopeMode === 'ALL_BRANCHES'
+        || (membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
+          ? membership.defaultBranchId === branchId
+          : membership.branchScopes.some((scope: { branchId: string }) => scope.branchId === branchId)))
+      .map((membership) => ({ userId: membership.userId, displayName: membership.user.displayName }));
+  }
+
+  async upsertSubstituteReceiptPolicy(input: {
+    companyId: string;
+    approvalMode: SubstituteReceiptApprovalMode;
+    approverUserIds: string[];
+    cashEvidencePolicy: SubstituteReceiptPolicyRecord['cashEvidencePolicy'];
+    cashEvidenceInstructions: string | null;
+    actorUserId: string;
+  }): Promise<SubstituteReceiptPolicyWithApprovalMode> {
+    const row = await this.prisma.client.expenseSubstituteReceiptPolicy.upsert({
+      where: { companyId: input.companyId },
+      create: {
+        companyId: input.companyId,
+        approverUserIds: input.approverUserIds,
+        approvalMode: input.approvalMode,
+        cashEvidencePolicy: input.cashEvidencePolicy,
+        cashEvidenceInstructions: input.cashEvidenceInstructions,
+        createdByUserId: input.actorUserId,
+        updatedByUserId: input.actorUserId,
+      },
+      update: {
+        approverUserIds: input.approverUserIds,
+        approvalMode: input.approvalMode,
+        cashEvidencePolicy: input.cashEvidencePolicy,
+        cashEvidenceInstructions: input.cashEvidenceInstructions,
+        updatedByUserId: input.actorUserId,
+      },
+    });
+    return {
+      ...row,
+      approverUserIds: Array.isArray(row.approverUserIds)
+        ? row.approverUserIds.filter((userId): userId is string => typeof userId === 'string')
+        : [],
+      cashEvidenceInstructions: row.cashEvidenceInstructions ?? null,
+    };
+  }
+
+  async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{ name: string; taxId: string | null; branchName: string | null }> {
+    const company = await this.prisma.client.company.findFirst({ where: { id: companyId }, select: { registeredName: true, name: true, taxId: true } });
+    if (!company) throw new Error(`Company ${companyId} not found`);
+    const branch = branchId
+      ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } })
+      : null;
+    return { name: company.registeredName ?? company.name, taxId: company.taxId, branchName: branch?.name ?? null };
+  }
+
+  async findSubstituteEvidenceAttachments(
+    companyId: string,
+    expenseId: string,
+    attachmentIds: string[],
+  ): Promise<Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; checksumSha256: string | null }>> {
+    if (attachmentIds.length === 0) return [];
+    const links = await this.prisma.client.attachmentLink.findMany({
+      where: {
+        companyId,
+        targetType: 'expense.record',
+        targetId: expenseId,
+        attachmentId: { in: attachmentIds },
+        attachment: { companyId, status: 'ACTIVE' },
+      },
+      include: { attachment: true },
+    });
+    return links.map((link) => ({
+      id: link.attachmentId,
+      purpose: link.purpose,
+      originalFileName: link.attachment.originalFileName,
+      mimeType: link.attachment.mimeType,
+      checksumSha256: link.attachment.checksumSha256,
+    }));
+  }
+
+  async findSubstituteArtifactAttachment(
+    companyId: string,
+    expenseId: string,
+    attachmentId: string,
+  ): Promise<{ bucket: string; objectKey: string; objectVersionId?: string } | null> {
+    const link = await this.prisma.client.attachmentLink.findFirst({
+      where: {
+        companyId,
+        targetType: 'expense.record',
+        targetId: expenseId,
+        attachmentId,
+        purpose: 'expense.review.evidence',
+        attachment: { companyId, status: 'ACTIVE', mimeType: 'image/svg+xml' },
+      },
+      include: { attachment: true },
+    });
+    return link ? {
+      bucket: link.attachment.bucket,
+      objectKey: link.attachment.objectKey,
+      objectVersionId: link.attachment.objectVersionId ?? undefined,
+    } : null;
+  }
+
+  async findPersonalSignatureAttachment(
+    companyId: string,
+    attachmentId: string,
+    actorUserId: string,
+    evidenceId: string,
+    role: 'payer' | 'approver',
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256: string | null } | null> {
+    const row = await this.prisma.client.attachmentObject.findFirst({
+      where: {
+        id: attachmentId,
+        companyId,
+        uploadedByUserId: actorUserId,
+        status: 'ACTIVE',
+        mimeType: { in: ['image/png', 'image/jpeg'] },
+        metadataJson: { equals: { generatedFor: 'substitute_receipt_signature', evidenceId, role } },
+      },
+    });
+    return row ? { id: row.id, bucket: row.bucket, objectKey: row.objectKey, objectVersionId: row.objectVersionId ?? undefined, mimeType: row.mimeType, byteSize: row.byteSize, checksumSha256: row.checksumSha256 } : null;
+  }
+
+  async findPersonalSignatureUploadAttachment(
+    companyId: string,
+    attachmentId: string,
+    actorUserId: string,
+    evidenceId: string,
+    role: 'payer' | 'approver',
+  ): Promise<{ id: string; status: string; mimeType: string } | null> {
+    const row = await this.prisma.client.attachmentObject.findFirst({
+      where: {
+        id: attachmentId,
+        companyId,
+        uploadedByUserId: actorUserId,
+        mimeType: { in: ['image/png', 'image/jpeg'] },
+        metadataJson: { equals: { generatedFor: 'substitute_receipt_signature', evidenceId, role } },
+      },
+      select: { id: true, status: true, mimeType: true },
+    });
+    return row;
+  }
+
+  async createPreparedSubstituteEvidence(input: {
+    companyId: string;
+    expenseId: string;
+    branchId: string | null;
+    expectedExpenseUpdatedAt: Date;
+    originalSourceDocumentType: string;
+    reasonCode: string;
+    missingReceiptReason: string;
+    businessPurpose: string;
+    paymentEvidenceAttachmentIds: string[];
+    supportingAttachmentIds: string[];
+    paymentDate: Date | null;
+    paymentMethod: string | null;
+    note: string | null;
+    payerUserId: string;
+    payerName: string;
+    payeeName: string;
+    payeeAddress: string | null;
+    payeeTaxId: string | null;
+    preparedByUserId: string;
+    idempotencyKey: string;
+  }): Promise<SubstituteReceiptEvidenceRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      const existing = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId: input.companyId, expenseId: input.expenseId, idempotencyKey: input.idempotencyKey },
+      });
+      if (existing) {
+        const same = existing.reasonCode === input.reasonCode
+          && existing.missingReceiptReason === input.missingReceiptReason
+          && existing.businessPurpose === input.businessPurpose
+          && existing.payerUserId === input.payerUserId
+          && existing.payeeName === input.payeeName
+          && existing.payeeAddress === input.payeeAddress
+          && existing.payeeTaxId === input.payeeTaxId
+          && existing.branchId === input.branchId
+          && existing.originalSourceDocumentType === input.originalSourceDocumentType
+          && (existing.paymentDate?.getTime() ?? null) === (input.paymentDate?.getTime() ?? null)
+          && existing.paymentMethod === input.paymentMethod
+          && existing.note === input.note
+          && JSON.stringify(existing.paymentEvidenceAttachmentIds) === JSON.stringify(input.paymentEvidenceAttachmentIds)
+          && JSON.stringify(existing.supportingAttachmentIds) === JSON.stringify(input.supportingAttachmentIds);
+        if (!same) throw new ConflictException({ code: 'substitute_evidence_idempotency_conflict', message: 'Idempotency key was already used with different substitute-receipt data.' });
+        return mapSubstituteEvidence(existing);
+      }
+      const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+      if (!expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()) {
+        throw new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review. Reload before preparing substitute evidence.' });
+      }
+      const safeUpdate = await tx.expenseRecord.updateMany({
+        where: {
+          id: input.expenseId,
+          companyId: input.companyId,
+          updatedAt: input.expectedExpenseUpdatedAt,
+          status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] },
+        },
+        data: {
+          taxEvidenceStatus: 'SUPPORTING_ONLY',
+          inputVatClaimStatus: 'NON_CLAIMABLE',
+          taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
+          updatedByUserId: input.preparedByUserId,
+        },
+      });
+      if (safeUpdate.count !== 1) throw new Error('Expense changed after review. Reload before preparing substitute evidence.');
+      const safeExpense = await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } });
+      const pendingCertified = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId: input.companyId, expenseId: input.expenseId, status: 'PAYER_CERTIFIED' },
+      });
+      if (pendingCertified) throw new Error('A payer-certified version is already waiting for approval.');
+      await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { companyId: input.companyId, expenseId: input.expenseId, status: 'PREPARED' },
+        data: { status: 'SUPERSEDED', supersededAt: new Date(), supersedeReason: 'CORRECTED_VERSION_PREPARED' },
+      });
+      const latest = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId: input.companyId, expenseId: input.expenseId }, orderBy: { version: 'desc' }, select: { version: true },
+      });
+      const version = (latest?.version ?? 0) + 1;
+      const documentNumber = `SRC-${expense.expenseNumber ?? expense.id}-V${version}`;
+      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.create({
+        data: {
+          companyId: input.companyId,
+          expenseId: input.expenseId,
+          branchId: input.branchId,
+          version,
+          documentNumber,
+          idempotencyKey: input.idempotencyKey,
+          originalSourceDocumentType: input.originalSourceDocumentType,
+          reasonCode: input.reasonCode,
+          missingReceiptReason: input.missingReceiptReason,
+          businessPurpose: input.businessPurpose,
+          paymentEvidenceAttachmentIds: input.paymentEvidenceAttachmentIds,
+          supportingAttachmentIds: input.supportingAttachmentIds,
+          paymentDate: input.paymentDate,
+          paymentMethod: input.paymentMethod,
+          note: input.note,
+          preparedByUserId: input.preparedByUserId,
+          preparedAt: new Date(),
+          expenseUpdatedAtAtPreparation: safeExpense.updatedAt,
+          payerUserId: input.payerUserId,
+          payerName: input.payerName,
+          payeeName: input.payeeName,
+          payeeAddress: input.payeeAddress,
+          payeeTaxId: input.payeeTaxId,
+        },
+      }));
+    });
+  }
+
+  async markSubstituteEvidenceCertified(input: {
+    companyId: string;
+    expenseId: string;
+    evidenceId: string;
+    payerUserId: string;
+    payerPosition: string;
+    payerSignatureAttachmentId: string;
+    payerSignatureChecksumSha256: string;
+    referencedAttachmentIds: string[];
+    snapshotJson: Record<string, unknown>;
+    snapshotChecksumSha256: string;
+    certifiedAt: Date;
+    expectedVersion: number;
+    expectedEvidenceUpdatedAt: Date;
+    artifact: { storageProvider: string; bucket: string; objectKey: string; objectVersionId: string; byteSize: number; checksumSha256: string; originalFileName: string };
+  }): Promise<SubstituteReceiptEvidenceRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${attachmentId}:attachment-retention`}))`;
+      }
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId },
+      });
+      if (!evidence || evidence.status !== 'PREPARED' || evidence.version !== input.expectedVersion
+        || evidence.payerUserId !== input.payerUserId || evidence.updatedAt.getTime() !== input.expectedEvidenceUpdatedAt.getTime()) {
+        throw new Error('Substitute evidence changed or the payer does not match. Reload before certifying.');
+      }
+      const activeAttachments = await tx.attachmentObject.count({
+        where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
+      });
+      if (activeAttachments !== new Set(input.referencedAttachmentIds).size) {
+        throw new Error('A linked source, payment, or signature attachment changed while certifying.');
+      }
+      const attachment = await tx.attachmentObject.create({
+        data: {
+          companyId: input.companyId,
+          branchId: evidence.branchId,
+          storageProvider: input.artifact.storageProvider,
+          bucket: input.artifact.bucket,
+          objectKey: input.artifact.objectKey,
+          objectVersionId: input.artifact.objectVersionId,
+          originalFileName: input.artifact.originalFileName,
+          mimeType: 'image/svg+xml',
+          byteSize: input.artifact.byteSize,
+          checksumSha256: input.artifact.checksumSha256,
+          visibility: 'INTERNAL',
+          status: 'ACTIVE',
+          uploadedByUserId: input.payerUserId,
+          uploadedAt: new Date(),
+          metadataJson: { generatedBy: 'substitute_receipt', stage: 'payer_certified', evidenceId: evidence.id, version: evidence.version },
+        },
+      });
+      await tx.attachmentLink.create({ data: {
+        companyId: input.companyId, attachmentId: attachment.id, targetType: 'expense.record', targetId: input.expenseId,
+        purpose: 'expense.review.evidence', linkedByUserId: input.payerUserId,
+      } });
+      const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { id: evidence.id, companyId: input.companyId, status: 'PREPARED', updatedAt: input.expectedEvidenceUpdatedAt },
+        data: {
+          status: 'PAYER_CERTIFIED', payerPosition: input.payerPosition,
+          payerSignatureAttachmentId: input.payerSignatureAttachmentId,
+          payerSignatureChecksumSha256: input.payerSignatureChecksumSha256,
+          snapshotJson: input.snapshotJson, snapshotChecksumSha256: input.snapshotChecksumSha256,
+          certifiedArtifactAttachmentId: attachment.id, certifiedArtifactChecksumSha256: input.artifact.checksumSha256,
+          certifiedAt: input.certifiedAt,
+        },
+      });
+      if (changed.count !== 1) throw new Error('Substitute evidence changed while certifying.');
+      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
+    });
+  }
+
+  async issueSubstituteEvidence(input: {
+    companyId: string;
+    expenseId: string;
+    evidenceId: string;
+    approverUserId: string;
+    approverName: string;
+    approverPosition: string;
+    /** Decided by the use-case from the company's approvalMode and the actor's OWNER role. The
+     *  separation-of-duties re-check below stays — it must run inside the lock to be race-safe —
+     *  but it cannot decide the policy itself, or a solo owner is blocked here after passing
+     *  every check above. */
+    allowSelfApproval: boolean;
+    approverSignatureAttachmentId: string;
+    approvedAt: Date;
+    expectedExpenseUpdatedAt: Date;
+    referencedAttachmentIds: string[];
+    expectedVersion: number;
+    expectedEvidenceUpdatedAt: Date;
+    artifact: { storageProvider: string; bucket: string; objectKey: string; objectVersionId: string; byteSize: number; checksumSha256: string; originalFileName: string };
+  }): Promise<SubstituteReceiptEvidenceRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${attachmentId}:attachment-retention`}))`;
+      }
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId } });
+      if (!evidence || evidence.status !== 'PAYER_CERTIFIED' || evidence.version !== input.expectedVersion
+        || evidence.updatedAt.getTime() !== input.expectedEvidenceUpdatedAt.getTime()) {
+        throw new Error('Substitute evidence changed. Reload before approval.');
+      }
+      if (!input.allowSelfApproval && evidence.payerUserId === input.approverUserId) {
+        throw new Error('The payer cannot approve their own substitute receipt.');
+      }
+      const expense = await tx.expenseRecord.findFirst({
+        where: { id: input.expenseId, companyId: input.companyId, updatedAt: input.expectedExpenseUpdatedAt },
+      });
+      if (!expense) throw new Error('Expense details changed after payer certification. Finance must prepare a new version.');
+      const activeAttachments = await tx.attachmentObject.count({
+        where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
+      });
+      if (activeAttachments !== new Set(input.referencedAttachmentIds).size) {
+        throw new Error('A certified source, artifact, or signature attachment changed while approving.');
+      }
+      const attachment = await tx.attachmentObject.create({ data: {
+        companyId: input.companyId, branchId: evidence.branchId, storageProvider: input.artifact.storageProvider,
+        bucket: input.artifact.bucket, objectKey: input.artifact.objectKey, objectVersionId: input.artifact.objectVersionId,
+        originalFileName: input.artifact.originalFileName,
+        mimeType: 'image/svg+xml', byteSize: input.artifact.byteSize, checksumSha256: input.artifact.checksumSha256,
+        visibility: 'INTERNAL', status: 'ACTIVE', uploadedByUserId: input.approverUserId, uploadedAt: new Date(),
+        metadataJson: { generatedBy: 'substitute_receipt', stage: 'issued', evidenceId: evidence.id, version: evidence.version },
+      } });
+      await tx.attachmentLink.create({ data: {
+        companyId: input.companyId, attachmentId: attachment.id, targetType: 'expense.record', targetId: input.expenseId,
+        purpose: 'expense.review.evidence', linkedByUserId: input.approverUserId,
+      } });
+      const now = input.approvedAt;
+      await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { companyId: input.companyId, expenseId: input.expenseId, status: 'ISSUED' },
+        data: { status: 'SUPERSEDED', supersededAt: now, supersedeReason: 'NEW_VERSION_ISSUED' },
+      });
+      const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { id: evidence.id, companyId: input.companyId, status: 'PAYER_CERTIFIED', updatedAt: input.expectedEvidenceUpdatedAt },
+        data: {
+          status: 'ISSUED', approverUserId: input.approverUserId, approverName: input.approverName,
+          approverPosition: input.approverPosition, approverSignatureAttachmentId: input.approverSignatureAttachmentId,
+          approvedAt: now, artifactAttachmentId: attachment.id, checksumSha256: input.artifact.checksumSha256,
+          issuedByUserId: input.approverUserId, issuedAt: now,
+        },
+      });
+      if (changed.count !== 1) throw new Error('Substitute evidence changed while approving.');
+      await tx.expenseRecord.updateMany({ where: { id: input.expenseId, companyId: input.companyId }, data: {
+        missingReceiptReason: evidence.missingReceiptReason,
+        taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+        taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
+        paidAmount: expense.netPayableAmount, outstandingAmount: 0, paymentStatus: 'PAID',
+        paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate,
+        substituteReceiptGeneratedAt: now, substituteReceiptGeneratedByUserId: input.approverUserId,
+        reviewedByUserId: input.approverUserId, reviewedAt: now, updatedByUserId: input.approverUserId,
+      } });
+      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
+    });
+  }
+
+  async updatePostingStatus(
+    companyId: string,
+    id: string,
+    data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed'; journalEntryId?: string | null; postingError?: string | null },
+  ): Promise<void> {
+    await this.prisma.client.expenseRecord.updateMany({
+      where: { id, companyId },
+      data: {
+        postingStatus: data.postingStatus as any,
+        journalEntryId: data.journalEntryId,
+        postingError: data.postingError,
+      },
+    });
+  }
+
+  /**
+   * H-04: the ledger journal table is the source of truth for whether a void
+   * needs a reversing entry — the postingStatus/journalEntryId pointers on the
+   * expense row can lag or be corrupted and must not gate the reversal.
+   */
+  async findPostedGeneratedJournalId(
+    companyId: string,
+    expenseId: string,
+    sourceType: 'expense.record' | 'expense.payment' = 'expense.record',
+  ): Promise<string | null> {
+    const row = await this.prisma.client.journalEntry.findFirst({
+      where: { companyId, sourceType, sourceId: expenseId, entryType: 'GENERATED' as any, status: 'POSTED' as any },
+      select: { id: true },
+    });
+    return row?.id ?? null;
+  }
+
+  // H-04: reverse the GENERATED journal of a voided expense inside the same
+  // transaction. Fail closed: an unresolved posting state, a closed accounting
+  // period, or a locked filed-form tax period blocks the whole void.
+  private async reverseExpenseJournalInTx(tx: any, opts: {
+    companyId: string;
+    expenseId: string;
+    // GAP-07: 'expense.record' reverses the accrual leg, 'expense.payment' the
+    // settlement leg; each has its own GENERATED journal keyed on the expense id.
+    sourceType?: 'expense.record' | 'expense.payment';
+    reversalEntryNumber?: string;
+    actorUserId: string;
+    memo: string;
+    lockedTaxFormTypes: string[];
+  }): Promise<{ reversalEntryId: string | null; reversed: boolean }> {
+    const sourceType = opts.sourceType ?? 'expense.record';
+    // A REVERSAL row for this source is the authoritative "already reversed"
+    // signal (one per source by unique constraint) — original.status is not,
+    // because reports count POSTED entries only.
+    const sourceWhere = { companyId: opts.companyId, sourceType, sourceId: opts.expenseId };
+    const existingReversal = await tx.journalEntry.findFirst({
+      where: { ...sourceWhere, entryType: 'REVERSAL' },
+      select: { id: true },
+    });
+    if (existingReversal) return { reversalEntryId: null, reversed: true };
+    const original = await tx.journalEntry.findFirst({
+      where: { ...sourceWhere, entryType: 'GENERATED' },
+      include: { lines: { orderBy: { lineNumber: 'asc' } } },
+    });
+    if (!original) return { reversalEntryId: null, reversed: false };
+    if (original.status !== 'POSTED') {
+      throw new UnprocessableEntityException(`Generated journal ${original.entryNumber} is ${original.status}; resolve its posting state before voiding`);
+    }
+    if (!opts.reversalEntryNumber) {
+      throw new ConflictException({ code: 'posting_state_changed', message: 'Posting state changed while voiding. Retry the void.' });
+    }
+    // Fail closed on a missing period row: the FK guarantees it exists, but a
+    // dangling id must block the void rather than skip the period/tax locks.
+    const period = await tx.accountingPeriod.findFirst({ where: { companyId: opts.companyId, id: original.periodId } });
+    if (!period) {
+      throw new UnprocessableEntityException(`Accounting period for journal ${original.entryNumber} was not found; cannot void`);
+    }
+    if (!['OPEN', 'REOPENED'].includes(period.status)) {
+      throw new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${period.periodKey} is not open; reopen it before voiding.` });
+    }
+    if (opts.lockedTaxFormTypes.length) {
+      const lockedTaxPeriod = await tx.taxPeriod.findFirst({
+        where: { companyId: opts.companyId, formType: { in: opts.lockedTaxFormTypes }, periodKey: period.periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } },
+        select: { formType: true },
+      });
+      if (lockedTaxPeriod) {
+        throw new ConflictException({ code: 'tax_period_locked', message: `${lockedTaxPeriod.formType}/${period.periodKey} is locked; use an adjustment or amended filing workflow.` });
+      }
+    }
+    const reversalLines = buildReversalLines((original.lines ?? []).map((l: any) => ({
+      accountId: l.accountId, branchId: l.branchId, description: l.description,
+      debitAmount: l.debitAmount.toString(), creditAmount: l.creditAmount.toString(),
+      currency: l.currency, taxCode: l.taxCode,
+    })));
+    const now = new Date();
+    // @@unique([companyId, sourceType, sourceId, entryType]) makes a second
+    // REVERSAL for this source abort the transaction — DB-level idempotency.
+    const reversal = await tx.journalEntry.create({
+      data: {
+        companyId: opts.companyId, periodId: original.periodId, entryNumber: opts.reversalEntryNumber,
+        entryType: 'REVERSAL', sourceType, sourceId: opts.expenseId,
+        reversalOfJournalEntryId: original.id, status: 'POSTED', entryDate: now, postedAt: now,
+        postedByUserId: opts.actorUserId, memo: opts.memo, createdByUserId: opts.actorUserId,
+        lines: {
+          // companyId is inherited through the compound journalEntry relation —
+          // Prisma 7 rejects it as an explicit scalar in this nested create.
+          create: reversalLines.map((l, idx) => ({
+            accountId: l.accountId, branchId: l.branchId ?? null,
+            lineNumber: idx + 1, description: l.description,
+            debitAmount: parseFloat(l.debitAmount ?? '0') || 0,
+            creditAmount: parseFloat(l.creditAmount ?? '0') || 0,
+            currency: l.currency ?? 'THB', taxCode: l.taxCode ?? null,
+          })),
+        },
+      },
+    });
+    // The original stays POSTED: GL/report queries count POSTED entries only,
+    // so original + reversal net to zero. Flipping it to REVERSED would drop
+    // it from reports and make the reversal double-subtract.
+    return { reversalEntryId: reversal.id, reversed: true };
+  }
+
+  // H-04: expense void is a true reversal — status claim, payable zeroing, and
+  // GL reversal commit or roll back together.
+  async voidExpenseTrueReversal(
+    companyId: string,
+    expenseId: string,
+    actorUserId: string,
+    reason: string,
+    reversalEntryNumber?: string,
+    paymentReversalEntryNumber?: string,
+  ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null }> {
+    return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      const claimed = await tx.expenseRecord.updateMany({
+        where: { id: expenseId, companyId, status: 'CONFIRMED' },
+        data: {
+          status: 'VOIDED', voidedByUserId: actorUserId, voidedAt: new Date(), voidReason: reason,
+          updatedByUserId: actorUserId, paidAmount: '0.00', outstandingAmount: '0.00', paymentStatus: 'VOIDED',
+        },
+      });
+      if (claimed.count !== 1) throw new ConflictException({ code: 'expense_changed', message: 'Expense changed before void. Reload and retry.' });
+      const expense = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId }, include: { lines: true } });
+
+      // Filed-form contributions on the tax-line snapshots decide the
+      // tax-period lock — the same seam the confirmation gate uses. The
+      // claim-status fallback fails closed for rows without components.
+      const formTypes = new Set<string>();
+      for (const line of expense.lines ?? []) {
+        const components = Array.isArray(line.taxComponentsJson) ? line.taxComponentsJson : [];
+        for (const component of components) {
+          for (const contribution of component?.reportContributions ?? []) {
+            if (['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(contribution?.formType)) formTypes.add(contribution.formType);
+          }
+        }
+      }
+      if (expense.inputVatClaimStatus === 'CLAIMABLE' && Number(expense.vatAmount) !== 0) formTypes.add('PP30');
+
+      const reversal = await this.reverseExpenseJournalInTx(tx, {
+        companyId, expenseId, sourceType: 'expense.record', reversalEntryNumber, actorUserId,
+        memo: `[VOID] ${expense.expenseNumber ?? expenseId}`,
+        lockedTaxFormTypes: [...formTypes],
+      });
+      // GAP-07: the settlement journal (Dr 2120-01 / Cr 1110-01) carries no VAT and
+      // contributes to no tax filing, so it takes no tax-period lock — only the
+      // accounting-period-open guard inside the helper applies to it.
+      const paymentReversal = await this.reverseExpenseJournalInTx(tx, {
+        companyId, expenseId, sourceType: 'expense.payment', reversalEntryNumber: paymentReversalEntryNumber, actorUserId,
+        memo: `[VOID] ${expense.expenseNumber ?? expenseId}`,
+        lockedTaxFormTypes: [],
+      });
+      if (reversal.reversed || paymentReversal.reversed) {
+        await tx.expenseRecord.update({ where: { id: expenseId }, data: { postingStatus: 'reversed', postingError: null } });
+      }
+      const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
+      return { expense: mapExpense(row), reversalEntryId: reversal.reversalEntryId, paymentReversalEntryId: paymentReversal.reversalEntryId };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  async confirmExpenseCas(input: {
+    companyId: string;
+    id: string;
+    expectedUpdatedAt: Date;
+    actorUserId: string;
+    expenseNumber: string;
+    postingStatus: import('@watchdog-bms/contracts').ExpensePostingStatus;
+    vendorSnapshotJson: Record<string, unknown> | null;
+    outboxEvent: { eventKey: string; payloadJson: Record<string, unknown> };
+  }): Promise<ExpenseRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const changed = await tx.expenseRecord.updateMany({
+        where: { id: input.id, companyId: input.companyId, updatedAt: input.expectedUpdatedAt },
+        data: {
+          status: 'CONFIRMED', confirmedByUserId: input.actorUserId, confirmedAt: new Date(),
+          updatedByUserId: input.actorUserId, expenseNumber: input.expenseNumber, postingStatus: input.postingStatus,
+          ...(input.vendorSnapshotJson ? { vendorSnapshotJson: input.vendorSnapshotJson } : {}),
+        },
+      });
+      if (changed.count !== 1) throw new Error('Expense changed while confirming. Reload and review it again.');
+      await tx.outboxEvent.create({
+        data: {
+          companyId: input.companyId,
+          eventType: 'expense.confirmed',
+          aggregateType: 'expense_record',
+          aggregateId: input.id,
+          eventKey: input.outboxEvent.eventKey,
+          payloadJson: input.outboxEvent.payloadJson,
+          priority: 'NORMAL',
+          status: 'PENDING',
+        },
+      });
+      return mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.id, companyId: input.companyId } }));
+    });
+  }
+
+  async finalizeAndConfirmExpenseCas(input: {
+    companyId: string;
+    id: string;
+    expectedUpdatedAt: Date;
+    expectedSourceChecksum: string;
+    actorUserId: string;
+    expenseNumber: string;
+    postingStatus: import('@watchdog-bms/contracts').ExpensePostingStatus;
+    vendorSnapshotJson: Record<string, unknown> | null;
+    /** Claim-born confirm under reimbursement authority: the signed ใบเบิก covers the missing
+     *  receipt, so no expense-side substitute artifact is demanded (mirrors the use-case gate). */
+    substituteCoveredByClaimForm?: boolean;
+    outboxEvent: { eventKey: string; payloadJson: Record<string, unknown> };
+  }, finalizeTax: ExpenseTaxFinalizer): Promise<{ expense: ExpenseRecord; finalized: ExpenseLineInput[] }> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
+      const current = await tx.expenseRecord.findFirst({
+        where: { id: input.id, companyId: input.companyId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } }, duplicateCandidates: { where: { status: { not: 'DISMISSED' } } } },
+      });
+      if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
+      const substitute = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId: input.companyId, expenseId: input.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' },
+      });
+      // The source checksum covers attachments, so the CAS re-read must load
+      // them the same way findByIdWithRelations does — an empty list here
+      // makes every attachment-bearing expense fail the checksum guard.
+      const attachmentLinks: Array<{ attachmentId: string; purpose: string; attachment: { originalFileName: string; mimeType: string; byteSize: bigint | number; checksumSha256: string | null; status: string; createdAt: Date } }> = await tx.attachmentLink.findMany({
+        where: { companyId: input.companyId, targetType: 'expense.record', targetId: input.id, attachment: { companyId: input.companyId } },
+        include: { attachment: true },
+      }) as any;
+      const currentRecord: ExpenseRecordWithRelations = {
+        ...mapExpense(current),
+        lines: current.lines.map(mapLine),
+        attachments: attachmentLinks.map((l) => ({
+          id: l.attachmentId,
+          purpose: l.purpose as any,
+          originalFileName: l.attachment.originalFileName,
+          mimeType: l.attachment.mimeType,
+          byteSize: Number(l.attachment.byteSize),
+          checksumSha256: l.attachment.checksumSha256 ?? null,
+          status: l.attachment.status,
+          createdAt: l.attachment.createdAt.toISOString(),
+        })),
+        duplicateCandidates: current.duplicateCandidates.map((row: any) => ({
+          id: row.id, candidateExpenseId: row.candidateExpenseId, reasonCodesJson: row.reasonCodesJson ?? [], score: row.score,
+          status: row.status, resolvedAt: row.resolvedAt?.toISOString() ?? null, resolutionReason: row.resolutionReason ?? null,
+        })),
+        substituteReceiptEvidence: substitute ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substitute)) : null,
+      };
+      if (expenseTaxSourceChecksum(currentRecord) !== input.expectedSourceChecksum) throw new ConflictException('expense_confirmation_source_checksum_changed');
+
+      const reliesOnSubstitute = Boolean(current.missingReceiptReason || current.substituteReceiptGeneratedAt || current.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
+      const coveredByClaimForm = Boolean(input.substituteCoveredByClaimForm)
+        && !current.substituteReceiptGeneratedAt && current.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
+      if (reliesOnSubstitute && !coveredByClaimForm && (!substitute || substitute.status !== 'ISSUED' || !substitute.artifactAttachmentId)) {
+        throw new ConflictException('expense_confirmation_substitute_evidence_changed');
+      }
+      const finalized = await finalizeTax({ db: tx, expense: currentRecord });
+      const expectedLineIds = currentRecord.lines.filter((line) => line.taxSnapshot?.taxCodeDefinitionId || line.taxSnapshot?.externalTaxCode).map((line) => line.id);
+      if (finalized.length !== expectedLineIds.length || new Set(finalized.map((line) => line.sourceLineId)).size !== finalized.length
+        || finalized.some((line) => !line.sourceLineId || !expectedLineIds.includes(line.sourceLineId)
+          || !line.taxSnapshot || !line.taxComponents?.length || line.taxSnapshot.evidenceStatus === 'REVIEW_REQUIRED')) {
+        throw new ConflictException('expense_confirmation_tax_line_changed');
+      }
+      if (finalized.some((line) => isDomesticTaxSnapshot(line.taxSnapshot) && line.taxSnapshot?.evidenceStatus !== 'VERIFIED')) {
+        throw new ConflictException('expense_confirmation_tax_evidence_changed');
+      }
+      const evidenceIds = [...new Set(finalized.flatMap((line) => line.taxSnapshot?.evidenceRefs ?? []))];
+      if (evidenceIds.length) {
+        const evidence = await tx.tradeTaxEvidence.findMany({ where: {
+          companyId: input.companyId, id: { in: evidenceIds }, status: 'VERIFIED', reviewedByUserId: { not: null }, reviewedAt: { not: null },
+        } });
+        const attachmentIds = [...new Set(evidence.flatMap((row: any) => Array.isArray(row.attachmentIdsJson) ? row.attachmentIdsJson : []))];
+        const activeAttachmentCount = attachmentIds.length ? await tx.attachmentObject.count({
+          where: { companyId: input.companyId, id: { in: attachmentIds }, status: 'ACTIVE' },
+        }) : 0;
+        if (evidence.length !== evidenceIds.length || activeAttachmentCount !== attachmentIds.length) {
+          throw new ConflictException('expense_confirmation_tax_evidence_changed');
+        }
+      }
+
+      const periodKey = current.expenseDate.toISOString().slice(0, 7);
+      const accountingPeriod = await tx.accountingPeriod.findUnique({
+        where: { companyId_periodKey: { companyId: input.companyId, periodKey } }, select: { status: true },
+      });
+      if (accountingPeriod && !['OPEN', 'REOPENED'].includes(String(accountingPeriod.status))) {
+        throw new ConflictException(`expense_confirmation_accounting_period_locked:${periodKey}`);
+      }
+      const formTypes = [...new Set(finalized.flatMap((line) => line.taxComponents ?? [])
+        .flatMap((component) => component.reportContributions.map((contribution) => contribution.formType))
+        .filter((formType) => ['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(formType)))];
+      if (formTypes.length) {
+        const periods = await tx.taxPeriod.findMany({
+          where: { companyId: input.companyId, periodKey, formType: { in: formTypes } }, select: { formType: true, status: true },
+        });
+        const locked = periods.find((period: any) => ['FILED', 'PAID', 'CLOSED'].includes(String(period.status)));
+        if (locked) throw new ConflictException(`expense_confirmation_tax_period_locked:${locked.formType}:${periodKey}`);
+      }
+
+      for (const line of finalized) {
+        const changed = await tx.expenseLine.updateMany({
+          where: { id: line.sourceLineId, companyId: input.companyId, expenseId: input.id },
+          data: expenseLineTaxSnapshotData(line),
+        });
+        if (changed.count !== 1) throw new ConflictException('expense_confirmation_tax_line_changed');
+      }
+      const changed = await tx.expenseRecord.updateMany({
+        where: { id: input.id, companyId: input.companyId, status: 'READY_FOR_CONFIRMATION', updatedAt: input.expectedUpdatedAt },
+        data: {
+          status: 'CONFIRMED', confirmedByUserId: input.actorUserId, confirmedAt: new Date(), updatedByUserId: input.actorUserId,
+          expenseNumber: input.expenseNumber, postingStatus: input.postingStatus,
+          ...(input.vendorSnapshotJson ? { vendorSnapshotJson: input.vendorSnapshotJson } : {}),
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('expense_confirmation_source_version_changed');
+      await tx.outboxEvent.create({ data: {
+        companyId: input.companyId, eventType: 'expense.confirmed', aggregateType: 'expense_record', aggregateId: input.id,
+        eventKey: input.outboxEvent.eventKey, payloadJson: input.outboxEvent.payloadJson, priority: 'NORMAL', status: 'PENDING',
+      } });
+      return {
+        expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.id, companyId: input.companyId } })),
+        finalized,
+      };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  async terminalizeUnconfirmedClaimProjection(input: {
+    companyId: string;
+    expenseId: string;
+    reimbursementRequestId: string;
+    reimbursementLineId: string;
+    actorUserId: string;
+    reason: string;
+    eventKey: string;
+    payloadJson: Record<string, unknown>;
+  }): Promise<ExpenseRecord> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      const current = await tx.expenseRecord.findFirst({
+        where: {
+          id: input.expenseId,
+          companyId: input.companyId,
+          sourceReimbursementRequestId: input.reimbursementRequestId,
+          sourceReimbursementLineId: input.reimbursementLineId,
+        },
+      });
+      if (!current) throw new NotFoundException('Reimbursement expense projection not found');
+      if (current.status === 'VOIDED') return mapExpense(current);
+      if (current.status !== 'READY_FOR_CONFIRMATION') {
+        throw new ConflictException('reimbursement_projection_requires_true_reversal');
+      }
+      const changed = await tx.expenseRecord.updateMany({
+        where: {
+          id: input.expenseId,
+          companyId: input.companyId,
+          sourceReimbursementRequestId: input.reimbursementRequestId,
+          sourceReimbursementLineId: input.reimbursementLineId,
+          status: 'READY_FOR_CONFIRMATION',
+          updatedAt: current.updatedAt,
+        },
+        data: {
+          status: 'VOIDED',
+          voidedByUserId: input.actorUserId,
+          voidedAt: new Date(),
+          voidReason: input.reason,
+          postingStatus: 'not_required',
+          updatedByUserId: input.actorUserId,
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('reimbursement_projection_state_changed');
+      await tx.outboxEvent.createMany({
+        data: [{
+          companyId: input.companyId,
+          eventType: 'expense.voided',
+          aggregateType: 'expense_record',
+          aggregateId: input.expenseId,
+          eventKey: input.eventKey,
+          payloadJson: input.payloadJson,
+          priority: 'NORMAL',
+          status: 'PENDING',
+        }],
+        skipDuplicates: true,
+      });
+      return mapExpense(await tx.expenseRecord.findFirstOrThrow({
+        where: { id: input.expenseId, companyId: input.companyId },
+      }));
+    });
+  }
+
+  async countPostingBlockers(companyId: string, fromDate: Date, toDate: Date): Promise<{ pending: number; errors: number }> {
+    const where = {
+      companyId,
+      expenseDate: { gte: fromDate, lt: exclusiveEndOfDay(toDate) },
+      status: 'CONFIRMED' as any,
+    };
+    const [pending, errors, paidExpenses] = await Promise.all([
+      this.prisma.client.expenseRecord.count({ where: { ...where, postingStatus: 'pending' as any } }),
+      this.prisma.client.expenseRecord.count({ where: { ...where, postingStatus: 'posting_error' as any } }),
+      // GAP-07: a fully-paid plain expense whose settlement leg (expense.payment)
+      // has no journal yet is a close blocker. The ledger journal table is the
+      // source of truth (the postingStatus flag can lag/corrupt), so we check for
+      // the journal directly. Exclude rows already in the 'pending' bucket so an
+      // expense is counted at most once.
+      this.prisma.client.expenseRecord.findMany({
+        where: {
+          ...where,
+          paymentStatus: 'PAID' as any,
+          sourceReimbursementRequestId: null,
+          postingStatus: { not: 'pending' as any },
+        },
+        select: { id: true },
+      }),
+    ]);
+    let settlementBlockers = 0;
+    if (paidExpenses.length) {
+      const settled = await this.prisma.client.journalEntry.findMany({
+        where: { companyId, sourceType: 'expense.payment', sourceId: { in: paidExpenses.map((e) => e.id) } },
+        select: { sourceId: true },
+      });
+      const settledIds = new Set(settled.map((s) => s.sourceId));
+      settlementBlockers = paidExpenses.filter((e) => !settledIds.has(e.id)).length;
+    }
+    return { pending: pending + settlementBlockers, errors };
+  }
+
+  async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
+    await this.runInTx(db, async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
+      const signedEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId, expenseId, status: { in: ['PAYER_CERTIFIED', 'ISSUED'] } }, select: { id: true },
+      });
+      if (signedEvidence) throw new ConflictException({ code: 'substitute_evidence_locks_lines', message: 'Signed substitute evidence locks expense lines. Prepare a corrected version before changing them.' });
+      await tx.expenseLine.deleteMany({ where: { expenseId, companyId, lineNumber: { notIn: lines.map((line) => line.lineNumber) } } });
+      if (lines.length > 0) {
+        for (const l of lines) {
+          const { taxSnapshot, taxComponents } = l;
+          const data = {
+          expenseId, companyId, lineNumber: l.lineNumber, description: l.description,
+          quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount,
+          taxableAmount: l.taxableAmount, vatRate: l.vatRate, vatAmount: l.vatAmount,
+          whtRate: l.whtRate, whtAmount: l.whtAmount, lineSubtotalAmount: l.lineSubtotalAmount,
+          lineTotalAmount: l.lineTotalAmount, expenseCategoryId: l.expenseCategoryId,
+          accountHintKey: l.accountHintKey, taxCategory: l.taxCategory, sourceLineText: l.sourceLineText,
+          aiLineConfidence: l.aiLineConfidence, reviewStatus: l.reviewStatus,
+          taxCodeDefinitionId: taxSnapshot?.taxCodeDefinitionId ?? null,
+          externalTaxCodeSnapshot: taxSnapshot?.externalTaxCode ?? null,
+          taxProfileKeySnapshot: taxSnapshot?.taxProfileKey ?? null,
+          taxProfileVersionSnapshot: taxSnapshot?.taxProfileVersion ?? null,
+          roundingModeSnapshot: taxSnapshot?.roundingMode ?? null,
+          roundingScaleSnapshot: taxSnapshot?.roundingScale ?? null,
+          taxAmountToleranceSnapshot: taxSnapshot?.taxAmountTolerance ?? null,
+          taxRegimeSnapshot: taxSnapshot?.taxRegime ?? null,
+          taxDirectionSnapshot: taxSnapshot?.taxDirection ?? null,
+          taxTreatmentSnapshot: taxSnapshot?.taxTreatment ?? null,
+          taxContextSnapshot: taxSnapshot?.taxContext ?? null,
+          taxRateSnapshot: taxSnapshot?.taxRate ?? null,
+          sourceCurrencySnapshot: taxSnapshot?.sourceCurrency ?? null,
+          taxCurrencySnapshot: taxSnapshot?.taxCurrency ?? null,
+          exchangeRateSnapshot: taxSnapshot?.exchangeRate ?? null,
+          exchangeRateSourceSnapshot: taxSnapshot?.exchangeRateSource ?? null,
+          exchangeRateDateSnapshot: taxSnapshot?.exchangeRateDate ? new Date(taxSnapshot.exchangeRateDate) : null,
+          taxBaseAmount: taxSnapshot?.taxBaseAmount ?? null,
+          transactionTaxAmount: taxSnapshot?.taxAmount ?? null,
+          claimabilitySnapshot: taxSnapshot?.claimability ?? null,
+          accountRuleVersionSnapshot: taxSnapshot?.accountRuleVersion ?? null,
+          reportRuleVersionSnapshot: taxSnapshot?.reportRuleVersion ?? null,
+          taxEvidenceReviewStatus: taxSnapshot?.evidenceStatus ?? null,
+          taxComponentsJson: taxComponents ?? null,
+          accountAssignmentsJson: taxComponents?.flatMap((component) => component.accountAssignments) ?? null,
+          };
+          await tx.expenseLine.upsert({
+            where: { expenseId_lineNumber: { expenseId, lineNumber: l.lineNumber } },
+            create: data,
+            update: data,
+          });
+        }
+      }
+    });
+  }
+
+  async deleteDraftExpense(companyId: string, id: string): Promise<void> {
+    await this.prisma.client.expenseRecord.deleteMany({ where: { id, companyId, status: 'DRAFT' as any } });
+  }
+
+  async listCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
+    const cats = await this.prisma.client.expenseCategory.findMany({
+      where: { status: 'ACTIVE', OR: [{ companyId }, { companyId: null }] },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return cats.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
+  }
+
+  async createCategory(companyId: string, input: CreateExpenseCategoryInput): Promise<ExpenseCategorySummary> {
+    const c = await this.prisma.client.expenseCategory.create({ data: { companyId, name: input.name, accountHintKey: input.accountHintKey, defaultInputTaxCode: input.defaultInputTaxCode ?? null, sortOrder: input.sortOrder ?? 0 } });
+    return { id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder };
+  }
+
+  /** Company-owned category only; global defaults (companyId null) are read-only. */
+  async findCategoryById(companyId: string, categoryId: string): Promise<ExpenseCategorySummary | null> {
+    const c = await this.prisma.client.expenseCategory.findFirst({ where: { id: categoryId, companyId } });
+    return c ? { id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder } : null;
+  }
+
+  async updateCategory(companyId: string, categoryId: string, input: UpdateExpenseCategoryInput): Promise<ExpenseCategorySummary> {
+    const c = await this.prisma.client.expenseCategory.update({
+      where: { id: categoryId },
+      data: {
+        ...(input.name !== undefined && { name: input.name }),
+        ...(input.accountHintKey !== undefined && { accountHintKey: input.accountHintKey }),
+        ...(input.defaultInputTaxCode !== undefined && { defaultInputTaxCode: input.defaultInputTaxCode }),
+        ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
+        ...(input.status !== undefined && { status: input.status as any }),
+      },
+    });
+    return { id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder };
+  }
+
+  /** Management view: company + global categories in every status. */
+  async listAllCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
+    const cats = await this.prisma.client.expenseCategory.findMany({
+      where: { OR: [{ companyId }, { companyId: null }] },
+      orderBy: [{ status: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    return cats.map((c): ExpenseCategorySummary => ({ id: c.id, companyId: c.companyId, name: c.name, accountHintKey: c.accountHintKey, defaultInputTaxCode: c.defaultInputTaxCode, status: c.status as any, sortOrder: c.sortOrder }));
+  }
+
+  async findNearDuplicates(
+    companyId: string,
+    excludeId: string,
+    since: Date,
+    db: ExpenseDb = this.prisma.client,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<Array<{ id: string; checksumSha256: string | null; perceptualHash: string | null; vendorDocumentNumber: string | null; vendorTaxId: string | null; expenseDate: string | null; grandTotalAmount: string; vendorCounterpartyId: string | null; vendorName: string | null }>> {
+    const rows = await db.expenseRecord.findMany({
+      where: {
+        companyId,
+        id: { not: excludeId },
+        status: { not: 'VOIDED' as any },
+        createdAt: { gte: since },
+        ...branchScopeWhere(scopes),
+      },
+      select: { id: true, primaryAttachmentId: true, vendorDocumentNumber: true, vendorTaxIdSnapshot: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true, vendorCounterpartyId: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    const attachmentIds = rows.flatMap((row) => row.primaryAttachmentId ? [row.primaryAttachmentId] : []);
+    const attachments = attachmentIds.length > 0
+      ? await db.attachmentObject.findMany({
+          where: { companyId, id: { in: attachmentIds }, status: 'ACTIVE' as any },
+          select: { id: true, checksumSha256: true, perceptualHash: true },
+        })
+      : [];
+    const fingerprints = new Map(attachments.map((attachment) => [attachment.id, attachment]));
+    return rows.map((r) => ({
+      id: r.id,
+      checksumSha256: r.primaryAttachmentId ? fingerprints.get(r.primaryAttachmentId)?.checksumSha256 ?? null : null,
+      perceptualHash: r.primaryAttachmentId ? fingerprints.get(r.primaryAttachmentId)?.perceptualHash ?? null : null,
+      vendorDocumentNumber: r.vendorDocumentNumber,
+      vendorTaxId: r.vendorTaxIdSnapshot,
+      expenseDate: r.expenseDate?.toISOString() ?? null,
+      grandTotalAmount: r.grandTotalAmount?.toString() ?? '0',
+      vendorCounterpartyId: r.vendorCounterpartyId,
+      vendorName: r.vendorNameSnapshot,
+    }));
+  }
+
+  async createDuplicateCandidate(companyId: string, expenseId: string, candidateExpenseId: string, reasonCodesJson: string[], score: number, db: ExpenseDb = this.prisma.client): Promise<void> {
+    await db.expenseDuplicateCandidate.upsert({
+      where: { companyId_expenseId_candidateExpenseId: { companyId, expenseId, candidateExpenseId } },
+      create: { companyId, expenseId, candidateExpenseId, reasonCodesJson, score },
+      update: {},
+    });
+    await db.expenseDuplicateCandidate.updateMany({
+      where: {
+        companyId,
+        expenseId,
+        candidateExpenseId,
+        OR: [
+          { status: 'OPEN' },
+          { status: 'DISMISSED', resolvedByUserId: null, resolutionReason: AUTO_STALE_DUPLICATE_REASON },
+        ],
+      },
+      data: {
+        reasonCodesJson,
+        score,
+        status: 'OPEN',
+        resolvedByUserId: null,
+        resolvedAt: null,
+        resolutionReason: null,
+      },
+    });
+  }
+
+  private async assertDuplicateWriteAllowed(
+    tx: Prisma.TransactionClient,
+    input: { companyId: string; expenseId: string; scopes: { branchIds?: string[] } },
+  ): Promise<void> {
+    // ponytail: duplicate writes are low-frequency; one company lock avoids cross-writer lock cycles.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:duplicate-reconciliation`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+    const expense = await tx.expenseRecord.findFirst({
+      where: { id: input.expenseId, companyId: input.companyId },
+      select: { branchId: true, status: true, postingStatus: true },
+    });
+    if (!expense) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+    if (!isBranchInScope(input.scopes, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
+      throw new BadRequestException(`Cannot change duplicate state for expense in status ${expense.status}`);
+    }
+    if (expense.postingStatus === 'posted' || expense.postingStatus === 'reversed') {
+      throw new BadRequestException(`Cannot change duplicate state for expense in posting status ${expense.postingStatus}`);
+    }
+  }
+
+  /** `db` joins a caller's transaction. Required when the caller already holds the
+   *  `duplicate-reconciliation` advisory lock this method takes: a nested `$transaction` would
+   *  wait on a lock its own caller holds and never return — and would compute the reconciliation
+   *  from rows the caller has not committed yet. */
+  async runDuplicateCheck(
+    input: { companyId: string; expenseId: string; actorUserId: string; scopes: { branchIds?: string[] } },
+    detectWithinTx: (tx: Prisma.TransactionClient) => Promise<string[]>,
+    db?: any,
+  ): Promise<{ openCandidates: number; duplicateStatus: 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN' }> {
+    return this.runInTx(db, async (tx: Prisma.TransactionClient) => {
+      await this.assertDuplicateWriteAllowed(tx, input);
+      const matchedExpenseIds = await detectWithinTx(tx);
+      await tx.expenseDuplicateCandidate.updateMany({
+        where: {
+          companyId: input.companyId,
+          expenseId: input.expenseId,
+          status: 'OPEN',
+          candidateExpense: { companyId: input.companyId, ...branchScopeWhere(input.scopes) },
+          ...(matchedExpenseIds.length > 0 && { candidateExpenseId: { notIn: matchedExpenseIds } }),
+        },
+        data: {
+          status: 'DISMISSED',
+          resolvedByUserId: null,
+          resolvedAt: new Date(),
+          resolutionReason: AUTO_STALE_DUPLICATE_REASON,
+        },
+      });
+      let candidates = await tx.expenseDuplicateCandidate.findMany({
+        where: { companyId: input.companyId, expenseId: input.expenseId },
+        select: { id: true, candidateExpenseId: true, status: true, resolvedByUserId: true },
+      });
+      const confirmed = candidates.find((row) => row.status === 'CONFIRMED_DUPLICATE');
+      if (confirmed && candidates.some((row) => row.status === 'OPEN')) {
+        await tx.expenseDuplicateCandidate.updateMany({
+          where: {
+            companyId: input.companyId,
+            expenseId: input.expenseId,
+            status: 'OPEN',
+          },
+          data: {
+            status: 'DISMISSED',
+            resolvedByUserId: input.actorUserId,
+            resolvedAt: new Date(),
+            resolutionReason: SUPERSEDED_DUPLICATE_REASON,
+          },
+        });
+        candidates = candidates.map((row) => row.status === 'OPEN' ? { ...row, status: 'DISMISSED' } : row);
+      }
+      const openCandidates = candidates.filter((row) => row.status === 'OPEN').length;
+      const hasOpen = openCandidates > 0;
+      const hasHumanDismissal = candidates.some((row) => row.status === 'DISMISSED' && row.resolvedByUserId);
+      const duplicateStatus = confirmed ? 'CONFIRMED_DUPLICATE' : hasOpen ? 'POSSIBLE_DUPLICATE' : hasHumanDismissal ? 'OVERRIDDEN' : 'NO_MATCH';
+      const expense = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId },
+        data: {
+          duplicateStatus,
+          duplicateOfExpenseId: confirmed?.candidateExpenseId ?? null,
+          ...(duplicateStatus !== 'OVERRIDDEN' && { duplicateOverrideReason: null }),
+          ...(confirmed && { postingStatus: 'not_required' }),
+          updatedByUserId: input.actorUserId,
+        },
+      });
+      if (expense.count !== 1) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+      return { openCandidates, duplicateStatus };
+    });
+  }
+
+  /**
+   * Records a LINE correction may target: captured by THIS user, in THIS chat, inside the
+   * caller's branch scope, still editable, and recent. Branch scope is applied here rather than
+   * only at the mutation gate — a user whose scope was revoked must not even see the summary.
+   * `EXTRACTING` is excluded to match the web edit-block while OCR is in flight.
+   */
+  async listRecentLineCaptures(input: {
+    companyId: string;
+    createdByUserId: string;
+    chatKeyHash: string;
+    since: Date;
+    scopes: { branchIds?: string[] };
+    take: number;
+  }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
+    const rows = await this.prisma.client.expenseRecord.findMany({
+      where: {
+        companyId: input.companyId,
+        createdByUserId: input.createdByUserId,
+        captureSource: 'LINE_UPLOAD',
+        status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any },
+        createdAt: { gte: input.since },
+        // Rows captured before chatKeyHash existed simply never match — accepted transitional gap.
+        sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: input.chatKeyHash },
+        ...branchScopeWhere(input.scopes),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: input.take,
+      // ponytail: served by the existing (companyId, captureSource) index plus a filter+sort;
+      // fine at SME LINE-capture volumes. Add (companyId, captureSource, createdAt) if a company's
+      // LINE upload history ever makes this scan show up.
+      select: { id: true, expenseDate: true, grandTotalAmount: true, sourceDocumentType: true, createdAt: true },
+    });
+    return rows.map((row: any) => ({
+      id: row.id,
+      expenseDate: row.expenseDate ?? null,
+      grandTotalAmount: row.grandTotalAmount?.toString() ?? null,
+      sourceDocumentType: row.sourceDocumentType ?? null,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  /**
+   * A candidate row is reachable only through the expense that owns it: the write is
+   * scoped by `companyId` AND `expenseId`, and a zero-row result is a NotFound rather
+   * than a silent no-op — a bare `where: { id }` let a caller in one company resolve
+   * another company's candidate. Resolution, the expense status flip, and the caller's
+   * audit row share one transaction, so a failed audit rolls the mutation back.
+   */
+  async resolveDuplicateCandidate(
+    input: { companyId: string; expenseId: string; candidateId: string; actorUserId: string; action: 'dismiss' | 'confirm'; reason?: string; scopes: { branchIds?: string[] } },
+    auditWithinTx: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    const client = this.prisma.client as any;
+    await client.$transaction(async (tx: Prisma.TransactionClient) => {
+      await this.assertDuplicateWriteAllowed(tx, input);
+      const existingConfirmed = await tx.expenseDuplicateCandidate.findFirst({
+        where: { companyId: input.companyId, expenseId: input.expenseId, status: 'CONFIRMED_DUPLICATE' },
+        select: { id: true },
+      });
+      if (existingConfirmed) throw new ConflictException('Expense already has a confirmed duplicate candidate');
+      const ownedCandidate = await tx.expenseDuplicateCandidate.findFirst({
+        where: { id: input.candidateId, companyId: input.companyId, expenseId: input.expenseId, status: 'OPEN' },
+        select: { candidateExpenseId: true },
+      });
+      if (!ownedCandidate) throw new NotFoundException(`Open duplicate candidate ${input.candidateId} not found on expense ${input.expenseId}`);
+      const candidateExpense = await tx.expenseRecord.findFirst({
+        where: {
+          id: ownedCandidate.candidateExpenseId,
+          companyId: input.companyId,
+          ...branchScopeWhere(input.scopes),
+        },
+        select: { id: true },
+      });
+      if (!candidateExpense) throw new NotFoundException(`Duplicate target ${ownedCandidate.candidateExpenseId} not found in company ${input.companyId}`);
+      const candidate = await tx.expenseDuplicateCandidate.updateMany({
+        where: { id: input.candidateId, companyId: input.companyId, expenseId: input.expenseId, status: 'OPEN' },
+        data: {
+          status: (input.action === 'confirm' ? 'CONFIRMED_DUPLICATE' : 'DISMISSED') as any,
+          resolvedByUserId: input.actorUserId, resolvedAt: new Date(), resolutionReason: input.reason,
+        },
+      });
+      if (candidate.count !== 1) throw new NotFoundException(`Duplicate candidate ${input.candidateId} not found on expense ${input.expenseId}`);
+      if (input.action === 'confirm') {
+        await tx.expenseDuplicateCandidate.updateMany({
+          where: { companyId: input.companyId, expenseId: input.expenseId, status: 'OPEN', id: { not: input.candidateId } },
+          data: {
+            status: 'DISMISSED',
+            resolvedByUserId: input.actorUserId,
+            resolvedAt: new Date(),
+            resolutionReason: SUPERSEDED_DUPLICATE_REASON,
+          },
+        });
+      }
+      const remaining = await tx.expenseDuplicateCandidate.findMany({
+        where: { companyId: input.companyId, expenseId: input.expenseId },
+        select: { candidateExpenseId: true, status: true },
+      });
+      const confirmed = remaining.find((row) => row.status === 'CONFIRMED_DUPLICATE');
+      const hasOpen = remaining.some((row) => row.status === 'OPEN');
+      const duplicateStatus = confirmed ? 'CONFIRMED_DUPLICATE' : hasOpen ? 'POSSIBLE_DUPLICATE' : 'OVERRIDDEN';
+      const expense = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId },
+        data: {
+          duplicateStatus: duplicateStatus as any,
+          duplicateOfExpenseId: confirmed?.candidateExpenseId ?? null,
+          duplicateOverrideReason: duplicateStatus === 'OVERRIDDEN' ? input.reason : null,
+          ...(confirmed && { postingStatus: 'not_required' as any }),
+          updatedByUserId: input.actorUserId,
+        },
+      });
+      if (expense.count !== 1) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+      await auditWithinTx(tx);
+    });
+  }
+
+  async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
+    await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType: 'expense.record', targetId: expenseId, purpose, companyId, linkedByUserId: actorUserId } });
+  }
+
+  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
+    await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId } });
+  }
+
+  // ─── Company signature assets ───────────────────────────────────────────────
+
+  async createSignatureAsset(input: {
+    companyId: string;
+    label?: string;
+    originalAttachmentId: string;
+    submittedByUserId: string;
+    submittedFromChannel: SignatureSubmitChannel;
+    lineMessageId?: string;
+  }): Promise<SignatureAssetRecord> {
+    const s = await this.prisma.client.companySignatureAsset.create({
+      data: {
+        companyId: input.companyId,
+        label: input.label,
+        originalAttachmentId: input.originalAttachmentId,
+        submittedByUserId: input.submittedByUserId,
+        submittedFromChannel: input.submittedFromChannel as any,
+        lineMessageId: input.lineMessageId,
+      },
+    });
+    return mapSignatureAsset(s);
+  }
+
+  async findSignatureAssetById(companyId: string, id: string): Promise<SignatureAssetRecord | null> {
+    const s = await this.prisma.client.companySignatureAsset.findFirst({ where: { id, companyId } });
+    return s ? mapSignatureAsset(s) : null;
+  }
+
+  async findSignatureAssetByLineMessageId(companyId: string, lineMessageId: string): Promise<SignatureAssetRecord | null> {
+    const s = await this.prisma.client.companySignatureAsset.findFirst({ where: { companyId, lineMessageId } });
+    return s ? mapSignatureAsset(s) : null;
+  }
+
+  async listSignatureAssets(companyId: string, status?: string): Promise<SignatureAssetRecord[]> {
+    const rows = await this.prisma.client.companySignatureAsset.findMany({
+      where: { companyId, ...(status ? { status: status as any } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return rows.map(mapSignatureAsset);
+  }
+
+  async updateSignatureAsset(companyId: string, id: string, data: {
+    status?: string;
+    derivedAttachmentId?: string;
+    approvedByUserId?: string;
+    approvedAt?: Date;
+    rejectedByUserId?: string;
+    rejectedAt?: Date;
+    rejectReason?: string;
+    archivedAt?: Date;
+    label?: string;
+  }): Promise<SignatureAssetRecord> {
+    const s = await this.prisma.client.companySignatureAsset.update({
+      where: { id },
+      data: {
+        ...(data.status !== undefined && { status: data.status as any }),
+        ...(data.derivedAttachmentId !== undefined && { derivedAttachmentId: data.derivedAttachmentId }),
+        ...(data.approvedByUserId !== undefined && { approvedByUserId: data.approvedByUserId }),
+        ...(data.approvedAt !== undefined && { approvedAt: data.approvedAt }),
+        ...(data.rejectedByUserId !== undefined && { rejectedByUserId: data.rejectedByUserId }),
+        ...(data.rejectedAt !== undefined && { rejectedAt: data.rejectedAt }),
+        ...(data.rejectReason !== undefined && { rejectReason: data.rejectReason }),
+        ...(data.archivedAt !== undefined && { archivedAt: data.archivedAt }),
+        ...(data.label !== undefined && { label: data.label }),
+      },
+    });
+    return mapSignatureAsset(s);
+  }
+
+  async createSignatureFill(input: {
+    companyId: string;
+    expenseId: string;
+    signatureAssetId: string;
+    appliedByUserId: string;
+    renderedAttachmentId?: string;
+    placeholder?: string;
+  }): Promise<{ id: string; appliedAt: Date }> {
+    const f = await this.prisma.client.signatureFillRecord.create({
+      data: {
+        companyId: input.companyId,
+        expenseId: input.expenseId,
+        signatureAssetId: input.signatureAssetId,
+        appliedByUserId: input.appliedByUserId,
+        renderedAttachmentId: input.renderedAttachmentId,
+        placeholder: input.placeholder,
+      },
+    });
+    return { id: f.id, appliedAt: f.appliedAt };
+  }
+
+  async listSignatureFills(companyId: string, expenseId: string): Promise<Array<{ id: string; expenseId: string; signatureAssetId: string; appliedByUserId: string; appliedAt: Date; renderedAttachmentId: string | null; placeholder: string | null }>> {
+    return this.prisma.client.signatureFillRecord.findMany({
+      where: { companyId, expenseId },
+      orderBy: { appliedAt: 'desc' },
+      select: { id: true, expenseId: true, signatureAssetId: true, appliedByUserId: true, appliedAt: true, renderedAttachmentId: true, placeholder: true },
+    });
+  }
+
+  // ─── Accountant shared evidence ─────────────────────────────────────────────
+
+  buildSharedEvidenceWhere(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Record<string, unknown> {
+    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+    let fromDate = filter.fromDate ? new Date(filter.fromDate) : undefined;
+    let toDate = filter.toDate ? new Date(filter.toDate) : undefined;
+    if (filter.yearMonth && /^\d{4}-\d{2}$/.test(filter.yearMonth)) {
+      const [y, m] = filter.yearMonth.split('-').map(Number);
+      fromDate = new Date(Date.UTC(y!, m! - 1, 1));
+      toDate = new Date(Date.UTC(y!, m!, 1));
+    }
+    return {
+      companyId,
+      ...(scopes ? branchScopeWhere(scopes) : {}),
+      ...(filter.branchId && { branchId: filter.branchId }),
+      ...(filter.status && { status: filter.status }),
+      ...(filter.sourceDocumentType && { sourceDocumentType: filter.sourceDocumentType }),
+      ...(filter.taxEvidenceStatus && { taxEvidenceStatus: filter.taxEvidenceStatus }),
+      ...(filter.expenseCategoryId && { expenseCategoryId: filter.expenseCategoryId }),
+      ...(filter.paymentStatus && { paymentStatus: filter.paymentStatus }),
+      ...(filter.postingStatus && { postingStatus: filter.postingStatus }),
+      ...(filter.createdByUserId && { createdByUserId: filter.createdByUserId }),
+      ...(fromDate || toDate ? { [dateField]: { ...(fromDate && { gte: fromDate }), ...(toDate && { lt: toDate }) } } : {}),
+    };
+  }
+
+  async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<{
+    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const page = filter.page && filter.page > 0 ? filter.page : 1;
+    const pageSize = filter.pageSize && filter.pageSize > 0 && filter.pageSize <= 200 ? filter.pageSize : 50;
+    const where = this.buildSharedEvidenceWhere(companyId, filter, scopes);
+    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+
+    const [records, total] = await Promise.all([
+      this.prisma.client.expenseRecord.findMany({
+        where: where as any,
+        include: { expenseCategory: { select: { name: true } } },
+        orderBy: { [dateField]: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.client.expenseRecord.count({ where: where as any }),
+    ]);
+
+    const ids = records.map((r) => r.id);
+    const journalIds = records.map((r) => r.journalEntryId).filter((id): id is string => !!id);
+    const links = ids.length > 0 ? await this.prisma.client.attachmentLink.findMany({
+      where: { companyId, targetType: 'expense.record', targetId: { in: ids }, attachment: { companyId, status: 'ACTIVE' } },
+      include: { attachment: true },
+    }) : [];
+    const journals = ids.length > 0 ? await this.prisma.client.journalEntry.findMany({
+      where: {
+        companyId,
+        OR: [
+          ...(journalIds.length > 0 ? [{ id: { in: journalIds } }] : []),
+          { sourceId: { in: ids }, sourceType: { in: ['expense.record', 'expense.payment'] }, entryType: 'GENERATED' as any },
+        ],
+      },
+      select: { id: true, sourceId: true, sourceType: true, entryNumber: true },
+    }) : [];
+    const journalNumberById = new Map(journals.map((journal) => [journal.id, journal.entryNumber]));
+    const generatedSourceTypesByExpense = new Map<string, Set<string>>();
+    const generatedJournalByExpense = new Map<string, typeof journals[number]>();
+    for (const journal of journals) {
+      if (!journal.sourceId || !journal.sourceType) continue;
+      const sourceTypes = generatedSourceTypesByExpense.get(journal.sourceId) ?? new Set<string>();
+      sourceTypes.add(journal.sourceType);
+      generatedSourceTypesByExpense.set(journal.sourceId, sourceTypes);
+      const current = generatedJournalByExpense.get(journal.sourceId);
+      if (!current || journal.sourceType === 'expense.payment') {
+        generatedJournalByExpense.set(journal.sourceId, journal);
+      }
+    }
+    const byExpense = new Map<string, any[]>();
+    for (const link of links) {
+      const list = byExpense.get(link.targetId) ?? [];
+      list.push({
+        id: link.attachmentId,
+        purpose: link.purpose,
+        originalFileName: (link as any).attachment.originalFileName,
+        mimeType: (link as any).attachment.mimeType,
+        byteSize: Number((link as any).attachment.byteSize),
+        checksumSha256: (link as any).attachment.checksumSha256 ?? null,
+        status: (link as any).attachment.status,
+        createdAt: (link as any).attachment.createdAt,
+      });
+      byExpense.set(link.targetId, list);
+    }
+
+    return {
+      rows: records.map((r) => {
+        const fallbackJournal = generatedJournalByExpense.get(r.id);
+        const journalEntryId = r.journalEntryId && journalNumberById.has(r.journalEntryId)
+          ? r.journalEntryId
+          : fallbackJournal?.id ?? null;
+        return {
+          ...mapExpense(r),
+          categoryName: (r as any).expenseCategory?.name ?? null,
+          journalEntryId,
+          journalEntryNumber: journalEntryId ? journalNumberById.get(journalEntryId) ?? null : null,
+          pendingPostingSourceType: nextExpensePostingSource({
+            paymentStatus: r.paymentStatus,
+            sourceReimbursementRequestId: r.sourceReimbursementRequestId,
+            generatedSourceTypes: generatedSourceTypesByExpense.get(r.id) ?? new Set(),
+          }),
+          attachments: byExpense.get(r.id) ?? [],
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  /** Virtual year/month folders from the chosen date field (bounded raw aggregate). */
+  async summarizeSharedEvidenceFolders(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<Array<{ yearMonth: string; expenseCount: number; evidenceCount: number; totalAmount: string }>> {
+    const dateField = filter.dateField === 'expenseDate' ? 'expenseDate' : 'uploadedAt';
+    const where = this.buildSharedEvidenceWhere(companyId, { ...filter, yearMonth: undefined }, scopes);
+    const rows = await this.prisma.client.expenseRecord.findMany({
+      where: where as any,
+      select: { id: true, [dateField]: true, grandTotalAmount: true } as any,
+      take: 5000,
+    });
+    const ids = (rows as Array<Record<string, any>>).map((row) => row['id'] as string);
+    const evidenceLinks = ids.length > 0 ? await this.prisma.client.attachmentLink.findMany({
+      where: { companyId, targetType: 'expense.record', targetId: { in: ids }, attachment: { status: 'ACTIVE' } },
+      select: { targetId: true },
+    }) : [];
+    const evidencedIds = new Set(evidenceLinks.map((link) => link.targetId));
+    const buckets = new Map<string, { count: number; evidenceCount: number; total: number }>();
+    for (const row of rows as Array<Record<string, any>>) {
+      const date = row[dateField] as Date | null;
+      if (!date) continue;
+      const key = date.toISOString().slice(0, 7);
+      const bucket = buckets.get(key) ?? { count: 0, evidenceCount: 0, total: 0 };
+      bucket.count += 1;
+      if (evidencedIds.has(row['id'] as string)) bucket.evidenceCount += 1;
+      bucket.total += Number(row['grandTotalAmount'] ?? 0);
+      buckets.set(key, bucket);
+    }
+    return [...buckets.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([yearMonth, b]) => ({ yearMonth, expenseCount: b.count, evidenceCount: b.evidenceCount, totalAmount: b.total.toFixed(4) }));
+  }
+}

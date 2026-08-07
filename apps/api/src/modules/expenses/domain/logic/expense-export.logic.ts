@@ -1,0 +1,210 @@
+import {
+  ACCOUNTANT_INDEX_COLUMNS,
+  ACCOUNTANT_INDEX_COLUMN_LABELS,
+  EXPENSE_STATUS_LABELS,
+  SOURCE_DOCUMENT_TYPE_LABELS,
+  TAX_EVIDENCE_STATUS_LABELS,
+  accountantIndexColumns,
+  type AccountantIndexColumn,
+  type AccountantIndexColumnSet,
+  type AccountantPackageIndexRow,
+  type EvidenceManifestEntry,
+  type ExpenseAttachmentRef,
+  type SourceDocumentType,
+  type TaxEvidenceStatus,
+} from '@watchdog-bms/contracts';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
+import { buildXlsx, type XlsxCell } from '../../../../common/export/xlsx.logic';
+import { safeCsvCell } from '../../../../common/export/csv.logic';
+
+export type AccountantIndexSource = {
+  companyName: string;
+  companyTaxId: string | null;
+  branchCode: string | null;
+  expenseId: string;
+  expenseNumber: string | null;
+  status: string;
+  captureSource: string;
+  sourceDocumentType: SourceDocumentType;
+  taxEvidenceStatus: TaxEvidenceStatus;
+  taxEvidenceReasonCode: string | null;
+  postingStatus: string;
+  postingError: string | null;
+  journalEntryNumber: string | null;
+  uploadedAt: string;
+  expenseDate: string;
+  requesterName: string | null;
+  uploaderName: string | null;
+  reviewerName: string | null;
+  vendorNameSnapshot: string | null;
+  vendorTaxIdSnapshot: string | null;
+  vendorBranchCodeSnapshot: string | null;
+  vendorDocumentNumber: string | null;
+  categoryName: string | null;
+  accountHintKey: string | null;
+  description: string | null;
+  quantity: string | null;
+  subtotalAmount: string;
+  discountAmount: string;
+  taxableAmount: string;
+  vatAmount: string;
+  whtAmount: string;
+  grandTotalAmount: string;
+  netPayableAmount: string;
+  paidAmount: string;
+  outstandingAmount: string;
+  paymentMethod: string | null;
+  paidAt: string | null;
+  paymentReference: string | null;
+  substituteReceiptRef: string | null;
+  primaryAttachmentId: string | null;
+  attachments: ExpenseAttachmentRef[];
+  webUrl: string;
+  notes: string | null;
+};
+
+const CAPTURE_SOURCE_TO_CHANNEL: Record<string, string> = {
+  WEB_UPLOAD: 'WEB',
+  WEB_MANUAL: 'WEB',
+  LINE_UPLOAD: 'LINE',
+  API_INTERNAL: 'API',
+};
+
+export function evidenceRef(expenseNumber: string | null, expenseId: string, attachmentId: string): string {
+  return `${expenseNumber ?? expenseId}-${attachmentId.slice(-8)}`;
+}
+
+/** Accounting period = YYYY-MM from document date, falling back to uploaded date. */
+export function accountingPeriod(expenseDate: string | null, uploadedAt: string): string {
+  const source = expenseDate && expenseDate.length >= 7 ? expenseDate : uploadedAt;
+  return source.slice(0, 7);
+}
+
+export function buildAccountantIndexRow(source: AccountantIndexSource): AccountantPackageIndexRow {
+  const primary = source.attachments.find((a) => a.id === source.primaryAttachmentId)
+    ?? source.attachments.find((a) => a.purpose === 'expense.receipt.primary');
+  const supporting = source.attachments.filter((a) => a.id !== primary?.id);
+  return {
+    company_name: source.companyName,
+    company_tax_id: source.companyTaxId ?? '',
+    branch_code: source.branchCode ?? '',
+    accounting_period: accountingPeriod(source.expenseDate, source.uploadedAt),
+    uploaded_at: source.uploadedAt,
+    document_date: source.expenseDate ?? '',
+    expense_number: source.expenseNumber ?? source.expenseId,
+    expense_status: source.status,
+    source_channel: CAPTURE_SOURCE_TO_CHANNEL[source.captureSource] ?? source.captureSource,
+    source_document_type: source.sourceDocumentType,
+    tax_evidence_status: source.taxEvidenceStatus,
+    tax_evidence_reason: source.taxEvidenceReasonCode ?? '',
+    posting_status: source.postingStatus,
+    posting_error: source.postingError ?? '',
+    journal_entry_number: source.journalEntryNumber ?? '',
+    requester_name: source.requesterName ?? '',
+    uploader_name: source.uploaderName ?? '',
+    reviewer_name: source.reviewerName ?? '',
+    vendor_name: source.vendorNameSnapshot ?? '',
+    vendor_tax_id: source.vendorTaxIdSnapshot ?? '',
+    vendor_branch_code: source.vendorBranchCodeSnapshot ?? '',
+    vendor_document_number: source.vendorDocumentNumber ?? '',
+    category_name: source.categoryName ?? '',
+    account_hint_key: source.accountHintKey ?? '',
+    description: source.description ?? '',
+    quantity: source.quantity ?? '',
+    subtotal_amount: source.subtotalAmount,
+    discount_amount: source.discountAmount,
+    taxable_amount: source.taxableAmount,
+    vat_amount: source.vatAmount,
+    wht_amount: source.whtAmount,
+    grand_total_amount: source.grandTotalAmount,
+    net_payable_amount: source.netPayableAmount,
+    paid_amount: source.paidAmount,
+    outstanding_amount: source.outstandingAmount,
+    payment_method: source.paymentMethod ?? '',
+    paid_at: source.paidAt ?? '',
+    payment_reference: source.paymentReference ?? '',
+    substitute_receipt_ref: source.substituteReceiptRef ?? '',
+    primary_evidence_ref: primary ? evidenceRef(source.expenseNumber, source.expenseId, primary.id) : '',
+    supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id)).join(','),
+    web_url: source.webUrl,
+    notes: source.notes ?? '',
+  };
+}
+
+/** CSV in the exact column order required by the expense-receipt-upload spec. */
+export function buildAccountantIndexCsv(rows: AccountantPackageIndexRow[]): string {
+  const header = ACCOUNTANT_INDEX_COLUMNS.join(',');
+  const body = rows.map((row) => ACCOUNTANT_INDEX_COLUMNS.map((col) => safeCsvCell(row[col] ?? '')).join(','));
+  return [header, ...body].join('\n');
+}
+
+/** Amount/quantity columns are written as real numbers so Excel can sum them. */
+const NUMERIC_COLUMNS = new Set<AccountantIndexColumn>([
+  'quantity', 'subtotal_amount', 'discount_amount', 'taxable_amount', 'vat_amount', 'wht_amount',
+  'grand_total_amount', 'net_payable_amount', 'paid_amount', 'outstanding_amount',
+]);
+
+/** Display dates in the XLSX only — the CSV keeps ISO for system-to-system consumers.
+    `accounting_period` is a YYYY-MM key, not a date, and is deliberately excluded. */
+const DATE_COLUMNS = new Set<AccountantIndexColumn>(['uploaded_at', 'document_date', 'paid_at']);
+
+/** Enum codes become the same Thai wording the UI shows. */
+const VALUE_LABELS: Partial<Record<AccountantIndexColumn, Record<string, string>>> = {
+  expense_status: EXPENSE_STATUS_LABELS,
+  source_document_type: SOURCE_DOCUMENT_TYPE_LABELS,
+  tax_evidence_status: TAX_EVIDENCE_STATUS_LABELS,
+};
+
+function xlsxCell(column: AccountantIndexColumn, value: string): XlsxCell {
+  if (NUMERIC_COLUMNS.has(column)) {
+    const amount = Number(value);
+    return value !== '' && Number.isFinite(amount) ? amount : '';
+  }
+  if (DATE_COLUMNS.has(column)) return formatThaiExportDate(value);
+  return VALUE_LABELS[column]?.[value] ?? value;
+}
+
+/** Real .xlsx of the accountant index, headed by Thai labels instead of column keys. */
+export function buildAccountantIndexXlsx(rows: AccountantPackageIndexRow[], columnSet: AccountantIndexColumnSet): Buffer {
+  const columns = accountantIndexColumns(columnSet);
+  return buildXlsx(
+    [
+      columns.map((col) => ACCOUNTANT_INDEX_COLUMN_LABELS[col]),
+      ...rows.map((row) => columns.map((col) => xlsxCell(col, row[col] ?? ''))),
+    ],
+    'รายการค่าใช้จ่าย',
+  );
+}
+
+export type ManifestEntrySource = {
+  expenseId: string;
+  expenseNumber: string | null;
+  attachment: ExpenseAttachmentRef;
+  sourceDocumentType: SourceDocumentType;
+  taxEvidenceStatus: TaxEvidenceStatus;
+  downloadUrl: string;
+  downloadUrlExpiresAt: string;
+  webUrl: string;
+};
+
+export function buildManifestEntry(source: ManifestEntrySource): EvidenceManifestEntry {
+  return {
+    evidence_ref: evidenceRef(source.expenseNumber, source.expenseId, source.attachment.id),
+    expense_id: source.expenseId,
+    attachment_id: source.attachment.id,
+    file_name: source.attachment.originalFileName,
+    mime_type: source.attachment.mimeType,
+    file_size_bytes: source.attachment.byteSize,
+    evidence_role: source.attachment.purpose,
+    source_document_type: source.sourceDocumentType,
+    tax_evidence_status: source.taxEvidenceStatus,
+    download_url: source.downloadUrl,
+    download_url_expires_at: source.downloadUrlExpiresAt,
+    web_url: source.webUrl,
+  };
+}
+
+/** UI year/month folder key from an ISO timestamp/date string. */
+export function yearMonthBucket(isoDate: string): string {
+  return isoDate.slice(0, 7);
+}

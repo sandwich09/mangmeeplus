@@ -1,0 +1,38 @@
+{
+  "name": "watchdog-bms",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "corepack pnpm -r --if-present build",
+    "dev": "turbo run dev",
+    "lint": "corepack pnpm -r --if-present lint",
+    "security:audit": "corepack pnpm audit --audit-level=high",
+    "config:validate": "tsx scripts/validate-prod-config.ts",
+    "security:m14-evidence": "tsx scripts/m14-scanner-evidence.ts",
+    "e2e": "playwright test",
+    "agent:gates": "node scripts/check-agent-gates.mjs",
+    "test": "corepack pnpm -r --if-present test",
+    "typecheck": "corepack pnpm -r --if-present typecheck",
+    "docker:local": "docker compose -f infra/docker/compose.local.yml --env-file .env up --build",
+    "docker:local:infra": "docker compose -f infra/docker/compose.local.yml --env-file .env up postgres redis minio minio-create-bucket"
+  },
+  "pnpm": {
+    "overrides": {
+      "@svgr/plugin-svgo>svgo": "3.3.4",
+      "@swc/cli>minimatch": "10.2.5",
+      "brace-expansion": "5.0.9",
+      "js-yaml": "4.3.1",
+      "multer": "2.2.0",
+      "postcss": "^8.5.18",
+      "sharp": "^0.35.3"
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}

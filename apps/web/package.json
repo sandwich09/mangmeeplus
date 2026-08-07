@@ -1,0 +1,31 @@
+{
+  "name": "@watchdog-bms/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev -H ${HOST:-127.0.0.1}",
+    "lint": "next typegen && tsc --noEmit",
+    "start": "next start -H ${HOST:-127.0.0.1}",
+    "test": "tsx --test \"src/**/*.spec.ts\"",
+    "typecheck": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@watchdog-bms/contracts": "workspace:*",
+    "@watchdog-bms/design-tokens": "workspace:*",
+    "heic-to": "^1.5.2",
+    "next": "^16.2.11",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@svgr/webpack": "^8.1.0",
+    "@tailwindcss/postcss": "^4.3.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "postcss": "^8.5.18",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,203 @@
+import { describe, it, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import { GenerateJournalFromSourceUseCase } from './journal.use-case';
+import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+
+// GAP-07: the expense settlement (payment) leg is a real posting source now.
+// RecordExpensePayment leaves the expense postingStatus 'pending'; generating the
+// expense.payment journal posts Dr 2120-01 / Cr 1110-01 and flips it to 'posted',
+// so a paid expense stops blocking period close forever.
+
+const noopAudit = { log: async () => undefined } as any;
+const noopOutbox = { append: async () => undefined } as any;
+
+function ctx(perms: string[]) {
+  return {
+    requestId: 'req-1', authSubject: 's', userId: 'fin-1', companyId: 'co-1',
+    membershipId: 'm', roles: ['FINANCE'], permissions: perms, scopes: {}, authProvider: 'dev',
+  } as any;
+}
+
+function paidExpense(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'exp-1', companyId: 'co-1', branchId: null, status: 'CONFIRMED', expenseNumber: 'EXP-1',
+    currency: 'THB', expenseDate: new Date('2026-07-10T00:00:00.000Z'),
+    grandTotalAmount: '107.0000', netPayableAmount: '107.0000', paidAmount: '107.0000',
+    outstandingAmount: '0.0000', paymentStatus: 'PAID', paidAt: new Date('2026-07-20T00:00:00.000Z'),
+    vendorCounterpartyId: null, sourceReimbursementRequestId: null,
+    vatAmount: '7.0000', whtAmount: '0.0000', lines: [],
+    ...overrides,
+  };
+}
+
+function generateFakes(expense: Record<string, unknown>) {
+  const created: any[] = [];
+  const flips: Array<{ id: string; postingStatus: string }> = [];
+  const ledgerRepo = {
+    findGeneratedJournal: async () => null,
+    findPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
+    upsertPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
+    findActivePostingRule: async () => null,
+    findAccountByCode: async (_c: string, code: string) => ({ id: code, status: 'ACTIVE', isPosting: true, companyId: 'co-1', isSystem: false }),
+    createJournalEntry: async (input: any) => {
+      const entry = {
+        id: 'je-1', companyId: input.companyId, periodId: input.periodId, entryNumber: input.entryNumber,
+        entryType: input.entryType, sourceType: input.sourceType, sourceId: input.sourceId,
+        reversalOfJournalEntryId: null, status: 'DRAFT', entryDate: input.entryDate, postedAt: null,
+        memo: input.memo, createdAt: new Date(),
+        lines: input.lines.map((l: any, i: number) => ({
+          id: `l${i}`, accountId: l.accountId, branchId: l.branchId ?? null, lineNumber: i + 1,
+          description: l.description, debitAmount: String(l.debitAmount ?? '0'), creditAmount: String(l.creditAmount ?? '0'),
+          currency: l.currency ?? 'THB', taxCode: l.taxCode ?? null,
+        })),
+      };
+      created.push(entry);
+      return entry;
+    },
+    postJournalEntry: async (id: string) => { const e = created.find((x) => x.id === id); e.status = 'POSTED'; e.postedAt = new Date(); return e; },
+  } as any;
+  const expenseRepo = {
+    findByIdWithRelations: async () => expense,
+    updatePostingStatus: mock.fn(async (_c: string, id: string, data: any) => { flips.push({ id, postingStatus: data.postingStatus }); }),
+  } as any;
+  const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'JV-1' }) } as any;
+  const commit = { execute: async () => undefined } as any;
+  const prisma = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) } } } as any;
+  const uc = new GenerateJournalFromSourceUseCase(ledgerRepo, noopAudit, reserve, commit, noopOutbox, {} as any, expenseRepo, {} as any, {} as any, prisma);
+  return { uc, created, flips, expenseRepo };
+}
+
+describe('GenerateJournalFromSourceUseCase — expense.payment canonical source', () => {
+  it('posts Dr 2120-01 / Cr 1110-01 from paidAmount and flips the expense to posted', async () => {
+    const { uc, created, flips } = generateFakes(paidExpense());
+    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+
+    assert.equal(summary.sourceType, 'expense.payment');
+    const lines = created[0].lines;
+    assert.equal(lines.find((l: any) => l.accountId === '2120-01')?.debitAmount, '107.0000');
+    assert.equal(lines.find((l: any) => l.accountId === '1110-01')?.creditAmount, '107.0000');
+    // pending (pre-generate) then posted (success) — mirrors every other source.
+    assert.deepEqual(flips.map((f) => f.postingStatus), ['pending', 'posted']);
+    assert.equal(flips.at(-1)?.id, 'exp-1');
+  });
+
+  it('uses the settlement (paidAt) date for the posting period, not the expense date', async () => {
+    const { uc, created } = generateFakes(paidExpense({
+      expenseDate: new Date('2026-06-01T00:00:00.000Z'), paidAt: new Date('2026-07-20T00:00:00.000Z'),
+    }));
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    assert.equal(created[0].entryDate.toISOString(), '2026-07-20T00:00:00.000Z');
+  });
+
+  it('falls back to the expense date when no paid date is stored', async () => {
+    const { uc, created } = generateFakes(paidExpense({ paidAt: null, expenseDate: new Date('2026-07-05T00:00:00.000Z') }));
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    assert.equal(created[0].entryDate.toISOString(), '2026-07-05T00:00:00.000Z');
+  });
+
+  it('rejects a claim-born expense (it settles through reimbursement.payment)', async () => {
+    const { uc } = generateFakes(paidExpense({ sourceReimbursementRequestId: 'rb-1' }));
+    await assert.rejects(
+      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
+      (e: any) => e?.getResponse?.().code === 'claim_expense_settles_via_reimbursement',
+    );
+  });
+
+  it('rejects a non-CONFIRMED expense', async () => {
+    const { uc } = generateFakes(paidExpense({ status: 'READY_FOR_CONFIRMATION' }));
+    await assert.rejects(
+      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
+      (e: any) => e?.getResponse?.().code === 'expense_not_confirmed',
+    );
+  });
+
+  it('rejects a not-fully-PAID expense', async () => {
+    const { uc } = generateFakes(paidExpense({ paymentStatus: 'PARTIALLY_PAID', paidAmount: '50.0000' }));
+    await assert.rejects(
+      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
+      (e: any) => e?.getResponse?.().code === 'expense_payment_not_settled',
+    );
+  });
+
+  it('returns the existing settlement journal on a repeat generate (idempotent per expense)', async () => {
+    const { uc, created } = generateFakes(paidExpense());
+    (uc as any).repo.findGeneratedJournal = async () => ({
+      id: 'je-existing', companyId: 'co-1', periodId: 'period-1', entryNumber: 'JV-0', entryType: 'GENERATED',
+      sourceType: 'expense.payment', sourceId: 'exp-1', reversalOfJournalEntryId: null, status: 'POSTED',
+      entryDate: new Date(), postedAt: new Date(), memo: null, createdAt: new Date(), lines: [],
+    });
+    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    assert.equal(summary.id, 'je-existing');
+    assert.equal(created.length, 0);
+  });
+});
+
+// ---- countPostingBlockers -------------------------------------------------
+
+type Row = Record<string, any>;
+
+function whereMatch(row: Row, where: Row): boolean {
+  return Object.entries(where).every(([key, cond]) => {
+    if (cond && typeof cond === 'object' && !Array.isArray(cond) && !(cond instanceof Date)) {
+      if ('not' in cond) return row[key] !== cond.not;
+      if ('in' in cond) return (cond.in as any[]).includes(row[key]);
+      if ('gte' in cond || 'lte' in cond) {
+        const v = row[key] as Date;
+        if ('gte' in cond && v < cond.gte) return false;
+        if ('lte' in cond && v > cond.lte) return false;
+        return true;
+      }
+      return true;
+    }
+    return row[key] === cond;
+  });
+}
+
+function blockersClient(expenses: Row[], journalEntries: Row[]) {
+  return {
+    client: {
+      expenseRecord: {
+        count: async ({ where }: any) => expenses.filter((r) => whereMatch(r, where)).length,
+        findMany: async ({ where }: any) => expenses.filter((r) => whereMatch(r, where)).map((r) => ({ id: r.id })),
+      },
+      journalEntry: {
+        findMany: async ({ where }: any) => journalEntries.filter((r) => whereMatch(r, where)).map((r) => ({ sourceId: r.sourceId })),
+      },
+    },
+  } as any;
+}
+
+describe('PrismaExpenseRepository.countPostingBlockers — GAP-07 settlement blockers', () => {
+  const CO = 'co-1';
+  const FROM = new Date('2026-07-01T00:00:00.000Z');
+  const TO = new Date('2026-07-31T23:59:59.999Z');
+  const D = new Date('2026-07-10T00:00:00.000Z');
+
+  function base(id: string, o: Record<string, unknown>) {
+    return { id, companyId: CO, status: 'CONFIRMED', expenseDate: D, paymentStatus: 'UNPAID', sourceReimbursementRequestId: null, postingStatus: 'posted', ...o };
+  }
+
+  it('counts a paid plain expense with no settlement journal, without double-counting the pending bucket', async () => {
+    const expenses: Row[] = [
+      base('e1', { paymentStatus: 'PAID', postingStatus: 'posted' }),          // settlement blocker
+      base('e2', { paymentStatus: 'PAID', postingStatus: 'pending' }),         // pending bucket only
+      base('e3', { paymentStatus: 'PAID', postingStatus: 'posted' }),          // settled → not a blocker
+      base('e4', { paymentStatus: 'PAID', postingStatus: 'posted', sourceReimbursementRequestId: 'rb-1' }), // claim-born → excluded
+      base('e5', { postingStatus: 'posting_error' }),                          // error bucket
+      base('e6', { postingStatus: 'pending' }),                                // accrual pending
+    ];
+    const journalEntries: Row[] = [
+      { companyId: CO, sourceType: 'expense.payment', sourceId: 'e3' },
+    ];
+    const repo = new PrismaExpenseRepository(blockersClient(expenses, journalEntries));
+    const result = await repo.countPostingBlockers(CO, FROM, TO);
+    // pending bucket: e2, e6 = 2; settlement blocker: e1 = 1 → 3. errors: e5 = 1.
+    assert.deepEqual(result, { pending: 3, errors: 1 });
+  });
+
+  it('does not count a claim-born paid expense as a settlement blocker', async () => {
+    const expenses: Row[] = [base('c1', { paymentStatus: 'PAID', postingStatus: 'posted', sourceReimbursementRequestId: 'rb-9' })];
+    const repo = new PrismaExpenseRepository(blockersClient(expenses, []));
+    assert.deepEqual(await repo.countPostingBlockers(CO, FROM, TO), { pending: 0, errors: 0 });
+  });
+});

@@ -1,0 +1,163 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
+import { UnauthorizedException } from '@nestjs/common';
+import { LineWebhookController } from './presentation/line-webhook.controller';
+
+function sign(rawBody: Buffer, secret: string): string {
+  return createHmac('sha256', secret).update(rawBody).digest('base64');
+}
+
+function makeController(enqueueImpl?: (envelope: unknown) => Promise<void>) {
+  const enqueued: any[] = [];
+  const controller = new LineWebhookController(
+    {
+      lineMessagingChannelSecret: 'line-secret',
+      lineMessagingChannelId: 'msg-channel-1',
+    } as any,
+    {
+      enqueue: async (envelope: unknown) => {
+        enqueued.push(envelope);
+        if (enqueueImpl) await enqueueImpl(envelope);
+      },
+    } as any,
+  );
+  return { controller, enqueued };
+}
+
+function requestFor(payload: Record<string, unknown>) {
+  const rawBody = Buffer.from(JSON.stringify(payload));
+  return {
+    headers: { 'x-line-signature': sign(rawBody, 'line-secret') },
+    rawBody,
+    body: JSON.parse(rawBody.toString('utf8')),
+  } as any;
+}
+
+describe('LineWebhookController', () => {
+  it('verifies signature against raw body and enqueues with canonical server channel id', async () => {
+    const { controller, enqueued } = makeController();
+    const result = await controller.lineWebhook(requestFor({
+      destination: 'bot',
+      events: [{
+        type: 'message', webhookEventId: 'evt-1', replyToken: 'reply-1', timestamp: 1751700000000,
+        source: { type: 'user', userId: 'line-user-1' },
+        message: { type: 'text', id: 'mid-1', text: ' low stock? ' },
+      }],
+    }));
+
+    assert.deepEqual(result, {});
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].messagingChannelId, 'msg-channel-1');
+    assert.equal(enqueued[0].chatId, 'line-user-1');
+    assert.equal(enqueued[0].lineUserId, 'line-user-1');
+    assert.equal(enqueued[0].item.kind, 'text');
+    assert.equal(enqueued[0].item.webhookEventId, 'evt-1');
+    assert.equal(enqueued[0].item.timestamp, 1751700000000);
+  });
+
+  it('acks 200 without waiting for turn processing (enqueue is the only await)', async () => {
+    // Processing happens on the buffer's worker, never inside the request.
+    // The controller must resolve even though no turn has run at all.
+    const { controller, enqueued } = makeController();
+    const result = await controller.lineWebhook(requestFor({
+      events: [{
+        type: 'message', webhookEventId: 'evt-fast', replyToken: 'reply-1',
+        source: { userId: 'line-user-1' },
+        message: { type: 'text', text: 'ขอรายชื่อลูกค้า' },
+      }],
+    }));
+    assert.deepEqual(result, {});
+    assert.equal(enqueued.length, 1);
+  });
+
+  it('maps group chats to a group-scoped chat id', async () => {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({
+      events: [{
+        type: 'message', webhookEventId: 'evt-g1', replyToken: 'reply-g1',
+        source: { type: 'group', groupId: 'group-77', userId: 'line-user-1' },
+        message: { type: 'text', text: 'ยอดขายวันนี้' },
+      }],
+    }));
+    assert.equal(enqueued[0].chatId, 'group-77');
+    assert.equal(enqueued[0].lineUserId, 'line-user-1');
+  });
+
+  it('enqueues image and file messages as media items', async () => {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({
+      events: [
+        {
+          type: 'message', webhookEventId: 'evt-img', replyToken: 'reply-img',
+          source: { userId: 'line-user-1' },
+          message: { type: 'image', id: 'mid-img' },
+        },
+        {
+          type: 'message', webhookEventId: 'evt-file', replyToken: 'reply-file',
+          source: { userId: 'line-user-1' },
+          message: { type: 'file', id: 'mid-file', fileName: 'bill.pdf', fileSize: 1024 },
+        },
+      ],
+    }));
+    assert.equal(enqueued.length, 2);
+    assert.equal(enqueued[0].item.kind, 'media');
+    assert.equal(enqueued[0].item.messageType, 'image');
+    assert.equal(enqueued[1].item.messageType, 'file');
+    assert.equal(enqueued[1].item.fileName, 'bill.pdf');
+  });
+
+  it('skips non-message events and keeps processing the rest', async () => {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({
+      events: [
+        { type: 'follow', webhookEventId: 'evt-follow', source: { userId: 'line-user-1' } },
+        {
+          type: 'message', webhookEventId: 'evt-2', replyToken: 'reply-2',
+          source: { userId: 'line-user-1' },
+          message: { type: 'text', text: 'สวัสดี' },
+        },
+      ],
+    }));
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].item.webhookEventId, 'evt-2');
+  });
+
+  it('rejects the webhook when enqueue fails so LINE can redeliver it', async () => {
+    const { controller, enqueued } = makeController(async (envelope: any) => {
+      if (envelope.item.webhookEventId === 'evt-bad') throw new Error('db down');
+    });
+    await assert.rejects(
+      () => controller.lineWebhook(requestFor({
+        events: [
+          { type: 'message', webhookEventId: 'evt-bad', replyToken: 'r1', source: { userId: 'u1' }, message: { type: 'text', text: 'a' } },
+          { type: 'message', webhookEventId: 'evt-good', replyToken: 'r2', source: { userId: 'u1' }, message: { type: 'text', text: 'b' } },
+        ],
+      })),
+      /db down/,
+    );
+    assert.equal(enqueued.length, 1, 'the request stops so the full LINE payload can be redelivered');
+  });
+
+  it('rejects invalid signature before enqueueing', async () => {
+    const { controller, enqueued } = makeController();
+    const rawBody = Buffer.from('{"events":[]}');
+    await assert.rejects(
+      () => controller.lineWebhook({
+        headers: { 'x-line-signature': sign(Buffer.from('other'), 'line-secret') },
+        rawBody,
+        body: { events: [] },
+      } as any),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+    assert.equal(enqueued.length, 0);
+  });
+
+  it('rejects when raw body is unavailable', async () => {
+    const { controller } = makeController();
+    await assert.rejects(
+      () => controller.lineWebhook({ headers: { 'x-line-signature': 'sig' }, body: { events: [] } } as any),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+  });
+});

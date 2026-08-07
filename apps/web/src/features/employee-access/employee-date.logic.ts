@@ -1,0 +1,19 @@
+export function formatEmployeeDateInput(value: string): string {
+  const raw = value.replace(/[^0-9]/g, '').slice(0, 8);
+  if (raw.length > 4) return `${raw.slice(0, 2)}/${raw.slice(2, 4)}/${raw.slice(4)}`;
+  if (raw.length > 2) return `${raw.slice(0, 2)}/${raw.slice(2)}`;
+  return raw;
+}
+
+export function employeeDateToIso(value: string, today = new Date()): string | undefined {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) return undefined;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined;
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  if (date.getTime() > todayUtc) return undefined;
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}

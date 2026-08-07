@@ -1,0 +1,245 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccountProbe",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "CreateOrUpdateOnlyUatExpressServices",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:CreateExpressGatewayService",
+        "ecs:UpdateExpressGatewayService",
+        "ecs:DescribeExpressGatewayService"
+      ],
+      "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:service/watchdog-bms-uat/*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:cluster/watchdog-bms-uat"
+        }
+      }
+    },
+    {
+      "Sid": "UatCluster",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:CreateCluster",
+        "ecs:DescribeClusters"
+      ],
+      "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:cluster/watchdog-bms-uat"
+    },
+    {
+      "Sid": "RegisterAndReadTaskDefinitions",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RegisterTaskDefinition",
+        "ecs:DescribeTaskDefinition"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RunOnlyUatReleaseTasks",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:task-definition/watchdog-bms-uat-release-task:*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:cluster/watchdog-bms-uat"
+        }
+      }
+    },
+    {
+      "Sid": "UatRolloutRead",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:ListTasks",
+        "ecs:DescribeTasks",
+        "ecs:ListServiceDeployments",
+        "ecs:DescribeServiceDeployments",
+        "ecs:DescribeServiceRevisions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TagOnlyUatCapacityTaskOnRun",
+      "Effect": "Allow",
+      "Action": "ecs:TagResource",
+      "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:task/watchdog-bms-uat/*",
+      "Condition": {
+        "StringEquals": {
+          "ecs:CreateAction": "RunTask",
+          "aws:RequestTag/WatchdogOperation": "U5Capacity"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": [
+            "WatchdogOperation",
+            "U5CapacityMarker"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "StopOnlyUatCapacityTask",
+      "Effect": "Allow",
+      "Action": "ecs:StopTask",
+      "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:task/watchdog-bms-uat/*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:cluster/watchdog-bms-uat"
+        },
+        "StringEquals": {
+          "ecs:ResourceTag/WatchdogOperation": "U5Capacity"
+        }
+      }
+    },
+    {
+      "Sid": "ReadRequiredEcsRoles",
+      "Effect": "Allow",
+      "Action": "iam:GetRole",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-execution-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-infrastructure-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-api-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
+      ]
+    },
+    {
+      "Sid": "PassOnlyUatEcsRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-execution-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-infrastructure-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-api-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "ecs.amazonaws.com",
+            "ecs-tasks.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "VerifyUatReleaseTaskRolePolicy",
+      "Effect": "Allow",
+      "Action": "iam:GetRolePolicy",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat"
+      ]
+    },
+    {
+      "Sid": "EcrLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "VerifyUatReleaseImageSignatures",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-api",
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-ai-gateway",
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-workers"
+      ]
+    },
+    {
+      "Sid": "UatReleaseTaskImage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage"
+      ],
+      "Resource": "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-api"
+    },
+    {
+      "Sid": "UatParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/uat/*"
+    },
+    {
+      "Sid": "DescribeUatSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:DescribeSecret",
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/uat/*"
+    },
+    {
+      "Sid": "NetworkRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "UatLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:PutMetricFilter",
+        "logs:PutRetentionPolicy",
+        "logs:AssociateKmsKey"
+      ],
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-*",
+        "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/ecs/watchdog-bms-uat-*:*"
+      ]
+    },
+    {
+      "Sid": "UatM01DenialAlarm",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:GetMetricData"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "UatEvidenceBucketControls",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketCORS"
+      ],
+      "Resource": "arn:aws:s3:::watchdog-bms-uat-<ACCOUNT_ID>"
+    }
+  ]
+}

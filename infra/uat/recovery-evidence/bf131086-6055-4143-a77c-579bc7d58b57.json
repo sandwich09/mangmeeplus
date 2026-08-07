@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "evidenceKind": "REVIEWED_EXPIRED_ECS_TASK",
+  "environment": "uat",
+  "parentOperationId": "bf131086-6055-4143-a77c-579bc7d58b57",
+  "releaseRef": "605a52e29f67d1dea5599387dbd22919799ebfe9",
+  "serviceName": "watchdog-bms-uat-ai-gateway",
+  "ssmParameterName": "/watchdog-bms/uat/ecs-express-ai-gateway-service-arn",
+  "intentId": "73bb4f20-1274-4ee0-a22a-edd6ac73b045",
+  "githubRunId": "30760853050",
+  "logGroup": "/ecs/watchdog-bms-uat-release-task",
+  "deploymentCreatedAt": "2026-08-02T18:34:00.973Z",
+  "tasks": {
+    "parent": {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/3b0a64a9d6c1465998c45f4319b05d9b",
+      "taskDefinitionArn": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-uat-release-task:28",
+      "taskDefinitionRegisteredAt": "2026-08-02T18:28:08.054Z",
+      "taskDefinitionRegisteredBy": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-deploy-30760853050",
+      "startedAt": "2026-08-02T18:28:51.000Z",
+      "stoppedAt": "2026-08-02T18:30:10.000Z",
+      "expectedExitCode": 0,
+      "logStream": "release/release/3b0a64a9d6c1465998c45f4319b05d9b",
+      "logTimestamp": 1785695387463,
+      "logMessage": "release operation awaiting rollout finalization: id=bf131086-6055-4143-a77c-579bc7d58b57 holdSeconds=5400"
+    },
+    "intent": {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/2eaa547afc124fcaacf21fdbb0994b73",
+      "taskDefinitionArn": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-uat-release-task:30",
+      "taskDefinitionRegisteredAt": "2026-08-02T18:31:28.654Z",
+      "taskDefinitionRegisteredBy": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-target-30760853050",
+      "startedAt": "2026-08-02T18:33:19.000Z",
+      "stoppedAt": "2026-08-02T18:33:45.000Z",
+      "expectedExitCode": 75,
+      "logStream": "release-intent/release-intent/2eaa547afc124fcaacf21fdbb0994b73",
+      "logTimestamp": 1785695602264,
+      "logMessage": "release operation failed: legacy api-web descriptor changed between exact cutover retries"
+    },
+    "binder": {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/3aa48e9b648346a8a7b0aae286f26ba8",
+      "taskDefinitionArn": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-uat-release-task:34",
+      "taskDefinitionRegisteredAt": "2026-08-02T18:34:10.816Z",
+      "taskDefinitionRegisteredBy": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-target-30760853050",
+      "startedAt": "2026-08-02T18:35:45.000Z",
+      "stoppedAt": "2026-08-02T18:36:11.000Z",
+      "expectedExitCode": 75,
+      "logStream": "release-bind/release-bind/3aa48e9b648346a8a7b0aae286f26ba8",
+      "logTimestamp": 1785695747810,
+      "logMessage": "release operation failed: deployment binding has no exact durable mutation intent"
+    }
+  },
+  "auditMetadata": {
+    "cloudTrailRunTaskEvents": {
+      "parent": {
+        "eventId": "fb35c60e-8abb-46ab-bba2-73805de726ce",
+        "eventTime": "2026-08-02T18:28:16Z",
+        "roleSessionArn": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-deploy-30760853050",
+        "requestOverridesPresent": false
+      },
+      "intent": {
+        "eventId": "09c116fd-9fdb-450d-a92f-056ade94ac63",
+        "eventTime": "2026-08-02T18:32:41Z",
+        "roleSessionArn": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-target-30760853050",
+        "requestOverridesPresent": false
+      },
+      "binder": {
+        "eventId": "a8af36f4-f63f-4f37-a8dc-d498d9e6fe3d",
+        "eventTime": "2026-08-02T18:35:14Z",
+        "roleSessionArn": "arn:aws:sts::311414082667:assumed-role/watchdog-bms-deploy-uat/watchdog-bms-uat-target-30760853050",
+        "requestOverridesPresent": false
+      }
+    }
+  }
+}

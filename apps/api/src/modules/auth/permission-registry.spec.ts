@@ -1,0 +1,284 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { COMPANY_PERMISSION_KEYS, PERMISSIONS, PERMISSION_KEYS, ROLE_GRANTS, SYSTEM_ROLES } from './permission-registry';
+
+describe('permission-registry', () => {
+  it('has no duplicate permission keys', () => {
+    const keys = PERMISSIONS.map((p) => p.key);
+    const unique = new Set(keys);
+    assert.equal(unique.size, keys.length, `Duplicate keys: ${keys.filter((k, i) => keys.indexOf(k) !== i).join(', ')}`);
+  });
+
+  it('all role grants reference only known permission keys', () => {
+    const knownKeys = new Set(PERMISSION_KEYS);
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      for (const key of grants) {
+        assert.ok(knownKeys.has(key), `Role ${role} grants unknown permission: ${key}`);
+      }
+    }
+  });
+
+  // SEC-03: the internal AI tool route enforces `ai.tool.invoke` at the execution
+  // boundary. Any role that can query business data via LINE AI (`line.ai.query`)
+  // must therefore also hold `ai.tool.invoke`, or its AI would resolve then be denied.
+  it('every role granted line.ai.query is also granted ai.tool.invoke', () => {
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      if (grants.includes('line.ai.query')) {
+        assert.ok(
+          grants.includes('ai.tool.invoke'),
+          `Role ${role} grants line.ai.query but not ai.tool.invoke (its LINE AI tools would be denied at the execution boundary)`,
+        );
+      }
+    }
+  });
+
+  it('every role granted expense.read is also granted expense.evidence.read', () => {
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      if (grants.includes('expense.read')) {
+        assert.ok(
+          grants.includes('expense.evidence.read'),
+          `Role ${role} grants expense.read but not expense.evidence.read`,
+        );
+      }
+    }
+  });
+
+  it('every role granted expense.void is also granted expense.delete', () => {
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      if (grants.includes('expense.void')) {
+        assert.ok(grants.includes('expense.delete'), `Role ${role} grants expense.void but not expense.delete`);
+      }
+    }
+  });
+
+  it('every employee role can report own expenses through LINE', () => {
+    const employeeRoles = ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'];
+    for (const role of employeeRoles) {
+      const grants = ROLE_GRANTS[role] ?? [];
+      assert.ok(grants.includes('attachment.create'), `${role} cannot store LINE receipt evidence`);
+      assert.ok(grants.includes('expense.read_own'), `${role} cannot read its own reported expense`);
+      assert.ok(grants.includes('expense.receipt.line_upload'), `${role} cannot report expenses through LINE`);
+    }
+  });
+
+  it('ADMIN can upload receipt evidence through web', () => {
+    assert.ok(ROLE_GRANTS.ADMIN.includes('attachment.create'));
+    assert.ok(ROLE_GRANTS.ADMIN.includes('expense.receipt.upload'));
+  });
+
+  // Team decision 2026-07-28: a default ADMIN cannot hand out permissions — the
+  // role-management keys are owner-delegated via a custom role, not default grants.
+  it('default ADMIN cannot manage roles until the owner delegates it', () => {
+    for (const key of ['access.role.manage', 'admin.role.manage', 'access.role_template.manage']) {
+      assert.equal(ROLE_GRANTS.ADMIN.includes(key), false, `ADMIN should not hold ${key} by default`);
+    }
+    // Reads stay: the admin can still see roles/permissions, and still manages employees.
+    for (const key of ['access.role.read', 'access.role_template.read', 'access.employee.create', 'access.employee.update']) {
+      assert.ok(ROLE_GRANTS.ADMIN.includes(key), `ADMIN should keep ${key}`);
+    }
+  });
+
+  // Team decision 2026-07-28: reimbursement approvers are OWNER / ADMIN / MANAGER.
+  // Paying stays FINANCE-only, so approval and payment remain in different hands.
+  it('OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot', () => {
+    for (const role of ['OWNER', 'ADMIN', 'MANAGER']) {
+      assert.ok(ROLE_GRANTS[role].includes('reimbursement.approve'), `${role} missing reimbursement.approve`);
+      assert.ok(ROLE_GRANTS[role].includes('reimbursement.reject'), `${role} missing reimbursement.reject`);
+    }
+    assert.equal(ROLE_GRANTS.FINANCE.includes('reimbursement.approve'), false);
+    assert.equal(ROLE_GRANTS.ADMIN.includes('reimbursement.payment.record'), false);
+  });
+
+  // Owner decision 2026-07-26: ADMIN works the expense module owner-equal — the full
+  // reviewer lane (review-fields, reviewer-mark-ready, substitute-receipt prepare/supersede)
+  // plus confirm/reject/void/payment/duplicate resolution. Signature-asset approval stays
+  // owner-level; ocr.request/ai.verify stay service-lane.
+  it('ADMIN works expenses owner-equal, minus owner-level signature approval', () => {
+    const lane = ['expense.create', 'expense.update', 'expense.review', 'expense.confirm',
+      'expense.reject', 'expense.void', 'expense.payment.record', 'expense.duplicate.resolve'];
+    for (const key of lane) {
+      assert.ok(ROLE_GRANTS.ADMIN.includes(key), `ADMIN missing ${key}`);
+    }
+    assert.equal(ROLE_GRANTS.ADMIN.includes('expense.signature.approve'), false);
+  });
+
+  // Every role must be able to change its own password: a forced temp-password change
+  // that 403s would lock the account out of the whole app (pack.core.basics intent).
+  it('every role can change its own password', () => {
+    for (const [role, grants] of Object.entries(ROLE_GRANTS)) {
+      assert.ok(grants.includes('account.password.change'), `Role ${role} cannot change its own password`);
+    }
+  });
+
+  it('STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read', () => {
+    assert.ok(ROLE_GRANTS.STAFF.includes('dashboard.read'));
+  });
+
+  it('SYSTEM_ROLES keys match ROLE_GRANTS keys', () => {
+    const roleKeys = new Set(SYSTEM_ROLES.map((r) => r.key));
+    const grantKeys = new Set(Object.keys(ROLE_GRANTS));
+    for (const k of roleKeys) {
+      assert.ok(grantKeys.has(k), `SYSTEM_ROLES has role "${k}" not found in ROLE_GRANTS`);
+    }
+    for (const k of grantKeys) {
+      assert.ok(roleKeys.has(k), `ROLE_GRANTS has role "${k}" not found in SYSTEM_ROLES`);
+    }
+  });
+
+  it('OWNER has all company permissions but no platform permissions', () => {
+    const ownerGrants = new Set(ROLE_GRANTS['OWNER']);
+    for (const perm of COMPANY_PERMISSION_KEYS) {
+      assert.ok(ownerGrants.has(perm), `OWNER missing permission: ${perm}`);
+    }
+    assert.equal([...ownerGrants].some((perm) => perm.startsWith('system.')), false);
+  });
+
+  it('keeps financial role assignment approval OWNER-only', () => {
+    assert.ok(ROLE_GRANTS.OWNER.includes('access.role.financial.assign'));
+    assert.equal(ROLE_GRANTS.ADMIN.includes('access.role.financial.assign'), false);
+  });
+
+  it('all 7 item-10A partner management permission keys are present', () => {
+    const keys = new Set(PERMISSIONS.map((p) => p.key));
+    const partnerKeys = [
+      'system.partner_dashboard.read',
+      'system.partner_company.create',
+      'system.partner_company.update',
+      'system.partner_company.lifecycle.manage',
+      'system.partner_feature.manage',
+      'system.partner_ai_model.manage',
+      'system.partner_line_credential.manage',
+    ];
+    for (const k of partnerKeys) {
+      assert.ok(keys.has(k), `Missing permission key: ${k}`);
+    }
+  });
+
+  it('SYSTEM_ADMIN has all 7 partner management permission keys', () => {
+    const systemAdminGrants = new Set(ROLE_GRANTS['SYSTEM_ADMIN']);
+    const partnerKeys = [
+      'system.partner_dashboard.read',
+      'system.partner_company.create',
+      'system.partner_company.update',
+      'system.partner_company.lifecycle.manage',
+      'system.partner_feature.manage',
+      'system.partner_ai_model.manage',
+      'system.partner_line_credential.manage',
+    ];
+    for (const k of partnerKeys) {
+      assert.ok(systemAdminGrants.has(k), `SYSTEM_ADMIN missing: ${k}`);
+    }
+  });
+
+  it('COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell', () => {
+    const companyViewGrants = new Set(ROLE_GRANTS['COMPANY_VIEW']);
+    const requiredMenuKeys = [
+      'dashboard.read',
+      'notification.read',
+      'crm.inbox.read',
+      'accounting.quotation.read',
+      'accounting.invoice.read',
+      'crm.customer.read',
+      'crm.report.read',
+      'expense.read',
+      'ledger.journal.read',
+      'accounting.document.read',
+      'report.catalog.read',
+      'ledger.report.read',
+      'ledger.period.read',
+      'access.role.read',
+      'admin.role.read',
+      'procurement.purchase_order.read',
+    ];
+    for (const k of requiredMenuKeys) {
+      assert.ok(companyViewGrants.has(k), `COMPANY_VIEW missing: ${k}`);
+    }
+    assert.equal([...companyViewGrants].some((perm) => perm.startsWith('system.')), false);
+  });
+
+  it('customer merge and LINE identity re-point stay Owner/Admin-only', () => {
+    assert.ok(ROLE_GRANTS['OWNER'].includes('crm.customer.merge'));
+    assert.ok(ROLE_GRANTS['ADMIN'].includes('crm.customer.merge'));
+    assert.equal(ROLE_GRANTS['MANAGER'].includes('crm.customer.merge'), false);
+    assert.equal(ROLE_GRANTS['SALES'].includes('crm.customer.merge'), false);
+  });
+
+  it('MARKETING can segment customers but cannot read contact-person PII', () => {
+    assert.ok(ROLE_GRANTS['MARKETING'].includes('crm.customer.read'));
+    assert.equal(ROLE_GRANTS['MARKETING'].includes('crm.contact.read'), false);
+  });
+
+  // Step 0 company tax identity (company-tax-identity-setup-spec §10).
+  describe('Step 0 company tax identity', () => {
+    const riskOf = (key: string) => PERMISSIONS.find((p) => p.key === key)?.riskLevel;
+
+    it('registers the six keys at the risk levels the spec fixes', () => {
+      assert.equal(riskOf('company.legal_identity.read'), 'MEDIUM');
+      assert.equal(riskOf('company.legal_identity.manage'), 'HIGH');
+      assert.equal(riskOf('company.vat_registration.read'), 'LOW');
+      assert.equal(riskOf('company.vat_registration.manage'), 'HIGH');
+      assert.equal(riskOf('accounting.tax_document_buyer_evidence.manage'), 'HIGH');
+      assert.equal(riskOf('system.identity_reconciliation.resolve'), 'CRITICAL');
+    });
+
+    it('gives the owner every company-side key without an explicit grant', () => {
+      for (const key of [
+        'company.legal_identity.read',
+        'company.legal_identity.manage',
+        'company.vat_registration.read',
+        'company.vat_registration.manage',
+        'accounting.tax_document_buyer_evidence.manage',
+      ]) {
+        assert.ok(COMPANY_PERMISSION_KEYS.includes(key), `${key} should be a company key`);
+        assert.ok(ROLE_GRANTS['OWNER'].includes(key), `OWNER missing ${key}`);
+      }
+    });
+
+    it('keeps reconciliation platform-side only', () => {
+      assert.ok(ROLE_GRANTS['SYSTEM_ADMIN'].includes('system.identity_reconciliation.resolve'));
+      assert.equal(COMPANY_PERMISSION_KEYS.includes('system.identity_reconciliation.resolve'), false);
+      for (const role of ['OWNER', 'ADMIN', 'ACCOUNTANT', 'FINANCE']) {
+        assert.equal(
+          (ROLE_GRANTS[role] ?? []).includes('system.identity_reconciliation.resolve'),
+          false,
+          `${role} must not resolve cross-tenant identity`,
+        );
+      }
+    });
+
+    it('answers VAT with the accountant and reads it with finance', () => {
+      assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('company.vat_registration.manage'));
+      assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('company.vat_registration.read'));
+      assert.ok(ROLE_GRANTS['FINANCE'].includes('company.vat_registration.read'));
+      assert.equal(ROLE_GRANTS['FINANCE'].includes('company.vat_registration.manage'), false);
+      // QP2 default until the owner answers: MANAGER does not read the VAT status.
+      assert.equal(ROLE_GRANTS['MANAGER'].includes('company.vat_registration.read'), false);
+    });
+
+    // The role that issues tax invoices is the one that unblocks a credit note against a legacy
+    // one; every other role has to be granted it deliberately.
+    it('gives buyer-evidence remediation to finance and to nobody else by default', () => {
+      assert.ok(ROLE_GRANTS['FINANCE'].includes('accounting.tax_document_buyer_evidence.manage'));
+      for (const role of ['ACCOUNTANT', 'MANAGER', 'SALES', 'STAFF', 'ADMIN', 'COMPANY_VIEW', 'AUDITOR_READONLY']) {
+        assert.equal(
+          (ROLE_GRANTS[role] ?? []).includes('accounting.tax_document_buyer_evidence.manage'),
+          false,
+          `${role} should not edit issued tax invoice evidence`,
+        );
+      }
+    });
+
+    // QP2 is unanswered, so manage stays with the owner alone. Documented, not accidental:
+    // widening this later is one line, narrowing it needs an access review.
+    it('keeps the legal identity owner-only pending QP2', () => {
+      for (const role of Object.keys(ROLE_GRANTS)) {
+        if (role === 'OWNER') continue;
+        assert.equal(
+          ROLE_GRANTS[role].includes('company.legal_identity.manage'),
+          false,
+          `${role} should not manage the legal identity yet`,
+        );
+      }
+    });
+  });
+});

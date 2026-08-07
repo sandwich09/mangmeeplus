@@ -1,0 +1,17 @@
+-- A category may suggest an input Tax Code for the lines of expenses filed under it.
+--
+-- Stored as the Tax Code's stable external code (e.g. 'O7'), NOT as a TaxCodeDefinition id.
+-- A definition row is one dated version of a code — unique on
+-- (profileId, direction, externalCode, effectiveFrom, version) — so a foreign key would pin the
+-- category to one version, block retiring an old profile, and keep suggesting a definition that is
+-- no longer effective. The code is resolved per document date through the same ACTIVE/direction/
+-- context/date filter the line picker already applies; a code that no longer resolves yields no
+-- suggestion rather than a wrong pre-fill.
+--
+-- ADDITIVE and rollback safe: nullable, no default, no constraint, no backfill. An older build
+-- does not select it and is unaffected.
+--
+-- This replaces the dropped `inputVatDefault` (migration 20260805100000). That column carried a
+-- claimability directly, which is a second source of truth against the Tax Code; a Tax Code
+-- carries claimability, account determination and report mapping together.
+ALTER TABLE "ExpenseCategory" ADD COLUMN IF NOT EXISTS "defaultInputTaxCode" TEXT;

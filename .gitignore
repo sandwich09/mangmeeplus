@@ -1,0 +1,33 @@
+.DS_Store
+.codex/*
+!.codex/agents/
+!.codex/agents/*.toml
+.obsidian/
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.next/
+.next-*/
+.turbo/
+coverage/
+*.log
+*.tsbuildinfo
+pnpm-debug.log*
+docs/.obsidian/workspace*.json
+docs/_attachments/
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+.claude/projects/
+.claude/settings.json
+.pnpm-store/
+.local-postgres/
+
+# Office lock files (Excel/Word leave these next to an open document)
+~$*

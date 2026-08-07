@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-29T05:22:31.640Z",
+  "readOnly": true,
+  "conflictSampleLimit": 20,
+  "template": {
+    "key": "TH_SME_COA_V1",
+    "version": 1,
+    "accountsChecksum": "1a92339d4d0d74ce36882a34a616b76b62c0f6567d07f59c4e27a83a708e86eb",
+    "mappingManifestVersion": 1,
+    "mappingManifestChecksum": "5b3f2125011edceec400a11c90dbbf9aaa01183f646357524703d801efb01c58"
+  },
+  "summary": {
+    "companyCount": 5,
+    "scannedCompanyCount": 5,
+    "failedCompanyCount": 0,
+    "templateAppliedCount": 1,
+    "companiesWithConflicts": 0,
+    "companiesWithMissingAccounts": 4,
+    "manualLedgerReadyCount": 1,
+    "automaticPostingReadyCount": 0
+  },
+  "companies": [
+    {
+      "companyId": "cmrqi2gcx0002j9qtq72utehs",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 0,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 0,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "h04_probe",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 1,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 1,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "seed-local-company",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 180,
+        "exact": 175,
+        "missing": 0,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 20,
+        "bySource": {
+          "ExpenseLineAssignment": 2,
+          "TaxAccountRule": 18
+        }
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": true,
+        "chartTemplateKey": "TH_SME_COA_V1",
+        "chartTemplateVersion": 1,
+        "chartTemplateChecksum": "1a92339d4d0d74ce36882a34a616b76b62c0f6567d07f59c4e27a83a708e86eb",
+        "chartTemplateAppliedAt": "2026-07-29T05:22:18.324Z",
+        "chartAccountCount": 180,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 1,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": true,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "seed-local-company-2",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 0,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 0,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "seed-watchdog-system-company",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 0,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 0,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 2 ]; then
+  echo "Usage: $0 <output-directory> <full-commit-sha>" >&2
+  exit 2
+fi
+
+output_dir="$1"
+source_commit="$2"
+pnpm_bin="${PNPM_BIN:-pnpm}"
+if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]] || [ "$(git rev-parse HEAD)" != "$source_commit" ]; then
+  echo "ERROR: AgentCore artifact must be built from the exact checked-out commit" >&2
+  exit 1
+fi
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "ERROR: AgentCore artifact build requires a clean worktree" >&2
+  exit 1
+fi
+
+"$pnpm_bin" --filter @watchdog-bms/contracts build
+"$pnpm_bin" --filter @watchdog-bms/config build
+"$pnpm_bin" --filter @watchdog-bms/ai-gateway run build:agentcore
+
+staging="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-agentcore-build.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+mkdir -p "$output_dir"
+output_dir="$(cd "$output_dir" && pwd -P)"
+
+node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/bin/esbuild \
+  apps/ai-gateway/src/agentcore/runtime.ts \
+  --bundle \
+  --platform=node \
+  --target=node22 \
+  --format=cjs \
+  --tsconfig=apps/ai-gateway/tsconfig.agentcore.json \
+  --outfile="$staging/runtime.js" \
+  --log-level=warning
+
+(cd "$staging" && zip -Xq "$output_dir/agentcore.zip" runtime.js)
+artifact_sha="$(shasum -a 256 "$output_dir/agentcore.zip" | awk '{print $1}')"
+jq -n \
+  --arg sourceCommit "$source_commit" \
+  --arg artifact "agentcore.zip" \
+  --arg sha256 "$artifact_sha" \
+  '{schemaVersion:1,sourceCommit:$sourceCommit,artifact:$artifact,sha256:$sha256}' \
+  > "$output_dir/agentcore-artifact.json"
+
+echo "[agentcore-artifact] source=$source_commit sha256=$artifact_sha"

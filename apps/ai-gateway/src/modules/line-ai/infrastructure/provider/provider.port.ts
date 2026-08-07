@@ -1,0 +1,79 @@
+/**
+ * Model provider port – AI Gateway calls this; never imports DB or LINE SDK.
+ */
+import type { ProviderError } from '@watchdog-bms/contracts';
+
+export type ProviderInput = {
+  messages: Array<{ role: 'user' | 'assistant'; text: string }>;
+  images?: Array<{ mimeType: 'image/jpeg' | 'image/png'; contentBase64: string }>;
+  /** ponytail: Bedrock Converse document blocks only — Typhoon takes images, not PDFs, so the
+   *  PDF branch of receipt OCR reads the file here instead. OpenAI ignores these; callers gate
+   *  on MODEL_PROVIDER=bedrock rather than the port growing a capability flag. */
+  documents?: Array<{ mimeType: 'application/pdf'; contentBase64: string }>;
+  systemPrompt?: string;
+  maxTokens?: number;
+  /** Deterministic, byte-stable context rendered as the FIRST content block of the first
+   *  user message, before that message's text. Bedrock adds a cachePoint after it when
+   *  long enough; OpenAI prepends it to the first user text (same model-visible content,
+   *  no caching). Callers must pass byte-identical strings for identical logical context. */
+  cacheableContext?: string;
+  /** Short call-site label for usage logs, e.g. 'ocr.receipt.extract'. */
+  usageTag?: string;
+};
+
+export type ProviderOutput =
+  | { ok: true; text: string }
+  | { ok: false; error: ProviderError };
+
+// ── Item 10F: native tool-use (Bedrock Converse toolConfig / OpenAI function calling) ──
+
+/** Wire-safe tool description. `name` must match ^[a-zA-Z0-9_-]{1,64}$ on both providers —
+ *  registry names carry dots, so callers map them (see orchestrator wireToolName). */
+export type ProviderToolSpec = {
+  name: string;
+  description?: string;
+  /** JSON-schema object for the tool input. */
+  inputSchema: Record<string, unknown>;
+};
+
+export type ProviderToolCall = {
+  /** Provider-issued id; must be echoed back on the matching tool result. */
+  toolUseId: string;
+  name: string;
+  input: unknown;
+};
+
+export type ProviderToolResult = {
+  toolUseId: string;
+  /** Serialized (bounded) tool output – DATA for the model, never instructions. */
+  content: string;
+  isError?: boolean;
+};
+
+/** Conversation turns for the tool loop. `tool_results` rides as a user turn on both wires. */
+export type ProviderToolMessage =
+  | { role: 'user'; text: string }
+  | { role: 'assistant'; text?: string; toolCalls?: ProviderToolCall[] }
+  | { role: 'tool_results'; results: ProviderToolResult[] };
+
+export type ProviderToolsInput = {
+  messages: ProviderToolMessage[];
+  tools: ProviderToolSpec[];
+  systemPrompt?: string;
+  maxTokens?: number;
+  /** Same contract as `ProviderInput.cacheableContext`. */
+  cacheableContext?: string;
+  /** Same contract as `ProviderInput.usageTag`. */
+  usageTag?: string;
+};
+
+export type ProviderToolsOutput =
+  | { ok: true; text: string; toolCalls: ProviderToolCall[]; stopReason: 'tool_use' | 'end_turn' | 'max_tokens' | 'other' }
+  | { ok: false; error: ProviderError };
+
+export interface IModelProvider {
+  generateText(input: ProviderInput): Promise<ProviderOutput>;
+  /** Optional so existing single-purpose stubs keep compiling; the orchestrator treats a
+   *  missing implementation as "not capable" and falls back to the JSON loop. */
+  generateWithTools?(input: ProviderToolsInput): Promise<ProviderToolsOutput>;
+}

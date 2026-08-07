@@ -1,0 +1,621 @@
+name: Production A5 Evidence
+run-name: Production A5 ${{ inputs.stage }} for run ${{ inputs.parent_production_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      parent_production_run_id:
+        description: Exact in-progress deploy-production run ID
+        required: true
+        type: string
+      stage:
+        description: Exact production A5 stage
+        required: true
+        type: choice
+        options:
+          - PRE_MUTATION
+          - POST_MIGRATION
+          - POST_DEPLOYMENT
+      source_commit:
+        description: Exact lowercase full application source SHA reachable from main
+        required: true
+        type: string
+      clone_rehearsal_run_id:
+        description: Exact successful H2A isolated-clone producer run ID for this parent/source
+        required: true
+        type: string
+      pre_mutation_run_id:
+        description: Required only after PRE; exact successful PRE producer run ID
+        required: false
+        default: ''
+        type: string
+      post_migration_run_id:
+        description: Required only for POST_DEPLOYMENT; exact successful POST_MIGRATION producer run ID
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-a5-${{ inputs.parent_production_run_id }}-${{ inputs.stage }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: Signed read-only production A5 ${{ inputs.stage }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      AWS_ACCOUNT_ID: '311414082667'
+      AWS_REGION: ap-southeast-1
+      A5_AWS_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly
+      A5_AWS_ROLE_NAME: watchdog-bms-production-a5-readonly
+      A5_AWS_POLICY_NAME: watchdog-bms-production-a5-readonly
+      A5_EXECUTION_ROLE_NAME: watchdog-bms-production-a5-readonly-execution
+      A5_EXECUTION_POLICY_NAME: watchdog-bms-production-a5-readonly-execution
+      A5_SECRET_ID: watchdog-bms/production/a5-readonly-database-url
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Bind main controller, parent attempt and stage inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          STAGE: ${{ inputs.stage }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+          CLONE_RUN_ID: ${{ inputs.clone_rehearsal_run_id }}
+          PRE_RUN_ID: ${{ inputs.pre_mutation_run_id }}
+          POST_MIGRATION_RUN_ID: ${{ inputs.post_migration_run_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/production-a5.yml@refs/heads/main"
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          [[ "$PARENT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CLONE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CLONE_RUN_ID" != "$PARENT_RUN_ID"
+          test "$CLONE_RUN_ID" != "$GITHUB_RUN_ID"
+          case "$STAGE" in
+            PRE_MUTATION)
+              test -z "$PRE_RUN_ID" && test -z "$POST_MIGRATION_RUN_ID"
+              ;;
+            POST_MIGRATION)
+              [[ "$PRE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+              test -z "$POST_MIGRATION_RUN_ID"
+              ;;
+            POST_DEPLOYMENT)
+              [[ "$PRE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+              [[ "$POST_MIGRATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+              test "$PRE_RUN_ID" != "$POST_MIGRATION_RUN_ID"
+              ;;
+            *) exit 2 ;;
+          esac
+          for run_id in "$PRE_RUN_ID" "$POST_MIGRATION_RUN_ID"; do
+            [ -z "$run_id" ] || { test "$run_id" != "$PARENT_RUN_ID" && test "$run_id" != "$GITHUB_RUN_ID"; }
+          done
+
+          git fetch --no-tags origin "+refs/heads/main:refs/heads/main"
+          test "$GITHUB_SHA" = "$(git rev-parse refs/heads/main)" || {
+            echo 'ERROR: obsolete A5 controller; dispatch the current protected main workflow' >&2
+            exit 1
+          }
+          git cat-file -e "${SOURCE_SHA}^{commit}"
+          git merge-base --is-ancestor "$SOURCE_SHA" refs/heads/main
+
+          evidence_root="$RUNNER_TEMP/production-a5-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence_root"
+          parent_json="$evidence_root/parent-run.json"
+          producer_json="$evidence_root/producer-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PARENT_RUN_ID" > "$parent_json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$producer_json"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$PARENT_RUN_ID" '
+            (.id|tostring) == $run and .status == "in_progress" and .conclusion == null
+            and .event == "workflow_dispatch" and .path == ".github/workflows/deploy-production.yml"
+            and .head_branch == "main" and .repository.full_name == $repository
+          ' "$parent_json" >/dev/null
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            --arg sha "$GITHUB_SHA" '
+            (.id|tostring) == $run and .status == "in_progress" and .conclusion == null
+            and .event == "workflow_dispatch" and .path == ".github/workflows/production-a5.yml"
+            and .head_branch == "main" and .head_sha == $sha and .repository.full_name == $repository
+          ' "$producer_json" >/dev/null
+          parent_attempt="$(jq -er '.run_attempt|select(type=="number" and .>=1 and floor==.)' "$parent_json")"
+          parent_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$parent_json")"
+          git merge-base --is-ancestor "$parent_controller" refs/heads/main
+          parent_blob="$(git rev-parse "$parent_controller:.github/workflows/deploy-production.yml")"
+          producer_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/production-a5.yml")"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$parent_json")"
+          producer_started="$(jq -er '.run_started_at|fromdateiso8601' "$producer_json")"
+          test "$parent_started" -le "$producer_started"
+
+          expected="$evidence_root/expected.json"
+          jq -cnS --arg source "$SOURCE_SHA" --arg repository "$GITHUB_REPOSITORY" \
+            --arg controller "$GITHUB_SHA" --arg workflowBlob "$producer_blob" \
+            --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg actor "$(jq -er '.actor.login' "$producer_json")" \
+            --arg triggeringActor "$(jq -er '.triggering_actor.login' "$producer_json")" \
+            --argjson started "$producer_started" --arg parentController "$parent_controller" \
+            --arg parentBlob "$parent_blob" --arg parentRun "$PARENT_RUN_ID" \
+            --argjson parentAttempt "$parent_attempt" --argjson parentStarted "$parent_started" '
+              {artifactKind:"PRODUCTION_A5_EVIDENCE_V1",repository:$repository,environment:"production",
+               sourceCommit:$source,producer:{workflowPath:".github/workflows/production-a5.yml",
+                 controllerCommit:$controller,workflowBlob:$workflowBlob,runId:$run,runAttempt:$attempt,
+                 actor:$actor,triggeringActor:$triggeringActor,startedAtEpoch:$started},
+               parentProductionRun:{controllerCommit:$parentController,workflowBlob:$parentBlob,
+                 runId:$parentRun,runAttempt:$parentAttempt,startedAtEpoch:$parentStarted},lifetimeSeconds:3600}
+            ' > "$expected"
+          source infra/security/signed-evidence.sh
+          signed_evidence_validate_parent_github_run "$parent_json" "$expected"
+          signed_evidence_validate_git_trust "$GITHUB_WORKSPACE" "$expected"
+          artifact_name="$(signed_evidence_artifact_name "$expected")"
+          printf '%s\n' "EVIDENCE_ROOT=$evidence_root" "PARENT_JSON=$parent_json" \
+            "EXPECTED_FILE=$expected" "PARENT_ATTEMPT=$parent_attempt" \
+            "PARENT_CONTROLLER=$parent_controller" "PARENT_WORKFLOW_BLOB=$parent_blob" \
+            "PARENT_STARTED=$parent_started" "EVIDENCE_ARTIFACT_NAME=$artifact_name" \
+            >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.source_commit }}
+          path: candidate
+
+      - uses: actions/setup-node@1e60f620b9541d21b7b6d9a6ff498da4007b2e17 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: candidate/pnpm-lock.yaml
+
+      - name: Install exact candidate dependencies without credentials
+        working-directory: candidate
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Verify required prior signed stages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STAGE: ${{ inputs.stage }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+          PRE_RUN_ID: ${{ inputs.pre_mutation_run_id }}
+          POST_MIGRATION_RUN_ID: ${{ inputs.post_migration_run_id }}
+        run: |
+          set -euo pipefail
+          source infra/security/signed-evidence.sh
+          printf '%s\n' null > "$EVIDENCE_ROOT/pre-ref.json"
+          printf '%s\n' null > "$EVIDENCE_ROOT/post-migration-ref.json"
+
+          verify_child() {
+            local run_id="$1" required_stage="$2" prefix="$3"
+            local run_json attempt controller started workflow_blob expected name artifacts artifact_id zip extracted digest ref
+            run_json="$EVIDENCE_ROOT/${prefix}-run.json"
+            expected="$EVIDENCE_ROOT/${prefix}-expected.json"
+            artifacts="$EVIDENCE_ROOT/${prefix}-artifacts.json"
+            zip="$EVIDENCE_ROOT/${prefix}.zip"
+            ref="$EVIDENCE_ROOT/${prefix}-ref.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$run_json"
+            attempt="$(jq -er '.run_attempt|select(type=="number" and .>=1 and floor==.)' "$run_json")"
+            controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$run_json")"
+            started="$(jq -er '.run_started_at|fromdateiso8601' "$run_json")"
+            workflow_blob="$(git rev-parse "$controller:.github/workflows/production-a5.yml")"
+            jq -cnS --arg source "$SOURCE_SHA" --arg repository "$GITHUB_REPOSITORY" \
+              --arg controller "$controller" --arg workflowBlob "$workflow_blob" \
+              --arg run "$run_id" --argjson attempt "$attempt" \
+              --arg actor "$(jq -er '.actor.login' "$run_json")" \
+              --arg triggeringActor "$(jq -er '.triggering_actor.login' "$run_json")" \
+              --argjson started "$started" --arg parentController "$PARENT_CONTROLLER" \
+              --arg parentBlob "$PARENT_WORKFLOW_BLOB" --arg parentRun "${{ inputs.parent_production_run_id }}" \
+              --argjson parentAttempt "$PARENT_ATTEMPT" --argjson parentStarted "$PARENT_STARTED" '
+                {artifactKind:"PRODUCTION_A5_EVIDENCE_V1",repository:$repository,environment:"production",
+                 sourceCommit:$source,producer:{workflowPath:".github/workflows/production-a5.yml",
+                   controllerCommit:$controller,workflowBlob:$workflowBlob,runId:$run,runAttempt:$attempt,
+                   actor:$actor,triggeringActor:$triggeringActor,startedAtEpoch:$started},
+                 parentProductionRun:{controllerCommit:$parentController,workflowBlob:$parentBlob,
+                   runId:$parentRun,runAttempt:$parentAttempt,startedAtEpoch:$parentStarted},lifetimeSeconds:3600}
+              ' > "$expected"
+            name="$(signed_evidence_artifact_name "$expected")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" > "$artifacts"
+            artifact_id="$(jq -er --arg name "$name" '
+              select(.total_count == 1 and (.artifacts|length) == 1)
+              | .artifacts[0] | select(.name == $name and .expired == false) | .id
+            ' "$artifacts")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$zip"
+            extracted="$(signed_evidence_extract_zip "$zip")"
+            digest="$(jq -er '.artifacts[0].digest' "$artifacts")"
+            jq -cnS --arg name "$name" --arg run "$run_id" --argjson attempt "$attempt" \
+              --arg content "$(jq -er '.contentSha256' "$extracted/evidence.json")" --arg digest "$digest" '
+                {artifactKind:"PRODUCTION_A5_EVIDENCE_V1",producerRunId:$run,
+                 producerRunAttempt:$attempt,artifactName:$name,contentSha256:$content,artifactDigest:$digest}
+              ' > "$ref"
+            signed_evidence_verify_artifact "$zip" "$artifacts" "$run_json" "$PARENT_JSON" \
+              "$expected" "$ref" "$GITHUB_WORKSPACE" "$(date -u +%s)"
+            jq -e --arg stage "$required_stage" --arg source "$SOURCE_SHA" '
+              .sourceCommit == $source and .payload.stage == $stage and .payload.passed == true
+            ' "$extracted/evidence.json" >/dev/null
+            cp "$extracted/evidence.json" "$EVIDENCE_ROOT/${prefix}-evidence.json"
+          }
+
+          if [ "$STAGE" != PRE_MUTATION ]; then
+            verify_child "$PRE_RUN_ID" PRE_MUTATION pre
+            cp "$EVIDENCE_ROOT/pre-ref.json" "$EVIDENCE_ROOT/pre-ref.actual.json"
+            mv "$EVIDENCE_ROOT/pre-ref.actual.json" "$EVIDENCE_ROOT/pre-ref.json"
+          fi
+          if [ "$STAGE" = POST_DEPLOYMENT ]; then
+            verify_child "$POST_MIGRATION_RUN_ID" POST_MIGRATION post-migration
+            jq -e --slurpfile pre "$EVIDENCE_ROOT/pre-ref.json" '
+              .payload.baselineRefs.preMutationRef == $pre[0]
+              and .payload.baselineRefs.postMigrationRef == null
+            ' "$EVIDENCE_ROOT/post-migration-evidence.json" >/dev/null
+          fi
+
+          # verify_child writes the exact structured ref to its prefix path. PRE uses that path
+          # directly; the initial null file exists only for the no-prior PRE stage.
+          if [ "$STAGE" != PRE_MUTATION ]; then
+            test -s "$EVIDENCE_ROOT/pre-ref.json"
+          fi
+          if [ "$STAGE" = POST_DEPLOYMENT ]; then
+            test -s "$EVIDENCE_ROOT/post-migration-ref.json"
+          fi
+
+      - name: Verify exact isolated-clone rehearsal and migration tool
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLONE_RUN_ID: ${{ inputs.clone_rehearsal_run_id }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          source infra/security/signed-evidence.sh
+          run_json="$EVIDENCE_ROOT/clone-run.json"
+          expected="$EVIDENCE_ROOT/clone-expected.json"
+          artifacts="$EVIDENCE_ROOT/clone-artifacts.json"
+          archive="$EVIDENCE_ROOT/clone.zip"
+          ref="$EVIDENCE_ROOT/clone-ref.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CLONE_RUN_ID" > "$run_json"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$CLONE_RUN_ID" '
+            (.id|tostring)==$run and .status=="completed" and .conclusion=="success"
+            and .event=="workflow_dispatch" and .path==".github/workflows/production-a5-clone.yml"
+            and .head_branch=="main" and .repository.full_name==$repository
+          ' "$run_json" >/dev/null
+          attempt="$(jq -er '.run_attempt|select(type=="number" and .>=1 and floor==.)' "$run_json")"
+          controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$run_json")"
+          started="$(jq -er '.run_started_at|fromdateiso8601' "$run_json")"
+          workflow_blob="$(git rev-parse "$controller:.github/workflows/production-a5-clone.yml")"
+          git merge-base --is-ancestor "$controller" refs/heads/main
+          jq -cnS --arg source "$SOURCE_SHA" --arg repository "$GITHUB_REPOSITORY" \
+            --arg controller "$controller" --arg workflowBlob "$workflow_blob" \
+            --arg run "$CLONE_RUN_ID" --argjson attempt "$attempt" \
+            --arg actor "$(jq -er '.actor.login' "$run_json")" \
+            --arg triggeringActor "$(jq -er '.triggering_actor.login' "$run_json")" \
+            --argjson started "$started" --arg parentController "$PARENT_CONTROLLER" \
+            --arg parentBlob "$PARENT_WORKFLOW_BLOB" \
+            --arg parentRun "${{ inputs.parent_production_run_id }}" \
+            --argjson parentAttempt "$PARENT_ATTEMPT" --argjson parentStarted "$PARENT_STARTED" '
+              {artifactKind:"PRODUCTION_A5_CLONE_REHEARSAL_V1",repository:$repository,
+               environment:"production",sourceCommit:$source,
+               producer:{workflowPath:".github/workflows/production-a5-clone.yml",
+                 controllerCommit:$controller,workflowBlob:$workflowBlob,runId:$run,
+                 runAttempt:$attempt,actor:$actor,triggeringActor:$triggeringActor,
+                 startedAtEpoch:$started},
+               parentProductionRun:{controllerCommit:$parentController,workflowBlob:$parentBlob,
+                 runId:$parentRun,runAttempt:$parentAttempt,startedAtEpoch:$parentStarted},
+               lifetimeSeconds:7200}
+          ' > "$expected"
+          artifact_name="$(signed_evidence_artifact_name "$expected")"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$CLONE_RUN_ID/artifacts" \
+            -f name="$artifact_name" -f per_page=100 > "$artifacts"
+          artifact_id="$(jq -er --arg name "$artifact_name" '
+            select(.total_count==1 and (.artifacts|length)==1)
+            | .artifacts[0] | select(.name==$name and .expired==false) | .id
+          ' "$artifacts")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          extracted="$(signed_evidence_extract_zip "$archive")"
+          jq -cnS --arg name "$artifact_name" --arg run "$CLONE_RUN_ID" \
+            --argjson attempt "$attempt" \
+            --arg content "$(jq -er '.contentSha256' "$extracted/evidence.json")" \
+            --arg digest "$(jq -er '.artifacts[0].digest' "$artifacts")" '
+              {artifactKind:"PRODUCTION_A5_CLONE_REHEARSAL_V1",producerRunId:$run,
+               producerRunAttempt:$attempt,artifactName:$name,contentSha256:$content,
+               artifactDigest:$digest}
+          ' > "$ref"
+          signed_evidence_verify_artifact "$archive" "$artifacts" "$run_json" "$PARENT_JSON" \
+            "$expected" "$ref" "$GITHUB_WORKSPACE" "$(date -u +%s)"
+          jq -e --arg source "$SOURCE_SHA" '
+            .sourceCommit==$source and .payload.targetEnvironment=="production-isolated-clone"
+            and .payload.cloneRehearsal.result=="PASSED"
+            and .payload.migrationTool.sourceCommit==$source
+            and (.payload.migrationTool.image|test("^311414082667\\.dkr\\.ecr\\.ap-southeast-1\\.amazonaws\\.com/watchdog-bms-migration-tool@sha256:[0-9a-f]{64}$"))
+          ' "$extracted/evidence.json" >/dev/null
+          cp "$extracted/evidence.json" "$EVIDENCE_ROOT/clone-evidence.json"
+          jq -cS '.payload.cloneRehearsal' "$extracted/evidence.json" \
+            > "$EVIDENCE_ROOT/clone-rehearsal.json"
+          migration_image="$(jq -er '.payload.migrationTool.image' "$extracted/evidence.json")"
+          if [ "$STAGE" != PRE_MUTATION ]; then
+            jq -e --slurpfile cloneRef "$ref" --arg image "$migration_image" '
+              .payload.migrationState.verificationEvidence.cloneRehearsalRef==$cloneRef[0]
+              and .payload.readerRuntime.migrationImage==$image
+            ' "$EVIDENCE_ROOT/pre-evidence.json" >/dev/null
+          fi
+          if [ "$STAGE" = POST_DEPLOYMENT ]; then
+            jq -e --slurpfile cloneRef "$ref" --arg image "$migration_image" '
+              .payload.migrationState.verificationEvidence.cloneRehearsalRef==$cloneRef[0]
+              and .payload.readerRuntime.migrationImage==$image
+            ' "$EVIDENCE_ROOT/post-migration-evidence.json" >/dev/null
+          fi
+          printf '%s\n' "MIGRATION_IMAGE=$migration_image" "CLONE_REF_FILE=$ref" \
+            >> "$GITHUB_ENV"
+
+      - name: Download and validate exact parent stage context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          STAGE: ${{ inputs.stage }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          context_name="production-a5-stage-context-${STAGE}-${SOURCE_SHA}-production-${PARENT_RUN_ID}-attempt-${PARENT_ATTEMPT}"
+          context_artifacts="$EVIDENCE_ROOT/context-artifacts.json"
+          context_zip="$EVIDENCE_ROOT/context.zip"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$PARENT_RUN_ID/artifacts" \
+            -f name="$context_name" -f per_page=100 > "$context_artifacts"
+          artifact_id="$(jq -er --arg name "$context_name" '
+            select(.total_count == 1 and (.artifacts|length) == 1)
+            | .artifacts[0] | select(.name == $name and .expired == false) | .id
+          ' "$context_artifacts")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$context_zip"
+          context_dir="$EVIDENCE_ROOT/context"
+          mkdir "$context_dir"
+          context="$(bash infra/security/validate-production-a5-stage-context.sh \
+            "$context_zip" "$context_artifacts" "$context_dir" "$STAGE" "$SOURCE_SHA" \
+            "$GITHUB_REPOSITORY" "$PARENT_RUN_ID" "$PARENT_ATTEMPT" "$PARENT_CONTROLLER" \
+            "$PARENT_WORKFLOW_BLOB" "$PARENT_STARTED" "$(date -u +%s)" \
+            "$EVIDENCE_ROOT/pre-ref.json" "$EVIDENCE_ROOT/post-migration-ref.json")"
+          jq -cS '.reviewedManifest' "$context" > "$EVIDENCE_ROOT/reviewed-manifest.json"
+          jq -cS '.servingBuilds' "$context" > "$EVIDENCE_ROOT/serving-builds.json"
+          jq -cS '.reimbursementWriteQuiesce' "$context" > "$EVIDENCE_ROOT/reimbursement-quiesce.json"
+          case "$STAGE" in
+            PRE_MUTATION)
+              jq -e --slurpfile clone "$EVIDENCE_ROOT/clone-evidence.json" \
+                --slurpfile cloneRef "$CLONE_REF_FILE" '
+                .reviewedManifest == $clone[0].payload.reviewedManifest
+                and .invariantContext.sourceAppliedMigrationsHash
+                  == $clone[0].payload.sourceAppliedMigrationsHash
+                and .invariantContext.cloneRehearsal == $clone[0].payload.cloneRehearsal
+                and .invariantContext.cloneRehearsalRef == $cloneRef[0]
+              ' "$context" >/dev/null
+              jq -cS '.invariantContext' "$context" > "$EVIDENCE_ROOT/invariant-context.json"
+              printf '%s\n' null > "$EVIDENCE_ROOT/production-apply-authority.json"
+              ;;
+            POST_MIGRATION)
+              jq -e --slurpfile pre "$EVIDENCE_ROOT/pre-evidence.json" '
+                .reviewedManifest == $pre[0].payload.migrationState.reviewedManifest
+                and .invariantContext.sourceAppliedMigrationsHash
+                    == $pre[0].payload.migrationState.appliedMigrationsHash
+                and .reimbursementWriteQuiesce.bridgeProof
+                    == $pre[0].payload.reimbursementWriteQuiesce.bridgeProof
+                and .reimbursementWriteQuiesce.quiesceStartedAtEpoch
+                    == $pre[0].payload.reimbursementWriteQuiesce.quiesceStartedAtEpoch
+              ' "$context" >/dev/null
+              jq -cS --slurpfile pre "$EVIDENCE_ROOT/pre-evidence.json" '
+                (.invariantContext
+                  | {sourceAppliedMigrationsHash,executedMigrations,executionBudgetResults})
+                + {preMutationVerificationEvidence:
+                    $pre[0].payload.migrationState.verificationEvidence}
+              ' "$context" > "$EVIDENCE_ROOT/invariant-context.json"
+              jq -cS '.invariantContext.productionApplyAuthority' "$context" \
+                > "$EVIDENCE_ROOT/production-apply-authority.json"
+              ;;
+            POST_DEPLOYMENT)
+              jq -e --slurpfile pre "$EVIDENCE_ROOT/pre-evidence.json" \
+                --slurpfile post "$EVIDENCE_ROOT/post-migration-evidence.json" '
+                .reviewedManifest == $pre[0].payload.migrationState.reviewedManifest
+                and .reviewedManifest == $post[0].payload.migrationState.reviewedManifest
+                and .invariantContext.sourceAppliedMigrationsHash
+                    == $pre[0].payload.migrationState.appliedMigrationsHash
+                and .invariantContext.productionApplyAuthority
+                    == $post[0].payload.migrationState.productionApplyAuthority
+                and .reimbursementWriteQuiesce.bridgeProof
+                    == $pre[0].payload.reimbursementWriteQuiesce.bridgeProof
+                and .reimbursementWriteQuiesce.reimbursementInvariantHash
+                    == $post[0].payload.reimbursementWriteQuiesce.reimbursementInvariantHash
+              ' "$context" >/dev/null
+              jq -cS --slurpfile post "$EVIDENCE_ROOT/post-migration-evidence.json" '
+                (.invariantContext | {sourceAppliedMigrationsHash})
+                + {postMigrationVerificationEvidence:
+                    $post[0].payload.migrationState.verificationEvidence}
+              ' "$context" > "$EVIDENCE_ROOT/invariant-context.json"
+              jq -cS '.invariantContext.productionApplyAuthority' "$context" \
+                > "$EVIDENCE_ROOT/production-apply-authority.json"
+              ;;
+          esac
+          printf '%s\n' "CONTEXT_FILE=$context" >> "$GITHUB_ENV"
+
+      - name: Validate candidate context parsers before AWS
+        env:
+          STAGE: ${{ inputs.stage }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          cd candidate/apps/api
+          ../../node_modules/.bin/tsx --test \
+            src/scripts/production-a5-reviewed-manifest.spec.ts \
+            src/scripts/production-a5-evidence.logic.spec.ts \
+            src/scripts/production-a5-evidence.pg.spec.ts
+
+      - name: Configure exact read-only production A5 credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly
+          aws-region: ap-southeast-1
+          allowed-account-ids: '311414082667'
+          role-session-name: production-a5-${{ github.run_id }}
+
+      - name: Run exact private production reader and collect current health
+        env:
+          STAGE: ${{ inputs.stage }}
+          SOURCE_SHA: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          identity="$EVIDENCE_ROOT/aws-identity.json"
+          role="$EVIDENCE_ROOT/aws-role.json"
+          policy="$EVIDENCE_ROOT/aws-policy.json"
+          execution_role="$EVIDENCE_ROOT/aws-execution-role.json"
+          execution_policy="$EVIDENCE_ROOT/aws-execution-policy.json"
+          aws sts get-caller-identity --output json > "$identity"
+          aws iam get-role --role-name "$A5_AWS_ROLE_NAME" --output json > "$role"
+          aws iam get-role-policy --role-name "$A5_AWS_ROLE_NAME" \
+            --policy-name "$A5_AWS_POLICY_NAME" --output json > "$policy"
+          aws iam get-role --role-name "$A5_EXECUTION_ROLE_NAME" --output json > "$execution_role"
+          aws iam get-role-policy --role-name "$A5_EXECUTION_ROLE_NAME" \
+            --policy-name "$A5_EXECUTION_POLICY_NAME" --output json > "$execution_policy"
+          jq -e --arg account "$AWS_ACCOUNT_ID" '.Account == $account' "$identity" >/dev/null
+          jq -e --slurpfile trust infra/security/production-a5-readonly-trust.template.json \
+            --arg expected "$A5_AWS_ROLE_ARN" '
+              .Role.Arn == $expected and .Role.AssumeRolePolicyDocument == $trust[0]
+            ' "$role" >/dev/null
+          jq -e --slurpfile expectedPolicy infra/security/production-a5-readonly-policy.template.json \
+            --arg name "$A5_AWS_POLICY_NAME" '
+              .PolicyName == $name and .PolicyDocument == $expectedPolicy[0]
+            ' "$policy" >/dev/null
+          jq -e --slurpfile trust infra/security/production-a5-readonly-execution-trust.template.json \
+            --arg expected "arn:aws:iam::311414082667:role/$A5_EXECUTION_ROLE_NAME" '
+              .Role.Arn == $expected and .Role.AssumeRolePolicyDocument == $trust[0]
+            ' "$execution_role" >/dev/null
+          jq -e --slurpfile expectedPolicy \
+            infra/security/production-a5-readonly-execution-policy.template.json \
+            --arg name "$A5_EXECUTION_POLICY_NAME" '
+              .PolicyName == $name and .PolicyDocument == $expectedPolicy[0]
+            ' "$execution_policy" >/dev/null
+
+          secret_meta="$EVIDENCE_ROOT/a5-secret-metadata.json"
+          aws secretsmanager describe-secret --secret-id "$A5_SECRET_ID" --region "$AWS_REGION" \
+            --output json | jq -cS . > "$secret_meta"
+          jq -e --arg name "$A5_SECRET_ID" --arg region "$AWS_REGION" --arg account "$AWS_ACCOUNT_ID" '
+            .Name == $name
+            and (.ARN | test("^arn:aws:secretsmanager:"+$region+":"+$account+
+              ":secret:watchdog-bms/production/a5-readonly-database-url-[A-Za-z0-9/_+=.@-]+$"))
+            and .Description == "Production-only SELECT credential for signed A5 evidence"
+            and .DeletedDate == null
+          ' "$secret_meta" >/dev/null
+          reader_version="$(jq -er '[.VersionIdsToStages|to_entries[]
+            |select(.value|index("AWSCURRENT"))|.key]|select(length==1)|.[0]' "$secret_meta")"
+
+          bash infra/security/validate-production-a5-current-quiesce.sh "$CONTEXT_FILE" "$STAGE"
+          profile=F1_CURRENT
+          [ "$STAGE" = PRE_MUTATION ] && profile=LEGACY_PRE_F1
+          printf '%s\n' null > "$EVIDENCE_ROOT/pre-payload.json"
+          printf '%s\n' null > "$EVIDENCE_ROOT/post-migration-payload.json"
+          if [ "$STAGE" != PRE_MUTATION ]; then
+            jq -cS '.payload' "$EVIDENCE_ROOT/pre-evidence.json" \
+              > "$EVIDENCE_ROOT/pre-payload.json"
+          fi
+          if [ "$STAGE" = POST_DEPLOYMENT ]; then
+            jq -cS '.payload' "$EVIDENCE_ROOT/post-migration-evidence.json" \
+              > "$EVIDENCE_ROOT/post-migration-payload.json"
+          fi
+          input_bundle="$EVIDENCE_ROOT/private-reader-input.json"
+          jq -cnS --arg stage "$STAGE" --arg source "$SOURCE_SHA" --arg profile "$profile" \
+            --slurpfile manifest "$EVIDENCE_ROOT/reviewed-manifest.json" \
+            --slurpfile serving "$EVIDENCE_ROOT/serving-builds.json" \
+            --slurpfile quiesce "$EVIDENCE_ROOT/reimbursement-quiesce.json" \
+            --slurpfile context "$EVIDENCE_ROOT/invariant-context.json" \
+            --slurpfile preRef "$EVIDENCE_ROOT/pre-ref.json" \
+            --slurpfile prePayload "$EVIDENCE_ROOT/pre-payload.json" \
+            --slurpfile postRef "$EVIDENCE_ROOT/post-migration-ref.json" \
+            --slurpfile postPayload "$EVIDENCE_ROOT/post-migration-payload.json" '
+              {schemaVersion:1,stage:$stage,sourceCommit:$source,schemaProfile:$profile,
+               reviewedManifest:$manifest[0],servingBuilds:$serving[0],
+               reimbursementWriteQuiesce:$quiesce[0],invariantContext:$context[0],
+               baselines:{preMutationRef:$preRef[0],preMutationPayload:$prePayload[0],
+                 postMigrationRef:$postRef[0],postMigrationPayload:$postPayload[0]}}
+          ' > "$input_bundle"
+
+          private_output="$EVIDENCE_ROOT/private-reader"
+          mkdir "$private_output"
+          AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" AWS_REGION="$AWS_REGION" SOURCE_SHA="$SOURCE_SHA" \
+            A5_STAGE="$STAGE" PRODUCER_RUN_ID="$GITHUB_RUN_ID" \
+            PRODUCER_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" MIGRATION_IMAGE="$MIGRATION_IMAGE" \
+            INPUT_BUNDLE_PATH="$input_bundle" EXPECTED_READER_SECRET_VERSION_ID="$reader_version" \
+            OUTPUT_DIR="$private_output" \
+            bash infra/security/run-production-a5-readonly.sh >/dev/null
+
+          core_payload="$private_output/payload.json"
+          reader_runtime="$private_output/reader-runtime.json"
+          core_hash="$(sha256sum "$core_payload" | awk '{print $1}')"
+          core_bytes="$(wc -c < "$core_payload" | tr -d '[:space:]')"
+          jq -e --arg hash "$core_hash" --argjson bytes "$core_bytes" \
+            '.output.payloadSha256==$hash and .output.payloadBytes==$bytes and .output.exitCode==0' \
+            "$reader_runtime" >/dev/null
+
+          health_output="$EVIDENCE_ROOT/current-health"
+          mkdir "$health_output"
+          bash infra/security/collect-production-a5-current-health.sh "$health_output" >/dev/null
+          jq -cS --slurpfile health "$health_output/current-health.json" \
+            --slurpfile runtime "$reader_runtime" \
+            --slurpfile authority "$EVIDENCE_ROOT/production-apply-authority.json" '
+              .currentHealth=$health[0] | .readerRuntime=$runtime[0]
+              | .migrationState.productionApplyAuthority=$authority[0]
+          ' "$core_payload" > "$EVIDENCE_ROOT/payload.json"
+
+      - name: Canonicalize, validate, sign and verify exact evidence
+        env:
+          SOURCE_SHA: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          source infra/security/signed-evidence.sh
+          output="$EVIDENCE_ROOT/output"
+          mkdir "$output"
+          issued_at="$(date -u +%s)"
+          expires_at="$((issued_at + 3600))"
+          evidence="$output/evidence.json"
+          jq -cnS --slurpfile payload "$EVIDENCE_ROOT/payload.json" \
+            --slurpfile expected "$EXPECTED_FILE" --argjson issued "$issued_at" \
+            --argjson expires "$expires_at" '
+              ($expected[0]) as $e
+              | {schemaVersion:1,artifactKind:"PRODUCTION_A5_EVIDENCE_V1",
+                 repository:$e.repository,environment:"production",sourceCommit:$e.sourceCommit,
+                 producer:{workflowPath:$e.producer.workflowPath,workflowRef:"refs/heads/main",
+                   controllerCommit:$e.producer.controllerCommit,workflowBlob:$e.producer.workflowBlob,
+                   runId:$e.producer.runId,runAttempt:$e.producer.runAttempt,event:"workflow_dispatch",
+                   actor:$e.producer.actor,triggeringActor:$e.producer.triggeringActor},
+                 parentProductionRun:{workflowPath:".github/workflows/deploy-production.yml",
+                   controllerCommit:$e.parentProductionRun.controllerCommit,
+                   workflowBlob:$e.parentProductionRun.workflowBlob,runId:$e.parentProductionRun.runId,
+                   runAttempt:$e.parentProductionRun.runAttempt},issuedAtEpoch:$issued,
+                 expiresAtEpoch:$expires,payload:$payload[0],contentSha256:("0"*64)}
+            ' > "$evidence.tmp"
+          content_hash="$(signed_evidence_content_sha256 "$evidence.tmp")"
+          jq -cS --arg hash "$content_hash" '.contentSha256=$hash' "$evidence.tmp" > "$evidence"
+          rm -f -- "$evidence.tmp"
+          cmp -s <(jq -cS . "$evidence") "$evidence"
+          signed_evidence_validate_envelope "$evidence" "$EXPECTED_FILE" "$issued_at"
+          jq -e --slurpfile context "$CONTEXT_FILE" '
+            .payload.reimbursementWriteQuiesce == $context[0].reimbursementWriteQuiesce
+          ' "$evidence" >/dev/null
+          cosign sign-blob --yes --bundle "$output/evidence.bundle" "$evidence"
+          signed_evidence_verify_cosign "$evidence" "$output/evidence.bundle" "$EXPECTED_FILE" >/dev/null
+          signed_evidence_validate_envelope "$evidence" "$EXPECTED_FILE" "$(date -u +%s)"
+          test "$(find "$output" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ')" \
+            = 'evidence.bundle evidence.json '
+          printf '%s\n' "EVIDENCE_OUTPUT=$output" >> "$GITHUB_ENV"
+
+      - name: Upload exact signed attempt evidence
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
+          path: |
+            ${{ env.EVIDENCE_OUTPUT }}/evidence.json
+            ${{ env.EVIDENCE_OUTPUT }}/evidence.bundle
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,191 @@
+/**
+ * Client for calling ERP read tool adapters in the API.
+ * AI Gateway never accesses DB directly; all data goes through ERP core.
+ * Governed path: policy decision → audit record → execute.
+ */
+import { Injectable, Logger } from '@nestjs/common';
+import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
+import { ToolPolicyEnforcerService } from '../../../common/ai/tool-policy-enforcer.service';
+import type { ToolResult, ToolMeta } from '@watchdog-bms/contracts';
+import type { ToolPolicy } from '../../../common/ai/tool-policy.model';
+
+// ponytail: intentionally empty — every previously-stubbed tool now has an API endpoint.
+// Kept so a future not-yet-wired tool can short-circuit to unsupported_module instead of HTTP 404.
+const UNIMPLEMENTED_TOOLS = new Set<string>();
+
+export type ErpToolContext = {
+  requestId?: string;
+  companyId: string;
+  userId: string;
+  membershipId?: string;
+  permissions: string[];
+  branchIds?: string[];
+  locationIds?: string[];
+  locale: string;
+  actorDelegations?: Record<string, string[]>;
+};
+
+/** Derive ToolPolicy from ToolMeta for enforcer assertion. */
+export function toolMetaToPolicy(tool: ToolMeta): ToolPolicy {
+  const isMutation = tool.category === 'final_mutation' || tool.category === 'approval_request';
+  return {
+    toolName: tool.name,
+    requiredPermission: tool.requiredPermissions[0] ?? tool.anyOfPermissions?.[0] ?? 'unknown',
+    riskLevel: tool.sensitiveAudit ? 'high' : 'low',
+    requiresConfirmation: false,
+    requiresAudit: tool.sensitiveAudit,
+    requiresErpCorePermissionCheck: tool.requiresErpPermissionCheck,
+    allowedWhenFinalMutationDisabled: !isMutation,
+  };
+}
+
+/** Normalize the untrusted ERP response before any specialist can inspect it. */
+export function enforceSourceHonesty(tool: ToolMeta, value: unknown): ToolResult {
+  const invalid = (): ToolResult => ({
+    toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'INVALID_TOOL_RESULT',
+  });
+  if (!value || typeof value !== 'object') return invalid();
+  const result = value as Partial<ToolResult>;
+  if (!result.status || !['ok', 'forbidden', 'unsupported_module', 'unavailable', 'error'].includes(result.status)) return invalid();
+  const asOf = typeof result.asOf === 'string' && result.asOf ? result.asOf : new Date().toISOString();
+
+  // A non-success result never carries business data or entity references across the boundary.
+  // Preserve its typed status so specialists can distinguish denied, unavailable, and failed.
+  if (result.status !== 'ok') {
+    return {
+      toolName: tool.name,
+      status: result.status,
+      sourceRefs: [],
+      asOf,
+      ...(typeof result.errorCode === 'string' ? { errorCode: result.errorCode } : {}),
+      ...(typeof result.errorMessage === 'string' ? { errorMessage: result.errorMessage } : {}),
+    };
+  }
+  if (result.toolName !== tool.name) {
+    return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_NAME_MISMATCH' };
+  }
+  if (result.data === undefined || result.data === null) {
+    return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_NO_DATA' };
+  }
+  if (!Array.isArray(result.sourceRefs) || result.sourceRefs.length === 0) {
+    return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_NO_SOURCE' };
+  }
+  if (result.sourceRefs.some((ref) => ref.module !== tool.sourceModule || ref.permissionChecked !== true)) {
+    return { toolName: tool.name, status: 'error', sourceRefs: [], asOf, errorCode: 'TOOL_RESULT_SOURCE_MISMATCH' };
+  }
+  return result as ToolResult;
+}
+
+@Injectable()
+export class ErpToolClient {
+  private readonly logger = new Logger(ErpToolClient.name);
+
+  constructor(
+    private readonly config: AiGatewayConfigService,
+    private readonly policyEnforcer: ToolPolicyEnforcerService,
+  ) {}
+
+  /**
+   * Measures the whole invoke (fetch included) once, attaches it to every returned ToolResult, and
+   * emits one correlatable `ai.tool.invoke.result` per call. Never logs tool input or delegations.
+   */
+  async invoke(tool: ToolMeta, ctx: ErpToolContext, input: Record<string, unknown> = {}): Promise<ToolResult> {
+    const startedMs = Date.now();
+    const result = await this.invokeInner(tool, ctx, input);
+    const durationMs = Date.now() - startedMs;
+    this.logger.log({
+      msg: 'ai.tool.invoke.result',
+      requestId: ctx.requestId,
+      toolName: tool.name,
+      status: result.status,
+      durationMs,
+      ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+    });
+    return { ...result, durationMs };
+  }
+
+  private async invokeInner(tool: ToolMeta, ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> {
+    // Return typed unsupported_module for tools not yet backed by API endpoints
+    if (UNIMPLEMENTED_TOOLS.has(tool.name)) {
+      return {
+        toolName: tool.name,
+        status: 'unsupported_module',
+        data: null,
+        sourceRefs: [{ label: tool.name, module: tool.sourceModule, entityType: 'tool', permissionChecked: true }],
+        asOf: new Date().toISOString(),
+      };
+    }
+
+    // Policy decision → audit record → execute
+    const policy = toolMetaToPolicy(tool);
+    try {
+      this.policyEnforcer.assertToolCanExecute(policy);
+      this.logger.log({ msg: 'ai.tool.policy.allow', requestId: ctx.requestId, toolName: tool.name, userId: ctx.userId, companyId: ctx.companyId });
+    } catch (policyErr) {
+      // L-14: a kill-switch/policy trip carries a root-level riskLevel so the existing production
+      // metric filter ($.riskLevel = "HIGH") sees it without any infrastructure change.
+      this.logger.warn({ msg: 'ai.tool.policy.deny', riskLevel: 'HIGH', requestId: ctx.requestId, toolName: tool.name, userId: ctx.userId, companyId: ctx.companyId, reason: (policyErr as Error).message });
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'POLICY_DENIED' };
+    }
+
+    if (tool.requiredInputFields) {
+      const missing = tool.requiredInputFields.filter((f) => !(f in input));
+      if (missing.length > 0) {
+        return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'MISSING_REQUIRED_INPUT', errorMessage: `Missing fields: ${missing.join(', ')}` };
+      }
+    }
+
+    const url = `${this.config.erpCoreInternalUrl}/internal/ai/tools/invoke`;
+    const secret = this.config.aiGatewayInternalSecret;
+    if (!secret) {
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'INTERNAL_SECRET_NOT_CONFIGURED' };
+    }
+    const actorDelegation = ctx.actorDelegations?.[tool.name]?.shift();
+    if (!actorDelegation) {
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'ACTOR_DELEGATION_MISSING' };
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      // Secret in header, not logged
+      'X-Internal-Secret': secret,
+      'X-Actor-Delegation': actorDelegation,
+    };
+
+    const body = JSON.stringify({
+      toolName: tool.name,
+      context: { ...ctx, actorDelegations: undefined },
+      input,
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: AbortSignal.timeout(this.config.aiToolTimeoutMs),
+      });
+    } catch (err) {
+      // Fetch/abort messages carry no URL query or headers, so no delegation material can ride along.
+      this.logger.error({ msg: 'ai.tool.invoke.error', requestId: ctx.requestId, toolName: tool.name, error: (err as Error).message });
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'TOOL_TIMEOUT' };
+    }
+
+    if (!response.ok) {
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: `HTTP_${response.status}` };
+    }
+
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch {
+      return { toolName: tool.name, status: 'error', sourceRefs: [], asOf: new Date().toISOString(), errorCode: 'INVALID_TOOL_RESULT' };
+    }
+    const guarded = enforceSourceHonesty(tool, result);
+    if (guarded.status === 'error' && guarded.errorCode?.startsWith('TOOL_RESULT_')) {
+      this.logger.warn({ msg: 'ai.tool.source_honesty.rejected', requestId: ctx.requestId, toolName: tool.name, errorCode: guarded.errorCode });
+    }
+    return guarded;
+  }
+}

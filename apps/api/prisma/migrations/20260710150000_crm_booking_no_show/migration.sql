@@ -1,0 +1,1 @@
+ALTER TYPE "CrmBookingStatus" ADD VALUE 'NO_SHOW';

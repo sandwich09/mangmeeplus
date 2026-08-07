@@ -1,0 +1,68 @@
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
+import type { AttachmentLinkRecord } from '../../domain/models/attachment.model';
+import type { RequestContext } from '../../../auth/domain/models/request-context.model';
+import { AuditService } from '../../../audit/application/audit.service';
+import { isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
+
+export type LinkAttachmentCommand = {
+  attachmentId: string;
+  targetType: string;
+  targetId: string;
+  purpose: string;
+};
+
+function canLinkExpense(ctx: RequestContext): boolean {
+  return ['expense.update', 'expense.review', 'expense.receipt.upload', 'expense.payment.record']
+    .some((permission) => ctx.permissions.includes(permission));
+}
+
+@Injectable()
+export class LinkAttachmentUseCase {
+  constructor(
+    private readonly attachments: PrismaAttachmentRepository,
+    private readonly audit: AuditService,
+  ) {}
+
+  async execute(ctx: RequestContext, cmd: LinkAttachmentCommand): Promise<AttachmentLinkRecord> {
+    const validTarget = isAllowedAttachmentTarget(cmd.targetType, cmd.purpose)
+      && typeof cmd.targetId === 'string'
+      && cmd.targetId.length > 0
+      && cmd.targetId.length <= 200;
+    if (!ctx.permissions.includes('attachment.create') || !validTarget || !canLinkExpense(ctx)) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.link.create', targetType: 'attachment', targetId: cmd.attachmentId,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'MEDIUM',
+        metadataJson: { requestedTargetType: cmd.targetType, requestedPurpose: cmd.purpose },
+      });
+      throw new ForbiddenException('Attachment target or purpose is not permitted.');
+    }
+
+    const existing = await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId });
+    if (!existing) throw new NotFoundException('Attachment not found.');
+    if (existing.status !== 'ACTIVE') {
+      throw new BadRequestException('Attachment must be ACTIVE to link.');
+    }
+
+    const link = await this.attachments.linkToTarget({
+      companyId: ctx.companyId,
+      attachmentId: cmd.attachmentId,
+      targetType: cmd.targetType,
+      targetId: cmd.targetId,
+      purpose: cmd.purpose,
+      linkedByUserId: ctx.userId,
+      targetOwnerUserId: ctx.permissions.some((permission) => ['expense.review', 'expense.payment.record'].includes(permission))
+        ? undefined
+        : ctx.userId,
+    });
+
+    void this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId,
+      action: 'attachment.link.create', targetType: 'attachment', targetId: cmd.attachmentId,
+      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+    });
+
+    return link;
+  }
+}

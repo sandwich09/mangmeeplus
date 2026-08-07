@@ -1,0 +1,769 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { formatThaiDate } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
+import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
+import { isReceiptTaxCodeAllowed } from '@/features/tax/transaction-tax.model';
+import type { TaxCodeDefinitionDto, TransactionTaxContext } from '@watchdog-bms/contracts';
+import {
+  approveQuotation,
+  convertDocument,
+  createDocument,
+  createPayment,
+  getDocument,
+  issueDocument,
+  listCounterparties,
+  listDocuments,
+  listPayments,
+  rejectQuotation,
+  submitQuotationApproval,
+  voidDocument,
+} from './accounting-documents.api';
+import {
+  DOCUMENT_STATUS_LABELS,
+  DOCUMENT_TYPE_LABELS,
+  OUTPUT_TAX_CODE_LABELS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_STATUS_LABELS,
+} from './accounting-documents.model';
+import type {
+  AccountingDocumentType,
+  AccountingOutputTaxCode,
+  AccountingPaymentMethod,
+  AccountingVatMode,
+  CounterpartySummary,
+  DocumentDetail,
+  DocumentLineSummary,
+  DocumentSummary,
+  PaymentSummary,
+} from './accounting-documents.model';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+import { useToast } from '@/common/components/toast';
+import { useInputPrompt } from '@/common/components/modal';
+
+const inputClass = 'mangmee-input';
+const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
+const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
+const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
+const DOCUMENT_TYPES: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'];
+
+function err(e: unknown) {
+  return apiErrorMessage(e);
+}
+
+function money(value?: string) {
+  return Number(value ?? '0').toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function StatusBadge({ status }: { status?: string }) {
+  if (!status) return <span className="text-xs text-gray-400">-</span>;
+  const tone: Record<string, string> = {
+    DRAFT: 'bg-gray-100 text-gray-700',
+    PENDING_APPROVAL: 'bg-amber-100 text-amber-800',
+    APPROVED: 'bg-brand-100 text-brand-800',
+    ISSUED: 'bg-emerald-100 text-emerald-800',
+    PAID: 'bg-emerald-100 text-emerald-800',
+    PARTIALLY_PAID: 'bg-amber-100 text-amber-800',
+    VOIDED: 'bg-red-100 text-red-700',
+    REJECTED: 'bg-red-100 text-red-700',
+  };
+  const label = (DOCUMENT_STATUS_LABELS as Record<string, string>)[status] ?? (PAYMENT_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tone[status] ?? 'bg-gray-100 text-gray-700'}`}>{label}</span>;
+}
+
+function MobileDocumentStatusBadge({ status }: { status: DocumentSummary['status'] }) {
+  const tone = status === 'REJECTED' || status === 'VOIDED'
+    ? 'danger'
+    : status === 'PENDING_APPROVAL'
+      ? 'amber'
+      : status === 'APPROVED' || status === 'ISSUED' || status === 'CREDITED' || status === 'DEBITED' || status === 'CLOSED'
+        ? 'brand'
+        : 'slate';
+  return <MangmeeBadge tone={tone}>{DOCUMENT_STATUS_LABELS[status]}</MangmeeBadge>;
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{message}</div>;
+}
+
+function copyLines(lines: DocumentLineSummary[]) {
+  return lines.map((line) => ({
+    lineNumber: line.lineNumber,
+    description: line.description,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    discountAmount: line.discountAmount,
+    vatRate: line.vatRate,
+    taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
+    externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
+  }));
+}
+
+type LinkedTaxSelection = Pick<TaxCodeDefinitionDto, 'id' | 'externalCode' | 'rate' | 'calculationMethod' | 'treatment'>;
+
+function linkedTaxInvoiceVatMode(selections: LinkedTaxSelection[]): AccountingVatMode | null {
+  const positive = selections.filter((item) => Number(item.rate) > 0);
+  const methods = new Set(positive.map((item) => item.calculationMethod));
+  if (methods.size > 1) return null;
+  if (methods.has('INCLUSIVE')) return 'VAT_INCLUDED';
+  if (methods.has('EXCLUSIVE')) return 'VAT_EXCLUDED';
+  return selections.some((item) => item.treatment === 'EXEMPT') ? 'EXEMPT' : 'NO_VAT';
+}
+
+function DocumentList({
+  companyId,
+  selectedId,
+  onSelect,
+  reloadKey,
+  filterType,
+  onFilterTypeChange,
+}: {
+  companyId: string;
+  selectedId?: string;
+  onSelect: (documentId: string) => void;
+  reloadKey: number;
+  filterType: AccountingDocumentType | '';
+  onFilterTypeChange: (type: AccountingDocumentType | '') => void;
+}) {
+  const [docs, setDocs] = useState<DocumentSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const loadAbort = useRef(0);
+
+  const load = useCallback(async () => {
+    const token = ++loadAbort.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await listDocuments(companyId, filterType ? { documentType: filterType } : {});
+      if (token !== loadAbort.current) return;
+      setDocs(res.data);
+      if (!selectedId && res.data[0]) onSelect(res.data[0].id);
+    } catch (e) {
+      if (token !== loadAbort.current) return;
+      setError(err(e));
+    } finally {
+      if (token === loadAbort.current) setLoading(false);
+    }
+  }, [companyId, filterType, onSelect, selectedId]);
+
+  useEffect(() => { void load(); }, [load, reloadKey]);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-bold text-gray-900">Accounting documents</h1>
+        <ThemedSelect className={`${inputClass} max-w-xs`} value={filterType} onChange={(e) => onFilterTypeChange(e.target.value as AccountingDocumentType | '')}>
+          <option value="">All types</option>
+          {DOCUMENT_TYPES.map((type) => <option key={type} value={type}>{DOCUMENT_TYPE_LABELS[type]}</option>)}
+        </ThemedSelect>
+      </div>
+      {error && <ErrorBanner message={error} />}
+      <div className="mangmee-card overflow-hidden">
+        {loading ? <p className="px-4 py-8 text-center text-sm text-gray-500">Loading...</p>
+          : docs.length === 0 ? <p className="px-4 py-8 text-center text-sm text-gray-500">No documents</p>
+            : <>
+        <div className="hidden md:block" data-testid="accounting-documents-table">
+        <div className="mangmee-table-scroll">
+          <table className="mangmee-table min-w-full">
+          <thead>
+            <tr>
+              {['Type', 'Number', 'Status', 'Date', 'Total', 'Payment', 'Posting'].map((header) => <th key={header}>{header}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">Loading...</td></tr>}
+            {!loading && docs.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">No documents</td></tr>}
+            {!loading && docs.map((doc) => (
+              <tr key={doc.id} className={`cursor-pointer ${selectedId === doc.id ? 'bg-brand-25' : ''}`} onClick={() => onSelect(doc.id)}>
+                <td className="px-4 py-3 text-sm text-gray-900">{DOCUMENT_TYPE_LABELS[doc.documentType]}</td>
+                <td className="px-4 py-3 font-mono text-sm text-gray-700">{doc.documentNumber ?? doc.id.slice(0, 8)}</td>
+                <td className="px-4 py-3"><StatusBadge status={doc.status} /></td>
+                <td className="px-4 py-3 text-sm text-gray-600">{formatThaiDate(doc.documentDate)}</td>
+                <td className="px-4 py-3 text-right text-sm text-gray-900">{money(doc.grandTotalAmount)}</td>
+                <td className="px-4 py-3"><StatusBadge status={doc.paymentStatus} /></td>
+                <td className="px-4 py-3 text-xs text-gray-500">{doc.postingStatus}</td>
+              </tr>
+            ))}
+          </tbody>
+          </table>
+        </div>
+        </div>
+        <div className="space-y-3 p-3 md:hidden" data-testid="accounting-documents-card-list">
+          {docs.map((doc) => (
+            <MangmeeCard key={doc.id} className={selectedId === doc.id ? 'overflow-hidden bg-brand-25' : 'overflow-hidden'}>
+              <a
+                href={`?documentId=${encodeURIComponent(doc.id)}`}
+                className="block min-h-11 w-full p-4 text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand-500"
+                data-testid="accounting-document-card"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{DOCUMENT_TYPE_LABELS[doc.documentType]}</span>
+                  <span className="max-w-[55%] truncate font-mono text-xs text-gray-600">{doc.documentNumber ?? doc.id.slice(0, 8)}</span>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <MobileDocumentStatusBadge status={doc.status} />
+                  <span className="shrink-0 text-xs text-gray-500">{formatThaiDate(doc.documentDate)}</span>
+                </div>
+                <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{money(doc.grandTotalAmount)}</div>
+              </a>
+            </MangmeeCard>
+          ))}
+        </div>
+        </>}
+      </div>
+    </section>
+  );
+}
+
+function CreateDocumentForm({ companyId, permissions, onCreated }: { companyId: string; permissions: string[]; onCreated: (documentId?: string) => void }) {
+  const toast = useToast();
+  const branch = useBranchFilter();
+  const [docType, setDocType] = useState<AccountingDocumentType>('INVOICE');
+  const [vatMode, setVatMode] = useState<AccountingVatMode>('NO_VAT');
+  const [outputTaxCode, setOutputTaxCode] = useState<AccountingOutputTaxCode | undefined>();
+  const [taxCodeDefinitionId, setTaxCodeDefinitionId] = useState('');
+  const [externalTaxCode, setExternalTaxCode] = useState<string>();
+  const [vatRate, setVatRate] = useState('7');
+  // Withholding the CUSTOMER will take from us. Blank on most documents; only a juristic buyer
+  // withholds, and the operator knows at issue time.
+  const [whtRate, setWhtRate] = useState('');
+  const [transactionContext, setTransactionContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
+  const [documentDate, setDocumentDate] = useState(todayCivilDate());
+  const [description, setDescription] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [unitPrice, setUnitPrice] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const docTypes: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'];
+  // Preview only — the server recomputes every total. VAT_INCLUDED already carries its VAT.
+  const lineGross = (Number(quantity) || 0) * (Number(unitPrice) || 0);
+  const expectedGross = vatMode === 'VAT_EXCLUDED' ? lineGross * (1 + (Number(vatRate) || 0) / 100) : lineGross;
+
+  function changeDocumentType(type: AccountingDocumentType) {
+    setDocType(type);
+    setTaxCodeDefinitionId('');
+    setExternalTaxCode(undefined);
+    setOutputTaxCode(undefined);
+    setVatMode('NO_VAT');
+    setTransactionContext('DOMESTIC_SALE');
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      const created = await createDocument(companyId, {
+        documentType: docType,
+        documentDate,
+        vatMode,
+        outputTaxCode,
+        branchId: branch?.branchId || undefined,
+        lines: [{ lineNumber: 1, description, quantity, unitPrice, vatRate, ...(whtRate ? { whtRate } : {}), taxCodeDefinitionId: taxCodeDefinitionId || undefined, externalTaxCode, transactionContext }],
+      });
+      setDescription('');
+      setUnitPrice('');
+      setWhtRate('');
+      onCreated(created.id);
+      toast.success('บันทึกร่างเอกสารเรียบร้อยแล้ว');
+    } catch (ex) {
+      setError(err(ex));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mangmee-card space-y-3 p-4">
+      <h2 className="text-base font-bold text-gray-900">New document</h2>
+      {error && <ErrorBanner message={error} />}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <ThemedSelect aria-label="Document type" className={inputClass} value={docType} onChange={(e) => changeDocumentType(e.target.value as AccountingDocumentType)}>
+          {docTypes.map((type) => <option key={type} value={type}>{DOCUMENT_TYPE_LABELS[type]}</option>)}
+        </ThemedSelect>
+        <ThemedDate className={inputClass} value={documentDate} onChange={(e) => setDocumentDate(e.target.value)} />
+        <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50 px-3 text-xs text-gray-600">Tax Code: {externalTaxCode ?? 'รายบรรทัด / ไม่มี'}</div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <ThemedSelect className={inputClass} value={vatMode} onChange={(e) => setVatMode(e.target.value as AccountingVatMode)}>
+          {(!outputTaxCode || outputTaxCode === 'O0') && <option value="NO_VAT">No VAT</option>}
+          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_EXCLUDED">VAT excluded</option>}
+          {(!outputTaxCode || outputTaxCode === 'O7') && <option value="VAT_INCLUDED">VAT included</option>}
+          {(!outputTaxCode || outputTaxCode === 'OX') && <option value="EXEMPT">VAT exempt</option>}
+        </ThemedSelect>
+        <input className={inputClass} type="number" min="0.0001" step="0.0001" value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={outputTaxCode !== 'O7'} required={outputTaxCode === 'O7'} aria-label="VAT rate" />
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-bold text-gray-600">
+          หัก ณ ที่จ่ายที่ลูกค้าจะหัก (%)
+          <input className={inputClass} type="number" min="0" max="100" step="0.0001" value={whtRate} onChange={(e) => setWhtRate(e.target.value)} placeholder="เว้นว่างถ้าลูกค้าไม่หัก" aria-label="อัตราถูกหัก ณ ที่จ่าย" />
+        </label>
+        {Number(whtRate) > 0 && <p className="self-end text-xs text-gray-600">
+          {/* The document total is unchanged — withholding only changes what arrives in the bank. */}
+          คาดว่าจะได้รับสุทธิ {(expectedGross * (1 - Number(whtRate) / 100)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จากยอดรวม {expectedGross.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </p>}
+      </div>
+      {!isReceiptTaxCodeAllowed(docType) && <p className="text-xs text-gray-500">{docType === 'RECEIPT' ? 'ใบเสร็จรับเงินเป็นหลักฐานรับชำระ ไม่มี Tax Code และไม่สร้าง VAT ซ้ำ' : `${DOCUMENT_TYPE_LABELS[docType]} ไม่ใช่เอกสารภาษี จึงไม่กำหนด Tax Code`}</p>}
+      {isReceiptTaxCodeAllowed(docType) && <label className="block text-xs font-bold text-gray-600">
+        บริบทธุรกรรม
+        <ThemedSelect
+          className={inputClass}
+          value={transactionContext}
+          onChange={(event) => {
+            setTransactionContext(event.target.value as TransactionTaxContext);
+            setTaxCodeDefinitionId('');
+            setExternalTaxCode(undefined);
+            setOutputTaxCode(undefined);
+            setVatMode('NO_VAT');
+          }}
+        >
+          <option value="DOMESTIC_SALE">ขายในประเทศ</option>
+          <option value="EXPORT_GOODS">ส่งออกสินค้า</option>
+          <option value="EXPORT_SERVICE">ส่งออกบริการ</option>
+        </ThemedSelect>
+      </label>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_120px_160px]">
+        <input className={inputClass} placeholder="Line description" value={description} onChange={(e) => setDescription(e.target.value)} required />
+        <input className={inputClass} type="number" min="0" step="0.0001" placeholder="Qty" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
+        <input className={inputClass} type="number" min="0" step="0.01" placeholder="Unit price" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required />
+      </div>
+      {isReceiptTaxCodeAllowed(docType) && <TransactionTaxLineSelector
+        companyId={companyId}
+        branchId={branch?.branchId || undefined}
+        sourceType="accounting.document"
+        sourceId="new-document"
+        sourceLineId="line-1"
+        transactionContext={transactionContext}
+        direction="OUTPUT"
+        documentDate={documentDate}
+        netAmount={String(Number(quantity || '0') * Number(unitPrice || '0'))}
+        grossAmount={String(Number(quantity || '0') * Number(unitPrice || '0'))}
+        value={taxCodeDefinitionId}
+        allowNoTax={docType !== 'TAX_INVOICE'}
+        onChange={(id, definition) => {
+          setTaxCodeDefinitionId(id);
+          setExternalTaxCode(definition?.externalCode);
+          setOutputTaxCode(['O7', 'OX', 'O0'].includes(definition?.externalCode ?? '') ? definition?.externalCode as AccountingOutputTaxCode : undefined);
+          setVatRate(definition?.rate ?? '0');
+          if (!definition || definition.calculationMethod === 'NONE' || ['NON_TAXABLE', 'OUTSIDE_SCOPE'].includes(definition.treatment)) setVatMode('NO_VAT');
+          else if (definition.treatment === 'EXEMPT') setVatMode('EXEMPT');
+          else setVatMode(definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED');
+        }}
+      />}
+      <button className={btnClass} disabled={loading || !permissions.includes('accounting.document.create') || (docType === 'TAX_INVOICE' && !taxCodeDefinitionId)}>{loading ? 'Saving...' : 'Save draft'}</button>
+      {!permissions.includes('accounting.document.create') && <p className="text-xs text-amber-700">อ่านอย่างเดียว: ไม่มีสิทธิ์สร้างเอกสารบัญชี</p>}
+    </form>
+  );
+}
+
+function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: { companyId: string; documentId?: string; permissions: string[]; onChanged: (documentId?: string) => void }) {
+  const toast = useToast();
+  const { promptInput, inputPromptDialog } = useInputPrompt();
+  const [detail, setDetail] = useState<DocumentDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  // Tax the customer withheld. Prefilled from the document only before anything has been received,
+  // because after a partial receipt there is no telling how much of the withholding is left.
+  const [paymentWht, setPaymentWht] = useState('');
+  // The 50 ทวิ the customer issues to US. We never issue it, so there is no certificate record to
+  // create — but the number is what proves the tax credit, so it is captured on the payment's
+  // existing reference field rather than left on paper.
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<AccountingPaymentMethod>('BANK_TRANSFER');
+  const [linkedTaxInvoiceOpen, setLinkedTaxInvoiceOpen] = useState(false);
+  const [linkedTaxInvoiceDate, setLinkedTaxInvoiceDate] = useState(todayCivilDate());
+  const [linkedTaxContext, setLinkedTaxContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
+  const [linkedTaxSelections, setLinkedTaxSelections] = useState<Record<number, LinkedTaxSelection | undefined>>({});
+
+  const load = useCallback(async () => {
+    if (!documentId) {
+      setDetail(null);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      setDetail(await getDocument(companyId, documentId));
+      setLinkedTaxInvoiceOpen(false);
+      setLinkedTaxSelections({});
+    } catch (e) {
+      setError(err(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [companyId, documentId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function run(action: () => Promise<DocumentDetail | PaymentSummary>, successMessage?: string, selectResult = true) {
+    setError(null);
+    try {
+      const result = await action();
+      const nextId = 'documentType' in result ? result.id : detail?.id;
+      onChanged(selectResult ? nextId : detail?.id);
+      if (nextId) setDetail(await getDocument(companyId, nextId));
+      if (successMessage) toast.success(successMessage);
+    } catch (e) {
+      setError(err(e));
+    }
+  }
+
+  async function rejectDocument() {
+    if (!detail) return;
+    const reason = await promptInput({ title: 'ปฏิเสธใบเสนอราคา', label: 'เหตุผลปฏิเสธ' });
+    if (!reason) return;
+    await run(() => rejectQuotation(companyId, detail.id, reason), 'ปฏิเสธใบเสนอราคาเรียบร้อยแล้ว');
+  }
+
+  async function voidAccountingDocument() {
+    if (!detail) return;
+    const reason = await promptInput({ title: 'ยกเลิกเอกสาร', label: 'เหตุผลยกเลิกเอกสาร' });
+    if (!reason) return;
+    await run(() => voidDocument(companyId, detail.id, reason), 'ยกเลิกเอกสารเรียบร้อยแล้ว');
+  }
+
+  async function createLinked(type: AccountingDocumentType) {
+    if (!detail) return;
+    await run(() => createDocument(companyId, {
+      documentType: type,
+      documentDate: todayCivilDate(),
+      counterpartyId: detail.counterpartyId,
+      sourceDocumentId: detail.id,
+      sourceDocumentType: detail.documentType,
+      vatMode: detail.vatMode,
+      outputTaxCode: detail.outputTaxCode,
+      note: `${DOCUMENT_TYPE_LABELS[type]} for ${detail.documentNumber ?? detail.id}`,
+      lines: copyLines(detail.lines).map((line) => ({ ...line, transactionContext: type === 'CREDIT_NOTE' ? 'RETURN_OR_CREDIT' as const : type === 'DEBIT_NOTE' ? 'DEBIT_ADJUSTMENT' as const : 'DOMESTIC_SALE' as const })),
+    }), type === 'CREDIT_NOTE' ? 'สร้างใบลดหนี้เรียบร้อยแล้ว' : 'สร้างใบเพิ่มหนี้เรียบร้อยแล้ว');
+  }
+
+  async function createLinkedTaxInvoice() {
+    if (!detail) return;
+    const selections = detail.lines.map((line) => linkedTaxSelections[line.lineNumber]).filter(Boolean) as LinkedTaxSelection[];
+    if (selections.length !== detail.lines.length) {
+      setError('กรุณาเลือก Tax Code ให้ครบทุกบรรทัดก่อนสร้างใบกำกับภาษี');
+      return;
+    }
+    const vatMode = linkedTaxInvoiceVatMode(selections);
+    if (!vatMode) {
+      setError('Tax Code แบบ VAT included และ excluded ไม่สามารถใช้ร่วมกันในเอกสารฉบับเดียวได้');
+      return;
+    }
+    const legacyCodes = new Set(selections.map((item) => item.externalCode).filter((code) => ['O7', 'OX', 'O0'].includes(code)));
+    const outputTaxCode = legacyCodes.size === 1 && selections.every((item) => legacyCodes.has(item.externalCode))
+      ? [...legacyCodes][0] as AccountingOutputTaxCode
+      : undefined;
+    await run(() => createDocument(companyId, {
+      documentType: 'TAX_INVOICE',
+      documentDate: linkedTaxInvoiceDate,
+      counterpartyId: detail.counterpartyId,
+      sourceDocumentId: detail.id,
+      sourceDocumentType: detail.documentType,
+      currency: detail.currency,
+      vatMode,
+      outputTaxCode,
+      note: `${DOCUMENT_TYPE_LABELS.TAX_INVOICE} for ${detail.documentNumber ?? detail.id}`,
+      lines: detail.lines.map((line) => {
+        const selection = linkedTaxSelections[line.lineNumber]!;
+        return {
+          lineNumber: line.lineNumber,
+          description: line.description,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          discountAmount: line.discountAmount,
+          vatRate: selection.rate,
+          taxCodeDefinitionId: selection.id,
+          externalTaxCode: selection.externalCode,
+          transactionContext: linkedTaxContext,
+        };
+      }),
+    }), 'สร้างร่างใบกำกับภาษีเรียบร้อยแล้ว');
+  }
+
+  const canIssue = detail && ['DRAFT', 'APPROVED'].includes(detail.status) && permissions.includes('accounting.document.issue');
+  const canSubmit = detail?.documentType === 'QUOTATION' && detail.status === 'DRAFT';
+  const canApprove = detail?.documentType === 'QUOTATION' && detail.status === 'PENDING_APPROVAL' && permissions.includes('accounting.quotation.approve');
+  const canConvert = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED' && permissions.includes('accounting.document.create');
+  const canRecordPayment = detail && ['INVOICE', 'BILLING_NOTE', 'DEBIT_NOTE'].includes(detail.documentType) && detail.status === 'ISSUED' && detail.paymentStatus !== 'PAID' && permissions.includes('accounting.payment.create');
+  const paymentSettles = (Number(paymentAmount) || 0) + (Number(paymentWht) || 0);
+  // Seed the withheld field from the document, but only while nothing has been received: after a
+  // partial receipt the remaining share of the withholding is a judgement call, not arithmetic.
+  // Seeded once per document so the operator can clear or correct it without it snapping back.
+  const seededWhtFor = useRef<string>('');
+  useEffect(() => {
+    if (!detail || seededWhtFor.current === detail.id) return;
+    seededWhtFor.current = detail.id;
+    setPaymentWht(Number(detail.whtAmount) > 0 && Number(detail.paidAmount) === 0 ? String(detail.whtAmount) : '');
+  }, [detail]);
+  const canCorrect = detail?.documentType === 'TAX_INVOICE' && detail.status === 'ISSUED' && detail.lines.some((line) => line.taxSnapshot?.taxCodeDefinitionId) && permissions.includes('accounting.document.create');
+  const canTaxInvoice = detail && ['INVOICE', 'RECEIPT'].includes(detail.documentType) && detail.status === 'ISSUED' && permissions.includes('accounting.document.create');
+
+  if (!documentId) return <section className="mangmee-card p-4 text-sm text-gray-500">Select a document to review actions.</section>;
+  if (loading) return <section className="mangmee-card p-4 text-sm text-gray-500">Loading document...</section>;
+  if (!detail) return <section className="mangmee-card p-4">{error && <ErrorBanner message={error} />}</section>;
+
+  return (
+    <section className="mangmee-card space-y-4 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm text-gray-500">{DOCUMENT_TYPE_LABELS[detail.documentType]}</div>
+          <h2 className="text-lg font-semibold text-gray-900">{detail.documentNumber ?? detail.id}</h2>
+        </div>
+        <div className="flex gap-2"><StatusBadge status={detail.status} /><StatusBadge status={detail.paymentStatus} /></div>
+      </div>
+      {error && <ErrorBanner message={error} />}
+      <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+        <div><dt className="text-gray-500">Date</dt><dd className="font-medium text-gray-900">{formatThaiDate(detail.documentDate)}</dd></div>
+        <div><dt className="text-gray-500">Total</dt><dd className="font-medium text-gray-900">{money(detail.grandTotalAmount)} {detail.currency}</dd></div>
+        <div><dt className="text-gray-500">Paid</dt><dd className="font-medium text-gray-900">{money(detail.paidAmount)}</dd></div>
+        <div><dt className="text-gray-500">Outstanding</dt><dd className="font-medium text-gray-900">{money(detail.outstandingAmount)}</dd></div>
+        <div><dt className="text-gray-500">VAT</dt><dd className="font-medium text-gray-900">{money(detail.vatAmount)}</dd></div>
+        <div><dt className="text-gray-500">Tax Code</dt><dd className="font-mono font-medium text-gray-900">{detail.documentType === 'RECEIPT' ? 'ไม่มี — รับชำระเท่านั้น' : `${detail.taxCodeSummary ?? 'NONE'}${detail.outputTaxCode ? ` · ${detail.outputTaxCode}` : ''}`}</dd></div>
+        <div><dt className="text-gray-500">WHT</dt><dd className="font-medium text-gray-900">{money(detail.whtAmount)}</dd></div>
+        <div><dt className="text-gray-500">Posting</dt><dd className="font-medium text-gray-900">{detail.postingStatus}</dd></div>
+        <div><dt className="text-gray-500">Source</dt><dd className="font-medium text-gray-900">{detail.sourceDocumentId ? detail.sourceDocumentId.slice(0, 8) : '-'}</dd></div>
+      </dl>
+      <div className="overflow-hidden rounded-lg border border-gray-200">
+        <div className="mangmee-table-scroll">
+          <table className="mangmee-table min-w-full">
+          <thead><tr><th>Line</th><th>Description</th><th>Tax Code</th><th className="text-right">Qty</th><th className="text-right">Unit</th><th className="text-right">Total</th></tr></thead>
+          <tbody className="divide-y divide-gray-200">
+            {detail.lines.map((line) => (
+              <tr key={line.id}>
+                <td className="px-3 py-2">{line.lineNumber}</td>
+                <td className="px-3 py-2">{line.description}</td>
+                <td className="px-3 py-2 font-mono">{line.taxSnapshot?.externalTaxCode ?? '—'}{line.taxComponents?.length ? <span className="ml-1 text-xs text-gray-500">({line.taxComponents.length})</span> : null}</td>
+                <td className="px-3 py-2 text-right">{line.quantity}</td>
+                <td className="px-3 py-2 text-right">{money(line.unitPrice)}</td>
+                <td className="px-3 py-2 text-right">{money(line.lineTotalAmount)}</td>
+              </tr>
+            ))}
+          </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+        {canSubmit && <button className={ghostClass} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>Submit approval</button>}
+        {canApprove && <button className={btnClass} onClick={() => run(() => approveQuotation(companyId, detail.id, 'Approved in accounting workspace'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>Approve</button>}
+        {canApprove && <button className={dangerClass} onClick={() => void rejectDocument()}>Reject</button>}
+        {canIssue && <button className={btnClass} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>Issue</button>}
+        {canConvert && <button className={ghostClass} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>Convert to invoice</button>}
+        {canConvert && <button className={ghostClass} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>Convert to billing note</button>}
+        {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>Create tax invoice</button>}
+        {canCorrect && <button className={ghostClass} onClick={() => createLinked('CREDIT_NOTE')}>Create credit note</button>}
+        {canCorrect && <button className={ghostClass} onClick={() => createLinked('DEBIT_NOTE')}>Create debit note</button>}
+        {detail.status !== 'VOIDED' && permissions.includes('accounting.document.void') && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} onClick={() => void voidAccountingDocument()}>Void</button>}
+      </div>
+      {canTaxInvoice && linkedTaxInvoiceOpen && (
+        <section className="space-y-3 rounded-lg border border-brand-200 bg-brand-25 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><h3 className="font-bold text-gray-900">สร้างใบกำกับภาษีจากเอกสารนี้</h3><p className="text-xs text-gray-600">เลือก Tax Code ตาม profile และบริบทให้ครบทุกบรรทัดก่อนสร้าง Draft</p></div>
+            <button type="button" className={ghostClass} onClick={() => setLinkedTaxInvoiceOpen(false)}>ยกเลิก</button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ThemedDate className={inputClass} value={linkedTaxInvoiceDate} onChange={(event) => setLinkedTaxInvoiceDate(event.target.value)} />
+            <ThemedSelect className={inputClass} value={linkedTaxContext} onChange={(event) => { setLinkedTaxContext(event.target.value as TransactionTaxContext); setLinkedTaxSelections({}); }}>
+              <option value="DOMESTIC_SALE">ขายในประเทศ</option>
+              <option value="EXPORT_GOODS">ส่งออกสินค้า</option>
+              <option value="EXPORT_SERVICE">ส่งออกบริการ</option>
+            </ThemedSelect>
+          </div>
+          <div className="space-y-3">
+            {detail.lines.map((line) => (
+              <div key={line.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="mb-2 text-sm font-medium text-gray-800">บรรทัด {line.lineNumber}: {line.description}</div>
+                <TransactionTaxLineSelector
+                  companyId={companyId}
+                  sourceType="accounting.document"
+                  sourceId={`new-linked-tax-invoice:${detail.id}`}
+                  sourceLineId={`line:${line.lineNumber}`}
+                  transactionContext={linkedTaxContext}
+                  direction="OUTPUT"
+                  documentDate={linkedTaxInvoiceDate}
+                  netAmount={line.lineSubtotalAmount ?? line.lineTotalAmount}
+                  grossAmount={line.lineTotalAmount}
+                  value={linkedTaxSelections[line.lineNumber]?.id ?? ''}
+                  allowNoTax={false}
+                  onChange={(_id, definition) => setLinkedTaxSelections((current) => ({
+                    ...current,
+                    [line.lineNumber]: definition ? {
+                      id: definition.id,
+                      externalCode: definition.externalCode,
+                      rate: definition.rate,
+                      calculationMethod: definition.calculationMethod,
+                      treatment: definition.treatment,
+                    } : undefined,
+                  }))}
+                />
+              </div>
+            ))}
+          </div>
+          <button type="button" className={btnClass} disabled={detail.lines.some((line) => !linkedTaxSelections[line.lineNumber])} onClick={() => void createLinkedTaxInvoice()}>สร้าง Draft ใบกำกับภาษี</button>
+        </section>
+      )}
+      {canRecordPayment && (
+        <form
+          className="grid grid-cols-1 gap-3 border-t border-gray-200 pt-4 sm:grid-cols-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() => createPayment(companyId, {
+              direction: 'RECEIVED',
+              method: paymentMethod,
+              amount: paymentAmount,
+              ...(Number(paymentWht) > 0 ? { whtAmount: paymentWht } : {}),
+              ...(paymentReference.trim() ? { externalReference: paymentReference.trim() } : {}),
+              paidAt: new Date().toISOString(),
+              counterpartyId: detail.counterpartyId,
+              allocateToDocumentId: detail.id,
+            }), 'บันทึกรับชำระเรียบร้อยแล้ว', false);
+          }}
+        >
+          <input className={inputClass} type="number" min="0.01" step="0.01" placeholder="เงินสดที่ได้รับ" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} required aria-label="เงินสดที่ได้รับ" />
+          <input className={inputClass} type="number" min="0" step="0.01" placeholder="ถูกหัก ณ ที่จ่าย" value={paymentWht} onChange={(e) => setPaymentWht(e.target.value)} aria-label="ยอดถูกหัก ณ ที่จ่าย" />
+          {Number(paymentWht) > 0 && <input className={`${inputClass} sm:col-span-2`} value={paymentReference} onChange={(e) => setPaymentReference(e.target.value)} placeholder="เลขที่หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ) ที่ลูกค้าออกให้" aria-label="เลขที่หนังสือรับรองหัก ณ ที่จ่าย" />}
+          <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as AccountingPaymentMethod)}>
+            {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </ThemedSelect>
+          <button className={btnClass} disabled={paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0}>Record payment</button>
+          <p className="sm:col-span-2 text-xs text-gray-600">
+            ตัดยอดค้าง {paymentSettles.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จาก {Number(detail.outstandingAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            {/* Cash alone may overshoot into an unapplied credit; withheld tax may not, because we
+                never held that money. */}
+            {Number(paymentWht) > 0 && paymentSettles > Number(detail.outstandingAmount) + 1e-9 && <strong className="ml-2 text-error-600">เงินสดรวมยอดถูกหักเกินยอดค้าง</strong>}
+          </p>
+        </form>
+      )}
+      {inputPromptDialog}
+    </section>
+  );
+}
+
+function CounterpartyListPage({ companyId }: { companyId: string }) {
+  const toast = useToast();
+  const [counterparties, setCounterparties] = useState<CounterpartySummary[]>([]);
+  const [displayName, setDisplayName] = useState('');
+  const [taxId, setTaxId] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await listCounterparties(companyId);
+      setCounterparties(res.data);
+    } catch (e) {
+      setError(err(e));
+    }
+  }, [companyId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <section className="mangmee-card space-y-3 p-4">
+      <h2 className="text-base font-bold text-gray-900">Customers and counterparties</h2>
+      {error && <ErrorBanner message={error} />}
+      <form className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={(e) => {
+        e.preventDefault();
+        import('./accounting-documents.api').then(({ createCounterparty }) => createCounterparty(companyId, { type: 'CUSTOMER', displayName, taxId })).then(async () => {
+          setDisplayName('');
+          setTaxId('');
+          await load();
+          toast.success('เพิ่มคู่ค้าเรียบร้อยแล้ว');
+        }).catch((ex) => setError(err(ex)));
+      }}>
+        <input className={inputClass} placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+        <input className={inputClass} placeholder="Tax ID" value={taxId} onChange={(e) => setTaxId(e.target.value)} />
+        <button className={btnClass}>Add</button>
+      </form>
+      <div className="max-h-64 overflow-auto rounded border border-gray-200">
+        {counterparties.length === 0 ? <p className="p-4 text-sm text-gray-500">No counterparties</p> : counterparties.map((counterparty) => (
+          <div key={counterparty.id} className="flex flex-wrap items-center justify-between border-b border-gray-100 px-3 py-2 text-sm last:border-b-0">
+            <span className="font-medium text-gray-900">{counterparty.displayName}</span>
+            <span className="text-gray-500">{counterparty.taxId ?? '-'}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PaymentListPage({ companyId, reloadKey }: { companyId: string; reloadKey: number }) {
+  const [payments, setPayments] = useState<PaymentSummary[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    listPayments(companyId, { direction: 'RECEIVED' }).then((res) => setPayments(res.data)).catch((e) => setError(err(e)));
+  }, [companyId, reloadKey]);
+
+  return (
+    <section className="mangmee-card space-y-3 p-4">
+      <h2 className="text-base font-bold text-gray-900">Received payments</h2>
+      {error && <ErrorBanner message={error} />}
+      <div className="max-h-64 overflow-auto rounded border border-gray-200">
+        {payments.length === 0 ? <p className="p-4 text-sm text-gray-500">No payments</p> : payments.map((payment) => (
+          <div key={payment.id} className="grid grid-cols-2 gap-3 border-b border-gray-100 px-3 py-2 text-sm last:border-b-0 sm:grid-cols-4">
+            <span>{formatThaiDate(payment.paidAt)}</span>
+            <span>{PAYMENT_METHOD_LABELS[payment.method]}</span>
+            <span className="text-right">{money(payment.amount)}</span>
+            <span className="text-right text-gray-500">{payment.postingStatus}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function AccountingHubPage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
+  const [selectedId, setSelectedId] = useState<string>();
+  const [reloadKey, setReloadKey] = useState(0);
+  const [filterType, setFilterType] = useState<AccountingDocumentType | ''>('');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const requested = new URLSearchParams(window.location.search).get('documentType');
+    if (DOCUMENT_TYPES.includes(requested as AccountingDocumentType)) setFilterType(requested as AccountingDocumentType);
+    const documentId = new URLSearchParams(window.location.search).get('documentId');
+    if (documentId) setSelectedId(documentId);
+  }, []);
+  const refresh = useCallback((documentId?: string) => {
+    if (documentId) setSelectedId(documentId);
+    setReloadKey((value) => value + 1);
+  }, []);
+  const contentKey = useMemo(() => `${companyId}:${reloadKey}`, [companyId, reloadKey]);
+  const canReadDocuments = permissions.includes('accounting.document.read');
+  const canCreateDocuments = permissions.includes('accounting.document.create');
+  const canReadCounterparties = permissions.includes('accounting.counterparty.read');
+  const canReadPayments = permissions.includes('accounting.payment.read');
+
+  return (
+    <MangmeePage
+      eyebrow="การเงินและบัญชี"
+      title="บัญชี"
+      description="จัดการเอกสารบัญชี การออกเอกสาร การรับชำระ และคู่ค้าโดยอ้างอิง backend จริง"
+    >
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+        <div className="space-y-4">
+          {canCreateDocuments && <CreateDocumentForm companyId={companyId} permissions={permissions} onCreated={refresh} />}
+          {canReadDocuments && <DocumentList
+            key={contentKey}
+            companyId={companyId}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            reloadKey={reloadKey}
+            filterType={filterType}
+            onFilterTypeChange={setFilterType}
+          />}
+        </div>
+        <div className="space-y-4">
+          {canReadDocuments && <DocumentDetailPanel companyId={companyId} documentId={selectedId} permissions={permissions} onChanged={refresh} />}
+          {canReadCounterparties && <CounterpartyListPage companyId={companyId} />}
+          {canReadPayments && <PaymentListPage companyId={companyId} reloadKey={reloadKey} />}
+        </div>
+      </div>
+    </MangmeePage>
+  );
+}

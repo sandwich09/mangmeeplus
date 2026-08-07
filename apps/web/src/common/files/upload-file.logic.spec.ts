@@ -1,0 +1,64 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  GENERIC_UPLOAD_ERROR_MESSAGE,
+  UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE,
+  attachmentMimeTypeForFileName,
+  uploadErrorMessage,
+  uploadFileValidationError,
+  withGenericUploadError,
+} from './upload-file.logic';
+
+describe('web upload file policy', () => {
+  it('maps every allowed extension to its exact MIME type', () => {
+    assert.equal(attachmentMimeTypeForFileName('receipt.pdf'), 'application/pdf');
+    assert.equal(attachmentMimeTypeForFileName('receipt.PNG'), 'image/png');
+    assert.equal(attachmentMimeTypeForFileName('receipt.jpg'), 'image/jpeg');
+    assert.equal(attachmentMimeTypeForFileName('receipt.JPEG'), 'image/jpeg');
+  });
+
+  it('accepts the complete attachment matrix', () => {
+    for (const file of [
+      { name: 'receipt.pdf', type: 'application/pdf' },
+      { name: 'receipt.png', type: 'image/png' },
+      { name: 'receipt.jpg', type: 'image/jpeg' },
+      { name: 'receipt.jpeg', type: 'image/jpeg' },
+    ]) {
+      assert.equal(uploadFileValidationError(file), null);
+    }
+  });
+
+  it('rejects SVG, unknown extensions, missing MIME, and MIME spoofing', () => {
+    for (const file of [
+      { name: 'receipt.svg', type: 'image/svg+xml' },
+      { name: 'receipt.jpg.exe', type: 'image/jpeg' },
+      { name: 'receipt.jpg', type: '' },
+      { name: 'receipt.pdf', type: 'image/jpeg' },
+      { name: 'receipt.png', type: 'image/jpeg' },
+    ]) {
+      assert.notEqual(uploadFileValidationError(file), null);
+    }
+  });
+
+  it('keeps image-only inputs narrower than general attachments', () => {
+    assert.notEqual(uploadFileValidationError({ name: 'signature.pdf', type: 'application/pdf' }, 'image'), null);
+    assert.equal(uploadFileValidationError({ name: 'signature.jpeg', type: 'image/jpeg' }, 'image'), null);
+  });
+
+  it('translates MIME failures without exposing technical details', async () => {
+    await assert.rejects(
+      withGenericUploadError(() =>
+        withGenericUploadError(async () => {
+          throw new Error('File signature does not match the declared MIME type.');
+        }),
+      ),
+      { message: UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE },
+    );
+    assert.equal(uploadErrorMessage(new Error('mimetype must be one of the allowed values')), UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE);
+  });
+
+  it('hides other technical upload failures behind one generic message', () => {
+    assert.equal(uploadErrorMessage(new Error('ECONNRESET storage.internal')), GENERIC_UPLOAD_ERROR_MESSAGE);
+    assert.equal(uploadErrorMessage(new Error('รองรับเฉพาะไฟล์ PNG, JPG และ JPEG')), 'รองรับเฉพาะไฟล์ PNG, JPG และ JPEG');
+  });
+});

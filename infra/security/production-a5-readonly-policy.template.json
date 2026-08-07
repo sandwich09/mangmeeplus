@@ -1,0 +1,103 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowExactA5RoleInspection",
+      "Effect": "Allow",
+      "Action": ["iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"],
+      "Resource": [
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution"
+      ]
+    },
+    {
+      "Sid": "AllowExactReaderSecretMetadataOnly",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:DescribeSecret", "secretsmanager:ListSecretVersionIds"],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/a5-readonly-database-url-*"
+    },
+    {
+      "Sid": "AllowExactProductionPointersRead",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-readonly-runtime/*",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-network/*",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-ai-gateway-service-arn",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-ai-gateway-url",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-api-web-service-arn",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-api-web-url",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-workers-service-arn",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/ecs-express-workers-url"
+      ]
+    },
+    {
+      "Sid": "AllowProductionHealthRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets", "ec2:DescribeVpcEndpoints",
+        "ecs:DescribeExpressGatewayService", "ecs:DescribeServiceRevisions", "ecs:DescribeTaskDefinition",
+        "ecs:DescribeTasks", "ecs:ListTasks",
+        "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth",
+        "rds:DescribeDBInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowExactA5TaskDefinitionLifecycle",
+      "Effect": "Allow",
+      "Action": ["ecs:DeregisterTaskDefinition", "ecs:RegisterTaskDefinition"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowExactA5TaskRun",
+      "Effect": "Allow",
+      "Action": ["ecs:RunTask", "ecs:StopTask"],
+      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-production-*:*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
+    },
+    {
+      "Sid": "AllowExactA5ExecutionRolePass",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+      "Condition": {"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+    },
+    {
+      "Sid": "AllowExactA5LogRead",
+      "Effect": "Allow",
+      "Action": ["logs:DescribeLogStreams", "logs:GetLogEvents"],
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-readonly:*",
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-bootstrap:*"
+      ]
+    },
+    {
+      "Sid": "DenyOutsideProductionA5Controller",
+      "Effect": "Deny",
+      "NotAction": [
+        "ec2:DescribeNetworkInterfaces", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets", "ec2:DescribeVpcEndpoints",
+        "ecs:DeregisterTaskDefinition", "ecs:DescribeExpressGatewayService", "ecs:DescribeServiceRevisions",
+        "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RegisterTaskDefinition",
+        "ecs:RunTask", "ecs:StopTask",
+        "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth",
+        "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:PassRole",
+        "logs:DescribeLogStreams", "logs:GetLogEvents", "rds:DescribeDBInstances",
+        "secretsmanager:DescribeSecret", "secretsmanager:ListSecretVersionIds",
+        "ssm:GetParameter", "ssm:GetParameters", "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

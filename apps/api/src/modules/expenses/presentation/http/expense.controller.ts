@@ -1,0 +1,599 @@
+import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
+import type { Response } from 'express';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
+import type { RequestContext } from '../../../auth/domain/models/request-context.model';
+import {
+  CreateExpenseDraftUseCase,
+  GetExpenseUseCase,
+  ListExpensesUseCase,
+  UpdateExpenseDraftUseCase,
+  ConfirmExpenseUseCase,
+  RejectExpenseUseCase,
+  VoidExpenseUseCase,
+  MarkExpenseReadyUseCase,
+  RecordExpensePaymentUseCase,
+} from '../../application/use-cases/expense-draft.use-case';
+import {
+  InitReceiptUploadUseCase,
+  CompleteReceiptUploadUseCase,
+  GetExpenseSourcePostingInputUseCase,
+  DuplicateCheckUseCase,
+  ResolveDuplicateUseCase,
+  ListExpenseCategoriesUseCase,
+} from '../../application/use-cases/expense-upload.use-case';
+import {
+  CreateExpenseCategoryUseCase,
+  UpdateExpenseCategoryUseCase,
+  ListAllExpenseCategoriesUseCase,
+} from '../../application/use-cases/expense-document.use-case';
+import {
+  ApproveSubstituteReceiptUseCase,
+  CertifySubstituteReceiptUseCase,
+  CompleteSubstituteSignatureUploadUseCase,
+  DownloadPaymentVoucherPdfUseCase,
+  DownloadSubstituteReceiptPdfUseCase,
+  InitSubstituteSignatureUploadUseCase,
+  ListCompanySubstituteReceiptsUseCase,
+  ListSubstituteReceiptHistoryUseCase,
+  ListSubstituteReceiptPayersUseCase,
+  PrepareSubstituteReceiptUseCase,
+  PreviewSubstituteReceiptUseCase,
+  SupersedeSubstituteReceiptUseCase,
+} from '../../application/use-cases/substitute-receipt.use-case';
+import {
+  GetSubstituteReceiptPolicyUseCase,
+  UpdateSubstituteReceiptPolicyUseCase,
+} from '../../application/use-cases/substitute-receipt-policy.use-case';
+import {
+  InitSignatureUploadUseCase,
+  CreateSignatureAssetUseCase,
+  ApproveSignatureAssetUseCase,
+  RejectSignatureAssetUseCase,
+  ArchiveSignatureAssetUseCase,
+  SetSignatureDerivedAssetUseCase,
+  FillSignatureUseCase,
+  ListSignatureAssetsUseCase,
+} from '../../application/use-cases/signature-asset.use-case';
+import {
+  GetSharedEvidenceViewUseCase,
+  CreateAccountantPackageUseCase,
+} from '../../application/use-cases/expense-evidence.use-case';
+import { GetExpenseCapturePolicyUseCase } from '../../application/use-cases/expense-capture-policy.use-case';
+import { RequestReceiptExtractionUseCase } from '../../application/use-cases/expense-extraction.use-case';
+import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense.use-case';
+import type {
+  CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
+  CreateExpenseCategoryInput, UpdateExpenseCategoryInput, CreateSignatureAssetInput,
+  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
+  NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
+  UpdateSubstituteReceiptPolicyInput,
+  PreviewSubstituteReceiptInput,
+  SubstituteReceiptEvidenceStatus,
+  SubstituteReceiptListFilter,
+  SupersedeSubstituteReceiptInput,
+} from '@watchdog-bms/contracts';
+import { todayCivilDate } from '@watchdog-bms/contracts';
+
+@Controller('companies/:companyId/expenses')
+export class ExpenseController {
+  constructor(
+    private readonly create: CreateExpenseDraftUseCase,
+    private readonly get: GetExpenseUseCase,
+    private readonly list: ListExpensesUseCase,
+    private readonly update: UpdateExpenseDraftUseCase,
+    private readonly confirm: ConfirmExpenseUseCase,
+    private readonly reject: RejectExpenseUseCase,
+    private readonly void_: VoidExpenseUseCase,
+    private readonly ready: MarkExpenseReadyUseCase,
+    private readonly payment: RecordExpensePaymentUseCase,
+    private readonly initUpload: InitReceiptUploadUseCase,
+    private readonly completeUpload: CompleteReceiptUploadUseCase,
+    private readonly sourcePosting: GetExpenseSourcePostingInputUseCase,
+    private readonly dupCheck: DuplicateCheckUseCase,
+    private readonly dupResolve: ResolveDuplicateUseCase,
+    private readonly listCats: ListExpenseCategoriesUseCase,
+    private readonly prepareSubstituteReceipt: PrepareSubstituteReceiptUseCase,
+    private readonly previewSubstituteReceipt: PreviewSubstituteReceiptUseCase,
+    private readonly certifySubstituteReceipt: CertifySubstituteReceiptUseCase,
+    private readonly approveSubstituteReceipt: ApproveSubstituteReceiptUseCase,
+    private readonly substituteReceiptPayers: ListSubstituteReceiptPayersUseCase,
+    private readonly substituteReceiptHistory: ListSubstituteReceiptHistoryUseCase,
+    private readonly supersedeSubstituteReceipt: SupersedeSubstituteReceiptUseCase,
+    private readonly initSubstituteSignatureUpload: InitSubstituteSignatureUploadUseCase,
+    private readonly completeSubstituteSignatureUpload: CompleteSubstituteSignatureUploadUseCase,
+    private readonly downloadPaymentVoucherPdf: DownloadPaymentVoucherPdfUseCase,
+    private readonly downloadSubstituteReceiptPdf: DownloadSubstituteReceiptPdfUseCase,
+    private readonly signatureFill: FillSignatureUseCase,
+    private readonly sharedEvidence: GetSharedEvidenceViewUseCase,
+    private readonly accountantPackage: CreateAccountantPackageUseCase,
+    private readonly requestExtraction: RequestReceiptExtractionUseCase,
+    private readonly deleteExpense: DeleteExpenseUseCase,
+    private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
+  ) {}
+
+  // Any authority that puts a user on an expense screen may read it: the answer is only whether
+  // the form asks Thai VAT questions, and the registration fact itself stays masked without
+  // `company.vat_registration.read`. Declared before `:expenseId` so the literal path wins.
+  @Get('capture-policy')
+  @RequireAnyPermission('expense.read', 'expense.read_own', 'expense.create', 'expense.review')
+  captureExpensePolicy(@ReqCtx() ctx: RequestContext, @Query('on') on?: string) {
+    return this.capturePolicy.execute(ctx, on);
+  }
+
+  @Get()
+  @RequirePermissions('expense.read_own')
+  listExpenses(
+    @ReqCtx() ctx: RequestContext,
+    @Query('status') status?: string,
+    @Query('branchId') branchId?: string,
+    @Query('paymentStatus') paymentStatus?: string,
+    @Query('duplicateStatus') duplicateStatus?: string,
+    @Query('vendorCounterpartyId') vendorCounterpartyId?: string,
+    @Query('sourceDocumentType') sourceDocumentType?: string,
+    @Query('taxEvidenceStatus') taxEvidenceStatus?: string,
+    @Query('expenseCategoryId') expenseCategoryId?: string,
+    @Query('captureSource') captureSource?: string,
+    @Query('postingStatus') postingStatus?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('uploadedFromDate') uploadedFromDate?: string,
+    @Query('uploadedToDate') uploadedToDate?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.list.execute(ctx, {
+      ...(status && { status: status as ExpenseStatus }),
+      ...(branchId && { branchId }),
+      ...(paymentStatus && { paymentStatus: paymentStatus as any }),
+      ...(duplicateStatus && { duplicateStatus: duplicateStatus as any }),
+      ...(vendorCounterpartyId && { vendorCounterpartyId }),
+      ...(sourceDocumentType && { sourceDocumentType: sourceDocumentType as any }),
+      ...(taxEvidenceStatus && { taxEvidenceStatus: taxEvidenceStatus as any }),
+      ...(expenseCategoryId && { expenseCategoryId }),
+      ...(captureSource && { captureSource: captureSource as any }),
+      ...(postingStatus && { postingStatus: postingStatus as any }),
+      ...(fromDate && { fromDate }),
+      ...(toDate && { toDate }),
+      ...(uploadedFromDate && { uploadedFromDate }),
+      ...(uploadedToDate && { uploadedToDate }),
+      page: page ? parseInt(page, 10) : 1,
+      pageSize: pageSize ? parseInt(pageSize, 10) : 20,
+    });
+  }
+
+  // NOTE: static routes must stay above the :expenseId param routes.
+  @Get('shared-evidence')
+  @RequirePermissions('expense.evidence.read')
+  getSharedEvidence(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string>) {
+    const filter: SharedEvidenceFilter = {
+      ...(query['dateField'] === 'expenseDate' ? { dateField: 'expenseDate' as const } : { dateField: 'uploadedAt' as const }),
+      ...(query['fromDate'] && { fromDate: query['fromDate'] }),
+      ...(query['toDate'] && { toDate: query['toDate'] }),
+      ...(query['yearMonth'] && { yearMonth: query['yearMonth'] }),
+      ...(query['status'] && { status: query['status'] as ExpenseStatus }),
+      ...(query['sourceDocumentType'] && { sourceDocumentType: query['sourceDocumentType'] as any }),
+      ...(query['taxEvidenceStatus'] && { taxEvidenceStatus: query['taxEvidenceStatus'] as any }),
+      ...(query['expenseCategoryId'] && { expenseCategoryId: query['expenseCategoryId'] }),
+      ...(query['paymentStatus'] && { paymentStatus: query['paymentStatus'] as any }),
+      ...(query['postingStatus'] && { postingStatus: query['postingStatus'] as any }),
+      ...(query['createdByUserId'] && { createdByUserId: query['createdByUserId'] }),
+      ...(query['page'] && { page: parseInt(query['page'], 10) }),
+      ...(query['pageSize'] && { pageSize: parseInt(query['pageSize'], 10) }),
+    };
+    return this.sharedEvidence.execute(ctx, filter);
+  }
+
+  @Post('accountant-package')
+  @RequirePermissions('expense.export')
+  createAccountantPackage(@ReqCtx() ctx: RequestContext, @Body() body: AccountantPackageRequest) {
+    return this.accountantPackage.execute(ctx, body ?? {});
+  }
+
+  @Post()
+  @RequirePermissions('expense.create')
+  createDraft(@ReqCtx() ctx: RequestContext, @Body() body: CreateExpenseDraftInput) {
+    return this.create.execute(ctx, body);
+  }
+
+  @Post('receipt-uploads')
+  @RequirePermissions('expense.receipt.upload')
+  initReceiptUpload(
+    @ReqCtx() ctx: RequestContext,
+    @Body() body: { originalFileName: string; mimeType: string; byteSize: number; expenseDate?: string; branchId?: string; note?: string },
+  ) {
+    return this.initUpload.execute(ctx, { ...body, expenseDate: body.expenseDate ?? todayCivilDate() });
+  }
+
+  @Delete(':expenseId')
+  @HttpCode(204)
+  @RequirePermissions('expense.update')
+  async removeExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string): Promise<void> {
+    await this.deleteExpense.execute(ctx, expenseId);
+  }
+
+  @Get(':expenseId')
+  @RequirePermissions('expense.read_own')
+  getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.get.execute(ctx, expenseId);
+  }
+
+  @Get(':expenseId/payment-voucher.pdf')
+  @RequirePermissions('expense.read_own')
+  async downloadPaymentVoucher(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Query('paymentDate') paymentDate: string | undefined,
+    @Query('payeeName') payeeName: string | undefined,
+    @Query('payeeAddress') payeeAddress: string | undefined,
+    @Query('payeeTaxId') payeeTaxId: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { data, fileName } = await this.downloadPaymentVoucherPdf.execute(ctx, expenseId, {
+      ...(paymentDate !== undefined ? { paymentDate } : {}),
+      ...(payeeName !== undefined ? { payeeName } : {}),
+      ...(payeeAddress !== undefined ? { payeeAddress } : {}),
+      ...(payeeTaxId !== undefined ? { payeeTaxId } : {}),
+    });
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    response.setHeader('Content-Disposition', `attachment; filename="payment-voucher.pdf"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    return new StreamableFile(data, { type: 'application/pdf' });
+  }
+
+  @Post(':expenseId/substitute-receipt')
+  @RequirePermissions('expense.review')
+  prepareSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: GenerateSubstituteReceiptInput) {
+    return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
+  }
+
+  @Get(':expenseId/substitute-receipt/payers')
+  @RequirePermissions('expense.review')
+  listSubstitutePayers(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.substituteReceiptPayers.execute(ctx, expenseId);
+  }
+
+  @Get(':expenseId/substitute-receipt/history')
+  @RequirePermissions('expense.review')
+  listSubstituteHistory(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.substituteReceiptHistory.execute(ctx, expenseId);
+  }
+
+  @Get(':expenseId/substitute-receipt/:evidenceId/artifact.pdf')
+  @RequirePermissions('expense.read_own')
+  async downloadSubstitutePdf(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { data, fileName } = await this.downloadSubstituteReceiptPdf.execute(ctx, expenseId, evidenceId);
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return new StreamableFile(data, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${fileName}"`,
+    });
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/certify')
+  @RequirePermissions('expense.read_own')
+  certifySubstitute(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Body() body: CertifySubstituteReceiptInput,
+  ) {
+    return this.certifySubstituteReceipt.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/preview')
+  @RequirePermissions('expense.read_own')
+  previewSubstitute(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Body() body: PreviewSubstituteReceiptInput,
+  ) {
+    return this.previewSubstituteReceipt.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/signature-upload-intent')
+  @RequirePermissions('expense.read_own')
+  initSubstituteSignature(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Body() body: { originalFileName: string; mimeType: string; byteSize: number },
+  ) {
+    return this.initSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/signature-uploads/:attachmentId/complete')
+  @RequirePermissions('expense.read_own')
+  completeSubstituteSignature(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Body() body: { checksumSha256?: string; byteSize?: number },
+  ) {
+    return this.completeSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, attachmentId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/approve')
+  @RequirePermissions('expense.confirm')
+  approveSubstitute(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Body() body: ApproveSubstituteReceiptInput,
+  ) {
+    return this.approveSubstituteReceipt.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/supersede')
+  @RequirePermissions('expense.review')
+  supersedeSubstitute(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Body() body: SupersedeSubstituteReceiptInput,
+  ) {
+    return this.supersedeSubstituteReceipt.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/extraction-request')
+  @RequirePermissions('expense.read_own')
+  requestReceiptExtraction(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.requestExtraction.execute(ctx, expenseId);
+  }
+
+  @Post(':expenseId/signature-fill')
+  @RequirePermissions('expense.review')
+  fillSignature(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: SignatureFillInput & { checksumSha256?: string; byteSize?: number }) {
+    return this.signatureFill.execute(ctx, expenseId, body);
+  }
+
+  @Patch(':expenseId')
+  @RequirePermissions('expense.update')
+  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
+    return this.update.execute(ctx, expenseId, body);
+  }
+
+  @Patch(':expenseId/review-fields')
+  @RequirePermissions('expense.review')
+  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
+    return this.update.execute(ctx, expenseId, body);
+  }
+
+  @Post(':expenseId/non-expense-classification-override')
+  @RequirePermissions('expense.review')
+  overrideNonExpenseClassification(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Body() body: NonExpenseClassificationOverrideInput & { sourceDocumentType: SourceDocumentType },
+  ) {
+    return this.update.execute(ctx, expenseId, {
+      sourceDocumentType: body.sourceDocumentType,
+      nonExpenseClassificationOverride: {
+        acknowledged: body.acknowledged,
+        reason: body.reason,
+      },
+    });
+  }
+
+  @Post(':expenseId/ocr-total-acknowledgement')
+  @RequirePermissions('expense.review')
+  acknowledgeOcrTotal(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: OcrTotalAcknowledgementInput) {
+    return this.update.execute(ctx, expenseId, { ocrTotalAcknowledgement: body });
+  }
+
+  @Post(':expenseId/receipt-uploads/:attachmentId/complete')
+  @RequirePermissions('expense.receipt.upload')
+  completeReceiptUpload(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('attachmentId') attachmentId: string,
+    @Body() body: { checksumSha256?: string; byteSize?: number; purpose?: string },
+  ) {
+    return this.completeUpload.execute(ctx, { expenseId, attachmentId, ...body });
+  }
+
+  @Post(':expenseId/mark-ready')
+  @RequirePermissions('expense.update')
+  markReady(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.ready.execute(ctx, expenseId);
+  }
+
+  @Post(':expenseId/reviewer-mark-ready')
+  @RequirePermissions('expense.review')
+  markReadyAsReviewer(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.ready.execute(ctx, expenseId);
+  }
+
+  @Post(':expenseId/confirm')
+  @RequirePermissions('expense.confirm')
+  confirmExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.confirm.execute(ctx, expenseId);
+  }
+
+  @Post(':expenseId/reject')
+  @RequirePermissions('expense.reject')
+  rejectExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+    return this.reject.execute(ctx, expenseId, body.reason);
+  }
+
+  @Post(':expenseId/void')
+  @RequirePermissions('expense.void')
+  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+    return this.void_.execute(ctx, expenseId, body.reason);
+  }
+
+  @Post(':expenseId/payment')
+  @RequirePermissions('expense.payment.record')
+  recordPayment(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Body() body: { paidAmount: string; paymentMethod?: string; paidAt?: string; bankAccountRef?: string },
+  ) {
+    return this.payment.execute(ctx, expenseId, body);
+  }
+
+  @Post(':expenseId/duplicate-check')
+  @RequirePermissions('expense.review')
+  duplicateCheck(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.dupCheck.execute(ctx, expenseId);
+  }
+
+  @Post(':expenseId/duplicates/:candidateId/dismiss')
+  @RequirePermissions('expense.duplicate.resolve')
+  dismissDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+    return this.dupResolve.execute(ctx, expenseId, candidateId, 'dismiss', body.reason);
+  }
+
+  @Post(':expenseId/duplicates/:candidateId/confirm')
+  @RequirePermissions('expense.duplicate.resolve')
+  confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+    return this.dupResolve.execute(ctx, expenseId, candidateId, 'confirm', body.reason);
+  }
+
+  @Get(':expenseId/source-posting-input')
+  @RequirePermissions('expense.read')
+  getSourcePosting(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    return this.sourcePosting.execute(ctx, expenseId);
+  }
+}
+
+@Controller('companies/:companyId/expense-categories')
+export class ExpenseCategoryController {
+  constructor(
+    private readonly listCats: ListExpenseCategoriesUseCase,
+    private readonly listAllCats: ListAllExpenseCategoriesUseCase,
+    private readonly createCat: CreateExpenseCategoryUseCase,
+    private readonly updateCat: UpdateExpenseCategoryUseCase,
+  ) {}
+
+  @Get()
+  @RequirePermissions('expense.read_own')
+  listCategories(@ReqCtx() ctx: RequestContext) {
+    return this.listCats.execute(ctx);
+  }
+
+  /** Management view including archived categories. */
+  @Get('manage')
+  @RequirePermissions('expense.category.manage')
+  listAllCategories(@ReqCtx() ctx: RequestContext) {
+    return this.listAllCats.execute(ctx);
+  }
+
+  @Post()
+  @RequirePermissions('expense.category.manage')
+  createCategory(@ReqCtx() ctx: RequestContext, @Body() body: CreateExpenseCategoryInput) {
+    return this.createCat.execute(ctx, body);
+  }
+
+  @Patch(':categoryId')
+  @RequirePermissions('expense.category.manage')
+  updateCategory(@ReqCtx() ctx: RequestContext, @Param('categoryId') categoryId: string, @Body() body: UpdateExpenseCategoryInput) {
+    return this.updateCat.execute(ctx, categoryId, body);
+  }
+}
+
+@Controller('companies/:companyId/substitute-receipts')
+export class CompanySubstituteReceiptController {
+  constructor(private readonly listSubstituteReceipts: ListCompanySubstituteReceiptsUseCase) {}
+
+  @Get()
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_own')
+  list(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string | undefined>) {
+    const filter: SubstituteReceiptListFilter = {
+      ...(query['status'] && { status: query['status'] as SubstituteReceiptEvidenceStatus }),
+      ...(query['yearMonth'] && { yearMonth: query['yearMonth'] }),
+      ...(query['payerUserId'] && { payerUserId: query['payerUserId'] }),
+      ...(query['page'] && { page: parseInt(query['page'], 10) }),
+      ...(query['pageSize'] && { pageSize: parseInt(query['pageSize'], 10) }),
+    };
+    return this.listSubstituteReceipts.execute(ctx, filter);
+  }
+}
+
+@Controller('companies/:companyId/expense-settings')
+export class ExpenseSettingsController {
+  constructor(
+    private readonly getSubstitutePolicy: GetSubstituteReceiptPolicyUseCase,
+    private readonly updateSubstitutePolicy: UpdateSubstituteReceiptPolicyUseCase,
+  ) {}
+
+  @Get('substitute-receipt')
+  @RequirePermissions('company.setup.manage')
+  getPolicy(@ReqCtx() ctx: RequestContext) {
+    return this.getSubstitutePolicy.execute(ctx);
+  }
+
+  @Get('substitute-receipt/runtime')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_own')
+  getRuntimePolicy(@ReqCtx() ctx: RequestContext) {
+    return this.getSubstitutePolicy.executeRuntime(ctx);
+  }
+
+  @Patch('substitute-receipt')
+  @RequirePermissions('company.setup.manage')
+  updatePolicy(@ReqCtx() ctx: RequestContext, @Body() body: UpdateSubstituteReceiptPolicyInput) {
+    return this.updateSubstitutePolicy.execute(ctx, body);
+  }
+}
+
+@Controller('companies/:companyId/expense-signatures')
+export class ExpenseSignatureController {
+  constructor(
+    private readonly listAssets: ListSignatureAssetsUseCase,
+    private readonly initUpload: InitSignatureUploadUseCase,
+    private readonly createAsset: CreateSignatureAssetUseCase,
+    private readonly approve: ApproveSignatureAssetUseCase,
+    private readonly rejectAsset: RejectSignatureAssetUseCase,
+    private readonly archive: ArchiveSignatureAssetUseCase,
+    private readonly setDerived: SetSignatureDerivedAssetUseCase,
+  ) {}
+
+  @Get()
+  @RequirePermissions('expense.signature.manage')
+  list(@ReqCtx() ctx: RequestContext, @Query('status') status?: string) {
+    return this.listAssets.execute(ctx, status);
+  }
+
+  @Post('uploads')
+  @RequirePermissions('expense.signature.manage')
+  initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: { originalFileName: string; mimeType: string; byteSize: number }) {
+    return this.initUpload.execute(ctx, body);
+  }
+
+  @Post()
+  @RequirePermissions('expense.signature.manage')
+  createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetInput & { checksumSha256?: string; byteSize?: number }) {
+    return this.createAsset.execute(ctx, { ...body, submittedFromChannel: 'WEB' });
+  }
+
+  @Post(':signatureId/approve')
+  @RequirePermissions('expense.signature.approve')
+  approveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
+    return this.approve.execute(ctx, signatureId);
+  }
+
+  @Post(':signatureId/reject')
+  @RequirePermissions('expense.signature.approve')
+  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { reason: string }) {
+    return this.rejectAsset.execute(ctx, signatureId, body?.reason ?? '');
+  }
+
+  @Post(':signatureId/archive')
+  @RequirePermissions('expense.signature.manage')
+  archiveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
+    return this.archive.execute(ctx, signatureId);
+  }
+
+  /** Records the web-canvas background-removed derived PNG. Original is kept. */
+  @Post(':signatureId/derived')
+  @RequirePermissions('expense.signature.manage')
+  setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { attachmentId: string; checksumSha256?: string; byteSize?: number }) {
+    return this.setDerived.execute(ctx, signatureId, body);
+  }
+}

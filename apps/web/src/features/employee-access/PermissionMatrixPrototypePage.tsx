@@ -1,0 +1,404 @@
+'use client';
+
+import type React from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isRoleEditableByCompany, type ActionId, type CapabilityPackView, type MenuId, type PermissionMatrix as PermissionMatrixDto, type RoleSummary, type RoleTemplate } from '@watchdog-bms/contracts';
+import {
+  BellIcon,
+  CalendarIcon,
+  ChatIcon,
+  CheckCircleIcon,
+  CheckLineIcon,
+  DocsIcon,
+  FileIcon,
+  GridIcon,
+  GroupIcon,
+  LockIcon,
+  PencilIcon,
+  PieChartIcon,
+  PlusIcon,
+  TrashIcon,
+  UserIcon,
+} from '@/common/icons';
+import {
+  MangmeeBranchChip,
+  MangmeeCard,
+  MangmeeIconFrame,
+  cx,
+  type MangmeeTone,
+} from '@/common/components/mangmee';
+import {
+  createRole,
+  disableRole,
+  getAccessMatrix,
+  listCapabilityPacks,
+  listEmployees,
+  listPermissionCatalog,
+  listRoleTemplates,
+  listRoles,
+  updateRole,
+} from './employee-access.api';
+import { RoleBuilder, coveredPacks, ghostClass, dangerClass } from './EmployeeAccessPages';
+import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { useConfirm } from '@/common/components/modal';
+import { useToast } from '@/common/components/toast';
+
+type SvgProps = React.SVGProps<SVGSVGElement>;
+
+function ShoppingCartIcon(props: SvgProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M4 5.25h2.1c.47 0 .88.32.98.78l.32 1.34h11.08c.64 0 1.11.6.97 1.22l-1.04 4.51c-.11.46-.51.78-.98.78H9.35c-.47 0-.87-.32-.98-.77L7.4 7.37" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9.25 18.25a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5ZM16.75 18.25a1.25 1.25 0 100-2.5 1.25 1.25 0 000 2.5Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SwapIcon(props: SvgProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M7 8h11m0 0-3-3m3 3-3 3M17 16H6m0 0 3 3m-3-3 3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StampIcon(props: SvgProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M9.5 10.5V6.75a2.5 2.5 0 015 0v3.75M7.25 10.5h9.5l.75 5.25h-11l.75-5.25ZM5.75 18.25h12.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TagIcon(props: SvgProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="m11.5 4.75 6.75 6.75-6.5 6.5a1.5 1.5 0 0 1-2.12 0l-4.63-4.63a1.5 1.5 0 0 1 0-2.12l6.5-6.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M14.25 8.75a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+const MENU_ICON: Record<MenuId, React.ReactNode> = {
+  dashboard: <GridIcon />,
+  inbox: <ChatIcon />,
+  sales: <ShoppingCartIcon />,
+  customers: <GroupIcon />,
+  booking: <CalendarIcon />,
+  crmreport: <PieChartIcon />,
+  broadcast: <BellIcon />,
+  expenses: <FileIcon />,
+  journal: <SwapIcon />,
+  salesdoc: <DocsIcon />,
+  reports: <PieChartIcon />,
+  closing: <LockIcon />,
+  roles: <LockIcon />,
+  poapproval: <StampIcon />,
+  discount: <TagIcon />,
+  notifications: <BellIcon />,
+};
+
+const MENU_TONE: Record<MenuId, MangmeeTone> = {
+  dashboard: 'brand', inbox: 'line', sales: 'rose', customers: 'sky', booking: 'cyan',
+  crmreport: 'purple', broadcast: 'danger', expenses: 'amber', journal: 'lime', salesdoc: 'line',
+  reports: 'indigo', closing: 'slate', roles: 'slate', poapproval: 'purple', discount: 'amber', notifications: 'sky',
+};
+
+const ACTIONS: { key: ActionId; label: string }[] = [
+  { key: 'view', label: 'ดู' },
+  { key: 'create', label: 'สร้าง' },
+  { key: 'edit', label: 'แก้ไข' },
+  { key: 'del', label: 'ลบ' },
+  { key: 'approve', label: 'อนุมัติ' },
+];
+
+function PositionGlyph({ isSystem, tone }: { isSystem: boolean; tone: MangmeeTone }) {
+  return (
+    <MangmeeIconFrame tone={tone} className="h-10 w-10 rounded-lg">
+      {isSystem ? <LockIcon /> : <UserIcon />}
+    </MangmeeIconFrame>
+  );
+}
+
+function PermissionCell({ granted, supported }: { granted: boolean; supported: boolean }) {
+  if (!supported) return <span className="text-gray-300">-</span>;
+  if (granted) {
+    return (
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white shadow-sm">
+        <CheckLineIcon className="h-4 w-4" />
+      </span>
+    );
+  }
+  return <span className="inline-flex h-7 w-7 rounded-lg border border-gray-200 bg-white" aria-label="ไม่ได้เปิดสิทธิ์" />;
+}
+
+export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [] }: { companyId: string; viewerPermissions?: string[] }) {
+  const locale = useWorkspaceLocale();
+  const toast = useToast();
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [matrix, setMatrix] = useState<PermissionMatrixDto | null>(null);
+  const [staffCounts, setStaffCounts] = useState<Record<string, number>>({});
+  const [catalog, setCatalog] = useState<any[]>([]);
+  const [packModules, setPackModules] = useState<Array<{ module: string; packs: CapabilityPackView[] }>>([]);
+  const [templates, setTemplates] = useState<RoleTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
+
+  const reload = useCallback(async () => {
+    setError(null);
+    const [rolesR, matrixR, employeesR, catalogR, packsR, templatesR] = await Promise.allSettled([
+      listRoles(companyId),
+      getAccessMatrix(companyId),
+      listEmployees(companyId),
+      listPermissionCatalog(companyId),
+      listCapabilityPacks(companyId),
+      listRoleTemplates(companyId),
+    ]);
+
+    if (rolesR.status === 'fulfilled') {
+      setRoles(rolesR.value);
+      setSelectedRoleId((prev) => prev ?? rolesR.value[0]?.id ?? null);
+    } else {
+      setError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
+    }
+    if (matrixR.status === 'fulfilled') setMatrix(matrixR.value);
+    if (employeesR.status === 'fulfilled') {
+      const counts: Record<string, number> = {};
+      for (const emp of employeesR.value as Array<{ roles: { id: string }[] }>) {
+        for (const r of emp.roles) counts[r.id] = (counts[r.id] ?? 0) + 1;
+      }
+      setStaffCounts(counts);
+    }
+    if (catalogR.status === 'fulfilled') setCatalog(catalogR.value);
+    if (packsR.status === 'fulfilled') setPackModules(packsR.value.modules);
+    if (templatesR.status === 'fulfilled') setTemplates(templatesR.value);
+    setLoading(false);
+  }, [companyId, locale]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  const allPacks = useMemo(() => packModules.flatMap((m) => m.packs), [packModules]);
+  const grouped = useMemo(
+    () => catalog.reduce<Record<string, any[]>>((acc, p) => { (acc[p.module] ??= []).push(p); return acc; }, {}),
+    [catalog],
+  );
+  const smartRolesReady = packModules.length > 0 || templates.length > 0;
+  // Mirror the API guard (RoleController create/update require access.role.manage) instead of
+  // inferring it from `catalog.length`. The catalog is fetched with allSettled and needs its own
+  // access.permission.read, so a viewer who may edit roles but cannot read the raw permission
+  // catalogue used to get every control silently disabled with no reason shown.
+  const canEditRoles = viewerPermissions.includes('access.role.manage');
+
+  const selectedRole = useMemo(
+    () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
+    [roles, selectedRoleId],
+  );
+  const roleEditable = selectedRole ? isRoleEditableByCompany(selectedRole) : false;
+  const selectedRow = useMemo(
+    () => matrix?.rows.find((r) => r.roleId === selectedRole?.id) ?? null,
+    [matrix, selectedRole],
+  );
+  const menus = matrix?.menus ?? [];
+  const openMenuCount = selectedRow
+    ? menus.filter((m) => selectedRow.menus[m.id]?.view).length
+    : 0;
+  const { confirm, confirmDialog } = useConfirm();
+
+  const handleDisable = async (roleId: string) => {
+    if (!(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
+    try {
+      await disableRole(companyId, roleId);
+      toast.success('ปิดใช้งานบทบาทเรียบร้อยแล้ว');
+      void reload();
+    } catch (e) {
+      setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="mangmee-page">
+        <MangmeeCard className="p-6 text-sm text-gray-400">กำลังโหลด…</MangmeeCard>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mangmee-page">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-gray-500">
+            <span>มั่งมี</span>
+            <span className="mx-2 text-gray-300">/</span>
+            <span className="text-gray-700">สิทธิ์การใช้งาน</span>
+          </div>
+          <h1 className="mt-7 text-3xl font-extrabold leading-tight text-gray-900">สิทธิ์การใช้งาน</h1>
+          <p className="mt-3 text-base font-medium text-gray-500">
+            กำหนดว่าแต่ละตำแหน่งทำอะไรได้บ้าง — ดู/สร้าง/แก้ไข/ลบ/อนุมัติ
+          </p>
+        </div>
+        <MangmeeBranchChip />
+      </div>
+
+      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+
+      {/* Without this, a viewer who cannot manage roles just finds every button greyed out and
+          no reason given — the failure the report described as "ตั้งสิทธิ์ไม่ได้". */}
+      {!loading && !canEditRoles && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+          อ่านอย่างเดียว: บัญชีของคุณไม่มีสิทธิ์ <span className="font-mono text-xs">access.role.manage</span> จึงแก้ไขบทบาทและสิทธิ์ไม่ได้ — ให้เจ้าของกิจการมอบบทบาทที่มีสิทธิ์นี้ให้ก่อน
+        </div>
+      )}
+
+      <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <MangmeeCard className="p-4">
+          <div className="flex flex-wrap items-center justify-between px-2">
+            <h2 className="text-sm font-bold text-gray-500">ตำแหน่งทั้งหมด</h2>
+            <button
+              type="button"
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
+              disabled={!canEditRoles}
+              onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
+            >
+              <PlusIcon className="h-3.5 w-3.5" />
+              เพิ่ม
+            </button>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {roles.map((role) => {
+              const active = role.id === selectedRole?.id && mode !== 'create';
+              return (
+                <button
+                  key={role.id}
+                  type="button"
+                  onClick={() => { setSelectedRoleId(role.id); setMode('view'); }}
+                  className={cx(
+                    'flex min-h-[74px] w-full items-center gap-3 rounded-lg border px-3 text-left transition',
+                    active
+                      ? 'border-brand-200 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]'
+                      : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
+                  )}
+                >
+                  <PositionGlyph isSystem={role.isSystem} tone={role.isSystem ? 'brand' : 'slate'} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-base font-extrabold text-gray-900">{role.name}</span>
+                    <span className="mt-1 block text-sm font-medium text-gray-500">
+                      {staffCounts[role.id] ?? 0} คน · {role.effectivePermissionCount ?? role.permissionKeys.length} สิทธิ์
+                    </span>
+                  </span>
+                  {role.isSystem && <LockIcon className="h-4 w-4 shrink-0 text-amber-500" />}
+                </button>
+              );
+            })}
+          </div>
+        </MangmeeCard>
+
+        {mode === 'create' && canEditRoles ? (
+          <RoleBuilder
+            companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+            onCancel={() => setMode('view')}
+            onSubmit={async (body) => {
+              await createRole(companyId, body);
+              toast.success('สร้างบทบาทเรียบร้อยแล้ว');
+              setMode('view');
+              void reload();
+            }}
+          />
+        ) : mode === 'edit' && selectedRole && canEditRoles && roleEditable ? (
+          <div className="space-y-3">
+            {selectedRole.isSystem && roleEditable && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+                ตำแหน่งมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ พนักงาน {staffCounts[selectedRole.id] ?? 0} คนที่อยู่ตำแหน่งนี้จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
+              </div>
+            )}
+            <RoleBuilder
+              companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
+              initial={selectedRole}
+              onCancel={() => setMode('view')}
+              onSubmit={async (body) => {
+                await updateRole(companyId, selectedRole.id, body);
+                toast.success('บันทึกบทบาทเรียบร้อยแล้ว');
+                setMode('view');
+                void reload();
+              }}
+            />
+          </div>
+        ) : selectedRole ? (
+          <MangmeeCard className="overflow-hidden p-0">
+            <div className="flex flex-col gap-3 border-b border-gray-100 p-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 lg:max-w-[620px]">
+                <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {selectedRole.name}</h2>
+                <p className="mt-2 text-sm font-medium text-gray-500">
+                  {selectedRole.description || 'ดู / สร้าง / แก้ไข / ลบ / อนุมัติ ในแต่ละเมนู — ปิด “ดู” = ซ่อนเมนูทั้งหมด'}
+                </p>
+              </div>
+              {roleEditable ? (
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button type="button" className={`${ghostClass} h-9 px-3`} disabled={!canEditRoles} onClick={() => setMode('edit')}>
+                    <PencilIcon className="h-4 w-4" />
+                    แก้ไข
+                  </button>
+                  {!selectedRole.isSystem && (
+                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={!canEditRoles} onClick={() => void handleDisable(selectedRole.id)}>
+                      <TrashIcon className="h-4 w-4" />
+                      ปิดใช้งาน
+                    </button>
+                  )}
+                  <span className="inline-flex h-9 items-center rounded-full bg-brand-50 px-4 text-sm font-extrabold text-brand-700">
+                    {openMenuCount} เมนูที่เปิด
+                  </span>
+                </div>
+              ) : (
+                <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-400">
+                  <LockIcon className="h-4 w-4" />
+                  ตำแหน่งนี้ระบบดูแลให้ แก้ไขไม่ได้
+                </div>
+              )}
+            </div>
+
+            <div className="overflow-x-auto px-6 pb-6">
+              <table className="w-full min-w-[820px] border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 text-xs font-bold text-gray-500">
+                    <th className="py-3 text-left">เมนู</th>
+                    {ACTIONS.map((action) => (
+                      <th key={action.key} className="w-[58px] py-3 text-center">{action.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {menus.map((menu) => (
+                    <tr key={menu.id} className="border-b border-gray-100 last:border-b-0">
+                      <td className="py-3 pr-4">
+                        <div className="flex items-center gap-3">
+                          <MangmeeIconFrame tone={MENU_TONE[menu.id]} className="h-8 w-8 rounded-lg">
+                            {MENU_ICON[menu.id]}
+                          </MangmeeIconFrame>
+                          <span className="text-sm font-extrabold text-gray-800">{menu.labelTh}</span>
+                        </div>
+                      </td>
+                      {ACTIONS.map((action) => (
+                        <td key={action.key} className="py-3 text-center align-middle">
+                          <PermissionCell
+                            supported={Boolean(menu.actions[action.key]?.length)}
+                            granted={Boolean(selectedRow?.menus[menu.id]?.[action.key])}
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </MangmeeCard>
+        ) : (
+          <MangmeeCard className="p-6 text-sm text-gray-400">ยังไม่มีบทบาทในบริษัทนี้</MangmeeCard>
+        )}
+      </div>
+      {confirmDialog}
+    </div>
+  );
+}

@@ -1,0 +1,67 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockInvokeModel",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:ap-southeast-1::foundation-model/anthropic.*",
+        "arn:aws:bedrock:*::foundation-model/anthropic.*",
+        "arn:aws:bedrock:ap-southeast-1:<ACCOUNT_ID>:inference-profile/global.anthropic.*"
+      ]
+    },
+    {
+      "Sid": "ReadExactInternalToolSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "<AI_GATEWAY_SECRET_ARN>"
+    },
+    {
+      "Sid": "BedrockAgentCoreReadArtifact",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::watchdog-bms-agentcore-artifacts-<ACCOUNT_ID>/agentcore/*"
+      ]
+    },
+    {
+      "Sid": "BedrockAgentCoreGetArtifactBucketLocation",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "arn:aws:s3:::watchdog-bms-agentcore-artifacts-<ACCOUNT_ID>"
+    },
+    {
+      "Sid": "BedrockAgentCoreListArtifactBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::watchdog-bms-agentcore-artifacts-<ACCOUNT_ID>",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "agentcore/*"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/watchdog-bms/agentcore/*"
+    }
+  ]
+}

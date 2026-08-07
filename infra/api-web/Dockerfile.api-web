@@ -1,0 +1,129 @@
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS system
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends ca-certificates openssl \
+  && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem
+WORKDIR /app
+
+FROM system AS build-base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+FROM build-base AS manifests
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/config/package.json packages/config/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/design-tokens/package.json packages/design-tokens/package.json
+
+FROM manifests AS deps
+RUN pnpm install --frozen-lockfile
+
+FROM manifests AS prod-deps
+RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+
+FROM deps AS build
+ARG INTERNAL_API_URL=http://localhost:3001/v1
+ARG NEXT_PUBLIC_API_BASE_URL=/api
+ARG NEXT_PUBLIC_AI_GATEWAY_BASE_URL=/api
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_AI_GATEWAY_BASE_URL=$NEXT_PUBLIC_AI_GATEWAY_BASE_URL
+COPY apps/api/src apps/api/src
+COPY apps/api/prisma/schema.prisma apps/api/prisma/schema.prisma
+COPY apps/api/.swcrc apps/api/.swcrc
+COPY apps/api/tsconfig.json apps/api/tsconfig.json
+COPY apps/web/app apps/web/app
+COPY apps/web/public apps/web/public
+COPY apps/web/src apps/web/src
+COPY apps/web/next-env.d.ts apps/web/next-env.d.ts
+COPY apps/web/next.config.mjs apps/web/next.config.mjs
+COPY apps/web/postcss.config.mjs apps/web/postcss.config.mjs
+COPY apps/web/proxy.ts apps/web/proxy.ts
+COPY apps/web/tsconfig.json apps/web/tsconfig.json
+COPY packages/config/src packages/config/src
+COPY packages/config/tsconfig.json packages/config/tsconfig.json
+COPY packages/contracts/src packages/contracts/src
+COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
+COPY packages/design-tokens/generated packages/design-tokens/generated
+COPY packages/design-tokens/scripts packages/design-tokens/scripts
+COPY packages/design-tokens/tokens.json packages/design-tokens/tokens.json
+RUN mkdir -p apps/api/.turbo apps/web/.turbo packages/config/.turbo packages/contracts/.turbo packages/design-tokens/.turbo
+RUN pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+RUN pnpm exec turbo run build --filter=@watchdog-bms/api --filter=@watchdog-bms/web
+
+FROM build AS runtime-artifacts
+RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
+  \( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' \) -delete \
+  && find apps/web/.next/standalone -type f -name '*.map' -delete
+
+FROM system AS runner
+ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436 \
+  https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb \
+  /tmp/clamav.deb
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends /tmp/clamav.deb \
+  && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf \
+  && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf \
+  && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf \
+  && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf \
+  && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf \
+  && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav \
+  && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav \
+  && freshclam --stdout --user=node \
+  && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+# Font FILES only — no Debian fontconfig. sharp's prebuilt libvips statically links its own
+# fontconfig/freetype/pango, so the distro packages added nothing but their dependency chain, and
+# that chain is what failed the ECR gate: libexpat1 carries a 7.5 HIGH with no fixed version in
+# Debian 12. Dropping `fontconfig` drops libexpat1, libpng16-16, libfontconfig1 and libfreetype6
+# with it. Verified the Thai certificate still rasterises to the identical pixel count.
+# perl-base is purged in THIS layer, after the last apt install rather than with ClamAV above:
+# fontconfig-config's postinst ran ucf, a Perl script, so purging perl first killed the layer with
+# dpkg exit 127. Nothing installs after this, so the purge is safe here.
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends fonts-noto-core \
+  && find /usr/share/fonts/truetype/noto -type f ! -name 'NotoSansThai*' ! -name 'NotoSans-Regular*' ! -name 'NotoSans-Bold*' -delete \
+  && mkdir -p /etc/fonts \
+  && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf \
+  && apt-get purge -y --allow-remove-essential perl-base \
+  && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+ENV HOST=0.0.0.0
+ENV PORT=3000
+ENV API_PORT=3001
+ENV WEB_PORT=3002
+ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+
+# API: compiled output plus production-only pnpm graph, preserving workspace symlinks.
+COPY --from=prod-deps --chown=node:node /app/node_modules ./api-runtime/node_modules
+COPY --from=prod-deps --chown=node:node /app/apps/api/node_modules ./api-runtime/apps/api/node_modules
+COPY --from=prod-deps --chown=node:node /app/packages/config/node_modules ./api-runtime/packages/config/node_modules
+COPY --from=runtime-artifacts --chown=node:node /app/apps/api/package.json ./api-runtime/apps/api/package.json
+COPY --from=runtime-artifacts --chown=node:node /app/apps/api/dist ./api-runtime/apps/api/dist
+COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.json ./api-runtime/packages/config/package.json
+COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./api-runtime/packages/config/dist
+COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.json ./api-runtime/packages/contracts/package.json
+COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./api-runtime/packages/contracts/dist
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.3/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.2/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+RUN sharp_dir="$(readlink -f './api-runtime/apps/api/node_modules/sharp')" \
+  && mkdir -p "$sharp_dir/node_modules/@img" \
+  && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/" \
+  && rm -rf /tmp/sharp-native \
+  && node -e "require('./api-runtime/apps/api/node_modules/sharp')"
+RUN node -e "const sharp=require('./api-runtime/apps/api/node_modules/sharp');const svg=Buffer.from('<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"850\" height=\"120\"><rect width=\"850\" height=\"120\" fill=\"white\"/><text x=\"425\" y=\"75\" text-anchor=\"middle\" font-family=\"Noto Sans Thai\" font-size=\"32\" font-weight=\"700\">ใบรับรองแทนใบเสร็จรับเงิน</text></svg>');sharp(svg).removeAlpha().greyscale().raw().toBuffer().then(data=>{let ink=0;for(const pixel of data)if(pixel<200)ink+=1;if(ink<1000)throw new Error('Thai font smoke check failed: '+ink+' dark pixels');console.log('Thai font smoke check:',ink,'dark pixels');});"
+
+# Web: Next's traced standalone server plus static/public assets only.
+COPY --from=runtime-artifacts --chown=node:node /app/apps/web/.next/standalone ./web-runtime
+COPY --from=build --chown=node:node /app/apps/web/.next/static ./web-runtime/apps/web/.next/static
+COPY --from=build --chown=node:node /app/apps/web/public ./web-runtime/apps/web/public
+
+COPY --chown=node:node infra/api-web/start-api-web-runtime.sh ./runtime/start-api-web-runtime.sh
+COPY --chown=node:node infra/api-web/web-api-proxy.mjs ./runtime/web-api-proxy.mjs
+USER node
+EXPOSE 3000
+CMD ["sh", "/app/runtime/start-api-web-runtime.sh"]

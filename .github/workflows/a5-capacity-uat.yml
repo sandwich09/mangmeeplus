@@ -1,0 +1,333 @@
+name: A5 UAT Capacity Evidence
+run-name: U5-C capacity @ ${{ inputs.release_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Full develop commit SHA currently serving UAT
+        required: true
+        type: string
+      marker:
+        description: Unique U5C- marker (12-32 uppercase hex characters after U5C-)
+        required: true
+        type: string
+      confirmation:
+        description: Type RUN-U5-C-V2 to consume the one-shot approval
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Exact same group as deploy-uat and UAT F2. A deploy, migration, normalizer and this writer cannot
+# overlap even when separate workflows were dispatched at the same time.
+concurrency:
+  group: watchdog-bms-uat-deploy
+  cancel-in-progress: false
+
+jobs:
+  capacity:
+    name: U5-C bounded mutating capacity evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: uat
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      DEPLOY_ENV: uat
+      RELEASE_REF: ${{ inputs.release_ref }}
+      U5_CAPACITY_MARKER: ${{ inputs.marker }}
+      CONFIRM_U5_CAPACITY: owner-approved:2026-08-03:u5-c-v2
+      U5_CAPACITY_WORKFLOW_SHA: ${{ github.workflow_sha }}
+    steps:
+      - name: Require the main-only one-shot controller
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OWNER_ACTOR: MangmeeDev
+          REQUEST_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main || {
+            echo "ERROR: dispatch this controller from main; release_ref selects the UAT application build" >&2
+            exit 1
+          }
+          test "$CONFIRMATION" = RUN-U5-C-V2 || {
+            echo "ERROR: confirmation must be exactly RUN-U5-C-V2" >&2
+            exit 1
+          }
+          [[ "$RELEASE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo "ERROR: release_ref must be a full SHA" >&2; exit 1; }
+          [[ "$U5_CAPACITY_MARKER" =~ ^U5C-[0-9A-F]{12,32}$ ]] || { echo "ERROR: marker shape invalid" >&2; exit 1; }
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "ERROR: workflow_sha is not an immutable commit" >&2; exit 1; }
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/a5-capacity-uat.yml@refs/heads/main" || {
+            echo "ERROR: controller workflow ref is not main" >&2
+            exit 1
+          }
+          test "$REQUEST_ACTOR" = "$OWNER_ACTOR" && test "$TRIGGERING_ACTOR" = "$OWNER_ACTOR" || {
+            echo "ERROR: only repository owner MangmeeDev may dispatch or rerun U5-C" >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+          path: controller
+
+      - name: Bind candidate workload without executing candidate controller code
+        working-directory: controller
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$U5_CAPACITY_WORKFLOW_SHA"
+          controller_ref=refs/remotes/origin/main
+          git fetch --no-tags origin "+refs/heads/main:${controller_ref}"
+          controller_tip="$(git rev-parse --verify "${controller_ref}^{commit}")"
+          test "$U5_CAPACITY_WORKFLOW_SHA" = "$controller_tip" || {
+            echo "ERROR: rerun uses an obsolete U5-C controller; dispatch the current main workflow" >&2
+            exit 1
+          }
+          candidate_ref=refs/remotes/origin/develop
+          git fetch --no-tags origin "+refs/heads/develop:${candidate_ref}"
+          candidate_tip="$(git rev-parse --verify "${candidate_ref}^{commit}")"
+          test "$(git rev-parse --verify 'FETCH_HEAD^{commit}')" = "$candidate_tip" || {
+            echo "ERROR: fetched develop tip is not the ref used for ancestry" >&2
+            exit 1
+          }
+          git merge-base --is-ancestor "$RELEASE_REF" "$candidate_tip" || {
+            echo "ERROR: release_ref is not reachable from origin/develop" >&2
+            exit 1
+          }
+          manifest="$RUNNER_TEMP/u5-capacity-workload-blobs.tsv"
+          bash infra/uat/build-u5-capacity-workload-manifest.sh "$RELEASE_REF" "$manifest"
+          workload_hash="$(sha256sum "$manifest" | awk '{print $1}')"
+          echo "U5_CAPACITY_WORKLOAD_MANIFEST_HASH=$workload_hash" >> "$GITHUB_ENV"
+          echo "U5_CAPACITY_WORKLOAD_MANIFEST_FILE=$manifest" >> "$GITHUB_ENV"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Configure exact UAT deploy credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-u5-capacity-${{ github.run_id }}
+
+      - name: Verify live controller policy and serving build
+        working-directory: controller
+        run: |
+          set -euo pipefail
+          bash infra/uat/verify-control-plane-policies.sh
+          bash infra/prod-ecs-express/verify-serving-api-build.sh uat "$RELEASE_REF"
+
+      - name: Resolve immutable release-task image
+        id: image
+        run: |
+          set -euo pipefail
+          digest="$(aws ecr describe-images --repository-name watchdog-bms-api \
+            --image-ids "imageTag=uat-release-task-${RELEASE_REF}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "ERROR: release-task digest missing" >&2; exit 1; }
+          echo "image=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/watchdog-bms-api@${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Bind immutable OCI revision to the reviewed source
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          registry="${RELEASE_IMAGE%%/*}"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+          docker pull --platform linux/amd64 "$RELEASE_IMAGE"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$RELEASE_IMAGE")" \
+            = "$RELEASE_REF" || {
+              echo 'ERROR: immutable release-task image revision does not match release_ref' >&2
+              exit 1
+            }
+          docker inspect --format '{{json .RepoDigests}}' "$RELEASE_IMAGE" \
+            | jq -e --arg image "$RELEASE_IMAGE" 'index($image) != null' >/dev/null
+
+      - name: Create and verify exact signed U5-C authorization
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.image }}
+          REQUEST_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        working-directory: controller
+        run: |
+          set -euo pipefail
+          authorization_dir="$RUNNER_TEMP/u5-capacity-authorization"
+          mkdir -p "$authorization_dir"
+          authorization="$authorization_dir/u5-capacity-authorization.json"
+          bundle="$authorization_dir/u5-capacity-authorization.bundle"
+          blobs="$(jq -Rn '[inputs|split("\t")|{path:.[0],blob:.[1]}]' < "$U5_CAPACITY_WORKLOAD_MANIFEST_FILE")"
+          marker_hash="$(printf '%s' "$U5_CAPACITY_MARKER" | sha256sum | awk '{print $1}')"
+          issued_at="$(date -u +%s)"
+          expires_at="$((issued_at + 3600))"
+          jq -cnS --arg repository "$GITHUB_REPOSITORY" --arg workflowRef "$GITHUB_WORKFLOW_REF" \
+            --arg workflowSha "$U5_CAPACITY_WORKFLOW_SHA" --arg sourceSha "$RELEASE_REF" \
+            --arg releaseImage "$RELEASE_IMAGE" --arg marker "$U5_CAPACITY_MARKER" \
+            --arg markerHash "$marker_hash" \
+            --arg workloadManifestHash "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg actor "$REQUEST_ACTOR" --arg triggeringActor "$TRIGGERING_ACTOR" \
+            --argjson workloadBlobs "$blobs" --argjson issuedAtEpoch "$issued_at" \
+            --argjson expiresAtEpoch "$expires_at" '
+              {artifact:"u5-capacity-authorization-v2",schemaVersion:2,repository:$repository,
+               workflowRef:$workflowRef,workflowSha:$workflowSha,sourceSha:$sourceSha,
+               releaseImage:$releaseImage,marker:$marker,markerHash:$markerHash,
+               workloadManifestHash:$workloadManifestHash,workloadBlobs:$workloadBlobs,
+               approvalRef:"owner-approved:2026-08-03:u5-c-v2",runId:$runId,
+               runAttempt:$runAttempt,actor:$actor,triggeringActor:$triggeringActor,
+               issuedAtEpoch:$issuedAtEpoch,expiresAtEpoch:$expiresAtEpoch}
+            ' > "$authorization"
+          bash infra/uat/validate-u5-capacity-authorization.sh "$authorization" "$RELEASE_REF" \
+            "$RELEASE_IMAGE" "$U5_CAPACITY_MARKER" "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            "$U5_CAPACITY_WORKFLOW_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$REQUEST_ACTOR" "$TRIGGERING_ACTOR" "$issued_at" >/dev/null
+          cosign sign-blob --yes --bundle "$bundle" "$authorization"
+          cosign verify-blob --bundle "$bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/a5-capacity-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$U5_CAPACITY_WORKFLOW_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch "$authorization"
+          echo "U5_CAPACITY_AUTHORIZATION_FILE=$authorization" >> "$GITHUB_ENV"
+          echo "U5_CAPACITY_AUTHORIZATION_BUNDLE=$bundle" >> "$GITHUB_ENV"
+
+      - name: Run bounded one-shot U5-C controller
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          result_dir="$RUNNER_TEMP/u5-capacity-result-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$result_dir"
+          echo "U5_CAPACITY_RESULT_DIR=$result_dir" >> "$GITHUB_ENV"
+          U5_CAPACITY_RESULT_FILE="$result_dir/evidence.json" \
+            bash "$GITHUB_WORKSPACE/controller/infra/uat/run-a5-capacity-mutating.sh" \
+            "$RELEASE_IMAGE" "$RELEASE_REF" "$U5_CAPACITY_MARKER" \
+            | tee "$RUNNER_TEMP/u5-capacity-controller.log"
+
+      - name: Validate, sign and verify canonical PASS result
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.image }}
+          REQUEST_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          result="$U5_CAPACITY_RESULT_DIR/evidence.json"
+          bundle="$U5_CAPACITY_RESULT_DIR/evidence.bundle"
+          bash "$GITHUB_WORKSPACE/controller/infra/uat/validate-u5-capacity-result.sh" \
+            "$result" "$RELEASE_REF" "$RELEASE_IMAGE" \
+            "$U5_CAPACITY_MARKER" "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            "$U5_CAPACITY_WORKFLOW_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$REQUEST_ACTOR" "$TRIGGERING_ACTOR" >/dev/null
+          cosign sign-blob --yes --bundle "$bundle" "$result"
+          cosign verify-blob --bundle "$bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/a5-capacity-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$U5_CAPACITY_WORKFLOW_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch "$result"
+          bash "$GITHUB_WORKSPACE/controller/infra/uat/validate-u5-capacity-result.sh" \
+            "$result" "$RELEASE_REF" "$RELEASE_IMAGE" \
+            "$U5_CAPACITY_MARKER" "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            "$U5_CAPACITY_WORKFLOW_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$REQUEST_ACTOR" "$TRIGGERING_ACTOR" >/dev/null
+          test "$(find "$U5_CAPACITY_RESULT_DIR" -maxdepth 1 -type f -printf '%f\n' | sort | tr '\n' ' ')" \
+            = 'evidence.bundle evidence.json '
+
+      - name: Upload exact signed attempt result
+        id: evidence-upload
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: u5-capacity-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.U5_CAPACITY_RESULT_DIR }}/evidence.json
+            ${{ env.U5_CAPACITY_RESULT_DIR }}/evidence.bundle
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Finalize durable PASS after signed artifact upload
+        env:
+          RELEASE_IMAGE: ${{ steps.image.outputs.image }}
+          REQUEST_ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ARTIFACT_ID: ${{ steps.evidence-upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.evidence-upload.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          result="$U5_CAPACITY_RESULT_DIR/evidence.json"
+          bundle="$U5_CAPACITY_RESULT_DIR/evidence.bundle"
+          artifact_name="u5-capacity-result-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'ERROR: signed evidence artifact id is invalid' >&2
+            exit 1
+          }
+          case "$ARTIFACT_DIGEST" in
+            sha256:[0-9a-f][0-9a-f]*) artifact_digest="$ARTIFACT_DIGEST" ;;
+            [0-9a-f][0-9a-f]*) artifact_digest="sha256:$ARTIFACT_DIGEST" ;;
+            *) echo 'ERROR: signed evidence artifact digest is invalid' >&2; exit 1 ;;
+          esac
+          [[ "$artifact_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo 'ERROR: signed evidence artifact digest is not SHA-256' >&2
+            exit 1
+          }
+          bash "$GITHUB_WORKSPACE/controller/infra/uat/validate-u5-capacity-result.sh" \
+            "$result" "$RELEASE_REF" "$RELEASE_IMAGE" \
+            "$U5_CAPACITY_MARKER" "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            "$U5_CAPACITY_WORKFLOW_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$REQUEST_ACTOR" "$TRIGGERING_ACTOR" >/dev/null
+          cosign verify-blob --bundle "$bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/a5-capacity-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$U5_CAPACITY_WORKFLOW_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch "$result"
+          result_hash="$(jq -r '.resultHash' "$result")"
+          authorization_hash="$(jq -r '.authorization.hash' "$result")"
+          attempt_parameter='/watchdog-bms/uat/evidence/u5-capacity-v2'
+          attempt="$(aws ssm get-parameter --name "$attempt_parameter" --with-decryption \
+            --query Parameter.Value --output text --region "$AWS_REGION")"
+          jq -e --arg resultHash "$result_hash" --arg authorizationHash "$authorization_hash" \
+            --arg sourceSha "$RELEASE_REF" --arg workflowSha "$U5_CAPACITY_WORKFLOW_SHA" \
+            --arg workloadHash "$U5_CAPACITY_WORKLOAD_MANIFEST_HASH" \
+            --arg runId "$GITHUB_RUN_ID" --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg actor "$REQUEST_ACTOR" --arg triggeringActor "$TRIGGERING_ACTOR" '
+              .status=="READY_TO_SIGN" and .resultHash==$resultHash
+              and .authorizationHash==$authorizationHash and .sourceSha==$sourceSha
+              and .workflowSha==$workflowSha and .workloadManifestHash==$workloadHash
+              and .runId==$runId and .runAttempt==$runAttempt and .actor==$actor
+              and .triggeringActor==$triggeringActor
+            ' <<< "$attempt" >/dev/null
+          finalized="$(jq -cS --arg artifactName "$artifact_name" --arg artifactId "$ARTIFACT_ID" \
+            --arg artifactDigest "$artifact_digest" --arg resultHash "$result_hash" \
+            --arg updatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+              .status="PASSED" | .signedResultHash=$resultHash
+              | .artifactName=$artifactName | .artifactId=$artifactId
+              | .artifactDigest=$artifactDigest | .updatedAt=$updatedAt
+            ' <<< "$attempt")"
+          aws ssm put-parameter --name "$attempt_parameter" --type String --overwrite \
+            --value "$finalized" --region "$AWS_REGION" >/dev/null
+          readback="$(aws ssm get-parameter --name "$attempt_parameter" --with-decryption \
+            --query Parameter.Value --output text --region "$AWS_REGION")"
+          test "$readback" = "$finalized"
+
+      - name: Upload raw controller diagnostics
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: u5-capacity-raw-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/u5-capacity-controller.log
+            ${{ runner.temp }}/u5-capacity-authorization
+            ${{ env.U5_CAPACITY_RESULT_DIR }}
+          if-no-files-found: warn
+          retention-days: 30

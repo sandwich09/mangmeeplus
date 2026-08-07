@@ -1,0 +1,345 @@
+{"kind":"deck","id":"pr/cp91x8","name":"Deck"}
+{"kind":"layout","layoutId":"5ff38aee-1dc1-4716-a74e-30adf7ed7b75","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"91cb7ece-e754-4e86-bf1c-a7ca597af019","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/t34ctw","slide":1,"title":"มั่งมี","textShapes":5}
+{"kind":"textbox","id":"sh/d4n2doz2","slide":1,"name":"brand","text":"มั่งมี","textPreview":"มั่งมี","textChars":6,"textLines":1,"bbox":[56,34,180,34]}
+{"kind":"textbox","id":"sh/q1cj290r","slide":1,"name":"cover","text":"ระบบเดียว\nที่เห็นทั้งธุรกิจ","textPreview":"ระบบเดียว | ที่เห็นทั้งธุรกิจ","textChars":27,"textLines":2,"bbox":[56,145,550,175]}
+{"kind":"textbox","id":"sh/b2lkbehw","slide":1,"name":"sub","text":"เชื่อมลูกค้า งาน เงิน และทีม\nด้วยข้อมูลจริงจากทุกจุดปฏิบัติงาน","textPreview":"เชื่อมลูกค้า งาน เงิน และทีม | ด้วยข้อมูลจริงจากทุกจุดปฏิบัติงาน","textChars":62,"textLines":2,"bbox":[56,350,500,86]}
+{"kind":"shape","id":"sh/ozu10jil","slide":1,"name":"hero-shadow","bbox":[698,108,540,410]}
+{"kind":"shape","id":"sh/p03294z6","slide":1,"name":"hero-frame","bbox":[690,98,540,410]}
+{"kind":"shape","id":"sh/2dcjy90f","slide":1,"name":"hero-bar","bbox":[690,98,540,28]}
+{"kind":"shape","id":"sh/3elk7eh0","slide":1,"name":"hero-dot0","bbox":[704,108,7,7]}
+{"kind":"shape","id":"sh/gba1wzi9","slide":1,"name":"hero-dot1","bbox":[718,108,7,7]}
+{"kind":"shape","id":"sh/1c3254zu","slide":1,"name":"hero-dot2","bbox":[732,108,7,7]}
+{"kind":"shape","id":"sh/g3ilwfyh","slide":1,"name":"tag-20 เมนูพร้อมใช้งาน","bbox":[56,510,188,34]}
+{"kind":"textbox","id":"sh/f2p43ahw","slide":1,"name":"tagt-20 เมนูพร้อมใช้งาน","text":"20 เมนูพร้อมใช้งาน","textPreview":"20 เมนูพร้อมใช้งาน","textChars":18,"textLines":1,"bbox":[68,512,164,28]}
+{"kind":"textbox","id":"sh/u1g3u5gb","slide":1,"name":"meta","text":"Sales Presentation • 2026","textPreview":"Sales Presentation • 2026","textChars":25,"textLines":1,"bbox":[56,660,320,20]}
+{"kind":"image","id":"im/2pobyl4b","slide":1,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: dashboard","bbox":[698,134,524,366]}
+{"kind":"notes","id":"nt/t34ctw","slide":1,"text":""}
+{"kind":"slide","id":"sl/qyiv2q","slide":2,"title":"WHY MANGMEE","textShapes":13}
+{"kind":"textbox","id":"sh/6lwjel0z","slide":2,"name":"kicker","text":"WHY MANGMEE","textPreview":"WHY MANGMEE","textChars":11,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/ton2p0zq","slide":2,"name":"title","text":"ธุรกิจไม่ควรต้องประกอบภาพเองจากหลายระบบ","textPreview":"ธุรกิจไม่ควรต้องประกอบภาพเองจากหลายระบบ","textChars":39,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/sne1gvi5","slide":2,"name":"no","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"textbox","id":"sh/fapkrahw","slide":2,"name":"vn0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[56,164,52,32]}
+{"kind":"textbox","id":"sh/epgji50b","slide":2,"name":"vt0","text":"ขายต่อได้ทันที","textPreview":"ขายต่อได้ทันที","textChars":14,"textLines":1,"bbox":[56,205,330,42]}
+{"kind":"textbox","id":"sh/1c72t0zm","slide":2,"name":"vb0","text":"ข้อมูลลูกค้าและบทสนทนาอยู่ในบริบทเดียว","textPreview":"ข้อมูลลูกค้าและบทสนทนาอยู่ในบริบทเดียว","textChars":38,"textLines":1,"bbox":[56,254,330,62]}
+{"kind":"shape","id":"sh/gby1kfih","slide":2,"name":"vr0","bbox":[56,332,330,2]}
+{"kind":"textbox","id":"sh/3epkvahs","slide":2,"name":"vn1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[446,164,52,32]}
+{"kind":"textbox","id":"sh/2dgjm507","slide":2,"name":"vt1","text":"คุมเงินได้จริง","textPreview":"คุมเงินได้จริง","textChars":14,"textLines":1,"bbox":[446,205,330,42]}
+{"kind":"textbox","id":"sh/g3ahsnud","slide":2,"name":"vb1","text":"หลักฐาน สถานะ และรายงานเชื่อมกัน","textPreview":"หลักฐาน สถานะ และรายงานเชื่อมกัน","textChars":32,"textLines":1,"bbox":[446,254,330,62]}
+{"kind":"shape","id":"sh/h4jy1sbi","slide":2,"name":"vr1","bbox":[446,332,330,2]}
+{"kind":"textbox","id":"sh/uh8zqdc7","slide":2,"name":"vn2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[836,164,52,32]}
+{"kind":"textbox","id":"sh/fihgzits","slide":2,"name":"vt2","text":"ขยายทีมอย่างปลอดภัย","textPreview":"ขยายทีมอย่างปลอดภัย","textChars":19,"textLines":1,"bbox":[836,205,330,42]}
+{"kind":"textbox","id":"sh/47ahwnu9","slide":2,"name":"vb2","text":"สิทธิ์แยกตามคน เมนู การกระทำ และสาขา","textPreview":"สิทธิ์แยกตามคน เมนู การกระทำ และสาขา","textChars":36,"textLines":1,"bbox":[836,254,330,62]}
+{"kind":"shape","id":"sh/p8ji5sbu","slide":2,"name":"vr2","bbox":[836,332,330,2]}
+{"kind":"shape","id":"sh/25szuxc3","slide":2,"name":"value-shot-shadow","bbox":[64,400,1168,230]}
+{"kind":"shape","id":"sh/361g32to","slide":2,"name":"value-shot-frame","bbox":[56,390,1168,230]}
+{"kind":"shape","id":"sh/cbuh07u5","slide":2,"name":"value-shot-bar","bbox":[56,390,1168,28]}
+{"kind":"shape","id":"sh/dc3i9cbq","slide":2,"name":"value-shot-dot0","bbox":[70,400,7,7]}
+{"kind":"shape","id":"sh/lszytc3u","slide":2,"name":"value-shot-dot1","bbox":[84,400,7,7]}
+{"kind":"shape","id":"sh/0rqhk72p","slide":2,"name":"value-shot-dot2","bbox":[98,400,7,7]}
+{"kind":"textbox","id":"sh/yp8zix4j","slide":2,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/87adsbm1","slide":2,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: customers","bbox":[64,426,1152,186]}
+{"kind":"notes","id":"nt/qyiv2q","slide":2,"text":""}
+{"kind":"slide","id":"sl/dcfubq","slide":3,"title":"OWNER COCKPIT","textShapes":9}
+{"kind":"textbox","id":"sh/tsfudkjq","slide":3,"name":"kicker","text":"OWNER COCKPIT","textPreview":"OWNER COCKPIT","textChars":13,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/6p4vi50f","slide":3,"name":"title","text":"เจ้าของเห็นสิ่งสำคัญก่อนที่จะกลายเป็นปัญหา","textPreview":"เจ้าของเห็นสิ่งสำคัญก่อนที่จะกลายเป็นปัญหา","textChars":42,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/rqdcba10","slide":3,"name":"no","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"textbox","id":"sh/4nmdgfi9","slide":3,"name":"lead","text":"Dashboard รวมสัญญาณจากหลายโมดูล\nให้ตัดสินใจจากภาพเดียวของธุรกิจ","textPreview":"Dashboard รวมสัญญาณจากหลายโมดูล | ให้ตัดสินใจจากภาพเดียวของธุรกิจ","textChars":63,"textLines":2,"bbox":[56,160,350,92]}
+{"kind":"shape","id":"sh/5ovu90ju","slide":3,"name":"dot-0","bbox":[56,296,10,10]}
+{"kind":"textbox","id":"sh/i14ve503","slide":3,"name":"li-0","text":"ตัวเลขสำคัญและงานค้าง","textPreview":"ตัวเลขสำคัญและงานค้าง","textChars":21,"textLines":1,"bbox":[80,284,326,42]}
+{"kind":"shape","id":"sh/j2dc7a1o","slide":3,"name":"dot-1","bbox":[56,356,10,10]}
+{"kind":"textbox","id":"sh/wzmdcvid","slide":3,"name":"li-1","text":"ติดตามสถานะข้ามทีม","textPreview":"ติดตามสถานะข้ามทีม","textChars":18,"textLines":1,"bbox":[80,344,326,42]}
+{"kind":"shape","id":"sh/h0vu50jy","slide":3,"name":"dot-2","bbox":[56,416,10,10]}
+{"kind":"textbox","id":"sh/tk7il0vq","slide":3,"name":"li-2","text":"เข้าเรื่องเร่งด่วนได้ในคลิกเดียว","textPreview":"เข้าเรื่องเร่งด่วนได้ในคลิกเดียว","textChars":32,"textLines":1,"bbox":[80,404,326,42]}
+{"kind":"shape","id":"sh/8jehcve5","slide":3,"name":"dash-shadow","bbox":[468,168,770,442]}
+{"kind":"shape","id":"sh/7i50jqd0","slide":3,"name":"dash-frame","bbox":[460,158,770,442]}
+{"kind":"shape","id":"sh/mhwzalwf","slide":3,"name":"dash-bar","bbox":[460,158,770,28]}
+{"kind":"shape","id":"sh/lgnih0vu","slide":3,"name":"dash-dot0","bbox":[474,168,7,7]}
+{"kind":"shape","id":"sh/kfeh8ve9","slide":3,"name":"dash-dot1","bbox":[488,168,7,7]}
+{"kind":"shape","id":"sh/zu5gfqdo","slide":3,"name":"dash-dot2","bbox":[502,168,7,7]}
+{"kind":"shape","id":"sh/xs3ydgvi","slide":3,"name":"tag-REAL PRODUCT","bbox":[1000,622,150,34]}
+{"kind":"textbox","id":"sh/cruh4bed","slide":3,"name":"tagt-REAL PRODUCT","text":"REAL PRODUCT","textPreview":"REAL PRODUCT","textChars":12,"textLines":1,"bbox":[1012,624,126,28]}
+{"kind":"textbox","id":"sh/ovyhkbmt","slide":3,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/94zulkz6","slide":3,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: dashboard","bbox":[468,194,754,398]}
+{"kind":"notes","id":"nt/dcfubq","slide":3,"text":""}
+{"kind":"slide","id":"sl/nzgba3","slide":4,"title":"REVENUE ENGINE","textShapes":6}
+{"kind":"textbox","id":"sh/14725cvq","slide":4,"name":"kicker","text":"REVENUE ENGINE","textPreview":"REVENUE ENGINE","textChars":14,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/e1wjahcz","slide":4,"name":"title","text":"จากข้อความแรก สู่ลูกค้าที่ทีมดูแลต่อได้","textPreview":"จากข้อความแรก สู่ลูกค้าที่ทีมดูแลต่อได้","textChars":39,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/f25k3mdk","slide":4,"name":"no","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/orylgruh","slide":4,"name":"inbox-shadow","bbox":[64,164,560,430]}
+{"kind":"shape","id":"sh/ps729wvm","slide":4,"name":"inbox-frame","bbox":[56,154,560,430]}
+{"kind":"shape","id":"sh/2pgjehcb","slide":4,"name":"inbox-bar","bbox":[56,154,560,28]}
+{"kind":"shape","id":"sh/3qpk7mdw","slide":4,"name":"inbox-dot0","bbox":[70,164,7,7]}
+{"kind":"shape","id":"sh/4vu14nux","slide":4,"name":"inbox-dot1","bbox":[84,164,7,7]}
+{"kind":"shape","id":"sh/5wn2xsvi","slide":4,"name":"inbox-dot2","bbox":[98,164,7,7]}
+{"kind":"shape","id":"sh/8n2ps32d","slide":4,"name":"cust-shadow","bbox":[672,164,560,430]}
+{"kind":"shape","id":"sh/7mtozy1s","slide":4,"name":"cust-frame","bbox":[664,154,560,430]}
+{"kind":"shape","id":"sh/ml07qdk7","slide":4,"name":"cust-bar","bbox":[664,154,560,28]}
+{"kind":"shape","id":"sh/hcbq5sju","slide":4,"name":"cust-dot0","bbox":[678,164,7,7]}
+{"kind":"shape","id":"sh/wb2pwni9","slide":4,"name":"cust-dot1","bbox":[692,164,7,7]}
+{"kind":"shape","id":"sh/vat83i1o","slide":4,"name":"cust-dot2","bbox":[706,164,7,7]}
+{"kind":"textbox","id":"sh/5gvq9sj6","slide":4,"name":"inbox-cap","text":"Inbox + AI Assist","textPreview":"Inbox + AI Assist","textChars":17,"textLines":1,"bbox":[56,598,350,34]}
+{"kind":"textbox","id":"sh/4fmp0nil","slide":4,"name":"cust-cap","text":"Customer 360","textPreview":"Customer 360","textChars":12,"textLines":1,"bbox":[664,598,350,34]}
+{"kind":"textbox","id":"sh/ove1svut","slide":4,"name":"crm-note","text":"บทสนทนาไม่หาย • ตัวตนลูกค้าไม่ซ้ำ • ทีมเห็น next action ร่วมกัน","textPreview":"บทสนทนาไม่หาย • ตัวตนลูกค้าไม่ซ้ำ • ทีมเห็น next action ร่วมกัน","textChars":63,"textLines":1,"bbox":[56,642,1120,26]}
+{"kind":"image","id":"im/q5sj2pwn","slide":4,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: inbox","bbox":[64,190,544,386]}
+{"kind":"image","id":"im/lw3i14va","slide":4,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: customers","bbox":[672,190,544,386]}
+{"kind":"notes","id":"nt/nzgba3","slide":4,"text":""}
+{"kind":"slide","id":"sl/kdfcqa","slide":5,"title":"CONNECTED SERVICE","textShapes":8}
+{"kind":"textbox","id":"sh/0rmhovqp","slide":5,"name":"kicker","text":"CONNECTED SERVICE","textPreview":"CONNECTED SERVICE","textChars":17,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/zqdgvq94","slide":5,"name":"title","text":"ปฏิทินจองเชื่อมลูกค้า ทีม และการให้บริการ","textPreview":"ปฏิทินจองเชื่อมลูกค้า ทีม และการให้บริการ","textChars":41,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/yp4zml8j","slide":5,"name":"no","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/9gfy1kr6","slide":5,"name":"book-shadow","bbox":[64,160,790,472]}
+{"kind":"shape","id":"sh/8f6hsfql","slide":5,"name":"book-frame","bbox":[56,150,790,472]}
+{"kind":"shape","id":"sh/nexgza90","slide":5,"name":"book-bar","bbox":[56,150,790,28]}
+{"kind":"shape","id":"sh/mt4zq58v","slide":5,"name":"book-dot0","bbox":[70,160,7,7]}
+{"kind":"shape","id":"sh/xkfi5kri","slide":5,"name":"book-dot1","bbox":[84,160,7,7]}
+{"kind":"shape","id":"sh/wj6hwfqx","slide":5,"name":"book-dot2","bbox":[98,160,7,7]}
+{"kind":"textbox","id":"sh/judcfqdk","slide":5,"name":"book-big","text":"เห็นคิวว่าง\nก่อนรับนัด","textPreview":"เห็นคิวว่าง | ก่อนรับนัด","textChars":22,"textLines":2,"bbox":[900,190,280,100]}
+{"kind":"shape","id":"sh/kvmtovu5","slide":5,"name":"dot-0","bbox":[900,342,10,10]}
+{"kind":"textbox","id":"sh/lwvuh0vq","slide":5,"name":"li-0","text":"มุมมองรายวัน/สัปดาห์","textPreview":"มุมมองรายวัน/สัปดาห์","textChars":20,"textLines":1,"bbox":[924,330,256,42]}
+{"kind":"shape","id":"sh/6xobqlcb","slide":5,"name":"dot-1","bbox":[900,404,10,10]}
+{"kind":"textbox","id":"sh/7yxcjqdg","slide":5,"name":"li-1","text":"สถานะนัดหมายชัดเจน","textPreview":"สถานะนัดหมายชัดเจน","textChars":18,"textLines":1,"bbox":[924,392,256,42]}
+{"kind":"shape","id":"sh/8z6tsvu1","slide":5,"name":"dot-2","bbox":[900,466,10,10]}
+{"kind":"textbox","id":"sh/t0ful0vm","slide":5,"name":"li-2","text":"ผูกประวัติกับลูกค้าเดิม","textPreview":"ผูกประวัติกับลูกค้าเดิม","textChars":23,"textLines":1,"bbox":[924,454,256,42]}
+{"kind":"textbox","id":"sh/m1kbe1cr","slide":5,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/50ba1w3u","slide":5,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: bookings","bbox":[64,186,774,428]}
+{"kind":"notes","id":"nt/kdfcqa","slide":5,"text":""}
+{"kind":"slide","id":"sl/jxo4c4","slide":6,"title":"FINANCIAL EVIDENCE","textShapes":8}
+{"kind":"textbox","id":"sh/kzm1wbyp","slide":6,"name":"kicker","text":"FINANCIAL EVIDENCE","textPreview":"FINANCIAL EVIDENCE","textChars":18,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/zyd0n6x4","slide":6,"name":"title","text":"ใบเสร็จทุกใบเดินต่อเป็นงานการเงินได้","textPreview":"ใบเสร็จทุกใบเดินต่อเป็นงานการเงินได้","textChars":36,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/yx4julgj","slide":6,"name":"no","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"textbox","id":"sh/94f2t0f6","slide":6,"name":"exp-title","text":"หลักฐาน → รีวิว → ยืนยัน → รายงาน","textPreview":"หลักฐาน → รีวิว → ยืนยัน → รายงาน","textChars":33,"textLines":1,"bbox":[56,148,800,48]}
+{"kind":"shape","id":"sh/83610vyl","slide":6,"name":"expense-shadow","bbox":[64,224,1168,396]}
+{"kind":"shape","id":"sh/72xkrqxg","slide":6,"name":"expense-frame","bbox":[56,214,1168,396]}
+{"kind":"shape","id":"sh/m14jylgv","slide":6,"name":"expense-bar","bbox":[56,214,1168,28]}
+{"kind":"shape","id":"sh/p8bihwf2","slide":6,"name":"expense-dot0","bbox":[70,224,7,7]}
+{"kind":"shape","id":"sh/o721oryh","slide":6,"name":"expense-dot1","bbox":[84,224,7,7]}
+{"kind":"shape","id":"sh/m1cv2x8r","slide":6,"name":"expense-dot2","bbox":[98,224,7,7]}
+{"kind":"shape","id":"sh/83ud47qh","slide":6,"name":"tag-ลดการคีย์ซ้ำ","bbox":[56,628,184,34]}
+{"kind":"textbox","id":"sh/943uxc72","slide":6,"name":"tagt-ลดการคีย์ซ้ำ","text":"ลดการคีย์ซ้ำ","textPreview":"ลดการคีย์ซ้ำ","textChars":12,"textLines":1,"bbox":[68,630,160,28]}
+{"kind":"shape","id":"sh/u5cv6h8n","slide":6,"name":"tag-ตรวจสถานะได้","bbox":[264,628,184,34]}
+{"kind":"textbox","id":"sh/v6lcz2p8","slide":6,"name":"tagt-ตรวจสถานะได้","text":"ตรวจสถานะได้","textPreview":"ตรวจสถานะได้","textChars":12,"textLines":1,"bbox":[276,630,160,28]}
+{"kind":"shape","id":"sh/g7ed87qt","slide":6,"name":"tag-พร้อมส่งต่อบัญชี","bbox":[472,628,184,34]}
+{"kind":"textbox","id":"sh/h8nu1c7e","slide":6,"name":"tagt-พร้อมส่งต่อบัญชี","text":"พร้อมส่งต่อบัญชี","textPreview":"พร้อมส่งต่อบัญชี","textChars":16,"textLines":1,"bbox":[484,630,160,28]}
+{"kind":"textbox","id":"sh/i9wvah8z","slide":6,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/gb61gbeh","slide":6,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: expenses","bbox":[64,250,1152,352]}
+{"kind":"notes","id":"nt/jxo4c4","slide":6,"text":""}
+{"kind":"slide","id":"sl/cswc57","slide":7,"title":"OPERATIONAL CONTROL","textShapes":8}
+{"kind":"textbox","id":"sh/idwbyl4r","slide":7,"name":"kicker","text":"OPERATIONAL CONTROL","textPreview":"OPERATIONAL CONTROL","textChars":19,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/5gnutgni","slide":7,"name":"title","text":"หลังบ้านเชื่อมกันตั้งแต่ของในคลังถึงเงินในบัญชี","textPreview":"หลังบ้านเชื่อมกันตั้งแต่ของในคลังถึงเงินในบัญชี","textChars":47,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/4fet0bmx","slide":7,"name":"no","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/r25cvql8","slide":7,"name":"inv-shadow","bbox":[64,172,560,392]}
+{"kind":"shape","id":"sh/q1wv2l43","slide":7,"name":"inv-frame","bbox":[56,162,560,392]}
+{"kind":"shape","id":"sh/d47ux03e","slide":7,"name":"inv-bar","bbox":[56,162,560,28]}
+{"kind":"shape","id":"sh/s3yd4vmt","slide":7,"name":"inv-dot0","bbox":[70,172,7,7]}
+{"kind":"shape","id":"sh/f6pczalk","slide":7,"name":"inv-dot1","bbox":[84,172,7,7]}
+{"kind":"shape","id":"sh/e5gv654z","slide":7,"name":"inv-dot2","bbox":[98,172,7,7]}
+{"kind":"shape","id":"sh/lofetwru","slide":7,"name":"bank-shadow","bbox":[672,172,560,392]}
+{"kind":"shape","id":"sh/ylofyh8j","slide":7,"name":"bank-frame","bbox":[664,162,560,392]}
+{"kind":"shape","id":"sh/jmxwrm94","slide":7,"name":"bank-bar","bbox":[664,162,560,28]}
+{"kind":"shape","id":"sh/8r6x4rql","slide":7,"name":"bank-dot0","bbox":[678,172,7,7]}
+{"kind":"shape","id":"sh/tsfyxwr6","slide":7,"name":"bank-dot1","bbox":[692,172,7,7]}
+{"kind":"shape","id":"sh/6pof2h8f","slide":7,"name":"bank-dot2","bbox":[706,172,7,7]}
+{"kind":"textbox","id":"sh/gvqx8bqh","slide":7,"name":"inv-title","text":"Inventory","textPreview":"Inventory","textChars":9,"textLines":1,"bbox":[56,574,250,34]}
+{"kind":"textbox","id":"sh/hgzy1gr2","slide":7,"name":"inv-sub","text":"สินค้า • location • movement • stock report","textPreview":"สินค้า • location • movement • stock report","textChars":43,"textLines":1,"bbox":[56,610,510,30]}
+{"kind":"textbox","id":"sh/pcvelwj6","slide":7,"name":"bank-title","text":"Banking","textPreview":"Banking","textChars":7,"textLines":1,"bbox":[664,574,250,34]}
+{"kind":"textbox","id":"sh/4bmxsril","slide":7,"name":"bank-sub","text":"บัญชีธนาคาร • statement • matching • reconciliation","textPreview":"บัญชีธนาคาร • statement • matching • reconciliation","textChars":51,"textLines":1,"bbox":[664,610,520,30]}
+{"kind":"textbox","id":"sh/3adwj61g","slide":7,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/32tcradc","slide":7,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: inventory","bbox":[64,198,544,348]}
+{"kind":"image","id":"im/c72dofet","slide":7,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: banking","bbox":[672,198,544,348]}
+{"kind":"notes","id":"nt/cswc57","slide":7,"text":""}
+{"kind":"slide","id":"sl/rbps5u","slide":8,"title":"AI WITH GUARDRAILS","textShapes":9}
+{"kind":"textbox","id":"sh/ze5g3uxs","slide":8,"name":"kicker","text":"AI WITH GUARDRAILS","textPreview":"AI WITH GUARDRAILS","textChars":18,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/kfexwzyd","slide":8,"name":"title","text":"AI และ Workflow ช่วยเร่งงาน—โดยไม่ข้ามการควบคุม","textPreview":"AI และ Workflow ช่วยเร่งงาน—โดยไม่ข้ามการควบคุม","textChars":47,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/lg7y54fy","slide":8,"name":"no","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/mhgzypgj","slide":8,"name":"wf-shadow","bbox":[64,166,720,448]}
+{"kind":"shape","id":"sh/72pg7ux4","slide":8,"name":"wf-frame","bbox":[56,156,720,448]}
+{"kind":"shape","id":"sh/83yh0zyp","slide":8,"name":"wf-bar","bbox":[56,156,720,28]}
+{"kind":"shape","id":"sh/t47y94fa","slide":8,"name":"wf-dot0","bbox":[70,166,7,7]}
+{"kind":"shape","id":"sh/u5gz29gf","slide":8,"name":"wf-dot1","bbox":[84,166,7,7]}
+{"kind":"shape","id":"sh/v6pgbex0","slide":8,"name":"wf-dot2","bbox":[98,166,7,7]}
+{"kind":"textbox","id":"sh/2do7q5cr","slide":8,"name":"wf-big","text":"Automation\nที่ตรวจสอบย้อนหลังได้","textPreview":"Automation | ที่ตรวจสอบย้อนหลังได้","textChars":32,"textLines":2,"bbox":[840,175,350,100]}
+{"kind":"shape","id":"sh/pgzql0bi","slide":8,"name":"dot-0","bbox":[840,330,10,10]}
+{"kind":"textbox","id":"sh/ofqpsvux","slide":8,"name":"li-0","text":"Template และ rule ที่เปิดใช้จริง","textPreview":"Template และ rule ที่เปิดใช้จริง","textChars":32,"textLines":1,"bbox":[864,318,326,42]}
+{"kind":"shape","id":"sh/fax8fqtg","slide":8,"name":"dot-1","bbox":[840,394,10,10]}
+{"kind":"textbox","id":"sh/epo7mlcv","slide":8,"name":"li-1","text":"ติดตาม run, task และ error queue","textPreview":"ติดตาม run, task และ error queue","textChars":32,"textLines":1,"bbox":[864,382,326,42]}
+{"kind":"shape","id":"sh/1cfqh0b6","slide":8,"name":"dot-2","bbox":[840,458,10,10]}
+{"kind":"textbox","id":"sh/gb6povul","slide":8,"name":"li-2","text":"AI เสนอคำแนะนำพร้อมแหล่งอ้างอิง","textPreview":"AI เสนอคำแนะนำพร้อมแหล่งอ้างอิง","textChars":31,"textLines":1,"bbox":[864,446,326,42]}
+{"kind":"textbox","id":"sh/z6h8rutk","slide":8,"name":"guard","text":"ทุก action สำคัญยังผ่าน permission, policy และ confirmation","textPreview":"ทุก action สำคัญยังผ่าน permission, policy และ confirmation","textChars":59,"textLines":1,"bbox":[840,540,340,58]}
+{"kind":"textbox","id":"sh/yl8rypcz","slide":8,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/gjax07up","slide":8,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: workflow","bbox":[64,192,704,404]}
+{"kind":"notes","id":"nt/rbps5u","slide":8,"text":""}
+{"kind":"slide","id":"sl/plidcu","slide":9,"title":"CHANNEL ADVANTAGE","textShapes":9}
+{"kind":"textbox","id":"sh/l4fmls3m","slide":9,"name":"kicker","text":"CHANNEL ADVANTAGE","textPreview":"CHANNEL ADVANTAGE","textChars":17,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/yh43qd4v","slide":9,"name":"title","text":"เชื่อม LINE OA ของบริษัทเข้ากับงานหลังบ้านโดยตรง","textPreview":"เชื่อม LINE OA ของบริษัทเข้ากับงานหลังบ้านโดยตรง","textChars":48,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/z2d4jilg","slide":9,"name":"no","text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"textbox","id":"sh/cfmlonmp","slide":9,"name":"line-lead","text":"ลูกค้าคุยในช่องทางเดิม\nแต่ทีมทำงานบนระบบเดียว","textPreview":"ลูกค้าคุยในช่องทางเดิม | แต่ทีมทำงานบนระบบเดียว","textChars":45,"textLines":2,"bbox":[56,170,390,100]}
+{"kind":"shape","id":"sh/dgvmh83a","slide":9,"name":"dot-0","bbox":[56,322,10,10]}
+{"kind":"textbox","id":"sh/qd43md4z","slide":9,"name":"li-0","text":"ตั้งค่า Channel และ webhook","textPreview":"ตั้งค่า Channel และ webhook","textChars":27,"textLines":1,"bbox":[80,310,366,42]}
+{"kind":"shape","id":"sh/bed4filk","slide":9,"name":"dot-1","bbox":[56,380,10,10]}
+{"kind":"textbox","id":"sh/ob2lk3mt","slide":9,"name":"li-1","text":"กำหนด SLA การตอบกลับ","textPreview":"กำหนด SLA การตอบกลับ","textChars":20,"textLines":1,"bbox":[80,368,366,42]}
+{"kind":"shape","id":"sh/pcvmd8ne","slide":9,"name":"dot-2","bbox":[56,438,10,10]}
+{"kind":"textbox","id":"sh/xgv25sb2","slide":9,"name":"li-2","text":"เปิด Auto-reply ตามนโยบายบริษัท","textPreview":"เปิด Auto-reply ตามนโยบายบริษัท","textChars":31,"textLines":1,"bbox":[80,426,366,42]}
+{"kind":"shape","id":"sh/wfmlwnah","slide":9,"name":"dot-3","bbox":[56,496,10,10]}
+{"kind":"textbox","id":"sh/bedk3itw","slide":9,"name":"li-3","text":"เชื่อม conversation กับลูกค้าและ booking","textPreview":"เชื่อม conversation กับลูกค้าและ booking","textChars":40,"textLines":1,"bbox":[80,484,366,42]}
+{"kind":"shape","id":"sh/ad43udsb","slide":9,"name":"line-shadow","bbox":[518,160,720,472]}
+{"kind":"shape","id":"sh/9cv218bq","slide":9,"name":"line-frame","bbox":[510,150,720,472]}
+{"kind":"shape","id":"sh/obm1s3a5","slide":9,"name":"line-bar","bbox":[510,150,720,28]}
+{"kind":"shape","id":"sh/natkzitk","slide":9,"name":"line-dot0","bbox":[524,160,7,7]}
+{"kind":"shape","id":"sh/m9kjqdsf","slide":9,"name":"line-dot1","bbox":[538,160,7,7]}
+{"kind":"shape","id":"sh/18b2x8bu","slide":9,"name":"line-dot2","bbox":[552,160,7,7]}
+{"kind":"textbox","id":"sh/sr6l43i5","slide":9,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/zeh4jads","slide":9,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: line-oa","bbox":[518,186,704,428]}
+{"kind":"notes","id":"nt/plidcu","slide":9,"text":""}
+{"kind":"slide","id":"sl/mdg8g8","slide":10,"title":"TRUST BY DESIGN","textShapes":9}
+{"kind":"textbox","id":"sh/doby5wjm","slide":10,"name":"kicker","text":"TRUST BY DESIGN","textPreview":"TRUST BY DESIGN","textChars":15,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/q10fa10b","slide":10,"name":"title","text":"เปิดให้ทีมทำงานได้ โดยไม่ต้องเปิดข้อมูลเกินหน้าที่","textPreview":"เปิดให้ทีมทำงานได้ โดยไม่ต้องเปิดข้อมูลเกินหน้าที่","textChars":50,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/r2tg361w","slide":10,"name":"no","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/4zix8ri5","slide":10,"name":"perm-shadow","bbox":[64,160,790,478]}
+{"kind":"shape","id":"sh/50ry1wjq","slide":10,"name":"perm-frame","bbox":[56,150,790,478]}
+{"kind":"shape","id":"sh/ix0f6h0z","slide":10,"name":"perm-bar","bbox":[56,150,790,28]}
+{"kind":"shape","id":"sh/3y9wzm1k","slide":10,"name":"perm-dot0","bbox":[70,160,7,7]}
+{"kind":"shape","id":"sh/ovmxkvi9","slide":10,"name":"perm-dot1","bbox":[84,160,7,7]}
+{"kind":"shape","id":"sh/9wvydgju","slide":10,"name":"perm-dot2","bbox":[98,160,7,7]}
+{"kind":"textbox","id":"sh/w3i1wnqp","slide":10,"name":"perm-big","text":"คน × เมนู × การกระทำ × สาขา","textPreview":"คน × เมนู × การกระทำ × สาขา","textChars":27,"textLines":1,"bbox":[900,176,280,90]}
+{"kind":"shape","id":"sh/v29kn2pk","slide":10,"name":"dot-0","bbox":[900,327,10,10]}
+{"kind":"textbox","id":"sh/a10jux8z","slide":10,"name":"li-0","text":"Role-based access","textPreview":"Role-based access","textChars":17,"textLines":1,"bbox":[924,315,256,42]}
+{"kind":"shape","id":"sh/90r2ls7e","slide":10,"name":"dot-1","bbox":[900,387,10,10]}
+{"kind":"textbox","id":"sh/8zi1snqt","slide":10,"name":"li-1","text":"Individual override","textPreview":"Individual override","textChars":19,"textLines":1,"bbox":[924,375,256,42]}
+{"kind":"shape","id":"sh/nypkjip8","slide":10,"name":"dot-2","bbox":[900,447,10,10]}
+{"kind":"textbox","id":"sh/mxgjqd8n","slide":10,"name":"li-2","text":"Branch scope","textPreview":"Branch scope","textChars":12,"textLines":1,"bbox":[924,435,256,42]}
+{"kind":"shape","id":"sh/twb2xc7i","slide":10,"name":"dot-3","bbox":[900,507,10,10]}
+{"kind":"textbox","id":"sh/sv2l47qx","slide":10,"name":"li-3","text":"Audit trail","textPreview":"Audit trail","textChars":11,"textLines":1,"bbox":[924,495,256,42]}
+{"kind":"textbox","id":"sh/sza50ve9","slide":10,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/2xgzydo7","slide":10,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: permissions","bbox":[64,186,774,434]}
+{"kind":"notes","id":"nt/mdg8g8","slide":10,"text":""}
+{"kind":"slide","id":"sl/7a65z0","slide":11,"title":"MENU PORTFOLIO 1/2","textShapes":28}
+{"kind":"textbox","id":"sh/fy9cjyl0","slide":11,"name":"kicker","text":"MENU PORTFOLIO 1/2","textPreview":"MENU PORTFOLIO 1/2","textChars":18,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/gzitc32l","slide":11,"name":"title","text":"20 เมนูพร้อมใช้งาน ครอบคลุมงานหลักของธุรกิจ","textPreview":"20 เมนูพร้อมใช้งาน ครอบคลุมงานหลักของธุรกิจ","textChars":43,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/hkrul836","slide":11,"name":"no","text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"textbox","id":"sh/6tgb69kj","slide":11,"name":"gh0","text":"ลูกค้า & รายได้","textPreview":"ลูกค้า & รายได้","textChars":15,"textLines":1,"bbox":[56,160,260,38]}
+{"kind":"shape","id":"sh/7upcfel4","slide":11,"name":"gm0-0","bbox":[56,210,260,44]}
+{"kind":"textbox","id":"sh/svyt8j29","slide":11,"name":"gmt0-0","text":"✓  แดชบอร์ด","textPreview":"✓  แดชบอร์ด","textChars":11,"textLines":1,"bbox":[70,214,232,34]}
+{"kind":"shape","id":"sh/tw7uho3u","slide":11,"name":"gm0-1","bbox":[56,267,260,44]}
+{"kind":"textbox","id":"sh/qpkvidkn","slide":11,"name":"gmt0-1","text":"✓  กล่องข้อความ","textPreview":"✓  กล่องข้อความ","textChars":15,"textLines":1,"bbox":[70,271,232,34]}
+{"kind":"shape","id":"sh/rqtcril8","slide":11,"name":"gm0-2","bbox":[56,324,260,44]}
+{"kind":"textbox","id":"sh/z2po3uhc","slide":11,"name":"gmt0-2","text":"✓  ลูกค้า","textPreview":"✓  ลูกค้า","textChars":9,"textLines":1,"bbox":[70,328,232,34]}
+{"kind":"shape","id":"sh/y1g7up0r","slide":11,"name":"gm0-3","bbox":[56,381,260,44]}
+{"kind":"textbox","id":"sh/l47q54z2","slide":11,"name":"gmt0-3","text":"✓  การจองออนไลน์","textPreview":"✓  การจองออนไลน์","textChars":16,"textLines":1,"bbox":[70,385,232,34]}
+{"kind":"shape","id":"sh/03ypwzih","slide":11,"name":"gm0-4","bbox":[56,438,260,44]}
+{"kind":"textbox","id":"sh/n6987eh8","slide":11,"name":"gmt0-4","text":"✓  ตั้งค่า CRM","textPreview":"✓  ตั้งค่า CRM","textChars":14,"textLines":1,"bbox":[70,442,232,34]}
+{"kind":"shape","id":"sh/m5g7y90n","slide":11,"name":"gm0-5","bbox":[56,495,260,44]}
+{"kind":"textbox","id":"sh/98rq94ze","slide":11,"name":"gmt0-5","text":"✓  ลูกค้า (CRM)","textPreview":"✓  ลูกค้า (CRM)","textChars":15,"textLines":1,"bbox":[70,499,232,34]}
+{"kind":"textbox","id":"sh/87ip0zit","slide":11,"name":"gh1","text":"ปฏิบัติการ","textPreview":"ปฏิบัติการ","textChars":10,"textLines":1,"bbox":[352,160,260,38]}
+{"kind":"shape","id":"sh/vu98beh4","slide":11,"name":"gm1-0","bbox":[352,210,260,44]}
+{"kind":"textbox","id":"sh/a907290z","slide":11,"name":"gmt1-0","text":"✓  คลังสินค้า","textPreview":"✓  คลังสินค้า","textChars":13,"textLines":1,"bbox":[366,214,232,34]}
+{"kind":"shape","id":"sh/614jqho3","slide":11,"name":"gm1-1","bbox":[352,267,260,44]}
+{"kind":"textbox","id":"sh/r2d0jm5o","slide":11,"name":"gmt1-1","text":"✓  จัดซื้อ","textPreview":"✓  จัดซื้อ","textChars":10,"textLines":1,"bbox":[366,271,232,34]}
+{"kind":"shape","id":"sh/s361s769","slide":11,"name":"gm1-2","bbox":[352,324,260,44]}
+{"kind":"textbox","id":"sh/t4f2lcnu","slide":11,"name":"gmt1-2","text":"✓  เวิร์กโฟลว์","textPreview":"✓  เวิร์กโฟลว์","textChars":14,"textLines":1,"bbox":[366,328,232,34]}
+{"kind":"shape","id":"sh/id4jmxo7","slide":11,"name":"gm1-3","bbox":[352,381,260,44]}
+{"kind":"textbox","id":"sh/jed0f25s","slide":11,"name":"gmt1-3","text":"✓  AI แนะนำ","textPreview":"✓  AI แนะนำ","textChars":11,"textLines":1,"bbox":[366,385,232,34]}
+{"kind":"textbox","id":"sh/4fm1o76d","slide":11,"name":"gh2","text":"การเงิน","textPreview":"การเงิน","textChars":7,"textLines":1,"bbox":[648,160,260,38]}
+{"kind":"shape","id":"sh/50vihcny","slide":11,"name":"gm2-0","bbox":[648,210,260,44]}
+{"kind":"textbox","id":"sh/29ojy1ob","slide":11,"name":"gmt2-0","text":"✓  ค่าใช้จ่าย+ใบเสร็จ","textPreview":"✓  ค่าใช้จ่าย+ใบเสร็จ","textChars":21,"textLines":1,"bbox":[662,214,232,34]}
+{"kind":"shape","id":"sh/nahkr65w","slide":11,"name":"gm2-1","bbox":[648,267,260,44]}
+{"kind":"textbox","id":"sh/x4jmh07y","slide":11,"name":"gmt2-1","text":"✓  สมุดรายวัน","textPreview":"✓  สมุดรายวัน","textChars":13,"textLines":1,"bbox":[662,271,232,34]}
+{"kind":"shape","id":"sh/c3alovqt","slide":11,"name":"gm2-2","bbox":[648,324,260,44]}
+{"kind":"textbox","id":"sh/b214fqp8","slide":11,"name":"gmt2-2","text":"✓  เจ้าหนี้การค้า","textPreview":"✓  เจ้าหนี้การค้า","textChars":17,"textLines":1,"bbox":[662,328,232,34]}
+{"kind":"shape","id":"sh/a183ml8n","slide":11,"name":"gm2-3","bbox":[648,381,260,44]}
+{"kind":"textbox","id":"sh/p0zmdg72","slide":11,"name":"gmt2-3","text":"✓  การเบิกจ่าย","textPreview":"✓  การเบิกจ่าย","textChars":14,"textLines":1,"bbox":[662,385,232,34]}
+{"kind":"shape","id":"sh/ozqlkbqh","slide":11,"name":"gm2-4","bbox":[648,438,260,44]}
+{"kind":"textbox","id":"sh/nyh4b6pw","slide":11,"name":"gmt2-4","text":"✓  บัญชีธนาคาร","textPreview":"✓  บัญชีธนาคาร","textChars":14,"textLines":1,"bbox":[662,442,232,34]}
+{"kind":"shape","id":"sh/2x83il8b","slide":11,"name":"gm2-5","bbox":[648,495,260,44]}
+{"kind":"textbox","id":"sh/9w3mpk76","slide":11,"name":"gmt2-5","text":"✓  รายงานการเงิน","textPreview":"✓  รายงานการเงิน","textChars":16,"textLines":1,"bbox":[662,499,232,34]}
+{"kind":"textbox","id":"sh/8vu5wfql","slide":11,"name":"gh3","text":"ทีม & ระบบ","textPreview":"ทีม & ระบบ","textChars":10,"textLines":1,"bbox":[944,160,260,38]}
+{"kind":"shape","id":"sh/gnyl0bm5","slide":11,"name":"gm3-0","bbox":[944,210,260,44]}
+{"kind":"textbox","id":"sh/ho7m9g3q","slide":11,"name":"gmt3-0","text":"✓  สิทธิ์การใช้งาน","textPreview":"✓  สิทธิ์การใช้งาน","textChars":18,"textLines":1,"bbox":[958,214,232,34]}
+{"kind":"shape","id":"sh/u1g3yl4z","slide":11,"name":"gm3-1","bbox":[944,267,260,44]}
+{"kind":"textbox","id":"sh/fmp47qlk","slide":11,"name":"gmt3-1","text":"✓  ตั้งค่า","textPreview":"✓  ตั้งค่า","textChars":10,"textLines":1,"bbox":[958,271,232,34]}
+{"kind":"shape","id":"sh/4ryl4vmh","slide":11,"name":"gm3-2","bbox":[944,324,260,44]}
+{"kind":"textbox","id":"sh/psrmd032","slide":11,"name":"gmt3-2","text":"✓  การแจ้งเตือน","textPreview":"✓  การแจ้งเตือน","textChars":15,"textLines":1,"bbox":[958,328,232,34]}
+{"kind":"shape","id":"sh/2pg32l4b","slide":11,"name":"gm3-3","bbox":[944,381,260,44]}
+{"kind":"textbox","id":"sh/3qp4bqlw","slide":11,"name":"gmt3-3","text":"✓  เชื่อมต่อ LINE OA","textPreview":"✓  เชื่อมต่อ LINE OA","textChars":20,"textLines":1,"bbox":[958,385,232,34]}
+{"kind":"textbox","id":"sh/cvil8v2d","slide":11,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"notes","id":"nt/7a65z0","slide":11,"text":""}
+{"kind":"slide","id":"sl/ftm203","slide":12,"title":"MENU PORTFOLIO 2/2","textShapes":29}
+{"kind":"textbox","id":"sh/udwj6d07","slide":12,"name":"kicker","text":"MENU PORTFOLIO 2/2","textPreview":"MENU PORTFOLIO 2/2","textChars":18,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/h0721szi","slide":12,"name":"title","text":"Roadmap ชัดเจน เพื่อวางการเติบโตโดยไม่ขายเกินจริง","textPreview":"Roadmap ชัดเจน เพื่อวางการเติบโตโดยไม่ขายเกินจริง","textChars":49,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/wze18nix","slide":12,"name":"no","text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/7a5kvyhg","slide":12,"name":"rp0","bbox":[56,170,260,148]}
+{"kind":"textbox","id":"sh/m9wj2d0v","slide":12,"name":"rpn0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[76,186,46,28]}
+{"kind":"textbox","id":"sh/9cn2x8zm","slide":12,"name":"rpt0","text":"การขาย","textPreview":"การขาย","textChars":6,"textLines":1,"bbox":[76,225,220,34]}
+{"kind":"textbox","id":"sh/8be143i1","slide":12,"name":"rps0","text":"Sales workspace","textPreview":"Sales workspace","textChars":15,"textLines":1,"bbox":[76,264,220,28]}
+{"kind":"shape","id":"sh/r6pk72hk","slide":12,"name":"rp1","bbox":[350,170,260,148]}
+{"kind":"textbox","id":"sh/65gjex0f","slide":12,"name":"rpn1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[370,186,46,28]}
+{"kind":"textbox","id":"sh/ozitkvuh","slide":12,"name":"rpt1","text":"รายงาน CRM","textPreview":"รายงาน CRM","textChars":10,"textLines":1,"bbox":[370,225,220,34]}
+{"kind":"textbox","id":"sh/p0rut0v2","slide":12,"name":"rps1","text":"CRM analytics","textPreview":"CRM analytics","textChars":13,"textLines":1,"bbox":[370,264,220,28]}
+{"kind":"shape","id":"sh/2xgbi5cb","slide":12,"name":"rp2","bbox":[644,170,260,148]}
+{"kind":"textbox","id":"sh/3y9crqdw","slide":12,"name":"rpn2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[664,186,46,28]}
+{"kind":"textbox","id":"sh/gvytgvul","slide":12,"name":"rpt2","text":"บัญชี","textPreview":"บัญชี","textChars":5,"textLines":1,"bbox":[664,225,220,34]}
+{"kind":"textbox","id":"sh/1w7up0vq","slide":12,"name":"rps2","text":"Accounting hub","textPreview":"Accounting hub","textChars":14,"textLines":1,"bbox":[664,264,220,28]}
+{"kind":"shape","id":"sh/utgbelcf","slide":12,"name":"rp3","bbox":[938,170,260,148]}
+{"kind":"textbox","id":"sh/fupcnqd0","slide":12,"name":"rpn3","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[958,186,46,28]}
+{"kind":"textbox","id":"sh/srytcbu9","slide":12,"name":"rpt3","text":"เอกสารขาย","textPreview":"เอกสารขาย","textChars":9,"textLines":1,"bbox":[958,225,220,34]}
+{"kind":"textbox","id":"sh/ts7algvu","slide":12,"name":"rps3","text":"Sales documents","textPreview":"Sales documents","textChars":15,"textLines":1,"bbox":[958,264,220,28]}
+{"kind":"shape","id":"sh/9oza9cni","slide":12,"name":"rp4","bbox":[56,355,260,148]}
+{"kind":"textbox","id":"sh/8nq9g76x","slide":12,"name":"rpn4","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[76,371,46,28]}
+{"kind":"textbox","id":"sh/7mxs725s","slide":12,"name":"rpt4","text":"ภาษี","textPreview":"ภาษี","textChars":4,"textLines":1,"bbox":[76,410,220,34]}
+{"kind":"textbox","id":"sh/mlorexo7","slide":12,"name":"rps4","text":"Thai tax","textPreview":"Thai tax","textChars":8,"textLines":1,"bbox":[76,449,220,28]}
+{"kind":"shape","id":"sh/lkfq5snm","slide":12,"name":"rp5","bbox":[350,355,260,148]}
+{"kind":"textbox","id":"sh/kj69c761","slide":12,"name":"rpn5","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[370,371,46,28]}
+{"kind":"textbox","id":"sh/zyx8325g","slide":12,"name":"rpt5","text":"ปิดงวด","textPreview":"ปิดงวด","textChars":6,"textLines":1,"bbox":[370,410,220,34]}
+{"kind":"textbox","id":"sh/yxoraxov","slide":12,"name":"rps5","text":"Period closing","textPreview":"Period closing","textChars":14,"textLines":1,"bbox":[370,449,220,28]}
+{"kind":"shape","id":"sh/5gjahwnq","slide":12,"name":"rp6","bbox":[644,355,260,148]}
+{"kind":"textbox","id":"sh/4fa9orm5","slide":12,"name":"rpn6","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[664,371,46,28]}
+{"kind":"textbox","id":"sh/21k7it4n","slide":12,"name":"rpt6","text":"อนุมัติคำสั่งซื้อ","textPreview":"อนุมัติคำสั่งซื้อ","textChars":17,"textLines":1,"bbox":[664,410,220,34]}
+{"kind":"textbox","id":"sh/n2tobyl8","slide":12,"name":"rps6","text":"PO approval","textPreview":"PO approval","textChars":11,"textLines":1,"bbox":[664,449,220,28]}
+{"kind":"shape","id":"sh/o32pk3mt","slide":12,"name":"rp7","bbox":[938,355,260,148]}
+{"kind":"textbox","id":"sh/p4v6d83e","slide":12,"name":"rpn7","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[958,371,46,28]}
+{"kind":"textbox","id":"sh/exkne94r","slide":12,"name":"rpt7","text":"นโยบายส่วนลด","textPreview":"นโยบายส่วนลด","textChars":12,"textLines":1,"bbox":[958,410,220,34]}
+{"kind":"textbox","id":"sh/fyto7elc","slide":12,"name":"rps7","text":"Discount policy","textPreview":"Discount policy","textChars":15,"textLines":1,"bbox":[958,449,220,28]}
+{"kind":"textbox","id":"sh/0z2pgjmx","slide":12,"name":"road-note","text":"สถานะอ้างอิงจากเมนูจริงใน workspace ณ 14 ก.ค. 2026","textPreview":"สถานะอ้างอิงจากเมนูจริงใน workspace ณ 14 ก.ค. 2026","textChars":50,"textLines":1,"bbox":[56,590,1120,30]}
+{"kind":"textbox","id":"sh/10b69o32","slide":12,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"notes","id":"nt/ftm203","slide":12,"text":""}
+{"kind":"slide","id":"sl/oaiecf","slide":13,"title":"ADOPTION PATH","textShapes":17}
+{"kind":"textbox","id":"sh/761cfqhs","slide":13,"name":"kicker","text":"ADOPTION PATH","textPreview":"ADOPTION PATH","textChars":13,"textLines":1,"bbox":[56,26,700,24]}
+{"kind":"textbox","id":"sh/87adovyd","slide":13,"name":"title","text":"เริ่มเล็ก เห็นผลเร็ว แล้วขยายบนข้อมูลชุดเดิม","textPreview":"เริ่มเล็ก เห็นผลเร็ว แล้วขยายบนข้อมูลชุดเดิม","textChars":44,"textLines":1,"bbox":[56,55,1110,68]}
+{"kind":"textbox","id":"sh/t8juh0zy","slide":13,"name":"no","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1180,30,44,22]}
+{"kind":"shape","id":"sh/y1sbi1gb","slide":13,"name":"journey-line","bbox":[112,330,1010,4]}
+{"kind":"shape","id":"sh/z21cb6hw","slide":13,"name":"an0","bbox":[76,300,64,64]}
+{"kind":"textbox","id":"sh/k3atkbyh","slide":13,"name":"ant0","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[76,300,64,64]}
+{"kind":"textbox","id":"sh/l4judgz2","slide":13,"name":"at0","text":"เชื่อมช่องทาง","textPreview":"เชื่อมช่องทาง","textChars":13,"textLines":1,"bbox":[56,402,220,38]}
+{"kind":"textbox","id":"sh/ad8be1gf","slide":13,"name":"ab0","text":"LINE OA + ทีม + สิทธิ์","textPreview":"LINE OA + ทีม + สิทธิ์","textChars":22,"textLines":1,"bbox":[56,448,240,52]}
+{"kind":"shape","id":"sh/behc76hk","slide":13,"name":"an1","bbox":[370,300,64,64]}
+{"kind":"textbox","id":"sh/j2dsnih8","slide":13,"name":"ant1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[370,300,64,64]}
+{"kind":"textbox","id":"sh/i1kbedgn","slide":13,"name":"at1","text":"ปิดวงจรลูกค้า","textPreview":"ปิดวงจรลูกค้า","textChars":13,"textLines":1,"bbox":[350,402,220,38]}
+{"kind":"textbox","id":"sh/54vupsfy","slide":13,"name":"ab1","text":"Inbox + Customer + Booking","textPreview":"Inbox + Customer + Booking","textChars":26,"textLines":1,"bbox":[350,448,240,52]}
+{"kind":"shape","id":"sh/43mtgnyt","slide":13,"name":"an2","bbox":[664,300,64,64]}
+{"kind":"textbox","id":"sh/r6dcr2x4","slide":13,"name":"ant2","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[664,300,64,64]}
+{"kind":"textbox","id":"sh/654bixgj","slide":13,"name":"at2","text":"คุมงานและเงิน","textPreview":"คุมงานและเงิน","textChars":13,"textLines":1,"bbox":[644,402,220,38]}
+{"kind":"textbox","id":"sh/tsvutsfa","slide":13,"name":"ab2","text":"Expense + Inventory + Banking","textPreview":"Expense + Inventory + Banking","textChars":29,"textLines":1,"bbox":[644,448,240,52]}
+{"kind":"shape","id":"sh/srmtk7yp","slide":13,"name":"an3","bbox":[958,300,64,64]}
+{"kind":"textbox","id":"sh/7a9sfyh0","slide":13,"name":"ant3","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[958,300,64,64]}
+{"kind":"textbox","id":"sh/m90b6tgf","slide":13,"name":"at3","text":"เร่งด้วย AI","textPreview":"เร่งด้วย AI","textChars":11,"textLines":1,"bbox":[938,402,220,38]}
+{"kind":"textbox","id":"sh/qp8vu103","slide":13,"name":"ab3","text":"Workflow + AI + Roadmap","textPreview":"Workflow + AI + Roadmap","textChars":23,"textLines":1,"bbox":[938,448,240,52]}
+{"kind":"shape","id":"sh/bqhwn6ho","slide":13,"name":"outcome","bbox":[56,548,1168,74]}
+{"kind":"textbox","id":"sh/crqdwbit","slide":13,"name":"outcome-t","text":"ลูกค้าเริ่มเห็นคุณค่าจาก journey แรก และไม่ต้องย้ายระบบเมื่อธุรกิจโตขึ้น","textPreview":"ลูกค้าเริ่มเห็นคุณค่าจาก journey แรก และไม่ต้องย้ายระบบเมื่อธุรกิจโตขึ้น","textChars":72,"textLines":1,"bbox":[80,558,1120,52]}
+{"kind":"textbox","id":"sh/xszepgze","slide":13,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"notes","id":"nt/oaiecf","slide":13,"text":""}
+{"kind":"slide","id":"sl/zcs5jj","slide":14,"title":"มั่งมี","textShapes":5}
+{"kind":"textbox","id":"sh/nu1czutk","slide":14,"name":"brand2","text":"มั่งมี","textPreview":"มั่งมี","textChars":6,"textLines":1,"bbox":[56,38,180,34]}
+{"kind":"textbox","id":"sh/8vad8zu5","slide":14,"name":"close","text":"พร้อมเปลี่ยนงานที่กระจัดกระจาย\nให้เป็นระบบที่โตไปกับธุรกิจ","textPreview":"พร้อมเปลี่ยนงานที่กระจัดกระจาย | ให้เป็นระบบที่โตไปกับธุรกิจ","textChars":58,"textLines":2,"bbox":[56,150,760,160]}
+{"kind":"textbox","id":"sh/9wju1kbq","slide":14,"name":"close-sub","text":"เริ่มด้วย Demo และ Solution Workshop\nเพื่อเลือก customer journey ที่สร้างผลลัพธ์เร็วที่สุด","textPreview":"เริ่มด้วย Demo และ Solution Workshop | เพื่อเลือก customer journey ที่สร้างผลลัพธ์เร็วที่สุด","textChars":90,"textLines":2,"bbox":[56,356,620,88]}
+{"kind":"shape","id":"sh/yp8b25c3","slide":14,"name":"cta","bbox":[56,500,420,76]}
+{"kind":"textbox","id":"sh/zq1cvato","slide":14,"name":"cta-t","text":"นัด Demo + Solution Workshop","textPreview":"นัด Demo + Solution Workshop","textChars":28,"textLines":1,"bbox":[76,510,380,54]}
+{"kind":"shape","id":"sh/0rat4fu9","slide":14,"name":"close-shot-shadow","bbox":[858,165,360,280]}
+{"kind":"shape","id":"sh/lsjuxkbe","slide":14,"name":"close-shot-frame","bbox":[850,155,360,280]}
+{"kind":"shape","id":"sh/q18by5cr","slide":14,"name":"close-shot-bar","bbox":[850,155,360,28]}
+{"kind":"shape","id":"sh/r2hcradc","slide":14,"name":"close-shot-dot0","bbox":[864,165,7,7]}
+{"kind":"shape","id":"sh/zed4vytw","slide":14,"name":"close-shot-dot1","bbox":[878,165,7,7]}
+{"kind":"shape","id":"sh/ed432tcb","slide":14,"name":"close-shot-dot2","bbox":[892,165,7,7]}
+{"kind":"textbox","id":"sh/0fml4juh","slide":14,"name":"footer","text":"มั่งมี • Business Management System","textPreview":"มั่งมี • Business Management System","textChars":35,"textLines":1,"bbox":[56,676,500,18]}
+{"kind":"image","id":"im/e9kr6d87","slide":14,"name":"","geometry":"rect","alt":"ภาพหน้าจอจริง: dashboard","bbox":[858,191,344,236]}
+{"kind":"notes","id":"nt/zcs5jj","slide":14,"text":""}

@@ -1,0 +1,5 @@
+companyId,scanStatus,errorCode,chartTemplateApplied,chartTemplateKey,chartTemplateVersion,chartTemplateChecksum,chartAccountCount,exact,missing,unusedConflicts,inUseConflicts,dependencyCount,dependencySources,conflictSampleCodes,requiredPostingRolesMissing,taxConfigurationRequired,requiredTaxAccountRolesMissing,taxProfilesNeedingReview,bankLedgerLinksInvalid,legacyTaxHeaderMismatches,sourcePostingErrors,readyForManualLedger,readyForAutomaticPosting
+cmrqi2gcx0002j9qtq72utehs,OK,,false,,,,0,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false
+h04_probe,OK,,false,,,,1,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false
+seed-local-company,OK,,false,,,,180,158,0,17,0,20,ExpenseLineAssignment=2|TaxAccountRule=18,1112-01|1112-02|1112-03|1113-01|1113-02|1113-03|1114-01|1114-02|1114-03|1210-00|2120-01|3100-00|4100-01|5200-06|5310-01|5370-03|9999-99,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,1,0,0,false,false
+seed-watchdog-system-company,OK,,false,,,,0,0,175,0,0,0,,,EXPENSE_CLAIM_CONFIRMED|EXPENSE_CONFIRMED,false,,0,0,0,0,false,false

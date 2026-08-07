@@ -1,0 +1,154 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccountProbe",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcsReleaseAndExpressDeploy",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeClusters",
+        "ecs:DescribeExpressGatewayService",
+        "ecs:UpdateExpressGatewayService",
+        "ecs:RegisterTaskDefinition",
+        "ecs:DescribeTaskDefinition",
+        "ecs:RunTask",
+        "ecs:ListTasks",
+        "ecs:DescribeTasks",
+        "ecs:ListServiceDeployments",
+        "ecs:DescribeServiceDeployments",
+        "ecs:DescribeServiceRevisions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadAndPassExistingEcsRoles",
+      "Effect": "Allow",
+      "Action": "iam:GetRole",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+        "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
+        "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-workers-role"
+      ]
+    },
+    {
+      "Sid": "PassExistingEcsRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-workers-role"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "ecs.amazonaws.com",
+            "ecs-tasks.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "VerifyReleaseTaskRolePolicy",
+      "Effect": "Allow",
+      "Action": "iam:GetRolePolicy",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role"
+    },
+    {
+      "Sid": "EcrLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReleaseTaskImage",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutImage"
+      ],
+      "Resource": "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-api"
+    },
+    {
+      "Sid": "ProductionParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/*"
+    },
+    {
+      "Sid": "DescribeProductionSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:DescribeSecret",
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"
+    },
+    {
+      "Sid": "NetworkRead",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReleaseAndDeployLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:DescribeLogStreams",
+        "logs:PutRetentionPolicy",
+        "logs:AssociateKmsKey",
+        "logs:PutMetricFilter"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SecurityAlarmRouting",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DescribeAlarms"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EvidenceBucketControls",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketCORS"
+      ],
+      "Resource": "arn:aws:s3:::watchdog-bms-prod-<ACCOUNT_ID>"
+    }
+  ]
+}

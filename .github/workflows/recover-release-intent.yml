@@ -1,0 +1,724 @@
+name: Recover Exact Release Mutation Intent
+run-name: Recover ${{ inputs.environment }} intent ${{ inputs.intent_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: uat
+        type: choice
+        options: [uat, production]
+      release_ref:
+        description: Full SHA owned by the UNKNOWN release
+        required: true
+        type: string
+      recovery_ref:
+        description: Full signed develop/main SHA containing the reviewed recovery fix
+        required: true
+        type: string
+      parent_operation_id:
+        description: UNKNOWN RemoteReleaseOperation UUID
+        required: true
+        type: string
+      intent_id:
+        description: OPEN intent UUID, PRE_INTENT for missing api-web intent, or ORPHAN for bounded historical evidence
+        required: true
+        type: string
+      service_name:
+        description: Exact ECS Express service name persisted by the intent (empty for PRE_INTENT)
+        required: false
+        type: string
+      ssm_parameter_name:
+        description: Exact service-cache parameter persisted by the intent (empty for PRE_INTENT)
+        required: false
+        type: string
+      parent_task_arn:
+        description: Original release task ARN (required for ORPHAN; optional exact STOPPED proof to reclaim a live rollout hold)
+        required: false
+        type: string
+      intent_task_arn:
+        description: Failed release-intent task ARN (required only for ORPHAN)
+        required: false
+        type: string
+      binder_task_arn:
+        description: Failed release-bind task ARN (required only for ORPHAN)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watchdog-bms-${{ inputs.environment }}-deploy
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      DEPLOY_ENV: ${{ inputs.environment }}
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+      # Replaced by the follow-up pin commit after the reviewed implementation baseline exists.
+      # All-zero intentionally makes recovery impossible between those two commits.
+      RECOVERY_FIX_BASELINE_UAT: 4e47e4bf25d7cb456cc21147e149b59066cffd27
+      RECOVERY_FIX_BASELINE_PRODUCTION: 0000000000000000000000000000000000000000
+    steps:
+      - name: Require the main controller and bounded identities
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
+          PARENT_ID: ${{ inputs.parent_operation_id }}
+          INTENT_ID: ${{ inputs.intent_id }}
+          SERVICE_NAME: ${{ inputs.service_name }}
+          SSM_PARAMETER: ${{ inputs.ssm_parameter_name }}
+          PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
+          INTENT_TASK_ARN: ${{ inputs.intent_task_arn }}
+          BINDER_TASK_ARN: ${{ inputs.binder_task_arn }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$RELEASE_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RECOVERY_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PARENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f-]{27}$ ]]
+          cluster=watchdog-bms-prod
+          [ "$DEPLOY_ENV" = uat ] && cluster=watchdog-bms-uat
+          if [ "$INTENT_ID" = PRE_INTENT ]; then
+            test -z "$SERVICE_NAME"
+            test -z "$SSM_PARAMETER"
+            test -z "$INTENT_TASK_ARN$BINDER_TASK_ARN"
+            if [ -n "$PARENT_TASK_ARN" ]; then
+              [[ "$PARENT_TASK_ARN" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
+            fi
+          elif [ "$INTENT_ID" = ORPHAN ]; then
+            [[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_-]{1,255}$ ]]
+            [[ "$SSM_PARAMETER" =~ ^/watchdog-bms/${DEPLOY_ENV}/ecs-express-[A-Za-z0-9_-]+-service-arn$ ]]
+            for task in "$PARENT_TASK_ARN" "$INTENT_TASK_ARN" "$BINDER_TASK_ARN"; do
+              [[ "$task" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
+            done
+          else
+            [[ "$INTENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f-]{27}$ ]]
+            [[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_-]{1,255}$ ]]
+            [[ "$SSM_PARAMETER" =~ ^/watchdog-bms/${DEPLOY_ENV}/ecs-express-[A-Za-z0-9_-]+-service-arn$ ]]
+            test -z "$INTENT_TASK_ARN$BINDER_TASK_ARN"
+            if [ -n "$PARENT_TASK_ARN" ]; then
+              [[ "$PARENT_TASK_ARN" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
+            fi
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Resolve the held target and fixed recovery executor
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
+        run: |
+          set -euo pipefail
+          branch=main
+          [ "$DEPLOY_ENV" = uat ] && branch=develop
+          baseline="$RECOVERY_FIX_BASELINE_PRODUCTION"
+          [ "$DEPLOY_ENV" = uat ] && baseline="$RECOVERY_FIX_BASELINE_UAT"
+          [[ "$baseline" =~ ^[0-9a-f]{40}$ ]]
+          test "$baseline" != 0000000000000000000000000000000000000000
+          git fetch origin "$branch" --force
+          git merge-base --is-ancestor "$RELEASE_REF" "origin/$branch"
+          git merge-base --is-ancestor "$RECOVERY_REF" "origin/$branch"
+          git merge-base --is-ancestor "$RELEASE_REF" "$RECOVERY_REF"
+          git merge-base --is-ancestor "$baseline" "$RECOVERY_REF"
+          git checkout --detach "$RECOVERY_REF"
+          test "$(git rev-parse HEAD)" = "$RECOVERY_REF"
+      - name: Require exact successful CI for the recovery executor
+        id: validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
+        run: |
+          set -euo pipefail
+          branch=main
+          [ "$DEPLOY_ENV" = uat ] && branch=develop
+          response="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&status=success&head_sha=$RECOVERY_REF&per_page=10")"
+          run_id="$(jq -r --arg sha "$RECOVERY_REF" --arg branch "$branch" '
+            [.workflow_runs[] | select(
+              .head_sha == $sha and .head_branch == $branch and .conclusion == "success"
+              and .event == "push" and .path == ".github/workflows/ci.yml"
+            )][0].id // empty
+          ' <<< "$response")"
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+          jobs="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
+          jq -e '
+            .total_count == (.jobs | length)
+            and ([.jobs[] | select(.name == "Typecheck and Test")] | length) == 1
+            and ([.jobs[] | select(.name == "Typecheck and Test")][0].conclusion == "success")
+            and ([.jobs[] | select(.name == "Typecheck and Test") | .steps[]
+              | select(.name == "Typecheck and test durable release recovery against PostgreSQL")] | length) == 1
+            and ([.jobs[] | select(.name == "Typecheck and Test") | .steps[]
+              | select(.name == "Typecheck and test durable release recovery against PostgreSQL")][0].conclusion == "success")
+          ' <<< "$jobs" >/dev/null
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-release-intent-recovery-${{ github.run_id }}
+      - name: Verify exact UAT controller policies before mutation
+        if: inputs.environment == 'uat'
+        run: bash infra/uat/verify-control-plane-policies.sh
+      - name: Prove optional exact parent release task is stably stopped
+        if: inputs.parent_task_arn != '' && inputs.intent_id != 'ORPHAN'
+        id: parent_task
+        env:
+          PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
+        run: |
+          set -euo pipefail
+          cluster=watchdog-bms-prod
+          stage=prod
+          family=watchdog-bms-release-task
+          if [ "$DEPLOY_ENV" = uat ]; then
+            cluster=watchdog-bms-uat
+            stage=uat
+            family=watchdog-bms-uat-release-task
+          fi
+          read_stopped() {
+            local state
+            state="$(aws ecs describe-tasks --cluster "$cluster" --tasks "$PARENT_TASK_ARN" --output json)"
+            jq -e --arg task "$PARENT_TASK_ARN" --arg family "$family" --arg stage "$stage" \
+              --arg region "$AWS_REGION" --arg account "$AWS_ACCOUNT_ID" '
+              (.failures | length) == 0
+              and (.tasks | length) == 1
+              and .tasks[0].taskArn == $task
+              and .tasks[0].lastStatus == "STOPPED"
+              and .tasks[0].desiredStatus == "STOPPED"
+              and .tasks[0].startedBy == ("watchdog-bms-" + $stage + "-release")
+              and .tasks[0].group == ("family:" + $family)
+              and (.tasks[0].taskDefinitionArn | test("^arn:aws:ecs:" + $region + ":" + $account + ":task-definition/" + $family + ":[1-9][0-9]*$"))
+              and (.tasks[0].stoppedAt | type == "string" and length > 0)
+            ' <<< "$state" >/dev/null
+            jq -c --arg task "$PARENT_TASK_ARN" '
+              .tasks[0] | {
+                taskArn:$task,taskDefinitionArn,lastStatus,desiredStatus,stoppedAt,
+                stopCode:(.stopCode // null),stoppedReason:(.stoppedReason // null),startedBy,group
+              }
+            ' <<< "$state"
+          }
+          first="$(read_stopped)"
+          sleep 1
+          second="$(read_stopped)"
+          test "$first" = "$second"
+          echo "evidence=$second" >> "$GITHUB_OUTPUT"
+      - name: Log in to ECR
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build fixed recovery executor without deploying an application service
+        id: recovery-image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: local
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:${{ inputs.environment }}-recovery-task-${{ inputs.recovery_ref }}
+          labels: org.opencontainers.image.revision=${{ inputs.recovery_ref }}
+          cache-from: type=gha,scope=recovery-task-api
+          cache-to: type=gha,mode=max,scope=recovery-task-api,ignore-error=true
+      - name: Sign and verify the fixed recovery executor
+        id: executor
+        env:
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
+          RECOVERY_DIGEST: ${{ steps.recovery-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$RECOVERY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          recovery_image="$ECR_REGISTRY/watchdog-bms-api@$RECOVERY_DIGEST"
+          cosign sign --yes "$recovery_image"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/recover-release-intent.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$recovery_image" >/dev/null
+          docker pull --platform linux/amd64 "$recovery_image"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$recovery_image")" = "$RECOVERY_REF"
+          echo "recovery_image=$recovery_image" >> "$GITHUB_OUTPUT"
+      - name: Resolve exact SSM and network before-state
+        id: state
+        env:
+          SERVICE_NAME: ${{ inputs.service_name }}
+          SSM_PARAMETER: ${{ inputs.ssm_parameter_name }}
+        run: |
+          set -euo pipefail
+          cluster=watchdog-bms-prod
+          resource_prefix=watchdog-bms-prod
+          [ "$DEPLOY_ENV" = uat ] && { cluster=watchdog-bms-uat; resource_prefix=watchdog-bms-uat; }
+          expected=""
+          observed=""
+          network=''
+          if [ "${{ inputs.intent_id }}" != PRE_INTENT ]; then
+            expected="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${cluster}/${SERVICE_NAME}"
+            error_file="$RUNNER_TEMP/recovery-ssm.err"
+            if observed="$(aws ssm get-parameter --name "$SSM_PARAMETER" --query Parameter.Value --output text 2>"$error_file")"; then
+              test "$observed" = "$expected" || { echo "ERROR: SSM points to another service" >&2; exit 1; }
+            elif grep -q ParameterNotFound "$error_file"; then
+              observed=MISSING
+            else
+              cat "$error_file" >&2
+              exit 1
+            fi
+            service_error="$RUNNER_TEMP/recovery-service.err"
+            if ! service_state="$(aws ecs describe-express-gateway-service --service-arn "$expected" --output json 2>"$service_error")"; then
+              if grep -q ServiceNotFoundException "$service_error"; then
+                test "$observed" = MISSING || { echo "ERROR: absent service still has an SSM identity" >&2; exit 1; }
+                network="$(jq -cn --arg serviceArn "$expected" '{serviceArn:$serviceArn,serviceAbsent:true}')"
+                echo "expected_service_arn=$expected" >> "$GITHUB_OUTPUT"
+                echo "observed_ssm=$observed" >> "$GITHUB_OUTPUT"
+                echo "network=$network" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              cat "$service_error" >&2
+              exit 1
+            fi
+            jq -e '.service.status.statusCode == "ACTIVE" and (.service.activeConfigurations | length) == 1' \
+              <<< "$service_state" >/dev/null
+            active_sgs="$(jq -c '.service.activeConfigurations[0].networkConfiguration.securityGroups' <<< "$service_state")"
+            test "$(jq 'length' <<< "$active_sgs")" -ge 1
+            test "$(jq 'length' <<< "$active_sgs")" -le 2
+            group_details="$(aws ec2 describe-security-groups --group-ids $(jq -r '.[]' <<< "$active_sgs") --output json)"
+            test "$(jq '[.SecurityGroups[].VpcId] | unique | length' <<< "$group_details")" -eq 1
+            requested_group_name="${resource_prefix}-app-egress-sg"
+            [[ "$SERVICE_NAME" == *ai-gateway* ]] && requested_group_name="${resource_prefix}-ai-egress-sg"
+            requested_sg="$(jq -r --arg name "$requested_group_name" '[.SecurityGroups[] | select(.GroupName == $name) | .GroupId] | if length == 1 then .[0] else "" end' <<< "$group_details")"
+            [[ "$requested_sg" =~ ^sg-[0-9a-f]+$ ]]
+            managed_sg="$(jq -r --arg description "Security group for ECS service: ${expected}" \
+              '[.SecurityGroups[] | select(.Description == $description) | .GroupId] | if length == 1 then .[0] else "" end' <<< "$group_details")"
+            managed_description=null
+            managed_json=null
+            if [ "$(jq 'length' <<< "$active_sgs")" -eq 2 ]; then
+              [[ "$managed_sg" =~ ^sg-[0-9a-f]+$ ]]
+              test "$managed_sg" != "$requested_sg"
+              managed_description="Security group for ECS service: ${expected}"
+              managed_json="$(jq -Rn --arg value "$managed_sg" '$value')"
+            else
+              test -z "$managed_sg"
+            fi
+            network="$(jq -cn --arg serviceArn "$expected" --argjson activeSecurityGroups "$(jq -c 'sort' <<< "$active_sgs")" \
+              --arg requestedSecurityGroup "$requested_sg" --argjson managedSecurityGroup "$managed_json" \
+              --arg managedDescription "$managed_description" \
+              '{serviceArn:$serviceArn,activeSecurityGroups:$activeSecurityGroups,requestedSecurityGroup:$requestedSecurityGroup,
+                managedSecurityGroup:$managedSecurityGroup,managedDescription:(if $managedSecurityGroup == null then null else $managedDescription end)}')"
+          fi
+          echo "expected_service_arn=$expected" >> "$GITHUB_OUTPUT"
+          echo "observed_ssm=$observed" >> "$GITHUB_OUTPUT"
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+      - name: Derive orphan evidence only from immutable failed tasks
+        if: inputs.intent_id == 'ORPHAN'
+        id: orphan
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          PARENT_ID: ${{ inputs.parent_operation_id }}
+          SERVICE_NAME: ${{ inputs.service_name }}
+          SSM_PARAMETER: ${{ inputs.ssm_parameter_name }}
+          PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
+          INTENT_TASK_ARN: ${{ inputs.intent_task_arn }}
+          BINDER_TASK_ARN: ${{ inputs.binder_task_arn }}
+        run: |
+          set -euo pipefail
+          cluster=watchdog-bms-prod
+          [ "$DEPLOY_ENV" = uat ] && cluster=watchdog-bms-uat
+          parent_task_id="${PARENT_TASK_ARN##*/}"
+          intent_task_id="${INTENT_TASK_ARN##*/}"
+          binder_task_id="${BINDER_TASK_ARN##*/}"
+          for task_id in "$parent_task_id" "$intent_task_id" "$binder_task_id"; do
+            [[ "$task_id" =~ ^([0-9a-f]{32}|[0-9a-f-]{36})$ ]]
+          done
+          tasks="$(aws ecs describe-tasks --cluster "$cluster" \
+            --tasks "$parent_task_id" "$intent_task_id" "$binder_task_id" --output json)"
+          evidence_kind=RETAINED_ECS_TASK
+          reviewed_evidence=''
+          reviewed_evidence_file=''
+          reviewed_evidence_sha256=''
+          started_by="watchdog-bms-prod-release"
+          [ "$DEPLOY_ENV" = uat ] && started_by="watchdog-bms-uat-release"
+          task_shape() {
+            jq -e --arg name "$2" --arg startedBy "$started_by" --argjson exitCode "$3" '
+              .lastStatus == "STOPPED" and .startedBy == $startedBy
+              and (.containers | length) == 1 and .containers[0].name == $name
+              and .containers[0].exitCode == $exitCode
+              and ((.enableExecuteCommand // false) == false)
+              and ((.overrides.taskRoleArn // "") == "")
+              and ((.overrides.executionRoleArn // "") == "")
+              and all(.overrides.containerOverrides[]?;
+                .name == $name
+                and ((.command // []) | length) == 0
+                and ((.environment // []) | length) == 0
+                and ((.environmentFiles // []) | length) == 0)
+            ' <<< "$1" >/dev/null
+          }
+          if jq -e '(.failures | length) == 0 and (.tasks | length) == 3' <<< "$tasks" >/dev/null; then
+            task() { jq -ce --arg arn "$1" '.tasks[] | select(.taskArn == $arn)' <<< "$tasks"; }
+            parent_task="$(task "$PARENT_TASK_ARN")"
+            intent_task="$(task "$INTENT_TASK_ARN")"
+            binder_task="$(task "$BINDER_TASK_ARN")"
+            task_shape "$parent_task" release 0
+            task_shape "$intent_task" release-intent 75
+            task_shape "$binder_task" release-bind 75
+            parent_def_arn="$(jq -r '.taskDefinitionArn' <<< "$parent_task")"
+            intent_def_arn="$(jq -r '.taskDefinitionArn' <<< "$intent_task")"
+            binder_def_arn="$(jq -r '.taskDefinitionArn' <<< "$binder_task")"
+            parent_started="$(jq -r '.startedAt' <<< "$parent_task")"
+            parent_stopped="$(jq -r '.stoppedAt' <<< "$parent_task")"
+            intent_started="$(jq -r '.startedAt' <<< "$intent_task")"
+            intent_stopped="$(jq -r '.stoppedAt' <<< "$intent_task")"
+            binder_started="$(jq -r '.startedAt' <<< "$binder_task")"
+            binder_stopped="$(jq -r '.stoppedAt' <<< "$binder_task")"
+          elif jq -e --arg parent "$parent_task_id" --arg intent "$intent_task_id" --arg binder "$binder_task_id" '
+            .tasks == [] and (.failures | length) == 3
+            and ([.failures[] | {taskId:(.arn | split("/")[-1]),reason}] | sort_by(.taskId)) ==
+              ([{taskId:$parent,reason:"MISSING"},{taskId:$intent,reason:"MISSING"},{taskId:$binder,reason:"MISSING"}] | sort_by(.taskId))
+          ' <<< "$tasks" >/dev/null; then
+            test "$DEPLOY_ENV" = uat || { echo "ERROR: expired-task evidence is UAT-only" >&2; exit 1; }
+            case "$PARENT_ID:$SERVICE_NAME" in
+              bf131086-6055-4143-a77c-579bc7d58b57:watchdog-bms-uat-ai-gateway)
+                reviewed_evidence_file=infra/uat/recovery-evidence/bf131086-6055-4143-a77c-579bc7d58b57.json
+                reviewed_evidence_sha256=f152c3da1b7d6cb54d1d51b6714f8028fb2c43f8dd324efbc829142906fc7cfb
+                ;;
+              *) echo "ERROR: no reviewed expired-task evidence matches this UAT parent/service" >&2; exit 1 ;;
+            esac
+            test "$(sha256sum "$reviewed_evidence_file" | awk '{print $1}')" = "$reviewed_evidence_sha256"
+            reviewed_evidence="$(< "$reviewed_evidence_file")"
+            jq -e --arg parent "$PARENT_ID" --arg release "$RELEASE_REF" --arg service "$SERVICE_NAME" \
+              --arg ssm "$SSM_PARAMETER" --arg parentTask "$PARENT_TASK_ARN" \
+              --arg intentTask "$INTENT_TASK_ARN" --arg binderTask "$BINDER_TASK_ARN" '
+              (keys | sort) == ["auditMetadata","deploymentCreatedAt","environment","evidenceKind","githubRunId",
+                "intentId","logGroup","parentOperationId","releaseRef","schemaVersion","serviceName",
+                "ssmParameterName","tasks"]
+              and .schemaVersion == 1 and .evidenceKind == "REVIEWED_EXPIRED_ECS_TASK" and .environment == "uat"
+              and .parentOperationId == $parent and .releaseRef == $release and .serviceName == $service
+              and .ssmParameterName == $ssm and .tasks.parent.taskArn == $parentTask
+              and .tasks.intent.taskArn == $intentTask and .tasks.binder.taskArn == $binderTask
+              and (.githubRunId | test("^[1-9][0-9]*$"))
+              and (.intentId | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+              and (.deploymentCreatedAt | type == "string" and length > 0)
+              and (.tasks | keys | sort) == ["binder","intent","parent"]
+              and all(.tasks[];
+                (keys | sort) == ["expectedExitCode","logMessage","logStream","logTimestamp","startedAt","stoppedAt",
+                  "taskArn","taskDefinitionArn","taskDefinitionRegisteredAt","taskDefinitionRegisteredBy"]
+                and (.taskDefinitionArn | test("^arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-uat-release-task:[1-9][0-9]*$"))
+                and (.taskDefinitionRegisteredAt | type == "string" and length > 0)
+                and (.startedAt | type == "string" and length > 0) and (.stoppedAt | type == "string" and length > 0)
+                and (.logTimestamp | type == "number") and (.logMessage | type == "string" and length > 0))
+              and .tasks.parent.expectedExitCode == 0 and .tasks.intent.expectedExitCode == 75
+              and .tasks.binder.expectedExitCode == 75
+              and (.auditMetadata | keys) == ["cloudTrailRunTaskEvents"]
+              and (.auditMetadata.cloudTrailRunTaskEvents | keys | sort) == ["binder","intent","parent"]
+              and all(.auditMetadata.cloudTrailRunTaskEvents[];
+                (keys | sort) == ["eventId","eventTime","requestOverridesPresent","roleSessionArn"]
+                and (.eventId | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))
+                and (.eventTime | type == "string" and length > 0) and .requestOverridesPresent == false)
+              and .auditMetadata.cloudTrailRunTaskEvents.parent.roleSessionArn == .tasks.parent.taskDefinitionRegisteredBy
+              and .auditMetadata.cloudTrailRunTaskEvents.intent.roleSessionArn == .tasks.intent.taskDefinitionRegisteredBy
+              and .auditMetadata.cloudTrailRunTaskEvents.binder.roleSessionArn == .tasks.binder.taskDefinitionRegisteredBy
+            ' <<< "$reviewed_evidence" >/dev/null
+            evidence_kind=REVIEWED_EXPIRED_ECS_TASK
+            parent_def_arn="$(jq -r '.tasks.parent.taskDefinitionArn' <<< "$reviewed_evidence")"
+            intent_def_arn="$(jq -r '.tasks.intent.taskDefinitionArn' <<< "$reviewed_evidence")"
+            binder_def_arn="$(jq -r '.tasks.binder.taskDefinitionArn' <<< "$reviewed_evidence")"
+            parent_started="$(jq -r '.tasks.parent.startedAt' <<< "$reviewed_evidence")"
+            parent_stopped="$(jq -r '.tasks.parent.stoppedAt' <<< "$reviewed_evidence")"
+            intent_started="$(jq -r '.tasks.intent.startedAt' <<< "$reviewed_evidence")"
+            intent_stopped="$(jq -r '.tasks.intent.stoppedAt' <<< "$reviewed_evidence")"
+            binder_started="$(jq -r '.tasks.binder.startedAt' <<< "$reviewed_evidence")"
+            binder_stopped="$(jq -r '.tasks.binder.stoppedAt' <<< "$reviewed_evidence")"
+            epoch_ms() { date -u -d "$1" +%s%3N; }
+            parent_started_ms="$(epoch_ms "$parent_started")"
+            parent_stopped_ms="$(epoch_ms "$parent_stopped")"
+            intent_started_ms="$(epoch_ms "$intent_started")"
+            intent_stopped_ms="$(epoch_ms "$intent_stopped")"
+            binder_started_ms="$(epoch_ms "$binder_started")"
+            binder_stopped_ms="$(epoch_ms "$binder_stopped")"
+            test "$parent_started_ms" -lt "$parent_stopped_ms"
+            test "$parent_stopped_ms" -lt "$intent_started_ms"
+            test "$intent_started_ms" -lt "$intent_stopped_ms"
+            test "$intent_stopped_ms" -lt "$binder_started_ms"
+            test "$binder_started_ms" -lt "$binder_stopped_ms"
+            test "$((binder_stopped_ms - parent_started_ms))" -le 1800000
+            for role in parent intent binder; do
+              registered_ms="$(epoch_ms "$(jq -r --arg role "$role" '.tasks[$role].taskDefinitionRegisteredAt' <<< "$reviewed_evidence")")"
+              cloudtrail_ms="$(epoch_ms "$(jq -r --arg role "$role" '.auditMetadata.cloudTrailRunTaskEvents[$role].eventTime' <<< "$reviewed_evidence")")"
+              started_ms="$(epoch_ms "$(jq -r --arg role "$role" '.tasks[$role].startedAt' <<< "$reviewed_evidence")")"
+              stopped_ms="$(epoch_ms "$(jq -r --arg role "$role" '.tasks[$role].stoppedAt' <<< "$reviewed_evidence")")"
+              log_ms="$(jq -r --arg role "$role" '.tasks[$role].logTimestamp' <<< "$reviewed_evidence")"
+              test "$registered_ms" -le "$cloudtrail_ms"
+              test "$cloudtrail_ms" -le "$started_ms"
+              test "$log_ms" -ge "$started_ms"
+              test "$log_ms" -le "$stopped_ms"
+            done
+          else
+            echo "ERROR: historical tasks must be either all retained or all exact MISSING" >&2
+            exit 1
+          fi
+          parent_def="$(aws ecs describe-task-definition --task-definition "$parent_def_arn" --output json)"
+          intent_def="$(aws ecs describe-task-definition --task-definition "$intent_def_arn" --output json)"
+          binder_def="$(aws ecs describe-task-definition --task-definition "$binder_def_arn" --output json)"
+          execution_role="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole"
+          task_role="arn:aws:iam::${AWS_ACCOUNT_ID}:role/watchdog-bms-release-task-role"
+          log_group=/ecs/watchdog-bms-release-task
+          if [ "$DEPLOY_ENV" = uat ]; then
+            execution_role="arn:aws:iam::${AWS_ACCOUNT_ID}:role/watchdog-bms-uat-ecs-execution-role"
+            task_role="arn:aws:iam::${AWS_ACCOUNT_ID}:role/watchdog-bms-uat-release-task-role"
+            log_group=/ecs/watchdog-bms-uat-release-task
+          fi
+          database_secret="$(jq -r '.taskDefinition.containerDefinitions[0].secrets
+            | if length == 1 and .[0].name == "DATABASE_URL" then .[0].valueFrom else "" end' <<< "$parent_def")"
+          [[ "$database_secret" =~ ^arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:watchdog-bms/${DEPLOY_ENV}/database-url-[A-Za-z0-9/_+=.@-]+$ ]]
+          validate_definition() {
+            jq -e --arg name "$2" --arg executionRole "$execution_role" --arg taskRole "$task_role" \
+              --arg databaseSecret "$database_secret" --arg logGroup "$log_group" --arg region "$AWS_REGION" '
+              (.taskDefinition.containerDefinitions | length) == 1
+              and .taskDefinition.containerDefinitions[0].name == $name
+              and .taskDefinition.containerDefinitions[0].user == "node"
+              and .taskDefinition.containerDefinitions[0].workingDirectory == "/app/apps/api"
+              and .taskDefinition.containerDefinitions[0].essential == true
+              and .taskDefinition.containerDefinitions[0].command == ["/bin/sh","-lc","./node_modules/.bin/tsx prisma/run-exclusive-release-operation.ts"]
+              and ((.taskDefinition.containerDefinitions[0].entryPoint // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].environmentFiles // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].mountPoints // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].volumesFrom // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].repositoryCredentials // null) == null)
+              and ((.taskDefinition.containerDefinitions[0].healthCheck // null) == null)
+              and ((.taskDefinition.containerDefinitions[0].linuxParameters // null) == null)
+              and ((.taskDefinition.containerDefinitions[0].extraHosts // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].dnsServers // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].dnsSearchDomains // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].dockerSecurityOptions // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].credentialSpecs // []) | length) == 0
+              and ((.taskDefinition.containerDefinitions[0].systemControls // []) | length) == 0
+              and .taskDefinition.containerDefinitions[0].secrets == [{name:"DATABASE_URL",valueFrom:$databaseSecret}]
+              and .taskDefinition.containerDefinitions[0].logConfiguration.logDriver == "awslogs"
+              and .taskDefinition.containerDefinitions[0].logConfiguration.options == {
+                "awslogs-group":$logGroup,"awslogs-region":$region,"awslogs-stream-prefix":$name
+              }
+              and ((.taskDefinition.containerDefinitions[0].logConfiguration.secretOptions // []) | length) == 0
+              and ((.taskDefinition.volumes // []) | length) == 0
+              and ((.taskDefinition.proxyConfiguration // null) == null)
+              and .taskDefinition.networkMode == "awsvpc"
+              and (.taskDefinition.requiresCompatibilities | index("FARGATE")) != null
+              and .taskDefinition.executionRoleArn == $executionRole
+              and .taskDefinition.taskRoleArn == $taskRole
+            ' <<< "$1" >/dev/null
+          }
+          validate_definition "$parent_def" release
+          validate_definition "$intent_def" release-intent
+          validate_definition "$binder_def" release-bind
+          if [ "$evidence_kind" = REVIEWED_EXPIRED_ECS_TASK ]; then
+            test "$(jq -r '.logGroup' <<< "$reviewed_evidence")" = "$log_group"
+            validate_reviewed_registration() {
+              expected_arn="$(jq -r --arg role "$2" '.tasks[$role].taskDefinitionArn' <<< "$reviewed_evidence")"
+              expected_registered_at="$(jq -r --arg role "$2" '.tasks[$role].taskDefinitionRegisteredAt' <<< "$reviewed_evidence")"
+              expected_registered_by="$(jq -r --arg role "$2" '.tasks[$role].taskDefinitionRegisteredBy' <<< "$reviewed_evidence")"
+              test "$(jq -r '.taskDefinition.taskDefinitionArn' <<< "$1")" = "$expected_arn"
+              test "$(jq -r '.taskDefinition.registeredBy' <<< "$1")" = "$expected_registered_by"
+              actual_registered_at="$(jq -r '.taskDefinition.registeredAt' <<< "$1")"
+              test "$(date -u -d "$actual_registered_at" +%s%3N)" = "$(date -u -d "$expected_registered_at" +%s%3N)"
+            }
+            validate_reviewed_registration "$parent_def" parent
+            validate_reviewed_registration "$intent_def" intent
+            validate_reviewed_registration "$binder_def" binder
+            validate_reviewed_log() {
+              stream="$(jq -r --arg role "$1" '.tasks[$role].logStream' <<< "$reviewed_evidence")"
+              message="$(jq -r --arg role "$1" '.tasks[$role].logMessage' <<< "$reviewed_evidence")"
+              timestamp="$(jq -r --arg role "$1" '.tasks[$role].logTimestamp' <<< "$reviewed_evidence")"
+              events="$(aws logs get-log-events --log-group-name "$log_group" --log-stream-name "$stream" \
+                --start-time "$timestamp" --end-time "$((timestamp + 1))" --limit 10 --start-from-head --no-paginate --output json)"
+              jq -e --arg message "$message" --argjson timestamp "$timestamp" '
+                [.events[] | {message,timestamp}] == [{message:$message,timestamp:$timestamp}]
+              ' <<< "$events" >/dev/null
+            }
+            validate_reviewed_log parent
+            validate_reviewed_log intent
+            validate_reviewed_log binder
+          fi
+          environment() {
+            jq -ce '
+              .taskDefinition.containerDefinitions[0].environment as $environment
+              | if ($environment | length) != ($environment | map(.name) | unique | length)
+                then error("duplicate historical task environment name")
+                else $environment | map({key:.name,value:.value}) | from_entries end
+            ' <<< "$1"
+          }
+          parent_env="$(environment "$parent_def")"
+          intent_env="$(environment "$intent_def")"
+          binder_env="$(environment "$binder_def")"
+          common_keys='["APP_ENV","AWS_REGION","DEPLOY_ENVIRONMENT","GIT_SHA","NODE_ENV","RELEASE_CONTROLLER_KIND","RELEASE_GITHUB_ACTOR","RELEASE_GITHUB_ACTOR_ID","RELEASE_GITHUB_REPOSITORY","RELEASE_GITHUB_RUN_ATTEMPT","RELEASE_GITHUB_RUN_ID","RELEASE_GITHUB_WORKFLOW_REF","RELEASE_OPERATION_MODE","RELEASE_SOURCE_BRANCH"]'
+          parent_keys="$(jq -cn --argjson common "$common_keys" '$common + ["RELEASE_DEPLOY_TARGET","RELEASE_OPERATION_COMMAND","RELEASE_OPERATION_ID"] | sort')"
+          intent_keys="$(jq -cn --argjson common "$common_keys" '$common + ["RELEASE_MUTATION_INTENT_ID","RELEASE_MUTATION_INTENT_JSON","RELEASE_PARENT_OPERATION_ID"] | sort')"
+          binder_keys="$(jq -cn --argjson common "$common_keys" '$common + ["RELEASE_MUTATION_INTENT_ID","RELEASE_OPERATION_DEPLOYMENT_MANIFEST","RELEASE_PARENT_OPERATION_ID"] | sort')"
+          test "$(jq -c 'keys | sort' <<< "$parent_env")" = "$parent_keys"
+          test "$(jq -c 'keys | sort' <<< "$intent_env")" = "$intent_keys"
+          test "$(jq -c 'keys | sort' <<< "$binder_env")" = "$binder_keys"
+          image="$(jq -r '.taskDefinition.containerDefinitions[0].image' <<< "$parent_def")"
+          [[ "$image" =~ ^${ECR_REGISTRY}/watchdog-bms-api@sha256:[0-9a-f]{64}$ ]]
+          test "$(jq -r '.taskDefinition.containerDefinitions[0].image' <<< "$intent_def")" = "$image"
+          test "$(jq -r '.taskDefinition.containerDefinitions[0].image' <<< "$binder_def")" = "$image"
+          deploy_workflow=deploy-production.yml
+          source_branch=main
+          [ "$DEPLOY_ENV" = uat ] && deploy_workflow=deploy-uat.yml
+          [ "$DEPLOY_ENV" = uat ] && source_branch=develop
+          expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/${deploy_workflow}@refs/heads/main"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${deploy_workflow}@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$image" >/dev/null
+          docker pull --platform linux/amd64 "$image" >/dev/null
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$RELEASE_REF"
+          for env_json in "$parent_env" "$intent_env" "$binder_env"; do
+            jq -e --arg environment "$DEPLOY_ENV" --arg region "$AWS_REGION" --arg sha "$RELEASE_REF" \
+              --arg branch "$source_branch" --arg repository "$GITHUB_REPOSITORY" --arg workflow "$expected_workflow_ref" '
+              .NODE_ENV == "production" and .APP_ENV == "production"
+              and .DEPLOY_ENVIRONMENT == $environment and .AWS_REGION == $region and .GIT_SHA == $sha
+              and .RELEASE_SOURCE_BRANCH == $branch and .RELEASE_CONTROLLER_KIND == "GITHUB_ACTIONS"
+              and .RELEASE_GITHUB_REPOSITORY == $repository and .RELEASE_GITHUB_WORKFLOW_REF == $workflow
+              and (.RELEASE_GITHUB_RUN_ID | test("^[1-9][0-9]*$"))
+              and (.RELEASE_GITHUB_RUN_ATTEMPT | test("^[1-9][0-9]*$"))
+              and (.RELEASE_GITHUB_ACTOR_ID | test("^[1-9][0-9]*$"))
+              and (.RELEASE_GITHUB_ACTOR | length > 0)
+            ' <<< "$env_json" >/dev/null
+          done
+          test "$(jq -r '.RELEASE_OPERATION_MODE' <<< "$parent_env")" = release
+          test "$(jq -r '.RELEASE_OPERATION_ID' <<< "$parent_env")" = "$PARENT_ID"
+          release_command='set -eu; ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions; echo release-task-complete sha=$GIT_SHA'
+          launch_release_command='set -eu; ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ./node_modules/.bin/tsx prisma/sync-feature-launch-gates.ts --verify-specialist-closed; ./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions; echo release-task-complete sha=$GIT_SHA'
+          jq -e --arg ordinary "$release_command" --arg launch "$launch_release_command" '
+            (.RELEASE_DEPLOY_TARGET == "all" and .RELEASE_OPERATION_COMMAND == $launch)
+            or ((.RELEASE_DEPLOY_TARGET == "ai-gateway" or .RELEASE_DEPLOY_TARGET == "workers")
+              and .RELEASE_OPERATION_COMMAND == $ordinary)
+          ' <<< "$parent_env" >/dev/null
+          test "$(jq -r '.RELEASE_OPERATION_MODE' <<< "$intent_env")" = release-intent
+          test "$(jq -r '.RELEASE_OPERATION_MODE' <<< "$binder_env")" = release-bind
+          test "$(jq -r '.RELEASE_PARENT_OPERATION_ID' <<< "$intent_env")" = "$PARENT_ID"
+          test "$(jq -r '.RELEASE_PARENT_OPERATION_ID' <<< "$binder_env")" = "$PARENT_ID"
+          for env_json in "$parent_env" "$intent_env" "$binder_env"; do
+            test "$(jq -r '.GIT_SHA' <<< "$env_json")" = "$RELEASE_REF"
+          done
+          controller_filter='{sourceBranch:.RELEASE_SOURCE_BRANCH,controllerKind:.RELEASE_CONTROLLER_KIND,
+            githubRunId:.RELEASE_GITHUB_RUN_ID,githubRunAttempt:(.RELEASE_GITHUB_RUN_ATTEMPT|tonumber),
+            githubActor:.RELEASE_GITHUB_ACTOR,githubActorId:.RELEASE_GITHUB_ACTOR_ID,
+            githubWorkflowRef:.RELEASE_GITHUB_WORKFLOW_REF,githubRepository:.RELEASE_GITHUB_REPOSITORY}'
+          controller="$(jq -c "$controller_filter" <<< "$parent_env")"
+          test "$(jq -c "$controller_filter" <<< "$intent_env")" = "$controller"
+          test "$(jq -c "$controller_filter" <<< "$binder_env")" = "$controller"
+          if [ "$evidence_kind" = REVIEWED_EXPIRED_ECS_TASK ]; then
+            test "$(jq -r '.githubRunId' <<< "$controller")" = "$(jq -r '.githubRunId' <<< "$reviewed_evidence")"
+          fi
+          intent_json="$(jq -c '.RELEASE_MUTATION_INTENT_JSON | fromjson' <<< "$intent_env")"
+          intent_id="$(jq -r '.id' <<< "$intent_json")"
+          manifest="$(jq -c '.RELEASE_OPERATION_DEPLOYMENT_MANIFEST | fromjson' <<< "$binder_env")"
+          if [ "$evidence_kind" = REVIEWED_EXPIRED_ECS_TASK ]; then
+            test "$intent_id" = "$(jq -r '.intentId' <<< "$reviewed_evidence")"
+          fi
+          test "$(jq -r '.RELEASE_MUTATION_INTENT_ID' <<< "$intent_env")" = "$intent_id"
+          test "$(jq -r '.RELEASE_MUTATION_INTENT_ID' <<< "$binder_env")" = "$intent_id"
+          parent_target="$(jq -r '.RELEASE_DEPLOY_TARGET' <<< "$parent_env")"
+          service_key="$(jq -r '.serviceKey' <<< "$intent_json")"
+          test "$parent_target" = all || test "$parent_target" = "$service_key"
+          jq -e --arg service "$SERVICE_NAME" --arg ssm "$SSM_PARAMETER" --arg sha "$RELEASE_REF" '
+            .serviceName == $service and .ssmParameterName == $ssm
+            and (.serviceKey == "ai-gateway" or .serviceKey == "workers")
+            and .mutationKind == "UPDATE" and .legacyBootstrapDescriptor != null
+          ' <<< "$intent_json" >/dev/null
+          jq -e --arg service "$SERVICE_NAME" --arg sha "$RELEASE_REF" --arg intent "$intent_id" '
+            length == 1 and .[0].sourceSha == $sha and .[0].noOp == false
+            and (.[0].serviceArn | endswith("/" + $service))
+          ' <<< "$manifest" >/dev/null
+          deployment_arn="$(jq -r '.[0].deploymentArn' <<< "$manifest")"
+          deployment_created="$(aws ecs describe-service-deployments --service-deployment-arns "$deployment_arn" \
+            --query 'serviceDeployments[0].createdAt' --output text)"
+          if [ "$evidence_kind" = REVIEWED_EXPIRED_ECS_TASK ]; then
+            reviewed_deployment_created="$(jq -r '.deploymentCreatedAt' <<< "$reviewed_evidence")"
+            test "$(date -u -d "$deployment_created" +%s%3N)" = "$(date -u -d "$reviewed_deployment_created" +%s%3N)"
+          fi
+          test "$(date -d "$deployment_created" +%s)" -ge "$(date -d "$intent_stopped" +%s)"
+          test "$(date -d "$deployment_created" +%s)" -le "$(date -d "$binder_started" +%s)"
+          task_evidence="$(jq -cn \
+            --arg parentTaskArn "$PARENT_TASK_ARN" --arg intentTaskArn "$INTENT_TASK_ARN" --arg binderTaskArn "$BINDER_TASK_ARN" \
+            --arg parentTaskDefinitionArn "$parent_def_arn" --arg intentTaskDefinitionArn "$intent_def_arn" --arg binderTaskDefinitionArn "$binder_def_arn" \
+            --arg imageDigest "$image" --arg parentStartedAt "$parent_started" \
+            --arg parentStoppedAt "$parent_stopped" --arg intentStartedAt "$intent_started" \
+            --arg intentStoppedAt "$intent_stopped" --arg binderStartedAt "$binder_started" --arg binderStoppedAt "$binder_stopped" \
+            --arg evidenceKind "$evidence_kind" --argjson originalController "$controller" \
+            '{parentTaskArn:$parentTaskArn,intentTaskArn:$intentTaskArn,binderTaskArn:$binderTaskArn,
+              parentTaskDefinitionArn:$parentTaskDefinitionArn,intentTaskDefinitionArn:$intentTaskDefinitionArn,
+              binderTaskDefinitionArn:$binderTaskDefinitionArn,imageDigest:$imageDigest,
+              parentStartedAt:$parentStartedAt,parentStoppedAt:$parentStoppedAt,
+              intentStartedAt:$intentStartedAt,intentStoppedAt:$intentStoppedAt,
+              binderStartedAt:$binderStartedAt,binderStoppedAt:$binderStoppedAt,
+              originalController:$originalController,evidenceKind:$evidenceKind}')"
+          if [ "$evidence_kind" = REVIEWED_EXPIRED_ECS_TASK ]; then
+            task_evidence="$(jq -c --arg evidenceKind "$evidence_kind" \
+              --arg manifestPath "$reviewed_evidence_file" --arg manifestSha256 "$reviewed_evidence_sha256" \
+              --argjson auditMetadata "$(jq -c '.auditMetadata' <<< "$reviewed_evidence")" \
+              '. + {evidenceKind:$evidenceKind,reviewedEvidenceManifestPath:$manifestPath,
+                reviewedEvidenceManifestSha256:$manifestSha256,reviewedAuditMetadata:$auditMetadata}' <<< "$task_evidence")"
+          fi
+          echo "intent_id=$intent_id" >> "$GITHUB_OUTPUT"
+          echo "intent_json=$intent_json" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "task_evidence=$task_evidence" >> "$GITHUB_OUTPUT"
+      - name: Recover only the exact durable intent
+        id: recover
+        continue-on-error: true
+        env:
+          RELEASE_REF: ${{ inputs.release_ref }}
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
+          RELEASE_PARENT_OPERATION_ID: ${{ inputs.parent_operation_id }}
+          RELEASE_MUTATION_INTENT_ID: ${{ steps.orphan.outputs.intent_id || inputs.intent_id }}
+          RELEASE_RECOVERY_BUILD_RELEASE_ID: ${{ inputs.release_ref }}
+          RELEASE_RECOVERY_VALIDATED_CI_RUN_ID: ${{ steps.validation.outputs.run_id }}
+          RELEASE_RECOVERY_EXPECTED_SERVICE_ARN: ${{ steps.state.outputs.expected_service_arn }}
+          RELEASE_RECOVERY_SSM_PARAMETER_NAME: ${{ inputs.ssm_parameter_name }}
+          RELEASE_RECOVERY_SSM_SERVICE_ARN: ${{ steps.state.outputs.observed_ssm }}
+          RELEASE_RECOVERY_NETWORK_EVIDENCE_JSON: ${{ steps.state.outputs.network }}
+          RELEASE_RECOVERY_PARENT_TASK_EVIDENCE_JSON: ${{ steps.parent_task.outputs.evidence }}
+          RELEASE_ORPHAN_MUTATION_INTENT_JSON: ${{ steps.orphan.outputs.intent_json }}
+          RELEASE_ORPHAN_DEPLOYMENT_MANIFEST_JSON: ${{ steps.orphan.outputs.manifest }}
+          RELEASE_ORPHAN_TASK_EVIDENCE_JSON: ${{ steps.orphan.outputs.task_evidence }}
+        run: |
+          set +e
+          recovery_mode=release-intent-recover
+          [ "${{ inputs.intent_id }}" = PRE_INTENT ] && recovery_mode=release-pre-intent-recover
+          [ "${{ inputs.intent_id }}" = ORPHAN ] && recovery_mode=release-orphan-intent-recover
+          bash infra/prod-ecs-express/run-release-task.sh \
+            "${{ steps.executor.outputs.recovery_image }}" "$RECOVERY_REF" "$recovery_mode"
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+      - name: Require a proved recovery outcome
+        env:
+          RECOVERY_CODE: ${{ steps.recover.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          case "$RECOVERY_CODE" in
+            0) echo "Exact recovery completed; SSM cache is exact when an intent was recovered." ;;
+            78) echo "Two stable reads proved no mutation; no SSM value was written." ;;
+            *) echo "ERROR: recovery remains UNKNOWN; no cache repair or generic reconciliation is allowed" >&2; exit 1 ;;
+          esac
+          echo "PRE_INTENT is accepted only when no api-web intent exists, every other intent is resolved, and two stable task-role reads prove the incoming SHA is absent."
+          echo "The task terminalizes the parent only after every intent and required cleanup is resolved."
+          echo "If another OPEN intent remains, recover that exact intent next; never run generic reconciliation while an intent is open."

@@ -1,0 +1,330 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-watchdog_bms}
+      POSTGRES_USER: ${POSTGRES_USER:-watchdog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-watchdog_local_password}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-watchdog}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-watchdog_local_secret}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-19000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - minio_data:/data
+
+  minio-create-bucket:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-watchdog-bms-local}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-watchdog}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-watchdog_local_secret}
+    volumes:
+      - ../object-storage-lifecycle.json:/config/object-storage-lifecycle.json:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until mc alias set local http://minio:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"; do
+          sleep 2
+        done
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        mc version enable "local/$$S3_BUCKET"
+        mc ilm rule import "local/$$S3_BUCKET" < /config/object-storage-lifecycle.json
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+      target: local
+    environment:
+      # F1.5.1 — DEPLOY_ENVIRONMENT is the authoritative deployment identity, and every service
+      # that sets APP_ENV must set it (and GIT_SHA) alongside, or an APP_ENV=production run of
+      # this file dies in validateProductionConfig. Enforced by
+      # packages/config/src/deployment-identity-manifest.test.ts.
+      APP_ENV: ${APP_ENV:-local}
+      DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-local}
+      NODE_ENV: ${NODE_ENV:-development}
+      SERVICE_NAME: api
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+      GIT_SHA: ${GIT_SHA:-local}
+      HOST: 0.0.0.0
+      PORT: 3001
+      PUBLIC_BASE_URL: ${API_PUBLIC_BASE_URL:-http://localhost:3001}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-watchdog}:${POSTGRES_PASSWORD:-watchdog_local_password}@postgres:5432/${POSTGRES_DB:-watchdog_bms}?schema=public
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:${MINIO_API_PORT:-19000}
+      S3_REGION: ${S3_REGION:-local}
+      S3_BUCKET: ${S3_BUCKET:-watchdog-bms-local}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-watchdog}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-watchdog_local_secret}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-1mb}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-120}
+      SESSION_REFRESH_MAX_PER_SESSION: ${SESSION_REFRESH_MAX_PER_SESSION:-30}
+      SESSION_REFRESH_WINDOW_SECONDS: ${SESSION_REFRESH_WINDOW_SECONDS:-60}
+      SESSION_REFRESH_REUSE_GRACE_SECONDS: ${SESSION_REFRESH_REUSE_GRACE_SECONDS:-30}
+      PASSWORD_RESET_RESPONSE_MIN_MS: ${PASSWORD_RESET_RESPONSE_MIN_MS:-300}
+      AI_LLM_MAX_PER_COMPANY: ${AI_LLM_MAX_PER_COMPANY:-60}
+      AI_OCR_MAX_PER_COMPANY: ${AI_OCR_MAX_PER_COMPANY:-20}
+      AI_RATE_LIMIT_WINDOW_SECONDS: ${AI_RATE_LIMIT_WINDOW_SECONDS:-60}
+      AI_THB_PER_USD: ${AI_THB_PER_USD:-33}
+      AI_MONTHLY_BUDGET_SATANG: ${AI_MONTHLY_BUDGET_SATANG:-200000}
+      AI_MONTHLY_BUDGET_SATANG_CEILING: ${AI_MONTHLY_BUDGET_SATANG_CEILING:-1000000}
+      CRM_AI_OUTBOUND_ALLOWED_DOMAINS: ${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-localhost,127.0.0.1,mangmeeplus.com,uat.mangmeeplus.com}
+      AI_DATA_RETENTION_DAYS: ${AI_DATA_RETENTION_DAYS:-90}
+      WORKFLOW_WEBHOOK_ALLOWED_HOSTS: ${WORKFLOW_WEBHOOK_ALLOWED_HOSTS:-hooks.example.com}
+      CLAMAV_HOST: ${CLAMAV_HOST:-}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      CLAMAV_TIMEOUT_MS: ${CLAMAV_TIMEOUT_MS:-5000}
+      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai,typhoon}
+      APPROVED_AI_MODEL_IDS: ${APPROVED_AI_MODEL_IDS:-global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-4-5-20251001-v1:0,apac.anthropic.claude-3-haiku-20240307-v1:0}
+      APPROVED_AI_REGIONS: ${APPROVED_AI_REGIONS:-ap-southeast-1}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVED: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-false}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:-}
+      AUTH_PROVIDER: ${AUTH_PROVIDER:-dev}
+      DEV_AUTH_ENABLED: ${DEV_AUTH_ENABLED:-true}
+      DEV_AUTH_SECRET: ${DEV_AUTH_SECRET:-local-dev-secret-change-me}
+      LINE_LOGIN_CHANNEL_ID: ${LINE_LOGIN_CHANNEL_ID:-}
+      LINE_LOGIN_CHANNEL_SECRET: ${LINE_LOGIN_CHANNEL_SECRET:-}
+      LINE_LIFF_ID: ${LINE_LIFF_ID:-}
+      LINE_MESSAGING_CHANNEL_ID: ${LINE_MESSAGING_CHANNEL_ID:-}
+      LINE_MESSAGING_CHANNEL_SECRET: ${LINE_MESSAGING_CHANNEL_SECRET:-}
+      LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: ${LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:-}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      AI_GATEWAY_INTERNAL_URL: http://ai-gateway:3002/v1
+      AI_GATEWAY_INTERNAL_SECRET: ${AI_GATEWAY_INTERNAL_SECRET:-local-ai-internal-secret}
+      AI_ACTOR_DELEGATION_SIGNING_KEY: ${AI_ACTOR_DELEGATION_SIGNING_KEY:-3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012}
+      WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN:-local-worker-token}
+      WATCHDOG_JWT_ISSUER: ${WATCHDOG_JWT_ISSUER:-http://localhost:3001}
+      WATCHDOG_JWT_AUDIENCE: ${WATCHDOG_JWT_AUDIENCE:-watchdog-bms-local}
+      WATCHDOG_JWT_SECRET_ARN: ${WATCHDOG_JWT_SECRET_ARN:-local-jwt-secret-change-me}
+      # ponytail: fixed local-only key (zod requires 64 hex); real key comes from .env / secrets in prod
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      PDPA_PSEUDONYMIZATION_KEY: ${PDPA_PSEUDONYMIZATION_KEY:-abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789}
+      PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS: ${PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      REQUIRE_COMPANY_CONTEXT: ${REQUIRE_COMPANY_CONTEXT:-true}
+      COMPANY_CONTEXT_HEADER: ${COMPANY_CONTEXT_HEADER:-X-Company-Id}
+      PERMISSION_CACHE_TTL_SECONDS: ${PERMISSION_CACHE_TTL_SECONDS:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_REDACTION_ENABLED: ${LOG_REDACTION_ENABLED:-true}
+      REQUEST_LOG_ENABLED: ${REQUEST_LOG_ENABLED:-true}
+      SQL_LOG_ENABLED: ${SQL_LOG_ENABLED:-false}
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      AUDIT_SINK: ${AUDIT_SINK:-database}
+    ports:
+      - "127.0.0.1:${API_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ai-gateway:
+    build:
+      context: ../..
+      dockerfile: apps/ai-gateway/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-local}
+      NODE_ENV: ${NODE_ENV:-development}
+      SERVICE_NAME: ai-gateway
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+      GIT_SHA: ${GIT_SHA:-local}
+      HOST: 0.0.0.0
+      PORT: 3002
+      PUBLIC_BASE_URL: ${AI_GATEWAY_PUBLIC_BASE_URL:-http://localhost:3002}
+      API_BASE_URL: http://api:3001/v1
+      REDIS_URL: redis://redis:6379
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      HTTP_BODY_LIMIT: ${HTTP_BODY_LIMIT:-1mb}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-disabled}
+      APPROVED_AI_PROVIDERS: ${APPROVED_AI_PROVIDERS:-bedrock,openai,typhoon}
+      APPROVED_AI_MODEL_IDS: ${APPROVED_AI_MODEL_IDS:-global.anthropic.claude-sonnet-4-6,global.anthropic.claude-haiku-4-5-20251001-v1:0,apac.anthropic.claude-3-haiku-20240307-v1:0}
+      APPROVED_AI_REGIONS: ${APPROVED_AI_REGIONS:-ap-southeast-1}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVED: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVED:-false}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_PROCESSING_REGION: ${OPENAI_PROCESSING_REGION:-}
+      BEDROCK_REGION: ${BEDROCK_REGION:-ap-southeast-1}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      # Bedrock reads the host's ~/.aws (mounted read-only below) instead of key env vars.
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_CONFIG_FILE: /aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /aws/credentials
+      # …unless the machine has no ~/.aws: with keys in .env the SDK's env provider resolves first,
+      # and empty values simply fall through to the profile above.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      TYPHOON_PROCESSING_REGION: ${TYPHOON_PROCESSING_REGION:-}
+      # Receipt OCR stage 1 (Typhoon reads the image) and stage 2 (chat model maps fields).
+      TYPHOON_OCR_API_KEY: ${TYPHOON_OCR_API_KEY:-}
+      DOCUMENT_AI_MODEL_ID: ${DOCUMENT_AI_MODEL_ID:-}
+      AGENTCORE_REGION: ${AGENTCORE_REGION:-ap-southeast-1}
+      AGENTCORE_MAX_BODY_BYTES: ${AGENTCORE_MAX_BODY_BYTES:-1048576}
+      AGENTCORE_MAX_MESSAGE_CHARS: ${AGENTCORE_MAX_MESSAGE_CHARS:-8000}
+      AGENTCORE_MAX_ATTACHMENTS: ${AGENTCORE_MAX_ATTACHMENTS:-10}
+      AGENTCORE_MAX_CONCURRENT_INVOCATIONS: ${AGENTCORE_MAX_CONCURRENT_INVOCATIONS:-16}
+      AI_GATEWAY_ENABLED: ${AI_GATEWAY_ENABLED:-false}
+      AI_AGENT_REGISTRY_ENABLED: ${AI_AGENT_REGISTRY_ENABLED:-false}
+      AI_TOOL_POLICY_ENFORCED: ${AI_TOOL_POLICY_ENFORCED:-true}
+      AI_TOOL_AUDIT_ENABLED: ${AI_TOOL_AUDIT_ENABLED:-true}
+      AI_FINAL_MUTATION_ENABLED: ${AI_FINAL_MUTATION_ENABLED:-false}
+      AI_PROMPT_LOGGING_ENABLED: ${AI_PROMPT_LOGGING_ENABLED:-false}
+      AI_MAX_TOOL_CALLS: ${AI_MAX_TOOL_CALLS:-8}
+      AI_TOOL_TIMEOUT_MS: ${AI_TOOL_TIMEOUT_MS:-10000}
+      LINE_AI_AGENT_ORCHESTRATION_ENABLED: ${LINE_AI_AGENT_ORCHESTRATION_ENABLED:-false}
+      LINE_AI_AGENT_RUNTIME: ${LINE_AI_AGENT_RUNTIME:-disabled}
+      AI_GATEWAY_INTERNAL_SECRET: ${AI_GATEWAY_INTERNAL_SECRET:-local-ai-internal-secret}
+      ERP_CORE_INTERNAL_URL: http://api:3001/v1
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_REDACTION_ENABLED: ${LOG_REDACTION_ENABLED:-true}
+    volumes:
+      - ${HOME}/.aws:/aws:ro
+    ports:
+      - "127.0.0.1:${AI_GATEWAY_PORT:-3002}:3002"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3002/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  workers:
+    build:
+      context: ../..
+      dockerfile: apps/workers/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-local}
+      NODE_ENV: ${NODE_ENV:-development}
+      SERVICE_NAME: workers
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+      GIT_SHA: ${GIT_SHA:-local}
+      PUBLIC_BASE_URL: ${WORKERS_PUBLIC_BASE_URL:-http://localhost:3003}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-watchdog}:${POSTGRES_PASSWORD:-watchdog_local_password}@postgres:5432/${POSTGRES_DB:-watchdog_bms}?schema=public
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_URL: http://api:3001/v1
+      WORKER_INTERNAL_TOKEN: ${WORKER_INTERNAL_TOKEN:-local-worker-token}
+      LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: ${LINE_MESSAGING_CHANNEL_ACCESS_TOKEN:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:${MINIO_API_PORT:-19000}
+      S3_BUCKET: ${S3_BUCKET:-watchdog-bms-local}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      LOG_REDACTION_ENABLED: ${LOG_REDACTION_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-create-bucket:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        INTERNAL_API_URL: http://api:3001/v1
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001/v1}
+        NEXT_PUBLIC_AI_GATEWAY_BASE_URL: ${NEXT_PUBLIC_AI_GATEWAY_BASE_URL:-http://localhost:3002/v1}
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DEPLOY_ENVIRONMENT: ${DEPLOY_ENVIRONMENT:-local}
+      NODE_ENV: ${NODE_ENV:-development}
+      SERVICE_NAME: web
+      SERVICE_VERSION: ${SERVICE_VERSION:-local}
+      GIT_SHA: ${GIT_SHA:-local}
+      HOST: 0.0.0.0
+      PORT: 3000
+      PUBLIC_BASE_URL: ${WEB_PUBLIC_BASE_URL:-http://localhost:3000}
+      INTERNAL_API_URL: http://api:3001/v1
+      NEXT_PUBLIC_APP_ENV: ${APP_ENV:-local}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001/v1}
+      NEXT_PUBLIC_AI_GATEWAY_BASE_URL: ${NEXT_PUBLIC_AI_GATEWAY_BASE_URL:-http://localhost:3002/v1}
+      # proxy.ts puts this origin in connect-src; without it CSP blocks the browser PUT
+      # to the presigned MinIO URL and every receipt upload dies before /complete.
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:${MINIO_API_PORT:-19000}
+      LINE_LIFF_ID: ${LINE_LIFF_ID:-}
+      LINE_OA_ADD_URL: ${LINE_OA_ADD_URL:-}
+      LINE_OA_QR_IMAGE_URL: ${LINE_OA_QR_IMAGE_URL:-}
+      LINE_ACCOUNT_LINK_URL: ${LINE_ACCOUNT_LINK_URL:-}
+      LINE_ACCOUNT_LINK_QR_IMAGE_URL: ${LINE_ACCOUNT_LINK_QR_IMAGE_URL:-}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+      ai-gateway:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

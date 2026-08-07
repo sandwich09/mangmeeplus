@@ -1,0 +1,25 @@
+-- Drops two ExpenseCategory columns that nothing ever read.
+--
+-- `inputVatDefault` was written by the category UI, stored, and displayed as a badge, but no code
+-- path ever consulted it when creating or reviewing an expense — setting a category to "ขอคืนได้"
+-- changed nothing. `taxCategory` had no UI at all and was NULL in every seed and every write path.
+--
+-- Neither is the column the ledger posts from. `journal.use-case.ts:158` reads
+-- `line.accountHintKey ?? line.taxCategory` from ExpenseRecord/ExpenseLine — same names, different
+-- tables, and those stay untouched. Verified before writing this: `ExpenseCategory` is loaded in
+-- exactly two places, and both use only `{ id, name, companyId }`.
+--
+-- NOT ROLLBACK SAFE, deliberately. A previous build's generated Prisma client selects every column
+-- of the model, so it fails against a table missing them. The build that stopped selecting these
+-- (commit fd9e74fc) MUST be fully deployed before this migration runs. There is no reverse
+-- migration because there is no value to restore: the data was never an input to any decision.
+--
+-- Claimability now belongs to the line-level Tax Code
+-- (`TaxCodeDefinition.claimabilityDefault` -> `snapshot.claimability`), which is what tax sync
+-- reads. The replacement for "a category suggests the tax treatment" is
+-- `ExpenseCategory.defaultTaxCodeDefinitionId`, added separately — pointing at the Tax Code brings
+-- the account and report mappings along with the claimability instead of duplicating one of them.
+--
+-- Idempotent so a re-run or a partially applied deploy heals instead of failing.
+ALTER TABLE "ExpenseCategory" DROP COLUMN IF EXISTS "inputVatDefault";
+ALTER TABLE "ExpenseCategory" DROP COLUMN IF EXISTS "taxCategory";

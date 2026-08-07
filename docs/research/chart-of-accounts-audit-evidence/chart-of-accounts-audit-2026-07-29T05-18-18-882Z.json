@@ -1,0 +1,340 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-29T05:18:18.882Z",
+  "readOnly": true,
+  "conflictSampleLimit": 20,
+  "template": {
+    "key": "TH_SME_COA_V1",
+    "version": 1,
+    "accountsChecksum": "1a92339d4d0d74ce36882a34a616b76b62c0f6567d07f59c4e27a83a708e86eb",
+    "mappingManifestVersion": 1,
+    "mappingManifestChecksum": "5b3f2125011edceec400a11c90dbbf9aaa01183f646357524703d801efb01c58"
+  },
+  "summary": {
+    "companyCount": 4,
+    "scannedCompanyCount": 4,
+    "failedCompanyCount": 0,
+    "templateAppliedCount": 0,
+    "companiesWithConflicts": 1,
+    "companiesWithMissingAccounts": 3,
+    "manualLedgerReadyCount": 0,
+    "automaticPostingReadyCount": 0
+  },
+  "companies": [
+    {
+      "companyId": "cmrqi2gcx0002j9qtq72utehs",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 0,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 0,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "h04_probe",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 1,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 1,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "seed-local-company",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 180,
+        "exact": 158,
+        "missing": 0,
+        "unusedConflicts": 17,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 20,
+        "bySource": {
+          "ExpenseLineAssignment": 2,
+          "TaxAccountRule": 18
+        }
+      },
+      "conflictSamples": [
+        {
+          "code": "1112-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1112-02",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1112-03",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1113-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1113-02",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1113-03",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1114-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1114-02",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1114-03",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "1210-00",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        },
+        {
+          "code": "2120-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        },
+        {
+          "code": "3100-00",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        },
+        {
+          "code": "4100-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        },
+        {
+          "code": "5200-06",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "5310-01",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        },
+        {
+          "code": "5370-03",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh"
+          ]
+        },
+        {
+          "code": "9999-99",
+          "classification": "UNUSED_CONFLICT",
+          "dependencyCount": 0,
+          "dependencies": {},
+          "differingFields": [
+            "nameTh",
+            "reportGroup"
+          ]
+        }
+      ],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 180,
+        "chartConflicts": 17,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 1,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    },
+    {
+      "companyId": "seed-watchdog-system-company",
+      "status": "OK",
+      "coverage": {
+        "chartAccountCount": 0,
+        "exact": 0,
+        "missing": 175,
+        "unusedConflicts": 0,
+        "inUseConflicts": 0
+      },
+      "dependencies": {
+        "total": 0,
+        "bySource": {}
+      },
+      "conflictSamples": [],
+      "conflictSamplesTruncated": false,
+      "readiness": {
+        "chartTemplateApplied": false,
+        "chartTemplateKey": null,
+        "chartTemplateVersion": null,
+        "chartTemplateChecksum": null,
+        "chartTemplateAppliedAt": null,
+        "chartAccountCount": 0,
+        "chartConflicts": 0,
+        "requiredPostingRolesMissing": [
+          "EXPENSE_CLAIM_CONFIRMED",
+          "EXPENSE_CONFIRMED"
+        ],
+        "requiredTaxAccountRolesMissing": [],
+        "taxProfilesNeedingReview": 0,
+        "bankLedgerLinksInvalid": 0,
+        "legacyTaxHeaderMismatches": 0,
+        "sourcePostingErrors": 0,
+        "taxConfigurationRequired": false,
+        "readyForManualLedger": false,
+        "readyForAutomaticPosting": false
+      }
+    }
+  ]
+}

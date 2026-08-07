@@ -1,0 +1,883 @@
+/* Tailwind CSS v4 */
+/* Scan our own source only. Tailwind's automatic source detection walks the whole
+   checkout minus .gitignore, so an un-ignored build artifact (a lane's
+   NEXT_DIST_DIR=.next-e2e-*, for one) is read as text: compressed Turbopack cache
+   bytes become candidates carrying raw control characters, and the stylesheet this
+   file generates then fails to parse — breaking every page, since layout.tsx
+   imports it. */
+@import 'tailwindcss' source(none);
+@source '../app';
+@source '../src';
+
+/* WatchDog design tokens (brand source of truth) */
+@import "../src/common/styles/theme.css";
+
+/* Expose มั่งมี tokens to Tailwind utilities */
+@theme inline {
+  --font-sans: var(--font-family-sans);
+  /* Keep every surface on the brand type stack — map the mono utility to the same
+     family so ID/reference text (font-mono) no longer falls back to a system
+     monospace that looks different from the rest of the UI. */
+  --font-mono: var(--font-family-sans);
+  --color-brand-25: var(--color-brand-25);
+  --color-brand-50: var(--color-brand-50);
+  --color-brand-100: var(--color-brand-100);
+  --color-brand-200: var(--color-brand-200);
+  --color-brand-300: var(--color-brand-300);
+  --color-brand-400: var(--color-brand-400);
+  --color-brand-500: var(--color-brand-500);
+  --color-brand-600: var(--color-brand-600);
+  --color-brand-700: var(--color-brand-700);
+  --color-brand-800: var(--color-brand-800);
+  --color-brand-900: var(--color-brand-900);
+  --color-gold-100: var(--color-gold-100);
+  --color-gold-300: var(--color-gold-300);
+  --color-gold-400: var(--color-gold-400);
+  --color-gold-500: var(--color-gold-500);
+  --color-gold-600: var(--color-gold-600);
+  --color-success-50: var(--color-success-50);
+  --color-success-500: var(--color-success-500);
+  --color-success-600: var(--color-success-600);
+  --color-success-700: var(--color-success-700);
+  --color-warning-50: var(--color-warning-50);
+  --color-warning-100: var(--color-warning-100);
+  --color-warning-500: var(--color-warning-500);
+  --color-warning-600: var(--color-warning-600);
+  --color-warning-700: var(--color-warning-700);
+  --color-error-50: var(--color-error-50);
+  --color-error-500: var(--color-error-500);
+  --color-error-700: var(--color-error-700);
+  --color-blue-light-50: var(--color-blue-light-50);
+  --color-blue-light-500: var(--color-blue-light-500);
+  --color-surface-base: var(--color-surface);
+  --color-surface-muted: var(--color-neutral-surface);
+}
+
+/* Base shell styles using มั่งมี tokens */
+:root {
+  color-scheme: light;
+  --app-header-h: 68px;
+  /* next/font variables (layout.tsx) take priority; token stack is the fallback */
+  --font-family-sans: var(--font-outfit, 'Outfit'), var(--font-plex-thai, 'IBM Plex Sans Thai'),
+    ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-family-sans);
+  background: var(--color-page-bg);
+  color: var(--color-text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--color-gray-50);
+  color: var(--color-gray-800);
+}
+
+.mangmee-shell {
+  min-height: 100dvh;
+  background: var(--color-gray-50);
+  color: var(--color-gray-800);
+}
+
+.mangmee-content {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline: 0;
+  padding: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+  /* Lock the page against horizontal scroll — wide children (tables, etc.) must
+     scroll inside their own container, never push the whole layout sideways. */
+  overflow-x: clip;
+}
+
+@media (min-width: 768px) {
+  .mangmee-content {
+    padding: 1.75rem;
+    padding-bottom: calc(1.75rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 1024px) {
+  .mangmee-content {
+    padding: 2rem 1.75rem;
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  }
+}
+
+.mangmee-page {
+  display: flex;
+  min-width: 0;
+  min-height: calc(100dvh - 112px);
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* Direct children of a page must be allowed to shrink so their own wrapping/scroll
+   handles width instead of forcing the whole page wider than the viewport. */
+.mangmee-page > * {
+  min-width: 0;
+}
+
+.mangmee-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mangmee-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+@media (max-width: 40rem) {
+  .mangmee-page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mangmee-page-actions {
+    justify-content: stretch;
+  }
+
+  .mangmee-page-actions > :is(a, button) {
+    flex: 1 1 auto;
+  }
+}
+
+.mangmee-eyebrow {
+  margin-bottom: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--color-brand-100);
+  border-radius: 999px;
+  background: var(--color-brand-25);
+  padding: 0.25rem 0.75rem;
+  color: var(--color-brand-700);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.mangmee-page-title {
+  color: var(--color-gray-900);
+  font-size: clamp(1.5rem, 1.35rem + 0.45vw, 1.875rem);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.mangmee-page-description {
+  margin-top: 0.35rem;
+  max-width: 58rem;
+  color: var(--color-gray-500);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+.mangmee-card {
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-2xl);
+  background: #fff;
+  box-shadow: var(--shadow-theme-sm);
+}
+
+.mangmee-card-muted {
+  background: #f7faf8;
+}
+
+.mangmee-card-header {
+  border-bottom: 1px solid var(--color-gray-100);
+  padding: 1rem 1.125rem;
+}
+
+.mangmee-card-body {
+  padding: 1rem 1.125rem;
+}
+
+.mangmee-stat-card {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 1rem;
+}
+
+.mangmee-stat-label {
+  color: var(--color-gray-500);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.mangmee-stat-value {
+  margin-top: 0.125rem;
+  color: var(--color-gray-900);
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.mangmee-stat-sub {
+  margin-top: 0.125rem;
+  color: var(--color-gray-400);
+  font-size: 0.75rem;
+}
+
+.mangmee-icon-frame {
+  display: inline-flex;
+  height: 2.5rem;
+  width: 2.5rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  line-height: 0;
+}
+
+.mangmee-icon-frame svg {
+  display: block;
+  height: 1.25rem;
+  width: 1.25rem;
+  flex-shrink: 0;
+  margin: auto;
+}
+
+.mangmee-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 999px;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mangmee-icon-tone-brand,
+.mangmee-badge-brand {
+  border-color: var(--color-brand-100);
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+
+.mangmee-icon-tone-line,
+.mangmee-badge-line {
+  border-color: #c7f7d8;
+  background: #e4f9ec;
+  color: #06c755;
+}
+
+.mangmee-icon-tone-rose,
+.mangmee-badge-rose {
+  border-color: #ffd6e3;
+  background: #fff0f5;
+  color: #f05a8b;
+}
+
+.mangmee-icon-tone-sky,
+.mangmee-badge-sky {
+  border-color: #d8ebff;
+  background: #edf7ff;
+  color: #2e90fa;
+}
+
+.mangmee-icon-tone-cyan,
+.mangmee-badge-cyan {
+  border-color: #cff5f8;
+  background: #ebfbfb;
+  color: #1fb7c9;
+}
+
+.mangmee-icon-tone-amber,
+.mangmee-badge-amber {
+  border-color: var(--color-warning-100);
+  background: var(--color-warning-50);
+  color: var(--color-warning-700);
+}
+
+.mangmee-icon-tone-lime,
+.mangmee-badge-lime {
+  border-color: #e4f3c8;
+  background: #f4faea;
+  color: #6f9f13;
+}
+
+.mangmee-icon-tone-teal,
+.mangmee-badge-teal {
+  border-color: #c9f2e8;
+  background: #ecfbf7;
+  color: #15977c;
+}
+
+.mangmee-icon-tone-indigo,
+.mangmee-badge-indigo {
+  border-color: #dfe4ff;
+  background: #eef1ff;
+  color: #5d6cf0;
+}
+
+.mangmee-icon-tone-purple,
+.mangmee-badge-purple {
+  border-color: #e9d7fe;
+  background: #f4f3ff;
+  color: #6941c6;
+}
+
+.mangmee-icon-tone-slate,
+.mangmee-badge-slate {
+  border-color: var(--color-gray-200);
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
+}
+
+.mangmee-icon-tone-danger,
+.mangmee-badge-danger {
+  border-color: #fecdca;
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+.mangmee-btn {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-lg);
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.mangmee-btn-primary {
+  border: 1px solid var(--color-brand-600);
+  background: linear-gradient(150deg, var(--color-brand-500), var(--color-brand-700));
+  color: #fff;
+  box-shadow: 0 10px 20px rgb(21 128 61 / 22%);
+}
+
+.mangmee-btn-secondary {
+  border: 1px solid var(--color-gray-200);
+  background: #fff;
+  color: var(--color-gray-700);
+}
+
+/* `:hover` still matches a disabled button, so without the guard a locked secondary
+   button lit up brand-green under the cursor and read as clickable. */
+.mangmee-btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-brand-200);
+  background: var(--color-brand-25);
+  color: var(--color-brand-700);
+}
+
+/* Same reason as the input rule below: the button primitive states its own colours,
+   and every caller had to remember to append `disabled:opacity-50` for a locked
+   button to look locked. Carry it on the primitive instead. */
+.mangmee-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mangmee-btn-danger {
+  border: 1px solid #fecdca;
+  background: var(--color-error-50);
+  color: var(--color-error-700);
+}
+
+.mangmee-input {
+  width: 100%;
+  min-height: 2.75rem;
+  border: 1.5px solid var(--color-gray-200);
+  border-radius: var(--radius-xl);
+  background: #fff;
+  padding: 0.5rem 0.75rem;
+  color: var(--color-gray-800);
+  font-size: 1rem;
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+/* iOS Safari auto-zooms any focused text control below 16px. Below sm, force the
+   16px floor on EVERY text-entry control — !important on purpose so feature-local
+   utilities (text-sm, text-[15px]) cannot reintroduce the zoom. Media-scoped, so
+   desktop rendering is untouchable from here. */
+@media (max-width: 39.999rem) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: max(1rem, 1em) !important;
+  }
+}
+
+@media (min-width: 40rem) {
+  .mangmee-input {
+    min-height: 2.5rem;
+    font-size: 0.875rem;
+  }
+}
+
+.mangmee-input:focus {
+  border-color: var(--color-brand-700);
+  box-shadow: var(--shadow-focus);
+}
+
+/* A locked field has to read as locked. `.mangmee-input` sets background and color
+   outright, which beats the UA's disabled rendering, so without this a read-only
+   record (a CONFIRMED expense, for one) shows fields that look fully editable —
+   users read the page as editable and only find out when nothing types. Scoped to
+   real form controls: ThemedSelect's <summary> and ThemedDate's <button> already
+   dim themselves and would double-dim here. */
+input.mangmee-input:disabled,
+textarea.mangmee-input:disabled,
+select.mangmee-input:disabled {
+  border-color: var(--color-gray-100);
+  background: var(--color-gray-50);
+  color: var(--color-gray-500);
+  cursor: not-allowed;
+}
+
+/* Themed native dropdowns — replace the OS-default arrow with the design's brand
+   chevron and hide the native appearance so every <select> across the app matches
+   the theme (same chevron as the custom SelectField). padding-right guarantees the
+   text never runs under the chevron regardless of the select's utility classes. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m5 7.5 5 5 5-5' stroke='%23667085' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 1.15rem;
+  padding-right: 2.25rem !important;
+  cursor: pointer;
+}
+
+/* Native option list can't be themed cross-browser; keep it readable on all OSes. */
+select option {
+  color: var(--color-gray-800);
+  background: #fff;
+}
+
+/* Tint native controls (date/month pickers, checkbox, radio, range) with the brand
+   color so the browser's default blue highlight matches the theme. The picker popup
+   chrome itself is OS-drawn and can't be fully styled, but the accent turns brand. */
+input,
+select,
+textarea {
+  accent-color: var(--color-brand-500);
+}
+input[type='date'],
+input[type='month'],
+input[type='time'],
+input[type='datetime-local'],
+input[type='week'] {
+  color-scheme: light;
+}
+
+.mangmee-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* min-width only inside the shared scroller: an unwrapped table must keep the
+   legacy column-squeeze so nothing gets clipped where no scrollbar can reach it,
+   and pre-existing overflow-x-auto wrappers keep today's desktop rendering until
+   they are migrated to .mangmee-table-scroll site-by-site. */
+.mangmee-table-scroll .mangmee-table {
+  min-width: max-content;
+}
+
+.mangmee-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.mangmee-table thead {
+  background: var(--color-gray-50);
+  color: var(--color-gray-500);
+}
+
+.mangmee-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mangmee-table th.text-right,
+.mangmee-table td.text-right {
+  text-align: right;
+}
+
+.mangmee-table td {
+  border-top: 1px solid var(--color-gray-100);
+  padding: 0.75rem 1rem;
+}
+
+.mangmee-table tbody tr:hover {
+  background: var(--color-gray-50);
+}
+
+.mangmee-segmented {
+  display: inline-flex;
+  max-width: 100%;
+  overflow-x: auto;
+  gap: 0.25rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-gray-100);
+  padding: 0.25rem;
+  scrollbar-width: none;
+}
+
+.mangmee-segmented::-webkit-scrollbar {
+  display: none;
+}
+
+.mangmee-tab {
+  border-radius: var(--radius-md);
+  padding: 0.5rem 0.875rem;
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.mangmee-tab-active {
+  background: #fff;
+  color: var(--color-brand-700);
+  box-shadow: var(--shadow-theme-sm);
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 0.7rem;
+  padding: 0.55rem 0.75rem;
+  min-height: 2.875rem;
+  /* submenu parents render as <button>, which centers text by default */
+  text-align: start;
+  text-decoration: none;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.menu-item-active {
+  background: #eaf9ef;
+  border-color: #d8f3e1;
+  color: var(--color-brand-800);
+  box-shadow:
+    inset 3px 0 0 0 var(--color-brand-500),
+    0 10px 18px rgb(34 197 94 / 0.06);
+}
+
+.menu-item-inactive {
+  color: var(--color-text-primary);
+}
+
+.menu-item-inactive:hover {
+  background: #f9fbf9;
+  border-color: #edf2ee;
+  color: var(--color-text-primary);
+}
+
+.menu-item-icon-wrap,
+.menu-dropdown-icon-wrap {
+  --menu-icon-bg: var(--color-brand-50);
+  --menu-icon-fg: var(--color-brand-600);
+  --menu-icon-box-size: 2rem;
+  --menu-icon-canvas-size: 1.25rem;
+  --menu-icon-glyph-size: 0.875rem;
+  display: inline-grid;
+  height: var(--menu-icon-box-size);
+  width: var(--menu-icon-box-size);
+  place-items: center;
+  align-self: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  border-radius: 0.75rem;
+  background: var(--menu-icon-bg);
+  color: var(--menu-icon-fg);
+  line-height: 0;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.55);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.menu-dropdown-icon-wrap {
+  --menu-icon-box-size: 1.875rem;
+  --menu-icon-canvas-size: 1.125rem;
+  --menu-icon-glyph-size: 0.96875rem;
+  height: var(--menu-icon-box-size);
+  width: var(--menu-icon-box-size);
+  border-radius: 0.65rem;
+}
+
+.menu-item-icon-wrap[data-active='true'] {
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.82),
+    0 8px 18px rgb(17 24 39 / 0.08);
+}
+
+.menu-item-icon-wrap[data-tone='brand'],
+.menu-dropdown-icon-wrap[data-tone='brand'] {
+  --menu-icon-bg: #ebfbf1;
+  --menu-icon-fg: #22a861;
+}
+
+.menu-item-icon-wrap[data-tone='line'],
+.menu-dropdown-icon-wrap[data-tone='line'] {
+  --menu-icon-bg: #e9fbef;
+  --menu-icon-fg: #21ba5f;
+}
+
+.menu-item-icon-wrap[data-tone='rose'],
+.menu-dropdown-icon-wrap[data-tone='rose'] {
+  --menu-icon-bg: #fff0f5;
+  --menu-icon-fg: #f05a8b;
+}
+
+.menu-item-icon-wrap[data-tone='sky'],
+.menu-dropdown-icon-wrap[data-tone='sky'] {
+  --menu-icon-bg: #edf7ff;
+  --menu-icon-fg: #4a90e2;
+}
+
+.menu-item-icon-wrap[data-tone='cyan'],
+.menu-dropdown-icon-wrap[data-tone='cyan'] {
+  --menu-icon-bg: #ebfbfb;
+  --menu-icon-fg: #1fb7c9;
+}
+
+.menu-item-icon-wrap[data-tone='amber'],
+.menu-dropdown-icon-wrap[data-tone='amber'] {
+  --menu-icon-bg: #fff6e7;
+  --menu-icon-fg: #f0a428;
+}
+
+.menu-item-icon-wrap[data-tone='lime'],
+.menu-dropdown-icon-wrap[data-tone='lime'] {
+  --menu-icon-bg: #f4faea;
+  --menu-icon-fg: #84b51d;
+}
+
+.menu-item-icon-wrap[data-tone='teal'],
+.menu-dropdown-icon-wrap[data-tone='teal'] {
+  --menu-icon-bg: #ecfbf7;
+  --menu-icon-fg: #19a78a;
+}
+
+.menu-item-icon-wrap[data-tone='indigo'],
+.menu-dropdown-icon-wrap[data-tone='indigo'] {
+  --menu-icon-bg: #eef1ff;
+  --menu-icon-fg: #6475f4;
+}
+
+.menu-item-icon-wrap[data-tone='purple'],
+.menu-dropdown-icon-wrap[data-tone='purple'] {
+  --menu-icon-bg: #f2edff;
+  --menu-icon-fg: #7a5af8;
+}
+
+.menu-item-icon-wrap[data-tone='danger'],
+.menu-dropdown-icon-wrap[data-tone='danger'] {
+  --menu-icon-bg: #fff1f3;
+  --menu-icon-fg: #f04467;
+}
+
+.menu-item-icon-wrap[data-tone='slate'],
+.menu-dropdown-icon-wrap[data-tone='slate'] {
+  --menu-icon-bg: #f2f4f7;
+  --menu-icon-fg: #667085;
+}
+
+.menu-item-icon-active,
+.menu-item-icon-inactive,
+.menu-dropdown-icon-canvas {
+  display: inline-grid;
+  height: var(--menu-icon-canvas-size);
+  width: var(--menu-icon-canvas-size);
+  place-items: center;
+  align-items: center;
+  justify-items: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.menu-item-icon-active {
+  color: currentColor;
+}
+
+.menu-item-icon-inactive {
+  color: currentColor;
+}
+
+.menu-item-icon-wrap svg,
+.menu-dropdown-icon-wrap svg {
+  display: block;
+  height: var(--menu-icon-glyph-size) !important;
+  width: var(--menu-icon-glyph-size) !important;
+  flex-shrink: 0;
+  max-height: var(--menu-icon-glyph-size);
+  max-width: var(--menu-icon-glyph-size);
+  min-height: var(--menu-icon-glyph-size);
+  min-width: var(--menu-icon-glyph-size);
+  margin: 0;
+  overflow: visible;
+  transform-box: fill-box;
+  transform-origin: center center;
+  shape-rendering: geometricPrecision;
+}
+
+.menu-item-icon-wrap svg *,
+.menu-dropdown-icon-wrap svg * {
+  vector-effect: non-scaling-stroke;
+}
+
+.menu-item-text {
+  min-width: 0;
+  flex: 1;
+  font-size: 0.94rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.menu-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.625rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-decoration: none;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.menu-dropdown-item-active {
+  background: #eaf9ef;
+  color: var(--color-brand-800);
+  box-shadow: inset 3px 0 0 0 var(--color-brand-500);
+}
+
+.menu-dropdown-item-inactive {
+  color: var(--color-text-secondary);
+}
+
+.menu-dropdown-item-inactive:hover {
+  background: var(--color-neutral-surface);
+  color: var(--color-text-primary);
+}
+
+.text-brand-500 {
+  color: var(--color-brand-600);
+}
+
+/* มั่งมี login hero (see docs/plans/mangmee-auth-permissions-ui-plan.md) */
+.login-hero {
+  background: linear-gradient(155deg, #2dd46a 0%, #22c55e 26%, #199b49 50%, #147e3b 74%, #11602d 100%);
+}
+
+/* fine grain overlay — dithers the hero gradient so it doesn't band */
+.login-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.055;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(0.5rem); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .toast-enter { animation: toast-in 160ms ease-out; }
+
+  @keyframes login-floaty {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+  .login-float-1 { animation: login-floaty 5s ease-in-out infinite; }
+  .login-float-2 { animation: login-floaty 6.5s ease-in-out infinite; }
+  .login-float-3 { animation: login-floaty 5.8s ease-in-out infinite 0.8s; }
+}
+
+/* ── Printing a document-preview modal (Modal printSurface) ─────────────────────
+   Fixed-position overlays are repeated by browsers on every printed page, so printing
+   with a preview modal open produced the same form N times with the app page showing
+   through behind it. When a print surface is open: print only its body, once. */
+@media print {
+  body.modal-print-active > *:not(.modal-print-surface) {
+    display: none !important;
+  }
+  .modal-print-surface {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    padding: 0 !important;
+    background: none !important;
+  }
+  .modal-print-surface [data-modal-panel] {
+    max-height: none !important;
+    max-width: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .modal-print-surface [data-modal-chrome],
+  .modal-print-surface .modal-print-hide {
+    display: none !important;
+  }
+  .modal-print-surface [data-modal-body] {
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+  .modal-print-surface [data-modal-body] img,
+  .modal-print-surface [data-modal-body] iframe {
+    max-height: none !important;
+    max-width: 100% !important;
+    border: 0 !important;
+  }
+}

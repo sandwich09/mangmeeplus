@@ -1,0 +1,491 @@
+name: Production A5 Isolated Clone Rehearsal
+run-name: Isolated clone for production run ${{ inputs.parent_production_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      parent_production_run_id:
+        description: Exact in-progress deploy-production run ID
+        required: true
+        type: string
+      parent_production_run_attempt:
+        description: Exact in-progress deploy-production attempt
+        required: true
+        type: string
+      uat_acceptance_run_id:
+        description: Exact successful all-target deploy-uat producer run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-a5-clone-${{ inputs.parent_production_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  clone:
+    name: Signed isolated production clone rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      AWS_ACCOUNT_ID: '311414082667'
+      AWS_REGION: ap-southeast-1
+      ECR_REGISTRY: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com
+      MIGRATION_REPOSITORY: watchdog-bms-migration-tool
+      CLONE_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone
+      CLONE_ROLE_NAME: watchdog-bms-production-a5-clone
+      CLONE_POLICY_NAME: watchdog-bms-production-a5-clone
+      CLONE_EXECUTION_ROLE_NAME: watchdog-bms-production-a5-clone-execution
+      CLONE_EXECUTION_POLICY_NAME: watchdog-bms-production-a5-clone-execution
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Bind protected-main controller, parent and accepted UAT source
+        id: bind
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PARENT_RUN_ID: ${{ inputs.parent_production_run_id }}
+          PARENT_ATTEMPT_INPUT: ${{ inputs.parent_production_run_attempt }}
+          UAT_RUN_ID: ${{ inputs.uat_acceptance_run_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/production-a5-clone.yml@refs/heads/main"
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          [[ "$PARENT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PARENT_ATTEMPT_INPUT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$UAT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$PARENT_RUN_ID" != "$UAT_RUN_ID"
+          test "$PARENT_RUN_ID" != "$GITHUB_RUN_ID"
+          test "$UAT_RUN_ID" != "$GITHUB_RUN_ID"
+          git fetch --no-tags origin '+refs/heads/main:refs/heads/main'
+          test "$GITHUB_SHA" = "$(git rev-parse refs/heads/main)" || {
+            echo 'ERROR: obsolete clone controller; dispatch the current protected main workflow' >&2
+            exit 1
+          }
+
+          root="$RUNNER_TEMP/production-a5-clone-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$root"
+          parent="$root/parent-run.json"
+          producer="$root/producer-run.json"
+          uat="$root/uat-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PARENT_RUN_ID" > "$parent"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$producer"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID" > "$uat"
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$PARENT_RUN_ID" \
+            --arg attempt "$PARENT_ATTEMPT_INPUT" '
+            (.id|tostring)==$run and (.run_attempt|tostring)==$attempt
+            and .status=="in_progress" and .conclusion==null and .event=="workflow_dispatch"
+            and .path==".github/workflows/deploy-production.yml" and .head_branch=="main"
+            and .repository.full_name==$repository
+          ' "$parent" >/dev/null
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            --arg sha "$GITHUB_SHA" '
+            (.id|tostring)==$run and .status=="in_progress" and .conclusion==null
+            and .event=="workflow_dispatch" and .path==".github/workflows/production-a5-clone.yml"
+            and .head_branch=="main" and .head_sha==$sha and .repository.full_name==$repository
+          ' "$producer" >/dev/null
+          jq -e --arg repository "$GITHUB_REPOSITORY" --arg run "$UAT_RUN_ID" '
+            (.id|tostring)==$run and .status=="completed" and .conclusion=="success"
+            and .event=="workflow_dispatch" and .path==".github/workflows/deploy-uat.yml"
+            and .head_branch=="main" and .repository.full_name==$repository
+          ' "$uat" >/dev/null
+          uat_attempt="$(jq -er '.run_attempt|select(type=="number" and .>=1 and floor==.)' "$uat")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts?per_page=100" \
+            > "$root/uat-all-artifacts.json"
+          source_sha="$(jq -er --argjson attempt "$uat_attempt" '
+            [.artifacts[] | .name
+              | capture("^uat-deployment-acceptance-(?<sha>[0-9a-f]{40})-attempt-(?<attempt>[1-9][0-9]*)$")
+              | select((.attempt|tonumber)==$attempt) | .sha]
+            | select(length==1) | .[0]
+          ' "$root/uat-all-artifacts.json")"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${source_sha}^{commit}"
+          git merge-base --is-ancestor "$source_sha" refs/heads/main
+
+          parent_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$parent")"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$parent")"
+          producer_started="$(jq -er '.run_started_at|fromdateiso8601' "$producer")"
+          test "$parent_started" -le "$producer_started"
+          parent_blob="$(git rev-parse "$parent_controller:.github/workflows/deploy-production.yml")"
+          producer_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/production-a5-clone.yml")"
+          jq -cnS --arg source "$source_sha" --arg repository "$GITHUB_REPOSITORY" \
+            --arg controller "$GITHUB_SHA" --arg workflowBlob "$producer_blob" \
+            --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg actor "$(jq -er '.actor.login' "$producer")" \
+            --arg triggeringActor "$(jq -er '.triggering_actor.login' "$producer")" \
+            --argjson started "$producer_started" --arg parentController "$parent_controller" \
+            --arg parentBlob "$parent_blob" --arg parentRun "$PARENT_RUN_ID" \
+            --argjson parentAttempt "$PARENT_ATTEMPT_INPUT" --argjson parentStarted "$parent_started" '
+              {artifactKind:"PRODUCTION_A5_CLONE_REHEARSAL_V1",repository:$repository,
+               environment:"production",sourceCommit:$source,
+               producer:{workflowPath:".github/workflows/production-a5-clone.yml",
+                 controllerCommit:$controller,workflowBlob:$workflowBlob,runId:$run,
+                 runAttempt:$attempt,actor:$actor,triggeringActor:$triggeringActor,
+                 startedAtEpoch:$started},
+               parentProductionRun:{controllerCommit:$parentController,workflowBlob:$parentBlob,
+                 runId:$parentRun,runAttempt:$parentAttempt,startedAtEpoch:$parentStarted},
+               lifetimeSeconds:7200}
+          ' > "$root/expected.json"
+          source infra/security/signed-evidence.sh
+          signed_evidence_validate_parent_github_run "$parent" "$root/expected.json"
+          signed_evidence_validate_git_trust "$GITHUB_WORKSPACE" "$root/expected.json"
+          artifact_name="$(signed_evidence_artifact_name "$root/expected.json")"
+          printf '%s\n' "EVIDENCE_ROOT=$root" "SOURCE_SHA=$source_sha" \
+            "PARENT_RUN_JSON=$parent" "PRODUCER_RUN_JSON=$producer" \
+            "EXPECTED_FILE=$root/expected.json" "PARENT_CONTROLLER=$parent_controller" \
+            "PARENT_WORKFLOW_BLOB=$parent_blob" "PARENT_STARTED=$parent_started" \
+            "UAT_RUN_JSON=$uat" "UAT_ATTEMPT=$uat_attempt" \
+            "EVIDENCE_ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Download and cryptographically verify exact UAT acceptance and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UAT_RUN_ID: ${{ inputs.uat_acceptance_run_id }}
+        run: |
+          set -euo pipefail
+          source infra/security/validate-production-security-preflight.sh
+          uat_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$UAT_RUN_JSON")"
+          acceptance_name="uat-deployment-acceptance-${SOURCE_SHA}-attempt-${UAT_ATTEMPT}"
+          release_name="uat-accepted-release-${SOURCE_SHA}-attempt-${UAT_ATTEMPT}"
+          for kind in acceptance release; do
+            name="$acceptance_name"
+            [ "$kind" = release ] && name="$release_name"
+            api="$EVIDENCE_ROOT/uat-${kind}-artifacts.json"
+            archive="$EVIDENCE_ROOT/uat-${kind}.zip"
+            gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts" \
+              -f name="$name" -f per_page=100 > "$api"
+            artifact_id="$(jq -er 'select(.total_count==1 and (.artifacts|length)==1)
+              | .artifacts[0] | select(.expired==false) | .id' "$api")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+            security_preflight_validate_artifact_metadata "$api" "$archive" "$name" \
+              "$UAT_RUN_ID" "$uat_controller" >/dev/null
+            extracted="$(security_preflight_extract_artifact "$kind" "$archive")"
+            if [ "$kind" = acceptance ]; then
+              acceptance_dir="$extracted"
+            else
+              release_dir="$extracted"
+            fi
+          done
+          ci_blob="$(git rev-parse "$uat_controller:.github/workflows/ci.yml")"
+          uat_blob="$(git rev-parse "$uat_controller:.github/workflows/deploy-uat.yml")"
+          validator_hash="$(sha256sum infra/docker/validate-uat-deployment-acceptance.sh | awk '{print $1}')"
+          cosign verify-blob --bundle "$acceptance_dir/uat-deployment-acceptance.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$uat_controller" \
+            --certificate-github-workflow-trigger workflow_dispatch \
+            "$acceptance_dir/uat-deployment-acceptance.json"
+          bash infra/docker/validate-uat-deployment-acceptance.sh \
+            "$acceptance_dir/uat-deployment-acceptance.json" \
+            "$release_dir/production-image-manifest.json" "$SOURCE_SHA" \
+            "$UAT_RUN_ID" "$UAT_ATTEMPT" "$uat_controller" "$GITHUB_REPOSITORY" \
+            "$ci_blob" "$uat_blob" "$validator_hash" "$(date -u +%s)"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.bind.outputs.source_sha }}
+          path: candidate
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - uses: actions/setup-node@1e60f620b9541d21b7b6d9a6ff498da4007b2e17 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: candidate/pnpm-lock.yaml
+
+      - name: Install exact candidate dependencies without credentials
+        working-directory: candidate
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Validate exact candidate clone controller inputs before AWS
+        run: |
+          set -euo pipefail
+          test "$(git -C candidate rev-parse HEAD)" = "$SOURCE_SHA"
+          bash candidate/infra/security/production-a5-clone-bootstrap.spec.sh
+          bash candidate/infra/security/production-a5-clone-runner.spec.sh
+          cd candidate/apps/api
+          ../../node_modules/.bin/tsx --test \
+            prisma/production-a5/run-clone-rehearsal.spec.ts \
+            src/scripts/production-a5-reviewed-manifest.spec.ts \
+            src/scripts/production-a5-evidence.logic.spec.ts
+
+      - name: Configure dedicated clone-only AWS controller
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone
+          aws-region: ap-southeast-1
+          allowed-account-ids: '311414082667'
+          role-session-name: production-a5-clone-${{ github.run_id }}
+
+      - name: Fail closed on live clone IAM, repository, logs and parameters
+        run: |
+          set -euo pipefail
+          identity="$(aws sts get-caller-identity --output json)"
+          jq -e --arg account "$AWS_ACCOUNT_ID" --arg role "$CLONE_ROLE_NAME" '
+            .Account==$account and (.Arn|test("^arn:aws:sts::"+$account+
+              ":assumed-role/"+$role+"/[A-Za-z0-9+=,.@_-]+$"))
+          ' <<< "$identity" >/dev/null
+          verify_role() {
+            local name="$1" policy_name="$2" trust="$3" expected_policy="$4" role policy
+            role="$(aws iam get-role --role-name "$name" --output json)"
+            policy="$(aws iam get-role-policy --role-name "$name" --policy-name "$policy_name" --output json)"
+            jq -e --slurpfile expected "$trust" '
+              .Role.MaxSessionDuration==7200 and .Role.AssumeRolePolicyDocument==$expected[0]
+            ' <<< "$role" >/dev/null
+            jq -e --slurpfile expected "$expected_policy" --arg name "$policy_name" '
+              .PolicyName==$name and .PolicyDocument==$expected[0]
+            ' <<< "$policy" >/dev/null
+            test "$(aws iam list-role-policies --role-name "$name" --output json \
+              | jq -cS '.PolicyNames|sort')" = "$(jq -cnS --arg name "$policy_name" '[$name]')"
+            test "$(aws iam list-attached-role-policies --role-name "$name" --output json \
+              | jq -cS '.AttachedPolicies')" = '[]'
+          }
+          verify_role "$CLONE_ROLE_NAME" "$CLONE_POLICY_NAME" \
+            candidate/infra/security/production-a5-clone-trust.template.json \
+            candidate/infra/security/production-a5-clone-policy.template.json
+          verify_role "$CLONE_EXECUTION_ROLE_NAME" "$CLONE_EXECUTION_POLICY_NAME" \
+            candidate/infra/security/production-a5-clone-execution-trust.template.json \
+            candidate/infra/security/production-a5-clone-execution-policy.template.json
+          aws ecr describe-repositories --repository-names "$MIGRATION_REPOSITORY" --output json \
+            | jq -e --arg name "$MIGRATION_REPOSITORY" '
+              .repositories|length==1 and .[0].repositoryName==$name
+              and .[0].imageTagMutability=="IMMUTABLE"
+              and .[0].imageScanningConfiguration.scanOnPush==true
+              and .[0].encryptionConfiguration.encryptionType=="AES256"
+            ' >/dev/null
+          aws logs describe-log-groups --log-group-name-prefix /ecs/watchdog-bms-production-a5-clone \
+            --output json | jq -e '
+              [.logGroups[]|select(.logGroupName=="/ecs/watchdog-bms-production-a5-clone")]
+              | length==1 and .[0].retentionInDays==7
+            ' >/dev/null
+          aws ssm get-parameters --names \
+            /watchdog-bms/production/a5-clone/source-db-identifier \
+            /watchdog-bms/production/a5-clone/db-subnet-group-name \
+            /watchdog-bms/production/a5-clone/db-security-group-id \
+            /watchdog-bms/production/a5-clone/task-security-group-id \
+            /watchdog-bms/production/a5-clone/task-subnet-ids \
+            /watchdog-bms/production/a5-clone/db-instance-class \
+            /watchdog-bms/production/a5-clone/execution-role-arn \
+            /watchdog-bms/production/a5-clone/log-group-name --output json \
+            | jq -e '.InvalidParameters==[] and (.Parameters|length)==8
+              and all(.Parameters[];.Type=="String")' >/dev/null
+
+      - name: Log in to the dedicated ECR repository
+        id: registry
+        run: |
+          set -euo pipefail
+          docker_config="$RUNNER_TEMP/production-a5-docker-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -m 700 "$docker_config"
+          temporary_tag="u5-a5-${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-${SOURCE_SHA:0:8}"
+          printf '%s\n' "DOCKER_CONFIG=$docker_config" "MIGRATION_TEMPORARY_TAG=$temporary_tag" \
+            >> "$GITHUB_ENV"
+          echo "temporary_tag=$temporary_tag" >> "$GITHUB_OUTPUT"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push the one-shot migration tool
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: candidate
+          file: candidate/apps/api/Dockerfile
+          target: migration-tool
+          push: true
+          platforms: linux/amd64
+          provenance: mode=max
+          sbom: true
+          build-args: GIT_SHA=${{ steps.bind.outputs.source_sha }}
+          tags: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-migration-tool:${{ steps.registry.outputs.temporary_tag }}
+
+      - name: Pull, verify, sign and record immutable migration tool
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="$ECR_REGISTRY/$MIGRATION_REPOSITORY@$IMAGE_DIGEST"
+          docker pull "$image"
+          bash candidate/infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"
+          tool_root="$EVIDENCE_ROOT/migration-tool"
+          mkdir "$tool_root"
+          docker run --rm --entrypoint /app/node_modules/.bin/tsx "$image" \
+            /app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts \
+            > "$tool_root/candidate-hashes.json"
+          jq -e '.candidateMigrationSetHash|test("^[0-9a-f]{64}$")' \
+            "$tool_root/candidate-hashes.json" >/dev/null
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/production-a5-clone.yml@refs/heads/main"
+          cosign sign --yes --bundle "$tool_root/migration-tool.signature.bundle" "$image"
+          cosign verify --bundle "$tool_root/migration-tool.signature.bundle" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$image" > "$tool_root/migration-tool.signature.verify.json"
+          printf '%s\n' "MIGRATION_IMAGE=$image" "MIGRATION_DIGEST=$IMAGE_DIGEST" \
+            "MIGRATION_IDENTITY=$identity" \
+            "MIGRATION_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+
+      - name: Collect registry-native BuildKit attestations and delete only the temporary image tag
+        run: |
+          set -euo pipefail
+          bash candidate/infra/security/collect-production-a5-migration-tool-registry-evidence.sh \
+            collect "$MIGRATION_IMAGE" "$SOURCE_SHA" "$MIGRATION_TOOL_ROOT"
+          registry_facts="$MIGRATION_TOOL_ROOT/migration-tool.registry-facts.json"
+          jq -e --arg image "$MIGRATION_IMAGE" --arg digest "$MIGRATION_DIGEST" \
+            --arg source "$SOURCE_SHA" '
+              .image==$image and .digest==$digest and .sourceCommit==$source
+            ' "$registry_facts" >/dev/null
+          aws ecr batch-delete-image --repository-name "$MIGRATION_REPOSITORY" \
+            --image-ids imageTag="$MIGRATION_TEMPORARY_TAG" --output json \
+            | jq -e --arg tag "$MIGRATION_TEMPORARY_TAG" '
+              .failures==[] and (.imageIds|length)==1 and .imageIds[0].imageTag==$tag
+            ' >/dev/null
+          test "$(aws ecr list-images --repository-name "$MIGRATION_REPOSITORY" \
+            --filter tagStatus=TAGGED --output json \
+            | jq -r --arg tag "$MIGRATION_TEMPORARY_TAG" '[.imageIds[]|select(.imageTag==$tag)]|length')" = 0
+          aws ecr describe-images --repository-name "$MIGRATION_REPOSITORY" \
+            --image-ids imageDigest="$MIGRATION_DIGEST" --output json \
+            | jq -e --arg digest "$MIGRATION_DIGEST" '
+              .imageDetails|length==1 and .[0].imageDigest==$digest
+            ' >/dev/null
+          candidate_hash="$(jq -er '.candidateMigrationSetHash' "$MIGRATION_TOOL_ROOT/candidate-hashes.json")"
+          jq -cnS --arg digest "$MIGRATION_DIGEST" --arg image "$MIGRATION_IMAGE" \
+            --arg source "$SOURCE_SHA" \
+            --arg dockerfileBlob "$(git -C candidate rev-parse "$SOURCE_SHA:apps/api/Dockerfile")" \
+            --arg lockHash "$(sha256sum candidate/pnpm-lock.yaml | awk '{print $1}')" \
+            --arg catalog "$candidate_hash" \
+            --arg bundleHash "$(sha256sum "$MIGRATION_TOOL_ROOT/migration-tool.signature.bundle" | awk '{print $1}')" \
+            --arg identity "$MIGRATION_IDENTITY" --arg tag "$MIGRATION_TEMPORARY_TAG" \
+            --slurpfile registry "$registry_facts" '
+              ($registry[0]) as $native
+              | select($native.image==$image and $native.digest==$digest and $native.sourceCommit==$source)
+              |
+              {digest:$digest,image:$image,sourceCommit:$source,dockerfilePath:"apps/api/Dockerfile",
+               dockerfileBlob:$dockerfileBlob,lockfilePath:"pnpm-lock.yaml",lockfileSha256:$lockHash,
+               target:"migration-tool",migrationCatalogHash:$catalog,
+               registryBinding:$native.registryBinding,sbom:$native.sbom,provenance:$native.provenance,
+               signature:{verified:true,signedDigest:$digest,identity:$identity,
+                 issuer:"https://token.actions.githubusercontent.com",bundleSha256:$bundleHash},
+               runtimeBoundary:{serviceTrafficAttached:false,taskRoleArn:null,
+                 executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution"},
+               tagCleanup:{temporaryTag:$tag,mutableTagDeleted:true,digestStillPresent:true}}
+          ' > "$EVIDENCE_ROOT/migration-tool.json"
+
+      - name: Restore, rehearse and destroy the isolated clone
+        run: |
+          set -euo pipefail
+          clone_output="$EVIDENCE_ROOT/clone-output"
+          mkdir "$clone_output"
+          AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" AWS_REGION="$AWS_REGION" SOURCE_SHA="$SOURCE_SHA" \
+            PARENT_RUN_ID="${{ inputs.parent_production_run_id }}" \
+            PARENT_RUN_ATTEMPT="${{ inputs.parent_production_run_attempt }}" \
+            CLONE_RUN_ID="$GITHUB_RUN_ID" CLONE_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            MIGRATION_IMAGE="$MIGRATION_IMAGE" OUTPUT_DIR="$clone_output" \
+            bash candidate/infra/security/run-production-a5-clone.sh
+
+      - name: Assemble, validate, sign and verify exact clone evidence
+        run: |
+          set -euo pipefail
+          source infra/security/signed-evidence.sh
+          clone_output="$EVIDENCE_ROOT/clone-output"
+          rehearsal_without_cleanup="$clone_output/clone-task-result.json"
+          infrastructure="$clone_output/clone-infrastructure.json"
+          destroyed="$(jq -er '.cleanup.deleteCompletedAtEpoch' "$infrastructure")"
+          clone_id="$(jq -er '.temporaryDbIdentifier' "$infrastructure")"
+          clone_id_hash="$(printf '%s' "$clone_id" | sha256sum | awk '{print $1}')"
+          jq -cS --arg idHash "$clone_id_hash" --argjson destroyed "$destroyed" '
+            .cloneRehearsalWithoutCleanup
+            + {cleanup:{cloneIdentifierHash:$idHash,destroyedAtEpochMs:($destroyed*1000),
+                residualObjectCount:0,status:"DESTROYED"}}
+          ' "$rehearsal_without_cleanup" > "$EVIDENCE_ROOT/rehearsal-without-hash.json"
+          result_hash="$(jq -cjS . "$EVIDENCE_ROOT/rehearsal-without-hash.json" | sha256sum | awk '{print $1}')"
+          jq -cS --arg hash "$result_hash" '.+{resultHash:$hash}' \
+            "$EVIDENCE_ROOT/rehearsal-without-hash.json" > "$EVIDENCE_ROOT/rehearsal.json"
+          jq -cnS --slurpfile result "$rehearsal_without_cleanup" \
+            --slurpfile infra "$infrastructure" --slurpfile tool "$EVIDENCE_ROOT/migration-tool.json" \
+            --slurpfile rehearsal "$EVIDENCE_ROOT/rehearsal.json" '
+              ($result[0]) as $r
+              | {targetEnvironment:"production-isolated-clone",
+                 isolationBoundary:{productionSourceReadOnly:true,noProductionWriterCredential:true,
+                   isolatedNetwork:true,publiclyAccessible:false,cloneDestroyed:true},
+                 sourceAppliedMigrations:$r.sourceAppliedMigrations,
+                 sourceAppliedMigrationsHash:$r.sourceAppliedMigrationsHash,
+                 sourceDatabaseFingerprint:$r.sourceDatabaseFingerprint,
+                 reviewedManifest:$r.reviewedManifest,
+                 candidateMigrationSetHash:$r.candidateMigrationSetHash,
+                 reviewedMigrationOperationsHash:$r.reviewedMigrationOperationsHash,
+                 expectedSchemaDeltaHash:$r.expectedSchemaDeltaHash,
+                 expectedDataTransformHash:$r.expectedDataTransformHash,
+                 preflightCatalogHash:$r.preflightCatalogHash,
+                 lockBudgetPolicyHash:$r.lockBudgetPolicyHash,
+                 expectedSeededRouteHash:$r.expectedSeededRouteHash,
+                 expectedClosedWhtRouteHash:$r.expectedClosedWhtRouteHash,
+                 migrationTool:$tool[0],cloneInfrastructure:$infra[0],
+                 reimbursementCompatibility:$r.reimbursementCompatibility,
+                 cloneRehearsal:$rehearsal[0],passed:true}
+          ' > "$EVIDENCE_ROOT/payload.json"
+          issued="$(date -u +%s)"
+          expires="$((issued+7200))"
+          output="$RUNNER_TEMP/production-a5-clone-evidence"
+          mkdir "$output"
+          jq -cnS --slurpfile expected "$EXPECTED_FILE" --slurpfile payload "$EVIDENCE_ROOT/payload.json" \
+            --argjson issued "$issued" --argjson expires "$expires" '
+              ($expected[0]) as $e
+              | {schemaVersion:1,artifactKind:"PRODUCTION_A5_CLONE_REHEARSAL_V1",
+                 repository:$e.repository,environment:"production",sourceCommit:$e.sourceCommit,
+                 producer:{workflowPath:$e.producer.workflowPath,workflowRef:"refs/heads/main",
+                   controllerCommit:$e.producer.controllerCommit,workflowBlob:$e.producer.workflowBlob,
+                   runId:$e.producer.runId,runAttempt:$e.producer.runAttempt,event:"workflow_dispatch",
+                   actor:$e.producer.actor,triggeringActor:$e.producer.triggeringActor},
+                 parentProductionRun:{workflowPath:".github/workflows/deploy-production.yml",
+                   controllerCommit:$e.parentProductionRun.controllerCommit,
+                   workflowBlob:$e.parentProductionRun.workflowBlob,runId:$e.parentProductionRun.runId,
+                   runAttempt:$e.parentProductionRun.runAttempt},issuedAtEpoch:$issued,
+                 expiresAtEpoch:$expires,payload:$payload[0],contentSha256:("0"*64)}
+          ' > "$output/evidence.tmp"
+          content_hash="$(signed_evidence_content_sha256 "$output/evidence.tmp")"
+          jq -cS --arg hash "$content_hash" '.contentSha256=$hash' \
+            "$output/evidence.tmp" > "$output/evidence.json"
+          rm -f -- "$output/evidence.tmp"
+          signed_evidence_validate_payload_contract "$output/evidence.json"
+          signed_evidence_validate_envelope "$output/evidence.json" "$EXPECTED_FILE" "$issued"
+          signed_evidence_validate_parent_github_run "$PARENT_RUN_JSON" "$EXPECTED_FILE"
+          signed_evidence_validate_git_trust "$GITHUB_WORKSPACE" "$EXPECTED_FILE"
+          cosign sign-blob --yes --bundle "$output/evidence.bundle" "$output/evidence.json"
+          signed_evidence_verify_cosign "$output/evidence.json" "$output/evidence.bundle" \
+            "$EXPECTED_FILE" >/dev/null
+          signed_evidence_validate_envelope "$output/evidence.json" "$EXPECTED_FILE" "$(date -u +%s)"
+          test "$(find "$output" -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" \
+            = $'evidence.bundle:f\nevidence.json:f'
+          echo "EVIDENCE_OUTPUT=$output" >> "$GITHUB_ENV"
+
+      - name: Upload exact signed attempt evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.EVIDENCE_ARTIFACT_NAME }}
+          path: ${{ env.EVIDENCE_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove ephemeral registry credentials
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -z "${DOCKER_CONFIG:-}" ] || rm -rf -- "$DOCKER_CONFIG"

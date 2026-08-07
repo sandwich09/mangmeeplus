@@ -1,0 +1,15 @@
+CREATE TYPE "CrmCampaignStatus" AS ENUM ('DRAFT','READY','SCHEDULED','QUEUED','SENDING','COMPLETED','PARTIAL','FAILED','CANCELLED');
+CREATE TYPE "CrmCampaignRecipientStatus" AS ENUM ('PENDING','SENDING','DELIVERED','FAILED','SKIPPED_CONSENT','SKIPPED_UNREACHABLE');
+CREATE TABLE "CrmCampaign" ("id" TEXT PRIMARY KEY,"companyId" TEXT NOT NULL,"channelId" TEXT NOT NULL,"name" TEXT NOT NULL,"messageText" TEXT NOT NULL,"imageUrl" TEXT,"segmentJson" JSONB NOT NULL,"status" "CrmCampaignStatus" NOT NULL DEFAULT 'DRAFT',"contentHash" TEXT,"sendIdempotencyKey" TEXT,"quotaSnapshotJson" JSONB,"recipientCount" INTEGER NOT NULL DEFAULT 0,"deliveredCount" INTEGER NOT NULL DEFAULT 0,"failedCount" INTEGER NOT NULL DEFAULT 0,"replyCount" INTEGER NOT NULL DEFAULT 0,"scheduledAt" TIMESTAMP(3),"startedAt" TIMESTAMP(3),"finishedAt" TIMESTAMP(3),"createdByUserId" TEXT NOT NULL,"approvedByUserId" TEXT,"createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"updatedAt" TIMESTAMP(3) NOT NULL);
+CREATE TABLE "CrmCampaignRecipient" ("id" TEXT PRIMARY KEY,"companyId" TEXT NOT NULL,"campaignId" TEXT NOT NULL,"customerId" TEXT NOT NULL,"channelIdentityId" TEXT NOT NULL,"providerUserId" TEXT NOT NULL,"consentSnapshot" "CrmConsentStatus" NOT NULL,"status" "CrmCampaignRecipientStatus" NOT NULL DEFAULT 'PENDING',"retryKey" TEXT NOT NULL,"attempts" INTEGER NOT NULL DEFAULT 0,"providerMessageId" TEXT,"lastError" TEXT,"nextAttemptAt" TIMESTAMP(3),"sentAt" TIMESTAMP(3),"createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,"updatedAt" TIMESTAMP(3) NOT NULL);
+CREATE UNIQUE INDEX "CrmCampaign_companyId_sendIdempotencyKey_key" ON "CrmCampaign"("companyId","sendIdempotencyKey");
+CREATE INDEX "CrmCampaign_companyId_status_scheduledAt_idx" ON "CrmCampaign"("companyId","status","scheduledAt");
+CREATE INDEX "CrmCampaign_companyId_createdAt_idx" ON "CrmCampaign"("companyId","createdAt");
+CREATE UNIQUE INDEX "CrmCampaignRecipient_retryKey_key" ON "CrmCampaignRecipient"("retryKey");
+CREATE UNIQUE INDEX "CrmCampaignRecipient_campaignId_channelIdentityId_key" ON "CrmCampaignRecipient"("campaignId","channelIdentityId");
+CREATE INDEX "CrmCampaignRecipient_companyId_campaignId_status_idx" ON "CrmCampaignRecipient"("companyId","campaignId","status");
+CREATE INDEX "CrmCampaignRecipient_status_nextAttemptAt_idx" ON "CrmCampaignRecipient"("status","nextAttemptAt");
+ALTER TABLE "CrmCampaign" ADD CONSTRAINT "CrmCampaign_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE;
+ALTER TABLE "CrmCampaign" ADD CONSTRAINT "CrmCampaign_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "CompanyMessagingChannel"("id") ON DELETE RESTRICT;
+ALTER TABLE "CrmCampaignRecipient" ADD CONSTRAINT "CrmCampaignRecipient_campaignId_fkey" FOREIGN KEY ("campaignId") REFERENCES "CrmCampaign"("id") ON DELETE CASCADE;
+ALTER TABLE "CrmCampaignRecipient" ADD CONSTRAINT "CrmCampaignRecipient_channelIdentityId_fkey" FOREIGN KEY ("channelIdentityId") REFERENCES "CrmChannelIdentity"("id") ON DELETE RESTRICT;

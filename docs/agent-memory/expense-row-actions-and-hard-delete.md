@@ -1,0 +1,48 @@
+# Agent Memory: expense-row-actions-and-hard-delete
+
+Status: IMPLEMENTED / VERIFIED
+Owner: Codex
+Scope: Expense list eye/trash actions, audited hard delete for draft expenses, and expense detail modal scroll ownership.
+Decisions:
+- 2026-07-29 follow-up: allow deletion for `NEEDS_REVIEW` / `READY_FOR_CONFIRMATION` only when `grandTotalAmount = 0` and `paymentStatus = UNPAID`; retain all existing linked-data, permission, retention, and audit guards.
+- Follow `docs/plans/expense-row-actions-and-hard-delete-plan.md` as the approved specification.
+- Use Ponytail full mode: preserve existing branch work, reuse current audit/attachment/modal patterns, add no dependency or Prisma migration.
+- Keep substitute-receipt evidence retention-locked and explicitly remove tenant-scoped polymorphic attachment links.
+- Refuse drafts linked to payment, tax, ledger, bank, workflow, notification, or another expense's duplicate trail with `EXPENSE_HAS_LINKED_DATA`.
+- Use each model's real reference shape: tax/ledger use `expense.record`, workflow/notification use `expense_record`, and bank matches use `EXPENSE_PAYMENT`.
+- Do not issue a redundant `BankStatementLine` query: it has no document `sourceId`, and an expense-linked line can exist only through the blocking `BankReconciliationMatch`.
+- Include parent-relation paths for `JournalLine → JournalEntry` and `WorkflowTask → WorkflowRun`.
+- Surface the structured blocker in the still-open web delete confirmation with localized, user-facing labels.
+- Write the successful delete audit on the Prisma transaction before deleting the expense row.
+- 2026-08-05 owner decision: an `ExpenseDuplicateCandidate` reference no longer blocks deletion. It was a dead end — the referencing document was already `REJECTED`, `assertDuplicateWriteAllowed` refuses duplicate writes in that status, and a `REJECTED` expense is not deletable, so neither record could ever be removed. The delete now re-verdicts every referencing expense from its remaining candidates (same rule as `runDuplicateCheck`), clears `duplicateOfExpenseId` and a stale `duplicateOverrideReason`, and records the touched ids on the SUCCESS audit as `duplicateRecheckedExpenseIds`. Web dropped the unreachable `EXPENSE_DUPLICATE_CANDIDATE` label.
+- 2026-08-04 fix: a `SKIPPED` `WorkflowEventInbox` row is a processed event log with no matched rule, so it must not block deletion. Every `WEB_UPLOAD` draft emits `expense.receipt_uploaded`, which the drain records as `SKIPPED` when no EVENT rule matches — that made every uploaded draft permanently undeletable. The inbox query is scoped to `status: { not: 'SKIPPED' }`; `RECEIVED` and `FAILED` still block, and `MATCHED` is covered by the earlier `WorkflowRun` blocker.
+- 2026-08-05 owner decision: `REJECTED` is deletable at any amount, and the uploader may delete their own — "discovery เป็น พนักงานที่อัปโหลด เป็นคนลบได้ก็ต่อเมื่องานถูก reject แล้ว". A rejected record had no exit (transitions only back to `NEEDS_REVIEW`, no tab of its own, not deletable). It is safe because rejecting sets `postingStatus: 'not_required'` and emits no workflow/notification event, so nothing posted exists to preserve and the linked-data precheck does not block rejected records wholesale; because `canRestartReview` already lets the creator reopen their own rejection, so delete grants no new reach; and because duplicate detection matches surviving `ExpenseRecord` rows, so delete-then-reupload cannot launder a receipt that was legitimately recorded elsewhere. This supersedes the "a `REJECTED` expense is not deletable either" observation in the duplicate-blocker decision above. No permission code changed — the existing `expense.delete || (creator && expense.update)` gate already expresses the rule, and employees hold `expense.update` via the expense capture capability pack.
+- 2026-08-05 owner decisions (round 2, list surface around the delete work): (a) รอตรวจสอบ counts from `DRAFT` onward in both the KPI card and the chip — one definition, `isExpensePending`; the card subtitle moved to ยังไม่ยืนยัน รวมฉบับร่าง to match what it counts. (b) `REJECTED`/`VOIDED` rows are excluded from ค่าใช้จ่ายรวม, ภาษีซื้อ (VAT), and the "N รายการ" subtitle — ค้างจ่าย already excluded them, and the VAT card claims เครดิตภาษีที่ขอคืนได้, which a rejected document never is. The arithmetic moved out of the component `useMemo` into `summarizeExpenseKpis` so it has a spec. (c) Added a ปฏิเสธ chip so rejected rows are reachable now that they are deletable. (d) `ExpenseReviewPage` gained the same `canDeleteExpense` gate with a footer confirmation; delete bypasses `doAction` because the record is gone on success and navigates back to the list instead of reloading a 404.
+- 2026-08-05 consistency sweep across every surface that aggregates expenses: LINE `expense.list_recent` was the one sibling of the list KPI bug — it summed rejected and voided rows into `totalAmount` and `unpaidAmount` (rejecting never clears `outstandingAmount`), while `expense.get_breakdown` one file over already excluded them. Fixed, with `countedItems`/`cancelledCount` reported so an answer can state the basis. Dashboard provider, Excel export/accountant package, tax source adapter, banking match source, reports `expense.summary`, and the evidence panel were all already correct — they scope to `CONFIRMED` or group by status.
+- 2026-08-05 round 3 (both open items closed by owner): dashboard ใบเสร็จรอตรวจ counts from `DRAFT` onward; `EXPENSE_PENDING_STATUSES`/`isExpensePending` and `EXPENSE_CANCELLED_STATUSES`/`isExpenseCancelled` moved to `packages/contracts` so the web list and `ExpenseSummaryProvider` share one definition instead of each keeping a copy. The metric stays current-state, not period-scoped, so it still will not equal the period-scoped list card — period-scoping would hide stale unreviewed receipts. ส่งออก Excel now reports ไม่มีรายการที่ยืนยันแล้วในช่วงนี้ when `rowCount` is 0 instead of downloading an empty workbook.
+Open questions:
+- Dashboard card severity is `pendingReview > 0 ? 'warning' : 'normal'`, so one unsubmitted draft anywhere in the company now paints the card warning. Left as-is; changing the threshold is a separate product call.
+Artifacts:
+- Plan: `docs/plans/expense-row-actions-and-hard-delete-plan.md`
+- API: `delete-expense.use-case.ts` + spec, DELETE controller route, module provider, transaction-aware attachment soft-delete.
+- Access: `expense.delete` registry/grants/capability pack, permission matrix, and contracts access matrix.
+- Web: delete API/capability predicate/spec, expense row actions/confirmation, and `Modal.bodyScroll`.
+Verification:
+- 2026-08-05 round 3: contracts rebuilt; API and web `tsc --noEmit` passed; dashboard + line-ai + expenses API specs 829/829 including a provider case asserting the pending query uses the shared contracts constant; web suite 693/693.
+- 2026-08-05 consistency sweep: API `tsc --noEmit` passed; line-ai specs 421/421 including the new `erp-expense-list-recent.use-case.spec.ts` (registered in the API package test list); dashboard + reports + expenses specs 470/470; web suite 693/693.
+- 2026-08-05 round 2: KPI spec cases built from the four rows the owner had on screen (total 450 not 630, VAT 11.78 not 23.56, counted 3 not 4, pending 3 matching the chip, plus an overdue boundary case); full web suite 693 tests / 0 failures; web `tsc --noEmit` passed; e2e chip assertions unaffected and `e2e/TEST-CASES.md` EXP-01 updated for the new chip.
+- 2026-08-05 rejected-deletable: focused API delete spec passed 30/30 (delete of a `REJECTED` record at full amount, creator-with-`expense.update` delete, non-owner denial; `REJECTED` removed from the refuse-list case); focused web model spec passed 35/35; API and web `tsc --noEmit` passed. Note: `packages/contracts` must be rebuilt for the API spec to see the change — the API resolves the package's built `dist`, so the first run failed against a stale build.
+- 2026-08-05 duplicate-blocker removal: focused API delete spec passed 27/27 (re-verdict cases for `NO_MATCH`, surviving `CONFIRMED_DUPLICATE`, and `OVERRIDDEN`); focused web model spec passed 33/33; API and web `tsc --noEmit` passed.
+- 2026-08-04 fix: reproduced on the local stack (expense `cmseoxyan…vw69`: one `expense.receipt_uploaded` / `SKIPPED` inbox row, zero `WorkflowRun` / `NotificationEvent` rows); focused API delete spec passed 25/25 with the status-scoped `where` asserted; API `tsc --noEmit` passed.
+- Zero-total follow-up: contracts build passed; focused API delete spec passed 25/25; focused web model spec passed 19/19; web typecheck and `git diff --check` passed.
+- API typecheck: passed after the linked-data changes.
+- Focused delete spec: 24 tests / 0 failures, including individually named blocker cases and a WEB_UPLOAD draft with own sub-data plus attachments.
+- Focused web model spec: 18 tests / 0 failures, including localized blocker labels and fallbacks.
+- Contracts build: passed.
+- Exact API package test: attempted alone; sandbox-blocked before discovery by `tsx` IPC `listen EPERM`. The IPC-free exact configured file list passed 2,752 tests / 641 suites / 0 failures; a broader full-spec glob also passed 2,780 tests / 649 suites / 0 failures.
+- Exact web package test: sandbox-blocked before discovery by the same `tsx` IPC denial. IPC-free full web run passed 482 tests / 129 suites / 0 failures.
+- Web typecheck: passed.
+- Exact Turbopack web build stopped emitting at optimized-build start and was terminated after a bounded wait; webpack fallback compiled in 3.2 seconds, generated 11/11 static pages, and exited 0.
+- `git diff --check`: passed.
+Next:
+- Ship the pending permission sync for `expense.delete` together with `expense.evidence.read`.

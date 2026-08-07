@@ -1,0 +1,106 @@
+{
+  "_comment": [
+    "ECS Fargate task definition template for ai-gateway.",
+    "Replace <ACCOUNT_ID>, <REGION>, <IMAGE_TAG>, <GIT_SHA>, <CLUSTER>, <SUBNETS>, <SECURITY_GROUPS> before deploy.",
+    "<GIT_SHA> must be the full 40-hex commit, not the image tag prefix (F1.5.1 deployment identity).",
+    "Secrets are injected from AWS Secrets Manager / SSM Parameter Store.",
+    "AI_FINAL_MUTATION_ENABLED and AI_PROMPT_LOGGING_ENABLED MUST stay false in production.",
+    "Task role needs infra/ai-gateway/bedrock-invoke-policy.json attached (not execution role)."
+  ],
+  "family": "watchdog-bms-ai-gateway",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ai-gateway-task-role",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "ai-gateway",
+      "image": "<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway:<IMAGE_TAG>",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3002,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "APP_ENV", "value": "production" },
+        { "name": "DEPLOY_ENVIRONMENT", "value": "production" },
+        { "name": "GIT_SHA", "value": "<GIT_SHA>" },
+        { "name": "SERVICE_NAME", "value": "ai-gateway" },
+        { "name": "HOST", "value": "0.0.0.0" },
+        { "name": "PORT", "value": "3002" },
+        { "name": "AWS_REGION", "value": "ap-southeast-1" },
+        { "name": "MODEL_PROVIDER", "value": "bedrock" },
+        { "name": "BEDROCK_REGION", "value": "ap-southeast-1" },
+        { "name": "BEDROCK_MODEL_ID", "value": "apac.anthropic.claude-3-haiku-20240307-v1:0" },
+        { "name": "APPROVED_AI_PROVIDERS", "value": "bedrock,typhoon" },
+        { "name": "APPROVED_AI_MODEL_IDS", "value": "apac.anthropic.claude-3-haiku-20240307-v1:0" },
+        { "name": "APPROVED_AI_REGIONS", "value": "ap-southeast-1" },
+        { "name": "AI_TOOL_TIMEOUT_MS", "value": "15000" },
+        { "name": "AI_MAX_TOOL_CALLS", "value": "8" },
+        { "name": "AI_GATEWAY_ENABLED", "value": "true" },
+        { "name": "AI_AGENT_REGISTRY_ENABLED", "value": "true" },
+        { "name": "AI_TOOL_POLICY_ENFORCED", "value": "true" },
+        { "name": "AI_TOOL_AUDIT_ENABLED", "value": "true" },
+        { "name": "AI_FINAL_MUTATION_ENABLED", "value": "false" },
+        { "name": "AI_PROMPT_LOGGING_ENABLED", "value": "false" },
+        { "name": "LINE_AI_AGENT_ORCHESTRATION_ENABLED", "value": "true" },
+        { "name": "LINE_AI_AGENT_RUNTIME", "value": "strands-local" },
+        { "name": "LOG_LEVEL", "value": "info" },
+        { "name": "LOG_FORMAT", "value": "json" },
+        { "name": "LOG_REDACTION_ENABLED", "value": "true" },
+        { "name": "SWAGGER_ENABLED", "value": "false" }
+      ],
+      "secrets": [
+        {
+          "name": "AI_GATEWAY_INTERNAL_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/ai-gateway-internal-secret"
+        },
+        {
+          "name": "ERP_CORE_INTERNAL_URL",
+          "valueFrom": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/erp-core-internal-url"
+        },
+        {
+          "name": "PUBLIC_BASE_URL",
+          "valueFrom": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/ai-gateway-public-base-url"
+        },
+        {
+          "name": "SERVICE_VERSION",
+          "valueFrom": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/service-version"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3002/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ],
+        "interval": 15,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/watchdog-bms/production/ai-gateway",
+          "awslogs-region": "ap-southeast-1",
+          "awslogs-stream-prefix": "ai-gateway",
+          "awslogs-create-group": "true"
+        }
+      },
+      "readonlyRootFilesystem": true,
+      "linuxParameters": {
+        "capabilities": {
+          "drop": ["ALL"]
+        }
+      },
+      "user": "node"
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGlobalRead",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "ecr:GetAuthorizationToken",
+        "elasticache:DescribeCacheClusters",
+        "elasticache:DescribeReplicationGroups",
+        "logs:DescribeLogGroups",
+        "logs:DescribeMetricFilters",
+        "rds:DescribeDBInstances",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowReleaseImageRead",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:DescribeImageScanFindings",
+        "ecr:DescribeImages",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-ai-gateway",
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-api",
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-migration-tool",
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-workers"
+      ]
+    },
+    {
+      "Sid": "AllowSelfInspection",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"
+    },
+    {
+      "Sid": "AllowOwnedAlertTopicRead",
+      "Effect": "Allow",
+      "Action": [
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic"
+      ],
+      "Resource": "arn:aws:sns:ap-southeast-1:311414082667:*"
+    },
+    {
+      "Sid": "DenyOutsideReadOnly",
+      "Effect": "Deny",
+      "NotAction": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:DescribeImageScanFindings",
+        "ecr:DescribeImages",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "elasticache:DescribeCacheClusters",
+        "elasticache:DescribeReplicationGroups",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "logs:DescribeLogGroups",
+        "logs:DescribeMetricFilters",
+        "rds:DescribeDBInstances",
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

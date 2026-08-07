@@ -1,0 +1,869 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { LineAiInternalController } from './line-ai-internal.controller';
+import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
+import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
+import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
+
+const linkedUserReq: LineAiTurnRequest = {
+  requestId: 'req-ctrl',
+  webhookEventId: 'evt-ctrl',
+  messageText: 'ดูสต็อก',
+  messagePreviewHash: 'abc',
+  userContext: {
+    lineUserId: 'line-1',
+    internalUserId: 'user-1',
+    companyId: 'company-1',
+    membershipId: 'mem-1',
+    permissions: ['inventory.product.read'],
+    roles: ['owner'],
+    locale: 'th-TH',
+  },
+};
+
+describe('LineAiInternalController', () => {
+  it('fails closed when internal secret is not configured', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: undefined } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    await assert.rejects(
+      () => controller.lineTurn(undefined, linkedUserReq),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+  });
+
+  it('fails closed when secret does not match', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'correct-secret' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    await assert.rejects(
+      () => controller.lineTurn('wrong-secret', linkedUserReq),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+  });
+
+  it('rejects missing requestId with BadRequestException', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    await assert.rejects(
+      () => controller.lineTurn('secret', { userContext: { companyId: 'c1' } } as any),
+      (error: unknown) => error instanceof BadRequestException,
+    );
+  });
+
+  it('linked user happy path delegates to use case and returns response', async () => {
+    const expectedReply = 'สต็อกสินค้า: 5 รายการ';
+    const mockUseCase = {
+      execute: async (req: LineAiTurnRequest) => ({
+        requestId: req.requestId,
+        replyText: expectedReply,
+        sourceRefs: [],
+        sourceLabels: [],
+        webLinks: [],
+        intent: 'read_detail' as const,
+        agent: 'inventory' as const,
+        refused: false,
+        toolsInvoked: ['inventory.list_low_stock'],
+        durationMs: 10,
+      }),
+    };
+
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', aiAgentRegistryEnabled: true } as any,
+      mockUseCase as any,
+    );
+
+    const result = await controller.lineTurn('secret', linkedUserReq);
+    assert.equal(result.replyText, expectedReply);
+    assert.equal(result.refused, false);
+  });
+
+  it('rejects the local agent registry without the internal secret', () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', aiAgentRegistryEnabled: true } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    assert.throws(() => controller.agents(undefined), UnauthorizedException);
+  });
+
+  it('returns the local agent registry with the internal secret', () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', aiAgentRegistryEnabled: true } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    const result = controller.agents('secret');
+
+    assert.equal(result.registryEnabled, true);
+    const tax = result.agents.find((agent) => agent.agent === 'tax');
+    assert.equal(tax?.status, 'limited');
+    assert.ok(tax?.tools.some((tool) => tool.name === 'tax.get_tax_code_profile'));
+    assert.ok(JSON.stringify(result).includes('local-ai-internal-secret') === false);
+  });
+
+  it('receipt OCR returns not_configured when TYPHOON_OCR_API_KEY is missing (no OpenAI/Bedrock fallback)', async () => {
+    const controller = new LineAiInternalController(
+      {
+        aiGatewayInternalSecret: 'secret',
+        modelProvider: 'openai',
+        openAiApiKey: 'should-not-be-used',
+        typhoonOcrApiKey: undefined,
+        aiToolTimeoutMs: 1000,
+      } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    const result = await controller.receiptOcr('secret', {
+      requestId: 'req-ocr',
+      companyId: 'company-1',
+      userId: 'user-1',
+      attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+    });
+
+    assert.equal(result.status, 'not_configured');
+    assert.equal(result.errorCode, 'PROVIDER_CONFIG_MISSING');
+  });
+
+  it('receipt OCR routes PDFs away from the image-only Typhoon API', async () => {
+    const originalFetch = globalThis.fetch;
+    let typhoonCalled = false;
+    globalThis.fetch = (async (url: any) => {
+      if (String(url).includes('api.opentyphoon.ai')) typhoonCalled = true;
+      throw new Error('no network in test');
+    }) as any;
+
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret',
+          modelProvider: 'openai',
+          openAiApiKey: 'should-not-be-used',
+          typhoonOcrApiKey: 'typhoon-key',
+          aiToolTimeoutMs: 1000,
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', {
+        requestId: 'req-pdf',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { id: 'att-pdf', mimeType: 'application/pdf', purpose: 'receipt', contentBase64: 'JVBERi0=' },
+      });
+
+      // Only Bedrock has a document channel; anything else must fail typed, not silently
+      // hand the PDF to Typhoon (which accepts image data URIs only).
+      assert.equal(result.status, 'not_configured');
+      assert.equal(result.errorCode, 'PDF_PROVIDER_UNSUPPORTED');
+      assert.equal(typhoonCalled, false, 'PDF must never be sent to the image-only Typhoon API');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('receipt OCR runs two stages: Typhoon natural_text markdown then provider field extraction', async () => {
+    const originalFetch = globalThis.fetch;
+    let typhoonBody: any = {};
+    let typhoonAuth = '';
+    let extractionInput = '';
+    globalThis.fetch = (async (url: any, init: any) => {
+      const requestedUrl = String(url);
+      if (requestedUrl.includes('api.opentyphoon.ai')) {
+        typhoonAuth = init.headers.Authorization;
+        typhoonBody = JSON.parse(init.body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [{ message: { content: '{"natural_text":"# ใบเสร็จ ร้านกาแฟ\\nยอดก่อนค่าบริการ 55.00\\nService charge 10.00\\nหัก ณ ที่จ่าย 1.50\\nยอดรวม 65.00 บาท"}' } }],
+          }),
+        };
+      }
+      // Stage 2: OpenAI provider (Responses API) maps OCR markdown -> draft fields.
+      extractionInput = JSON.stringify(JSON.parse(init.body).input);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output_text: JSON.stringify({
+            classification: {
+              contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+              businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+              confidence: 0.95, evidenceSignals: ['ร้านกาแฟ'], amountSignals: ['ยอดรวม 65.00'],
+              settlementSignals: ['ใบเสร็จ'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+            },
+            fields: {
+              vendorName: 'ร้านกาแฟ',
+              subtotalAmount: '55.00',
+              grandTotalAmount: '65.00',
+              whtRate: '0.03',
+              whtAmount: '1.50',
+              vatMode: 'NO_VAT',
+              additionalCharges: [{
+                kind: 'SERVICE_CHARGE',
+                description: 'Service charge',
+                amount: '10.00',
+                vatRate: '0',
+                evidenceSignal: 'Service charge 10.00',
+                confidence: 0.96,
+              }],
+              categorySuggestion: {
+                expenseCategoryId: 'cat-meals',
+                confidence: 0.92,
+                evidenceSignals: ['ร้านกาแฟ'],
+              },
+              missingFields: ['vendorTaxId'],
+            },
+          }),
+        }),
+      };
+    }) as any;
+
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret',
+          typhoonOcrApiKey: 'typhoon-key',
+          aiToolTimeoutMs: 1000,
+          modelProvider: 'openai',
+          openAiApiKey: 'openai-key',
+          openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', {
+        requestId: 'req-ocr',
+        companyId: 'company-1',
+        userId: 'user-1',
+        activeCategories: [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
+        attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.vendorName, 'ร้านกาแฟ');
+      assert.equal(result.fields?.grandTotalAmount, '65.00');
+      assert.equal(result.fields?.whtAmount, '1.50');
+      assert.deepEqual(result.fields?.additionalCharges, [{
+        kind: 'SERVICE_CHARGE',
+        description: 'Service charge',
+        amount: '10.00',
+        vatRate: '0',
+        evidenceSignal: 'Service charge 10.00',
+        confidence: 0.96,
+      }]);
+      assert.deepEqual(result.fields?.categorySuggestion, {
+        expenseCategoryId: 'cat-meals',
+        confidence: 0.92,
+        evidenceSignals: ['ร้านกาแฟ'],
+      });
+      assert.equal(result.classification?.documentKind, 'RECEIPT');
+      assert.deepEqual(result.classification?.settlementSignals, ['ใบเสร็จ']);
+      assert.equal(typhoonAuth, 'Bearer typhoon-key');
+      assert.equal(typhoonBody.model, 'typhoon-ocr');
+      assert.equal(typhoonBody.temperature, 0.1);
+      assert.ok(String(typhoonBody.messages[0].content[0].text).includes('natural_text'), 'stage 1 must use the official Typhoon prompt');
+      assert.ok(extractionInput.includes('ใบเสร็จ ร้านกาแฟ'), 'stage 2 must receive the OCR markdown, not the image');
+      assert.ok(extractionInput.includes('cat-meals'), 'stage 2 must receive the bounded active category catalogue');
+      assert.ok(!extractionInput.includes('ZmFrZQ=='), 'image bytes must not reach stage 2');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('receipt OCR drops category suggestions outside the active catalogue or without exact OCR evidence', async () => {
+    const originalFetch = globalThis.fetch;
+    const runOcr = async (expenseCategoryId: string, evidenceSignals: string[]) => {
+      globalThis.fetch = (async (url: any) => {
+        if (String(url).includes('api.opentyphoon.ai')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ choices: [{ message: { content: '{"natural_text":"ใบเสร็จ ร้านกาแฟ\\nTOTAL 65.00 PAID"}' } }] }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            output_text: JSON.stringify({
+              classification: {
+                contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+                businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+                confidence: 0.95, evidenceSignals: ['ร้านกาแฟ'], amountSignals: ['65.00'],
+                settlementSignals: ['ใบเสร็จ'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+              },
+              fields: {
+                grandTotalAmount: '65.00',
+                categorySuggestion: { expenseCategoryId, confidence: 0.95, evidenceSignals },
+              },
+            }),
+          }),
+        };
+      }) as any;
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      return controller.receiptOcr('secret', {
+        requestId: 'req-ocr-category',
+        companyId: 'company-1',
+        userId: 'user-1',
+        activeCategories: [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
+        attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+    };
+
+    try {
+      const unknown = await runOcr('cat-foreign', ['ร้านกาแฟ']);
+      assert.equal(unknown.fields?.categorySuggestion, undefined);
+
+      const inventedEvidence = await runOcr('cat-meals', ['ข้อความที่ไม่มีในใบเสร็จ']);
+      assert.equal(inventedEvidence.fields?.categorySuggestion, undefined);
+      assert.equal(inventedEvidence.fields?.grandTotalAmount, '65.00', 'invalid category must not discard sibling OCR fields');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // Spec §19c: a card slip prints TAX RATE 7% — the rate must reach the draft as "0.07"
+  // even though "0.07" itself is never printed (rates are exempt from the numeric cross-check).
+  it('receipt OCR keeps a printed VAT rate as a decimal fraction and drops percentage misreads', async () => {
+    const originalFetch = globalThis.fetch;
+    const ocrText = 'BENLAI ใบเสร็จรับเงิน\\nTAX RATE 7%\\nTAX AMT 37.94\\nTAX Exclude 542.06\\nTOTAL 580.00 PAID';
+    const runOcr = async (rawVatRate: string) => {
+      globalThis.fetch = (async (url: any) => {
+        if (String(url).includes('api.opentyphoon.ai')) {
+          return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: `{"natural_text":"${ocrText}"}` } }] }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            output_text: JSON.stringify({
+              classification: {
+                contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+                businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+                confidence: 0.95, evidenceSignals: ['BENLAI'], amountSignals: ['580.00'],
+                settlementSignals: ['PAID'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+              },
+              fields: {
+                vendorName: 'BENLAI', vatRate: rawVatRate, taxableAmount: '542.06',
+                vatAmount: '37.94', grandTotalAmount: '580.00', vatMode: 'VAT_EXCLUDED',
+              },
+            }),
+          }),
+        };
+      }) as any;
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      return controller.receiptOcr('secret', {
+        requestId: 'req-ocr',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+    };
+
+    try {
+      const kept = await runOcr('0.07');
+      assert.equal(kept.fields?.vatRate, '0.07', 'a decimal-fraction rate survives even though "0.07" is not printed');
+      assert.equal(kept.fields?.vatAmount, '37.94');
+      assert.equal(kept.fields?.grandTotalAmount, '580.00');
+      assert.equal(kept.fields?.missingFields, undefined);
+
+      // Spec §19g decision 2: a printed "0" is a zero-rated supply — export, international transport,
+      // services used abroad. The prompt asks for it and additionalCharges already accept it, so
+      // dropping it here left those documents indistinguishable from an unread rate.
+      const zeroRated = await runOcr('0');
+      assert.equal(zeroRated.fields?.vatRate, '0', 'a printed zero rate is data, not an unknown');
+
+      for (const bad of ['7', '1.5', 'seven']) {
+        const dropped = await runOcr(bad);
+        assert.equal(dropped.fields?.vatRate, undefined, `percentage or garbage rate ${bad} must not reach the draft`);
+        assert.equal(dropped.fields?.taxableAmount, '542.06', 'sibling money fields survive');
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('receipt OCR fails typed when Typhoon reads the document but the extraction provider is disabled', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: '{"natural_text":"# ใบเสร็จ"}' } }] }),
+    })) as any;
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000, modelProvider: 'disabled' } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', {
+        requestId: 'req-ocr',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'PROVIDER_DISABLED');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('receipt OCR maps Typhoon throttle to failed with bounded error code', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: false, status: 429, json: async () => ({}) })) as any;
+    try {
+      const controller = new LineAiInternalController(
+        { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000 } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.receiptOcr('secret', {
+        requestId: 'req-ocr',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { id: 'att-1', mimeType: 'image/png', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'PROVIDER_THROTTLED');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('line intake route fails closed on wrong secret and bad payload', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+    await assert.rejects(
+      () => controller.lineIntakeRoute('wrong', { requestId: 'r', companyId: 'c', userId: 'u', locale: 'th', messageText: 'x', permissions: [] }),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+    await assert.rejects(
+      () => controller.lineIntakeRoute('secret', { requestId: 'r' } as any),
+      (error: unknown) => error instanceof BadRequestException,
+    );
+  });
+
+  it('line intake route returns typed UNAVAILABLE when provider is disabled', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+    const plan = await controller.lineIntakeRoute('secret', {
+      requestId: 'req-route',
+      companyId: 'company-1',
+      userId: 'user-1',
+      locale: 'th',
+      messageText: 'ค่ากาแฟ 65 บาท',
+      permissions: ['expense.receipt.line_upload'],
+    });
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'PROVIDER_DISABLED');
+  });
+
+  it('bank statement extract fails closed on missing typhoon key and rejects non-image mime types', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: undefined, aiToolTimeoutMs: 1000 } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+
+    const pdfAttempt = await controller.bankStatementExtract('secret', {
+      requestId: 'req-stmt',
+      companyId: 'company-1',
+      userId: 'user-1',
+      attachment: { mimeType: 'application/pdf' as any, contentBase64: 'ZmFrZQ==' },
+    });
+    assert.equal(pdfAttempt.status, 'failed');
+    assert.equal(pdfAttempt.errorCode, 'UNSUPPORTED_MIME_TYPE');
+
+    const noKey = await controller.bankStatementExtract('secret', {
+      requestId: 'req-stmt',
+      companyId: 'company-1',
+      userId: 'user-1',
+      attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' },
+    });
+    assert.equal(noKey.status, 'not_configured');
+    assert.equal(noKey.errorCode, 'PROVIDER_CONFIG_MISSING');
+  });
+
+  it('bank statement extract runs two stages and returns bounded rows with model id', async () => {
+    const originalFetch = globalThis.fetch;
+    let extractionInput = '';
+    globalThis.fetch = (async (url: any, init: any) => {
+      if (String(url).includes('api.opentyphoon.ai')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            choices: [{ message: { content: '{"natural_text":"| วันที่ | รายการ | ถอน | ฝาก | คงเหลือ |\\n| 01/07/69 | รับโอน | | 1,500.00 | 11,500.00 |"}' } }],
+          }),
+        };
+      }
+      extractionInput = JSON.stringify(JSON.parse(init.body).input);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output_text: '{"rows":[{"postedDate":"2026-07-01","description":"รับโอน","credit":"1500.00","balance":"11500.00","confidence":0.93},{"description":"   "},{"bogus":123}]}',
+        }),
+      };
+    }) as any;
+
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret',
+          typhoonOcrApiKey: 'typhoon-key',
+          aiToolTimeoutMs: 1000,
+          modelProvider: 'openai',
+          openAiApiKey: 'openai-key',
+          openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      const result = await controller.bankStatementExtract('secret', {
+        requestId: 'req-stmt',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' },
+      });
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.modelId, 'gpt-test');
+      assert.deepEqual(result.modelLineage?.map((item) => item.provider), ['typhoon', 'openai']);
+      assert.deepEqual(result.modelLineage?.map((item) => item.purpose), [
+        'bank_statement_ocr_read',
+        'bank_statement_extract',
+      ]);
+      assert.equal(result.rows?.length, 1);
+      assert.equal(result.rows?.[0].credit, '1500.00');
+      assert.equal(result.rows?.[0].confidence, 0.93);
+      assert.ok(extractionInput.includes('รับโอน'), 'stage 2 must receive the OCR markdown, not the image');
+      assert.ok(!extractionInput.includes('ZmFrZQ=='), 'image bytes must not reach stage 2');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ── Item 10F: OCR value cross-check – fields must exist in the OCR text ──────
+
+import { applyOcrValueCrossCheck } from './line-ai-internal.controller';
+
+describe('applyOcrValueCrossCheck (item 10F)', () => {
+  const RECEIPT_TEXT = 'ร้านกาแฟ ใบเสร็จ 09/12/2537\nกาแฟ 2 x 30.00 = 60.00\nVAT 7% 4.20\nรวม ๖๔.๒๐ บาท';
+
+  it('keeps values printed in the OCR text, including Thai digits', () => {
+    const out = applyOcrValueCrossCheck({ grandTotalAmount: '64.20', vatAmount: '4.20', quantity: '2', expenseDate: '1994-12-09' }, RECEIPT_TEXT);
+    assert.equal(out.grandTotalAmount, '64.20');
+    assert.equal(out.vatAmount, '4.20');
+    assert.equal(out.expenseDate, '1994-12-09');
+    assert.equal(out.missingFields, undefined);
+  });
+
+  it('drops a hallucinated total to missingFields', () => {
+    const out = applyOcrValueCrossCheck({ grandTotalAmount: '640.20', vatAmount: '4.20' }, RECEIPT_TEXT);
+    assert.equal(out.grandTotalAmount, undefined);
+    assert.ok(out.missingFields?.includes('grandTotalAmount'));
+    assert.equal(out.vatAmount, '4.20', 'honest sibling fields survive');
+  });
+
+  it('drops an expenseDate the OCR text cannot support (kept-as-BE corruption)', () => {
+    const out = applyOcrValueCrossCheck({ expenseDate: '2537-12-09' }, RECEIPT_TEXT);
+    assert.equal(out.expenseDate, undefined);
+    assert.ok(out.missingFields?.includes('expenseDate'));
+  });
+
+  it('verifies Thai number words on handwritten bills via the shared normalizer', () => {
+    const out = applyOcrValueCrossCheck({ grandTotalAmount: '60' }, 'บิลเงินสด รวมหกสิบบาทถ้วน');
+    assert.equal(out.grandTotalAmount, '60');
+  });
+
+  it('drops values against an ambiguous printed date (9/11/37) – review decides', () => {
+    const out = applyOcrValueCrossCheck({ expenseDate: '1994-11-09' }, 'ใบเสร็จ 9/11/37 รวม 60.00');
+    assert.equal(out.expenseDate, undefined);
+    assert.ok(out.missingFields?.includes('expenseDate'));
+  });
+
+  it('non-numeric fields pass through untouched, including the printed rate (spec §19c)', () => {
+    const out = applyOcrValueCrossCheck({ vendorName: 'ร้านกาแฟ', vatMode: 'VAT_INCLUDED', vatRate: '0.07', grandTotalAmount: '64.20' }, RECEIPT_TEXT);
+    assert.equal(out.vendorName, 'ร้านกาแฟ');
+    assert.equal(out.vatMode, 'VAT_INCLUDED');
+    assert.equal(out.vatRate, '0.07', 'rates print as "7%", so the verbatim numeric check must not touch them');
+    assert.equal(out.missingFields, undefined);
+  });
+
+  it('keeps only additional charges whose amount appears in the OCR text', () => {
+    const out = applyOcrValueCrossCheck({
+      additionalCharges: [
+        {
+          kind: 'SERVICE_CHARGE',
+          description: 'Service charge',
+          amount: '5.00',
+          evidenceSignal: 'Service charge 5.00',
+        },
+        {
+          kind: 'OTHER',
+          description: 'Invented fee',
+          amount: '999.00',
+          evidenceSignal: 'Invented fee 999.00',
+        },
+      ],
+    }, `${RECEIPT_TEXT}\nService charge 5.00`);
+    assert.deepEqual(out.additionalCharges, [{
+      kind: 'SERVICE_CHARGE',
+      description: 'Service charge',
+      amount: '5.00',
+      evidenceSignal: 'Service charge 5.00',
+    }]);
+    assert.ok(out.missingFields?.includes('additionalCharges'));
+  });
+});
+
+function classification(overrides: Partial<BusinessDocumentClassification> = {}): BusinessDocumentClassification {
+  return {
+    contentKind: 'DOCUMENT',
+    documentFamily: 'EXPENSE_EVIDENCE',
+    documentKind: 'RECEIPT',
+    businessDirection: 'PURCHASE_EXPENSE',
+    transactionState: 'PAID',
+    evidenceRoles: ['EXPENSE_SUPPORT'],
+    confidence: 0.95,
+    evidenceSignals: [],
+    amountSignals: ['ยอดรวม 65.00'],
+    settlementSignals: ['ชำระแล้ว'],
+    missingRequiredSignals: [],
+    contradictionSignals: [],
+    requiresClarification: false,
+    ...overrides,
+  };
+}
+
+describe('business document classification gate', () => {
+  it('retains only exact bounded OCR spans, clamps confidence, and rejects unknown enums', () => {
+    const parsed = parseBusinessDocumentClassification({
+      ...classification({ confidence: 2 }),
+      evidenceSignals: ['ร้านกาแฟ', 'invented evidence'],
+      amountSignals: ['ยอดรวม 65.00'],
+      settlementSignals: ['ชำระแล้ว', 'PAID'],
+    }, 'ร้านกาแฟ\nยอดรวม 65.00\nชำระแล้ว');
+    assert.equal(parsed?.confidence, 1);
+    assert.deepEqual(parsed?.evidenceSignals, ['ร้านกาแฟ']);
+    assert.deepEqual(parsed?.settlementSignals, ['ชำระแล้ว']);
+    assert.equal(parseBusinessDocumentClassification({ ...classification(), documentKind: 'MAGIC_RECEIPT' }, 'ชำระแล้ว'), null);
+  });
+
+  // Spec §19h: the kind the prompt now asks for has to survive the strict parser, or every
+  // abbreviated invoice would be rejected outright instead of recorded as non-creditable evidence.
+  it('accepts ABBREVIATED_TAX_INVOICE as a known document kind', () => {
+    const parsed = parseBusinessDocumentClassification(
+      { ...classification(), documentKind: 'ABBREVIATED_TAX_INVOICE' },
+      'ร้านกาแฟ\nยอดรวม 65.00\nชำระแล้ว',
+    );
+    assert.equal(parsed?.documentKind, 'ABBREVIATED_TAX_INVOICE');
+  });
+
+  it('downgrades a quantity-only receipt candidate to ORDER_OR_CHECK_BILL', () => {
+    const gated = gateBusinessDocumentClassification(
+      classification({ missingRequiredSignals: ['QUANTITY_ONLY'] }),
+      { vendorName: 'ร้านอาหาร', description: 'ข้าวผัด', quantity: '2' },
+      'ร้านอาหาร\nข้าวผัด x 2',
+    );
+    assert.equal(gated.documentKind, 'ORDER_OR_CHECK_BILL');
+    assert.equal(gated.documentFamily, 'COMMERCIAL_DOCUMENT');
+    assert.ok(gated.missingRequiredSignals.includes('MISSING_MONETARY_AMOUNT'));
+    assert.equal(gated.requiresClarification, true);
+
+    const quantityMisreadAsTotal = gateBusinessDocumentClassification(
+      classification({ amountSignals: [] }),
+      { vendorName: 'ร้านอาหาร', quantity: '2', grandTotalAmount: '2' },
+      'ร้านอาหาร\nข้าวผัด x 2\nชำระแล้ว',
+    );
+    assert.equal(quantityMisreadAsTotal.documentKind, 'ORDER_OR_CHECK_BILL');
+  });
+
+  it('does not retain RECEIPT when total was dropped or settlement evidence is absent', () => {
+    const noTotal = gateBusinessDocumentClassification(
+      classification(),
+      { vendorName: 'ร้านกาแฟ' },
+      'ร้านกาแฟ\nใบเสร็จ',
+    );
+    assert.equal(noTotal.documentKind, 'NEEDS_REVIEW');
+
+    const noSettlement = gateBusinessDocumentClassification(
+      classification({ settlementSignals: [] }),
+      { vendorName: 'ร้านกาแฟ', grandTotalAmount: '65.00' },
+      'ร้านกาแฟ\nยอดรวม 65.00',
+    );
+    assert.equal(noSettlement.documentKind, 'SUPPLIER_INVOICE_OR_BILL');
+    assert.ok(noSettlement.missingRequiredSignals.includes('MISSING_PAYMENT_EVIDENCE'));
+
+    const notPaid = gateBusinessDocumentClassification(
+      classification({ transactionState: 'DUE' }),
+      { vendorName: 'ร้านกาแฟ', grandTotalAmount: '65.00' },
+      'ร้านกาแฟ\nยอดรวม 65.00\nชำระแล้ว',
+    );
+    assert.equal(notPaid.documentKind, 'SUPPLIER_INVOICE_OR_BILL');
+    assert.ok(notPaid.missingRequiredSignals.includes('MISSING_PAYMENT_EVIDENCE'));
+  });
+
+  it('never upgrades non-expense kinds and blocks sales-direction receipts from expense mutation', () => {
+    const quotation = classification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'QUOTATION' });
+    assert.deepEqual(gateBusinessDocumentClassification(quotation, { grandTotalAmount: '100.00' }, '100.00'), quotation);
+
+    const salesReceipt = gateBusinessDocumentClassification(
+      classification({ businessDirection: 'SALES_RECEIVABLE', amountSignals: ['ยอดรวม 100.00'] }),
+      { vendorName: 'บริษัทเรา', grandTotalAmount: '100.00' },
+      'บริษัทเรา\nยอดรวม 100.00\nชำระแล้ว',
+    );
+    assert.equal(salesReceipt.documentKind, 'RECEIPT');
+    assert.equal(salesReceipt.requiresClarification, true);
+    assert.ok(salesReceipt.missingRequiredSignals.includes('AMBIGUOUS_BUSINESS_DIRECTION'));
+  });
+});
+
+describe('receipt OCR image re-read when the printed total is unusable', () => {
+  // Typhoon reads a warped photo and loses the printed total line; stage 2 can only report an
+  // ambiguous number, which the API's expense gate refuses. The receipt's real total is 180.00.
+  const TYPHOON_TEXT_WITHOUT_TOTAL = '# Starbucks Coffee\n| Sub Total | 160.00 |\n| Total Discount | -15.00 |';
+  const BEDROCK_REREAD_TEXT = '# Starbucks Coffee\nSub Total 195.00\nTotal Discount -15.00\nTotal Amount 180.00\nPayment 180.00';
+
+  const classification = (total: string, requiresClarification: boolean) => ({
+    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'TAX_INVOICE',
+    businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+    confidence: 0.9, evidenceSignals: ['Starbucks Coffee'], amountSignals: [total],
+    settlementSignals: ['Payment'],
+    missingRequiredSignals: requiresClarification ? ['MISSING_TRANSACTION_TOTAL'] : [],
+    contradictionSignals: [], requiresClarification,
+  });
+
+  function stubTyphoon() {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init: any) => {
+      const requested = String(url);
+      if (requested.includes('api.opentyphoon.ai')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ natural_text: TYPHOON_TEXT_WITHOUT_TOTAL }) } }] }),
+        };
+      }
+      // OpenAI stage 2 over whatever text it was given.
+      const input = JSON.stringify(JSON.parse(init.body).input);
+      const total = input.includes('180.00') ? '180.00' : '160.00';
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          output_text: JSON.stringify({
+            classification: classification(total, total === '160.00'),
+            fields: { vendorName: 'Starbucks Coffee', grandTotalAmount: total },
+          }),
+        }),
+      };
+    }) as any;
+    return () => { globalThis.fetch = originalFetch; };
+  }
+
+  /** Bedrock serves both roles here: the vision re-read (image block) and stage 2 (text only). */
+  function stubBedrock() {
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const content = command.input.messages.at(-1).content;
+      const isRead = content.some((block: any) => block.image);
+      calls.push(isRead ? 'read' : 'extract');
+      if (isRead) {
+        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: BEDROCK_REREAD_TEXT }) }] } } };
+      }
+      const sawRereadText = JSON.stringify(content).includes('Total Amount 180.00');
+      const total = sawRereadText ? '180.00' : '160.00';
+      return {
+        output: {
+          message: {
+            content: [{
+              text: JSON.stringify({
+                classification: classification(total, !sawRereadText),
+                fields: { vendorName: 'Starbucks Coffee', grandTotalAmount: total },
+              }),
+            }],
+          },
+        },
+      };
+    };
+    return { calls, restore: () => { (BedrockRuntimeClient.prototype as any).send = original; } };
+  }
+
+  const request = {
+    requestId: 'req-reread',
+    companyId: 'company-1',
+    userId: 'user-1',
+    attachment: { id: 'att-1', mimeType: 'image/jpeg' as const, purpose: 'receipt' as const, contentBase64: 'ZmFrZQ==' },
+  };
+
+  it('recovers the printed total from one Bedrock vision re-read', async () => {
+    const restoreFetch = stubTyphoon();
+    const bedrock = stubBedrock();
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', request);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.grandTotalAmount, '180.00');
+      assert.equal(result.classification?.requiresClarification, false);
+      assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'exactly one re-read, never a loop');
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('keeps the first reading when the provider has no vision re-read', async () => {
+    const restoreFetch = stubTyphoon();
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', request);
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields?.grandTotalAmount, '160.00');
+      assert.equal(result.classification?.requiresClarification, true);
+    } finally {
+      restoreFetch();
+    }
+  });
+});
