@@ -1,7 +1,7 @@
 # Agent Memory: repo-migration-fresh-history
 
-Status: Phase 0–5 + 6.1 เสร็จ — repo ใหม่ `MangmeeDev/mangmeeplus` CI เขียวแล้ว
-ถัดไป 6.2 deploy UAT
+Status: การย้าย repo เสร็จแล้ว — UAT รันจาก MangmeeDev/mangmeeplus ได้จริง
+เหลือ soak → prune IAM → archive repo เดิม
 Owner: thawatchai
 Scope: ย้าย `sandwich09/WatchDog-BMS` ไป repo ใหม่แบบไม่มี git history ยก CI/CD + environment config ไปด้วย
 
@@ -387,8 +387,36 @@ repo ที่สร้างใหม่ได้ format นี้ ส่วน
 **6.2** Actions → `deploy-uat.yml` — **Use workflow from = main**,
 `release_ref` = SHA ของ `develop` (`668a2d08...` เต็ม 40 ตัว), `target = all`
 
-**6.3** UAT acceptance → **6.4** deploy production → **6.5 soak 1–2 สัปดาห์**
-→ **6.6** `MODE=prune` → **6.7** archive repo เดิม
+**6.3** UAT acceptance ✅ — `https://uat.mangmeeplus.com` 302 → `/login` 200 (`<title>มั่งมี</title>`)
+
+**6.4 production — ไม่ใช่ขั้นตอนของงานย้าย repo** (ดูหัวข้อถัดไป)
+
+**6.5 soak** → **6.6** `MODE=prune` → **6.7** archive repo เดิม
+
+## production ยังไม่เคย deploy — ไม่เกี่ยวกับการย้าย
+
+ตรวจแล้วพบว่า production ไม่เคยขึ้นเลยทั้งบน repo เก่าและใหม่:
+
+| หลักฐาน | |
+|---|---|
+| `deploy-production.yml` บน repo เดิม | **0 runs** |
+| `u5-owner-approval.yml`, `u5-shadow-evidence.yml`, `production-a5.yml`, `production-security-preflight.yml` | ไม่มีบน `main` ของ repo เดิม (404) — อยู่แต่บน `develop-with-ai` |
+| ECS cluster `watchdog-bms-prod` | 3 services ทั้งหมด desired=0 running=0 |
+
+แปลว่าการย้าย repo **ไม่ได้ทำให้ production เสียหาย** เพราะไม่มีอะไรรันอยู่
+
+`deploy-production.yml` แบบ `target=all` บังคับ `release_mode=promotion` ซึ่งต้องมีครบ:
+
+1. **bridge** — UAT run *ก่อนหน้า* ใน repo เดียวกัน (`bridge_uat_run_id`, `bridge_uat_run_attempt`,
+   `bridge_source_sha`, `bridge_api_image`) และ `BRIDGE_SOURCE != SOURCE_SHA`
+   → repo ใหม่มี UAT run เดียว จึงยังไม่มี bridge
+2. **U5 owner approval** — evidence `OWNER_U5E_APPROVAL_V1` ที่ `u5-owner-approval.yml` ต้องผลิต
+   *ระหว่าง* deploy run นั้น (รอสูงสุด 1800s) ผูกกับ run id ของ deploy เอง
+3. approval อ้างต่อไปยัง `U5_SHADOW_AGGREGATE_V1` และ `PRODUCTION_A5_EVIDENCE_V1`
+4. environment **`production-approval`** ที่ `u5-owner-approval.yml` ใช้ — **ยังไม่มีใน repo ใหม่**
+   (repo เดิมก็ไม่มี) ต้องสร้างพร้อม protection rule ที่ต้องการก่อน
+
+นี่คืองาน "เปิด production ครั้งแรก" เป็นโปรเจกต์แยก ไม่ใช่ส่วนหนึ่งของการย้าย repo
 
 local clone ย้ายมาทำงานบน branch `develop` ที่ track `newremote` แล้ว
 `origin` ยังชี้ repo เดิมไว้เป็นทางถอย
