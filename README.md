@@ -1,4 +1,3 @@
-# This is private repo, side project for study ERP, AI, End to End promote product by self
 # WatchDog-BMS
 A Dog that never sleeps, always watching your stock, sales, KPI, accounts &amp; team — just like you built this platform to do. Loyal to your business. Sharp like your Rat hour.
 

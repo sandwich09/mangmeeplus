@@ -1,30 +1,162 @@
-Copyright (c) 2026 บริษัท มั่งมียั่งยืน จำกัด
-Juristic person registration no. 0105569135722
+Copyright © 2026 บริษัท มั่งมียั่งยืน จำกัด
+Juristic Person Registration No. 0105569135722
 All rights reserved.
 
-PROPRIETARY AND CONFIDENTIAL
+PROPRIETARY SOFTWARE LICENSE AND CONFIDENTIALITY NOTICE
+RESTRICTED USE — NO PUBLIC LICENSE
 
-This software, including its source code, configuration, documentation,
-and all associated materials (collectively, the "Software"), is the
-confidential and proprietary property of บริษัท มั่งมียั่งยืน จำกัด,
-juristic person registration no. 0105569135722 (the "Company").
+1. OWNERSHIP AND SCOPE
 
-No part of the Software may be copied, reproduced, distributed,
-published, modified, merged, sublicensed, sold, or used to create
-derivative works, in whole or in part, by any means or in any form,
-without the prior written permission of the Company.
+Except for Third-Party Materials, this repository and all software,
+source code, object code, scripts, configuration files,
+infrastructure-as-code, database schemas, documentation, designs,
+specifications, Company-created prompts, agent configurations,
+workflows, test materials, and related materials contained in or
+distributed with it (collectively, the "Software") are owned by or
+licensed to บริษัท มั่งมียั่งยืน จำกัด, juristic person registration
+no. 0105569135722 (the "Company").
 
-Access to this repository, whether granted directly or obtained
-otherwise, does not transfer ownership of the Software and does not
-grant any license or right to it. No license is granted by implication,
-estoppel, or otherwise.
+The Software is protected by applicable copyright, trade secret,
+confidentiality, contract, and other laws.
 
-Unauthorized copying, disclosure, use, or distribution of the Software
-may violate applicable copyright, trade secret, and contract law.
+2. AUTHORIZED USE
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE COMPANY BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR
-THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+An "Authorized User" means an employee, officer, contractor, advisor,
+service provider, or other person:
+
+(a) whose access to the Software has been expressly approved by the
+    Company; and
+
+(b) who is subject to applicable confidentiality and intellectual
+    property obligations.
+
+The Company grants each Authorized User a limited, revocable,
+non-exclusive, non-transferable, and non-sublicensable right to access,
+reproduce, execute, modify, test, deploy, and make necessary backup
+copies of the Software solely:
+
+(a) for purposes expressly approved by the Company;
+
+(b) within the scope of that Authorized User's employment, engagement,
+    duties, or written authorization; and
+
+(c) only while such authorization remains in effect.
+
+Except for the Authorized Use described above, or as otherwise
+expressly permitted in a separate written agreement signed by an
+authorized representative of the Company, no person may copy,
+reproduce, publish, disclose, distribute, transmit, modify, adapt,
+translate, reverse engineer, decompile, disassemble, merge, sublicense,
+sell, rent, commercialize, or create derivative works from the
+Software, in whole or in part.
+
+The foregoing restrictions apply except to the extent that a particular
+restriction is prohibited by applicable law.
+
+3. CONFIDENTIALITY AND SECURITY
+
+The Software may contain confidential information and trade secrets of
+the Company.
+
+Each Authorized User must:
+
+(a) protect the Software against unauthorized access, use, copying,
+    loss, or disclosure;
+
+(b) use at least reasonable care and no less than the level of care used
+    to protect that Authorized User's own confidential information of a
+    similar nature;
+
+(c) restrict access to persons who have a legitimate need to know and
+    who are subject to appropriate confidentiality obligations;
+
+(d) comply with the Company's applicable information security,
+    repository access, and data handling policies; and
+
+(e) promptly notify the Company of any suspected unauthorized access,
+    loss, compromise, copying, or disclosure.
+
+Upon expiration, termination, or revocation of authorization, the
+Authorized User must immediately cease using the Software and, upon
+request by the Company, return or securely delete all copies under the
+Authorized User's possession or control, except where retention is
+required by applicable law.
+
+The confidentiality obligations relating to information constituting a
+trade secret continue for as long as that information remains a trade
+secret under applicable law.
+
+4. THIRD-PARTY MATERIALS
+
+The Software may include or depend upon open-source software, third-party
+libraries, frameworks, assets, fonts, data, services, or other materials
+owned or licensed by third parties ("Third-Party Materials").
+
+Third-Party Materials are governed by their respective copyright
+notices and license terms.
+
+Nothing in this Notice:
+
+(a) claims ownership of Third-Party Materials;
+
+(b) restricts any rights expressly granted under the applicable
+    third-party license terms; or
+
+(c) modifies or overrides any obligations imposed by those terms.
+
+5. NO TRANSFER OF OWNERSHIP OR OTHER RIGHTS
+
+Access to, possession of, or authorized use of the Software does not
+transfer ownership of the Software or any intellectual property rights
+in the Software.
+
+No public license and no rights under any patent, trademark, service
+mark, trade name, logo, domain name, or other intellectual property are
+granted except as expressly stated in this Notice or in a separate
+written agreement signed by an authorized representative of the
+Company.
+
+6. UNAUTHORIZED ACCESS OR USE
+
+Unauthorized access, copying, disclosure, use, modification,
+distribution, or commercialization of the Software may violate
+applicable copyright, trade secret, confidentiality, employment,
+contract, and other laws, and may result in civil or criminal liability
+where applicable.
+
+The Company reserves all rights and remedies available under applicable
+law.
+
+Any person who receives or obtains access to the Software in error must
+immediately cease all use, refrain from copying or disclosure, and
+notify the Company.
+
+7. DISCLAIMER AND LIMITATION OF LIABILITY
+
+Except as expressly provided in a separate written agreement signed by
+an authorized representative of the Company, and to the maximum extent
+permitted by applicable law, the Software is provided "AS IS", without
+warranty of any kind, express or implied, including warranties of
+merchantability, fitness for a particular purpose, title, and
+non-infringement.
+
+To the maximum extent permitted by applicable law, the Company shall
+not be liable for any indirect, incidental, special, exemplary,
+punitive, or consequential damages, or for any loss of profits,
+revenue, goodwill, business opportunity, or data, arising from or
+relating to the Software.
+
+Nothing in this Notice excludes or limits any liability that cannot
+lawfully be excluded or limited.
+
+8. PRIORITY AND GOVERNING LAW
+
+If this Notice conflicts with a separate written agreement signed by an
+authorized representative of the Company, the separate written
+agreement shall control to the extent of that conflict.
+
+This Notice is governed by the laws of Thailand, subject to any
+governing-law or dispute-resolution provision contained in such
+separate written agreement.
+
+Licensing inquiries: [INSERT COMPANY EMAIL ADDRESS]
