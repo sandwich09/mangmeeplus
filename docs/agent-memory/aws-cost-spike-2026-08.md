@@ -96,8 +96,16 @@ Three estimates were wrong by 20-100x before Cost Explorer access landed. Do not
 
 1. Ship current `develop` to UAT. Redis was refilling at ~17 keys/min after the last clear, so the
    270k records that filled it return around 2026-08-18 without the retention fix deployed.
-2. `maxmemory-policy` is `volatile-lru` on **both** clusters; BullMQ needs `noeviction`. Both use
-   `default.redis7`, which cannot be edited — needs a custom parameter group.
+2. ~~`maxmemory-policy` is `volatile-lru`~~ — done 2026-08-07. UAT Redis now uses the custom group
+   `watchdog-bms-uat-redis7` (family `redis7`) with `maxmemory-policy=noeviction`; the change
+   reached `in-sync` in about 30 seconds with `CacheNodeIdsToReboot` empty, because the parameter is
+   dynamic. `default.redis7` cannot be edited, hence the custom group. Worth knowing why this
+   mattered beyond BullMQ's warning: `volatile-lru` evicts only keys **with** a TTL, which here are
+   the rate-limit counters and the actor-delegation replay store — the untagged BullMQ job records
+   that actually filled the cache were never eviction candidates. The cache was quietly discarding
+   security state on its way to the same OOM. Attaching a parameter group needs
+   `elasticache:ModifyCacheCluster` on **both** the cluster and the parameter-group ARN; scoping it
+   to the cluster alone returns AccessDenied naming the parameter group.
 3. **Blocking any production deploy: `watchdog-bms/production/redis-url` still holds the endpoint of
    the deleted cluster** (`watchdog-bms-prod-redis.tp6lu7.0001.apse1.cache.amazonaws.com`, secret
    untouched since 2026-06-28). `deploy.sh` injects it into api-web and workers, so the next prod
