@@ -72,7 +72,7 @@ Optional variables include `PUBLIC_DOMAIN_URL`, LINE links/images, and AI provid
 
 ## Isolated data services
 
-This creates a dedicated encrypted `db.t4g.micro` RDS instance, `cache.t4g.micro` Redis, S3 bucket, UAT-only security groups, secrets, and ECS cluster. It reuses the existing subnets and adds recurring AWS cost. The RDS and Redis nodes sit in the two private subnets; the Fargate tasks run in the public ones and egress through the internet gateway, which is why the NAT gateway was removed on 2026-08-07 after a month of billing $43.90 for 0.4 GB of traffic. Recreate it before running anything in `ECS_EXPRESS_SUBNET_MODE=private` or the A5 clone/audit path. Export UAT LINE secrets without putting them on the command line; temporary production values require explicit owner approval and mandatory production rotation after acceptance:
+This creates a dedicated `db.t4g.micro` RDS instance (encrypted at rest via `--storage-encrypted`), a `cache.t4g.micro` Redis node (**not** encrypted — `bootstrap-data.sh` passes no at-rest, in-transit, or auth-token flags, and the stored URL is `redis://`, not `rediss://`), S3 bucket, UAT-only security groups, secrets, and ECS cluster. It reuses the existing subnets and adds recurring AWS cost. The RDS and Redis nodes sit in the two private subnets; the Fargate tasks run in the public ones and egress through the internet gateway, which is why the NAT gateway was removed on 2026-08-07 after a month of billing $43.90 for 0.4 GB of traffic. Recreate it before running anything in `ECS_EXPRESS_SUBNET_MODE=private` or the A5 clone/audit path. Export UAT LINE secrets without putting them on the command line; temporary production values require explicit owner approval and mandatory production rotation after acceptance:
 
 ```sh
 export LINE_LOGIN_CHANNEL_SECRET='...'
@@ -85,6 +85,39 @@ unset LINE_LOGIN_CHANNEL_SECRET LINE_MESSAGING_CHANNEL_SECRET LINE_MESSAGING_CHA
 ```
 
 Secrets are stored only under `watchdog-bms/uat/*`. The deployment runs containers with `APP_ENV=production` for production security validation while `DEPLOY_ENV=uat` selects isolated cloud resources.
+
+## Redis parameter group (`noeviction`)
+
+`bootstrap-data.sh` creates the node on `default.redis7`, which ships `maxmemory-policy=volatile-lru` and cannot be edited. That default is actively wrong here: `volatile-lru` evicts only keys that carry a TTL — the rate-limit counters and the actor-delegation replay store — while the untagged BullMQ job records that actually fill the cache are never eviction candidates. The cache sheds security state and then hits OOM anyway, which is what took every UAT worker down on 2026-08-05. BullMQ wants `noeviction` so the failure is loud instead of silent.
+
+Applied to UAT on 2026-08-07. Run the same three steps for any new node, including the production Redis when it is rebuilt — substitute `prod` for `uat` in both names:
+
+```sh
+aws elasticache create-cache-parameter-group \
+  --cache-parameter-group-name watchdog-bms-uat-redis7 \
+  --cache-parameter-group-family redis7 \
+  --description 'UAT: noeviction for BullMQ'
+
+aws elasticache modify-cache-parameter-group \
+  --cache-parameter-group-name watchdog-bms-uat-redis7 \
+  --parameter-name-values ParameterName=maxmemory-policy,ParameterValue=noeviction
+
+aws elasticache modify-cache-cluster \
+  --cache-cluster-id watchdog-bms-uat-redis \
+  --cache-parameter-group-name watchdog-bms-uat-redis7 \
+  --apply-immediately
+```
+
+The family is `redis7` for engine 7.x. `maxmemory-policy` is a dynamic parameter, so the third step returns `CacheNodeIdsToReboot: []` and reaches `ParameterApplyStatus: in-sync` in about thirty seconds with no reboot and no data loss. Confirm with:
+
+```sh
+aws elasticache describe-cache-clusters --cache-cluster-id watchdog-bms-uat-redis \
+  --query 'CacheClusters[0].CacheParameterGroup'
+```
+
+Two IAM details cost time the first time through. `modify-cache-cluster` authorises against **both** the cluster ARN and the parameter-group ARN, so a policy scoped only to the cluster fails with an `AccessDenied` that names the parameter group and reads like the wrong resource is at fault. And `describe-cache-parameters` on `default.redis7` is a separate grant from the custom group, which is why reading the AWS default is not required by the steps above — the new group inherits the family defaults and only the one parameter is overridden.
+
+Doing this at zero capacity (see below) means nothing is connected while the group swaps.
 
 ## Parking UAT between cycles
 
