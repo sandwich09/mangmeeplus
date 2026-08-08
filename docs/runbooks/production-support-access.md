@@ -30,7 +30,13 @@
       3 certs, `sha256 3c696020a3b7c6721085d182211c28024ab01873ade35dcc7eeebb89c20ee979`, mode 0644)
       — **ไม่ใช่** `global-bundle.pem` ตามที่เขียนไว้เดิม ทั้งสองสคริปต์ default มาที่ path นี้แล้ว
       ถ้าย้าย DB ข้าม region ต้องโหลด bundle ของ region ใหม่
-      **ยังค้าง:** คัดลอก `infra/production/arm-support-execute.sh` ไป `/opt/watchdog/` (chmod 0750, root)
+      `arm-support-execute.sh` **ติดตั้งแล้ว** ที่ `/opt/watchdog/arm-support-execute.sh`
+      (0750 root:root, `sha256 a372df66a819310dd91b4fab31868faef94b6eb362bbc519efabc31ca2781b56`,
+      ตรวจ `bash -n` ก่อนติดตั้ง) — รัน `status` จริงบน production ได้ผล `DISARMED` exit 0
+      ซึ่งพิสูจน์พร้อมกันว่า: การแตก URI เป็น `PG*` ใช้ได้, CA bundle ที่ path ใหม่ผ่าน `verify-full`,
+      `role_is_armed` อ่านค่าจริงจาก `pg_roles` ได้ (ไม่ใช่เดา) และ `ssm:GetParameter` ที่เพิ่งให้ทำงาน
+      > **ติดตั้งซ้ำเมื่อแก้สคริปต์:** ไฟล์บน bastion เป็นสำเนา ไม่ได้ผูกกับ repo
+      > ถ้าแก้ใน repo แล้วไม่ copy ใหม่ bastion จะยังรันของเก่าเงียบ ๆ เทียบ sha256 ทุกครั้ง
 - [ ] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
 - [ ] **Bastion**: บังคับ IMDSv2, เปิด SSM Patch Manager
 - [~] **Bastion instance profile**: `rds-db:connect` สำหรับทั้งสอง db user **ให้แล้ว 2026-08-08**
