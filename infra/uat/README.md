@@ -119,6 +119,33 @@ Two IAM details cost time the first time through. `modify-cache-cluster` authori
 
 Doing this at zero capacity (see below) means nothing is connected while the group swaps.
 
+`bootstrap-data.sh` now creates the parameter group and attaches it at create time, so a fresh bootstrap never passes through `volatile-lru`. The three commands above remain the procedure for a node that already exists.
+
+## Redis encryption and the pending migration
+
+The live UAT node is **not encrypted** — `AtRestEncryptionEnabled`, `TransitEncryptionEnabled` and `AuthTokenEnabled` all read false, and the stored URL is `redis://`. It predates the bootstrap change below.
+
+`bootstrap-data.sh` now creates a **single-node replication group** with at-rest encryption, in-transit encryption and an auth token, and writes the secret as `rediss://:<token>@<host>:6379`. The shape is forced: `create-cache-cluster` has no at-rest encryption option at all, so a standalone node can never be encrypted. One node, no failover and no snapshot retention are deliberate — those are M-17's *availability* requirements for production, where `infra/security/verify-production-security-baseline.sh` fails closed without `nodeCount >= 2`, `automaticFailover == "enabled"` and 35-day snapshots. A replica in UAT would buy no confidentiality.
+
+No application change is needed: `REDIS_URL` is an unconstrained string, and ioredis turns on TLS from the `rediss://` scheme and reads the password from the userinfo field, which covers both BullMQ (`connection: { url }`) and the API rate limiter (`new Redis(url, …)`).
+
+Encryption cannot be toggled on an existing node, so the live one has to be replaced. Its contents are disposable — BullMQ jobs and rate-limit counters, no durable state. Run this while UAT is parked at zero:
+
+```sh
+aws elasticache delete-cache-cluster --cache-cluster-id watchdog-bms-uat-redis
+
+aws secretsmanager delete-secret --secret-id watchdog-bms/uat/redis-url \
+  --force-delete-without-recovery
+
+CONFIRM_UAT_COST=CREATE_ISOLATED_UAT bash infra/uat/bootstrap-data.sh
+```
+
+`--force-delete-without-recovery` is not optional: an ordinary `delete-secret` holds the name for 7–30 days, and `bootstrap-data.sh` refuses to run when the secret exists without a node. Everything else in the bootstrap is idempotent and will skip.
+
+Recreating the secret produces a **new ARN**, and `deploy.sh` embeds that ARN in `valueFrom` rather than the name, so the task definitions must be rewritten. Bringing UAT back up does exactly that, so no extra step is needed — just deploy rather than only raising capacity.
+
+`infra/uat/redis-encryption.spec.sh` guards the bootstrap: it fails if the standalone `create-cache-cluster` returns, if any encryption flag is dropped, if the secret reverts to `redis://`, or if the generated auth token leaves the 16–128 character range or contains a character ElastiCache rejects.
+
 ## Parking UAT between cycles
 
 UAT Fargate is the largest recurring line in the account (~$113/month including the three public IPv4 addresses its tasks hold). Park it at zero when no acceptance cycle is running:

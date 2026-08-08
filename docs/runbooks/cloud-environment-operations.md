@@ -108,9 +108,17 @@ capacity ไม่ใช่ deploy ใหม่
 
 > **ยังขึ้นไม่ได้:** secret `watchdog-bms/production/redis-url` ชี้ endpoint ของ Redis ที่ถูกลบไปแล้ว
 > `deploy.sh` ฉีดค่านี้เข้า api-web และ workers ดังนั้น container จะขึ้นมาแล้วต่อ Redis ไม่ติด
-> ต้องสร้าง cluster ใหม่ (**ก้อนว่าง** ห้าม restore snapshot ของก้อนเดิมที่เต็ม) ผูก parameter group
-> `noeviction` ตาม `infra/uat/README.md` แล้วอัปเดต secret ก่อน — **ไม่มีสคริปต์ bootstrap ของ prod
-> ใน repo** มีแต่ของ UAT (`infra/uat/bootstrap-data.sh`) ตอนทำจริงให้เขียนเก็บไว้ด้วย
+> ต้องสร้างใหม่ (**ก้อนว่าง** ห้าม restore snapshot ของก้อนเดิมที่เต็ม) แล้วอัปเดต secret ก่อน —
+> **ไม่มีสคริปต์ bootstrap ของ prod ใน repo** มีแต่ของ UAT (`infra/uat/bootstrap-data.sh`)
+> ตอนทำจริงให้เขียนเก็บไว้ด้วย
+>
+> production **ต้องเป็น replication group** ไม่ใช่ standalone node เพราะ
+> `infra/security/verify-production-security-baseline.sh` อ่าน `describe-replication-groups` และ
+> fail closed ถ้าไม่ครบ: `atRestEncryptionEnabled`, `transitEncryptionEnabled`, `authTokenEnabled`,
+> `automaticFailover == "enabled"`, `nodeCount >= 2`, `snapshotRetentionDays >= 35`
+> นี่คือ **M-17** ใน `docs/security-remediation-checklist-merged-2026-07-17.md` ซึ่งยังเปิดอยู่ที่
+> ช่อง "Live closure" และกำหนดว่า "ก่อน production release ถัดไป" — ก้อนเดิมที่ลบไป
+> (standalone, `SnapshotRetentionLimit: 0`) ไม่เคยผ่านเกณฑ์นี้ การสร้างคืนคือจังหวะปิด M-17
 
 ---
 
@@ -212,7 +220,11 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
    ตรง ๆ — ถ้าจะใช้ private mode หรือรัน A5 clone/audit **ต้องสร้าง NAT คืนก่อน**
    (`/watchdog-bms/production/a5-network/task-subnet-ids` ยังเป็น `ParameterNotFound` แปลว่า
    `bootstrap-production-a5-private-network.sh` ไม่เคยถูกรัน)
-7. **UAT Redis ไม่ได้เข้ารหัสทั้ง at-rest และ in-transit** และไม่มี auth token — secret เก็บเป็น
-   `redis://` ไม่ใช่ `rediss://` ต่างจาก RDS ที่สร้างด้วย `--storage-encrypted` เปิดทีหลังไม่ได้
-   ต้องเปลี่ยน node
+7. **UAT Redis ตัวที่รันอยู่ยังไม่ได้เข้ารหัส** ทั้ง at-rest, in-transit และไม่มี auth token — secret
+   เก็บเป็น `redis://` ต่างจาก RDS ที่สร้างด้วย `--storage-encrypted` `bootstrap-data.sh` แก้แล้ว
+   (สร้างเป็น single-node replication group ที่เข้ารหัสครบ เพราะ `create-cache-cluster` ไม่มี
+   at-rest encryption ให้เลย) แต่ **node ที่มีอยู่ต้องถูกแทนที่** เปิดทีหลังไม่ได้ —
+   ขั้นตอน migration อยู่ใน `infra/uat/README.md` จุดที่พลาดง่ายคือ `delete-secret` ต้องใส่
+   `--force-delete-without-recovery` ไม่งั้นชื่อถูกจองอีก 7–30 วัน และ secret ใหม่ได้ ARN ใหม่
+   ซึ่ง `deploy.sh` ฝังไว้ใน `valueFrom` จึงต้อง deploy ไม่ใช่แค่ปรับ capacity กลับ
 8. **ไม่มี CloudWatch alarm บน `IncomingBytes`** ถ้ามีตั้งแต่แรก เหตุการณ์ 6 ส.ค. จะจบที่ $7 แทน $179
