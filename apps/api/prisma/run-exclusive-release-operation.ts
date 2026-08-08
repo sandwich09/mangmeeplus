@@ -1150,7 +1150,14 @@ function parseMutationIntent(environment: Environment, variable = 'RELEASE_MUTAT
   if (!/^[0-9a-f]{64}$/.test(requestHash) || !/^[0-9a-f]{64}$/.test(desiredConfigHash)) {
     throw new Error('mutation intent request/config hashes must be lowercase SHA-256');
   }
-  if (!Array.isArray(row.beforeDeploymentArns) || row.beforeDeploymentArns.length > 100) {
+  // The bound is a sanity ceiling on a durable JSON column, not a statement about how many
+  // deployments a service may have. It used to be 100, which silently matched the single
+  // ListServiceDeployments page the producer read - so the two could never disagree. Now that the
+  // producer walks every page (it has to: the before-set is what proves a bound deployment is new),
+  // a long-lived service legitimately exceeds 100. Production api-web was at 184 the first time
+  // this ran. 5000 is the pager's own ceiling, LIST_DEPLOYMENTS_MAX_PAGES=50 x 100 rows, so the two
+  // limits move together instead of one quietly capping the other.
+  if (!Array.isArray(row.beforeDeploymentArns) || row.beforeDeploymentArns.length > 5000) {
     throw new Error('mutation intent beforeDeploymentArns must be a bounded array');
   }
   const beforeDeploymentArns = row.beforeDeploymentArns.map((item) =>
