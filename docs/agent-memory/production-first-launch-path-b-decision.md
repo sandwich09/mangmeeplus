@@ -56,3 +56,38 @@ security/SBOM/sign/scan) ต่างแค่ authority path
 - migration item11b fix ทำแล้ว → `prisma migrate deploy` ผ่าน
 - หลัง deploy: smoke (login/upload/expense/LINE) → support roles → M-01 evidence
 - A5 chain (พร้อม 4 fixes) = งานแยก ไม่มี time pressure
+
+## บทเรียน: production ขาด control-plane setup ที่ UAT มี (2026-08-08)
+
+Deploy ล้ม 4 รอบติด แต่ละรอบเป็น **IAM resource ที่ UAT มีแต่ production ไม่มี** เจอทีละตัวตอน
+deploy พัง แทนที่จะเทียบทั้งชุดก่อน (เจ้าของทักเรื่องนี้ตรง ๆ ว่า "ทำไมไม่ลอกจาก UAT มาเลย" —
+ถูกต้อง และควรทำตั้งแต่แรก):
+
+| รอบ | ตายที่ | ขาดอะไร |
+| --- | --- | --- |
+| 1 | workflow parse | `actions: read` ใน caller permissions |
+| 2 | Verify release image signatures | ECR read บน `-ai-gateway`, `-workers` |
+| 3 | RegisterTaskDefinition | `iam:PassRole` (policy บน role เก่ากว่า template) |
+| 4 | RunTask | **`watchdog-bms-release-task-role` ไม่มีอยู่จริง** |
+
+**ต้นเหตุเชิงโครงสร้าง:** UAT มี `infra/uat/setup-control-plane.sh` ที่สร้าง role ครบ 8 ตัว
+พร้อม trust/policy — **production ไม่มีสคริปต์เทียบเท่า** resource เดิมถูกสร้างด้วยมือจาก repo เก่า
+บางตัวหายตอนย้าย repo และไม่มีอะไรตรวจว่าครบ
+
+**สิ่งที่ควรมี (งานตามหลัง):** `infra/production/setup-control-plane.sh` ที่ mirror ของ UAT
+(role, trust, policy) + ตรวจ readback ก่อน mutate — เพื่อไม่ให้ต้องไล่เจอทีละ deploy รอบละ ~15 นาที
+(ทุกรอบ build image ใหม่หมดก่อนถึง Deploy job)
+
+**ค่าที่ลอกมาจาก UAT ตรง ๆ:**
+- release-task trust: `{Service:"ecs-tasks.amazonaws.com", Action:"sts:AssumeRole"}`
+  (`setup-control-plane.sh:62`)
+- release-task policy: ECS describe (`DescribeExpressGatewayService`,
+  `DescribeServiceDeployments`, `ListServiceDeployments`) + SSM Get/PutParameter บน
+  `parameter/watchdog-bms/production/ecs-express-*-service-arn`
+  (`verify-control-plane-policies.sh:20-21`, เปลี่ยน uat→production)
+- **taskRole ไม่ต้องอ่าน DATABASE_URL** — executionRole (`ecsTaskExecutionRole`) เป็นคน resolve
+  secret ให้ (ยืนยันจาก `uat-environment.md:179`)
+
+**สถานะ IAM หลังแก้ครบ:** 6 role ที่ production ต้องใช้มีครบและ trust ถูกทั้งหมด
+(`ecsTaskExecutionRole`, `ecsInfrastructureRoleForExpressServices`, ecs-express api/ai-gateway/
+workers, release-task)
