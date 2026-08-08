@@ -101,10 +101,17 @@ Verification:
 - Phase C copy sweep — no manage permission key is rendered as user-facing
   copy. Matches are registry values, capability checks, comments, and tests;
   no `ForbiddenState` description contains a raw permission key.
-- Host E2E not run: the handoff environment contract forbids DB-dependent E2E.
-- Report-only stale expectations: `e2e/settings.spec.ts` SET-09 and
-  `e2e/cross-cutting.spec.ts` XC-03; `e2e/harness/roles.ts` still grants
-  COMPANY_VIEW the roles route and feeds later access-matrix coverage.
+- Host E2E run on 2026-08-08 (native postgres 5432 + redis + MinIO 19000 via
+  S3_E2E=1, API_PORT=3101/WEB_PORT=3100): full suite 197 passed / 0 failed /
+  62 skipped after updating the stale expectations below.
+- Stale expectations fixed: `e2e/settings.spec.ts` SET-09 and
+  `e2e/cross-cutting.spec.ts` XC-03 now assert the dashboard bounce (no page
+  without access.role.manage); `e2e/harness/roles.ts` visibleTo mirrors
+  route-permissions.ts (permissions=OWNER only, access-overview +MANAGER,
+  LINE OA -MANAGER, +po-approval/discount children, settings hub includes
+  MANAGER/FINANCE/ACCOUNTANT via tax/ledger read keys, roles parent shows for
+  SALES through the discount child, ลายเซ็นบริษัท hidden for all — feature
+  disabled 2026-08-05).
 
 Next:
 - [x] Codex Phase A (route-permissions registry + 4-layer unification) → gate

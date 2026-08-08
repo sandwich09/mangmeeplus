@@ -31,13 +31,18 @@ test.describe('SYS — system admin', () => {
     await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
     await page.goto('/system/company-onboardings/new');
     await expect(page.getByRole('heading', { name: /New Company Onboarding/i })).toBeVisible();
-    const fields = page.locator('input:not([type="checkbox"])');
+    // ThemedSelect renders an sr-only form input for its `name`, so bare input-index
+    // selectors drift; the three text fields are the only visible mangmee-input inputs.
+    const fields = page.locator('input.mangmee-input:visible');
     await fields.nth(0).fill(unique('E2E Partner'));
     await fields.nth(1).fill(unique('E2E Owner'));
     await fields.nth(2).fill(unique('e2e-owner').toLowerCase());
     // Required since the PDPA tenant tripwire: the form will not submit uncategorised.
     // RETAIL deliberately — the non-alerting path, so the e2e run does not page the dev team.
-    await page.locator('#businessCategory').selectOption('RETAIL');
+    // The category picker is a ThemedSelect (combobox + role="option" buttons), not a native
+    // <select>, so it needs open-then-click instead of selectOption().
+    await page.getByRole('combobox', { name: 'ประเภทธุรกิจ / Business Category' }).click();
+    await page.getByRole('option', { name: 'ค้าปลีก (Retail)', exact: true }).click();
     await page.getByRole('button', { name: /Create Onboarding/i }).click();
     await expect(page.getByText(/Handoff Package|temporary password|Company/i).first()).toBeVisible();
   });

@@ -109,8 +109,15 @@ export const MENUS: MenuSpec[] = [
   { key: 'journal',     th: 'สมุดรายวัน',             en: 'Journal',                   path: 'journal',                visibleTo: ['OWNER', 'COMPANY_VIEW', 'FINANCE', 'ACCOUNTANT'] },
   { key: 'reports',     th: 'รายงานการเงิน',          en: 'Financial Reports',         path: 'reports',                visibleTo: ALL },
   { key: 'closing',     th: 'ปิดงวด',                 en: 'Period Closing',            path: 'period-closing',         visibleTo: ['OWNER', 'COMPANY_VIEW', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
-  { key: 'roles',       th: 'พนักงานและสิทธิ์',        en: 'Employees & Access',        path: 'settings/permissions',   visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER'] },
-  { key: 'settings',    th: 'ตั้งค่าบริษัท',           en: 'Company Settings',          path: 'settings',               visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN'] },
+  // The roles parent renders when ANY child survives its per-child registry key and points at
+  // the first visible child. COMPANY_VIEW holds only access.role.read — no child, no parent.
+  // SALES reaches it through นโยบายส่วนลด (crm.customer.update); MANAGER through
+  // ภาพรวมสิทธิ์/รายชื่อพนักงาน (access.employee.read).
+  { key: 'roles',       th: 'พนักงานและสิทธิ์',        en: 'Employees & Access',        path: 'settings/permissions',   visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
+  // The hub key list (web-core-workspace.constants.ts `settings`) includes tax.config.read and
+  // ledger read keys, so MANAGER / FINANCE / ACCOUNTANT see the hub too — matching the cards
+  // (accounting/tax setup) they can actually open inside it.
+  { key: 'settings',    th: 'ตั้งค่าบริษัท',           en: 'Company Settings',          path: 'settings',               visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
 ];
 
 /**
@@ -129,15 +136,22 @@ export const SUB_MENUS: SubMenuSpec[] = [
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.upload',     th: 'อัปโหลดใบเสร็จ',          en: 'Upload receipt',  path: 'expenses/upload',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'STAFF'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.manual',     th: 'บันทึกด้วยมือ',           en: 'Manual entry',    path: 'expenses/manual',     visibleTo: ['OWNER', 'ADMIN', 'SALES', 'INVENTORY', 'FINANCE', 'STAFF'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.categories', th: 'หมวดหมู่',                en: 'Categories',      path: 'expenses/categories', visibleTo: ['OWNER', 'ADMIN', 'FINANCE'] },
-  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นบริษัท',           en: 'Signatures',      path: 'expenses/signatures', visibleTo: ['OWNER', 'ADMIN', 'FINANCE'] },
+  // Company-signature stamping is feature-disabled (owner decision 2026-08-05): the menu entry
+  // is hidden for every role until the stamping flow ships. Route + API stay intact.
+  { parent: 'expenses', routeGuard: 'parent', key: 'expenses.signatures', th: 'ลายเซ็นบริษัท',           en: 'Signatures',      path: 'expenses/signatures', visibleTo: [] },
   { parent: 'expenses', routeGuard: 'own',    key: 'expenses.substitute', th: 'ตั้งค่าใบรับรองแทนใบเสร็จ', en: 'Substitute receipt', path: 'settings/substitute-receipt', visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'expenses', routeGuard: 'parent', key: 'expenses.evidence',   th: 'หลักฐานทางบัญชี',         en: 'Accounting evidence', path: 'expenses/evidence', visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER', 'FINANCE', 'ACCOUNTANT'] },
 
-  // พนักงานและสิทธิ์
-  { parent: 'roles', routeGuard: 'own', key: 'roles.permissions', th: 'บทบาทและสิทธิ์',   en: 'Roles & permissions', path: 'settings/permissions',      visibleTo: ['OWNER', 'COMPANY_VIEW', 'ADMIN', 'MANAGER'] },
-  { parent: 'roles', routeGuard: 'own', key: 'roles.individual',  th: 'ภาพรวมสิทธิ์',     en: 'Access overview',     path: 'settings/access-overview',  visibleTo: ['OWNER', 'ADMIN'] },
+  // พนักงานและสิทธิ์ — visibility mirrors route-permissions.ts (the single web registry):
+  // permissions/roles need access.role.manage (OWNER only), access-overview + employees need
+  // access.employee.read, po-approval needs procurement.purchase_order.manage, discount-policy
+  // needs crm.customer.update, LINE OA needs crm.channel.manage.
+  { parent: 'roles', routeGuard: 'own', key: 'roles.permissions', th: 'บทบาทและสิทธิ์',   en: 'Roles & permissions', path: 'settings/permissions',      visibleTo: ['OWNER'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.individual',  th: 'ภาพรวมสิทธิ์',     en: 'Access overview',     path: 'settings/access-overview',  visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.employees',   th: 'รายชื่อพนักงาน',   en: 'Employees',           path: 'settings/employees',        visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
-  { parent: 'roles', routeGuard: 'own', key: 'roles.lineoa',      th: 'เชื่อมต่อ LINE OA', en: 'LINE OA',            path: 'settings/line-oa',          visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.poapproval',  th: 'อนุมัติคำสั่งซื้อ',  en: 'PO Approval',         path: 'settings/po-approval',      visibleTo: ['OWNER', 'ADMIN'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.discount',    th: 'นโยบายส่วนลด',     en: 'Discount policy',     path: 'settings/discount-policy',  visibleTo: ['OWNER', 'ADMIN', 'SALES'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.lineoa',      th: 'เชื่อมต่อ LINE OA', en: 'LINE OA',            path: 'settings/line-oa',          visibleTo: ['OWNER', 'ADMIN'] },
 
   // ตั้งค่าบริษัท. The สาขา page keeps its own rule (company.branch.read, which every role holds),
   // so it stays reachable by direct URL even for roles that no longer see the hub — the hub is
