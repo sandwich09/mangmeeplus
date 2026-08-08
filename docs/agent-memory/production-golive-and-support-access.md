@@ -314,7 +314,8 @@ blocker **ความจริงคือมันเป็นสวิตช�
 - drift = `20260714120000_item11b_transaction_tax_schema` (prod dirty-deploy draft 07-14 ก่อน
   immutable pipeline) — **schema ถูกแก้แล้ว** โดย `heal_item11b` ที่ prod applied ไว้ เหลือแค่
   ตัวเลข checksum ในตาราง metadata ที่ยังชี้ draft เก่า
-- แก้ด้วย metadata-only UPDATE (checksum → `1e8e73d2...`) — รายละเอียด + คำสั่งเต็มใน
+- **แก้แล้ว 2026-08-08** ด้วย metadata-only UPDATE (checksum → `1e8e73d2...`) ยืนยัน SELECT ได้ 1 row
+  prod DB 70 แถวตรงไฟล์หมด 0 drift — รายละเอียด + คำสั่งเต็มใน
   **`docs/runbooks/production-migration-reconciliation.md`** ทำผ่าน bastion writer **ก่อน** dispatch
   deploy ไม่งั้น `prisma migrate deploy` ปฏิเสธทั้ง batch (51 migration ใหม่) ก่อน rollout
 - ตัว drift อื่นที่ diagnosis doc เตือน (company_booking_buffer, crm_product_service_catalog CHECK)

@@ -1,5 +1,10 @@
 # Production Migration Reconciliation — item11b checksum drift
 
+> **สถานะ: ✅ แก้แล้ว 2026-08-08** — UPDATE ผ่าน bastion writer สำเร็จ ยืนยันด้วย SELECT ว่า
+> checksum ของ `20260714120000_item11b_transaction_tax_schema` เป็น `1e8e73d2...` (1 row)
+> prod DB ตอนนี้ 70 แถวตรงไฟล์ทั้งหมด 0 drift — `prisma migrate deploy` จะผ่านและ apply
+> 51 migration ใหม่ได้ เอกสารนี้เก็บไว้เป็นบันทึกวิธีทำ เผื่อเจอ drift แบบเดียวกันอีก
+
 ตรวจจริงจาก production DB ผ่าน bastion เมื่อ 2026-08-08 | คู่กับ
 `docs/agent-memory/migration-drift-diagnosis.md` (การวิเคราะห์ต้นเหตุ) และ
 `infra/production/inspect-migration-state.sh` (เครื่องมือตรวจ)
