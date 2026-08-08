@@ -146,3 +146,35 @@ ERROR: recent before-deployment snapshot is paginated; refusing to prepare a non
 **สิ่งที่ยังไม่แก้ (จงใจ):** `bind-express-deployment.sh` อ่านหน้าเดียว (20 แถว) ไม่มี guard —
 ปลอดภัยเพราะ ECS คืน deployment ใหม่สุดก่อน (ยืนยันกับข้อมูลจริงแล้ว) และตัวมันกรองด้วย
 target revision + request window อยู่แล้ว การแก้จะขยาย diff โดยไม่เพิ่มความถูกต้อง
+
+## รอบ 7: deadlock ระหว่างเครื่องมือกู้สองตัว (2026-08-08)
+
+รอบ 6 ตายที่ pagination guard ซึ่งอยู่ **ก่อน** `prepare_release_operation_intent` จึงเปิด parent
+operation `19aa6849` ไว้แล้วตายโดยไม่เคยสร้าง api-web intent
+
+`holdRemoteReleaseOperation` ตั้ง lease **90 นาที** (`ROLLOUT_HOLD_SECONDS = 5400` ไม่ใช่
+`LEASE_SECONDS = 60` ที่ผมอ่านผิดตอนแรก) จึงต้องรอถึง 22:03 ก่อนทำอะไรได้
+
+สถานะจริงที่อ่านจาก DB (ผ่าน bastion):
+
+```
+19aa6849 | UNKNOWN | release | api-web | lease หมดอายุ | intents = 0
+         | "operator found an expired heartbeat without a terminal outcome"
+```
+
+**ทางตันที่เจอ:**
+
+| เครื่องมือ | ผล |
+| --- | --- |
+| `operation-reconcile` (workstation break-glass) | exit 75 — *"pre-attested api-web but stopped before a durable api-web intent; exact pre-intent recovery is required"* |
+| `recover-release-intent.yml` + `intent_id=PRE_INTENT` | ถูกซีล — `RECOVERY_FIX_BASELINE_PRODUCTION` = 40 ศูนย์ |
+
+ทั้งสองชี้หากัน สถานะ UNKNOWN + api-web + intent 0 ตรงเงื่อนไข PRE_INTENT ของ runbook ครบทุกข้อ
+
+**ทางออก:** comment ในไฟล์ระบุเองว่า 40 ศูนย์คือ placeholder *"replaced by the follow-up pin commit
+after the reviewed implementation baseline exists"* — จึง pin เป็น `dc9081a5`
+
+**เหตุผลที่ floor ต้องเป็น dc9081a5 ไม่ใช่ commit อื่น:** recovery ต้องพิสูจน์ platform state จาก
+exhaustive `ListServiceDeployments` สองครั้งที่ตรงกัน แต่ AWS CLI ไม่ auto-paginate และ production
+api-web มี 184 deployment ต่อหน้า 100 แถว **ทุก commit ก่อน dc9081a5 จึงล้มที่การพิสูจน์นั้น
+แบบเดียวกับที่ deploy ล้ม** — executor ที่ต่ำกว่า floor นี้ทำงานบน production ไม่ได้จริง ๆ

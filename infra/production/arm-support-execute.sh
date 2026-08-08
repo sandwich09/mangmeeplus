@@ -34,6 +34,10 @@ usage() {
 
 region="${AWS_REGION:-ap-southeast-1}"
 secret_id="${SUPPORT_WRITER_SECRET_ID:-watchdog-bms/production/database-url}"
+# The regional Amazon RDS bundle, installed on the bastion 2026-08-08. sslmode=verify-full needs a
+# trust anchor and the OS store does not carry Amazon's RDS roots; without this psql fails with
+# "certificate verify failed" rather than falling back to something weaker.
+ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/ap-southeast-1-bundle.pem}"
 state_param="${SUPPORT_ARM_STATE_PARAM:-/watchdog-bms/production/support-rw-armed}"
 alert_topic="${SECURITY_ALERT_TOPIC_ARN:-}"
 role_name=watchdog_support_rw
@@ -47,6 +51,8 @@ aws_cmd() {
 
 command -v psql >/dev/null 2>&1 || { echo 'ERROR: psql is required' >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo 'ERROR: jq is required' >&2; exit 1; }
+# Used to split the writer URL without hand-rolling percent-decoding in shell.
+command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required' >&2; exit 1; }
 
 # The URL is fetched into a variable and never echoed, never written to a file, and never placed on
 # a command line. psql reads it from the environment so it stays out of the process table.
@@ -59,12 +65,41 @@ writer_url() {
     --query SecretString --output text --region "$region"
 }
 
-# psql picks the connection URI up from PGDATABASE (libpq treats a dbname holding a URI or an
-# `=` sign as a full conninfo string). Passing it as an argument instead would both expand in the
-# caller's environment before the assignment took effect and expose the credential in the process
-# table for anyone running `ps` on the same host.
+# libpq does NOT expand a URI held in the PGDATABASE *environment variable* - only the dbname
+# *parameter* gets conninfo expansion. Verified against psql 16 on the bastion: PGDATABASE set to
+# a postgres:// URI ignores it entirely and falls back to the local socket
+# (/var/run/postgresql/.s.PGSQL.5432), while the same URI passed positionally connects. Passing it
+# positionally is still not an option here - it would expose the writer credential in the process
+# table to anyone running `ps` on the same host.
+#
+# So the URI is split into the discrete PG* variables libpq reads natively. The credential stays in
+# the environment and off every command line, which is what the original comment intended.
+export_pg_env() {
+  local assignments
+  assignments="$(DBURL="$(writer_url)" python3 -c '
+import os, shlex, urllib.parse, sys
+u = urllib.parse.urlparse(os.environ["DBURL"])
+q = urllib.parse.parse_qs(u.query)
+values = {
+    "PGHOST": u.hostname or "",
+    "PGPORT": str(u.port or 5432),
+    "PGUSER": urllib.parse.unquote(u.username or ""),
+    "PGPASSWORD": urllib.parse.unquote(u.password or ""),
+    "PGDATABASE": (u.path or "/").lstrip("/"),
+    # Never silently weaken TLS: an absent sslmode means verify-full, not "whatever connects".
+    "PGSSLMODE": q.get("sslmode", ["verify-full"])[0],
+}
+if not values["PGHOST"] or not values["PGDATABASE"] or not values["PGUSER"]:
+    sys.exit("writer URL is missing host, user or database")
+print("\n".join("export %s=%s" % (k, shlex.quote(v)) for k, v in values.items()))
+')" || { echo "ERROR: could not parse the writer database URL" >&2; return 1; }
+  eval "$assignments"
+  export PGSSLROOTCERT="$ca_bundle"
+}
+
 run_sql() {
-  PGCONNECT_TIMEOUT=10 PGDATABASE="$(writer_url)" psql -v ON_ERROR_STOP=1 -qtAX -c "$1"
+  export_pg_env || return 1
+  PGCONNECT_TIMEOUT=10 psql -v ON_ERROR_STOP=1 -qtAX -c "$1"
 }
 
 notify() {
@@ -81,8 +116,28 @@ read_state() {
 
 # Truth lives in pg_roles, not in the SSM parameter. The parameter records *why* and *until when*;
 # if the two ever disagree, the database is right and the parameter is stale bookkeeping.
+#
+# A failed query is not an answer. The previous form - [ "$(run_sql ...)" = "t" ] - returned false
+# both when the role was genuinely NOLOGIN and when psql could not run at all (DB unreachable,
+# expired IAM token, missing grant). `disarm` reads this as "already disarmed", so it printed
+# success, deleted the state parameter and exited 0 while production write access was still open,
+# and `status` printed DISARMED for the same reason. A break-glass control that cannot read its own
+# state has to stop, not guess: every exit below is deliberate rather than a boolean.
 role_is_armed() {
-  [ "$(run_sql "SELECT rolcanlogin FROM pg_roles WHERE rolname = '${role_name}'")" = "t" ]
+  local answer
+  if ! answer="$(run_sql "SELECT rolcanlogin FROM pg_roles WHERE rolname = '${role_name}'")"; then
+    echo "ERROR: cannot read ${role_name} from the database; refusing to guess its armed state" >&2
+    echo "       Resolve the connection problem first - do not assume it is disarmed." >&2
+    exit 3
+  fi
+  case "$answer" in
+    t) return 0 ;;
+    f) return 1 ;;
+    '') echo "ERROR: role ${role_name} does not exist; run bootstrap-support-roles.sql first" >&2
+        exit 3 ;;
+    *)  echo "ERROR: unexpected rolcanlogin value for ${role_name}: '${answer}'" >&2
+        exit 3 ;;
+  esac
 }
 
 case "${1:-}" in
@@ -113,7 +168,10 @@ case "${1:-}" in
       --value "$(jq -cn --arg i "$incident" --arg o "$operator" --arg a "$armed_at" --arg d "$deadline" \
         '{incident:$i,operator:$o,armedAt:$a,disarmBy:$d}')" >/dev/null
 
-    notify "[CRITICAL] production support EXECUTE armed - ${incident}" \
+    # The alert is the second-person control, not a courtesy. Arming production write access and
+    # then failing to announce it is the one outcome this script must never leave behind, so a
+    # failed publish rolls the arm back rather than exiting non-zero on top of an armed role.
+    if ! notify "[CRITICAL] production support EXECUTE armed - ${incident}" \
 "watchdog_support_rw was armed on production.
 
 incident:  ${incident}
@@ -122,7 +180,14 @@ armed at:  ${armed_at}
 disarm by: ${deadline}
 
 If you did not expect this, treat it as an active security event and disarm immediately:
-  arm-support-execute.sh disarm"
+  arm-support-execute.sh disarm"; then
+      run_sql "ALTER ROLE ${role_name} WITH NOLOGIN" >/dev/null 2>&1 || true
+      aws_cmd ssm delete-parameter --name "$state_param" --region "$region" >/dev/null 2>&1 || true
+      echo "ERROR: the arm alert could not be sent, so ${role_name} was disarmed again." >&2
+      echo "       Check sns:Publish on ${alert_topic:-<SECURITY_ALERT_TOPIC_ARN unset>} and retry." >&2
+      echo "       Verify with 'arm-support-execute.sh status' before assuming the rollback worked." >&2
+      exit 1
+    fi
 
     cat >&2 <<EOF
 

@@ -31,7 +31,8 @@ region="${AWS_REGION:-ap-southeast-1}"
 bastion_name="${SUPPORT_BASTION_NAME:-watchdog-bms-ssm-bastion}"
 db_instance="${SUPPORT_DB_INSTANCE:-watchdog-bms-prod-db}"
 db_name="${SUPPORT_DB_NAME:-watchdog_bms}"
-ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/global-bundle.pem}"
+ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/ap-southeast-1-bundle.pem}"
+arm_state_param="${SUPPORT_ARM_STATE_PARAM:-/watchdog-bms/production/support-rw-armed}"
 arm_script="${SUPPORT_ARM_SCRIPT:-/opt/watchdog/arm-support-execute.sh}"
 
 mode="${1:-}"
@@ -44,6 +45,8 @@ aws_cmd() {
 
 command -v session-manager-plugin >/dev/null 2>&1 \
   || { echo 'ERROR: the AWS Session Manager plugin is not installed' >&2; exit 1; }
+# Used to read the arm window; without it an expired or foreign arm would go unchecked.
+command -v jq >/dev/null 2>&1 || { echo 'ERROR: jq is required' >&2; exit 1; }
 
 require_incident() {
   [ -n "${1:-}" ] || usage
@@ -92,8 +95,11 @@ case "$mode" in
     instance_id="$(resolve_instance_id)"
     host="$(aws_cmd rds describe-db-instances --db-instance-identifier "$db_instance" \
       --query 'DBInstances[0].Endpoint.Address' --output text --region "$region")"
+    # application_name lands inside a libpq conninfo string built by concatenation. IAM allows
+    # `+=,.@-` in names, and an `=` or a space would end the application_name token and start a new
+    # keyword - so the identity is reduced to characters that cannot do that before it is embedded.
     operator="$(aws_cmd sts get-caller-identity --query Arn --output text --region "$region" \
-      | sed 's#.*/##' | cut -c1-32)"
+      | sed 's#.*/##' | tr -cd 'A-Za-z0-9._-' | cut -c1-32)"
 
     if [ "$mode" = view ]; then
       db_user=watchdog_support_ro
@@ -119,10 +125,39 @@ EOF
 EOF
       # Failing here beats failing after a psql prompt appears: a NOLOGIN role produces an
       # authentication error that reads like a broken setup rather than "nobody armed it".
-      if ! aws_cmd ssm get-parameter --name /watchdog-bms/production/support-rw-armed \
-            --region "$region" >/dev/null 2>&1; then
+      #
+      # The database is still the enforcement point - a NOLOGIN role rejects the login no matter
+      # what this parameter says. What is checked here is everything the database cannot know:
+      # which incident the arm was approved for, and when the approval runs out.
+      arm_state="$(aws_cmd ssm get-parameter --name "$arm_state_param" \
+        --query 'Parameter.Value' --output text --region "$region" 2>/dev/null || true)"
+      if [ -z "$arm_state" ] || [ "$arm_state" = None ]; then
         echo "ERROR: watchdog_support_rw is not armed. A second person must run:" >&2
         echo "         connect-production.sh arm ${incident}" >&2
+        exit 1
+      fi
+      armed_incident="$(jq -r '.incident // empty' <<< "$arm_state")"
+      disarm_by="$(jq -r '.disarmBy // empty' <<< "$arm_state")"
+      # The deadline used to be advisory only: the parameter outlives it, so an expired arm still
+      # opened a write session and only `status` ever complained. Both timestamps are ISO-8601 UTC
+      # with the same fixed width, so a string comparison is a time comparison.
+      # `arm` always writes disarmBy, so a state parameter without one did not come from `arm`.
+      # Treating that as "no deadline" would make a hand-written parameter outrank the control.
+      if [ -z "$disarm_by" ]; then
+        echo "ERROR: the arm state carries no disarmBy; it was not written by arm-support-execute.sh." >&2
+        echo "       Disarm and arm again rather than trusting it." >&2
+        exit 1
+      fi
+      if [ "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \> "$disarm_by" ]; then
+        echo "ERROR: the arm window for ${armed_incident:-unknown} expired at ${disarm_by}." >&2
+        echo "       Disarm, then arm again with a fresh approval - never extend one silently." >&2
+        exit 1
+      fi
+      # An arm is approved for one incident. Reusing someone else's open window is how a narrow
+      # approval quietly becomes a general-purpose write session.
+      if [ -n "$armed_incident" ] && [ "$armed_incident" != "$incident" ]; then
+        echo "ERROR: watchdog_support_rw is armed for ${armed_incident}, not ${incident}." >&2
+        echo "       Use that incident reference, or disarm and arm for this one." >&2
         exit 1
       fi
     fi
