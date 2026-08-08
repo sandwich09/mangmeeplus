@@ -136,7 +136,12 @@ jobs:
     # exact commit, so there is nothing to build or test again.
     if: needs.resolve-release.outputs.release_mode == 'partial-incident'
     needs: resolve-release
+    # Must be a superset of every job-level permission inside ci.yml. Its resolve-source job
+    # requests `actions: read` (to read prior run metadata); a caller that omits it makes the
+    # nested grant `none` and GitHub refuses the whole dispatch at parse time with
+    # "startup failure" - before any job or `if:` runs. deploy-uat.yml carries the same trio.
     permissions:
+      actions: read
       contents: read
       id-token: write
     uses: ./.github/workflows/ci.yml
