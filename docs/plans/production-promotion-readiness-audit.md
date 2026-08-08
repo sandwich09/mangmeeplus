@@ -36,6 +36,17 @@ alarm 6 ตัว · ECR lifecycle · GitHub variables ครบ (parity check e
 | U5/A5 ceremony | **บังคับทั้ง chain** | ข้าม |
 | ความหมายใน audit trail | release ปกติ | **incident** |
 
+> **มติ 2026-08-08: เจ้าของเลือกทาง A** (promotion เต็มรูปแบบ) — โดยเรื่อง network ยืนยันอีกครั้งว่า
+> **A5 ไม่ใช้ NAT ใด ๆ เลย** (validator บังคับ endpoint-only egress แบบ fail-closed — NAT instance
+> ก็ใช้แทนไม่ได้และไม่ควรฝืน design) ใช้ interface endpoints สร้างเฉพาะช่วง ceremony แล้วลบ
+> ส่วนมติ **NAT instance (`t4g.nano`)** ที่บันทึกไว้ใช้กับ **H-14 cutover** หลัง launch เท่านั้น
+
+> **Startup failure — root cause พบแล้ว 2026-08-08:** `build_and_publish` เรียก `ci.yml` ด้วย
+> permissions ที่ขาด `actions: read` ซึ่ง job `resolve-source` ข้างในขอ → GitHub ปฏิเสธทั้ง dispatch
+> ตอน parse (ก่อน `if:` ใด ๆ ทำงาน) — ไฟล์นี้ไม่เคยถูก dispatch สำเร็จมาก่อนจึงไม่มีใครเจอ
+> แก้แล้วตาม pattern ของ `deploy-uat.yml` (ให้ครบสามตัว: `actions: read`, `contents: read`,
+> `id-token: write`) — ต้อง merge เข้า `main` ก่อนถึงจะมีผล เพราะ controller รันจาก main
+
 ### ทาง A — promotion เต็มรูปแบบ (ตามที่ระบบออกแบบ)
 
 สิ่งที่ยังขาดทั้งหมด (ตรวจแล้วรายตัว):
