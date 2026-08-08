@@ -36,9 +36,13 @@
 - [~] **Bastion instance profile**: `rds-db:connect` สำหรับทั้งสอง db user **ให้แล้ว 2026-08-08**
       (statement `ConnectAsSupportDatabaseRoles` ใน inline policy
       `watchdog-bms-bastion-read-support-secrets`, ระบุชื่อ db user ตรง ๆ ไม่มี wildcard)
-      **ยังค้าง:** `rds:DescribeDBInstances`, `ssm:GetParameter`/`PutParameter`/`DeleteParameter` บน
-      `/watchdog-bms/production/support-rw-armed`, `sns:Publish` บน alert topic — สามอย่างนี้
-      `arm-support-execute.sh` ต้องใช้ ดังนั้น **T2 EXECUTE ยังใช้ไม่ได้จนกว่าจะเพิ่มครบ** (T1 ใช้ได้แล้ว)
+      `ssm:GetParameter`/`PutParameter`/`DeleteParameter` บน `/watchdog-bms/production/support-rw-armed`
+      และ `sns:Publish` บน alert topic **ให้แล้ว 2026-08-08** เช่นกัน (statement
+      `RecordArmStateForSupportExecute` และ `AnnounceSupportExecuteArming`)
+      > **`rds:DescribeDBInstances` ไม่ได้อยู่ฝั่ง bastion** — เดิมเอกสารนี้เขียนไว้ผิดคอลัมน์
+      > ไล่ดู `aws_cmd` ทุกจุดแล้ว: `arm-support-execute.sh` (รันบน bastion) เรียกแค่
+      > secretsmanager / sns / ssm / sts ส่วน `rds describe-db-instances` ถูกเรียกโดย
+      > `connect-production.sh` ซึ่งรันบน **workstation** จึงเป็นสิทธิ์ของคนใช้งาน ไม่ใช่ของ instance profile
       > **IAM propagation ช้ากว่าที่คิด:** หลัง `put-role-policy` การเชื่อมยังล้มด้วย
       > `pam_authenticate failed: Permission denied` อยู่ ~9 นาที แล้วผ่านเอง อย่าเพิ่งสรุปว่า
       > policy ผิดแล้วไปแก้อย่างอื่น — ให้ retry เป็นระยะก่อน
@@ -265,3 +269,39 @@ credential อยู่ใน environment ไม่แตะ command line
 **`sslmode=verify-full` ต้องมี trust anchor** — OS trust store ของ Amazon Linux 2023 ไม่มี Amazon RDS
 root CA จึงได้ `SSL error: certificate verify failed` **ห้ามแก้ด้วยการลด sslmode** ให้ติดตั้ง bundle
 แล้วชี้ `PGSSLROOTCERT`/`sslrootcert` มาที่ไฟล์นั้น
+
+## บั๊กที่เจอจาก audit เส้น T2 (2026-08-08) — ทั้งหมดอยู่ในโค้ดที่ไม่เคยรัน
+
+**1. `role_is_armed()` fail open — ร้ายแรงที่สุด**
+
+เดิมเขียนว่า `[ "$(run_sql "SELECT rolcanlogin ...")" = "t" ]` ซึ่งคืน false ทั้งกรณีที่ role
+เป็น NOLOGIN จริง **และ** กรณีที่ psql รันไม่ได้เลย (DB ล่ม / token หมดอายุ / ไม่มีสิทธิ์)
+
+ผลที่ `disarm`: เข้าเงื่อนไข `if ! role_is_armed` → พิมพ์ *"already disarmed"* → ลบ SSM state
+parameter → `exit 0` **โดยไม่เคยรัน `ALTER ROLE ... NOLOGIN`** แปลว่าสิทธิ์เขียน production
+ยังเปิดอยู่ แต่ทุกอย่างรายงานว่าปิดแล้ว และ `status` ก็ตอบ `DISARMED` ด้วยเหตุผลเดียวกัน
+
+แก้เป็น fail closed: query ล้ม / role ไม่มี / ค่าประหลาด → `exit 3` พร้อมข้อความ ไม่เดา
+
+**2. arm สำเร็จได้ทั้งที่ alert ส่งไม่ออก**
+
+`notify` ล้ม (เช่นไม่มี `sns:Publish`) ตอนนั้น `set -e` จะ abort **หลัง** `ALTER ROLE ... LOGIN`
+และหลังเขียน SSM param แล้ว → สิทธิ์เขียนเปิดค้างโดยไม่มีใครรู้ ซึ่งทำลายเหตุผลทั้งหมดของ
+second-person control แก้ให้ rollback (NOLOGIN + ลบ param) แล้ว exit 1 เมื่อส่ง alert ไม่ได้
+
+**3. deadline เป็นแค่ของประดับ**
+
+`connect-production.sh execute` เช็คแค่ว่า SSM parameter **มีอยู่** ไม่ได้ดู `disarmBy` เลย
+พอเลยเวลา parameter ก็ยังอยู่ → เปิด write session ได้ต่อ มีแต่ `status` ที่บ่น OVERDUE
+แก้ให้บังคับจริง + ปฏิเสธเมื่อ incident ไม่ตรงกับที่ arm ไว้ + ปฏิเสธเมื่อไม่มี `disarmBy`
+(แปลว่า parameter ไม่ได้มาจาก `arm`)
+
+**4. `application_name` ต่อสตริงเข้า conninfo ตรง ๆ**
+
+`operator` มาจาก ARN ซึ่ง IAM อนุญาต `+=,.@-` ถ้ามี `=` หรือช่องว่างจะไปตัด token แล้วกลายเป็น
+keyword ใหม่ของ conninfo แก้ด้วย `tr -cd 'A-Za-z0-9._-'` ก่อนฝัง
+
+> **แง่คิด:** ทั้งสี่ข้อคือโค้ดที่ *อ่านแล้วดูถูก* comment อธิบายเจตนาไว้ดีด้วยซ้ำ แต่ไม่เคยถูกรัน
+> เหมือน pagination bug ใน `deploy.sh` และ `PGDATABASE` — รูปแบบเดิมซ้ำ ๆ ทั้งวัน
+> **ข้อ §1 ที่ยังเหลือ "ซ้อม T1/T2 บน UAT ให้จบหนึ่งรอบ" จึงไม่ใช่พิธีกรรม** มันคือสิ่งเดียว
+> ที่จะจับบั๊กประเภทนี้ได้ก่อนถึงเวลาจริง

@@ -116,8 +116,28 @@ read_state() {
 
 # Truth lives in pg_roles, not in the SSM parameter. The parameter records *why* and *until when*;
 # if the two ever disagree, the database is right and the parameter is stale bookkeeping.
+#
+# A failed query is not an answer. The previous form - [ "$(run_sql ...)" = "t" ] - returned false
+# both when the role was genuinely NOLOGIN and when psql could not run at all (DB unreachable,
+# expired IAM token, missing grant). `disarm` reads this as "already disarmed", so it printed
+# success, deleted the state parameter and exited 0 while production write access was still open,
+# and `status` printed DISARMED for the same reason. A break-glass control that cannot read its own
+# state has to stop, not guess: every exit below is deliberate rather than a boolean.
 role_is_armed() {
-  [ "$(run_sql "SELECT rolcanlogin FROM pg_roles WHERE rolname = '${role_name}'")" = "t" ]
+  local answer
+  if ! answer="$(run_sql "SELECT rolcanlogin FROM pg_roles WHERE rolname = '${role_name}'")"; then
+    echo "ERROR: cannot read ${role_name} from the database; refusing to guess its armed state" >&2
+    echo "       Resolve the connection problem first - do not assume it is disarmed." >&2
+    exit 3
+  fi
+  case "$answer" in
+    t) return 0 ;;
+    f) return 1 ;;
+    '') echo "ERROR: role ${role_name} does not exist; run bootstrap-support-roles.sql first" >&2
+        exit 3 ;;
+    *)  echo "ERROR: unexpected rolcanlogin value for ${role_name}: '${answer}'" >&2
+        exit 3 ;;
+  esac
 }
 
 case "${1:-}" in
@@ -148,7 +168,10 @@ case "${1:-}" in
       --value "$(jq -cn --arg i "$incident" --arg o "$operator" --arg a "$armed_at" --arg d "$deadline" \
         '{incident:$i,operator:$o,armedAt:$a,disarmBy:$d}')" >/dev/null
 
-    notify "[CRITICAL] production support EXECUTE armed - ${incident}" \
+    # The alert is the second-person control, not a courtesy. Arming production write access and
+    # then failing to announce it is the one outcome this script must never leave behind, so a
+    # failed publish rolls the arm back rather than exiting non-zero on top of an armed role.
+    if ! notify "[CRITICAL] production support EXECUTE armed - ${incident}" \
 "watchdog_support_rw was armed on production.
 
 incident:  ${incident}
@@ -157,7 +180,14 @@ armed at:  ${armed_at}
 disarm by: ${deadline}
 
 If you did not expect this, treat it as an active security event and disarm immediately:
-  arm-support-execute.sh disarm"
+  arm-support-execute.sh disarm"; then
+      run_sql "ALTER ROLE ${role_name} WITH NOLOGIN" >/dev/null 2>&1 || true
+      aws_cmd ssm delete-parameter --name "$state_param" --region "$region" >/dev/null 2>&1 || true
+      echo "ERROR: the arm alert could not be sent, so ${role_name} was disarmed again." >&2
+      echo "       Check sns:Publish on ${alert_topic:-<SECURITY_ALERT_TOPIC_ARN unset>} and retry." >&2
+      echo "       Verify with 'arm-support-execute.sh status' before assuming the rollback worked." >&2
+      exit 1
+    fi
 
     cat >&2 <<EOF
 

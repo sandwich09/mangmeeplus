@@ -18,6 +18,22 @@
         "arn:aws:rds-db:ap-southeast-1:<ACCOUNT_ID>:dbuser:<DB_RESOURCE_ID>/watchdog_support_ro",
         "arn:aws:rds-db:ap-southeast-1:<ACCOUNT_ID>:dbuser:<DB_RESOURCE_ID>/watchdog_support_rw"
       ]
+    },
+    {
+      "Sid": "RecordArmStateForSupportExecute",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter"
+      ],
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/support-rw-armed"
+    },
+    {
+      "Sid": "AnnounceSupportExecuteArming",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:watchdog-bms-production-security-alerts"
     }
   ]
 }
