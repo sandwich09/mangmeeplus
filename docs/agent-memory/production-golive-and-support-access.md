@@ -223,6 +223,87 @@ primary รายงานค่าได้คือย้าย snapshotting �
 - **แก้ความเข้าใจผิดก่อนหน้า:** t4g **ส่ง** `CPUCreditBalance` เข้า CloudWatch จริง
   (เคยบันทึกไว้ว่าไม่ส่งตามรายงาน re:Post) — alarm ได้ข้อมูลและเปลี่ยนสถานะได้ปกติ
 
+## ClamAV บน production — สิ่งที่เข้าใจผิดตอนแรกและข้อจำกัดที่เจอ 2026-08-08
+
+**เข้าใจผิดตอนแรก:** คิดว่า `CLAMAV_HOST` ชี้ไปหา scanner ภายนอกที่ต้องมีอยู่ก่อน จึงเสนอว่าเป็น
+blocker **ความจริงคือมันเป็นสวิตช์** — `infra/api-web/start-api-web-runtime.sh:29`
+`if [ "${CLAMAV_HOST:-}" = "127.0.0.1" ]` แล้วสตาร์ท clamd ที่ bundle มากับ image เอง
+(`Dockerfile.api-web:65-77` ติดตั้ง ClamAV 1.5.3, `TCPAddr 127.0.0.1`, `TCPSocket 3310`)
+ตั้งค่าเป็น `127.0.0.1` จึงถูกต้อง ไม่ต้องมี infra เพิ่ม
+
+**ข้อจำกัดที่ตามมาและกระทบแผน rollback โดยตรง:**
+
+- `clamd --fail-if-cvd-older-than=7` → **clamd ปฏิเสธสตาร์ทถ้า signature เก่าเกิน 7 วัน**
+  signature ถูก bake ตอน build (freshclam daemon เริ่ม *หลัง* clamd ready แล้ว — บรรทัด 33 → 37 → 51)
+  ⇒ **rollback ไป image ที่ build เกิน 7 วัน = container ขึ้นไม่ได้เลย** ไม่ใช่ขึ้นแบบไม่มี scan
+  ⇒ ถ้าต้องย้อนเกิน 7 วัน **ต้อง build ใหม่จาก commit เก่า** ไม่ใช่ deploy digest เดิม
+  ⇒ ECR lifecycle ที่เก็บ 20 image ไม่ได้แปลว่า rollback ได้ 20 จุด
+- clamd ready ใช้เวลาสูงสุด 120 วินาทีก่อนแอปตอบ health ได้ → ตอน canary bake จะดูช้ากว่าปกติ
+  **อย่าตีความว่าล้มแล้วไปกด rollback เอง** ดู `list-service-deployments` อย่างเดียว
+
+**การทดสอบในเครื่องบอกอะไรได้/ไม่ได้:** `pnpm security:m14-evidence` บน laptop ผ่าน 19 เช็คแรก
+(metadata + content inspection: EICAR in PDF, polyglot, SVG smuggling, PDF /OpenAction, object bomb)
+แล้วตายที่ `ECONNREFUSED` เพราะไม่มี clamd ในเครื่อง — **ไม่ใช่สัญญาณว่า production พัง**
+แต่เป็นการยืนยัน fail-closed behavior ที่ m14 doc เตือนไว้
+
+## มติที่เปลี่ยนจาก D4 เมื่อ 2026-08-08 (เจ้าของตัดสิน)
+
+| | D4 เดิม | ที่ตั้งจริง |
+| --- | --- | --- |
+| `CRM_AUTO_REPLY_ENABLED` | `false` | **`true`** |
+| `LINE_AI_AGENT_RUNTIME` | `disabled` | **`strands-local`** |
+| `CLAMAV_HOST` | ไม่ตั้ง (ตามมติ 2026-07-28) | **`127.0.0.1`** |
+
+**ผลที่ต้องจำ:** เหตุผลเดิมที่ M-01 "ไม่บล็อก" คือจะปิด AI ไว้ก่อนแล้วค่อยเก็บหลักฐาน
+เมื่อ AI เปิดตั้งแต่วันแรก **เหตุผลนั้นหายไป** → ต้องเก็บ live evidence ของ M-01
+(substitution, replay, cross-company, audience, Redis-unavailable) ให้เร็วที่สุดหลัง deploy
+ตัวกันความเสียหายที่ยังทำงาน: `CRM_AI_OUTBOUND_ALLOWED_DOMAINS=mangmeeplus.com`,
+`CRM_AI_MIN_CONFIDENCE=0.7` และ per-channel toggle ใน ตั้งค่า LINE OA ที่ต้องเปิดอีกชั้น
+
+## GitHub production variables ที่ตั้งครบแล้ว 2026-08-08
+
+`BEDROCK_REGION=ap-southeast-1` · `MODEL_PROVIDER=bedrock` · `PUBLIC_DOMAIN_URL=https://mangmeeplus.com`
+`LINE_LOGIN_CHANNEL_ID=2010515251` · `LINE_LIFF_ID=2010515251-rvdZJ8la` · `LINE_MESSAGING_CHANNEL_ID=2010514513`
+`CLAMAV_HOST=127.0.0.1` · `CRM_AUTO_REPLY_ENABLED=true` · `LINE_AI_AGENT_RUNTIME=strands-local`
+`CRM_AI_MIN_CONFIDENCE=0.7` (เจอเพิ่มระหว่างทาง — required, ไม่มี fallback)
+
+**ห้าม copy LINE ID จาก UAT** — `uat-environment.md` ระบุว่า UAT ใช้ **isolated** channel
+`2010784350`/`-ruzn5beM`/`2010784371` แยกจาก production โดยตั้งใจ
+
+## Deploy ครั้งแรก 2026-08-08 — startup failure + ค้นพบว่าไม่มีโหมด deploy ธรรมดา
+
+- run 31243639486 (`release_ref=2a78266`, `target=api-web`) จบที่ **startup_failure** —
+  workflow ไม่เริ่มรันเลย ข้อความจริงอ่านได้จากหน้า run ใน UI เท่านั้น (annotation API คืนว่าง)
+  static ตรวจหมดแล้ว: YAML ผ่าน, job graph ถูก, input 10 ตัวพอดีลิมิต, `ci.yml` ประกาศ
+  `workflow_call` ตรง — ผู้ต้องสงสัยที่เหลืออยู่ฝั่ง Settings (environment protection / Actions policy)
+- **`validate-production-release-intent.sh` มีแค่ 2 โหมด**: `target=all` = promotion
+  (บังคับ UAT producer run + bridge 4 ตัว + U5/A5 ceremony ทั้ง chain) ·
+  `target=เดี่ยว` = partial-incident (บังคับ `INC-...` + `approval://...`) —
+  **คำสั่ง deploy ที่ให้ไปตอนแรกผิดทั้งสองทาง** ไม่มีโหมด "แค่ release_ref + target"
+- UAT run 31207038953 (`d3e08f4`) มี acceptance artifact ครบและ SHA reachable จาก main —
+  ใช้ promote ได้โดยไม่รัน UAT ใหม่ ถ้ายอมไม่ได้ 4 commit ล่าสุด; โค้ดปัจจุบันต้อง
+  UAT `a1dd5ba` ก่อน
+
+## Audit ก่อน promote (2026-08-08) — `production-promotion-readiness-audit.md`
+
+เจ้าของสั่งหยุดก่อน promote แล้วตรวจรอบด้าน ผลอยู่ใน
+`docs/plans/production-promotion-readiness-audit.md` ประเด็นที่ค้นพบใหม่:
+
+- **Migration state ของ prod DB ไม่เคยถูกตรวจ และเสี่ยงจริง**: AWS resource มาจาก repo เก่า
+  ที่ deploy production ช่วง 2026-07-03–10 ⇒ DB น่าจะมี `_prisma_migrations` อยู่แล้ว ขณะที่
+  `migration-drift-diagnosis.md` บันทึกว่าไฟล์ migration ถูกแก้ (5 checksum mismatch บน dev,
+  fix landed in repo) และ `verify-applied-migration-catalog.ts` เทียบชื่อ+sha256 จริง —
+  ถ้า prod mismatch, release จะล้มกลางทาง ต้องตรวจผ่าน bastion ก่อน (audit §8.3)
+- ทางแยก A (full ceremony — ขาด A5 network/IAM/DB reader/clone rehearsal/policy token,
+  หลายวัน) vs B (partial-incident — ทำได้เลยแต่ audit trail เป็น incident ต้องบันทึกมติ)
+  vs C (แก้ workflow — security change ต้อง review) — **ยังไม่ตัดสิน**
+- clone rehearsal ของทาง A = restore drill ของ M-17 ในตัว (งานเดียวได้สอง)
+- Alarm ที่ยังขาด: RDS FreeStorageSpace (20GB), FreeableMemory, ALB 5xx steady-state
+- ยังไม่มี AWS Budget / Cost Anomaly Detection · ประมาณการหลัง launch ~$270–320/เดือน
+- UAT Redis เก่า (ไม่เข้ารหัส) ต้องถูกแทน**ในรอบเดียวกับ** UAT acceptance run ถัดไป
+- ไม่มี load test tooling ใน repo เลย — ถ้าจะทำ ให้ยิงที่ UAT ไม่ใช่ prod
+- M-01 ยกระดับความเร่งเพราะ AI เปิดวันแรก (มติเจ้าของเปลี่ยนจาก D4)
+
 ## Next
 
 - เจ้าของรันตาม `docs/runbooks/production-golive-aws-commands.md` ขั้น 0 → 8
