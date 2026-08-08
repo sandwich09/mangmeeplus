@@ -97,10 +97,10 @@ bash "$clone_sg_validator" "$tmp/clone-task-before.json" "$tmp/clone-db-before.j
 bash "$reader_sg_validator" "$tmp/reader-task-before.json" "$tmp/production-db-before.json" \
   "$reader_task_sg" "$production_db_sg" "$endpoint_sg" "$s3_prefix_list_id" preflight
 jq -e --arg clone "$clone_task_sg" --arg reader "$reader_task_sg" '
-  .SecurityGroups|length==1 and .[0].IpPermissionsEgress|length<=1
-  and all(.[0].IpPermissionsEgress[]; .IpProtocol=="-1" and [.IpRanges[].CidrIp]==["0.0.0.0/0"])
-  and ((.[0].IpPermissions==[]) or
-    ([.[0].IpPermissions[]|{protocol:.IpProtocol,from:.FromPort,to:.ToPort,
+  (.SecurityGroups|length==1) and (.SecurityGroups[0].IpPermissionsEgress|length<=1)
+  and all(.SecurityGroups[0].IpPermissionsEgress[]; .IpProtocol=="-1" and [.IpRanges[].CidrIp]==["0.0.0.0/0"])
+  and ((.SecurityGroups[0].IpPermissions==[]) or
+    ([.SecurityGroups[0].IpPermissions[]|{protocol:.IpProtocol,from:.FromPort,to:.ToPort,
       groups:([.UserIdGroupPairs[].GroupId]|sort),cidrs:(.IpRanges//[]),ipv6:(.Ipv6Ranges//[]),
       prefixes:(.PrefixListIds//[])}])==[{protocol:"tcp",from:443,to:443,
         groups:([$clone,$reader]|sort),cidrs:[],ipv6:[],prefixes:[]}])
@@ -133,7 +133,11 @@ for tuple in "$clone_task_sg:$clone_db_sg" "$reader_task_sg:$production_db_sg"; 
 done
 
 ensure_endpoint() {
-  local suffix="$1" type="$2" policy="$3" service="com.amazonaws.${region}.${suffix}" matches count id
+  # Split the declaration: under `set -u`, a single `local a="$1" b="${a}"` evaluates ${a} before
+  # bash has bound a, which aborts with "a: unbound variable". Bind the positional args first, then
+  # derive service from them.
+  local suffix="$1" type="$2" policy="$3"
+  local service="com.amazonaws.${region}.${suffix}" matches count id
   matches="$(aws ec2 describe-vpc-endpoints --region "$region" \
     --filters "Name=vpc-id,Values=$vpc_id" "Name=service-name,Values=$service" \
     --query 'VpcEndpoints[?State!=`deleted`].VpcEndpointId' --output text)"
