@@ -1,6 +1,7 @@
 # Agent Memory: repo-migration-fresh-history
 
-Status: Phase 0 เสร็จแล้ว (local, ยังไม่ push) — ถัดไป 0.4 push แล้วต่อ Phase 1
+Status: การย้าย repo เสร็จแล้ว — UAT รันจาก MangmeeDev/mangmeeplus ได้จริง
+เหลือ soak → prune IAM → archive repo เดิม
 Owner: thawatchai
 Scope: ย้าย `sandwich09/WatchDog-BMS` ไป repo ใหม่แบบไม่มี git history ยก CI/CD + environment config ไปด้วย
 
@@ -318,7 +319,104 @@ aws sts get-caller-identity
 ยังไม่ลบใน Phase 0 เพราะ merge ควรรักษาพฤติกรรมเดิมไว้ก่อน
 ตัดสินใจว่าจะลบทิ้งตอน Phase 1 หรือไม่ — ถ้าลบ ต้องแก้ `production-image-security.spec.sh` ที่ assert บล็อกพวกนี้ด้วย
 
+## Phase 1–5 + 6.1 — ผ่านครบ (2026-08-07)
+
+ปลายทาง: **`MangmeeDev/mangmeeplus`** (personal Pro, ย้ายเข้า org Team ภายหลัง)
+`OWNER_ACTOR` = `MangmeeDev`
+
+| Phase | ผล |
+|---|---|
+| 1 rename branch | 115 ไฟล์ · `develop-with-ai` เหลือ 0 · `ci.yml:43` ไม่มี develop ซ้ำ |
+| 2 rename owner | slug 23 ไฟล์ + actor 8 ไฟล์ใน `infra/` · spec **5/5 exit 0** |
+| 3 snapshot | commit `668a2d08` · **0 parents** · 2732 ไฟล์ · push เป็น `main` + `develop` · default=main · private |
+| 4 config | environments `production`/`uat` branch policy=main · vars **28/28** + **37/37** · branch protection ตรงทุกฟิลด์ |
+| 4c secret | `TYPHOON_OCR_API_KEY` ตั้งแล้วที่ env `uat` |
+| 5 IAM | 4 roles มี sub claim ทั้งเก่าและใหม่ |
+| 6.1 CI | run 31190822100 (main) + 31190823113 (develop) — **success ทั้งคู่** required checks 6/6 |
+
+IAM roles ที่แก้: `watchdog-bms-{ci,deploy}-{production,uat}`
+trust template ใน `infra/security/` อีก 3 ตัวยังไม่มี role จริงบน AWS — ไฟล์ถูก rename แล้ว
+ตอน bootstrap จริงจะได้ slug ใหม่เอง
+
+## บั๊กที่เจอในสคริปต์เอง (แก้แล้วทุกตัว)
+
+| อาการ | สาเหตุ |
+|---|---|
+| phase1/phase2 ตายตอน verify | `set -o pipefail` + `grep` ที่หาไม่เจอคืน exit 1 ซึ่งเป็นเคส**สำเร็จ** |
+| phase2 พลาด actor 8 ไฟล์ | แทนแค่ slug เต็ม `owner/repo` — `sandwich09` เดี่ยวๆ อยู่ใน gate จริง (`validate-u5-capacity-authorization.sh`, `run-a5-capacity-mutating.sh`) และ fixture ของ spec |
+| `\b` ใน sed ไม่ทำงาน | BSD sed บน macOS ไม่รู้จัก word boundary |
+| phase3 บอก "repo ไม่ว่าง" ทั้งที่ว่าง | repo ว่าง commits API ตอบ **409 + JSON error** ไม่ใช่ `[]` → `--jq length` พัง ใช้ branches API แทน |
+| phase4a ได้ uat มา 30/37 เงียบๆ | endpoint `environments/<env>/variables` ตัดที่ 30 ต่อหน้า `per_page=100` ไม่มีผล |
+| push/gh api ตอบ 404 ทั้งที่ repo มีอยู่ | git ใช้ `gh auth git-credential` → auth ด้วย **active gh account** |
+| phase5 AccessDenied | `watchdog-bedrock-dev` อ่าน IAM ได้แต่เขียนไม่ได้ ต้องใช้ `AWS_PROFILE=thawatchai` (root) |
+
+## ⚠️ OIDC sub claim ของ repo ใหม่ใช้ format immutable-ID
+
+**อาการ:** deploy UAT ครั้งแรก (run 31193212550) ล้มที่ `Configure AWS credentials`
+`Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`
+ทั้งที่ trust policy มี `repo:MangmeeDev/mangmeeplus:environment:uat` แล้ว
+
+**สาเหตุ:** CloudTrail (`AssumeRoleWithWebIdentity` → `AccessDenied`) แสดง sub ที่ GitHub ส่งจริง:
+
+```
+repo:MangmeeDev@314278152/mangmeeplus@1326789216:environment:uat
+```
+
+GitHub แนบ numeric ID ของ owner และ repo เข้าไปใน sub claim เพื่อกัน hijack ด้วยการเปลี่ยนชื่อ
+repo ที่สร้างใหม่ได้ format นี้ ส่วน `sandwich09/WatchDog-BMS` (สร้างก่อนหน้า) ยังเป็น format เดิม
+
+**บทเรียน:** Phase 5 สร้าง sub ด้วยการแทนสตริง `<old-slug>` → `<new-slug>` ซึ่งผิด
+ต้องดึง `.owner.id` และ `.id` จาก `gh api repos/<owner>/<repo>` มาประกอบ
+ตรวจจาก template ในรีโปอย่างเดียวไม่มีทางเห็น — เห็นได้จาก CloudTrail เท่านั้น
+
+**แก้ด้วย** `phase5b-fix-oidc-sub.sh` — เพิ่ม sub รูปแบบ ID, คงของ repo เดิมไว้,
+ทิ้งรูปแบบ `owner/repo` ธรรมดาของ repo ใหม่ที่ไม่มีวัน match
+
+ผลลัพธ์ต่อ role:
+
+```json
+["repo:MangmeeDev@314278152/mangmeeplus@1326789216:environment:<env>",
+ "repo:sandwich09/WatchDog-BMS:environment:<env>"]
+```
+
+> ตอน 6.6 `prune` ต้องลบเฉพาะ prefix `repo:sandwich09/WatchDog-BMS` เท่านั้น
+> ห้ามลบตัว immutable-ID
+
 ## Next
 
-0.4 — push `develop-with-ai` (เจ้าของ repo เป็นคน push)
-แล้วต่อ Phase 1 (rename branch) เมื่อได้ชื่อ org/repo ปลายทาง
+**6.2** Actions → `deploy-uat.yml` — **Use workflow from = main**,
+`release_ref` = SHA ของ `develop` (`668a2d08...` เต็ม 40 ตัว), `target = all`
+
+**6.3** UAT acceptance ✅ — `https://uat.mangmeeplus.com` 302 → `/login` 200 (`<title>มั่งมี</title>`)
+
+**6.4 production — ไม่ใช่ขั้นตอนของงานย้าย repo** (ดูหัวข้อถัดไป)
+
+**6.5 soak** → **6.6** `MODE=prune` → **6.7** archive repo เดิม
+
+## production ยังไม่เคย deploy — ไม่เกี่ยวกับการย้าย
+
+ตรวจแล้วพบว่า production ไม่เคยขึ้นเลยทั้งบน repo เก่าและใหม่:
+
+| หลักฐาน | |
+|---|---|
+| `deploy-production.yml` บน repo เดิม | **0 runs** |
+| `u5-owner-approval.yml`, `u5-shadow-evidence.yml`, `production-a5.yml`, `production-security-preflight.yml` | ไม่มีบน `main` ของ repo เดิม (404) — อยู่แต่บน `develop-with-ai` |
+| ECS cluster `watchdog-bms-prod` | 3 services ทั้งหมด desired=0 running=0 |
+
+แปลว่าการย้าย repo **ไม่ได้ทำให้ production เสียหาย** เพราะไม่มีอะไรรันอยู่
+
+`deploy-production.yml` แบบ `target=all` บังคับ `release_mode=promotion` ซึ่งต้องมีครบ:
+
+1. **bridge** — UAT run *ก่อนหน้า* ใน repo เดียวกัน (`bridge_uat_run_id`, `bridge_uat_run_attempt`,
+   `bridge_source_sha`, `bridge_api_image`) และ `BRIDGE_SOURCE != SOURCE_SHA`
+   → repo ใหม่มี UAT run เดียว จึงยังไม่มี bridge
+2. **U5 owner approval** — evidence `OWNER_U5E_APPROVAL_V1` ที่ `u5-owner-approval.yml` ต้องผลิต
+   *ระหว่าง* deploy run นั้น (รอสูงสุด 1800s) ผูกกับ run id ของ deploy เอง
+3. approval อ้างต่อไปยัง `U5_SHADOW_AGGREGATE_V1` และ `PRODUCTION_A5_EVIDENCE_V1`
+4. environment **`production-approval`** ที่ `u5-owner-approval.yml` ใช้ — **ยังไม่มีใน repo ใหม่**
+   (repo เดิมก็ไม่มี) ต้องสร้างพร้อม protection rule ที่ต้องการก่อน
+
+นี่คืองาน "เปิด production ครั้งแรก" เป็นโปรเจกต์แยก ไม่ใช่ส่วนหนึ่งของการย้าย repo
+
+local clone ย้ายมาทำงานบน branch `develop` ที่ track `newremote` แล้ว
+`origin` ยังชี้ repo เดิมไว้เป็นทางถอย

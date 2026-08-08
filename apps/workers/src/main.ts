@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { validateProductionConfig, workersConfigSchema } from '@watchdog-bms/config';
-import { workerLog } from './common/log.js';
+import { fatalDetail, workerLog } from './common/log.js';
 import { startNotificationWorker } from './modules/notifications/notification-worker.js';
 import { startWorkflowWorker } from './modules/workflow/workflow-worker.js';
 import { startAiDraftWorker } from './modules/ai-draft/ai-draft-worker.js';
@@ -10,6 +10,18 @@ import { startCrmTrustWorker } from './modules/crm-inbox/crm-trust-worker.js';
 import { startLineAiLedgerWorker } from './modules/line-ai-ledger/line-ai-ledger-worker.js';
 import { startCrmCampaignWorker } from './modules/crm-inbox/crm-campaign-worker.js';
 import { startExpenseAutoPostWorker } from './modules/expense-auto-post/expense-auto-post-worker.js';
+
+// Registered before anything that can reject: a full Redis takes every worker down at boot, and
+// without this Node prints the whole BullMQ error object on the way out. One bounded line instead.
+function exitFatal(event: string, err: unknown): void {
+  workerLog('error', { event, error: fatalDetail(err) });
+  // ECS pipes stdout, so the line above flushes on a later tick; exiting in this one can drop the
+  // only record of why the task died.
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 50).unref();
+}
+process.on('unhandledRejection', (err) => exitFatal('worker_unhandled_rejection', err));
+process.on('uncaughtException', (err) => exitFatal('worker_uncaught_exception', err));
 
 const result = workersConfigSchema.safeParse(process.env);
 if (!result.success) {

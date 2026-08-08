@@ -127,23 +127,62 @@ fi
 
 redis_id="${prefix}-redis"
 redis_secret="${secret_prefix}/redis-url"
-if ! aws_cmd elasticache describe-cache-clusters --cache-cluster-id "$redis_id" --region "$region" >/dev/null 2>&1; then
+redis_param_group="${prefix}-redis7"
+
+# `default.redis7` ships maxmemory-policy=volatile-lru, which cannot be edited and is the wrong
+# policy for BullMQ: it evicts only keys carrying a TTL — the rate-limit counters and the
+# actor-delegation replay store — while the untagged job records that actually fill the node are
+# never candidates. On 2026-08-05 that combination discarded security state and then OOM'd every
+# UAT worker anyway. Create the node already pointing at a `noeviction` group.
+if ! aws_cmd elasticache describe-cache-parameter-groups --cache-parameter-group-name "$redis_param_group" --region "$region" >/dev/null 2>&1; then
+  aws_cmd elasticache create-cache-parameter-group \
+    --cache-parameter-group-name "$redis_param_group" \
+    --cache-parameter-group-family redis7 \
+    --description 'WatchDog BMS UAT Redis: noeviction for BullMQ' --region "$region" >/dev/null
+  aws_cmd elasticache modify-cache-parameter-group \
+    --cache-parameter-group-name "$redis_param_group" \
+    --parameter-name-values ParameterName=maxmemory-policy,ParameterValue=noeviction \
+    --region "$region" >/dev/null
+fi
+
+if ! aws_cmd elasticache describe-replication-groups --replication-group-id "$redis_id" --region "$region" >/dev/null 2>&1; then
   if secret_exists "$redis_secret"; then
     echo "ERROR: ${redis_secret} exists but UAT Redis does not; remove or reconcile the stale secret explicitly" >&2
     exit 1
   fi
-  aws_cmd elasticache create-cache-cluster \
-    --cache-cluster-id "$redis_id" \
+  # A replication group rather than a standalone cache cluster: `create-cache-cluster` has no
+  # at-rest encryption option at all, so a standalone node can never be encrypted. UAT holds the
+  # actor-delegation replay store, the rate-limit counters, and — for the current acceptance cycle —
+  # owner-approved copies of the production LINE credentials, so it gets the same confidentiality
+  # controls as the RDS instance beside it.
+  #
+  # One node, no failover, no snapshot retention: those are M-17's *availability* requirements and
+  # apply to production, where `infra/security/verify-production-security-baseline.sh` fails closed
+  # without `nodeCount >= 2`, `automaticFailover == "enabled"` and 35-day snapshots. Paying for a
+  # replica in UAT would buy no confidentiality.
+  redis_auth="$(openssl rand -base64 48 | tr -d '/@"+= ' | cut -c1-48)"
+  [ "${#redis_auth}" -ge 32 ] || { echo "ERROR: generated Redis auth token is too short" >&2; exit 1; }
+  aws_cmd elasticache create-replication-group \
+    --replication-group-id "$redis_id" \
+    --replication-group-description 'WatchDog BMS UAT Redis' \
     --engine redis \
     --engine-version 7.1 \
     --cache-node-type cache.t4g.micro \
-    --num-cache-nodes 1 \
+    --num-cache-clusters 1 \
+    --cache-parameter-group-name "$redis_param_group" \
     --cache-subnet-group-name "$redis_subnet_group" \
     --security-group-ids "$redis_sg" \
+    --at-rest-encryption-enabled \
+    --transit-encryption-enabled \
+    --auth-token "$redis_auth" \
     --region "$region" >/dev/null
-  aws_cmd elasticache wait cache-cluster-available --cache-cluster-id "$redis_id" --region "$region"
-  redis_host="$(aws_cmd elasticache describe-cache-clusters --cache-cluster-id "$redis_id" --show-cache-node-info --query 'CacheClusters[0].CacheNodes[0].Endpoint.Address' --output text --region "$region")"
-  create_secret "$redis_secret" "redis://${redis_host}:6379"
+  aws_cmd elasticache wait replication-group-available --replication-group-id "$redis_id" --region "$region"
+  redis_host="$(aws_cmd elasticache describe-replication-groups --replication-group-id "$redis_id" --query 'ReplicationGroups[0].NodeGroups[0].PrimaryEndpoint.Address' --output text --region "$region")"
+  # `rediss://` plus the token in the userinfo field: ioredis enables TLS from the scheme and reads
+  # the password from the URL, so no application code changes with encryption on. The token is
+  # never echoed — it exists only inside this secret.
+  create_secret "$redis_secret" "rediss://:${redis_auth}@${redis_host}:6379"
+  unset redis_auth
 elif ! secret_exists "$redis_secret"; then
   echo "ERROR: UAT Redis exists but ${redis_secret} does not" >&2
   exit 1

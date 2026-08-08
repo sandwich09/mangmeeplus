@@ -28,6 +28,30 @@ LOG_KMS_KEY_ID="${LOG_KMS_KEY_ID:-}"
 SECURITY_ALERT_TOPIC_ARN="${SECURITY_ALERT_TOPIC_ARN:-}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 DEPLOY_ENV="${DEPLOY_ENV:-production}"
+# UAT gets parked at zero between test cycles. Every update payload used to hardcode 1/2, so the
+# next deploy restarted it — and its Fargate bill — without anyone asking. Production stays pinned:
+# infra/security/collect-production-a5-current-health.sh asserts the live service still reads
+# exactly {minTaskCount:1,maxTaskCount:2,AVERAGE_CPU,70}, so an override there breaks signed
+# evidence instead of saving money.
+EXPRESS_MIN_TASKS="${ECS_EXPRESS_MIN_TASKS:-1}"
+EXPRESS_MAX_TASKS="${ECS_EXPRESS_MAX_TASKS:-2}"
+for express_count in "$EXPRESS_MIN_TASKS" "$EXPRESS_MAX_TASKS"; do
+  case "$express_count" in
+    ''|*[!0-9]*)
+      echo "ERROR: ECS_EXPRESS_MIN_TASKS/ECS_EXPRESS_MAX_TASKS must be non-negative integers" >&2
+      exit 1
+      ;;
+  esac
+done
+if [ "$EXPRESS_MAX_TASKS" -lt "$EXPRESS_MIN_TASKS" ]; then
+  echo "ERROR: ECS_EXPRESS_MAX_TASKS ($EXPRESS_MAX_TASKS) is below ECS_EXPRESS_MIN_TASKS ($EXPRESS_MIN_TASKS)" >&2
+  exit 1
+fi
+if [ "$DEPLOY_ENV" = production ] \
+  && { [ "$EXPRESS_MIN_TASKS" != 1 ] || [ "$EXPRESS_MAX_TASKS" != 2 ]; }; then
+  echo "ERROR: production capacity is pinned to 1/2; A5 health evidence asserts that exact shape" >&2
+  exit 1
+fi
 case "$DEPLOY_ENV" in
   production) RESOURCE_STAGE="prod" ;;
   uat) RESOURCE_STAGE="uat" ;;
@@ -951,6 +975,8 @@ deploy_express_service() {
       --arg memory "$memory" \
       --argjson primaryContainer "$(cat "$container_file")" \
       --argjson networkConfiguration "$network" \
+      --argjson minTaskCount "$EXPRESS_MIN_TASKS" \
+      --argjson maxTaskCount "$EXPRESS_MAX_TASKS" \
       '{
         executionRoleArn: $executionRoleArn,
         infrastructureRoleArn: $infrastructureRoleArn,
@@ -962,7 +988,7 @@ deploy_express_service() {
         networkConfiguration: $networkConfiguration,
         cpu: $cpu,
         memory: $memory,
-        scalingTarget: {minTaskCount: 1, maxTaskCount: 2, autoScalingMetric: "AVERAGE_CPU", autoScalingTargetValue: 70}
+        scalingTarget: {minTaskCount: $minTaskCount, maxTaskCount: $maxTaskCount, autoScalingMetric: "AVERAGE_CPU", autoScalingTargetValue: 70}
       }' > "$create_request"
     mutation_intent_id="$(prepare_release_operation_intent "$service_name" CREATE "$service_arn" \
       "$create_request" "$before_deployments" "$before_service" "$service_arn_param")" || return $?
@@ -1007,6 +1033,8 @@ deploy_express_service() {
       --arg memory "$memory" \
       --argjson primaryContainer "$(cat "$container_file")" \
       --argjson networkConfiguration "$network" \
+      --argjson minTaskCount "$EXPRESS_MIN_TASKS" \
+      --argjson maxTaskCount "$EXPRESS_MAX_TASKS" \
       '{
         serviceArn: $serviceArn,
         executionRoleArn: $executionRoleArn,
@@ -1016,7 +1044,7 @@ deploy_express_service() {
         networkConfiguration: $networkConfiguration,
         cpu: $cpu,
         memory: $memory,
-        scalingTarget: {minTaskCount: 1, maxTaskCount: 2, autoScalingMetric: "AVERAGE_CPU", autoScalingTargetValue: 70}
+        scalingTarget: {minTaskCount: $minTaskCount, maxTaskCount: $maxTaskCount, autoScalingMetric: "AVERAGE_CPU", autoScalingTargetValue: 70}
       }' > "$update_request"
     mutation_intent_id="$(prepare_release_operation_intent "$service_name" UPDATE "$service_arn" \
       "$update_request" "$before_deployments" "$before_service" "$service_arn_param")" || return $?
