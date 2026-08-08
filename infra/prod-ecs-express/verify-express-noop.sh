@@ -46,8 +46,8 @@ aws_cmd() {
 
 read_snapshot() {
   local deployment_response deployments service
-  deployment_response="$(aws_cmd ecs list-service-deployments --service "$service_arn" \
-    --max-results 100 --output json --region "$region")"
+  deployment_response="$(AWS_BIN="$aws_bin" AWS_REGION="$region" \
+    bash "$(dirname "$0")/list-service-deployments-all.sh" --service-arn "$service_arn")"
   if ! jq -e '.nextToken == null' <<< "$deployment_response" >/dev/null; then
     echo "ERROR: deployment history is paginated; no-op comparison is not exhaustive" >&2
     return 75

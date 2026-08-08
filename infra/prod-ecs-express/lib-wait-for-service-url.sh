@@ -76,10 +76,10 @@ wait_for_service_url() {
           --service-arn "$arn" \
           --query 'service.{status:status.statusCode,currentDeployment:currentDeployment,activeRevisions:activeConfigurations[].serviceRevisionArn}' \
           --output json --region "$REGION")" || return $?
-        history_first="$(aws_cmd ecs list-service-deployments \
-          --service "$arn" --max-results 100 --no-paginate \
+        history_first="$(AWS_BIN="$AWS_BIN" AWS_REGION="$REGION" \
+          bash "$(dirname "$0")/list-service-deployments-all.sh" --service-arn "$arn" \
           --query '{nextToken:nextToken,serviceDeployments:serviceDeployments[].{deploymentArn:serviceDeploymentArn,createdAt:createdAt}}' \
-          --output json --region "$REGION" | jq -c '
+          | jq -c '
             .serviceDeployments |= sort_by(.createdAt,.deploymentArn)
           ')" || return $?
         sleep "${DEPLOYMENT_STABILITY_SECONDS:-2}"
@@ -87,10 +87,10 @@ wait_for_service_url() {
           --service-arn "$arn" \
           --query 'service.{status:status.statusCode,currentDeployment:currentDeployment,activeRevisions:activeConfigurations[].serviceRevisionArn}' \
           --output json --region "$REGION")" || return $?
-        history_second="$(aws_cmd ecs list-service-deployments \
-          --service "$arn" --max-results 100 --no-paginate \
+        history_second="$(AWS_BIN="$AWS_BIN" AWS_REGION="$REGION" \
+          bash "$(dirname "$0")/list-service-deployments-all.sh" --service-arn "$arn" \
           --query '{nextToken:nextToken,serviceDeployments:serviceDeployments[].{deploymentArn:serviceDeploymentArn,createdAt:createdAt}}' \
-          --output json --region "$REGION" | jq -c '
+          | jq -c '
             .serviceDeployments |= sort_by(.createdAt,.deploymentArn)
           ')" || return $?
 

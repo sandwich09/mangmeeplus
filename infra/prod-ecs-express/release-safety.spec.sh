@@ -143,10 +143,27 @@ for wrong_field in serviceArn targetRevision; do
   fi
 done
 
+# A service outlives one page: production api-web reached 184 deployments against a 100-row
+# page while UAT was still at 93. A paginated history is now walked to the end and merged, so
+# each read stays exhaustive instead of refusing. Both reads span two pages here.
+wait_reset
+wait_history_page_one() {
+  jq -cn --arg old "${wait_deployment}-old" \
+    '{nextToken:"more",serviceDeployments:[{deploymentArn:$old,createdAt:"2026-08-03T00:00:00Z"}]}'
+}
+wait_history_page_one > "${FAKE_WAIT_HISTORY_PREFIX}-1.json"
+wait_history_state > "${FAKE_WAIT_HISTORY_PREFIX}-2.json"
+wait_history_page_one > "${FAKE_WAIT_HISTORY_PREFIX}-3.json"
+wait_history_state > "${FAKE_WAIT_HISTORY_PREFIX}-4.json"
+test "$(wait_run)" = "$wait_url"
+
+# Only a pagination that never terminates is refused: that read cannot be made exhaustive.
 wait_reset
 jq '.nextToken = "more"' "${FAKE_WAIT_HISTORY_PREFIX}-default.json" > "$fixture/wait-history.tmp"
 mv "$fixture/wait-history.tmp" "${FAKE_WAIT_HISTORY_PREFIX}-default.json"
-assert_exit 1 'waiter paginated history' wait_run
+export LIST_DEPLOYMENTS_MAX_PAGES=3
+assert_exit 75 'waiter unterminated pagination' wait_run
+unset LIST_DEPLOYMENTS_MAX_PAGES
 wait_assert_one_poll
 
 wait_reset
@@ -250,7 +267,11 @@ for terminal_outer_state in DRAINING UPDATING; do
   wait_assert_one_poll
 done
 
-test "$(grep -c -- '--no-paginate' "$repo_root/infra/prod-ecs-express/lib-wait-for-service-url.sh")" -eq 2
+# Both settlement history reads must go through the exhaustive pager. A direct CLI read is
+# either one capped page - which the nextToken check then rejects outright once a service
+# outgrows it - or an auto-paginated read that drops nextToken and makes the check vacuous.
+test "$(grep -c 'list-service-deployments-all.sh' "$repo_root/infra/prod-ecs-express/lib-wait-for-service-url.sh")" -eq 2
+test "$(grep -c 'ecs list-service-deployments' "$repo_root/infra/prod-ecs-express/lib-wait-for-service-url.sh" || true)" -eq 0
 
 wait_reset
 wait_service_state "[\"$wait_old\",\"$wait_target\"]" > "${FAKE_WAIT_SERVICE_PREFIX}-default.json"
@@ -560,9 +581,27 @@ jq -cn --arg current "$current" --arg new "${current}-late" \
   > "$fixture/noop-deployments-2.json"
 assert_exit 75 'late deployment during no-op verification' noop_run
 cp "$fixture/noop-deployments-1.json" "$fixture/noop-deployments-2.json"
-jq '.nextToken="more"' "$fixture/noop-deployments-2.json" > "$fixture/noop-deployments.tmp"
-mv "$fixture/noop-deployments.tmp" "$fixture/noop-deployments-2.json"
-assert_exit 75 'paginated no-op deployment history' noop_run
+# Each snapshot walks the history to its last page, so a service that outgrew one page is
+# merged and still compared exhaustively. Both reads span two pages here, which also keeps
+# the fake's shared call counter aligned with the service reads it indexes.
+jq -cn --arg current "$current" \
+  '{nextToken:"more",serviceDeployments:[{serviceDeploymentArn:$current}]}' \
+  > "$fixture/noop-deployments-1.json"
+jq -cn '{nextToken:null,serviceDeployments:[]}' > "$fixture/noop-deployments-2.json"
+cp "$fixture/noop-deployments-1.json" "$fixture/noop-deployments-3.json"
+cp "$fixture/noop-deployments-2.json" "$fixture/noop-deployments-4.json"
+cp "$fixture/noop-before-service.json" "$fixture/noop-service-4.json"
+noop_run >/dev/null
+
+# Only a pagination that never terminates is refused; that read cannot be made exhaustive.
+rm -f "$fixture/noop-deployments-2.json" "$fixture/noop-deployments-3.json" \
+  "$fixture/noop-deployments-4.json"
+export LIST_DEPLOYMENTS_MAX_PAGES=3
+assert_exit 75 'unterminated no-op pagination' noop_run
+unset LIST_DEPLOYMENTS_MAX_PAGES
+jq -cn --arg current "$current" \
+  '{nextToken:null,serviceDeployments:[{serviceDeploymentArn:$current}]}' \
+  > "$fixture/noop-deployments-1.json"
 cp "$fixture/noop-deployments-1.json" "$fixture/noop-deployments-2.json"
 jq -cn --arg current "${current}-new" --arg target "$target" \
   '{currentDeployment:$current,activeRevisions:[$target]}' > "$fixture/noop-service-2.json"

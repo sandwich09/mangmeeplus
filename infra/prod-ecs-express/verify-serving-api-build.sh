@@ -39,7 +39,8 @@ read_state() {
     deployment="$($aws_bin ecs describe-service-deployments --service-deployment-arns "$deployment_arn" --output json --region "$region")"
     stability_evidence="$(jq -cS . <<< "$deployment")"
   else
-    history="$($aws_bin ecs list-service-deployments --service "$service_arn" --max-results 100 --output json --region "$region")"
+    history="$(AWS_BIN="$aws_bin" AWS_REGION="$region" \
+      bash "$(dirname "$0")/list-service-deployments-all.sh" --service-arn "$service_arn")"
     if ! jq -e '.nextToken == null and (.serviceDeployments | length) > 0' <<< "$history" >/dev/null; then
       echo "ERROR: F2 settled deployment history is empty or paginated" >&2
       return 75

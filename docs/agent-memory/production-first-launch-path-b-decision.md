@@ -69,6 +69,8 @@ deploy พัง แทนที่จะเทียบทั้งชุดก
 | 2 | Verify release image signatures | ECR read บน `-ai-gateway`, `-workers` |
 | 3 | RegisterTaskDefinition | `iam:PassRole` (policy บน role เก่ากว่า template) |
 | 4 | RunTask | **`watchdog-bms-release-task-role` ไม่มีอยู่จริง** |
+| 5 | Deploy immutable manifest | `kms:DescribeKey` (log group encryption) |
+| 6 | Deploy immutable manifest | ไม่ใช่ IAM — เป็นบั๊กจริงในโค้ด ดูหัวข้อถัดไป |
 
 **ต้นเหตุเชิงโครงสร้าง:** UAT มี `infra/uat/setup-control-plane.sh` ที่สร้าง role ครบ 8 ตัว
 พร้อม trust/policy — **production ไม่มีสคริปต์เทียบเท่า** resource เดิมถูกสร้างด้วยมือจาก repo เก่า
@@ -91,3 +93,56 @@ deploy พัง แทนที่จะเทียบทั้งชุดก
 **สถานะ IAM หลังแก้ครบ:** 6 role ที่ production ต้องใช้มีครบและ trust ถูกทั้งหมด
 (`ecsTaskExecutionRole`, `ecsInfrastructureRoleForExpressServices`, ecs-express api/ai-gateway/
 workers, release-task)
+
+## บทเรียน: UAT ไม่มีทางเจอบั๊กนี้เพราะ threshold อยู่ที่ 100 (2026-08-08)
+
+รอบ 6 ตายที่ `Deploy immutable manifest` ด้วยข้อความ
+
+```
+ERROR: recent before-deployment snapshot is paginated; refusing to prepare a non-exhaustive intent
+```
+
+**ต้นเหตุ:** AWS CLI **ไม่ auto-paginate** `ecs list-service-deployments` (เรียกเปล่า ๆ ได้ 20 แถว,
+`--max-results 100` ได้ 100 แถว — ทั้งสองแบบมี `nextToken` ติดมา) แต่สคริปต์ในโฟลเดอร์
+`infra/prod-ecs-express/` **5 จุด** อ่านหน้าเดียวแล้วปฏิเสธถ้าเจอ `nextToken` โดยไม่เคยเดินหน้าถัดไป
+
+จำนวน deployment จริงตอนตรวจ:
+
+| env | api-web deployments | เกิน 100? |
+| --- | --- | --- |
+| UAT | 93 | ไม่ |
+| production | **184** | **ใช่** |
+
+นี่คือเหตุผลที่ CI/UAT ผ่านมาตลอดแต่ production พังทันที — guard จะทำงานก็ต่อเมื่อเกิน 100 เท่านั้น
+และ **UAT กำลังจะชนเพดานเดียวกันในอีกประมาณ 7 deploy**
+
+**5 จุดที่เป็นบั๊กเดียวกัน:**
+
+| จุด | ไฟล์ | เดิมทำอะไรเมื่อ paginated | อยู่บนเส้นทาง prod deploy |
+| --- | --- | --- | --- |
+| 1 | `deploy.sh` (before-set ของ intent) | `exit 1` | ใช่ (ตายรอบ 6) |
+| 2 | `verify-express-noop.sh` | `return 75` | ใช่ (เฉพาะ no-op) |
+| 3 | `lib-wait-for-service-url.sh` ×2 | jq `.nextToken == null` → `return 1` | ใช่ (หลัง deploy สำเร็จ) |
+| 4 | `active-launch-builds.sh` | สอง read ไม่ตรงกัน → defer | ใช่ (ขั้น retire) |
+| 5 | `verify-serving-api-build.sh` | `return 75` | ไม่ (เส้น F2/A5) |
+
+**ข้อผูกพันที่สำคัญ:** จุด 1 เขียน before-set ลง intent แล้วจุด 2 เอาไปเทียบ **byte-for-byte** —
+ถ้าแก้จุด 1 ให้ครบ 184 แต่จุด 2 ยังอ่าน 100 การเทียบจะไม่ตรงและกลายเป็นบั๊กใหม่ทันที
+ทั้งสองจุดจึงต้องแก้พร้อมกัน
+
+**วิธีแก้:** helper กลางตัวเดียว `infra/prod-ecs-express/list-service-deployments-all.sh`
+เดินทุกหน้าแล้วคืน object รูปเดิมที่ `nextToken` เป็น null เสมอ (รองรับ `--query` แบบ per-page)
+ทุกจุดเรียกผ่าน helper นี้ — guard `.nextToken == null` เดิม **คงไว้ทั้งหมด** เปลี่ยนสถานะจาก
+"กำแพง" เป็น "tripwire" ที่จะดังก็ต่อเมื่อ helper เองพัง มี page cap
+(`LIST_DEPLOYMENTS_MAX_PAGES`, ค่าเริ่มต้น 50 = 5000 deployment) กัน pagination ที่ไม่รู้จบ → exit 75
+
+**หลักฐาน:**
+- helper กับ production จริง: 184 รายการ, unique 184, `nextToken: null`, ทั้งรูปแบบธรรมดาและ `--query`
+- อ่านสองครั้งได้ byte-identical (35185 bytes) — เงื่อนไขที่จุด 3 กับ 4 ต้องใช้
+- `release-safety.spec.sh` ผ่าน, `production-image-security.spec.sh` ผ่าน
+- spec case เดิมที่ยืนยัน "paginated → ปฏิเสธ" ถูกแทนด้วยสองกรณี: **หลายหน้าที่จบ → merge แล้วรับ**
+  และ **pagination ที่ไม่จบ → ปฏิเสธ 75**
+
+**สิ่งที่ยังไม่แก้ (จงใจ):** `bind-express-deployment.sh` อ่านหน้าเดียว (20 แถว) ไม่มี guard —
+ปลอดภัยเพราะ ECS คืน deployment ใหม่สุดก่อน (ยืนยันกับข้อมูลจริงแล้ว) และตัวมันกรองด้วย
+target revision + request window อยู่แล้ว การแก้จะขยาย diff โดยไม่เพิ่มความถูกต้อง
