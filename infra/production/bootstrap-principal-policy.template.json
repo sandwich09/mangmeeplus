@@ -1,0 +1,71 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnlyDiscovery",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:Describe*",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "rds:DescribeDBInstances"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "ap-southeast-1" }
+      }
+    },
+    {
+      "Sid": "CreateProductionRedis",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:CreateReplicationGroup",
+        "elasticache:ModifyReplicationGroup",
+        "elasticache:CreateCacheParameterGroup",
+        "elasticache:ModifyCacheParameterGroup",
+        "elasticache:CreateCacheSubnetGroup",
+        "elasticache:AddTagsToResource"
+      ],
+      "Resource": "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:*:watchdog-bms-prod-redis*"
+    },
+    {
+      "Sid": "ElastiCacheServiceLinkedRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/elasticache.amazonaws.com/*",
+      "Condition": {
+        "StringEquals": { "iam:AWSServiceName": "elasticache.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "RedisSecurityGroup",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "ap-southeast-1" }
+      }
+    },
+    {
+      "Sid": "ProductionDataSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:CreateSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"
+    },
+    {
+      "Sid": "HardenProductionRds",
+      "Effect": "Allow",
+      "Action": "rds:ModifyDBInstance",
+      "Resource": "arn:aws:rds:ap-southeast-1:<ACCOUNT_ID>:db:watchdog-bms-prod-db"
+    }
+  ]
+}
