@@ -181,7 +181,19 @@ runbook ที่ทำได้: จอด UAT (Fargate 3 service + 3 public IP
 | CloudWatch logs/metrics | ตัวแปรใหญ่สุด — alarm 512MB/ชม. คุมไว้แล้ว |
 | **รวมคร่าว ๆ** | **~$270–320/เดือน** (จาก ~$47 ตอนจอดทุกอย่าง) |
 
-ถ้าเลือกทาง A ต้องบวก NAT ~$47.55 หรือ VPC endpoints ~$44 (และเป็นของที่ H-14 ต้องใช้อยู่ดี)
+**เรื่อง NAT (มติแนวทาง 2026-08-08):** เจ้าของเห็นว่า NAT Gateway ไม่คุ้ม — สรุปแนวทางที่ตกลง:
+
+- **Launch: $0** — ทุก service อยู่ public subnet ออกทาง IGW เหมือน UAT (NAT ไม่เกี่ยวข้องกับการขึ้น production เลย)
+- **H-14 cutover: ใช้ NAT instance (`t4g.nano`, ~$4–5/เดือน) แทน NAT Gateway ($43.90 + $0.045/GB)**
+  traffic จริงคือ JSON ไป LINE API — แบนด์วิดท์ nano เหลือเฟือ · trade-off ที่ยอมรับ: ไม่ HA
+  (ตายแล้ว workers ส่ง LINE ไม่ได้จน restart), patch ผ่าน SSM Patch Manager ·
+  หักค่า public IPv4 ที่ประหยัดได้ (~$7.3/เดือนจาก 2 task ที่ย้ายเข้า private) ≈ **cost-neutral**
+  · อัปเกรดเป็น NAT Gateway ทีหลังได้ด้วยการสลับ route เดียว
+- **ทำคู่กันตอน cutover: S3 gateway endpoint (ฟรี)** — ECR layer pulls ไม่ต้องวิ่งผ่าน NAT
+- **A5 (ถ้าทาง A): interface endpoints สร้างเฉพาะช่วง ceremony แล้วลบ** (คิดรายชั่วโมง)
+  ไม่จ่าย recurring
+- IPv6 + egress-only gateway = ฟรี แต่ต้องพิสูจน์ก่อนว่า LINE API รองรับ IPv6 — ตัวเลือกไว้ทดสอบ
+  ตอนทำจริง ห้ามวางแผนบนสมมติฐานนี้
 
 **ยังไม่ได้ทำและควรทำก่อน launch:**
 
