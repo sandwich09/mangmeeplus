@@ -5,6 +5,7 @@
 - Docs in `docs/` are source of truth for product, specs, plans, ADRs, research, and prompts.
 - Do not implement major features without relevant spec and plan.
 - Record task state in `docs/agent-memory/<task>.md` when work spans multiple turns, touches multiple modules, or changes docs and code together.
+- Before touching the cloud environment — starting or stopping a service, reading what is deployed, or investigating AWS cost — read `docs/runbooks/cloud-environment-operations.md` first. It carries the live inventory, the start/stop procedures, and the specific ways the AWS CLI misreports ECS Express Mode. Reading it is faster than re-deriving any of that from the scripts, and it is where the next such finding belongs.
 
 ## Default Workflow
 
