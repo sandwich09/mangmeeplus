@@ -91,6 +91,21 @@
       "Resource": "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-api"
     },
     {
+      "Sid": "VerifyAndPullRuntimeImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-ai-gateway",
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-workers"
+      ]
+    },
+    {
       "Sid": "ProductionParameters",
       "Effect": "Allow",
       "Action": [
