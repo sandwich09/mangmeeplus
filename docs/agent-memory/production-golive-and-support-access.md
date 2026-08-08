@@ -304,6 +304,35 @@ blocker **ความจริงคือมันเป็นสวิตช�
 - ไม่มี load test tooling ใน repo เลย — ถ้าจะทำ ให้ยิงที่ UAT ไม่ใช่ prod
 - M-01 ยกระดับความเร่งเพราะ AI เปิดวันแรก (มติเจ้าของเปลี่ยนจาก D4)
 
+## ตรวจ migration state จริงบน production 2026-08-08 — พบ drift 1 ตัว แก้ง่าย
+
+เข้า bastion ผ่าน SSM (identity root ผ่าน CloudShell — automation user `watchdog-bedrock-dev`
+เข้าไม่ได้เพราะไม่มี `ssm:StartSession` และ **ไม่ควรมี** ตรงหลัก OPEN-1) แล้ว query DB ผ่าน writer
+
+- **prod DB ไม่ว่าง** — repo เก่า deploy ไว้ (`GIT_SHA=6d66bdc7`, 07-19) `_prisma_migrations` 70 แถว
+- เทียบ checksum ครบ 70: **69 ตรง / 1 drift / 0 orphan / 0 failed**
+- drift = `20260714120000_item11b_transaction_tax_schema` (prod dirty-deploy draft 07-14 ก่อน
+  immutable pipeline) — **schema ถูกแก้แล้ว** โดย `heal_item11b` ที่ prod applied ไว้ เหลือแค่
+  ตัวเลข checksum ในตาราง metadata ที่ยังชี้ draft เก่า
+- **แก้แล้ว 2026-08-08** ด้วย metadata-only UPDATE (checksum → `1e8e73d2...`) ยืนยัน SELECT ได้ 1 row
+  prod DB 70 แถวตรงไฟล์หมด 0 drift — รายละเอียด + คำสั่งเต็มใน
+  **`docs/runbooks/production-migration-reconciliation.md`** ทำผ่าน bastion writer **ก่อน** dispatch
+  deploy ไม่งั้น `prisma migrate deploy` ปฏิเสธทั้ง batch (51 migration ใหม่) ก่อน rollout
+- ตัว drift อื่นที่ diagnosis doc เตือน (company_booking_buffer, crm_product_service_catalog CHECK)
+  **ไม่ปรากฏใน prod** เพราะ prod อยู่ 07-19 deploy จาก committed ref — ตรงกับ inference ใน doc
+
+## Infra ที่ตั้งเพิ่มระหว่างตรวจ 2026-08-08
+
+- inline policy `watchdog-bms-operator-ssm` บน `watchdog-bedrock-dev` — `ssm:StartSession` บน
+  bastion (แต่ CLI propagation ช้า เข้าจริงผ่าน CloudShell/root)
+- inline policy `watchdog-bms-bastion-read-support-secrets` บน **role**
+  `watchdog-bms-ssm-bastion-role` — `secretsmanager:GetSecretValue` scope แค่ `database-url`
+  กับ `a5-readonly-database-url` (template: `infra/production/bastion-instance-role-policy.template.json`)
+- **RDS SG allow 5432 จาก bastion SG** (SG-to-SG) — **เก็บถาวรตามมติเจ้าของ** เป็น support path
+  setup ที่ตั้งใจ ไม่ใช่ workaround (บันทึกใน support-access runbook §1)
+- `WatchDogAppRunnerNetworkingSLR` deny statement `NeverTouchProductionDataStores` ครอบแค่
+  elasticache/rds mutation บน prod resource — **ไม่มี ssm** (เคยเดาผิดว่ามี)
+
 ## Next
 
 - เจ้าของรันตาม `docs/runbooks/production-golive-aws-commands.md` ขั้น 0 → 8

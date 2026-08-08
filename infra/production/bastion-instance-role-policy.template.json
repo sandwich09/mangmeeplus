@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadProductionDataSecretsForSupport",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/database-url-*",
+        "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/a5-readonly-database-url-*"
+      ]
+    }
+  ]
+}
