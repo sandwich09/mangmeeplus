@@ -145,6 +145,14 @@
       "Resource": "*"
     },
     {
+      "Sid": "DescribeLogEncryptionKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey"
+      ],
+      "Resource": "arn:aws:kms:ap-southeast-1:<ACCOUNT_ID>:key/*"
+    },
+    {
       "Sid": "SecurityAlarmRouting",
       "Effect": "Allow",
       "Action": [
