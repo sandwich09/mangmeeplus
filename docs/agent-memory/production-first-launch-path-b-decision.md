@@ -217,3 +217,31 @@ ai-gateway/workers ยังไม่ deploy
 หลังจากนั้นกู้ด้วย PRE_INTENT ได้ทันที — **อย่าส่ง `parent_task_arn`** (ECS ลบ stopped task
 ภายใน ~1 ชม. evidence จะเป็น null แล้ว recovery จะปฏิเสธ) และใช้ `recovery_ref` ที่มี
 successful push CI บน main แล้วเท่านั้น
+
+## บั๊ก guard ที่ `set -e` เอื้อมไม่ถึง (2026-08-08)
+
+`recover-release-intent.yml` step `Prove optional exact parent release task is stably stopped`
+**รายงาน success ทั้งที่ควรปฏิเสธ** แล้วส่ง evidence ที่เป็น null ทั้งก้อนต่อไป
+
+```
+{"taskArn":"...","taskDefinitionArn":null,"lastStatus":null,"stoppedAt":null,...}
+```
+
+พิสูจน์กลไกแล้ว ไม่ใช่ `jq` ผิด:
+
+| | ผล |
+| --- | --- |
+| `jq -e` เดี่ยว ๆ | exit 1 ถูกต้อง |
+| เรียก function ตรง ๆ | `set -e` หยุดถูกต้อง |
+| เรียก function ใน `$( )` | **ไม่หยุด** คำสั่งถัดไปรันต่อ |
+
+`set -e` ไม่เอื้อมเข้าไปใน command-substitution subshell คำสั่ง `jq -e` ที่ล้มจึงแค่ปล่อยให้บรรทัด
+ถัดไปทำงาน ตัวที่จับได้จริงคือ recovery task ปลายทาง (*"stopped parent task definition is outside
+the exact release family"*) — คำตอบที่ถูกแต่มาถึงผิดที่ หลังจากเสีย build กับ ECS run ไปแล้ว
+
+**สาเหตุที่ evidence เป็น null:** ECS ลบ stopped task ทิ้งภายใน ~1 ชั่วโมง `describe-tasks` คืน
+`tasks: []` + `failures: [MISSING]` ซึ่ง `.tasks[0]` เป็น null แล้ว object constructor เติม null ให้ทุก field
+
+**แก้แล้ว:** ทุกจุดคืนค่าล้มเหลวชัดเจน (`|| return 1`, `|| exit 1`) ไม่พึ่ง `set -e` และเพิ่ม
+ด่านสุดท้ายที่ปฏิเสธ evidence รูปร่าง null ก่อนส่งต่อ พร้อมข้อความบอกทางออก (ไม่ต้องส่ง
+`parent_task_arn`) ทดสอบสามกรณีแล้ว: task หมดอายุ / task ปกติ / task ที่ยังรันอยู่
