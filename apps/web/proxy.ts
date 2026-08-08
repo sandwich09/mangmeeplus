@@ -13,6 +13,7 @@ import {
   buildContentSecurityPolicy,
   buildS3EndpointOrigin,
   buildS3UploadOrigin,
+  usesDevelopmentCsp,
 } from '@/common/security/security-headers.logic';
 
 function secureResponse(response: NextResponse, csp: string): NextResponse {
@@ -39,7 +40,7 @@ export function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_AI_GATEWAY_BASE_URL,
     buildS3UploadOrigin(process.env.S3_BUCKET, process.env.S3_REGION ?? 'ap-southeast-1'),
     buildS3EndpointOrigin(process.env.S3_PUBLIC_ENDPOINT || process.env.S3_ENDPOINT),
-  ], process.env.NODE_ENV !== 'production');
+  ], usesDevelopmentCsp(process.env));
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
   requestHeaders.set('Content-Security-Policy', csp);

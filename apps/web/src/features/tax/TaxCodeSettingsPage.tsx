@@ -11,6 +11,7 @@ import type {
   TransactionTaxTreatment,
 } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import {
   activateTaxCodeProfile,
@@ -50,6 +51,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
   const [definitions, setDefinitions] = useState<TaxCodeDefinitionDto[]>([]);
   const [profileId, setProfileId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [profileBusy, setProfileBusy] = useState<{ id: string; action: 'activate' | 'retire' } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [importFormat, setImportFormat] = useState<'CSV' | 'JSON'>('CSV');
@@ -151,17 +153,30 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
+  async function activateProfile(id: string) {
+    setBusy(true); setProfileBusy({ id, action: 'activate' }); setError('');
+    try {
+      await activateTaxCodeProfile(companyId, id);
+      await load();
+      toast.success('เปิดใช้งาน Tax Profile เรียบร้อยแล้ว');
+    } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setProfileBusy(null); setBusy(false); }
+  }
+
   async function retireProfile(id: string) {
     if (!(await confirm({
       title: 'เลิกใช้งาน Tax Profile',
       message: 'เลิกใช้งาน Tax Profile นี้ใช่หรือไม่',
     }))) return;
+    setBusy(true); setProfileBusy({ id, action: 'retire' }); setError('');
     try {
       await retireTaxCodeProfile(companyId, id);
       await load();
       toast.success('ยกเลิกใช้งาน Tax Profile เรียบร้อยแล้ว');
     } catch (cause) {
       setError(transactionTaxErrorMessage(cause));
+    } finally {
+      setProfileBusy(null);
+      setBusy(false);
     }
   }
 
@@ -191,8 +206,8 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                   </button>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold">{profile.status}</span>
-                    {capability.canManageProfiles && capability.canManageConfig && profile.status === 'DRAFT' && <button disabled={busy} className="text-xs font-bold text-emerald-700" onClick={() => void activateTaxCodeProfile(companyId, profile.id).then(async () => { await load(); toast.success('เปิดใช้งาน Tax Profile เรียบร้อยแล้ว'); }).catch((cause) => setError(transactionTaxErrorMessage(cause)))}>Activate</button>}
-                    {capability.canManageProfiles && profile.status === 'ACTIVE' && <button disabled={busy} className="text-xs font-bold text-red-700" onClick={() => void retireProfile(profile.id)}>Retire</button>}
+                    {capability.canManageProfiles && capability.canManageConfig && profile.status === 'DRAFT' && <button disabled={busy} className="text-xs font-bold text-emerald-700" onClick={() => void activateProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'activate' ? 'กำลังเปิดใช้งาน...' : 'Activate'}</button>}
+                    {capability.canManageProfiles && profile.status === 'ACTIVE' && <button disabled={busy} className="text-xs font-bold text-red-700" onClick={() => void retireProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'retire' ? 'กำลังเลิกใช้งาน...' : 'Retire'}</button>}
                   </div>
                 </div>
               ))}
@@ -203,7 +218,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
             <MangmeeCard className="p-4">
               <h2 className="font-bold text-gray-900">Built-in Tax Code templates</h2>
               <p className="mt-1 text-xs text-gray-500">คัดลอกเป็น DRAFT/REVIEW_REQUIRED เท่านั้น ระบบไม่ activate และไม่ผูกบัญชีให้อัตโนมัติ</p>
-              <input className={`${field} mt-3`} type="date" value={templateEffectiveFrom} onChange={(event) => setTemplateEffectiveFrom(event.target.value)} />
+              <ThemedDate className={`${field} mt-3`} value={templateEffectiveFrom} onChange={(event) => setTemplateEffectiveFrom(event.target.value)} />
               <div className="mt-3 space-y-3">
                 {templates.map((template) => {
                   const installed = profiles.some((profile) => profile.sourceSystem === template.sourceSystem && profile.sourceProfileKey === template.key && profile.status !== 'RETIRED');
@@ -221,7 +236,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                 <input required name="sourceProfileKey" placeholder="Profile key เช่น TH-S4-2026" className={field} />
                 <input name="sapClient" placeholder="SAP Client" className={field} />
                 <input name="sapCompanyCode" placeholder="SAP Company Code" className={field} />
-                <input required name="effectiveFrom" type="date" className={field} />
+                <ThemedDate required name="effectiveFrom" className={field} />
                 <ThemedSelect name="roundingMode" defaultValue="HALF_UP"><option value="HALF_UP">Half up</option><option value="HALF_EVEN">Half even</option><option value="DOWN">Down (เข้าหาศูนย์)</option><option value="UP">Up (ออกจากศูนย์)</option></ThemedSelect>
                 <input required name="roundingScale" type="number" min="0" max="4" step="1" defaultValue="2" aria-label="Tax rounding decimal places" className={field} />
                 <input required name="taxAmountTolerance" type="number" min="0" step="0.000001" defaultValue="0.01" aria-label="Tax amount tolerance" className={`${field} sm:col-span-2`} />
@@ -269,8 +284,8 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                 <ThemedSelect name="claimabilityDefault" defaultValue="NOT_APPLICABLE"><option value="NOT_APPLICABLE">N/A</option><option value="CLAIMABLE">Claimable</option><option value="PENDING_EVIDENCE">Pending evidence</option><option value="PARTIAL">Partial</option><option value="NONDEDUCTIBLE_EXPENSE">Non-deductible expense</option><option value="NONDEDUCTIBLE_CAPITALIZED">Capitalize</option></ThemedSelect>
                 <input name="sapAccountKey" placeholder="SAP account key" className={field} />
                 <input name="evidenceRuleKey" placeholder='Evidence policy: CSV หรือ {"mode":"REPLACE","required":[],"oneOf":[],"optional":[]}' className={`${field} sm:col-span-2`} />
-                <input required name="effectiveFrom" type="date" className={field} />
-                <input name="effectiveTo" type="date" className={field} />
+                <ThemedDate required name="effectiveFrom" className={field} />
+                <ThemedDate name="effectiveTo" className={field} />
                 <fieldset className="sm:col-span-2"><legend className="mb-2 text-xs font-bold text-gray-600">บริบทธุรกรรม</legend><div className="grid gap-2 sm:grid-cols-2">{contexts.map((context) => <label key={context} className="flex gap-2 text-sm"><input type="checkbox" name={`context:${context}`} /> {TAX_CONTEXT_LABELS[context]}</label>)}</div></fieldset>
                 <button disabled={busy || !profileId} className={`${button} sm:col-span-2`}>บันทึก Tax Code</button>
               </form>

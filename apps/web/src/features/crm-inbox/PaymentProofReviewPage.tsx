@@ -50,7 +50,7 @@ export function PaymentProofReviewPage({ companyId }: { companyId: string }) {
       </div>
 
       {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-      {!items && !error && <div className="text-sm text-gray-400">กำลังโหลด…</div>}
+      {!items && !error && <div className="text-sm text-gray-400">กำลังโหลด...</div>}
       {items && items.length === 0 && (
         <div className="rounded border border-dashed border-gray-300 px-4 py-12 text-center text-sm text-gray-400">ยังไม่มีหลักฐานการชำระเงินที่รอตรวจสอบ</div>
       )}

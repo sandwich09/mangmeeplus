@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from 'react-dom';
 import { subscribeToastBus, type ToastEvent } from '@/common/feedback/toast-bus';
 import { Toast } from './Toast';
-import { addToast, removeToast, toastDuration } from './toast.logic';
+import { addToast, removeToast, toastDuration, visibleToasts } from './toast.logic';
 import type { ToastItem } from './toast.model';
 import { ToastContext, toastErrorMessage, type ToastContextValue } from './use-toast';
 
@@ -61,8 +61,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const stack = items.length > 0 && typeof document !== 'undefined'
     ? createPortal(
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[100000] flex flex-col items-center gap-2 px-4">
-          {items.map((item) => <Toast key={item.id} item={item} onDismiss={() => dismiss(item.id)} />)}
+        <div className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top,0px)+0.75rem)] z-[100000] flex flex-col items-center gap-2 px-4">
+          {visibleToasts(items).map((item) => <Toast key={item.id} item={item} onDismiss={() => dismiss(item.id)} />)}
         </div>,
         document.body,
       )

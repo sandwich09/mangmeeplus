@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/common/components/button/Button';
 import { TextField } from '@/common/components/field/Field';
 import { Modal } from '@/common/components/modal';
+import { useToast } from '@/common/components/toast';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
 import { ErrorState } from '@/common/components/state/ErrorState';
 import { revokeOtherSessions } from '@/common/auth/session';
@@ -41,6 +42,7 @@ function formatDateTime(value: string | null): string | null {
 }
 
 export function AccountSecurityPage({ companyId }: { companyId: string }) {
+  const toast = useToast();
   const [locale, setLocale] = useState<SupportedLocale>(getDefaultLocale());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -100,6 +102,7 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
     try {
       await setAiAssistantEnabled(currentlyOptedOut);
       await loadState();
+      toast.success(currentlyOptedOut ? 'เปิดใช้งานผู้ช่วย AI แล้ว' : 'ปิดใช้งานผู้ช่วย AI แล้ว');
     } catch (error) {
       setAiToggleError(authErrorMessage(error, 'ไม่สามารถบันทึกการตั้งค่าผู้ช่วย AI ได้'));
     } finally {

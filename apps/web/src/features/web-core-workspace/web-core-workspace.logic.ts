@@ -3,12 +3,32 @@ import type { WorkspaceModule, NavGroup, NavItem } from './web-core-workspace.mo
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { filterSettingsSidebarItems } from './settings-menu.logic';
+import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
+
+const ROUTE_GATED_MODULE_PATHS = new Map([
+  ['poapproval', '/settings/po-approval'],
+  ['discount', '/settings/discount-policy'],
+  ['lineoa', '/settings/line-oa'],
+]);
+
+const ROLE_NAV_ROUTE_PATHS = [
+  '/settings/permissions',
+  '/settings/access-overview',
+  '/settings/employees',
+  ...ROUTE_GATED_MODULE_PATHS.values(),
+];
 
 export function filterModulesByPermissions(
   modules: WorkspaceModule[],
   userPermissions: string[],
 ): WorkspaceModule[] {
   return modules.filter((mod) => {
+    if (mod.key === 'roles') {
+      return ROLE_NAV_ROUTE_PATHS.some((path) => canSeeRoute(path, userPermissions));
+    }
+    if (mod.key === 'tax') return canSeeRoute('/tax', userPermissions);
+    const routePath = ROUTE_GATED_MODULE_PATHS.get(mod.key);
+    if (routePath) return canSeeRoute(routePath, userPermissions);
     if (mod.requiredAnyPermissions.length === 0) return true;
     const hasAny = mod.requiredAnyPermissions.some((p) => userPermissions.includes(p));
     if (!hasAny) return false;
@@ -49,34 +69,10 @@ export function canAccessWorkspacePath(
     && !userPermissions.includes('report.catalog.read');
   if (reportsHistoryOnly && isUnderHref(pathname, reportsBase)) return pathname === reportsBase;
 
-  const settingsBase = `/companies/${companyId}/settings`;
-  const exactSettingsRules: Array<{ prefix: string; requiredAny: string[] }> = [
-    { prefix: `${settingsBase}/access-overview`, requiredAny: ['access.effective.read'] },
-    { prefix: `${settingsBase}/permissions`, requiredAny: ['access.role.read'] },
-    { prefix: `${settingsBase}/roles`, requiredAny: ['access.role.read'] },
-    { prefix: `${settingsBase}/employees`, requiredAny: ['access.employee.read'] },
-    {
-      prefix: `${settingsBase}/security`,
-      requiredAny: ['account.password.change', 'account.identity.link', 'account.identity.unlink'],
-    },
-    { prefix: `${settingsBase}/branches`, requiredAny: ['company.branch.read', 'company.branch.manage'] },
-    { prefix: `${settingsBase}/substitute-receipt`, requiredAny: ['company.setup.manage'] },
-    {
-      prefix: `${settingsBase}/accounting-tax-setup`,
-      // Must stay identical to the card's gate in `settings-menu.logic.ts`. Two lists for one
-      // route drift silently: the card stopped offering this to a read-only viewer and the route
-      // kept letting them in by URL.
-      requiredAny: [
-        'ledger.account.read', 'ledger.account.manage',
-        'tax.profile.read', 'tax.profile.manage', 'tax.config.read', 'tax.config.manage',
-      ],
-    },
-    { prefix: `${settingsBase}/chart-of-accounts`, requiredAny: ['ledger.account.read', 'ledger.account.manage'] },
-    { prefix: `${settingsBase}/tax-codes`, requiredAny: ['tax.profile.read', 'tax.profile.manage', 'tax.config.read', 'tax.config.manage'] },
-    { prefix: `${settingsBase}/tax-accounts`, requiredAny: ['tax.config.read', 'tax.config.manage', 'ledger.posting-rule.read', 'ledger.posting-rule.manage'] },
-  ];
-  const exactRule = exactSettingsRules.find(({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-  if (exactRule) return hasAnyPermission(userPermissions, exactRule.requiredAny);
+  const workspacePath = pathname.startsWith(`/companies/${companyId}`)
+    ? pathname.slice(`/companies/${companyId}`.length) || '/'
+    : pathname;
+  if (findRoutePermissionRule(workspacePath)) return canSeeRoute(workspacePath, userPermissions);
 
   const matchingModule = modules
     .filter((module) => {
@@ -102,7 +98,10 @@ export function buildNavItems(
   companyId: string,
   locale: SupportedLocale,
   iconMap: Record<string, React.ReactNode>,
-  userPermissions: string[] = modules.flatMap((module) => module.requiredAnyPermissions),
+  userPermissions: string[] = [
+    ...modules.flatMap((module) => module.requiredAnyPermissions),
+    ...ROUTE_PERMISSION_RULES.flatMap((rule) => rule.anyOf),
+  ],
 ): NavItem[] {
   const moduleMap = new Map(modules.map((mod) => [mod.key, mod]));
   // 'notifications' stays here so the module never renders as a top-level row: the notification
@@ -129,10 +128,8 @@ export function buildNavItems(
     if (mod.key === 'roles') {
       const childItems: NavItem['subItems'] = [];
       // The settings landing no longer carries a บทบาทและสิทธิ์ card, so this child is the only
-      // way in. It repeats the parent's own href on purpose: a parent with children expands
-      // rather than navigates. Its gate matches the page's own rule in exactSettingsRules, so a
-      // user holding only access.employee.read is never offered a page that bounces them.
-      if (hasAnyPermission(userPermissions, ['access.role.read'])) {
+      // way in. The shared route rule keeps it aligned with direct-path access.
+      if (canSeeRoute('/settings/permissions', userPermissions)) {
         childItems.push({
           key: 'roles.permissions',
           label: 'บทบาทและสิทธิ์',
@@ -141,7 +138,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['access.effective.read'])) {
+      if (canSeeRoute('/settings/access-overview', userPermissions)) {
         childItems.push({
           key: 'roles.individual',
           label: t('module.individual' as Parameters<typeof t>[0], locale),
@@ -150,7 +147,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (hasAnyPermission(userPermissions, ['access.employee.read'])) {
+      if (canSeeRoute('/settings/employees', userPermissions)) {
         childItems.push({
           key: 'employees',
           label: t('module.add_employee' as Parameters<typeof t>[0], locale),
@@ -163,6 +160,8 @@ export function buildNavItems(
       for (const childKey of ['poapproval', 'discount', 'lineoa']) {
         const child = moduleMap.get(childKey);
         if (!child) continue;
+        const childPath = ROUTE_GATED_MODULE_PATHS.get(childKey)!;
+        if (!canSeeRoute(childPath, userPermissions)) continue;
         childItems.push({
           key: child.key,
           label: t(child.labelKey as Parameters<typeof t>[0], locale),
@@ -172,6 +171,8 @@ export function buildNavItems(
         });
       }
 
+      if (childItems.length === 0) return [];
+      item.href = childItems[0]!.href;
       item.subItems = childItems;
     }
 

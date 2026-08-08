@@ -2,6 +2,10 @@ import { DEDUP_MS, MAX_VISIBLE, TOAST_DURATION_MS, type ToastItem, type ToastTon
 
 export type ToastInput = Pick<ToastItem, 'tone' | 'message'>;
 
+export function visibleToasts(items: ToastItem[]): ToastItem[] {
+  return [...items].reverse();
+}
+
 export function addToast(items: ToastItem[], input: ToastInput, now: number): ToastItem[] {
   if (items.some((item) => item.tone === input.tone && item.message === input.message && now - item.id < DEDUP_MS)) {
     return items;

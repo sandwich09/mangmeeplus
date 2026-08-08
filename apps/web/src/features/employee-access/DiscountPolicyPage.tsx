@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { MangmeeCard, cx } from '@/common/components/mangmee';
+import { useToast } from '@/common/components/toast';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import {
   DISCOUNT_OVERRIDE_OPTIONS,
@@ -105,8 +106,10 @@ const TIER_ROWS: TierRow[] = [
 ];
 
 export function DiscountPolicyPage({ companyId }: { companyId: string }) {
+  const toast = useToast();
   const [policy, setPolicy] = useState<DiscountPolicyState>(DISCOUNT_POLICY_DEFAULTS);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     getDiscountPolicy(companyId)
@@ -116,11 +119,14 @@ export function DiscountPolicyPage({ companyId }: { companyId: string }) {
   }, [companyId]);
   const save = async () => {
     setError(null);
+    setSaving(true);
     try {
       const { saved: _saved, ...body } = policy;
       const value = await saveDiscountPolicyApi(companyId, body);
       setPolicy({ ...value, saved: true });
+      toast.success('บันทึกนโยบายส่วนลดแล้ว');
     } catch (e) { setError(apiErrorMessage(e)); }
+    finally { setSaving(false); }
   };
   const step = (field: DiscountStepField, delta: 1 | -1) =>
     setPolicy((state) => stepDiscountPolicy(state, field, delta));
@@ -142,18 +148,20 @@ export function DiscountPolicyPage({ companyId }: { companyId: string }) {
         <button
           type="button"
           onClick={() => void save()}
-          disabled={loading || policy.saved}
+          disabled={loading || saving || policy.saved}
+          aria-busy={saving}
           className={cx(
-            'flex h-11 shrink-0 items-center rounded-[11px] px-[22px] text-[15px] font-bold',
-            policy.saved
+            'flex h-11 shrink-0 items-center gap-2 rounded-[11px] px-[22px] text-[15px] font-bold',
+            policy.saved || saving
               ? 'bg-gray-100 text-gray-400'
               : 'bg-brand-500 text-white shadow-[0_4px_12px_rgba(22,163,74,0.28)]',
           )}
         >
-          {policy.saved ? '✓ บันทึกแล้ว' : 'บันทึกนโยบาย'}
+          {saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+          {saving ? 'กำลังบันทึก...' : policy.saved ? '✓ บันทึกแล้ว' : 'บันทึกนโยบาย'}
         </button>
       </div>
-      {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย…</div>}
+      {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย...</div>}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">

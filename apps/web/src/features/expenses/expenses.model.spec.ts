@@ -172,7 +172,7 @@ describe('expenses.model', () => {
 
   it('gives a manually typed service charge its own line, like the OCR path', () => {
     const bill = {
-      description: ' ค่าอาหาร ', quantity: '1', unitPrice: '1000', discountAmount: '0',
+      items: [{ description: ' ค่าอาหาร ', quantity: '1', unitPrice: '1000', discountAmount: '0' }],
       serviceChargeDescription: 'ค่าบริการ (Service charge)',
       vatRate: '0.07', taxCodeDefinitionId: 'tax-def-1', externalTaxCode: 'V7',
     };
@@ -191,6 +191,25 @@ describe('expenses.model', () => {
     assert.equal(buildManualExpenseLines({ ...bill, serviceChargeAmount: '' }).length, 1);
     assert.equal(buildManualExpenseLines({ ...bill, serviceChargeAmount: '0' }).length, 1);
     assert.equal(buildManualExpenseLines(bill).length, 1);
+  });
+
+  it('numbers multiple hand-keyed items sequentially and appends the charge after them', () => {
+    const lines = buildManualExpenseLines({
+      items: [
+        { description: 'ค่าอาหาร', quantity: '2', unitPrice: '250', discountAmount: '0' },
+        { description: 'ค่าเครื่องดื่ม', quantity: '4', unitPrice: '80' },
+      ],
+      serviceChargeAmount: '50',
+      serviceChargeDescription: 'ค่าบริการ (Service charge)',
+      vatRate: '0.07',
+    });
+    assert.deepEqual(lines.map((line) => [line.lineNumber, line.description, line.quantity, line.unitPrice, line.discountAmount]), [
+      [1, 'ค่าอาหาร', '2', '250', '0'],
+      [2, 'ค่าเครื่องดื่ม', '4', '80', '0'],
+      [3, 'ค่าบริการ (Service charge)', '1', '50', '0'],
+    ]);
+    // One bill, one tax treatment: every line carries the document VAT rate.
+    assert.ok(lines.every((line) => line.vatRate === '0.07' && line.transactionContext === 'DOMESTIC_PURCHASE'));
   });
 
   it('builds the review PATCH without client-computed totals', () => {

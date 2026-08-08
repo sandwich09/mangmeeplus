@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ForbiddenState } from '@/common/components/state';
+import { LoadingState } from '@/common/components/state/LoadingState';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { formatThaiDate, formatThaiMonth } from '@/common/i18n/thai-date';
 import {
@@ -26,6 +28,7 @@ import {
   type TaxExportArtifact,
 } from './tax.api';
 import { useToast } from '@/common/components/toast';
+import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -94,20 +97,23 @@ function EmptyRow({ cols, text }: { cols: number; text: string }) {
 export function TaxWorkspacePage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const toast = useToast();
   const can = (permission: string) => permissions.includes(permission);
+  const canSeeWorkspace = canSeeRoute('/tax', permissions);
   const [tab, setTab] = useState<'VAT' | 'WHT' | 'CIT'>('VAT');
   const [periods, setPeriods] = useState<TaxPeriod[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<TaxPeriod | null>(null);
   const [events, setEvents] = useState<TaxEvent[]>([]);
   const [issues, setIssues] = useState<ReviewIssue[]>([]);
   const [loading, setLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [note, setNote] = useState('');
 
   const loadPeriods = useCallback(async () => {
-    if (!can('tax.period.read')) { setPeriods([]); return; }
+    if (!canSeeWorkspace) { setPeriods([]); return; }
     setLoading(true);
     setError(null);
     try {
@@ -115,12 +121,13 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       setPeriods(res.items);
     } catch (e) { setError(err(e)); }
     finally { setLoading(false); }
-  }, [companyId, tab, permissions]);
+  }, [canSeeWorkspace, companyId, tab]);
 
   const loadPeriodDetail = useCallback(async (period: TaxPeriod) => {
     setSelectedPeriod(period);
     setEvents([]);
     setIssues([]);
+    setDetailLoading(true);
     try {
       const [evts, iss] = await Promise.all([
         can('tax.event.read') ? listTaxEvents(companyId, period.id) : Promise.resolve([]),
@@ -129,6 +136,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       setEvents(evts);
       setIssues(iss);
     } catch (e) { setError(err(e)); }
+    finally { setDetailLoading(false); }
   }, [companyId, permissions]);
 
   const handleSync = useCallback(async () => {
@@ -146,26 +154,31 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
 
   const handleMarkFiled = useCallback(async () => {
     if (!selectedPeriod) return;
+    setBusyAction('mark-filed');
     try {
       const updated = await markFiled(companyId, selectedPeriod.id, note || undefined);
       setSelectedPeriod(updated);
       await loadPeriods();
       toast.success('บันทึกการยื่นแบบเรียบร้อยแล้ว');
     } catch (e) { setError(err(e)); }
+    finally { setBusyAction(null); }
   }, [companyId, selectedPeriod, note, loadPeriods, toast]);
 
   const handleMarkPaid = useCallback(async () => {
     if (!selectedPeriod) return;
+    setBusyAction('mark-paid');
     try {
       const updated = await markPaid(companyId, selectedPeriod.id, note || undefined);
       setSelectedPeriod(updated);
       await loadPeriods();
       toast.success('บันทึกการชำระภาษีเรียบร้อยแล้ว');
     } catch (e) { setError(err(e)); }
+    finally { setBusyAction(null); }
   }, [companyId, selectedPeriod, note, loadPeriods, toast]);
 
   const handleGenerateReport = useCallback(async () => {
     if (!selectedPeriod) return;
+    setBusyAction('report');
     setError(null);
     setMessage(null);
     try {
@@ -176,10 +189,12 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       }
       setMessage('คำนวณรายงานสำเร็จ');
     } catch (e) { setError(err(e)); }
+    finally { setBusyAction(null); }
   }, [companyId, selectedPeriod]);
 
   const handleExport = useCallback(async (format: TaxExportFormat) => {
     if (!selectedPeriod) return;
+    setBusyAction(`export-${format}`);
     setError(null);
     setMessage(null);
     try {
@@ -188,11 +203,14 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
       setMessage(`สร้าง export ${result.exportNumber} สำเร็จ`);
       await loadPeriods();
     } catch (e) { setError(err(e)); }
+    finally { setBusyAction(null); }
   }, [companyId, selectedPeriod, loadPeriods]);
 
   useEffect(() => { loadPeriods(); setSelectedPeriod(null); setEvents([]); setIssues([]); }, [loadPeriods]);
 
   const isLocked = selectedPeriod ? ['FILED', 'PAID', 'CLOSED'].includes(selectedPeriod.status) : false;
+
+  if (!canSeeWorkspace) return <ForbiddenState />;
 
   return (
     <MangmeePage
@@ -273,7 +291,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
               </MangmeeCard>
             )}
 
-            {selectedPeriod && (
+            {selectedPeriod && (detailLoading ? <LoadingState label="กำลังโหลด..." /> : (
               <>
                 {/* Period header */}
                 <MangmeeCard className="p-4">
@@ -287,7 +305,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                         {isLocked && <span className="text-xs text-red-600 font-medium">ล็อกแล้ว (ไม่สามารถแก้ไข)</span>}
                       </div>
                     </div>
-                    {!isLocked && (
+                    {!isLocked && (can('tax.filing.mark_filed') || can('tax.filing.mark_paid')) && (
                       <div className="flex flex-wrap justify-end gap-2 gap-y-2">
                         <input
                           type="text"
@@ -296,18 +314,18 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                           placeholder="หมายเหตุ (ถ้ามี)"
                           className={`${inputClass} w-40`}
                         />
-                        {can('tax.filing.mark_filed') && <button onClick={handleMarkFiled} className={ghostClass}>ยื่นแบบแล้ว</button>}
-                        {can('tax.filing.mark_paid') && <button onClick={handleMarkPaid} className={ghostClass}>ชำระแล้ว</button>}
+                        {can('tax.filing.mark_filed') && <button onClick={handleMarkFiled} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'mark-filed' ? 'กำลังบันทึก...' : 'ยื่นแบบแล้ว'}</button>}
+                        {can('tax.filing.mark_paid') && <button onClick={handleMarkPaid} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'mark-paid' ? 'กำลังบันทึก...' : 'ชำระแล้ว'}</button>}
                       </div>
                     )}
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                     {selectedPeriod.taxType !== 'CIT' && can('tax.report.recompute') && (
-                      <button onClick={handleGenerateReport} className={ghostClass}>คำนวณรายงาน</button>
+                      <button onClick={handleGenerateReport} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'report' ? 'กำลังคำนวณ...' : 'คำนวณรายงาน'}</button>
                     )}
                     {can('tax.report.export') && (['REVIEW_JSON', 'CSV', 'XLSX', 'PDF'] as TaxExportFormat[]).map(format => (
-                      <button key={format} onClick={() => handleExport(format)} className={ghostClass}>
-                        Export {format}
+                      <button key={format} onClick={() => handleExport(format)} disabled={busyAction !== null} className={ghostClass}>
+                        {busyAction === `export-${format}` ? 'กำลังส่งออก...' : `Export ${format}`}
                       </button>
                     ))}
                   </div>
@@ -378,7 +396,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                   </div>
                 </MangmeeCard>
               </>
-            )}
+            ))}
           </div>
         </div>
     </MangmeePage>
@@ -424,7 +442,6 @@ function WhtIncomeCategoryPanel({ companyId, canManage, canRead }: { companyId: 
           <div className="text-sm font-medium text-gray-700">หมวดเงินได้ หัก ณ ที่จ่าย</div>
           <div className="text-xs text-gray-500">เปิดใช้งานแล้ว {active} จาก {rows.length} หมวด — หมวดที่ยังไม่เปิดจะเลือกตอนบันทึกจ่ายไม่ได้</div>
         </div>
-        {!canManage && <span className="text-xs text-amber-800">ต้องมีสิทธิ์ tax.config.manage เพื่อเปิดใช้งานหมวด</span>}
       </div>
       {error && <div className="px-4 py-2 text-xs text-error-600">{error}</div>}
       {active === 0 && rows.length > 0 && (

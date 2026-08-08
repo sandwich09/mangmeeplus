@@ -32,6 +32,15 @@ export function buildS3EndpointOrigin(endpoint: string | undefined): string | un
   }
 }
 
+export function usesDevelopmentCsp(env: Record<string, string | undefined>): boolean {
+  const appEnvironment = env['APP_ENV'];
+  const deploymentEnvironment = env['DEPLOY_ENVIRONMENT'];
+  if (appEnvironment !== undefined || deploymentEnvironment !== undefined) {
+    return appEnvironment === 'local' && (deploymentEnvironment === undefined || deploymentEnvironment === 'local');
+  }
+  return env['NODE_ENV'] !== 'production';
+}
+
 export function buildContentSecurityPolicy(
   nonce: string,
   connectUrls: Array<string | undefined>,
@@ -66,6 +75,7 @@ export function buildContentSecurityPolicy(
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
+    "frame-src 'self' blob:",
     "frame-ancestors 'none'",
     "worker-src 'self' blob:",
     ...(dev ? [] : ['upgrade-insecure-requests']),

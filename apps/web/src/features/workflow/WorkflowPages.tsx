@@ -26,6 +26,7 @@ import {
   type WorkflowTab,
 } from './workflow.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { LoadingState } from '@/common/components/state/LoadingState';
 import { useToast } from '@/common/components/toast';
 import { useConfirm } from '@/common/components/modal';
 
@@ -112,7 +113,7 @@ function TemplatesTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((t) => (
             <div key={t.id} className="rounded border border-gray-200 p-4 space-y-2">
@@ -211,7 +212,7 @@ function RulesTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
             <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
@@ -252,6 +253,7 @@ function RulesTab({ companyId }: { companyId: string }) {
 function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId: string; ruleId: string; onClose: () => void; onChanged: () => Promise<void> }) {
   const toast = useToast();
   const [rule, setRule] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [conditionJson, setConditionJson] = useState('');
   const [actionJson, setActionJson] = useState('');
@@ -260,12 +262,13 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const r = await getWorkflowRule(companyId, ruleId);
       setRule(r);
       setConditionJson(JSON.stringify(r.conditionJson, null, 2));
       setActionJson(JSON.stringify(r.actionJson, null, 2));
-    } catch (e) { setError(err(e)); }
+    } catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId, ruleId]);
   useEffect(() => { load(); }, [load]);
 
@@ -286,11 +289,27 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
     setError(null);
     const sample = parseJsonSafely(samplePayload);
     if (sample.error) { setError(sample.error); return; }
+    setBusy(true);
     try { setTestResult(await testWorkflowRule(companyId, ruleId, sample.value as Record<string, unknown>)); }
     catch (e) { setError(err(e)); }
+    finally { setBusy(false); }
   };
 
-  if (!rule) return null;
+  if (!rule || loading) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+      <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4 rounded bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        {loading ? <LoadingState label="กำลังโหลด..." /> : (
+          <>
+            {error && <ErrorBanner message={error} />}
+            <div className="flex justify-end">
+              <button className={ghostClass} onClick={onClose}>ปิด</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
       <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-4 rounded bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -314,7 +333,7 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
         <div>
           <label className="mb-1 block text-sm text-gray-600">ทดสอบ (ไม่มีผลกระทบจริง — ไม่ส่งแจ้งเตือน/สร้างงาน)</label>
           <textarea className={`${inputClass} font-mono`} rows={3} value={samplePayload} onChange={(e) => setSamplePayload(e.target.value)} />
-          <button className={`${ghostClass} mt-2`} onClick={runTest}>ทดสอบเงื่อนไข</button>
+          <button className={`${ghostClass} mt-2`} disabled={busy} onClick={runTest}>{busy ? 'กำลังดำเนินการ...' : 'ทดสอบเงื่อนไข'}</button>
           {testResult && (
             <pre className="mt-2 max-h-48 overflow-auto rounded bg-gray-50 p-3 text-xs text-gray-700">{JSON.stringify(testResult, null, 2)}</pre>
           )}
@@ -344,7 +363,7 @@ function RunsTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
             <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
@@ -379,15 +398,17 @@ function RunsTab({ companyId }: { companyId: string }) {
 function RunDetailModal({ companyId, runId, onClose, onChanged }: { companyId: string; runId: string; onClose: () => void; onChanged: () => Promise<void> }) {
   const toast = useToast();
   const [run, setRun] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
   const [explanation, setExplanation] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const [r, ex] = await Promise.all([getWorkflowRun(companyId, runId), explainWorkflowRun(companyId, runId)]);
       setRun(r); setExplanation(ex);
-    } catch (e) { setError(err(e)); }
+    } catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId, runId]);
   useEffect(() => { load(); }, [load]);
 
@@ -397,7 +418,21 @@ function RunDetailModal({ companyId, runId, onClose, onChanged }: { companyId: s
     catch (e) { setError(err(e)); } finally { setBusy(null); }
   };
 
-  if (!run) return null;
+  if (!run || loading) return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4 rounded bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        {loading ? <LoadingState label="กำลังโหลด..." /> : (
+          <>
+            {error && <ErrorBanner message={error} />}
+            <div className="flex justify-end">
+              <button className={ghostClass} onClick={onClose}>ปิด</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto space-y-4 rounded bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -468,7 +503,7 @@ function TasksTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="space-y-2">
           {data.map((t) => (
             <div key={t.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded border border-gray-200 p-3">
@@ -522,7 +557,7 @@ function DeadLettersTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-3">
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="space-y-2">
           {data.map((d) => (
             <div key={d.id} className="rounded border border-gray-200 p-3">
@@ -636,7 +671,7 @@ function WebhooksTab({ companyId }: { companyId: string }) {
           <button type="submit" className={btnClass} disabled={busy === 'create'}>{busy === 'create' ? 'กำลังบันทึก...' : 'บันทึก'}</button>
         </form>
       )}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="space-y-2">
           {data.map((w) => (
             <div key={w.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded border border-gray-200 p-3">

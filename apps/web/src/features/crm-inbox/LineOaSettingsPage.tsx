@@ -64,6 +64,7 @@ function TwoOaWarningCard() {
 }
 
 function ChannelAutonomySettings({ companyId, channel }: { companyId: string; channel: MessagingChannelSummary }) {
+  const toast = useToast();
   const [enabled, setEnabled] = useState(channel.autoReplyEnabled ?? false);
   const [dailyCap, setDailyCap] = useState(String(channel.autoReplyDailyCap ?? 0));
   const [staffUserId, setStaffUserId] = useState(channel.defaultBookingStaffUserId ?? '');
@@ -72,7 +73,6 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,12 +100,10 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
     const cap = Number(dailyCap);
     if (!dailyCap.trim() || !Number.isInteger(cap) || cap < 0) {
       setError('จำนวนตอบอัตโนมัติต่อวันต้องเป็นเลขจำนวนเต็มตั้งแต่ 0 ขึ้นไป');
-      setNotice(null);
       return;
     }
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       const updated = await updateChannelSettings(companyId, channel.id, {
         autoReplyEnabled: enabled,
@@ -117,7 +115,7 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
       setDailyCap(String(updated.autoReplyDailyCap ?? 0));
       setStaffUserId(updated.defaultBookingStaffUserId ?? '');
       setBranchId(updated.defaultBookingBranchId ?? '');
-      setNotice('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว');
+      toast.success('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว');
     } catch (e) {
       setError((e as Error).message || 'บันทึกการตั้งค่าไม่สำเร็จ');
     } finally {
@@ -165,12 +163,11 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
           </ThemedSelect>
         </label>
       </div>
-      {optionsLoading && !optionsError ? <div className="mt-2 text-xs text-gray-500">กำลังโหลดรายชื่อพนักงานและสาขา…</div> : null}
+      {optionsLoading && !optionsError ? <div className="mt-2 text-xs text-gray-500">กำลังโหลดรายชื่อพนักงานและสาขา...</div> : null}
       {optionsError ? <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{optionsError}</div> : null}
-      {notice ? <div className="mt-3 rounded border border-green-200 bg-green-50 p-2 text-sm text-green-800">{notice}</div> : null}
       {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</div> : null}
       <button className={`${primaryBtn} mt-3`} disabled={saving || optionsLoading || Boolean(optionsError)} onClick={() => void save()}>
-        {saving ? 'กำลังบันทึก…' : 'บันทึกการตั้งค่า'}
+        {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
       </button>
     </div>
   );
@@ -232,7 +229,7 @@ function ConnectWizard({ companyId, onConnected }: { companyId: string; onConnec
       {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       <div className="mt-4">
         <button className={primaryBtn} onClick={submit} disabled={submitting}>
-          {submitting ? 'กำลังเชื่อมต่อ…' : 'เชื่อมต่อ LINE OA'}
+          {submitting ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อ LINE OA'}
         </button>
       </div>
     </div>
@@ -330,7 +327,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
               onChanged();
             })}
           >
-            {busy === 'test' ? 'กำลังทดสอบ…' : 'ทดสอบการเชื่อมต่อ'}
+            {busy === 'test' ? 'กำลังทดสอบ...' : 'ทดสอบการเชื่อมต่อ'}
           </button>
           <button className={secondaryBtn} disabled={busy !== null} onClick={() => setRotateOpen((v) => !v)}>
             เปลี่ยน Credential
@@ -342,7 +339,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
               setRevealed(await revealChannelCredential(companyId, channel.id));
             })}
           >
-            {busy === 'reveal' ? 'กำลังดึงข้อมูล…' : 'ดู Credential (บันทึก audit)'}
+            {busy === 'reveal' ? 'กำลังดึงข้อมูล...' : 'ดู Credential (บันทึก audit)'}
           </button>
           <button
             className={dangerBtn}
@@ -406,7 +403,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
                 onChanged();
               })}
             >
-              {busy === 'rotate' ? 'กำลังบันทึก…' : 'บันทึก credential ใหม่'}
+              {busy === 'rotate' ? 'กำลังบันทึก...' : 'บันทึก credential ใหม่'}
             </button>
             <button className={secondaryBtn} onClick={() => setRotateOpen(false)}>ยกเลิก</button>
           </div>
@@ -422,6 +419,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
  * crm.inbox.policy_manage — a 403 on load hides the card silently.
  */
 function SlaPolicyCard({ companyId }: { companyId: string }) {
+  const toast = useToast();
   const [policy, setPolicy] = useState<CrmInboxPolicyDto | null>(null);
   const [hidden, setHidden] = useState(false);
   const [minutes, setMinutes] = useState('30');
@@ -429,7 +427,6 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
   const [start, setStart] = useState('09:00');
   const [end, setEnd] = useState('18:00');
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -458,10 +455,9 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
 
   const save = async () => {
     const validation = validateInboxPolicyForm({ firstResponseMinutes: minutes, businessHoursEnabled: hoursEnabled, start, end });
-    if (validation) { setError(validation); setNotice(null); return; }
+    if (validation) { setError(validation); return; }
     setSaving(true);
     setError(null);
-    setNotice(null);
     try {
       const timezone = policy?.businessHours?.timezone ?? 'Asia/Bangkok';
       const updated = await updateInboxPolicy(companyId, {
@@ -469,7 +465,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
         businessHours: hoursEnabled ? { start, end, timezone } : null,
       });
       setPolicy(updated);
-      setNotice('บันทึกการตั้งค่า SLA แล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้');
+      toast.success('บันทึกการตั้งค่า SLA แล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้');
     } catch (e) {
       setError((e as Error).message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่');
     } finally {
@@ -489,7 +485,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
         กำหนดเวลาที่ทีมต้องตอบข้อความแรกของลูกค้า — เกินกำหนดระบบจะแจ้งเตือนผู้รับผิดชอบและผู้จัดการ
       </p>
       {policy === null && !error ? (
-        <div className="mt-3 text-sm text-gray-500">กำลังโหลด…</div>
+        <div className="mt-3 text-sm text-gray-500">กำลังโหลด...</div>
       ) : (
         <>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -525,11 +521,10 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
               )}
             </div>
           </div>
-          {notice ? <div className="mt-3 rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">{notice}</div> : null}
           {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
           <div className="mt-4">
             <button className={primaryBtn} onClick={() => void save()} disabled={saving || policy === null}>
-              {saving ? 'กำลังบันทึก…' : 'บันทึกการตั้งค่า SLA'}
+              {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า SLA'}
             </button>
           </div>
         </>
@@ -580,7 +575,7 @@ export function LineOaSettingsPage({ companyId }: { companyId: string }) {
       {loadError ? (
         <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">{loadError}</div>
       ) : channels === null ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500">กำลังโหลด…</div>
+        <div className="rounded-lg border border-gray-200 bg-white p-6 text-sm text-gray-500">กำลังโหลด...</div>
       ) : (
         <>
           {channels.map((channel) => (

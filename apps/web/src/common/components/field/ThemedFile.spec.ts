@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import * as React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+
+test('name prop renders an sr-only native file input carrying name and required', async () => {
+  const { ThemedFile } = await import('./ThemedFile');
+  const html = renderToStaticMarkup(React.createElement(ThemedFile, {
+    name: 'attachment',
+    required: true,
+  }));
+
+  assert.match(html, /<input[^>]*type="file"/);
+  assert.match(html, /<input[^>]*name="attachment"/);
+  assert.match(html, /<input[^>]*required/);
+  assert.match(html, /<input[^>]*class="sr-only"/);
+  // Empty state: Thai placeholder + pick chip, no clear button.
+  assert.match(html, /ยังไม่ได้เลือกไฟล์/);
+  assert.match(html, /เลือกไฟล์/);
+  assert.doesNotMatch(html, /นำไฟล์ออก/);
+});
+
+test('controlled file shows its name with clear button and change chip', async () => {
+  const { ThemedFile } = await import('./ThemedFile');
+  const html = renderToStaticMarkup(React.createElement(ThemedFile, {
+    file: 'receipt-2569.jpg',
+    'aria-required': true,
+  }));
+
+  assert.match(html, /receipt-2569\.jpg/);
+  assert.match(html, /<input[^>]*aria-required="true"/);
+  assert.doesNotMatch(html, /<input[^>]*required=""/);
+  assert.match(html, /aria-label="นำไฟล์ออก"/);
+  assert.match(html, /เปลี่ยนไฟล์/);
+  assert.doesNotMatch(html, /ยังไม่ได้เลือกไฟล์/);
+});
+
+test('disabled state hides the clear button and dims the chip', async () => {
+  const { ThemedFile } = await import('./ThemedFile');
+  const html = renderToStaticMarkup(React.createElement(ThemedFile, {
+    file: 'receipt.pdf',
+    disabled: true,
+  }));
+
+  assert.match(html, /<input[^>]*disabled/);
+  assert.doesNotMatch(html, /นำไฟล์ออก/);
+  assert.match(html, /cursor-not-allowed/);
+});

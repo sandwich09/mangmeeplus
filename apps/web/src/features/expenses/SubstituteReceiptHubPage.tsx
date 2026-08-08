@@ -1,22 +1,24 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type {
   SubstituteReceiptApprovalMode,
   SubstituteReceiptEvidenceStatus,
   SubstituteReceiptListResult,
 } from '@watchdog-bms/contracts';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
+import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import {
   downloadSubstituteReceiptPdf,
-  getAttachmentDownloadUrl,
+  fetchSubstituteReceiptPdfBlob,
   getSubstituteReceiptRuntimePolicy,
   listCompanySubstituteReceipts,
 } from './expenses.api';
@@ -49,6 +51,12 @@ const STATUS_BADGES: Record<SubstituteReceiptEvidenceStatus, string> = {
   SUPERSEDED: 'VOIDED',
 };
 
+type IssuedArtifactPreviewTarget = {
+  expenseId: string;
+  evidenceId: string;
+  documentNumber: string;
+};
+
 export function SubstituteReceiptHubPage({
   companyId,
   userId,
@@ -70,7 +78,34 @@ export function SubstituteReceiptHubPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ name: string; url: string } | null>(null);
+  const [preview, setPreview] = useState<DocumentPreviewSource | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<IssuedArtifactPreviewTarget | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
+
+  const releasePreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+    setPreview(null);
+    setPreviewTarget(null);
+    setPreviewLoadingId(null);
+  }, [releasePreviewUrl]);
+
+  useEffect(() => () => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+  }, [releasePreviewUrl]);
+
+  useEffect(() => {
+    closePreview();
+  }, [companyId, closePreview]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,17 +145,34 @@ export function SubstituteReceiptHubPage({
     `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidenceId)}`
   );
 
-  async function openIssuedArtifact(expenseId: string, documentNumber: string, attachmentId: string | null) {
-    if (!attachmentId) {
-      router.push(expenseHref(expenseId));
-      return;
-    }
+  async function loadIssuedArtifactPreview(target: IssuedArtifactPreviewTarget) {
+    const requestId = ++previewRequestRef.current;
+    setPreviewLoadingId(target.evidenceId);
     setActionError(null);
     try {
-      const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId);
-      setPreview({ name: `${documentNumber}.svg`, url: downloadUrl });
+      const blob = await fetchSubstituteReceiptPdfBlob(companyId, target.expenseId, target.evidenceId);
+      if (requestId !== previewRequestRef.current) return;
+      const url = URL.createObjectURL(blob);
+      releasePreviewUrl();
+      previewUrlRef.current = url;
+      setPreviewTarget(target);
+      setPreview({ name: `${target.documentNumber}.pdf`, mimeType: 'application/pdf', url });
     } catch (error) {
+      if (requestId !== previewRequestRef.current) return;
       setActionError(err(error));
+      throw error;
+    } finally {
+      if (requestId === previewRequestRef.current) {
+        setPreviewLoadingId((current) => current === target.evidenceId ? null : current);
+      }
+    }
+  }
+
+  async function openIssuedArtifact(expenseId: string, evidenceId: string, documentNumber: string) {
+    try {
+      await loadIssuedArtifactPreview({ expenseId, evidenceId, documentNumber });
+    } catch {
+      // The current request already surfaced a localized error above the table.
     }
   }
 
@@ -147,7 +199,7 @@ export function SubstituteReceiptHubPage({
       )}
     >
       {loading ? (
-        <MangmeeCard className="p-6 text-sm text-gray-500">{t('expenses.loading', locale)}</MangmeeCard>
+        <LoadingState label="กำลังโหลด..." />
       ) : loadError ? (
         <ErrorBanner message={loadError} />
       ) : result ? (
@@ -216,9 +268,9 @@ export function SubstituteReceiptHubPage({
               </label>
               <label className="text-sm font-semibold text-gray-700">
                 <span className="mb-1 block">{t('expenses.substitute_hub.filter_month', locale)}</span>
-                <input
+                <ThemedDate
                   className={inputClass}
-                  type="month"
+                  mode="month"
                   value={yearMonth}
                   onChange={(event) => setYearMonth(event.target.value)}
                 />
@@ -272,8 +324,11 @@ export function SubstituteReceiptHubPage({
                           )}
                           {item.status === 'ISSUED' && (
                             <IconBtn
-                              title={t('expenses.substitute_hub.open_document', locale)}
-                              onClick={() => void openIssuedArtifact(item.expenseId, item.documentNumber, item.artifactAttachmentId)}
+                              title={previewLoadingId === item.evidenceId
+                                ? t('expenses.loading', locale)
+                                : t('expenses.substitute_hub.open_document', locale)}
+                              disabled={previewLoadingId === item.evidenceId}
+                              onClick={() => void openIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}
                             >
                               {ICON.eye}
                             </IconBtn>
@@ -305,17 +360,16 @@ export function SubstituteReceiptHubPage({
         </div>
       ) : null}
       </MangmeePage>
-      {preview && (
-        <Modal
-          open
-          title={preview.name}
-          size="lg"
-          closeLabel={t('expenses.close', locale)}
-          onClose={() => setPreview(null)}
-        >
-          <img src={preview.url} alt={preview.name} className="mx-auto max-h-[70vh] w-auto rounded-lg" />
-        </Modal>
-      )}
+      {preview && <DocumentPreviewModal
+        source={preview}
+        closeLabel={t('expenses.close', locale)}
+        loadingLabel={t('expenses.loading', locale)}
+        errorLabel={t('expenses.substitute_wizard.document_not_ready', locale)}
+        retryLabel={t('expenses.substitute_wizard.retry', locale)}
+        openNewTabLabel={t('expenses.open_new_tab', locale)}
+        onClose={closePreview}
+        onRetry={previewTarget ? () => loadIssuedArtifactPreview(previewTarget) : undefined}
+      />}
     </>
   );
 }

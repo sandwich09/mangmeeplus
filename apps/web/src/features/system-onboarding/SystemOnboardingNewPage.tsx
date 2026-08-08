@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { BackLink } from '@/common/components/app-shell/BackLink';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useConfirm } from '@/common/components/modal';
 import { COMPANY_BUSINESS_CATEGORIES, type CompanyBusinessCategory } from '@watchdog-bms/contracts';
@@ -439,7 +440,7 @@ export default function SystemOnboardingNewPage() {
                 {vatStatus === 'REGISTERED' && (
                   <div className="mt-2">
                     <label className={labelClass}>วันที่มีผล (ตาม ภ.พ.20) *</label>
-                    <input type="date" className={inputClass} required value={vatEffectiveFrom}
+                    <ThemedDate className={inputClass} required value={vatEffectiveFrom}
                       onChange={(e) => setVatEffectiveFrom(e.target.value)} />
                   </div>
                 )}

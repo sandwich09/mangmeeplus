@@ -10,6 +10,7 @@ import {
 } from '@watchdog-bms/contracts';
 import Link from 'next/link';
 import { BackLink } from '@/common/components/app-shell/BackLink';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { getMangmeeMenuTone, mangmeeToneClass } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal/Modal';
@@ -187,7 +188,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
         </div>
         <div>
           <label className="block text-xs text-gray-500 mb-1">Effective From</label>
-          <input type="date" className={inputClass} value={effectiveFrom} disabled={disabled || busy}
+          <ThemedDate className={inputClass} value={effectiveFrom} disabled={disabled || busy}
             onChange={(e) => setEffectiveFrom(e.target.value)} />
         </div>
         <button type="button" className={btnPrimary} disabled={disabled || busy || !status} onClick={() => void save()}>
@@ -631,7 +632,7 @@ function PackageMenuSection({
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => void saveChanges()}
             >
-              {saving ? 'กำลังบันทึก…' : 'ยืนยันและบันทึก'}
+              {saving ? 'กำลังบันทึก...' : 'ยืนยันและบันทึก'}
             </button>
           </>
         )}
@@ -1051,7 +1052,7 @@ function PackageMenuSection({
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => setReviewOpen(true)}
             >
-              {saving ? 'กำลังบันทึก…' : 'ตรวจสอบและบันทึก'}
+              {saving ? 'กำลังบันทึก...' : 'ตรวจสอบและบันทึก'}
             </button>
           </div>
         </div>

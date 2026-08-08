@@ -160,11 +160,15 @@ export function calculateManualExpenseTotals(input: {
  *  post, and review identically.
  *  ponytail: service charge only — add delivery/packaging/tip inputs when a real bill needs them,
  *  the second line is already generic. */
-export function buildManualExpenseLines(input: {
+export type ManualExpenseItem = {
   description: string;
   quantity: string;
   unitPrice: string;
   discountAmount?: string;
+};
+
+export function buildManualExpenseLines(input: {
+  items: ManualExpenseItem[];
   serviceChargeAmount?: string;
   serviceChargeDescription: string;
   vatRate?: string;
@@ -177,19 +181,21 @@ export function buildManualExpenseLines(input: {
     ...(input.externalTaxCode && { externalTaxCode: input.externalTaxCode }),
     transactionContext: 'DOMESTIC_PURCHASE' as const,
   };
-  const lines: CreateExpenseDraftInput['lines'] = [{
-    lineNumber: 1,
-    description: input.description.trim(),
-    quantity: input.quantity,
-    unitPrice: input.unitPrice,
-    discountAmount: input.discountAmount || '0',
+  // Every item carries the document VAT rate and Tax Code — manual entry captures one bill,
+  // and a bill prints one tax treatment (the same assumption the OCR path makes).
+  const lines: CreateExpenseDraftInput['lines'] = input.items.map((item, index) => ({
+    lineNumber: index + 1,
+    description: item.description.trim(),
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    discountAmount: item.discountAmount || '0',
     ...documentTax,
-  }];
+  }));
   // Spec §7.1: a charge is additive only. A printed discount reduces the item, never the charge, so
-  // the second line carries no discount of its own.
+  // the charge line carries no discount of its own.
   if (moneyNumber(input.serviceChargeAmount) > 0) {
     lines.push({
-      lineNumber: 2,
+      lineNumber: lines.length + 1,
       description: input.serviceChargeDescription,
       quantity: '1',
       unitPrice: input.serviceChargeAmount!,

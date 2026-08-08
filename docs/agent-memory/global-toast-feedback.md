@@ -1,7 +1,18 @@
 # Agent Memory: global-toast-feedback
 
-Status: PHASE 6 COMPLETE LOCALLY — all 6 phases implemented; the Phase 6 local
-typecheck/unit/build gates pass. Its named stale E2E assertions were refreshed
+Status: CODEX PHASE D COMPLETE LOCALLY (2026-08-08); PHASES A-C WERE ALREADY
+COMPLETE AND VERIFIED AT KICKOFF; HOST E2E/COMMIT PENDING. Earlier, owner asked for
+(1) toast moved to top-center with the
+pastel tones kept and a more finished pill design, (2) loading indicators on
+every page. Both are specced and handed to Codex:
+`docs/plans/toast-topcenter-loading-plan.md` (design authority; §3 tables come
+from a full 2026-08-08 loading audit) and
+`docs/plans/toast-topcenter-loading-codex-handoff.md` (phases A–D). The audit's
+duplicate-record risk in `AccountingPages.tsx` and blank workflow modal loads
+are now closed by Phases B-C. Loading copy still splits `...` vs `…`; Phase D
+normalizes on ASCII `...`. Earlier: PHASE 7 closed the silent-success and missing-in-flight-state
+gaps that survived phases 1-6; local typecheck/lint/unit/build gates pass
+(755/755). PHASE 6 COMPLETE LOCALLY — all 6 phases implemented. Its named stale E2E assertions were refreshed
 but E2E was not run. The e2e toast spec remains
 2/2 passed on the real stack (2026-08-07). Host e2e note: DB was behind
 `20260807100000_substitute_receipt_payee_identity`; migrate deploy +
@@ -75,6 +86,54 @@ Artifacts:
 - Phase 6: fixed cross-parent submenu prefix matching; removed the dead
   `security` settings-sidebar key; refreshed SET-01, SET-03A, SET-07, and
   NAV-02 to current intended behavior without moving menu entries.
+- Phase 7 (2026-08-08, re-audit after a user report that save feedback never
+  appeared): the Phase 4 claim that employee activation/deactivation and role
+  create/update/disable were toast-wired did NOT match the tree —
+  `EmployeeAccessPages.tsx` contained zero `useToast`. Fixed there by giving the
+  existing `run(key, fn)` helper an optional `done` message (credential handoff
+  and LINE QR stay silent — both already render a result panel) and wiring
+  RoleBuilder create/update plus `disableRole`, which also gained its first
+  in-flight state. Same helper-parameter shape applied to
+  `IndividualPermissionsPrototypePage`'s `withBusy`.
+- Phase 7 also toasted: discount policy, PO approval policy, substitute-receipt
+  policy, reimbursement policy, AP approval policy, LINE OA auto-reply + SLA
+  policy, CRM booking buffer, and the account-security AI toggle. Where a
+  persistent inline success banner existed (AP `message`, reimbursement `saved`,
+  LINE OA `notice` ×2), the banner and its state were DELETED rather than
+  double-reporting alongside the toast; inline ErrorBanners stay.
+- Phase 7 in-flight states added where a mutation button was freely
+  double-clickable: discount policy, PO approval, bank account create, bank
+  adjustment create, product update/barcode/QR, report save-view + CSV export.
+- Phase 7 confirmed-silent by design (not bugs): redirect flows
+  (`ReimbursementCreatePage`), wizard step advances (`AddEmployeePrototypePage`
+  `submitDraft` — `completeEmployee` toasts at the end), and explicit
+  done-panels carrying counts a toast cannot (`ChartOfAccountsSettingsPage`
+  `applyTemplate`, employee credential handoff, LINE QR).
+- There is no `loading` toast tone and none is planned: `ToastTone` is
+  `success | warning | error`. In-flight feedback belongs on the button.
+- Codex Phase B added initial-load coverage across accounting documents,
+  accounts payable, banking, CRM, employee onboarding, expenses, tax, and
+  workflow. Fake empty/default states now wait for resolved data; async selects
+  expose disabled loading options; workflow modal frames open immediately with
+  a loading body. Phase A toast components were left untouched.
+- Codex Phase C added shared mutation guards at every named §3.2 gap: accounting
+  document/payment/counterparty actions, reconciliation and inventory-location
+  creation, tax filing/report/evidence/profile actions, expense category and
+  signature actions, notification actions/rules/quiet-hours saves, CRM inbox
+  actions, workflow rule testing, role disable, and report history/download.
+  Every added busy state clears in `finally`; Phase B loading branches and toast
+  components were left untouched.
+- Codex Phase D upgraded 44 definite page/panel/table/form loading bodies across
+  18 feature files to the shared `LoadingState`; inline table rows, select
+  options, chips, additive status lines, and preserved-content refetch slots
+  kept their existing structure. It also normalized 71 Thai in-flight labels
+  from U+2026 to ASCII `...` across 18 feature files and translated the four
+  current accounting-document `Loading...`/`Saving...` holdouts. Phase A toast
+  components and the deliberate `system-partners` skeletons were untouched.
+- Naming trap for future audits: most `*PrototypePage` files call real APIs.
+  Only `crm/BroadcastPrototypePage.tsx` and
+  `mangmee-prototype/MangmeeModulePrototypePage.tsx` are local-state mocks — the
+  broadcast one renders a fake success line and can never toast.
 - The Phase 5 survey count drifted: the enumerated live files contain 14
   prompt-gated buttons / 15 prompt calls, not 13 / 14. All enumerated live
   calls were migrated. Four prompts remain only in the explicitly out-of-scope
@@ -115,6 +174,33 @@ Verification:
   passed 754/754; webpack build compiled and generated all routes. E2E was not
   run per the environment contract.
 
+- Phase 7 gate (2026-08-08): `corepack pnpm --filter @watchdog-bms/contracts
+  build` was required first (fresh clone had no `node_modules` and a stale
+  `contracts/dist`, same failure mode as the Phase 0 baseline repair);
+  then `corepack pnpm --filter @watchdog-bms/web typecheck` passed, `lint`
+  passed, `CI=true npx tsx --test "src/**/*.spec.ts"` passed 755/755 (the tsx
+  IPC `EPERM` sandbox issue did not reproduce on this host), and
+  `IS_WEBPACK_TEST=1 corepack pnpm --filter @watchdog-bms/web build` compiled
+  and generated all routes. E2E not run.
+- Codex Phase B gate (2026-08-08): web typecheck passed; exact `CI=true npx tsx
+  --test "src/**/*.spec.ts"` hit the documented IPC `listen EPERM`, then the
+  prescribed `CI=true node --import tsx --test "src/**/*.spec.ts"` fallback
+  passed 756/756; webpack build compiled and generated all routes. E2E was not
+  run per the environment contract.
+- Codex Phase C gate (2026-08-08): web typecheck passed; exact `CI=true npx tsx
+  --test "src/**/*.spec.ts"` hit the documented IPC `listen EPERM`, then the
+  prescribed `CI=true node --import tsx --test "src/**/*.spec.ts"` fallback
+  passed 756/756; webpack build compiled successfully and generated 11/11
+  static pages. E2E was not run per the environment contract.
+- Codex Phase D gate (2026-08-08): web typecheck passed; exact `CI=true npx tsx
+  --test "src/**/*.spec.ts"` hit the documented IPC `listen EPERM`, then the
+  prescribed `CI=true node --import tsx --test "src/**/*.spec.ts"` fallback
+  passed 756/756; webpack build compiled successfully and generated 11/11
+  static pages. The mandated U+2026 loading/saving grep returned zero rows,
+  `git diff --check` passed, and the protected Phase A aggregate diff hash
+  remained `b37b4d788543792f0dddde3186a2c8c5230aa881eb77018361d176bb6c8a54a7`.
+  E2E was not run per the environment contract.
+
 Next:
 - [x] Phase 1 foundation (Codex) → host gate → commit
 - [x] Phase 2 finance rollout (Codex) → host gate → commit
@@ -122,4 +208,10 @@ Next:
 - [x] Phase 4 auth/settings/system + e2e spec → local gate
 - [x] Phase 5 themed prompts + confirms + PO settings → local gate
 - [x] Phase 6 sidebar active-state + stale E2E refresh → local gate
+- [x] Phase 7 silent-success + missing in-flight-state sweep → local gate
+- [x] Toast v2 + global-loading plan + Codex handoff docs authored (2026-08-08)
+- [x] Codex Phase A (toast top-center redesign) → gate (complete before this execution)
+- [x] Codex Phase B (initial-load gaps) → gate
+- [x] Codex Phase C (mutation busy gaps — AccountingPages `run` is the core) → gate
+- [x] Codex Phase D (LoadingState standardization + ellipsis copy sweep) → gate
 - [ ] Host E2E run → commit

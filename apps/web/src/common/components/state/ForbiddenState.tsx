@@ -8,7 +8,6 @@ export interface ForbiddenStateProps {
   title?: string;
   description?: string;
   helpText?: string;
-  readonly?: boolean;
   locale?: SupportedLocale;
 }
 
@@ -16,7 +15,6 @@ export function ForbiddenState({
   title,
   description,
   helpText,
-  readonly = false,
   locale = 'th',
 }: ForbiddenStateProps) {
   return (
@@ -26,15 +24,13 @@ export function ForbiddenState({
       </span>
       <div className="flex flex-col gap-1">
         <p className="text-sm font-semibold text-gray-700">
-          {readonly ? t('state.readonly.title', locale) : (title ?? t('state.forbidden.title', locale))}
+          {title ?? t('state.forbidden.title', locale)}
         </p>
         <p className="text-sm text-gray-400">
-          {readonly ? t('state.readonly.description', locale) : (description ?? t('state.forbidden.description', locale))}
+          {description ?? t('state.forbidden.description', locale)}
         </p>
       </div>
-      {!readonly && (
-        <p className="text-xs text-gray-400">{helpText ?? t('state.forbidden.help', locale)}</p>
-      )}
+      <p className="text-xs text-gray-400">{helpText ?? t('state.forbidden.help', locale)}</p>
     </div>
   );
 }

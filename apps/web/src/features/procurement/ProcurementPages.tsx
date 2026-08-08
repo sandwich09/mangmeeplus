@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { ForbiddenState } from '@/common/components/state';
+import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listSuppliers, listPurchaseRequests, listPurchaseOrders, listGoodsReceipts, submitPurchaseRequest, approvePurchaseRequest, rejectPurchaseRequest, issuePurchaseOrder, postGoodsReceipt, voidGoodsReceipt } from './procurement.api';
 import { parseProcurementTab, visibleProcurementTabs, type ProcurementTab } from './procurement.logic';
@@ -60,7 +60,7 @@ function SupplierList({ companyId }: { companyId: string }) {
         <button className={ghostClass} onClick={load}>ค้นหา</button>
       </div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -123,7 +123,7 @@ function PurchaseRequestList({ companyId }: { companyId: string }) {
         <button className={ghostClass} onClick={load}>กรอง</button>
       </div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -187,7 +187,7 @@ function PurchaseOrderList({ companyId }: { companyId: string }) {
         <button className={ghostClass} onClick={load}>กรอง</button>
       </div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -246,7 +246,7 @@ function GoodsReceiptList({ companyId }: { companyId: string }) {
     <div className="space-y-4">
       <div className="flex justify-end"><button className={ghostClass} onClick={load}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">

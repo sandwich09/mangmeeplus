@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
@@ -22,7 +24,7 @@ import {
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
   getReimbursementPolicy, updateReimbursementPolicy,
-  uploadClaimSignature, signReimbursementClaimForm, uploadSignedClaimFormCopy, getAttachmentDownloadUrl,
+  uploadClaimSignature, signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
 } from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
@@ -64,6 +66,12 @@ const APPROVER_MODE_LABELS: Record<string, string> = {
   CUSTOM_USER: 'ผู้ใช้ที่กำหนด',
 };
 const shortDate = (iso?: string) => (iso ? String(iso).slice(0, 10) : '—');
+const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image/png' | 'image/jpeg' => (
+  /\.pdf$/i.test(fileName) ? 'application/pdf' : /\.png$/i.test(fileName) ? 'image/png' : 'image/jpeg'
+);
+type ReimbursementDocumentPreviewTarget =
+  | { kind: 'claim-form'; reimbursementId: string; name: string }
+  | { kind: 'attachment'; reimbursementId: string; attachmentId: string; fileName: string; mimeType: 'application/pdf' | 'image/png' | 'image/jpeg' };
 
 /**
  * FINANCE_REVIEW + อนุมัติจ่าย means the decision is already durable and only the expense
@@ -246,39 +254,134 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const [claimForm, setClaimForm] = useState<{ name: string; url: string } | null>(null);
   const [claimFormSaving, setClaimFormSaving] = useState(false);
   const [claimFormError, setClaimFormError] = useState<string | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<DocumentPreviewSource | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<ReimbursementDocumentPreviewTarget | null>(null);
+  const [previewLoadingKey, setPreviewLoadingKey] = useState<string | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
+  const claimFormSaveRequestRef = useRef(0);
   // Signing dialog for one signature block of the printed form.
   const [signFor, setSignFor] = useState<ClaimSignatureRole | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
 
+  const releaseAttachmentPreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+
+  const closeDocumentPreview = useCallback(() => {
+    previewRequestRef.current += 1;
+    claimFormSaveRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+    setClaimForm(null);
+    setClaimFormError(null);
+    setClaimFormSaving(false);
+    setAttachmentPreview(null);
+    setPreviewTarget(null);
+    setPreviewLoadingKey(null);
+  }, [releaseAttachmentPreviewUrl]);
+
+  useEffect(() => () => {
+    previewRequestRef.current += 1;
+    claimFormSaveRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+  }, [releaseAttachmentPreviewUrl]);
+
+  useEffect(() => {
+    closeDocumentPreview();
+  }, [companyId, detail?.id, closeDocumentPreview]);
+
   const openDetail = useCallback(async (id: string) => {
+    closeDocumentPreview();
     setDrawerBusy(true); setDrawerError(null);
     try { setDetail(await getReimbursement(companyId, id)); }
     catch (e) { setDrawerError(err(e)); }
     finally { setDrawerBusy(false); }
-  }, [companyId]);
+  }, [closeDocumentPreview, companyId]);
 
   useEffect(() => { if (focusId) void openDetail(focusId); }, [focusId, openDetail]);
 
-  const openClaimForm = async () => {
-    if (!detail) return;
-    setDrawerBusy(true); setDrawerError(null);
+  const loadDocumentPreview = async (target: ReimbursementDocumentPreviewTarget) => {
+    const requestId = ++previewRequestRef.current;
+    claimFormSaveRequestRef.current += 1;
+    const loadingKey = target.kind === 'claim-form' ? `claim-form:${target.reimbursementId}` : `attachment:${target.attachmentId}`;
+    setPreviewLoadingKey(loadingKey);
+    setDrawerError(null);
     try {
-      const preview = await previewReimbursementClaimForm(companyId, detail.id);
-      setClaimFormError(null); setClaimFormSaving(false);
-      setClaimForm({ name: `ใบเบิกค่าใช้จ่าย ${detail.requestNo ?? ''}`.trim(), url: preview.svgDataUrl });
-    } catch (e) { setDrawerError(err(e)); }
-    finally { setDrawerBusy(false); }
+      if (target.kind === 'claim-form') {
+        const nextPreview = await previewReimbursementClaimForm(companyId, target.reimbursementId);
+        if (requestId !== previewRequestRef.current) return;
+        releaseAttachmentPreviewUrl();
+        setAttachmentPreview(null);
+        setClaimFormError(null);
+        setClaimFormSaving(false);
+        setClaimForm({ name: target.name, url: nextPreview.svgDataUrl });
+      } else {
+        const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
+        if (requestId !== previewRequestRef.current) return;
+        const url = URL.createObjectURL(blob);
+        releaseAttachmentPreviewUrl();
+        previewUrlRef.current = url;
+        setClaimForm(null);
+        setClaimFormError(null);
+        setAttachmentPreview({ name: target.fileName, mimeType: blob.type, url });
+      }
+      setPreviewTarget(target);
+    } catch (e) {
+      if (requestId !== previewRequestRef.current) return;
+      setDrawerError(err(e));
+      throw e;
+    } finally {
+      if (requestId === previewRequestRef.current) {
+        setPreviewLoadingKey((current) => current === loadingKey ? null : current);
+      }
+    }
   };
 
-  /** Signed scans open in a new tab on a short-lived signed URL — PDFs and photos alike. */
-  const openAttachment = async (attachmentId: string) => {
-    setDrawerBusy(true); setDrawerError(null);
+  const openClaimForm = async () => {
+    if (!detail) return;
     try {
-      const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId);
-      window.open(downloadUrl, '_blank', 'noopener');
-    } catch (e) { setDrawerError(err(e)); }
-    finally { setDrawerBusy(false); }
+      await loadDocumentPreview({
+        kind: 'claim-form',
+        reimbursementId: detail.id,
+        name: `ใบเบิกค่าใช้จ่าย ${detail.requestNo ?? ''}`.trim(),
+      });
+    } catch {
+      // The active request already reports its localized failure in the drawer.
+    }
+  };
+
+  /** Fetch first so storage 404/MIME errors are visible before opening the document viewer. */
+  const openAttachment = async (attachmentId: string, fileName: string) => {
+    if (!detail) return;
+    try {
+      await loadDocumentPreview({
+        kind: 'attachment',
+        reimbursementId: detail.id,
+        attachmentId,
+        fileName,
+        mimeType: attachmentPreviewMimeType(fileName),
+      });
+    } catch {
+      // The active request already reports its localized failure in the drawer.
+    }
+  };
+
+  const downloadClaimForm = async () => {
+    if (!claimForm) return;
+    const requestId = ++claimFormSaveRequestRef.current;
+    const target = claimForm;
+    setClaimFormSaving(true);
+    setClaimFormError(null);
+    try {
+      await downloadDocumentAsPdf(target.url, target.name, { vector: true });
+    } catch (e) {
+      if (requestId === claimFormSaveRequestRef.current) setClaimFormError(err(e));
+    } finally {
+      if (requestId === claimFormSaveRequestRef.current) setClaimFormSaving(false);
+    }
   };
 
   /**
@@ -356,9 +459,9 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         context={tab}
         userId={userId}
         permissions={permissions}
-        busy={drawerBusy}
+        busy={drawerBusy || previewLoadingKey !== null}
         error={drawerError}
-        onClose={() => { setDetail(null); setDrawerError(null); }}
+        onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
         onPrintClaimForm={openClaimForm}
         onSign={setSignFor}
         onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
@@ -376,36 +479,41 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         onRecordPayment={() => setPayFor(detail)}
       />}
       {/* Sibling of the drawer so closing the preview does not close the claim behind it. */}
-      {claimForm && (
-        <Modal
-          open
-          printSurface
-          title={claimForm.name}
-          size="lg"
-          closeLabel="ปิด"
-          onClose={() => setClaimForm(null)}
-          footer={(
-            <>
-              {claimFormError && <p className="mr-auto text-xs font-semibold text-error-700">{claimFormError}</p>}
-              <button
-                className={successBtn}
-                style={successBtnStyle}
-                disabled={claimFormSaving}
-                onClick={async () => {
-                  setClaimFormSaving(true); setClaimFormError(null);
-                  try { await downloadDocumentAsPdf(claimForm.url, claimForm.name, { vector: true }); }
-                  catch (e) { setClaimFormError(err(e)); }
-                  finally { setClaimFormSaving(false); }
-                }}
-              >
-                {claimFormSaving ? 'กำลังสร้างไฟล์...' : 'ดาวน์โหลด PDF'}
-              </button>
-            </>
-          )}
-        >
-          <img src={claimForm.url} alt={claimForm.name} className="mx-auto w-auto max-h-[70vh] rounded-lg border border-gray-200" />
-        </Modal>
-      )}
+      {claimForm && <DocumentPreviewModal
+        source={{ name: claimForm.name, mimeType: 'image/svg+xml', url: claimForm.url }}
+        printSurface
+        hideOpenNewTab
+        closeLabel="ปิด"
+        loadingLabel="กำลังเปิดเอกสาร..."
+        errorLabel="แสดงเอกสารนี้ไม่สำเร็จ กรุณาลองสร้างตัวอย่างใหม่"
+        retryLabel="ลองอีกครั้ง"
+        openNewTabLabel="เปิดในแท็บใหม่"
+        onClose={closeDocumentPreview}
+        onRetry={previewTarget?.kind === 'claim-form' ? () => loadDocumentPreview(previewTarget) : undefined}
+        footer={(
+          <>
+            {claimFormError && <p className="mr-auto text-xs font-semibold text-error-700">{claimFormError}</p>}
+            <button
+              className={successBtn}
+              style={successBtnStyle}
+              disabled={claimFormSaving}
+              onClick={() => void downloadClaimForm()}
+            >
+              {claimFormSaving ? 'กำลังสร้างไฟล์...' : 'ดาวน์โหลด PDF'}
+            </button>
+          </>
+        )}
+      />}
+      {attachmentPreview && <DocumentPreviewModal
+        source={attachmentPreview}
+        closeLabel="ปิด"
+        loadingLabel="กำลังเปิดเอกสาร..."
+        errorLabel="แสดงเอกสารนี้ไม่สำเร็จ กรุณาลองใหม่"
+        retryLabel="ลองอีกครั้ง"
+        openNewTabLabel="เปิดในแท็บใหม่"
+        onClose={closeDocumentPreview}
+        onRetry={previewTarget?.kind === 'attachment' ? () => loadDocumentPreview(previewTarget) : undefined}
+      />}
       {/* Sibling of the drawer, like the print preview: closing the dialog keeps the claim open. */}
       {signFor && detail && <SignatureModal
         companyId={companyId}
@@ -688,7 +796,7 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
   onPrintClaimForm: () => void;
   onSign: (role: ClaimSignatureRole) => void;
   onUploadSignedCopy: (file: File) => void;
-  onOpenAttachment: (attachmentId: string) => void;
+  onOpenAttachment: (attachmentId: string, fileName: string) => void;
   onLineReceipt: (lineNo: number, file: File | null) => void;
   onSubmit: () => void;
   onCancel: () => void;
@@ -785,16 +893,14 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
                     <td className="text-gray-500">{l.categoryLabelSnapshot ?? l.categoryKey}</td>
                     <td className="text-right tabular-nums">{formatMoney(l.amount)}</td>
                     <td className="text-xs">
-                      <div className="text-gray-600">
-                        {l.attachmentFileName ? `📎 ${l.attachmentFileName}` : l.attachmentId ? '📎 แนบแล้ว' : l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}
-                      </div>
+                      {l.attachmentId ? (
+                        <button className="max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
+                          📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
+                        </button>
+                      ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
                       {isDraft && context === 'mine' && (
                         <div className="mt-1 space-y-1">
-                          <input className={inputClass} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={e => {
-                            const file = e.target.files?.[0];
-                            if (file) onLineReceipt(l.lineNo, file);
-                            e.target.value = '';
-                          }} />
+                          <ThemedFile file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
                           {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
                         </div>
                       )}
@@ -854,21 +960,17 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
                   <ul className="space-y-2 text-xs">
                     {signedCopies.map((copy: any) => (
                       <li key={copy.attachmentId} className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2">
-                        <button className="truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId)}>📄 {copy.fileName}</button>
+                        <button className="truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(copy.attachmentId, copy.fileName)}>📄 {copy.fileName}</button>
                         <span className="shrink-0 text-gray-400">{shortDate(copy.uploadedAt)}</span>
                       </li>
                     ))}
                   </ul>
                 )}
               {canAttachSignedCopy && (
-                <label className="mt-3 block text-xs font-semibold text-gray-600">
+                <div className="mt-3 block text-xs font-semibold text-gray-600">
                   แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
-                  <input className={cx(inputClass, 'mt-1.5')} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={e => {
-                    const file = e.target.files?.[0];
-                    if (file) onUploadSignedCopy(file);
-                    e.target.value = '';
-                  }} />
-                </label>
+                  <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onUploadSignedCopy(file); }} />
+                </div>
               )}
             </MangmeeCard>
           )}
@@ -1361,10 +1463,10 @@ function SignatureModal({ companyId, requestId, role, ackHash, onClose, onDone }
     <Modal open title={`ลงนาม — ${CLAIM_SIGNATURE_ROLE_LABELS[role]}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
       <form className="space-y-3" onSubmit={submit}>
         <p className="text-xs text-gray-500">อัปโหลดรูปลายเซ็น (PNG/JPEG ไม่เกิน 2 MB) ระบบจะนำไปวางในช่อง{CLAIM_SIGNATURE_ROLE_LABELS[role]}ของใบเบิก</p>
-        <label className="block">
+        <div className="block">
           <span className="mb-1.5 block text-xs font-semibold text-gray-600">รูปลายเซ็น *</span>
-          <input className={inputClass} type="file" accept={IMAGE_UPLOAD_ACCEPT} onChange={e => pick(e.target.files?.[0] ?? null)} />
-        </label>
+          <ThemedFile file={file} accept={IMAGE_UPLOAD_ACCEPT} onChange={picked => void pick(picked)} />
+        </div>
         <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-3 py-2.5">
           <span className="text-xs font-semibold text-gray-600">ลบพื้นหลังให้อัตโนมัติ</span>
           <input type="checkbox" checked={removeBackground} onChange={e => setRemoveBackground(e.target.checked)} />
@@ -1421,10 +1523,10 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
 
 // ── Policy Settings ───────────────────────────────────────────────────────────
 function PolicySettings({ companyId }: { companyId: string }) {
+  const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -1435,7 +1537,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
   useEffect(() => { load(); }, [load]);
 
   const save = async (e: React.FormEvent) => {
-    e.preventDefault(); setBusy(true); setError(null); setSaved(false);
+    e.preventDefault(); setBusy(true); setError(null);
     try {
       await updateReimbursementPolicy(companyId, {
         approvalRequiredFromAmount: form.approvalRequiredFromAmount,
@@ -1448,7 +1550,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
         financeReviewRequired: form.financeReviewRequired,
         slaHours: form.slaHours ? Number(form.slaHours) : null,
       });
-      setSaved(true); await load();
+      toast.success('บันทึกนโยบายเบิกจ่ายแล้ว'); await load();
     } catch (e2) { setError(err(e2)); } finally { setBusy(false); }
   };
 
@@ -1576,7 +1678,6 @@ function PolicySettings({ companyId }: { companyId: string }) {
           </dl>
           <div className="mt-4 space-y-3">
             {error && <ErrorBanner message={error} />}
-            {saved && <InfoBanner message="บันทึกนโยบายแล้ว" />}
             <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
           </div>
         </MangmeeCard>

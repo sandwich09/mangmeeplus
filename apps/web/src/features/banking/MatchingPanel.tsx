@@ -11,6 +11,7 @@ import {
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
+import { LoadingState } from '@/common/components/state';
 
 function err(e: unknown) { return apiErrorMessage(e); }
 const inputClass = 'mangmee-input';
@@ -43,6 +44,7 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
   const [bankAccountId, setBankAccountId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,13 +57,15 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
   const [allocations, setAllocations] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    setAccountsLoading(true);
     listBankAccounts(companyId)
       .then((r) => {
         const list = r.data ?? r ?? [];
         setAccounts(list);
         if (list.length > 0) setBankAccountId((prev) => prev || list[0].id);
       })
-      .catch((e) => setError(err(e)));
+      .catch((e) => setError(err(e)))
+      .finally(() => setAccountsLoading(false));
   }, [companyId]);
 
   const load = useCallback(async () => {
@@ -121,8 +125,8 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
       <div className="grid grid-cols-2 gap-3 max-w-2xl">
         <div>
           <label className="block text-xs text-gray-600 mb-1">บัญชีธนาคาร</label>
-          <ThemedSelect className={inputClass} value={bankAccountId} onChange={(e) => { setBankAccountId(e.target.value); setOpenLineId(null); }}>
-            {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.displayName} ({a.bankName})</option>)}
+          <ThemedSelect className={inputClass} value={bankAccountId} disabled={accountsLoading} onChange={(e) => { setBankAccountId(e.target.value); setOpenLineId(null); }}>
+            {accountsLoading ? <option value="">กำลังโหลด...</option> : accounts.map((a: any) => <option key={a.id} value={a.id}>{a.displayName} ({a.bankName})</option>)}
           </ThemedSelect>
         </div>
         <div className="flex items-end">
@@ -131,7 +135,7 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
       </div>
 
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">

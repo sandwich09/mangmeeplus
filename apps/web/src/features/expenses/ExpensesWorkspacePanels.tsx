@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, type MouseEventHandler, type ReactNode } from 'react';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { EmptyState } from '@/common/components/state/EmptyState';
+import { EmptyState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
 import {
   listManageCategories, createExpenseCategory, updateExpenseCategory,
@@ -57,10 +57,10 @@ function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; o
     </button>
   );
 }
-export function IconBtn({ title, tone, onClick, children }: { title: string; tone?: 'primary' | 'danger'; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
+export function IconBtn({ title, tone, disabled, onClick, children }: { title: string; tone?: 'primary' | 'danger'; disabled?: boolean; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
   return (
-    <button type="button" title={title} aria-label={title} onClick={onClick}
-      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white transition hover:bg-gray-50',
+    <button type="button" title={title} aria-label={title} disabled={disabled} onClick={onClick}
+      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40',
         tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:bg-brand-600'
           : tone === 'danger' ? 'text-error-500 hover:border-[#FECDCA]' : 'text-gray-500 hover:border-brand-200 hover:text-brand-600')}>
       {children}
@@ -81,6 +81,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [updating, setUpdating] = useState(false);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -130,9 +131,12 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
   };
 
   const runUpdate = async (id: string, body: Parameters<typeof updateExpenseCategory>[2], successMessage?: string) => {
+    if (updating) return;
+    setUpdating(true);
     setActionError(null);
     try { await updateExpenseCategory(companyId, id, body); await load(); if (successMessage) toast.success(successMessage); }
     catch (e) { setActionError(err(e)); }
+    finally { setUpdating(false); }
   };
   const saveName = async (id: string) => {
     const trimmed = editName.trim();
@@ -156,7 +160,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
         </div>
         {actionError && <div className="p-4 pb-0"><ErrorBanner message={actionError} /></div>}
         {error ? <div className="p-4"><StateBanner error={error} /></div> : loading ? (
-          <p className="p-6 text-sm text-gray-500">กำลังโหลด…</p>
+          <LoadingState label="กำลังโหลด..." />
         ) : (
           <div className="overflow-x-auto">
             <table className="mangmee-table">
@@ -171,16 +175,17 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                       <td className="font-semibold text-gray-900">
                         {editId === c.id ? (
                           <span className="flex min-w-64 items-center gap-2">
-                            <input autoFocus className="mangmee-input h-9" value={editName} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
+                            <input autoFocus className="mangmee-input h-9" value={editName} disabled={updating} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
                               onKeyDown={(e) => { if (e.key === 'Enter') void saveName(c.id); if (e.key === 'Escape') setEditId(null); }} />
-                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={!editName.trim() || editName.trim() === c.name} onClick={() => void saveName(c.id)}>บันทึก</button>
-                            <button className={cx(ghostClass, 'h-9 px-3 text-xs')} onClick={() => setEditId(null)}>ยกเลิก</button>
+                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+                            <button className={cx(ghostClass, 'h-9 px-3 text-xs')} disabled={updating} onClick={() => setEditId(null)}>ยกเลิก</button>
                           </span>
                         ) : c.name}
                       </td>
                       {showsTax && <td className="whitespace-nowrap text-xs">
                         {owned ? (
                           <ThemedSelect className={cx(inputClass, 'h-9 w-auto !text-xs')} value={c.defaultInputTaxCode ?? ''}
+                            disabled={updating}
                             onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
                             <option value="">ไม่กำหนด</option>
                             {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
@@ -188,7 +193,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                         ) : <span className="text-gray-400">{c.defaultInputTaxCode ?? '—'}</span>}
                       </td>}
                       <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
-                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
+                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updating} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
                       <td className="w-px whitespace-nowrap text-right">
                         {owned ? (
                           <span className="inline-flex items-center justify-end gap-1.5">
@@ -207,7 +212,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
       </MangmeeCard>
 
       <Modal open={showCreate} title="เพิ่มหมวดหมู่ใหม่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
-        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? 'กำลังบันทึก…' : 'เพิ่มหมวดหมู่'}</button></>}>
+        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวดหมู่'}</button></>}>
           <div className="space-y-3">
           {createError && <ErrorBanner message={createError} />}
           <label className="text-sm font-semibold text-gray-700">ชื่อหมวดหมู่ *</label>
@@ -229,8 +234,8 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
             <div className="text-base font-bold text-gray-900">เก็บถาวร “{confirmTarget.name}” ?</div>
             <p className="mt-1.5 text-sm leading-relaxed text-gray-500">หมวดหมู่ที่เก็บถาวรจะไม่แสดงให้ AI หรือผู้ใช้เลือกอีก แต่รายการเดิมที่ใช้หมวดนี้ยังอยู่ครบ · เปิดใช้ใหม่ได้ทุกเมื่อจากปุ่มสวิตช์</p>
             <div className="mt-4 flex justify-end gap-2">
-              <button className={ghostClass} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button className={dangerClass} onClick={() => { void runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>เก็บถาวร</button>
+              <button className={ghostClass} disabled={updating} onClick={() => setConfirmId(null)}>ยกเลิก</button>
+              <button className={dangerClass} disabled={updating} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังเก็บถาวร...' : 'เก็บถาวร'}</button>
             </div>
           </div>
         </div>
@@ -246,6 +251,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [label, setLabel] = useState('');
@@ -322,9 +328,12 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
   };
 
   const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
+    if (actionBusy) return;
+    setActionBusy(true);
     setActionError(null);
     try { await fn(); await load(); if (successMessage) toast.success(successMessage); }
     catch (e) { setActionError(err(e)); }
+    finally { setActionBusy(false); }
   };
 
   const pending = assets.filter((a) => a.status === 'PENDING_OWNER_APPROVAL');
@@ -351,7 +360,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                       </div>
                       {canApprove && (
                         <div className="flex gap-2">
-                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว')}>อนุมัติ</button>
+                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" disabled={actionBusy} onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว')}>{actionBusy ? 'กำลังดำเนินการ...' : 'อนุมัติ'}</button>
                           <button className="mangmee-btn mangmee-btn-danger h-9 px-3 text-xs" onClick={() => { setRejectId(a.id); setRejectReason(''); }}>ปฏิเสธ</button>
                         </div>
                       )}
@@ -362,7 +371,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                             const forbidden = findForbiddenChars(rejectReason);
                             if (forbidden.length > 0) throw new Error(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`);
                             await rejectSignatureAsset(companyId, a.id, rejectReason.trim()); setRejectId(null);
-                          }, 'ปฏิเสธลายเซ็นเรียบร้อยแล้ว')} disabled={!rejectReason.trim()}>ยืนยันปฏิเสธ</button>
+                          }, 'ปฏิเสธลายเซ็นเรียบร้อยแล้ว')} disabled={actionBusy || !rejectReason.trim()}>{actionBusy ? 'กำลังดำเนินการ...' : 'ยืนยันปฏิเสธ'}</button>
                         </div>
                       )}
                     </div>
@@ -376,7 +385,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                 <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-[9px]" style={{ background: '#F4EBFF', color: '#6941C6' }}>{ICON.signature}</span>ลายเซ็นทั้งหมด</span>
                 <button className={btnClass} onClick={() => { setActionError(null); setShowUpload(true); }}>อัปโหลดลายเซ็นใหม่</button>
               </div>
-              {loading ? <p className="p-6 text-sm text-gray-500">กำลังโหลด…</p> : (
+              {loading ? <LoadingState label="กำลังโหลด..." /> : (
                 <div className="overflow-x-auto">
                   <table className="mangmee-table">
                     <thead><tr>{['ลายเซ็น', 'สถานะ', 'ช่องทาง', 'อนุมัติเมื่อ', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'สถานะ' || h === 'ช่องทาง' || h === 'อนุมัติเมื่อ') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
@@ -388,7 +397,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                           <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.approvedAt ? dateShort(a.approvedAt) : '-'}</td>
-                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว')}>{ICON.trash}</IconBtn>}</td>
+                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" disabled={actionBusy} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว')}>{ICON.trash}</IconBtn>}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -409,7 +418,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
             <input className={cx(inputClass, 'mt-3')} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
             <div className="mt-3 flex flex-wrap gap-2">
               <button className={ghostClass} onClick={buildPreview} disabled={saving}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
-              <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังส่ง…' : derivedBlob ? 'ส่งขออนุมัติ (พร้อมไฟล์โปร่งใส)' : 'ส่งขออนุมัติ'}</button>
+              <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังส่ง...' : derivedBlob ? 'ส่งขออนุมัติ (พร้อมไฟล์โปร่งใส)' : 'ส่งขออนุมัติ'}</button>
             </div>
             {preview && (
               <div className="mt-3 grid grid-cols-2 gap-3">
@@ -632,8 +641,8 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               </ThemedSelect>
             </label>}
             {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
-            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy}>{backfillBusy ? 'กำลังตรวจ…' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
-            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting}>{exporting ? 'กำลังสร้าง…' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
+            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
+            {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting}>{exporting ? 'กำลังสร้าง...' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
           </MangmeeCard>
 
           {/* Themed confirm instead of window.confirm(): the browser dialog ignored the app theme. */}
@@ -645,7 +654,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             footer={
               <>
                 <button className={ghostClass} onClick={() => setConfirmExport(false)}>ยกเลิก</button>
-                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting}>{exporting ? 'กำลังสร้าง…' : 'ยืนยันส่งออก'}</button>
+                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting}>{exporting ? 'กำลังสร้าง...' : 'ยืนยันส่งออก'}</button>
               </>
             }
           >
@@ -661,7 +670,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             </div>
           </Modal>
 
-          {loading && !view ? <p className="text-sm text-gray-500">กำลังโหลด…</p> : view && (
+          {loading && !view ? <LoadingState label="กำลังโหลด..." /> : view && (
             <div className={cx('grid grid-cols-1 gap-4 transition-opacity 2xl:grid-cols-[220px_1fr]', loading && 'pointer-events-none opacity-50')}>
               <MangmeeCard className="space-y-1 p-3">
                 <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-gray-700"><span className="text-gray-400">{ICON.folder}</span>โฟลเดอร์ ({view.dateField === 'uploadedAt' ? 'วันที่ส่งเข้า' : 'วันที่เอกสาร'})</div>
@@ -773,7 +782,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                             {canPostLedger && r.pendingPostingSourceType ? (
                               <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId}
                                 onClick={(event) => { event.stopPropagation(); void postExpense(r.expenseId, r.pendingPostingSourceType!); }}>
-                                {postingExpenseId === r.expenseId ? 'กำลังลง…' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
+                                {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
                               </button>
                             ) : canReadLedger && r.journalEntryId ? (
                               <a className="font-semibold text-brand-700 hover:underline"
@@ -827,7 +836,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               <>
                 <button className={ghostClass} onClick={() => setBackfillPreview(null)} disabled={backfillBusy}>ยกเลิก</button>
                 <button className={btnClass} onClick={() => void confirmHistoricalBackfill()} disabled={backfillBusy || backfillPreview.eligibleCount === 0}>
-                  {backfillBusy ? 'กำลังลงบัญชี…' : `ยืนยันลงบัญชี ${Math.min(backfillPreview.eligibleCount, 50)} รายการ`}
+                  {backfillBusy ? 'กำลังลงบัญชี...' : `ยืนยันลงบัญชี ${Math.min(backfillPreview.eligibleCount, 50)} รายการ`}
                 </button>
               </>
             ) : null}

@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { CrmDuplicateWarning } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { ForbiddenState } from '@/common/components/state';
+import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { formatThaiDate } from '@/common/i18n/thai-date';
@@ -125,7 +125,7 @@ function Overview({ companyId }: { companyId: string }) {
     return () => { alive = false; };
   }, [companyId]);
 
-  if (loading) return <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <ErrorBanner message={error} />;
 
   const cards = summary ? [
@@ -252,7 +252,7 @@ function Leads({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                   <button className={btnClass} disabled={busy === duplicatePrompt.leadId} onClick={() => void convert(duplicatePrompt.leadId, warning.customerId)}>
-                    {busy === duplicatePrompt.leadId ? 'กำลังเชื่อม…' : 'ใช้ลูกค้ารายนี้'}
+                    {busy === duplicatePrompt.leadId ? 'กำลังเชื่อม...' : 'ใช้ลูกค้ารายนี้'}
                   </button>
                 </div>
               ))}
@@ -274,7 +274,7 @@ function Leads({ companyId }: { companyId: string }) {
           <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create'} onClick={create}>{t('customers.save', locale)}</button></div>
         </div>
       )}
-      {loading ? <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>
+      {loading ? <LoadingState label="กำลังโหลด..." />
         : rows.length === 0 ? <Empty text={t('customers.no_leads', locale)} />
         : (
           <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
@@ -313,6 +313,7 @@ function Pipeline({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
+  const [loadingOpportunityId, setLoadingOpportunityId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -323,7 +324,14 @@ function Pipeline({ companyId }: { companyId: string }) {
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
 
-  if (loading) return <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>;
+  const openOpportunity = async (opportunityId: string) => {
+    setLoadingOpportunityId(opportunityId);
+    try { setSelected(await getCrmOpportunity(companyId, opportunityId)); }
+    catch (e) { setError(err(e)); }
+    finally { setLoadingOpportunityId(null); }
+  };
+
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <ErrorBanner message={error} />;
   const columns = board?.columns ?? [];
 
@@ -338,13 +346,16 @@ function Pipeline({ companyId }: { companyId: string }) {
             </div>
             <div className="space-y-2">
               {col.opportunities.length === 0 ? <p className="text-xs text-gray-300">—</p>
-                : col.opportunities.map((o: any) => (
-                  <button key={o.id} onClick={async () => setSelected(await getCrmOpportunity(companyId, o.id))}
-                    className="block w-full rounded border border-gray-200 bg-white p-2 text-left text-sm hover:border-brand-300">
-                    <div className="font-medium text-gray-900">{o.title}</div>
-                    <div className="text-xs text-gray-500">{o.customerDisplayName ?? ''} · ฿{money(o.amountEstimate)}</div>
-                  </button>
-                ))}
+                : col.opportunities.map((o: any) => {
+                  const isLoading = loadingOpportunityId === o.id;
+                  return (
+                    <button key={o.id} disabled={isLoading} aria-busy={isLoading} onClick={() => void openOpportunity(o.id)}
+                      className={`block w-full rounded border border-gray-200 bg-white p-2 text-left text-sm hover:border-brand-300 ${isLoading ? 'pointer-events-none opacity-60' : ''}`}>
+                      <div className="font-medium text-gray-900">{o.title}</div>
+                      <div className="text-xs text-gray-500">{o.customerDisplayName ?? ''} · ฿{money(o.amountEstimate)}</div>
+                    </button>
+                  );
+                })}
             </div>
           </div>
         ))}
@@ -497,7 +508,7 @@ function FollowUps({ companyId }: { companyId: string }) {
           <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create' || !form.title.trim() || !form.dueAt} onClick={create}>{t('customers.save', locale)}</button></div>
         </div>
       )}
-      {loading ? <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>
+      {loading ? <LoadingState label="กำลังโหลด..." />
         : rows.length === 0 ? <Empty text={t('customers.no_followups', locale)} />
         : (
           <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">

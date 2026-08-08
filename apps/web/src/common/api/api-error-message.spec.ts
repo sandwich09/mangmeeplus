@@ -65,6 +65,17 @@ test('translates the substitute-receipt eligibility refusals', () => {
   assert.match(refusal!, /ใบรับรองแทนใบเสร็จ/);
 });
 
+test('maps substitute-receipt render limits to stable actionable Thai copy', () => {
+  const lines = apiErrorMessage(apiError('layout rejected', {
+    status: 400, code: 'substitute_receipt_too_many_lines',
+  }));
+  assert.match(lines, /สูงสุด 8 รายการ/);
+  assert.match(lines, /แยก/);
+  assert.match(translateApiError('substitute_receipt_line_description_too_long')!, /200 ตัวอักษร/);
+  assert.match(translateApiError('substitute_receipt_too_many_evidence')!, /สูงสุด 8 ไฟล์/);
+  assert.match(translateApiError('substitute_receipt_evidence_filename_too_long')!, /255 ตัวอักษร/);
+});
+
 test('unknown input passes through', () => {
   assert.equal(translateApiError('something_unmapped'), null);
   assert.equal(apiErrorMessage('not an error'), 'เกิดข้อผิดพลาด');

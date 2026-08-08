@@ -1,5 +1,4 @@
 import { ApiError } from '../models/api-error.model';
-import type { PermissionState } from '../models/permission-state.model';
 
 // Map HTTP response to ApiError
 export async function mapResponseToApiError(response: Response): Promise<ApiError> {
@@ -60,7 +59,7 @@ export function resolvePermissionState(
   requiredWritePermissions: string[],
   userPermissions: string[],
   isSignedIn: boolean,
-): PermissionState {
+) {
   if (!isSignedIn) return 'signed_out';
   if (requiredAnyPermissions.length === 0) return 'allowed';
   const canRead = requiredAnyPermissions.some((p) => userPermissions.includes(p));

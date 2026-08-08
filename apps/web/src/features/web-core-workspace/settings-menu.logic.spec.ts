@@ -3,31 +3,30 @@ import assert from 'node:assert/strict';
 import { filterSettingsMenuItems, filterSettingsSidebarItems, SETTINGS_MENU_ITEMS } from './settings-menu.logic';
 import { canAccessWorkspacePath } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES } from './web-core-workspace.constants';
+import { findRoutePermissionRule } from './route-permissions';
 
 describe('settings menu', () => {
-  it('defines the guided setup entry and existing settings cards with permission gates', () => {
+  it('defines the guided setup entry and existing settings cards on registered routes', () => {
     assert.deepEqual(
-      SETTINGS_MENU_ITEMS.map(({ title, requiredAnyPermissions }) => [title, requiredAnyPermissions]),
+      SETTINGS_MENU_ITEMS.map(({ title, href }) => [title, href]),
       [
-        ['เชื่อมต่อ LINE OA', ['crm.channel.read']],
-        ['สินค้าและบริการสำหรับ CRM', ['inventory.product.read']],
-        ['สาขา', ['company.branch.read', 'company.branch.manage']],
-        ['ตั้งค่าบัญชีและภาษี', [
-          'ledger.account.read', 'ledger.account.manage',
-          'tax.profile.read', 'tax.profile.manage', 'tax.config.read', 'tax.config.manage',
-        ]],
-        ['ตั้งค่าใบรับรองแทนใบเสร็จ', ['company.setup.manage']],
-        ['Tax Code และ Tax Profile', ['tax.profile.read', 'tax.profile.manage', 'tax.config.read', 'tax.config.manage']],
-        ['Tax Account Determination', ['tax.config.read', 'tax.config.manage', 'ledger.posting-rule.read', 'ledger.posting-rule.manage']],
-        ['ผังบัญชี Master Data', ['ledger.account.read', 'ledger.account.manage']],
+        ['เชื่อมต่อ LINE OA', '/settings/line-oa'],
+        ['สินค้าและบริการสำหรับ CRM', '/settings/crm-catalog'],
+        ['สาขา', '/settings/branches'],
+        ['ตั้งค่าบัญชีและภาษี', '/settings/accounting-tax-setup'],
+        ['ตั้งค่าใบรับรองแทนใบเสร็จ', '/settings/substitute-receipt'],
+        ['Tax Code และ Tax Profile', '/settings/tax-codes'],
+        ['Tax Account Determination', '/settings/tax-accounts'],
+        ['ผังบัญชี Master Data', '/settings/chart-of-accounts'],
       ],
     );
+    for (const item of SETTINGS_MENU_ITEMS) assert.ok(findRoutePermissionRule(item.href), item.key);
   });
 
   it('shows all seven cards to a fully permitted user', () => {
     // account-security is parked (owner decision 2026-08-05), so its card no longer counts.
     assert.equal(filterSettingsMenuItems([
-      'crm.channel.read',
+      'crm.channel.manage',
       'inventory.product.read',
       'account.password.change',
       'company.branch.read',
@@ -73,16 +72,20 @@ describe('settings menu', () => {
     }
   });
 
-  // The card gate and the route guard are two lists describing one door. They drifted once
-  // already: the card stopped offering the wizard to a read-only viewer while the route kept
-  // letting them in by URL. Every settings card that has a route guard is pinned here.
-  it('opens each settings route to exactly the permissions its card is offered on', () => {
+  it('opens each settings route to exactly the registry permissions its card uses', () => {
     const companyId = 'co-1';
     for (const item of SETTINGS_MENU_ITEMS) {
       const path = `/companies/${companyId}${item.href}`;
-      for (const permission of item.requiredAnyPermissions) {
+      const rule = findRoutePermissionRule(item.href);
+      assert.ok(rule, `${item.key}: missing route rule`);
+      assert.ok(!filterSettingsMenuItems([]).some((candidate) => candidate.key === item.key));
+      for (const permission of rule.anyOf) {
         assert.ok(
-          canAccessWorkspacePath(WORKSPACE_MODULES, [permission, 'company.settings.view'], companyId, path),
+          filterSettingsMenuItems([permission]).some((candidate) => candidate.key === item.key),
+          `${item.key}: card is hidden on ${permission}`,
+        );
+        assert.ok(
+          canAccessWorkspacePath(WORKSPACE_MODULES, [permission], companyId, path),
           `${item.key}: card is offered on ${permission} but the route refuses it`,
         );
       }
