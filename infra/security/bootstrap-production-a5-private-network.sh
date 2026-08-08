@@ -97,10 +97,10 @@ bash "$clone_sg_validator" "$tmp/clone-task-before.json" "$tmp/clone-db-before.j
 bash "$reader_sg_validator" "$tmp/reader-task-before.json" "$tmp/production-db-before.json" \
   "$reader_task_sg" "$production_db_sg" "$endpoint_sg" "$s3_prefix_list_id" preflight
 jq -e --arg clone "$clone_task_sg" --arg reader "$reader_task_sg" '
-  .SecurityGroups|length==1 and .[0].IpPermissionsEgress|length<=1
-  and all(.[0].IpPermissionsEgress[]; .IpProtocol=="-1" and [.IpRanges[].CidrIp]==["0.0.0.0/0"])
-  and ((.[0].IpPermissions==[]) or
-    ([.[0].IpPermissions[]|{protocol:.IpProtocol,from:.FromPort,to:.ToPort,
+  (.SecurityGroups|length==1) and (.SecurityGroups[0].IpPermissionsEgress|length<=1)
+  and all(.SecurityGroups[0].IpPermissionsEgress[]; .IpProtocol=="-1" and [.IpRanges[].CidrIp]==["0.0.0.0/0"])
+  and ((.SecurityGroups[0].IpPermissions==[]) or
+    ([.SecurityGroups[0].IpPermissions[]|{protocol:.IpProtocol,from:.FromPort,to:.ToPort,
       groups:([.UserIdGroupPairs[].GroupId]|sort),cidrs:(.IpRanges//[]),ipv6:(.Ipv6Ranges//[]),
       prefixes:(.PrefixListIds//[])}])==[{protocol:"tcp",from:443,to:443,
         groups:([$clone,$reader]|sort),cidrs:[],ipv6:[],prefixes:[]}])
