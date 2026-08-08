@@ -71,7 +71,16 @@ jobs:
       # Replaced by the follow-up pin commit after the reviewed implementation baseline exists.
       # All-zero intentionally makes recovery impossible between those two commits.
       RECOVERY_FIX_BASELINE_UAT: 4e47e4bf25d7cb456cc21147e149b59066cffd27
-      RECOVERY_FIX_BASELINE_PRODUCTION: 0000000000000000000000000000000000000000
+      # This is that pin commit for production. dc9081a5 is not an arbitrary "latest main": it is
+      # the first commit at which production recovery can succeed at all. Recovery has to prove the
+      # platform state from two agreeing exhaustive ListServiceDeployments reads, and the AWS CLI
+      # does not auto-paginate that call. Production api-web holds 184 service deployments against
+      # a 100-row page, so every commit before dc9081a5 fails that proof the same way the deploy
+      # did - a recovery executor below this floor cannot do its job here.
+      #
+      # Raise this floor whenever a later commit becomes required for a correct recovery. Never
+      # lower it, and never copy the UAT value: the two environments fail in different places.
+      RECOVERY_FIX_BASELINE_PRODUCTION: "dc9081a5b061ba180eb8bd61e2238d1d288e0a50"
     steps:
       - name: Require the main controller and bounded identities
         env:
