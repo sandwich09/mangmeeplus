@@ -120,7 +120,18 @@ infra/support/connect-production.sh view INC-2026-0808-01
 จะได้ `psql` บน bastion ในฐานะ `watchdog_support_ro` server บังคับ read-only —
 พิมพ์ `UPDATE` ผิดก็เขียนไม่ได้ `statement_timeout` 15 วินาที `lock_timeout` 2 วินาที
 
-**session นี้ถูกบันทึกทั้งหมด อ่านเฉพาะเท่าที่เคสต้องการ** การ `SELECT *` ทั้งตารางลูกค้า
+> ⚠️ **ยังไม่จริง ณ 2026-08-08 — session ยังไม่ถูกบันทึก** ตรวจแล้วว่า Session Manager ยังไม่มี
+> document `SSM-SessionManagerRunShell` แปลว่าใช้ค่า default ซึ่ง **ไม่ส่ง transcript ไป S3
+> หรือ CloudWatch เลย** และ RDS ยังใช้ parameter group `default.postgres18` ที่ `log_line_prefix`
+> เป็น `%t:%r:%u@%d:[%p]:` — **ไม่มี `%a`** ดังนั้น `application_name` ที่เราอุตส่าห์ใส่
+> incident/operator ลงไปจะไม่ปรากฏใน log ฝั่ง server เลย
+>
+> **ผลรวม: ตอนนี้ตอบคำถาม "ใครอ่านข้อมูลลูกค้ารายไหนเมื่อวันที่ 8" ไม่ได้**
+> จนกว่าจะทำสองข้อใน §1 ให้ครบ ให้ถือว่า T1/T2 เป็น trust-based ไม่ใช่ audited
+> (แก้ `log_line_prefix` ต้องสร้าง custom parameter group เพราะ default group แก้ไม่ได้
+> และการเปลี่ยน group ต้อง reboot ซึ่งบน Multi-AZ = failover ~1–2 นาที **วางแผนก่อน อย่าทำสด**)
+
+**session นี้ (ควรจะ) ถูกบันทึกทั้งหมด อ่านเฉพาะเท่าที่เคสต้องการ** การ `SELECT *` ทั้งตารางลูกค้า
 เพราะขี้เกียจเขียน `WHERE` จะปรากฏใน transcript ตลอดไป
 
 query ที่ใช้บ่อย:
