@@ -226,6 +226,14 @@ collect_baseline() {
     --output json | jq -cS . > "$rds_raw"
   aws elasticache describe-replication-groups --region "$region" \
     --replication-group-id "$redis_id" --output json | jq -cS . > "$redis_raw"
+  # The primary is still read, because engine identity and primaryClusterId must come from a real
+  # node. Snapshot retention must NOT: ElastiCache records it on the replication group and mirrors
+  # it onto whichever member is SnapshottingClusterId, which defaults to a replica so that the fork
+  # a backup performs never lands on the node serving traffic. Reading it from the primary
+  # therefore returns 0 for a correctly built two-node group, and the only ways to make that read
+  # non-zero are to move snapshotting onto the primary — degrading production to satisfy a check —
+  # or to run a single-node group, which M-17 forbids. Observed live on 2026-08-08:
+  # replication group 35, replica -002 35, primary -001 0.
   primary_id="$(jq -er '[.ReplicationGroups[]?.NodeGroups[]?.NodeGroupMembers[]?
     | select(.CurrentRole == "primary") | .CacheClusterId] | select(length == 1) | .[0]' "$redis_raw")"
   aws elasticache describe-cache-clusters --region "$region" --cache-cluster-id "$primary_id" \
@@ -303,7 +311,7 @@ collect_baseline() {
            engine:$cluster.Engine,atRestEncryptionEnabled:$rg.AtRestEncryptionEnabled,
            transitEncryptionEnabled:$rg.TransitEncryptionEnabled,authTokenEnabled:$rg.AuthTokenEnabled,
            automaticFailover:$rg.AutomaticFailover,nodeCount:([$rg.NodeGroups[].NodeGroupMembers[]]|length),
-           primaryClusterId:$cluster.CacheClusterId,snapshotRetentionDays:$cluster.SnapshotRetentionLimit,
+           primaryClusterId:$cluster.CacheClusterId,snapshotRetentionDays:$rg.SnapshotRetentionLimit,
            rawReplicationGroupSha256:$redisHash,rawPrimaryClusterSha256:$primaryHash},
          alerting:{topicArn:$topic,ownerAccount:$topicRaw[0].Attributes.Owner,
            topicRawSha256:$topicHash,
