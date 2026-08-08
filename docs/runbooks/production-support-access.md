@@ -59,11 +59,12 @@
       `default_transaction_read_only=on`, อ่าน `_prisma_migrations` ได้ 121 แถว,
       `CREATE TABLE` และ `DELETE FROM "AuditLog"` ถูกปฏิเสธด้วย
       `cannot execute ... in a read-only transaction`
-- [ ] ~~**DB roles**~~: `psql "$WRITER_URL" -v ON_ERROR_STOP=1 -f infra/production/bootstrap-support-roles.sql`
-      **ต้องทำหลัง deploy ครั้งแรกเท่านั้น** — สคริปต์อ้าง `_prisma_migrations` และ `AuditLog`
-      ตรง ๆ ถ้า schema ยังว่างจะหยุดที่ `relation "_prisma_migrations" does not exist`
-      (ยืนยันด้วยการทดสอบจริงบน PostgreSQL 16 เมื่อ 2026-08-08) การล้มแบบนี้ถูกต้องแล้ว
-      ทั้งไฟล์อยู่ใน transaction เดียว จึงไม่มี role ครึ่ง ๆ ค้าง
+      - คำสั่ง (idempotent — รันซ้ำได้ ใช้แก้ drift):
+        `psql "$WRITER_URL" -v ON_ERROR_STOP=1 -f infra/production/bootstrap-support-roles.sql`
+      - **ต้องทำหลัง deploy ครั้งแรกเท่านั้น** — สคริปต์อ้าง `_prisma_migrations` และ `AuditLog`
+        ตรง ๆ ถ้า schema ยังว่างจะหยุดที่ `relation "_prisma_migrations" does not exist`
+        (ยืนยันด้วยการทดสอบจริงบน PostgreSQL 16 เมื่อ 2026-08-08) การล้มแบบนี้ถูกต้องแล้ว
+        ทั้งไฟล์อยู่ใน transaction เดียว จึงไม่มี role ครึ่ง ๆ ค้าง
 - [ ] **Alarm** เมื่อมีคนเปิด SSM session บน bastion → alert topic
 - [ ] **Alarm** เมื่อมี `AuthorizeSecurityGroupIngress` บน bastion SG → alert topic
       **ข้อนี้คือสิ่งที่ปิดช่องว่างหลักของ D5 ทาง (ก)** อย่าข้าม
