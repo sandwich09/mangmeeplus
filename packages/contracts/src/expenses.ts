@@ -135,6 +135,17 @@ export type SubstituteReceiptReasonCode =
   | 'RECEIPT_MATERIALLY_INCOMPLETE'
   | 'OTHER';
 
+/**
+ * Shared certificate-layout limits. Keeping these in contracts prevents the wizard from accepting
+ * a draft that the API cannot safely turn into the authoritative SVG and its derived A4 PDF.
+ */
+export const SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS = Object.freeze({
+  maxExpenseLines: 8,
+  maxLineDescriptionLength: 200,
+  maxEvidenceAttachments: 8,
+  maxEvidenceFileNameLength: 255,
+});
+
 export const EXPENSE_SEQUENCE_KEY = 'expense.record';
 
 export const EXPENSE_STATUS_LABELS: Record<ExpenseStatus, string> = {

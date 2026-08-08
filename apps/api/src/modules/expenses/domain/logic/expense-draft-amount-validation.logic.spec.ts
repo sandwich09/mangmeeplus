@@ -1,0 +1,77 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { validateExpenseDraftAmounts, type ExpenseDraftAmountLine } from './expense-draft-amount-validation.logic';
+
+const line = (overrides: Partial<ExpenseDraftAmountLine> = {}): ExpenseDraftAmountLine => ({
+  lineNumber: 1,
+  quantity: '1',
+  unitPrice: '100',
+  discountAmount: '0',
+  ...overrides,
+});
+
+describe('create expense Decimal(18,4) boundary validation', () => {
+  it('accepts exact decimal strings, blank draft rates, and free-of-charge lines', () => {
+    assert.equal(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT',
+      lines: [line({ unitPrice: '99999999999999.99', vatRate: '  ', whtRate: null })],
+    }), null);
+    assert.equal(validateExpenseDraftAmounts({ vatMode: 'NO_VAT', lines: [line({ unitPrice: '0.0000' })] }), null);
+    assert.equal(validateExpenseDraftAmounts({ vatMode: 'NO_VAT', lines: [] }), null);
+  });
+
+  it('rejects non-decimal shapes, exponent notation, overprecision, and input overflow', () => {
+    for (const [field, value] of [
+      ['quantity', '-1'],
+      ['quantity', '0'],
+      ['quantity', '01'],
+      ['quantity', '1e3'],
+      ['unitPrice', 'NaN'],
+      ['unitPrice', '1.00001'],
+      ['unitPrice', '100000000000000'],
+      ['discountAmount', '-0.01'],
+    ] as const) {
+      const error = validateExpenseDraftAmounts({ vatMode: 'NO_VAT', lines: [line({ [field]: value })] });
+      assert.ok(error, `expected ${field}=${value} to be rejected`);
+    }
+    assert.match(validateExpenseDraftAmounts({ vatMode: 'NO_VAT', lines: {} as any }) ?? '', /must be an array/);
+    assert.match(validateExpenseDraftAmounts({ vatMode: 'NO_VAT', lines: [null] }) ?? '', /fields are required/);
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'VAT_EXCLUDED', lines: [line({ vatRate: 0.07 as any })],
+    }) ?? '', /VAT rate/);
+  });
+
+  it('rejects a line whose satang-rounded result exceeds Decimal(18,4)', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT',
+      lines: [line({ unitPrice: '99999999999999.9999' })],
+    }) ?? '', /calculated amount exceeds/);
+
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [line({ unitPrice: '99999999999999.99', vatRate: '0.07' })],
+    }) ?? '', /calculated amount exceeds/);
+  });
+
+  it('rejects aggregate header overflow even when every line fits', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT',
+      lines: [
+        line({ lineNumber: 1, unitPrice: '60000000000000' }),
+        line({ lineNumber: 2, unitPrice: '60000000000000' }),
+      ],
+    }) ?? '', /aggregate amount exceeds/);
+  });
+
+  it('rejects a discount above subtotal and rates outside the stored fractional range', () => {
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [line({ unitPrice: '10', discountAmount: '10.0001' })],
+    }) ?? '', /discount cannot exceed/);
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'VAT_EXCLUDED', lines: [line({ vatRate: '1.0001' })],
+    }) ?? '', /VAT rate/);
+    assert.match(validateExpenseDraftAmounts({
+      vatMode: 'NO_VAT', lines: [line({ whtRate: '0.00001' })],
+    }) ?? '', /WHT rate/);
+  });
+});

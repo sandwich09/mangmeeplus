@@ -140,6 +140,7 @@ export function renderSubstituteReceiptSvg(
   const tableTop = 283 + payeeLines.length * 22;
   const headerHeight = 38;
   let rowY = tableTop + headerHeight;
+  const rowBreaks: number[] = [];
   const rows = sourceLines.map((line, index) => {
     const descriptions = wrapText(line.description, 380);
     const rowNotes = index === 0 && snapshot.note ? wrapText(snapshot.note, 52) : ['-'];
@@ -152,6 +153,7 @@ export function renderSubstituteReceiptSvg(
       <text x="710" y="${contentY}" text-anchor="end">${xml(money(line.amount))}</text>
       ${multilineText(742, contentY, rowNotes, 21)}`;
     rowY += rowHeight;
+    rowBreaks.push(rowY);
     return markup;
   }).join('');
   const totalY = rowY + 24;
@@ -171,18 +173,34 @@ export function renderSubstituteReceiptSvg(
   const certificationHeight = Math.max(62, certificationLines.length * 22 + 28);
   const evidenceTitleY = certificationTop + certificationHeight + 38;
   let evidenceY = evidenceTitleY + 30;
+  const evidenceBreaks: number[] = [];
   const evidence = snapshot.evidence.length
     ? snapshot.evidence.map((item) => {
       const lines = wrapText(`• ${item.originalFileName} — ${EVIDENCE_PURPOSE_LABELS[item.purpose] ?? 'หลักฐานประกอบ'}`, 720);
       const markup = multilineText(64, evidenceY, lines, 21);
       evidenceY += lines.length * 21 + 6;
+      evidenceBreaks.push(evidenceY);
       return markup;
     }).join('')
     : multilineText(64, evidenceY, ['• ไม่มีเอกสารแนบเพิ่มเติม'], 21);
-  if (!snapshot.evidence.length) evidenceY += 27;
+  if (!snapshot.evidence.length) {
+    evidenceY += 27;
+    evidenceBreaks.push(evidenceY);
+  }
   const signaturesStart = evidenceY + 58;
   const selfSigned = approver?.userId === snapshot.payer.userId;
   const height = signaturesStart + 220 + (selfSigned ? 28 : 0);
+  // The PDF renderer maps these SVG-space positions to raster rows and prefers them over its
+  // legacy low-ink fallback. They are boundaries between logical blocks, never arbitrary text rows.
+  const pdfBreaks = [...new Set([
+    tableTop,
+    ...rowBreaks,
+    tableBottom,
+    certificationTop,
+    evidenceTitleY,
+    ...evidenceBreaks,
+    signaturesStart,
+  ])].filter((value) => value > 0 && value < height).sort((left, right) => left - right);
   const payerSignatureY = signaturesStart + 8;
   const approverSignatureY = signaturesStart + 8;
   const payerSignatureBlock = payerSignatureDataUrl
@@ -196,7 +214,7 @@ export function renderSubstituteReceiptSvg(
     : `<text x="615" y="${signaturesStart + 75}" text-anchor="middle" fill="#777">รอผู้อนุมัติลงนาม</text>`;
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_TITLE)}">
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" data-pdf-breaks="${pdfBreaks.join(',')}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_TITLE)}">
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
