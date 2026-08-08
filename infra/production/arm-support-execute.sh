@@ -34,6 +34,10 @@ usage() {
 
 region="${AWS_REGION:-ap-southeast-1}"
 secret_id="${SUPPORT_WRITER_SECRET_ID:-watchdog-bms/production/database-url}"
+# The regional Amazon RDS bundle, installed on the bastion 2026-08-08. sslmode=verify-full needs a
+# trust anchor and the OS store does not carry Amazon's RDS roots; without this psql fails with
+# "certificate verify failed" rather than falling back to something weaker.
+ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/ap-southeast-1-bundle.pem}"
 state_param="${SUPPORT_ARM_STATE_PARAM:-/watchdog-bms/production/support-rw-armed}"
 alert_topic="${SECURITY_ALERT_TOPIC_ARN:-}"
 role_name=watchdog_support_rw
@@ -47,6 +51,8 @@ aws_cmd() {
 
 command -v psql >/dev/null 2>&1 || { echo 'ERROR: psql is required' >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo 'ERROR: jq is required' >&2; exit 1; }
+# Used to split the writer URL without hand-rolling percent-decoding in shell.
+command -v python3 >/dev/null 2>&1 || { echo 'ERROR: python3 is required' >&2; exit 1; }
 
 # The URL is fetched into a variable and never echoed, never written to a file, and never placed on
 # a command line. psql reads it from the environment so it stays out of the process table.
@@ -59,12 +65,41 @@ writer_url() {
     --query SecretString --output text --region "$region"
 }
 
-# psql picks the connection URI up from PGDATABASE (libpq treats a dbname holding a URI or an
-# `=` sign as a full conninfo string). Passing it as an argument instead would both expand in the
-# caller's environment before the assignment took effect and expose the credential in the process
-# table for anyone running `ps` on the same host.
+# libpq does NOT expand a URI held in the PGDATABASE *environment variable* - only the dbname
+# *parameter* gets conninfo expansion. Verified against psql 16 on the bastion: PGDATABASE set to
+# a postgres:// URI ignores it entirely and falls back to the local socket
+# (/var/run/postgresql/.s.PGSQL.5432), while the same URI passed positionally connects. Passing it
+# positionally is still not an option here - it would expose the writer credential in the process
+# table to anyone running `ps` on the same host.
+#
+# So the URI is split into the discrete PG* variables libpq reads natively. The credential stays in
+# the environment and off every command line, which is what the original comment intended.
+export_pg_env() {
+  local assignments
+  assignments="$(DBURL="$(writer_url)" python3 -c '
+import os, shlex, urllib.parse, sys
+u = urllib.parse.urlparse(os.environ["DBURL"])
+q = urllib.parse.parse_qs(u.query)
+values = {
+    "PGHOST": u.hostname or "",
+    "PGPORT": str(u.port or 5432),
+    "PGUSER": urllib.parse.unquote(u.username or ""),
+    "PGPASSWORD": urllib.parse.unquote(u.password or ""),
+    "PGDATABASE": (u.path or "/").lstrip("/"),
+    # Never silently weaken TLS: an absent sslmode means verify-full, not "whatever connects".
+    "PGSSLMODE": q.get("sslmode", ["verify-full"])[0],
+}
+if not values["PGHOST"] or not values["PGDATABASE"] or not values["PGUSER"]:
+    sys.exit("writer URL is missing host, user or database")
+print("\n".join("export %s=%s" % (k, shlex.quote(v)) for k, v in values.items()))
+')" || { echo "ERROR: could not parse the writer database URL" >&2; return 1; }
+  eval "$assignments"
+  export PGSSLROOTCERT="$ca_bundle"
+}
+
 run_sql() {
-  PGCONNECT_TIMEOUT=10 PGDATABASE="$(writer_url)" psql -v ON_ERROR_STOP=1 -qtAX -c "$1"
+  export_pg_env || return 1
+  PGCONNECT_TIMEOUT=10 psql -v ON_ERROR_STOP=1 -qtAX -c "$1"
 }
 
 notify() {

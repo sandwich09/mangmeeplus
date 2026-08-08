@@ -31,7 +31,7 @@ region="${AWS_REGION:-ap-southeast-1}"
 bastion_name="${SUPPORT_BASTION_NAME:-watchdog-bms-ssm-bastion}"
 db_instance="${SUPPORT_DB_INSTANCE:-watchdog-bms-prod-db}"
 db_name="${SUPPORT_DB_NAME:-watchdog_bms}"
-ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/global-bundle.pem}"
+ca_bundle="${SUPPORT_RDS_CA_BUNDLE:-/opt/rds-ca/ap-southeast-1-bundle.pem}"
 arm_script="${SUPPORT_ARM_SCRIPT:-/opt/watchdog/arm-support-execute.sh}"
 
 mode="${1:-}"

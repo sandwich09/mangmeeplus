@@ -25,13 +25,23 @@
 
 ## 1. ต้องทำครบก่อนถึงจะใช้ได้ (one-time)
 
-- [ ] **Bastion**: ติดตั้ง `postgresql`, `jq`, `awscli`; วาง RDS CA bundle ที่ `/opt/rds-ca/global-bundle.pem`;
-      คัดลอก `infra/production/arm-support-execute.sh` ไป `/opt/watchdog/` (chmod 0750, เจ้าของ root)
+- [~] **Bastion**: `postgresql` (psql 16.14), `jq`, `awscli`, `python3` **มีครบแล้ว** (ตรวจ 2026-08-08);
+      RDS CA bundle **ติดตั้งแล้วที่ `/opt/rds-ca/ap-southeast-1-bundle.pem`** (regional bundle,
+      3 certs, `sha256 3c696020a3b7c6721085d182211c28024ab01873ade35dcc7eeebb89c20ee979`, mode 0644)
+      — **ไม่ใช่** `global-bundle.pem` ตามที่เขียนไว้เดิม ทั้งสองสคริปต์ default มาที่ path นี้แล้ว
+      ถ้าย้าย DB ข้าม region ต้องโหลด bundle ของ region ใหม่
+      **ยังค้าง:** คัดลอก `infra/production/arm-support-execute.sh` ไป `/opt/watchdog/` (chmod 0750, root)
 - [ ] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
 - [ ] **Bastion**: บังคับ IMDSv2, เปิด SSM Patch Manager
-- [ ] **Bastion instance profile**: `rds-db:connect` สำหรับ `watchdog_support_ro` และ `watchdog_support_rw`,
-      `rds:DescribeDBInstances`, `ssm:GetParameter`/`PutParameter`/`DeleteParameter` บน
-      `/watchdog-bms/production/support-rw-armed`, `sns:Publish` บน alert topic
+- [~] **Bastion instance profile**: `rds-db:connect` สำหรับทั้งสอง db user **ให้แล้ว 2026-08-08**
+      (statement `ConnectAsSupportDatabaseRoles` ใน inline policy
+      `watchdog-bms-bastion-read-support-secrets`, ระบุชื่อ db user ตรง ๆ ไม่มี wildcard)
+      **ยังค้าง:** `rds:DescribeDBInstances`, `ssm:GetParameter`/`PutParameter`/`DeleteParameter` บน
+      `/watchdog-bms/production/support-rw-armed`, `sns:Publish` บน alert topic — สามอย่างนี้
+      `arm-support-execute.sh` ต้องใช้ ดังนั้น **T2 EXECUTE ยังใช้ไม่ได้จนกว่าจะเพิ่มครบ** (T1 ใช้ได้แล้ว)
+      > **IAM propagation ช้ากว่าที่คิด:** หลัง `put-role-policy` การเชื่อมยังล้มด้วย
+      > `pam_authenticate failed: Permission denied` อยู่ ~9 นาที แล้วผ่านเอง อย่าเพิ่งสรุปว่า
+      > policy ผิดแล้วไปแก้อย่างอื่น — ให้ retry เป็นระยะก่อน
 - [ ] **SSM session logging** → S3 (KMS-encrypted) + CloudWatch **ตั้งก่อนใช้งานครั้งแรก**
       session ที่ไม่ถูกบันทึกคือ session ที่ตอบคำถามภายหลังไม่ได้
 - [x] **RDS**: เปิด IAM database authentication บน `watchdog-bms-prod-db` (ทำแล้วใน W1 modify-db-instance)
@@ -43,7 +53,13 @@
       - เปิด: `aws ec2 authorize-security-group-ingress --group-id <RDS_SG> --protocol tcp --port 5432 --source-group <BASTION_SG> --region ap-southeast-1`
       - ปิด (ถ้าจำเป็นจริง): `revoke-security-group-ingress` ด้วย argument เดียวกัน
 - [ ] **RDS parameter group**: ใส่ `%a` (application_name) ลง `log_line_prefix`
-- [ ] **DB roles**: `psql "$WRITER_URL" -v ON_ERROR_STOP=1 -f infra/production/bootstrap-support-roles.sql`
+- [x] **DB roles**: รันแล้ว 2026-08-08 บน production — `COMMIT` พร้อม
+      `NOTICE: support roles verified: ro(login=t, armed_rw=f)` (verification block ผ่านครบ)
+      พิสูจน์ปลายทางจริงด้วย RDS IAM token จาก bastion: `current_user=watchdog_support_ro`,
+      `default_transaction_read_only=on`, อ่าน `_prisma_migrations` ได้ 121 แถว,
+      `CREATE TABLE` และ `DELETE FROM "AuditLog"` ถูกปฏิเสธด้วย
+      `cannot execute ... in a read-only transaction`
+- [ ] ~~**DB roles**~~: `psql "$WRITER_URL" -v ON_ERROR_STOP=1 -f infra/production/bootstrap-support-roles.sql`
       **ต้องทำหลัง deploy ครั้งแรกเท่านั้น** — สคริปต์อ้าง `_prisma_migrations` และ `AuditLog`
       ตรง ๆ ถ้า schema ยังว่างจะหยุดที่ `relation "_prisma_migrations" does not exist`
       (ยืนยันด้วยการทดสอบจริงบน PostgreSQL 16 เมื่อ 2026-08-08) การล้มแบบนี้ถูกต้องแล้ว
@@ -226,3 +242,25 @@ infra/support/connect-production.sh status    # ยืนยันว่าเ�
 - [ ] ทดสอบว่า `rds_superuser` ตั้ง `pgaudit.log` ต่อ role ได้ไหม — ถ้าได้จะเป็น audit ชั้นที่สอง
       โดยไม่ระเบิดค่า CloudWatch (ตั้งระดับ parameter group จะ log ทุก query ของแอปด้วย)
 - [ ] ทบทวนความเหมาะสมของ `connection_limit` 4/2 หลังใช้จริงหนึ่งเดือน
+
+## บทเรียนจากการติดตั้งจริง (2026-08-08)
+
+**`PGDATABASE` ไม่ขยาย URI** — เดิม `arm-support-execute.sh` เขียนว่า libpq ถือว่า dbname ที่เป็น URI
+เป็น conninfo เต็ม ซึ่ง **ไม่จริงสำหรับ environment variable** ทดสอบบน psql 16 บน bastion:
+
+| วิธี | ผล |
+| --- | --- |
+| `PGDATABASE=postgres://…` | ไปที่ `/var/run/postgresql/.s.PGSQL.5432` — ไม่สนใจ URI |
+| `psql "postgres://…"` (positional) | ต่อไป host ที่ระบุจริง |
+
+เฉพาะ dbname ที่เป็น **parameter** เท่านั้นที่ได้รับการขยาย ไม่ใช่ตัวแปรสภาพแวดล้อม แต่การส่งเป็น
+argument ก็ทำให้ credential โผล่ใน process table ซึ่งเป็นสิ่งที่ดีไซน์เดิมตั้งใจเลี่ยง
+**ทางแก้:** แตก URI เป็น `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`/`PGDATABASE`/`PGSSLMODE` ด้วย
+`python3 urllib.parse` (จัดการ percent-decoding ให้ถูก) แล้ว `eval` ค่าที่ `shlex.quote` แล้ว —
+credential อยู่ใน environment ไม่แตะ command line
+
+ถ้าไม่เจอตอนนี้ จะไปเจอตอนตี 2 กลาง incident ซึ่งเป็นเวลาที่แย่ที่สุด
+
+**`sslmode=verify-full` ต้องมี trust anchor** — OS trust store ของ Amazon Linux 2023 ไม่มี Amazon RDS
+root CA จึงได้ `SSL error: certificate verify failed` **ห้ามแก้ด้วยการลด sslmode** ให้ติดตั้ง bundle
+แล้วชี้ `PGSSLROOTCERT`/`sslrootcert` มาที่ไฟล์นั้น
