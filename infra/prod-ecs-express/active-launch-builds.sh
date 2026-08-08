@@ -142,9 +142,10 @@ read_service_state() {
     --output json
 }
 read_deployment_history() {
-  "$aws_bin" ecs list-service-deployments --service "$service_arn" --max-results 100 \
+  AWS_BIN="$aws_bin" bash "$(dirname "$0")/list-service-deployments-all.sh" \
+    --service-arn "$service_arn" \
     --query '{nextToken:nextToken,serviceDeployments:serviceDeployments[].{deploymentArn:serviceDeploymentArn,createdAt:createdAt}}' \
-    --output json | jq -c '.serviceDeployments |= sort_by(.createdAt,.deploymentArn)'
+    | jq -c '.serviceDeployments |= sort_by(.createdAt,.deploymentArn)'
 }
 
 validate_exact_legacy() {

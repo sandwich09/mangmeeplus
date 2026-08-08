@@ -1010,10 +1010,9 @@ deploy_express_service() {
     expected_deployment="$(jq -r '.deploymentArn' <<< "$create_bound")"
     target_revision="$(jq -r '.targetRevisionArn' <<< "$create_bound")"
   else
-    aws_cmd ecs list-service-deployments \
-      --service "$service_arn" \
-      --max-results 100 \
-      --output json --region "$REGION" > "$before_deployments_response" || return $?
+    AWS_BIN="$AWS_BIN" AWS_REGION="$REGION" \
+      bash "$(dirname "$0")/list-service-deployments-all.sh" \
+        --service-arn "$service_arn" > "$before_deployments_response" || return $?
     if ! jq -e '.nextToken == null' "$before_deployments_response" >/dev/null; then
       echo "ERROR: recent before-deployment snapshot is paginated; refusing to prepare a non-exhaustive intent" >&2
       exit 1
