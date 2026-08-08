@@ -41,7 +41,11 @@ alarm 6 ตัว · ECR lifecycle · GitHub variables ครบ (parity check e
 สิ่งที่ยังขาดทั้งหมด (ตรวจแล้วรายตัว):
 
 - [ ] A5 private network — `bootstrap-production-a5-private-network.sh` ไม่เคยรัน
-      (SSM param `ParameterNotFound`) และ **ต้องมี NAT (~$47.55/เดือน) หรือ VPC endpoints (~$44) คืนก่อน**
+      (SSM param `ParameterNotFound`) — **ไม่ใช่ NAT**: สคริปต์สร้างเครือข่ายแบบ **endpoint-only
+      โดยออกแบบ** (PrivateLink ECR/Logs/Secrets + S3 gateway prefix list, "no CIDR egress")
+      ค่า interface endpoint ~$7.3/ตัว/AZ/เดือน ≈ **$44–58/เดือนแบบ recurring** หรือสร้างเฉพาะ
+      ช่วงทำ ceremony แล้วลบ (คิดเงินรายชั่วโมง) — runbook §7 ข้อ 6 ที่พูดถึง NAT
+      ใช้กับ private mode ของ service ทั่วไป (H-14) ไม่ใช่ A5
 - [ ] A5 IAM roles (`bootstrap-production-a5-readonly.sh`)
 - [ ] A5 DB reader + secret `a5-readonly-database-url` — **ยังไม่มีใน production** (ยืนยันจาก parity check)
 - [ ] H2A isolated-clone rehearsal run (`production-a5-clone.yml`) — ต้อง restore snapshot เข้า
