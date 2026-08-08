@@ -34,7 +34,14 @@
       `/watchdog-bms/production/support-rw-armed`, `sns:Publish` บน alert topic
 - [ ] **SSM session logging** → S3 (KMS-encrypted) + CloudWatch **ตั้งก่อนใช้งานครั้งแรก**
       session ที่ไม่ถูกบันทึกคือ session ที่ตอบคำถามภายหลังไม่ได้
-- [ ] **RDS**: เปิด IAM database authentication บน `watchdog-bms-prod-db`
+- [x] **RDS**: เปิด IAM database authentication บน `watchdog-bms-prod-db` (ทำแล้วใน W1 modify-db-instance)
+- [x] **RDS SG อนุญาต 5432 จาก bastion SG** — เปิดแล้ว 2026-08-08 ด้วย `--source-group` (SG-to-SG
+      ไม่ใช่ CIDR) นี่คือ setup ถาวรที่ตั้งใจ ไม่ใช่ workaround: bastion คือทางเข้า DB ที่ออกแบบไว้
+      สำหรับ support path ทั้งหมด (T1/T2) การป้องกันมาจากสามชั้นที่ยังอยู่ครบ — bastion ไม่มี
+      inbound port (เข้าได้ทาง SSM เท่านั้น คุมด้วย IAM), RDS ยังไม่ public, และ rule จำกัดที่
+      bastion SG เท่านั้น **ห้ามปิด** เว้นแต่จะเปลี่ยนดีไซน์ support path ทั้งชุด
+      - เปิด: `aws ec2 authorize-security-group-ingress --group-id <RDS_SG> --protocol tcp --port 5432 --source-group <BASTION_SG> --region ap-southeast-1`
+      - ปิด (ถ้าจำเป็นจริง): `revoke-security-group-ingress` ด้วย argument เดียวกัน
 - [ ] **RDS parameter group**: ใส่ `%a` (application_name) ลง `log_line_prefix`
 - [ ] **DB roles**: `psql "$WRITER_URL" -v ON_ERROR_STOP=1 -f infra/production/bootstrap-support-roles.sql`
       **ต้องทำหลัง deploy ครั้งแรกเท่านั้น** — สคริปต์อ้าง `_prisma_migrations` และ `AuditLog`
