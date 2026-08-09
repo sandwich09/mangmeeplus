@@ -135,7 +135,7 @@ alarm 6 ตัว · ECR lifecycle · GitHub variables ครบ (parity check e
 
 | รายการ | สถานะ |
 | --- | --- |
-| Retention 90 วัน + KMS + metric filter + HIGH/CRITICAL alarm ต่อ log group | เกิดอัตโนมัติตอน deploy (deploy.sh §613–640) — ตัวแปรพร้อมแล้ว ✅ |
+| Retention production 14 วัน + UAT 3 วัน + KMS + metric filter + HIGH/CRITICAL alarm ต่อ log group | AWS read-back 2026-08-09 ยืนยัน retention แล้ว: UAT 3 กลุ่ม = 3 วัน, production/legacy/support 11 กลุ่ม = 14 วัน; KMS/filter/alarm ยังต้องมีหลักฐานแยก |
 | Log-ingest alarm | มีครบ 3 log group (512 MB/ชม./ตัว) — **service ที่ 4 ต้องเพิ่มมือ** (SEARCH ใช้กับ alarm ไม่ได้) |
 | Alarm ที่ **ยังขาดและควรเพิ่มก่อน launch** | `RDS FreeStorageSpace` (มีแค่ 20 GB!), `RDS FreeableMemory`, ALB target 5xx แบบ steady-state (ตัวที่มีคือ canary rollback alarm ซึ่งเกิดเฉพาะตอน deploy) — คำสั่งใน §8.4 |
 | Logs Insights query สำหรับ incident | อยู่ใน `production-support-access.md` §2 ✅ |

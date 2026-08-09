@@ -299,7 +299,7 @@ and revokes nothing; the read-then-write is unguarded so parallel refreshes race
   the concurrent P1 session); this item verifies them and closes the durability coupling.
 - Evidence (code): the tombstone survives a hard delete of its subject; the requeue is idempotent.
 - Live closure (separate): an executed restore drill with recorded re-erasure evidence, and live
-  backup/log retention aligned to the documented 35-day/90-day windows.
+  backup/log retention aligned to the documented 35-day/14-day windows.
 
 ## 6. Out of scope
 

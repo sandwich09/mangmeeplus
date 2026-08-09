@@ -60,7 +60,10 @@
       > policy ผิดแล้วไปแก้อย่างอื่น — ให้ retry เป็นระยะก่อน
 - [x] **SSM session logging** เปิดแล้ว 2026-08-09 ผ่าน document `SSM-SessionManagerRunShell`
       → S3 `watchdog-bms-prod-…/ssm-session-logs/production` (AES256) + CloudWatch
-      `/aws/ssm/session-logs/watchdog-bms-production` (**KMS**, retention 90 วัน)
+      `/aws/ssm/session-logs/watchdog-bms-production` (**KMS**, retention 14 วัน)
+      > **สำเนาถาวรอยู่ที่ S3 ไม่ใช่ CloudWatch** — prefix `ssm-session-logs/` ไม่มี lifecycle rule
+      > จึงเก็บไม่มีกำหนด ส่วน CloudWatch 14 วันคือหน้าต่างสำหรับ**ค้นหา** ถ้าต้องสืบเหตุการณ์
+      > ที่เก่ากว่า 14 วัน ให้ไปอ่านจาก S3
       idle timeout 20 นาที, max session 4 ชม.
       พิสูจน์ด้วย session จริง: transcript ขึ้นครบทั้งสองที่ พร้อมข้อความ error ที่ถูกปฏิเสธ
       > **`cloudWatchEncryptionEnabled` ต้องเป็น `false`** — ตั้ง `true` แล้ว SSM ปฏิเสธทุก session
