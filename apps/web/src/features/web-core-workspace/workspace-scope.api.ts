@@ -13,9 +13,22 @@ export async function fetchMyCompanies(): Promise<MyCompany[]> {
 export type MyContext = {
   userId: string;
   companyId: string;
+  roles: string[];
   permissions: string[];
   scopes?: { branchIds?: string[] };
 };
+
+type AccessContext = Pick<MyContext, 'roles' | 'permissions' | 'scopes'>;
+
+export function accessContextFingerprint(context: AccessContext): string {
+  const sorted = (items: readonly string[] | undefined) => [...new Set(items ?? [])].sort();
+  return JSON.stringify({
+    roles: sorted(context.roles),
+    permissions: sorted(context.permissions),
+    // undefined means unrestricted branches; preserve it instead of collapsing it to [].
+    branchIds: context.scopes?.branchIds === undefined ? null : sorted(context.scopes.branchIds),
+  });
+}
 
 export async function fetchMyContext(companyId: string): Promise<MyContext> {
   return authedApiFetch<MyContext>('/v1/auth/me', { headers: { 'X-Company-Id': companyId } });

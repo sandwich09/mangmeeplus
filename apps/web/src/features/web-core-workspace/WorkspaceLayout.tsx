@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { WorkspaceShell } from '@/common/components/app-shell/WorkspaceShell';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
@@ -16,8 +16,10 @@ import {
   canAccessWorkspacePath,
 } from './web-core-workspace.logic';
 import { BranchFilterProvider, BranchSelector, CompanySwitcher } from './WorkspaceScope';
+import { accessContextFingerprint, fetchMyContext, type MyContext } from './workspace-scope.api';
 import { MenuFilterProvider } from './MenuFilterScope';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
+import { ACCESS_CONTEXT_STALE_EVENT } from '@/common/api/authed-fetch';
 
 type Props = {
   children: React.ReactNode;
@@ -44,12 +46,49 @@ const DESIGN_HANDOFF_NAV_ORDER = [
 ] as const;
 // Wide string keys: this map whitelists arbitrary nav-item keys, so lookups take any string.
 const DESIGN_HANDOFF_NAV_RANK = new Map<string, number>(DESIGN_HANDOFF_NAV_ORDER.map((key, index) => [key, index]));
+const ACCESS_CONTEXT_POLL_MS = 60_000;
 
 export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
   const router = useRouter();
   const companyName = session.companyId;
+  const currentAccessFingerprint = accessContextFingerprint(session);
+  const accessCheckInFlight = useRef<Promise<void> | null>(null);
+
+  const applyLatestAccessContext = useCallback((latest: MyContext) => {
+    if (accessContextFingerprint(latest) !== currentAccessFingerprint) router.refresh();
+  }, [currentAccessFingerprint, router]);
+
+  const revalidateAccessContext = useCallback(() => {
+    if (accessCheckInFlight.current) return;
+    const check = fetchMyContext(companyId)
+      .then(applyLatestAccessContext)
+      .catch((error: unknown) => {
+        // Membership/company access disappeared: let the server layout render its explicit
+        // CompanyAccessUnavailable state. Network errors retain the current usable shell.
+        if ((error as { status?: unknown })?.status === 403) router.refresh();
+      })
+      .finally(() => {
+        if (accessCheckInFlight.current === check) accessCheckInFlight.current = null;
+      });
+    accessCheckInFlight.current = check;
+  }, [applyLatestAccessContext, companyId, router]);
+
+  useEffect(() => {
+    const onFocus = () => revalidateAccessContext();
+    const onVisible = () => { if (document.visibilityState === 'visible') revalidateAccessContext(); };
+    const timer = window.setInterval(onVisible, ACCESS_CONTEXT_POLL_MS);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener(ACCESS_CONTEXT_STALE_EVENT, onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener(ACCESS_CONTEXT_STALE_EVENT, onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [revalidateAccessContext]);
 
   const filteredModules = useMemo(
     () => filterModulesByPermissions(WORKSPACE_MODULES, session.permissions),
@@ -84,7 +123,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   if (!canAccessCurrentPath) return null;
 
   return (
-    <BranchFilterProvider companyId={companyId}>
+    <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>
       <WorkspaceShell
         companyId={companyId}
         companyName={companyName}

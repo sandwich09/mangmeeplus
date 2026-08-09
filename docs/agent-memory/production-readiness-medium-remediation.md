@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01/M8-02 committed; M8-03 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-03 committed; M8-04 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -35,6 +35,10 @@ Verification:
 - M8-02 commit: `5be8d78 fix(audit): bind log queries to route company`.
 - M8-03 AuthGuard/deny-by-default tests: 25/25 pass. Central guard rejects conflicting header/route tenant selectors only
   after authentication/session validation and before context resolution; missing/invalid credentials retain 401 ordering.
+- M8-03 commit: `efe097f fix(auth): reject conflicting company selectors`.
+- M8-04 focused web tests: 26/26 pass; contracts build and web `tsc --noEmit` pass. Visible workspaces revalidate access
+  every 60 seconds, on focus/visibility return and immediately after stable permission/feature denial. Fingerprints include
+  roles, effective permissions and branch scopes; fetches are single-flight and denied mutations are never retried.
 Next:
-- Commit M8-03 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
-- M8-04: verify/fix stale permission and entitlement UI after mid-session changes.
+- Commit M8-04 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
+- M8-05: reconcile Bangkok civil-date/period-key and settlement persistence paths.

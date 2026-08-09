@@ -6,6 +6,7 @@ export type WebSession = {
   membershipId: string;
   roles: string[];
   permissions: string[];
+  scopes?: { branchIds?: string[] };
   authProvider: 'watchdog' | 'line' | 'dev';
   /** Set while a temporary password is pending: the API 403s this session out of every business route. */
   mustChangePassword: boolean;

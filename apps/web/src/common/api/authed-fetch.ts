@@ -16,6 +16,7 @@ const REFRESH_ENDPOINT = '/api/auth/refresh';
 const REFRESH_ROTATED = 204;
 const MUTATING_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
 const LEGAL_ACCEPTANCE_REQUIRED_CODE = 'legal_acceptance_required';
+export const ACCESS_CONTEXT_STALE_EVENT = 'watchdog:access-context-stale';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 export type AuthedInit = RequestInit & { suppressErrorToast?: boolean };
@@ -161,6 +162,14 @@ export async function authedApiFetch<T>(path: string, init?: AuthedInit, fetchIm
       : typeof body.message === 'string'
         ? body.message
         : null;
+    if (
+      res.status === 403
+      && (body.code === 'feature_not_enabled' || body.code === 'insufficient_permissions' || message === 'Insufficient permissions.')
+      && typeof window !== 'undefined'
+      && typeof window.dispatchEvent === 'function'
+    ) {
+      window.dispatchEvent(new Event(ACCESS_CONTEXT_STALE_EVENT));
+    }
     // The API blocks business modules until a temporary password is changed.
     if (res.status === 403 && message?.includes('Password change required') && typeof window !== 'undefined') {
       window.location.assign('/change-password');

@@ -31,7 +31,15 @@ export function useBranchFilter(): BranchFilterValue | null {
 
 const storageKey = (companyId: string) => `watchdog.branchFilter.${companyId}`;
 
-export function BranchFilterProvider({ companyId, children }: { companyId: string; children: React.ReactNode }) {
+export function BranchFilterProvider({
+  companyId,
+  onContextLoaded,
+  children,
+}: {
+  companyId: string;
+  onContextLoaded?: (context: Awaited<ReturnType<typeof fetchMyContext>>) => void;
+  children: React.ReactNode;
+}) {
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [locked, setLocked] = useState(false);
   const [branchId, setBranchIdState] = useState('');
@@ -45,6 +53,7 @@ export function BranchFilterProvider({ companyId, children }: { companyId: strin
       try {
         const [all, me] = await Promise.all([fetchActiveBranches(companyId), fetchMyContext(companyId)]);
         if (cancelled) return;
+        onContextLoaded?.(me);
         const scopeIds = me.scopes?.branchIds;
         const visible = scopeIds ? all.filter((b) => scopeIds.includes(b.id)) : all;
         setBranches(visible);
@@ -61,7 +70,7 @@ export function BranchFilterProvider({ companyId, children }: { companyId: strin
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId, onContextLoaded]);
 
   const setBranchId = useCallback(
     (id: string) => {
