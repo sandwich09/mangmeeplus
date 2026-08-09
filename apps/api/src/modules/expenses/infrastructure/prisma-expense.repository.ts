@@ -267,9 +267,13 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
 
 @Injectable()
 export class PrismaExpenseRepository {
+  // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
+  // the provider DataModelCoreModule exports, and an unannotated parameter emits nothing there,
+  // so the API fails to boot. The default only keeps the class directly constructible from the
+  // repository specs; under Nest the injected instance always wins.
   constructor(
     private readonly prisma: PrismaService,
-    private readonly documentNumbers = new PrismaDocumentSequenceRepository(prisma),
+    private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
   ) {}
 
   async recordPaymentAtomic(input: {
