@@ -59,6 +59,18 @@ export function hasToolPermissions(tool: Pick<ToolMeta, 'requiredPermissions' | 
     && (!tool.anyOfPermissions?.length || tool.anyOfPermissions.some((permission) => permissions.includes(permission)));
 }
 
+export const ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS = [
+  'accounting.document.read',
+  'accounting.document.read_related',
+  'accounting.quotation.read',
+  'accounting.invoice.read',
+  'accounting.billing_note.read',
+  'accounting.receipt.read',
+  'accounting.tax_invoice.read',
+  'accounting.credit_note.read',
+  'accounting.debit_note.read',
+] as const;
+
 /** Registry of allowlisted read tools for LINE item 07. */
 export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   {
@@ -415,7 +427,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['accounting_document'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
-    requiredPermissions: ['accounting.document.read'],
+    requiredPermissions: [],
+    anyOfPermissions: [...ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS],
     sourceModule: 'accounting-documents',
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: true,
@@ -428,7 +441,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['accounting_document'],
     questionKinds: ['list'],
     category: 'read_summary',
-    requiredPermissions: ['accounting.document.read'],
+    requiredPermissions: [],
+    anyOfPermissions: [...ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS],
     sourceModule: 'accounting-documents',
     supportedAgents: ['accounting', 'general'],
     sensitiveAudit: false,
@@ -441,7 +455,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['accounting_document'],
     questionKinds: ['detail'],
     category: 'read_detail',
-    requiredPermissions: ['accounting.document.read'],
+    requiredPermissions: [],
+    anyOfPermissions: [...ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS],
     sourceModule: 'accounting-documents',
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,
@@ -454,7 +469,8 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     businessSubjects: ['accounting_document', 'payment'],
     questionKinds: ['summary', 'breakdown'],
     category: 'read_summary',
-    requiredPermissions: ['accounting.document.read'],
+    requiredPermissions: [],
+    anyOfPermissions: [...ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS],
     sourceModule: 'accounting-documents',
     supportedAgents: ['accounting', 'cfo', 'general'],
     sensitiveAudit: true,

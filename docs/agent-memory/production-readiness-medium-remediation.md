@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-07 committed; M8-08 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-08 committed; M8-09 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -14,6 +14,9 @@ Decisions:
 - `production-readiness-audit-2026-08-09.md` and `production-readiness-usecase-audit-2026-08-09.md` remain untracked and
   out of all commits.
 - CR-3 owner decision remains: accounting UI hidden, ledger core/background posting active.
+- Owner decision 2026-08-09: authenticated company members related as creator/requester, assignee/handler, approver,
+  payer/payee/payment actor, issuer/void actor, or through linked documents may view the tenant/branch-scoped record chain.
+  Relationship is view-only; every mutation still requires action permission/role plus the current state.
 Open questions:
 - None blocking M8-01. Findings that require a product policy decision will be marked `DECISION_REQUIRED` rather than guessed.
 Artifacts:
@@ -62,7 +65,27 @@ Verification:
   the related partial-update window where lines could persist even though the header write failed.
 - API `tsc --noEmit` still reaches only the established 14 unrelated errors in substitute-receipt/report specs; no M8-08
   file error.
-- Concurrent unrelated LINE media work appeared in two source files plus its memory while M8-07 ran; it remains unstaged.
+- M8-08 commit: `995fae5 fix(expenses): prevent stale draft overwrites`.
+- M8-09 was reclassified: draft void already existed and user-route hard delete is intentionally forbidden by the source
+  spec. The missing PATCH/UI now edits DRAFT only with branch/permission/money/tax validation, `updatedAt` CAS, and one
+  transaction for header, replacement lines, and tax snapshots; issue/update/void share a lifecycle lock.
+- M8-09 related access gap fixed: type-specific accounting permissions now pass controller, use-case, navigation, and access
+  matrix gates; list queries are narrowed to readable document types instead of granting generic document visibility.
+- M8-09 owner relation policy implemented across web/API/LINE AI: all company roles receive the view-only
+  `accounting.document.read_related` path, but entitlement filtering removes it when `sales_documents` is off. The source
+  graph follows actor, source/conversion and payment-allocation links to cycle-safe closure with tenant/branch filtering;
+  mutation permission and state checks are unchanged. Existing custom roles receive an additive universal backfill.
+- M8-09 related gaps fixed during use-case play: the first graph pass stopped at ten links and did not connect sibling
+  documents allocated to one payment; traversal now reaches finite closure through both paths and source/conversion indexes
+  keep child-link queries indexed. LINE/AI registry and preview gates now honor any-of relation/type reads, then repeat ABAC
+  in the source use case. The draft editor now carries hidden product/SKU/unit/category line metadata through full replacement,
+  and submit/convert/correction controls require the exact action and target-document permission instead of state/generic
+  permission alone.
+- M8-09 verification: focused API/accounting/auth/access/AI 179/179, LINE/AI API 202/202, AI Gateway 93/93, focused web
+  86/86 and full web 863/863 pass. Prisma schema validate, contracts build, AI Gateway/web typechecks pass. API typecheck
+  has no M8-09 error and still reports only the established 14 errors in substitute-receipt/report specs.
+- Concurrent unrelated work continues in the shared worktree and remains outside M8-09 staging.
 Next:
-- Commit M8-08 only; keep the untracked QA consolidation and unrelated LINE media work out.
-- M8-09: verify and implement the required draft edit/delete/void lifecycle for revenue documents.
+- Commit M8-09 only; keep the untracked QA consolidation and concurrent onboarding work out.
+- M8-09B (new finding): make quotation conversion target-create + source-close atomic/CAS/idempotent under the shared lifecycle lock.
+- Then M8-10: repair expense partial-payment accumulation, history and posting lifecycle.

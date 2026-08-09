@@ -1766,6 +1766,8 @@ model AccountingDocument {
   @@index([companyId, documentType, status])
   @@index([companyId, branchId, documentDate])
   @@index([companyId, counterpartyId])
+  @@index([companyId, sourceDocumentId])
+  @@index([companyId, convertedFromDocumentId])
   @@index([companyId, paymentStatus])
   @@index([companyId, postingStatus])
   @@index([companyId, outputTaxCode, status])

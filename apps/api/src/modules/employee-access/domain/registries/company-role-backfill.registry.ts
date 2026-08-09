@@ -33,6 +33,13 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'not a new capability. Universal because pack.core.basics grants it to everyone.',
   },
   {
+    key: 'accounting.document.read_related',
+    anchor: null,
+    why: 'Related-record visibility is a universal, view-only ABAC path. The sales_documents '
+      + 'entitlement still strips this key when the feature is off, and the accounting source '
+      + 'returns nothing unless the caller is persisted as an actor in the tenant/branch graph.',
+  },
+  {
     key: 'expense.evidence.read',
     anchor: 'expense.read',
     why: 'หลักฐานทางบัญชี moved off expense.read onto its own key. Without this the evidence menu '

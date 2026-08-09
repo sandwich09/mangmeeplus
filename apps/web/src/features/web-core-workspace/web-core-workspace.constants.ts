@@ -191,7 +191,10 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     iconKey: 'DollarLineIcon',
     navGroup: 'finance',
     // Only sales_documents-owned permissions belong here; ledger access must not leak this menu.
-    requiredAnyPermissions: ['accounting.document.read', 'accounting.invoice.read'],
+    requiredAnyPermissions: [
+      'accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
+      'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read',
+    ],
     status: 'planned',
     statusReasonKey: 'module.status.planned',
     deepLinkTargets: ['invoice'],
@@ -202,7 +205,10 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/sales-documents`,
     iconKey: 'DocsIcon',
     navGroup: 'operate',
-    requiredAnyPermissions: ['accounting.document.read'],
+    requiredAnyPermissions: [
+      'accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
+      'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read',
+    ],
     status: 'planned',
     deepLinkTargets: ['invoice'],
   },

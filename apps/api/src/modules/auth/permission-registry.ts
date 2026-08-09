@@ -102,6 +102,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'accounting.counterparty.read',        description: 'Read accounting counterparties',         riskLevel: 'LOW' },
   { key: 'accounting.counterparty.manage',      description: 'Create/update accounting counterparties', riskLevel: 'MEDIUM' },
   { key: 'accounting.document.read',            description: 'Read accounting documents',              riskLevel: 'LOW' },
+  { key: 'accounting.document.read_related',    description: 'Read related accounting document chains', riskLevel: 'LOW' },
   { key: 'accounting.document.create',          description: 'Create accounting documents',            riskLevel: 'MEDIUM' },
   { key: 'accounting.document.update',          description: 'Update draft accounting documents',      riskLevel: 'MEDIUM' },
   { key: 'accounting.document.issue',           description: 'Issue accounting documents',             riskLevel: 'HIGH' },
@@ -491,6 +492,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ADMIN: [
     'account.session.read',
     'account.password.change',
+    'accounting.document.read_related',
     'account.identity.link',
     'account.identity.unlink',
     'company.setup.read',
@@ -642,7 +644,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'accounting.counterparty.read', 'accounting.quotation.read', 'accounting.quotation.create',
+    'accounting.counterparty.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.quotation.create',
     'accounting.quotation.update', 'accounting.quotation.submit_approval', 'accounting.quotation.issue',
     'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.payment.read',
     'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
@@ -672,6 +674,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   INVENTORY: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read',
     'inventory.movement.create', 'inventory.movement.adjust', 'inventory.stock_count.create',
@@ -820,6 +823,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   MARKETING: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
@@ -835,6 +839,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   STAFF: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
     'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',

@@ -46,7 +46,7 @@ import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.l
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import type { BusinessDocumentClassification, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -338,10 +338,9 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
 
 function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[]): boolean {
   if (!toolNames || toolNames.length === 0) return true;
-  const permissionSet = new Set(permissions);
   return toolNames.every((toolName) => {
     const meta = LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName);
-    return !!meta && meta.requiredPermissions.every((permission) => permissionSet.has(permission));
+    return !!meta && hasToolPermissions(meta, permissions);
   });
 }
 

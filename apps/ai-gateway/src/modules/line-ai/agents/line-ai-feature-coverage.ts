@@ -97,7 +97,7 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   {
     id: 'accounting_documents', feature: 'Accounting document summaries and recent documents', status: 'covered',
     questionKinds: ['summary', 'list'], tools: tools('accounting.get_summary', 'accounting.list_recent_documents'),
-    requiredPermissions: ['accounting.document.read'], sourceModule: 'accounting-documents', navigationMenuIds: ['salesdoc'],
+    requiredPermissions: ['accounting.document.read', 'accounting.document.read_related'], sourceModule: 'accounting-documents', navigationMenuIds: ['salesdoc'],
   },
   {
     id: 'procurement_ap', feature: 'Accounts payable outstanding', status: 'covered', questionKinds: ['summary', 'report'],
@@ -152,7 +152,7 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
   { id: 'crm_booking', feature: 'CRM bookings', status: 'covered', questionKinds: ['summary', 'list', 'detail'], tools: tools('crm.get_booking_summary', 'crm.list_bookings'), requiredPermissions: ['crm.booking.read'], sourceModule: 'crm', navigationMenuIds: ['booking'] },
   { id: 'crm_reports', feature: 'CRM reports, pipeline, and follow-ups', status: 'covered', questionKinds: ['summary', 'list', 'report'], tools: tools('crm.get_report_summary', 'crm.get_pipeline_summary', 'crm.list_open_followups'), requiredPermissions: ['crm.report.read', 'crm.opportunity.read', 'crm.follow_up.read'], sourceModule: 'crm/crm-inbox', navigationMenuIds: ['crmreport'] },
   { id: 'inventory_product_detail', feature: 'Inventory product detail', status: 'covered', questionKinds: ['detail'], tools: tools('inventory.get_product_detail'), requiredPermissions: ['inventory.product.read'], sourceModule: 'inventory' },
-  { id: 'accounting_document_detail', feature: 'Accounting document detail and receivables', status: 'covered', questionKinds: ['detail', 'summary'], tools: tools('accounting.get_document_detail', 'accounting.get_receivable_summary'), requiredPermissions: ['accounting.document.read'], sourceModule: 'accounting-documents' },
+  { id: 'accounting_document_detail', feature: 'Accounting document detail and receivables', status: 'covered', questionKinds: ['detail', 'summary'], tools: tools('accounting.get_document_detail', 'accounting.get_receivable_summary'), requiredPermissions: ['accounting.document.read', 'accounting.document.read_related'], sourceModule: 'accounting-documents' },
   { id: 'expense_detail', feature: 'Expense detail', status: 'covered', questionKinds: ['detail'], tools: tools('expense.get_detail'), requiredPermissions: ['expense.read', 'expense.review', 'expense.read_own'], sourceModule: 'expenses' },
   { id: 'reimbursement_detail', feature: 'Reimbursement summary and detail', status: 'covered', questionKinds: ['summary', 'detail'], tools: tools('reimbursement.get_summary', 'reimbursement.get_detail'), requiredPermissions: ['reimbursement.read', 'reimbursement.read_own'], sourceModule: 'reimbursements' },
   { id: 'procurement_operations', feature: 'Suppliers and purchase orders', status: 'covered', questionKinds: ['summary', 'search', 'detail'], tools: tools('procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'), requiredPermissions: ['procurement.supplier.read', 'procurement.purchase_order.read'], sourceModule: 'procurement' },

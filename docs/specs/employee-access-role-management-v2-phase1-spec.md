@@ -252,7 +252,7 @@ Curated bundles over the existing `permission-registry.ts` keys plus the explici
 
 | Pack key | ไทย | English | Risk | Entitlement | Permission keys |
 |---|---|---|---|---|---|
-| `pack.core.basics` | พื้นฐาน (ทุกคน) | Core basics | MEDIUM | — | account.session.read, account.password.change, account.identity.link, account.identity.unlink, notification.read, notification.preference.manage, dashboard.read, attachment.read, company.branch.read, ai.tool.invoke, line.ai.query |
+| `pack.core.basics` | พื้นฐาน (ทุกคน) | Core basics | MEDIUM | — | account.session.read, account.password.change, account.identity.link, account.identity.unlink, notification.read, notification.preference.manage, dashboard.read, attachment.read, company.branch.read, ai.tool.invoke, line.ai.query, accounting.document.read_related (ยังถูก gate ด้วย sales_documents) |
 | `pack.workflow.tasks` | งานที่ได้รับมอบหมาย | My tasks | MEDIUM | workflow | workflow.task.read, workflow.task.work |
 
 ### Company setup & administration
@@ -368,6 +368,10 @@ Feature Entitlement Decoupling Spec v5 supersedes only the 50 ทวิ portion 
 ## Appendix B — Job Preset (RoleTemplate) definitions
 
 Every preset auto-includes `pack.core.basics` + `pack.workflow.tasks`. Presets compile to company custom roles (never system roles). `crosscutting` presets map closely to existing seeded roles for consistency; niche presets are finer-grained combos that no system role provides today.
+
+`accounting.document.read_related` is carried by the core pack so every related member can reach source-owned record ABAC.
+It is an explicit exception to the core pack's always-on label: the runtime prefix gate removes it unless
+`sales_documents` is enabled, and the accounting source returns only records linked to that caller inside tenant/branch scope.
 
 ### Cross-cutting
 

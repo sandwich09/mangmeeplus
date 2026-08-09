@@ -133,6 +133,16 @@ describe('permission-registry', () => {
     assert.equal([...ownerGrants].some((perm) => perm.startsWith('system.')), false);
   });
 
+  it('lets every company role reach accounting relation ABAC without widening document reads', () => {
+    for (const role of SYSTEM_ROLES.map((entry) => entry.key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      const grants = ROLE_GRANTS[role] ?? [];
+      assert.ok(
+        grants.includes('accounting.document.read') || grants.includes('accounting.document.read_related'),
+        `${role} must have broad or relation-scoped accounting document view`,
+      );
+    }
+  });
+
   it('keeps financial role assignment approval OWNER-only', () => {
     assert.ok(ROLE_GRANTS.OWNER.includes('access.role.financial.assign'));
     assert.equal(ROLE_GRANTS.ADMIN.includes('access.role.financial.assign'), false);

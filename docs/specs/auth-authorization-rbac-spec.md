@@ -340,6 +340,22 @@ These are standing product rules, not implementation accidents. When someone ask
    and the payer are always different hands; the per-user self-approval guard
    applies on top.
 
+### 8.3 Related-record visibility (owner decision 2026-08-09)
+
+1. A company member who is related to a business record may view that record and its linked document chain. Relationship
+   includes creator/requester, current assignee/handler, approver, payer/payee or payment actor, issuer/void actor, and the
+   same actors reached through source, conversion, allocation, evidence, or parent/child links.
+2. Relationship is an additive **view-only ABAC path**. It never grants update, approve, issue, pay, void, delete, export,
+   or another final mutation. Every mutation still requires its action permission/role and the current state transition.
+3. Tenant, active membership, feature entitlement, branch scope, and sensitive-field redaction remain mandatory. A linked
+   record outside the caller's tenant or branch scope is not made visible by the relationship graph.
+4. Collection APIs include only broadly readable records plus related records. A related-read permission such as
+   `accounting.document.read_related`, `expense.read_own`, or `reimbursement.read_own` is the feature-entitlement gate;
+   relation checks are repeated by the source module and are not delegated to UI or AI Gateway.
+5. Relationship follows persisted links transitively in both directions until the finite graph reaches closure. Traversal
+   is cycle-safe and reapplies tenant/branch scope when every candidate id becomes a record; an action actor does not become
+   authorized merely because they know an id.
+
 ## 9. Authorization Pipeline
 
 Every protected request follows this order:

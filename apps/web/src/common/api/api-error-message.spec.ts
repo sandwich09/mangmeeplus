@@ -135,6 +135,16 @@ test('maps an expense draft edit race to a reload-and-review instruction', () =>
   );
 });
 
+test('maps an accounting document edit/issue race to a reload-and-review instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Document changed after it was loaded.', {
+      status: 409,
+      code: 'accounting_document_changed',
+    })),
+    'เอกสารถูกแก้ไขหรือเปลี่ยนสถานะโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงทำรายการอีกครั้ง',
+  );
+});
+
 test('maps the entitlement command conflicts and cascade preview', () => {
   assert.match(translateApiError('entitlement_set_version_conflict')!, /เปิดใหม่/);
   assert.match(translateApiError('entitlement_command_conflict')!, /ข้อมูลอื่น/);

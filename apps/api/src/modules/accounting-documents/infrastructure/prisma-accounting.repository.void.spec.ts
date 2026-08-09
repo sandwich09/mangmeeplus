@@ -93,6 +93,7 @@ function fakeClient(seed: {
 
 function makeClient(seed: Parameters<typeof fakeClient>[0]) {
   const c: any = fakeClient(seed);
+  c.$executeRaw = async () => 0;
   c.$transaction = async (fn: any) => fn(c);
   return c;
 }

@@ -61,6 +61,7 @@ function harness(options: { lockedTax?: boolean; failIssueUpdate?: boolean; outp
     $transaction: async (work: (tx: any) => Promise<unknown>) => {
       const draft = structuredClone(state);
       const tx = {
+        $executeRaw: async () => 0,
         accountingDocument: {
           findFirst: async ({ where }: any) => where.id === draft.document.id && where.companyId === draft.document.companyId ? draft.document : null,
           findFirstOrThrow: async () => draft.document,

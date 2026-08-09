@@ -44,6 +44,17 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
     }
   });
 
+  it('accounting tools admit relation-scoped reads but never permissionless calls', () => {
+    for (const name of [
+      'accounting.get_summary', 'accounting.list_recent_documents',
+      'accounting.get_document_detail', 'accounting.get_receivable_summary',
+    ]) {
+      const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === name)!;
+      assert.equal(hasToolPermissions(tool, ['accounting.document.read_related']), true, name);
+      assert.equal(hasToolPermissions(tool, []), false, name);
+    }
+  });
+
   it('tranche-A registry inputs and subjects match the API adapters', () => {
     const expected: Record<string, { subjects: string[]; required?: string[] }> = {
       'inventory.get_product_detail': { subjects: ['product'], required: ['productId'] },

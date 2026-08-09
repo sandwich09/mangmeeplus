@@ -80,7 +80,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     iconKey: 'DocsIcon',
     parentFeatureKey: 'sales_documents',
     entitlementKeys: ['sales_documents'],
-    gatePermissions: ['accounting.document.read'],
+    gatePermissions: ['accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read'],
     status: 'planned',
   },
   {
@@ -210,7 +210,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     iconKey: 'DollarLineIcon',
     parentFeatureKey: 'sales_documents',
     entitlementKeys: ['sales_documents'],
-    gatePermissions: ['accounting.document.read', 'accounting.invoice.read'],
+    gatePermissions: ['accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read'],
     status: 'planned',
   },
   {

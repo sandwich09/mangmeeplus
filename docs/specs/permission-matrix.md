@@ -156,6 +156,7 @@ Use these keys for Accounting Documents MVP:
 accounting.counterparty.read
 accounting.counterparty.manage
 accounting.document.read
+accounting.document.read_related
 accounting.document.create
 accounting.document.update
 accounting.document.issue
@@ -203,6 +204,7 @@ accounting.document.export
 Default grants:
 
 ```text
+ALL company roles: accounting.document.read_related; this is view-only, sales_documents-entitlement-gated, and returns only tenant/branch-scoped related records
 OWNER: all accounting document permissions
 ADMIN: accounting.counterparty.read, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.tax_invoice.read, accounting.credit_note.read, accounting.debit_note.read, accounting.payment.read
 SALES: accounting.counterparty.read, accounting.quotation.read, accounting.quotation.create, accounting.quotation.update, accounting.quotation.submit_approval, accounting.quotation.issue after approval, accounting.invoice.read where own/assigned, accounting.billing_note.read where own/assigned, accounting.receipt.read where own/assigned, accounting.payment.read where own/assigned

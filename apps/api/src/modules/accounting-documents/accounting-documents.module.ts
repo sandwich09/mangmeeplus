@@ -11,6 +11,7 @@ import {
 import { EnsureCustomerCounterpartyUseCase } from './application/use-cases/ensure-customer-counterparty.use-case';
 import {
   CreateDocumentUseCase,
+  UpdateDocumentUseCase,
   GetDocumentUseCase,
   ListDocumentsUseCase,
   IssueDocumentUseCase,
@@ -50,6 +51,7 @@ import { TaxModule } from '../tax/tax.module';
     EnsureCustomerCounterpartyUseCase,
     // Document
     CreateDocumentUseCase,
+    UpdateDocumentUseCase,
     GetDocumentUseCase,
     ListDocumentsUseCase,
     IssueDocumentUseCase,

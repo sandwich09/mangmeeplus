@@ -5,7 +5,7 @@
  * Period-scoped tools default to the current month (owner decision 2026-07-03).
  */
 import { Injectable } from '@nestjs/common';
-import type { ToolResult, SourceRef } from '@watchdog-bms/contracts';
+import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
@@ -45,7 +45,7 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('accounting.document.read')) {
+    if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
@@ -86,7 +86,7 @@ export class AccountingListRecentDocumentsTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; documentType?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('accounting.document.read')) {
+    if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);

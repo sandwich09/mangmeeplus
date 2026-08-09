@@ -65,6 +65,26 @@ export async function createDocument(
   return apiFetch(`/v1/companies/${companyId}/accounting/documents`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+export async function updateDocument(
+  companyId: string,
+  documentId: string,
+  body: {
+    expectedUpdatedAt: string;
+    branchId?: string | null;
+    documentDate?: string;
+    dueDate?: string | null;
+    counterpartyId?: string | null;
+    currency?: string;
+    vatMode?: AccountingVatMode;
+    outputTaxCode?: AccountingOutputTaxCode | null;
+    note?: string | null;
+    internalMemo?: string | null;
+    lines?: Array<{ lineNumber: number; productId?: string; skuSnapshot?: string; description: string; unitName?: string; quantity: string; unitPrice: string; discountAmount?: string; vatRate?: string; whtRate?: string; taxCategory?: string; revenueCategory?: string; taxCodeDefinitionId?: string; externalTaxCode?: string; transactionContext?: TransactionTaxContext }>;
+  },
+): Promise<DocumentDetail> {
+  return apiFetch(`/v1/companies/${companyId}/accounting/documents/${documentId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
 export async function issueDocument(companyId: string, documentId: string): Promise<DocumentDetail> {
   return apiFetch(`/v1/companies/${companyId}/accounting/documents/${documentId}/issue`, { method: 'POST', body: '{}' });
 }

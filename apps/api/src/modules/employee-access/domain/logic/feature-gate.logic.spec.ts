@@ -95,6 +95,17 @@ describe('filterPermissionsByEntitlement', () => {
     assert.deepEqual(result, ['expense.read', 'crm.customer.read']);
   });
 
+  it('keeps universal related-record view gated by sales documents', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['accounting.document.read_related'], entitledWithChildren('expenses')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['accounting.document.read_related'], entitledWithChildren('sales_documents')),
+      ['accounting.document.read_related'],
+    );
+  });
+
   it('does not retain a child permission when only the child entitlement is enabled', () => {
     assert.deepEqual(
       filterPermissionsByEntitlement(['expense.evidence.read'], new Set(['expenses.evidence'])),
