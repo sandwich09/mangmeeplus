@@ -6,9 +6,13 @@
       "Effect": "Allow",
       "Action": "ssm:StartSession",
       "Resource": [
-        "arn:aws:ec2:ap-southeast-1:<ACCOUNT_ID>:instance/i-0f3b3881690dcf874",
-        "arn:aws:ssm:ap-southeast-1::document/SSM-SessionManagerRunShell"
-      ]
+        "arn:aws:ec2:ap-southeast-1:<ACCOUNT_ID>:instance/<BASTION_INSTANCE_ID>",
+        "arn:aws:ssm:ap-southeast-1::document/AWS-StartInteractiveCommand",
+        "arn:aws:ssm:ap-southeast-1::document/AWS-StartPortForwardingSessionToRemoteHost"
+      ],
+      "Condition": {
+        "BoolIfExists": { "ssm:SessionDocumentAccessCheck": "true" }
+      }
     },
     {
       "Sid": "ManageOwnSessions",
@@ -25,7 +29,8 @@
       "Action": [
         "ec2:DescribeInstances",
         "ssm:DescribeSessions",
-        "ssm:DescribeInstanceInformation"
+        "ssm:DescribeInstanceInformation",
+        "rds:DescribeDBInstances"
       ],
       "Resource": "*",
       "Condition": {
@@ -33,10 +38,44 @@
       }
     },
     {
+      "Sid": "ReadArmStateBeforeExecute",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/support-rw-armed"
+    },
+    {
+      "Sid": "ReadUatSupportPasswordsOnly",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/uat/support-ro-password-*",
+        "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/uat/support-rw-password-*"
+      ]
+    },
+    {
       "Sid": "StartStoppedBastion",
       "Effect": "Allow",
       "Action": "ec2:StartInstances",
-      "Resource": "arn:aws:ec2:ap-southeast-1:<ACCOUNT_ID>:instance/i-0f3b3881690dcf874"
+      "Resource": "arn:aws:ec2:ap-southeast-1:<ACCOUNT_ID>:instance/<BASTION_INSTANCE_ID>"
+    },
+    {
+      "Sid": "NeverReachProductionDataDirectly",
+      "Effect": "Deny",
+      "Action": [
+        "rds-db:connect",
+        "rds:GenerateDBAuthToken"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "NeverReadProductionSecrets",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"
     }
   ]
 }

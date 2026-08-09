@@ -98,8 +98,8 @@ case "$mode" in
     # application_name lands inside a libpq conninfo string built by concatenation. IAM allows
     # `+=,.@-` in names, and an `=` or a space would end the application_name token and start a new
     # keyword - so the identity is reduced to characters that cannot do that before it is embedded.
-    operator="$(aws_cmd sts get-caller-identity --query Arn --output text --region "$region" \
-      | sed 's#.*/##' | tr -cd 'A-Za-z0-9._-' | cut -c1-32)"
+    caller_arn="$(aws_cmd sts get-caller-identity --query Arn --output text --region "$region")"
+    operator="$(printf '%s' "$caller_arn" | sed 's#.*/##' | tr -cd 'A-Za-z0-9._-' | cut -c1-32)"
 
     if [ "$mode" = view ]; then
       db_user=watchdog_support_ro
@@ -151,6 +151,31 @@ EOF
       if [ "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \> "$disarm_by" ]; then
         echo "ERROR: the arm window for ${armed_incident:-unknown} expired at ${disarm_by}." >&2
         echo "       Disarm, then arm again with a fresh approval - never extend one silently." >&2
+        exit 1
+      fi
+      # Two people, enforced rather than assumed. The design separates arm from execute by IAM
+      # permission, which stops working the moment one person holds both - and with a two-person
+      # team that is the normal case, not the exception. The arm script already records who armed;
+      # this is the check that makes the record mean something.
+      #
+      # Compared on the full caller ARN rather than the shortened display name, so two different
+      # people whose session names happen to match are not mistaken for one.
+      #
+      # What this does not do, stated rather than implied: one person holding two principals - an
+      # IAM user and an assumed role - can arm as one and execute as the other. Closing that needs
+      # an identity mapping this script does not have. It stops the accident and the shortcut; it
+      # does not stop someone who decides to work around it, and the audit trail is what covers
+      # that case, since both ARNs are recorded.
+      armed_operator="$(jq -r '.operator // empty' <<< "$arm_state")"
+      if [ -z "$armed_operator" ]; then
+        echo "ERROR: the arm state carries no operator; it was not written by arm-support-execute.sh." >&2
+        echo "       Disarm and arm again rather than trusting it." >&2
+        exit 1
+      fi
+      if [ "$armed_operator" = "$caller_arn" ]; then
+        echo "ERROR: ${caller_arn} armed this window and cannot also execute it." >&2
+        echo "       T2 needs a second person: someone else runs" >&2
+        echo "         connect-production.sh arm ${incident}" >&2
         exit 1
       fi
       # An arm is approved for one incident. Reusing someone else's open window is how a narrow
