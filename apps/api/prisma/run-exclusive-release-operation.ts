@@ -1746,9 +1746,8 @@ export async function revalidateCurrentApiBuild(
       ? await ecsJsonRequest(region, 'DescribeServiceDeployments', {
         serviceDeploymentArns: [current],
       }, credentials)
-      : await ecsJsonRequest(region, 'ListServiceDeployments', {
+      : await listAllServiceDeployments(region, {
         service: serviceArn,
-        maxResults: 100,
       }, credentials);
     return validateCurrentApiBuildState(service, deployment, serviceArn, expectedBuildReleaseId);
   };
@@ -2238,9 +2237,8 @@ export async function recoverOrphanReleaseMutationIntent(
       ecsJsonRequest(input.region, 'DescribeServiceDeployments', {
         serviceDeploymentArns: [input.evidence.deploymentArn],
       }, credentials),
-      ecsJsonRequest(input.region, 'ListServiceDeployments', {
+      listAllServiceDeployments(input.region, {
         service: input.evidence.serviceArn,
-        maxResults: 100,
       }, credentials),
       ecsJsonRequest(input.region, 'DescribeExpressGatewayService', {
         serviceArn: input.evidence.serviceArn,
@@ -2432,12 +2430,11 @@ export async function recoverRemoteReleaseMutationIntent(
     read = async () => {
       let deployments: Record<string, unknown>;
       try {
-        deployments = await ecsJsonRequest(input.region, 'ListServiceDeployments', {
+        deployments = await listAllServiceDeployments(input.region, {
           service: intent.expectedServiceArn,
           createdAt: {
             after: (new Date(intent.requestStartedAt).getTime() - 5_000) / 1000,
           },
-          maxResults: 100,
         }, taskCredentials);
       } catch (error) {
         if ((error as Error & { ecsCode?: string }).ecsCode === 'ServiceNotFoundException'
@@ -2790,9 +2787,8 @@ export async function recoverPreIntentApiRelease(
         serviceDeploymentArns: [current],
       }, credentials)
       : activeShas.length === 1 && /^[0-9a-f]{40}$/.test(String(activeShas[0]))
-        ? await ecsJsonRequest(input.region, 'ListServiceDeployments', {
+        ? await listAllServiceDeployments(input.region, {
           service: expectedServiceArn,
-          maxResults: 100,
         }, credentials)
         : null;
     return { service, deployment, ssmServiceArn };
@@ -2999,6 +2995,40 @@ export async function markRecoveredLegacyCutoverCompleted(
   return marked.rowCount ?? 0;
 }
 
+/**
+ * Exhaustive ListServiceDeployments.
+ *
+ * ECS returns one capped page plus a nextToken, and every caller here reasons over *the* deployment
+ * set - the unique newest record, a causal window, two reads that must agree - so a truncated page
+ * is a wrong answer rather than a smaller one. Each caller already refuses a paginated response;
+ * walking every page keeps that refusal a tripwire instead of a wall.
+ *
+ * The shell side of this repo hit the same edge first: production api-web crossed the 100-row page
+ * at 184 deployments while UAT was still at 93, so nothing caught it until the first production
+ * retirement. Callers pass their own filters; maxResults and nextToken are owned here.
+ */
+async function listAllServiceDeployments(
+  region: string,
+  input: Record<string, unknown>,
+  credentials: TaskCredentials,
+  maxPages = 50,
+): Promise<Record<string, unknown>> {
+  const serviceDeployments: unknown[] = [];
+  let nextToken: unknown = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await ecsJsonRequest(region, 'ListServiceDeployments', {
+      ...input,
+      maxResults: 100,
+      ...(nextToken == null ? {} : { nextToken }),
+    }, credentials);
+    const rows = response.serviceDeployments;
+    if (Array.isArray(rows)) serviceDeployments.push(...rows);
+    nextToken = response.nextToken ?? null;
+    if (nextToken == null) return { serviceDeployments, nextToken: null };
+  }
+  throw new Error(`service deployment history exceeds ${maxPages} pages; refusing a non-exhaustive read`);
+}
+
 /** Fail closed unless one exact terminal deployment and one stable serving manifest agree. */
 export function validateRetirementPlatformState(
   deploymentResponse: Record<string, unknown>,
@@ -3081,9 +3111,8 @@ export async function revalidateRetirementPlatform(
     await ecsJsonRequest(region, 'DescribeServiceDeployments', {
       serviceDeploymentArns: [expected.deploymentArn],
     }, credentials),
-    await ecsJsonRequest(region, 'ListServiceDeployments', {
+    await listAllServiceDeployments(region, {
       service: expected.serviceArn,
-      maxResults: 100,
     }, credentials),
     await ecsJsonRequest(region, 'DescribeExpressGatewayService', {
       serviceArn: expected.serviceArn,
