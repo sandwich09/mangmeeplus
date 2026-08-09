@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01 implemented and verified; preparing its atomic commit.
+Status: IN PROGRESS — M8-01 committed; M8-02 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -29,6 +29,9 @@ Verification:
   the session in the same transaction.
 - API `tsc --noEmit` reaches only 14 pre-existing test errors: 11 missing `ObjectVersionCleanupService` constructor arguments
   in `substitute-receipt.use-case.spec.ts` and 3 mock tuple typing errors in `report.use-cases.spec.ts`; no M8-01 file errors.
+- M8-01 commit: `87d6c0e fix(auth): revoke sessions after credential changes`.
+- M8-02 audit tests: 26/26 pass; RPT E2E file compiles/lists all 8 cases. The endpoint is tenant-explicit at
+  `/companies/:companyId/audit/logs`, route/context mismatch fails before repository access, and specs/caller match.
 Next:
-- Commit M8-01 code/tests plus this task memory only; keep the shared untracked consolidated audit out of the atomic code commit.
-- M8-02: verify/fix audit-log tenant routing and selection, then commit separately.
+- Commit M8-02 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
+- M8-03: quantify and fix route/header tenant precedence across company-scoped controllers without conflating it with M8-02.

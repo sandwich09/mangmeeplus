@@ -1,9 +1,10 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, Param, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { AuditService } from '../application/audit.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
+import { assertRouteCompany } from '../../data-model-core/presentation/http/assert-route-company';
 
 export type AuditLogDto = {
   id: string;
@@ -23,7 +24,7 @@ const ROLE_AUDIT_CATEGORIES: Record<string, string[]> = {
   ACCOUNTANT: ['accounting', 'tax', 'finance'],
 };
 
-@Controller('audit')
+@Controller('companies/:companyId/audit')
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
@@ -39,6 +40,7 @@ export class AuditController {
   @ApiResponse({ status: 200, description: 'Paginated audit logs' })
   async getLogs(
     @Req() req: Request & { context: RequestContext },
+    @Param('companyId') companyId: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('targetType') targetType?: string,
@@ -47,6 +49,7 @@ export class AuditController {
     @Query('to') toStr?: string,
   ): Promise<{ data: AuditLogDto[]; total: number; page: number; pageSize: number }> {
     const ctx = req.context;
+    assertRouteCompany(ctx, companyId);
     const page = Math.max(1, parseInt(pageStr ?? '1', 10) || 1);
     const pageSize = Math.min(100, Math.max(1, parseInt(pageSizeStr ?? '20', 10) || 20));
 
@@ -60,7 +63,7 @@ export class AuditController {
     const to = toStr ? new Date(toStr) : undefined;
 
     const result = await this.auditService.getCompanyLogs({
-      companyId: ctx.companyId,
+      companyId,
       actorUserId: filterActorUserId,
       targetType,
       categories,

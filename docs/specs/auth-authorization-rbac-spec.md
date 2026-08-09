@@ -932,10 +932,10 @@ GET /auth/me
 - Permission: account.session.read.
 - Returns current user, active company, memberships, roles, permissions, and scopes safe for UI.
 
-GET /audit/logs
+GET /companies/:companyId/audit/logs
 - Protected route.
 - Permission: audit.log.read.
-- Requires tenant filter from request context.
+- Resolves tenant from the route and requires it to match the request context.
 - Applies role/category ABAC filter: full company for OWNER/AUDITOR_READONLY, admin/security for ADMIN, accounting/tax/finance for ACCOUNTANT.
 - Returns bounded paginated audit records.
 ```

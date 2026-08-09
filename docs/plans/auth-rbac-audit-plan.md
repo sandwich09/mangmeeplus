@@ -230,7 +230,7 @@ Persist security-relevant access and mutation events with redacted metadata.
 - [ ] Add audit metadata sanitizer/redactor.
 - [ ] Add `AuditAction` enum/taxonomy matching the spec.
 - [ ] Add automatic audit for login mapping failure, account link/unlink, company switch, role/permission change, export, and sensitive sample mutation.
-- [ ] Add `GET /v1/audit/logs` protected by `audit.log.read` with pagination, tenant filter, and role/category ABAC filter.
+- [ ] Add `GET /v1/companies/:companyId/audit/logs` protected by `audit.log.read` with pagination, route/context tenant match, and role/category ABAC filter.
 - [ ] Ensure audit failures fail closed for high-risk mutations and fail with explicit error for required audit events.
 
 ### Tests
