@@ -108,16 +108,36 @@ scoped by `aws:SourceArn` to exactly these two rule ARNs rather than to EventBri
 }
 ```
 
-## Known finding, not yet acted on
+## Resolved: the stray bastion inbound rule
 
-The bastion security group `sg-0e363ecb391c7dd17` currently has **one** inbound rule, though the
-design calls for zero:
+The bastion security group `sg-0e363ecb391c7dd17` carried one inbound rule where the design calls
+for zero:
 
 ```
 tcp 5432 from sg-0e363ecb391c7dd17   (the group referencing itself)
 ```
 
-It is a no-op in practice — it permits port 5432 between members of that group, the group has one
-member, and that member does not run PostgreSQL. It most likely arrived alongside the RDS-side rule
-that genuinely was needed. It is recorded rather than removed because deleting it is a production
-security-group change, and because rule 2 above now makes any such change visible.
+Removed 2026-08-09 (`sgr-0301c3539914cba4f`). Before removing it, the bastion was checked for
+anything listening on 5432 — nothing was — confirming it permitted traffic no process could accept.
+It most likely arrived alongside the RDS-side rule that genuinely was needed.
+
+The group is now at zero inbound, and SSM access was re-verified afterwards: entry is outbound-only,
+so removing inbound rules cannot affect it.
+
+Restore, if it ever turns out to have been load-bearing:
+
+```bash
+aws ec2 authorize-security-group-ingress --group-id sg-0e363ecb391c7dd17 \
+  --protocol tcp --port 5432 --source-group sg-0e363ecb391c7dd17 --region ap-southeast-1
+```
+
+### This doubled as the live test of rule 2
+
+The revoke produced a `RevokeSecurityGroupIngress` event, EventBridge invoked the rule, and SNS
+delivered the alert — which is why the rule watches revokes and not only authorizes. Both rules have
+now fired against real events rather than test payloads:
+
+| rule | proven by |
+| --- | --- |
+| `…bastion-session-opened` | a real `StartSession` on the bastion |
+| `…bastion-sg-changed` | this `RevokeSecurityGroupIngress` |

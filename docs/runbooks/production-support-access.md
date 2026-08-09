@@ -38,11 +38,12 @@
       `role_is_armed` อ่านค่าจริงจาก `pg_roles` ได้ (ไม่ใช่เดา) และ `ssm:GetParameter` ที่เพิ่งให้ทำงาน
       > **ติดตั้งซ้ำเมื่อแก้สคริปต์:** ไฟล์บน bastion เป็นสำเนา ไม่ได้ผูกกับ repo
       > ถ้าแก้ใน repo แล้วไม่ copy ใหม่ bastion จะยังรันของเก่าเงียบ ๆ เทียบ sha256 ทุกครั้ง
-- [~] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
-      > **ตรวจ 2026-08-09 พบ inbound 1 ข้อ:** `tcp 5432 from sg-0e363ecb391c7dd17` (SG อ้างถึงตัวเอง)
-      > ในทางปฏิบัติไม่มีผล — อนุญาต 5432 ระหว่างสมาชิกใน SG เดียวกัน ซึ่งมีสมาชิกตัวเดียวและ
-      > ไม่ได้รัน PostgreSQL น่าจะหลงมาตอนเปิด rule ฝั่ง RDS **ยังไม่ลบ** เพราะเป็นการแก้ SG
-      > บน production ตัดสินใจก่อนแล้วค่อยทำ — ตอนนี้ alarm ตัวที่สองจับการแก้ SG ได้แล้ว
+- [x] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
+      ตรวจ 2026-08-09 พบ inbound 1 ข้อ (`tcp 5432 from ตัวเอง`) **ลบแล้ว** (`sgr-0301c3539914cba4f`)
+      ก่อนลบยืนยันว่าไม่มีอะไรฟังพอร์ต 5432 บน bastion และหลังลบทดสอบว่า SSM ยังเข้าได้ปกติ
+      (ทางเข้าเป็น outbound อย่างเดียว การลบ inbound จึงไม่กระทบ) — ตอนนี้ inbound = 0
+      > การลบนี้ยิง alarm ตัวที่สองจริง ๆ ซึ่งเป็นการพิสูจน์ว่าเหตุผลที่ดักทั้ง Revoke ไม่ใช่แค่
+      > Authorize นั้นถูกต้อง คืนค่าได้ด้วย `authorize-security-group-ingress` argument เดิม
 - [ ] **Bastion**: บังคับ IMDSv2, เปิด SSM Patch Manager
 - [~] **Bastion instance profile**: `rds-db:connect` สำหรับทั้งสอง db user **ให้แล้ว 2026-08-08**
       (statement `ConnectAsSupportDatabaseRoles` ใน inline policy
