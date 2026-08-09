@@ -55,6 +55,47 @@ const MODULELESS_SUBITEM_HREFS = {
   substituteReceiptPolicy: (companyId: string) => `/companies/${companyId}/settings/substitute-receipt`,
 };
 
+/**
+ * คู่มือการใช้งานระบบ — one sub-item per source manual. The manuals are read-only pages carrying no
+ * company data, so they are deliberately not a WorkspaceModule: there is no entitlement to sell and
+ * no permission to hold. Whoever can open the workspace can read how it works.
+ * Labels are the document titles themselves, so they stay Thai here as with the other
+ * document-named sub-items above.
+ */
+const USER_GUIDE_NAV_KEY = 'guide';
+
+/**
+ * เรียงตามลำดับเมนูจริงในแถบซ้าย (ค่าใช้จ่ายและใบเสร็จ → การเบิกจ่าย → ภาษี → รายงานการเงิน)
+ * โดยคู่มือใบรับรองแทนใบเสร็จอยู่ถัดจากค่าใช้จ่ายและใบเสร็จ เพราะเป็นเมนูย่อยของกลุ่มนั้น
+ * ผู้ใช้จึงหาคู่มือได้จากตำแหน่งเดียวกับที่จำเมนูไว้ ไม่ต้องไล่อ่านทั้งรายการ
+ */
+const USER_GUIDE_PAGES = [
+  { key: 'guide.expenses', label: 'ค่าใช้จ่ายและใบเสร็จ', slug: 'expenses', iconKey: 'FileIcon' },
+  { key: 'guide.substitute_receipts', label: 'ใบรับรองแทนใบเสร็จรับเงิน', slug: 'substitute-receipts', iconKey: 'SwapIcon' },
+  { key: 'guide.reimbursements', label: 'การเบิกจ่ายและอนุมัติ', slug: 'reimbursements', iconKey: 'DollarLineIcon' },
+  { key: 'guide.tax', label: 'ภาษี', slug: 'tax', iconKey: 'DocsIcon' },
+  { key: 'guide.reports', label: 'รายงานการเงิน', slug: 'reports', iconKey: 'PieChartIcon' },
+] as const;
+
+function buildUserGuideNavItem(companyId: string, iconMap: Record<string, React.ReactNode>): NavItem {
+  const subItems = USER_GUIDE_PAGES.map((page) => ({
+    key: page.key,
+    label: page.label,
+    href: `/companies/${companyId}/user-guide/${page.slug}`,
+    icon: iconMap[page.iconKey] ?? null,
+    tone: 'slate' as const,
+  }));
+
+  return {
+    key: USER_GUIDE_NAV_KEY,
+    label: 'คู่มือการใช้งานระบบ',
+    icon: iconMap.DocsIcon ?? null,
+    href: subItems[0]!.href,
+    subItems,
+    group: 'admin',
+  };
+}
+
 /** Prevents protected workspace pages from rendering when opened by URL directly. */
 export function canAccessWorkspacePath(
   modules: WorkspaceModule[],
@@ -108,7 +149,7 @@ export function buildNavItems(
   // centre is reached from the header bell, not from the sidebar.
   const settingsChildKeys = new Set(['poapproval', 'discount', 'notifications', 'lineoa']);
 
-  return modules.flatMap((mod) => {
+  const moduleItems = modules.flatMap((mod) => {
     if (settingsChildKeys.has(mod.key)) return [];
     // Retained-only Reports (snapshot read without the catalog) can no longer create anything, and
     // the sidebar cannot tell whether this company ever produced an artifact — for the launch
@@ -277,6 +318,8 @@ export function buildNavItems(
 
     return [item];
   });
+
+  return [...moduleItems, buildUserGuideNavItem(companyId, iconMap)];
 }
 
 export function getActiveModuleKey(

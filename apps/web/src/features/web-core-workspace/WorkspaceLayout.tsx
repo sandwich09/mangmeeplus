@@ -41,6 +41,7 @@ const DESIGN_HANDOFF_NAV_ORDER = [
   'closing',
   'roles',
   'settings',
+  'guide',
 ] as const;
 // Wide string keys: this map whitelists arbitrary nav-item keys, so lookups take any string.
 const DESIGN_HANDOFF_NAV_RANK = new Map<string, number>(DESIGN_HANDOFF_NAV_ORDER.map((key, index) => [key, index]));

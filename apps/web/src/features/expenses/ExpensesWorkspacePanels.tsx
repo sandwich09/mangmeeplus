@@ -59,10 +59,14 @@ function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; o
 }
 export function IconBtn({ title, tone, disabled, onClick, children }: { title: string; tone?: 'primary' | 'danger'; disabled?: boolean; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
   return (
+    // Every colour lives in exactly one branch. The neutral base used to carry `bg-white`
+    // unconditionally, and `cx` is a plain join, so the primary tone's `bg-brand-500` lost the
+    // cascade to it — the button rendered white with a white glyph, i.e. an empty box.
     <button type="button" title={title} aria-label={title} disabled={disabled} onClick={onClick}
-      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40',
-        tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:bg-brand-600'
-          : tone === 'danger' ? 'text-error-500 hover:border-[#FECDCA]' : 'text-gray-500 hover:border-brand-200 hover:text-brand-600')}>
+      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40',
+        tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:border-brand-600 hover:bg-brand-600'
+          : tone === 'danger' ? 'border-gray-200 bg-white text-error-500 hover:border-[#FECDCA] hover:bg-gray-50'
+            : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200 hover:bg-gray-50 hover:text-brand-600')}>
       {children}
     </button>
   );
