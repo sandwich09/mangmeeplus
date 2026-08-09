@@ -81,6 +81,34 @@ export class PrismaReimbursementRepository {
     return Object.fromEntries(rows.map((row) => [row.userId, row.user.displayName]));
   }
 
+  /**
+   * Of the named approvers given, which can still act (audit H-20).
+   *
+   * A step routed to a specific person used to be approvable by that person and nobody else, with
+   * no OWNER fallback and no reassign route — so disabling or removing that member froze every
+   * request waiting on them AND hid it from every queue, because the queue filters on the same
+   * predicate. The only way out was cancelling the request, which burns its document number.
+   *
+   * "Can still act" is membership-level, not user-level: an ACTIVE person who has been removed from
+   * THIS company must not keep approving its claims.
+   */
+  async findActiveApproverUserIds(companyId: string, userIds: string[]): Promise<Set<string>> {
+    const ids = [...new Set(userIds.filter((id) => !!id))];
+    if (ids.length === 0) return new Set();
+    const rows = await this.prisma.client.companyMembership.findMany({
+      where: {
+        companyId,
+        userId: { in: ids },
+        status: 'ACTIVE',
+        // A suspended or disabled login cannot approve even while the membership row still says
+        // ACTIVE — both have to hold for the assignment to still mean something.
+        user: { status: 'ACTIVE' },
+      },
+      select: { userId: true },
+    });
+    return new Set(rows.map((row) => row.userId));
+  }
+
   /** Letterhead for the printed claim form — same precedence as the substitute receipt. */
   async getClaimFormCompanyContext(
     companyId: string,
@@ -510,20 +538,38 @@ export class PrismaReimbursementRepository {
     }
   }
 
-  private assertApproverEligibility(
+  private async assertApproverEligibility(
+    tx: any,
+    companyId: string,
     step: { approverUserId?: string | null; approverRoleSnapshot?: string | null },
     actorUserId: string,
     actorRoles: string[],
-  ): void {
-    if (step.approverUserId) {
+  ): Promise<void> {
+    // Audit H-20: a step naming a person used to be exact-match forever, so disabling that member
+    // froze the request with no reassign route and no OWNER fallback. The assignment now only binds
+    // while the person can still act for this company; after that the step falls back to the role
+    // it was ALSO recorded with, which is the routing it would have had without a name on it.
+    //
+    // Read through `tx`: the eligibility decision and the status update it guards have to see the
+    // same snapshot, or a member disabled mid-transaction could still be treated as assigned.
+    if (step.approverUserId && await this.canActAsApprover(tx, companyId, step.approverUserId)) {
       if (step.approverUserId !== actorUserId) throw new ForbiddenException('not_assigned_approver');
       return;
     }
     // Same predicate as the use-case gate: a role-routed step is approvable by that role or by the
-    // OWNER; only a step naming a specific person stays exact-match.
+    // OWNER; only a step naming a specific person who can still act stays exact-match.
     if (!matchesApproverRole(step.approverRoleSnapshot, actorRoles)) {
       throw new ForbiddenException('not_eligible_approver_role');
     }
+  }
+
+  /** Membership-level, not user-level: an ACTIVE person removed from THIS company cannot approve. */
+  private async canActAsApprover(tx: any, companyId: string, userId: string): Promise<boolean> {
+    const membership = await tx.companyMembership.findFirst({
+      where: { companyId, userId, status: 'ACTIVE', user: { status: 'ACTIVE' } },
+      select: { id: true },
+    });
+    return Boolean(membership);
   }
 
   private async lockEvidence(
@@ -702,7 +748,7 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step || step.requestSnapshotHash !== storedHash) throw new ConflictException('stale_approval_snapshot');
-      this.assertApproverEligibility(step, data.actorUserId, data.actorRoles);
+      await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles);
 
       if (step.status === 'APPROVED') {
         if (data.financeReviewRequired
@@ -1318,7 +1364,7 @@ export class PrismaReimbursementRepository {
         },
       });
       if (!step) throw new ConflictException('stale_approval_snapshot');
-      this.assertApproverEligibility(step, data.actorUserId, data.actorRoles);
+      await this.assertApproverEligibility(tx, data.companyId, step, data.actorUserId, data.actorRoles);
       const changedStep = await tx.reimbursementApprovalStep.updateMany({
         where: {
           id: step.id,

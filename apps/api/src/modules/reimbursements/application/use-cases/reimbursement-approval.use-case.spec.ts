@@ -45,9 +45,13 @@ function fakeTx(events: any[]) {
   return { outboxEvent: { createMany: async ({ data }: any) => { events.push(...data); } } } as any;
 }
 
-function fakeRepo(req: any, policy: any = null, events: any[] = []) {
+function fakeRepo(req: any, policy: any = null, events: any[] = [], activeApprovers?: string[]) {
   return {
     findRequestById: async () => ({ ...req, payments: [], duplicateCandidates: [], signatures: [], signedCopies: [] }),
+    // Audit H-20: named approvers who can still act. Defaults to "all of them", so every existing
+    // test keeps the exact-match behaviour it was written for.
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) =>
+      new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
@@ -109,6 +113,38 @@ describe('ApproveReimbursementUseCase', () => {
     // Deputising for a named approver is a different decision than holding rank.
     const req = baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver', approverRoleSnapshot: undefined }] });
     const uc = approveUC(fakeRepo(req));
+    await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
+  });
+
+  // Audit H-20: with no reassign route, a step naming someone who has left froze the request AND
+  // hid it from every queue, because the queue filters on the same predicate. Cancelling was the
+  // only exit, and that burns the document number.
+  it('lets the OWNER decide a step whose named approver can no longer act', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
+    });
+    // Nobody active: the assignment no longer binds and the step falls back to its recorded role.
+    const uc = approveUC(fakeRepo(req, null, [], []));
+
+    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+
+    assert.equal(result.status, 'FINANCE_REVIEW');
+  });
+
+  it('still refuses someone who matches neither the departed assignee nor its role', async () => {
+    // The fallback widens to the role the step was routed with and OWNER — never to everyone.
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
+    });
+    const uc = approveUC(fakeRepo(req, null, [], []));
+    await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /not_eligible_approver/);
+  });
+
+  it('keeps a step exact-match while its named approver is still active', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver' }],
+    });
+    const uc = approveUC(fakeRepo(req, null, [], ['other-approver']));
     await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
   });
 
