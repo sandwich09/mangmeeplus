@@ -190,7 +190,7 @@ jobs:
       CLAMAV_HOST: ${{ vars.CLAMAV_HOST }}
       CLAMAV_PORT: ${{ vars.CLAMAV_PORT || '3310' }}
       CLAMAV_TIMEOUT_MS: ${{ vars.CLAMAV_TIMEOUT_MS || '5000' }}
-      LOG_RETENTION_DAYS: ${{ vars.LOG_RETENTION_DAYS || '90' }}
+      LOG_RETENTION_DAYS: ${{ vars.LOG_RETENTION_DAYS || '14' }}
       LOG_KMS_KEY_ID: ${{ vars.LOG_KMS_KEY_ID }}
       SECURITY_ALERT_TOPIC_ARN: ${{ vars.SECURITY_ALERT_TOPIC_ARN }}
       AI_DATA_RETENTION_DAYS: ${{ vars.AI_DATA_RETENTION_DAYS || '90' }}

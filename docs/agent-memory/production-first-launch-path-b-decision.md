@@ -347,3 +347,46 @@ FAILED_CONFIRMED จึงเป็นคำตอบเดียวที่ต
 เปิดทางแคบ ๆ: เฉพาะ target `ai-gateway`/`workers` **และ** intent เป็น 0 พอดี **และ** outcome เป็น
 FAILED_CONFIRMED เท่านั้น — api-web ยังใช้เส้น pre-intent ที่เข้มกว่าเพราะมี launch-gate authority
 ต้องปลดระวางด้วย
+
+## รอบ 11 (2026-08-09): สามบริการขึ้นครบ + skew ที่ซ่อนอยู่หลัง deploy ที่ "ล้ม"
+
+หลัง merge PR #11 แล้วเดินสายต่อ: reconcile `f77c80bf` → deploy `ai-gateway` → `workers`
+ทั้งสองผ่านเขียวบน `0bdbe508` ยืนยันว่ากลไก release ใช้งานได้จริงหลังแก้ pagination + ชื่อ service
+
+**สิ่งที่เกือบพลาด — deploy ที่ล้มไม่ได้แปลว่าไม่มีอะไรเปลี่ยน**
+
+run ของ `api-web` เมื่อ 01:26 สรุปว่า **failure** แต่ production กลับให้บริการอยู่จริงที่ `8ebc7259`
+เพราะมันอัปเดต service สำเร็จแล้วไปล้มที่ขั้นตอนหลัง (pagination ใน release task ซึ่ง PR #8 เพิ่งแก้
+ตอน 02:08 — คือ *หลัง* run นั้น)
+
+ผลคือสภาพที่ไม่มีใครประกาศออกมา:
+
+| service | SHA | สถานะ |
+| --- | --- | --- |
+| api-web | `8ebc7259` | ตามหลัง main **23 commit** |
+| ai-gateway | `0bdbe508` | ตรง main |
+| workers | `0bdbe508` | ตรง main |
+
+`git diff 8ebc7259 0bdbe508 -- apps/ packages/` = **123 ไฟล์ / +7254 บรรทัด** ไม่ใช่แค่เครื่องมือ deploy
+แต่เป็นงานหน้าบ้านจริง (tax, reimbursements, inventory, permission page visibility,
+substitute-receipt wizard) — เว็บ production เปิดได้แต่เป็นของเก่า
+
+**บทเรียน:** "เว็บใช้งานได้" ไม่ใช่หลักฐานว่า deploy สำเร็จ ต้องเทียบ SHA ที่ให้บริการอยู่กับ main
+ทุกครั้ง เพราะ ECS Express อัปเดต service ก่อน แล้วขั้นตอนพิสูจน์ผลจึงตามมาทีหลัง
+run ที่ล้มจึงทิ้ง service ที่ *เปลี่ยนไปแล้ว* ไว้ได้
+
+## สรุปการเก็บ log / lifecycle (2026-08-09)
+
+ไล่ครบทุกที่เก็บแล้ว มีขอบเขตหมดยกเว้นสองที่ที่ **ตั้งใจไม่ตั้ง**:
+
+| ที่เก็บ | ขนาด | ขอบเขต |
+| --- | --- | --- |
+| ECR 4 repos | 15.84 GB | keep-20 ทำงานจริง (เหลือย้อนหลัง ~2 วัน) |
+| CloudWatch logs | 0.15 GB | production 14 วัน / UAT 3 วัน |
+| S3 prod | 3.9 MB | 3 rules |
+| S3 cloudtrail | 0 MB | 400 วัน |
+| S3 uat `evidence/` | 55 MB | **ไม่ตั้ง** — รูปใบเสร็จ/ลายเซ็นที่อัปโหลดตอนทดสอบ |
+| S3 `agentcore/` | 23 MB | **ไม่ตั้ง** — zip ที่ AgentCore runtime อ้างอิงอยู่ ลบผิดตัว = AI พัง |
+
+รวมค่าเก็บข้อมูลทั้งหมด ~$1.60/เดือน จากบิล ~$105/เดือน (1.5%) — **การไล่ตั้ง lifecycle เพิ่ม
+ไม่ใช่ทางลดค่าใช้จ่าย** ตัวที่ประหยัดได้จริงคือปิด UAT นอกเวลางาน (~$25–30/เดือน)

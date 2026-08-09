@@ -23,7 +23,7 @@ WORKFLOW_WEBHOOK_ALLOWED_HOSTS_INPUT="${WORKFLOW_WEBHOOK_ALLOWED_HOSTS:-}"
 CLAMAV_HOST_INPUT="${CLAMAV_HOST:-}"
 REIMBURSEMENT_WRITE_QUIESCE_INPUT="${REIMBURSEMENT_WRITE_QUIESCE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
-LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-90}"
+LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOG_KMS_KEY_ID="${LOG_KMS_KEY_ID:-}"
 SECURITY_ALERT_TOPIC_ARN="${SECURITY_ALERT_TOPIC_ARN:-}"
 REGION="${AWS_REGION:-ap-southeast-1}"
@@ -107,12 +107,23 @@ if [ "$DEPLOY_ENV" = "production" ] && { [ -z "$LOG_KMS_KEY_ID" ] || [ -z "$SECU
   echo "ERROR: LOG_KMS_KEY_ID and SECURITY_ALERT_TOPIC_ARN are required for production monitoring" >&2
   exit 2
 fi
-[[ "$LOG_RETENTION_DAYS" =~ ^[0-9]+$ ]] && [ "$LOG_RETENTION_DAYS" -ge 30 ] || {
-  echo "ERROR: LOG_RETENTION_DAYS must be an integer >= 30" >&2
+# CloudWatch accepts one day upward. The floor here used to be 30, which meant the retention
+# policy the environments actually run (production 14, UAT 3) could not be expressed at all:
+# a deploy rejected it before ever reaching the per-environment pin below.
+[[ "$LOG_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "ERROR: LOG_RETENTION_DAYS must be a positive integer" >&2
   exit 2
 }
-if [ "$DEPLOY_ENV" = "production" ] && [ "$LOG_RETENTION_DAYS" -ne 90 ]; then
-  echo "ERROR: production LOG_RETENTION_DAYS must be exactly 90" >&2
+# Each environment is pinned to exactly one value, in both directions. ensure_log_group() rewrites
+# retention on every log group it touches on every deploy, so an unpinned value would quietly
+# become the new policy at the next deploy without anyone deciding it - which is how the groups
+# came to disagree with the documentation in the first place.
+if [ "$DEPLOY_ENV" = "production" ] && [ "$LOG_RETENTION_DAYS" -ne 14 ]; then
+  echo "ERROR: production LOG_RETENTION_DAYS must be exactly 14" >&2
+  exit 2
+fi
+if [ "$DEPLOY_ENV" = "uat" ] && [ "$LOG_RETENTION_DAYS" -ne 3 ]; then
+  echo "ERROR: uat LOG_RETENTION_DAYS must be exactly 3" >&2
   exit 2
 fi
 CLAMAV_HOST="$CLAMAV_HOST_INPUT"
