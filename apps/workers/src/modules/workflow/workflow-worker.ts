@@ -5,7 +5,7 @@
  * endpoints. Mirrors the notification worker's dispatch-to-HTTP pattern.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { WORKFLOW_QUEUE, type WorkflowJobPayload } from './workflow-jobs.js';
 import { workerLog } from '../../common/log.js';
 import {
@@ -33,6 +33,7 @@ export function startWorkflowWorker(redisUrl: string, cleanupConfig: ObjectVersi
   });
 
   void scheduleRepeatableJobs(redisUrl);
+  attachDeadLetterQueue(worker, WORKFLOW_QUEUE, redisUrl);
   return worker;
 }
 

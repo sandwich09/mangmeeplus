@@ -5,7 +5,7 @@
  * worker's dispatch-to-HTTP pattern.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
 
@@ -46,6 +46,7 @@ export function startCrmSlaWorker(redisUrl: string): Worker {
       workerLog('error', { event: 'crm_inbox_schedule_failed', error: (err as Error).message });
     },
   );
+  attachDeadLetterQueue(worker, CRM_INBOX_QUEUE, redisUrl);
   return worker;
 }
 

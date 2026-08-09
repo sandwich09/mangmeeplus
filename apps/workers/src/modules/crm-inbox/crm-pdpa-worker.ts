@@ -6,7 +6,7 @@
  * pattern; the retention rules + finance exemption live in the API use-case.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 
 const CRM_PDPA_QUEUE = 'crm-pdpa';
@@ -34,6 +34,7 @@ export function startCrmPdpaWorker(redisUrl: string): Worker {
   });
 
   void scheduleRepeatableJobs(redisUrl);
+  attachDeadLetterQueue(worker, CRM_PDPA_QUEUE, redisUrl);
   return worker;
 }
 
