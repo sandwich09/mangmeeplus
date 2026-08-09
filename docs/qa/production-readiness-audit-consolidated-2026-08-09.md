@@ -1096,13 +1096,75 @@ Verify: `api-error-coverage.spec.ts` 9 tests — guard อ่าน code จา�
 และไม่มี snake_case หลุดออกมา · web ทั้งชุด 884 tests ผ่าน 0 fail · `tsc` clean
 mutation: ลบคำแปล 1 ตัว → fail 2
 
-**onboarding bootstrap [R2]**
-- ไม่สร้าง: WhtIncomeCategory (ไม่มี endpoint สร้างเลย → หัก ณ ที่จ่ายใช้ไม่ได้), expense category ตั้งต้น 11 หมวด, EmployeeAccessProfile ของเจ้าของ (เจ้าของไม่ปรากฏในหน้าพนักงาน/สิทธิ์)
-- [R2] `approverMode` reimbursement ไม่มีผลยกเว้น `CUSTOM_USER`; PO approval threshold + discount policy แก้ได้แต่ไม่มีใครอ่าน
+**onboarding bootstrap [R2]** — ตรวจกับโค้ดใหม่ 2026-08-10 แล้วคัดตาม launch scope จริง
+
+**ขอบเขตที่จะเปิดจริง (เจ้าของยืนยัน 2026-08-10):** เบิก + บิลใบเสร็จ + ใบทดแทนใบเสร็จ. **บัญชี "เปิดครึ่ง"**
+— ซ่อน UI จากผู้ใช้ แต่ ledger core และการบันทึกสถานะ posting ทำงานปกติ (ตรงกับ CR-3 owner decision และกับ
+comment ใน `expense-account-binding.use-case.ts:15`). นี่คือเกณฑ์ที่ใช้คัดข้อล่างทั้งหมด
+
+- [x] **expense category ตั้งต้น — ✅ RESOLVED 2026-08-10.** (เอกสารเดิมเขียน "11 หมวด" — ไม่มีลิสต์นี้ใน spec
+  ที่ไหน เป็นการประมาณของผู้ตรวจ; ที่มีจริงคือ 6 หมวดใน `seed.ts:978`)
+  - **หนักกว่าที่ finding เขียนไว้มาก** เพราะพังพร้อมกัน 3 ทางในของที่จะเปิด:
+    1. **ใบทดแทนใบเสร็จออกไม่ได้เลย** — `substitute-receipt.use-case.ts:155` throw ตรง ๆ
+       `'A reviewed expense category or account hint is required.'` และหมวดถูกพิมพ์ลงบนตัวเอกสารด้วย (`:192`)
+    2. **AI/OCR จัดหมวดไม่ได้** — เลือกได้เฉพาะหมวดที่ตั้งค่าไว้ สร้างเองไม่ได้
+       (`expense-receipt-upload-spec.md:27`) แคตตาล็อกว่าง = ไม่มีที่ให้ลง ทั้งที่ `ai_line_assistant` เปิด
+    3. **หนี้เงียบสะสม** — ทุกใบที่ยืนยัน stamp `postingStatus: 'pending'` (`prisma-expense.repository.ts:320`)
+       รอ backfill ที่จะ fail ทั้งกองด้วย `expense_account_unmapped:no_category` (`expense-backfill.use-case.ts:247`)
+       เพราะ UI ซ่อน จึงไม่มีใครเห็นระหว่างทาง และระเบิดพร้อมกันทั้งประวัติวันที่เปิดบัญชี
+  - แก้: seed 12 หมวดตอน onboarding **ตัดตามพฤติกรรมภาษี ไม่ใช่ประเภทค่าใช้จ่าย** (ผังบัญชีมีบัญชีค่าใช้จ่าย ~75 ตัว
+    ลอกมาหมดคือโยนปัญหาจัดหมวดกลับให้ผู้ใช้) — ค่ารับรองแยกจากค่าอาหาร (ภาษีซื้อต้องห้าม vs ขอคืนได้),
+    ค่าขนส่งแยกจากค่าเดินทาง (ยกเว้น VAT vs ขอคืนได้)
+  - **owner decision 2026-08-10:** ผูก `ledgerAccountCode` ให้เลย แต่ยังตั้งเป็นรอรีวิว → เพิ่มคอลัมน์
+    `ledgerAccountReviewedByUserId` stamp `system:expense-category-bootstrap` ใช้ seam เดียวกับ
+    `TAX_CONFIG_BOOTSTRAP_ACTOR_USER_ID`. posting ทำงานตั้งแต่ใบแรก, route ผูกบัญชีรายงานเป็น
+    `awaitingHumanReview`, คนตั้งบัญชีจริงเมื่อไหร่ sentinel ถูกแทนด้วย user id.
+    ผลข้างเคียง: `ledgerAccountCode: null` ใช้เป็นสัญญาณ "ยังไม่รีวิว" ไม่ได้อีก — comment ใน schema แก้แล้ว
+  - **แก้ข้อผิดพลาดของการวิเคราะห์รอบแรก:** tax code `V1`/`VX`/`N1`/`U1` เป็นของ **SAP reference template**
+    ที่ติด warning `"Reference template only"` ไม่ใช่ profile ที่ onboarding ติดตั้ง. profile จริง
+    (`WATCHDOG_TH_DOMESTIC_EXPENSE_V1` = "WatchDog ภาษีซื้อในประเทศ") มี **2 code เท่านั้น**: `V7` ขอคืนได้ 7%,
+    `ND` ขอคืนไม่ได้ 7%. เทสที่เทียบ catalog กับ profile จริงจับได้ก่อน commit — ไม่งั้นจะ ship code ที่ไม่มี
+    ในบริษัทไหนเลย. remap: `ND`→ค่ารับรอง, `V7`→7 หมวดที่ขอคืนได้, **ไม่ใส่เลย**→ยกเว้น VAT
+    (ค่าเช่า/ค่าขนส่ง/ค่าธรรมเนียมธนาคาร) และเบ็ดเตล็ด เพราะ `ND` จะกลายเป็นการอ้างว่ามีการเรียก VAT ทั้งที่ไม่มี
+  - Verification: `expense-category-bootstrap.service.spec.ts` 6 tests — 2 ตัวเทียบ catalog กับ `TH_SME_COA_V1`
+    และ tax profile จริง ทำให้บัญชี/tax code ที่ผิดพังตอน build ไม่ใช่ตอนลูกค้า onboard. onboarding + expenses +
+    ledger 668/668, typecheck baseline เดิม, Prisma validate ผ่าน. **migration ยังไม่ได้ apply** — เครื่องที่ทำงาน
+    ไม่มี PostgreSQL ให้ต่อ ตรวจได้แค่ชนิดคอลัมน์ตรง convention ของ migration เดิม **ต้องรันบน DB จริงก่อนขึ้น**
+  - Commit: `a29d46c feat(onboarding): seed the expense categories a Thai company needs on day one`
+- [ ] **EmployeeAccessProfile ของเจ้าของ — ยังไม่แก้ ไม่บล็อก launch.** `list-employees.use-case.ts:11` อ่านจาก
+  `employeeAccessProfile.findMany` อย่างเดียว เจ้าของไม่มีแถวจึงไม่ปรากฏในรายชื่อ. **ไม่กระทบเบิก** — ยืนยันแล้วว่า
+  โมดูล reimbursement ไม่อ้าง `EmployeeAccessProfile` เลยสักที่ อนุมัติวิ่งผ่าน membership/role. เหลือผลแค่
+  เจ้าของจัดการตัวเอง (status/credential/LINE link) จากหน้าพนักงานไม่ได้ — ประชดที่ comment ใน `feature-registry.ts`
+  เขียนเองว่าเปิด `employee_access` ไว้ "เพื่อให้บริษัทใหม่เพิ่มพนักงานคนแรกได้"
+- [ ] **`approverMode` ไม่มีผลนอก `CUSTOM_USER` — ยังไม่แก้ ไม่บล็อก launch.** reader เดียวคือ
+  `reimbursement-request.use-case.ts:333`; `MANAGER_ROLE` (ค่า default) → `undefined` → ใบเบิกไม่ถูก assign
+  ผู้อนุมัติอัตโนมัติ. ตัวที่ยังคุมจริงคือ `approvalRequiredFromAmount` + `allowSelfApproval` จึงเป็นเรื่อง
+  **routing ไม่ใช่รูรั่วสิทธิ์**
+- [x] **`WhtIncomeCategory` — ปิดเป็น OUT_OF_SCOPE 2026-08-10 (ไม่ต้องแก้โค้ด).** สองเหตุผลอิสระ:
+  1. **กรอบเดิมผิด** — เป็น master data ระดับระบบ (`@@unique([code])` ไม่มี `companyId`) onboarding ต่อบริษัท
+     ไม่ควรสร้างอยู่แล้ว. ที่จริงคือ "ไม่มี endpoint สร้าง" (`wht-income-category.use-case.ts:32` มีแต่ `update`,
+     แถวมาจาก `seed.ts:3215` ที่เดียว) → เป็นเรื่อง **ตรวจว่า production seed ไปหรือยัง** ไม่ใช่บั๊กโค้ด
+  2. **ไม่กระทบ launch scope** — โมดูล expenses ใช้ `whtRate`/`whtAmount` เป็น**ตัวเลขบนบรรทัด** ไม่แตะตาราง
+     `WhtIncomeCategory` เลย. consumer จริงอยู่ที่ `tax` (ออก 50 ทวิ) และ `procurement` ซึ่ง**ไม่เปิด**
+- [x] **PO approval threshold — เอกสารเดิมผิด ปิด 2026-08-10.** procurement `dualApprovalThresholdAmount`
+  **ถูกอ่านจริง** ที่ `vendor-bill.use-case.ts:449,474-480` ทำงานอยู่ (และ procurement ไม่เปิดรอบนี้อยู่แล้ว)
+- [ ] **discount policy ไม่มีใครอ่าน — จริง ไม่กระทบ launch.** `DiscountPolicy` มีแค่ validate/เก็บ/คืนค่า
+  ไม่มี consumer; `PoApprovalPolicy` ใน business-policy ก็ไม่มี consumer เหมือนกัน. ทั้งคู่เป็นของ
+  `sales_documents`/`procurement` ที่ไม่เปิด
+- [ ] **พบใหม่ — `ReimbursementPolicy` มีคอลัมน์ threshold ซ้ำสองตัว.** `approvalRequiredFromAmount` คือตัวที่
+  ประตูอ่านและ web เขียน (ทำงานถูก) ส่วน `approvalThresholdAmount` เขียนได้/คืนค่าได้แต่**ไม่มีใครอ่าน** — เป็น
+  คอลัมน์ตายที่ล่อให้ integration ตัวถัดไปเขียนผิดช่อง ไม่กระทบวันนี้เพราะ web เขียนตัวที่ถูก
 
 > **REMARK (สองรอบเห็นต่างเรื่องขอบเขต bootstrap):** รอบ 1 ระบุ NotificationRule เป็นสิ่งที่ onboarding ไม่สร้าง (H-12).
 > รอบ 2 ตรวจ Day-0 ครบแล้วยืนยันว่า onboarding **สร้าง** chart of accounts, tax profile, entitlement, workflow template
 > ให้จริง (รูรั่วแคบกว่าที่กังวล) แต่ **ไม่สร้าง** อีกหลายอย่างข้างต้น. ทั้งสองรอบไม่ขัดกัน — รอบ 2 แค่ระบุขอบเขตให้ครบ.
+> **รอบ 3 (2026-08-10)** เพิ่ม expense category ตอน onboarding ทำให้ข้อที่หนักที่สุดปิด ที่เหลือคัดแล้วว่าไม่บล็อก launch
+
+> **ต้องยืนยันก่อนเปิด — ไม่ใช่เรื่องโค้ด:** `DEFAULT_ENABLED_FEATURE_KEYS` (`feature-registry.ts:27`) เปิด
+> `thai_tax` `double_entry_ledger` `workflow_automation` ให้ทุกบริษัทที่ onboard ใหม่ พร้อม comment อ้าง
+> *"owner decision 2026-08-04: a Thai SME buys the tax/accounting journey"*. ถ้าเจตนาคือซ่อน UI แต่ให้ core
+> ทำงาน (ตามที่ยืนยัน 2026-08-10) ค่านี้ถูกอยู่แล้ว — แต่ควรยืนยันว่า **เมนูบัญชี/ภาษีไม่โผล่ให้ผู้ใช้เห็นจริง**
+> เพราะ entitlement ที่เปิดคือสิ่งที่ตัดสินเมนู
 
 ---
 
