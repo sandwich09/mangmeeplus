@@ -13,7 +13,7 @@ they must not be committed as credentials.
 ## M-16 deployment and alert evidence
 
 The production deploy fails before rollout unless `LOG_KMS_KEY_ID` and
-`SECURITY_ALERT_TOPIC_ARN` are set. Each application log group receives 90-day
+`SECURITY_ALERT_TOPIC_ARN` are set. Each production application log group receives 14-day
 retention, the classified KMS key, a high-risk security metric filter, and an
 alarm routed to that topic.
 

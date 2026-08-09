@@ -155,6 +155,24 @@ Cost Explorer คิด **$0.01 ต่อ request** และข้อมูล 
 IAM user `watchdog-bedrock-dev` ที่ agent ใช้ **อ่าน IAM ของตัวเองไม่ได้** (`iam:List*` ไม่ได้ให้)
 ถ้าโดน AccessDenied แล้วอยากรู้ว่า policy ไหนบล็อก ต้องใช้ Policy Simulator ใน Console
 
+### CloudWatch log retention — policy ปัจจุบัน (อัปเดต 2026-08-09)
+
+| ขอบเขต | Log group/prefix | เก็บไว้ |
+| --- | --- | ---: |
+| UAT | `watchdog-bms-uat-*` | **3 วัน** |
+| Production | `watchdog-bms-prod-*` | **14 วัน** |
+| Production support session | `/aws/ssm/session-logs/watchdog-bms-production` | **14 วัน** |
+| กลุ่ม production เดิม | กลุ่ม legacy ที่ชื่ออยู่ใต้ `watchdog-bms-*` และ App Runner production เดิม | **14 วัน** |
+
+ตารางนี้คือ policy ที่ต้องถือเป็นค่าปัจจุบันสำหรับ CloudWatch logs; ไม่ใช่ retention ของ AI data,
+database backup หรือ GitHub artifact ซึ่งมีนโยบายแยกกัน ไฟล์นี้แก้จากค่าที่เคยระบุ UAT 30 วัน,
+production 90 วัน และบางกลุ่มไม่จำกัดเวลา
+
+AWS read-back วันที่ 2026-08-09 ยืนยันแล้วว่า log group ที่ใช้งาน 14 กลุ่มตรงตาม policy:
+กลุ่ม UAT ที่มีอยู่ 3 กลุ่มเป็น 3 วัน และกลุ่ม production/legacy/support ที่มีอยู่ 11 กลุ่มเป็น
+14 วัน ส่วน `/probe/invalid/xyz-does-not-matter-if-denied` เป็นกลุ่มทดสอบที่ยัง `None`
+โดยตั้งใจและไม่อยู่ใน service log retention baseline
+
 ---
 
 ## 5. Redis / BullMQ — memory

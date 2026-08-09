@@ -11,6 +11,26 @@ Scope: Budget alert fired at $173.03 against a $100 monthly budget on account `3
 Investigated with Cost Explorer, then fixed the log-volume half of the root cause in
 `apps/workers`. Companion incident doc: `uat-deploy-ci-unblock-20260807.md` (same OOM, prior repo).
 
+## CloudWatch log retention policy (updated 2026-08-09)
+
+The current operational policy is:
+
+| Scope | Log group/prefix | Retention |
+| --- | --- | ---: |
+| UAT | `watchdog-bms-uat-*` | **3 days** |
+| Production | `watchdog-bms-prod-*` | **14 days** |
+| Production support session | `/aws/ssm/session-logs/watchdog-bms-production` | **14 days** |
+| Legacy production groups | Existing production ECS/App Runner groups under `watchdog-bms-*` | **14 days** |
+
+This supersedes the former documentation of UAT 30 days, production 90 days, and indefinite
+retention on some legacy groups. AWS read-back on 2026-08-09 verified 14 service/support groups:
+3 existing UAT groups at 3 days and 11 production/legacy/support groups at 14 days. The only
+unmanaged result is `/probe/invalid/xyz-does-not-matter-if-denied` with `None`, which is an
+intentional denied-probe test group and outside the service baseline.
+
+This is CloudWatch log retention only. AI data retention, database backup retention, object/business
+record retention, and CI artifact retention remain separate policies.
+
 ## What actually cost the money
 
 August 1-7 was **$262.75** (the $173.03 in the alert email was already stale; CE keeps posting for

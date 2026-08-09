@@ -442,12 +442,13 @@
 - **สถานะ / ที่มา:** Corrected + live; รวม Opus `I18`, ส่วนหนึ่งของ `I19`; declarative remediation + local verification เสร็จ 2026-07-28 แต่ AWS apply/delivery/reconstruction ยัง pending
 - **Owner / Due / change:** Platform on-call + Security owner / ก่อน production release ถัดไป / local P1 infrastructure remediation
 - **Affected assets/data/tenants:** production CloudWatch log groups/KMS/metric filters/alarms/SNS และ security events ของทุก tenant
-- **Rollback:** restore prior immutable task revision while retaining 90-day logs/KMS/alarm routing; if an alarm misfires, tune filter through reviewed change rather than removing notification
+- **Rollback:** restore prior immutable task revision while retaining 14-day production logs/KMS/alarm routing; if an alarm misfires, tune filter through reviewed change rather than removing notification
 - **สาเหตุ:** live log groups 7/7 ไม่มี explicit retention; alarms 3 ตัวเป็น rollback alarms และไม่มี notification action; deploy ไม่ apply spec retention
-- **ข้อโต้แย้ง + evidence:** logs ใช้ service-managed encryption จึงไม่ควรเรียก “unencrypted”; issue คือ retention/CMK requirement ตาม data class และ alert routing. Spec ระบุ logs 90 วัน แต่ live เป็น indefinite
+- **ข้อโต้แย้ง + evidence:** logs ใช้ service-managed encryption จึงไม่ควรเรียก “unencrypted”; issue คือ retention/CMK requirement ตาม data class และ alert routing. เอกสารเดิมระบุ logs 90 วัน แต่ policy ปัจจุบันคือ UAT 3 วัน และ production 14 วัน
 - **วิธีแก้:** retention/KMS by classification, metric/security filters, actionable notification/on-call และ deploy verification
 - **หลักฐานปิดงาน:** AWS config assertions, synthetic alert delivery และ incident reconstruction drill
 - [x] **Code/test remediation (2026-07-28):** production deploy บังคับ retention 90 วัน + KMS + alert topic, สร้าง HIGH/CRITICAL metric filters/alarms; auth abuse, AI failure/deny, erasure failure และ malware quarantine emit structured high-risk event; read-only baseline verifier/assertions และ runbook เพิ่มแล้ว; shell/static infra/workflow YAML checks ผ่าน
+- **Policy update (2026-08-09):** owner กำหนด CloudWatch retention เป็น UAT 3 วัน, production 14 วัน, production support session 14 วัน และกลุ่ม production เดิม 14 วัน; AWS read-back ยืนยันแล้ว 14 service/support groups (UAT 3 กลุ่ม และ production/legacy/support 11 กลุ่ม) ส่วน denied-probe test group ที่เป็น `None` อยู่นอก baseline
 - [ ] **Live closure:** deploy/apply AWS controls, archive sanitized verifier output, emit synthetic events, prove alarm→SNS/on-call acknowledgement และ reconstruct request/audit/AI/DSAR chain
 
 ### [ ] M-17 — Harden Redis/RDS recovery และ production secret rotation
@@ -458,7 +459,7 @@
 - **Rollback:** use reviewed maintenance rollback that preserves encryption/auth/deletion protection; never downgrade Redis/RDS security for availability, and keep erasure tombstones through restore
 - **สาเหตุ:** Redis live 1 node ไม่มี TLS/at-rest/auth/snapshot/replica; RDS single-AZ/deletion protection off/backup 7 วัน; secrets 7/7 rotation off
 - **วิธีแก้:** encrypted/authenticated replicated Redis + tested snapshot, RDS HA/protection/retention policy และ rotation runbook ตาม secret type
-- **ข้อโต้แย้ง + evidence:** Opus บอกไม่มี documented backup window แต่ `platform-environment-config-spec.md:287-295` ระบุ backup 35 วัน/log 90 วัน; ปัญหาคือ live drift และไม่มี tombstone/re-erasure หลัง restore
+- **ข้อโต้แย้ง + evidence:** Opus บอกไม่มี documented backup window แต่ `platform-environment-config-spec.md:287-295` ระบุ backup 35 วัน/log 14 วัน; ปัญหาคือ live drift และไม่มี tombstone/re-erasure หลัง restore
 - **หลักฐานปิดงาน:** live config evidence, restore/RTO/RPO drill, post-restore re-erasure test และ rotation/revocation evidence
 - [x] **Repository controls/test path (2026-07-28):** read-only verifier fail closed ถ้า RDS ไม่ encrypted/Multi-AZ/deletion-protected/35-day backup หรือ Redis ไม่ TLS/at-rest/auth/failover/2-node/35-day snapshot; durable tombstone replay + authenticated post-restore re-erasure และ rotation/revocation runbook/tests เพิ่มแล้ว; Prisma/API/static checks ผ่าน
 - [ ] **Live closure:** apply reviewed RDS/Redis hardening, run isolated restore/RTO/RPO + re-erasure drill, enable/execute supported secret rotations และ prove old-version/session revocation; attach sanitized live config and approvals
@@ -635,11 +636,11 @@
 
 - **ที่มา:** Corrected from Opus `I19`
 - **งาน:** documented residual-retention window, tombstone ledger และ automatic/manual re-erasure procedure หลัง restore
-- **ข้อโต้แย้ง + evidence:** documented windows มีอยู่แล้ว (backup 35 วัน/log 90 วัน); สิ่งที่ยังขาดคือ live alignment และ verified replay of erasure after restore
+- **ข้อโต้แย้ง + evidence:** documented windows มีอยู่แล้ว (backup 35 วัน/log 14 วัน); สิ่งที่ยังขาดคือ live alignment และ verified replay of erasure after restore
 - [x] **Code remediation (2026-07-28):** tombstone ledger (`CrmDataSubjectRequest`), `replayAfterRestore` และ runbook/สคริปต์ drill สร้างโดยงาน P1 คู่ขนาน — ส่วนที่ P2 ปิดคือ**ความทนทานของ tombstone เอง**: FK ไปหา `CrmCustomer` เป็น `ON DELETE CASCADE` แปลว่า ledger ที่มีไว้เพื่ออยู่ให้นานกว่าตัว subject จะถูกลบไปพร้อม subject; migration `20260728191000_l15_tombstone_durability` เปลี่ยนเป็น `ON DELETE RESTRICT` เป็น `DO` block เดียวที่ no-op เมื่อยังไม่มีตารางหรือเป็น RESTRICT อยู่แล้ว และ atomic จึงไม่มีสถานะ "ไม่มี FK เลย" ระหว่างทาง
   - พิสูจน์บน DB จริง: `DELETE FROM "CrmCustomer"` ที่มี tombstone ค้างถูกปฏิเสธด้วย FK violation, ลบผ่าน Company ก็ยังถูกปฏิเสธ, รัน migration ซ้ำสะอาด และ no-op เมื่อไม่มีตาราง; ปัจจุบันไม่มีเส้นทาง hard delete ในโค้ดจึงไม่เปลี่ยนพฤติกรรมใด ๆ เป็นการปิดกับดักอนาคต
   - idempotency ของ requeue มี coverage อยู่แล้วใน `crm-pdpa.use-case.spec.ts` และ `prisma-crm-pdpa-self-service.repository.spec.ts` จึงไม่เขียนซ้ำ
-- [ ] **Live closure:** รัน restore drill จริงตาม `docs/runbooks/p1-production-security-operations.md` แล้วเก็บหลักฐานว่า case ที่ completed ก่อน snapshot ถูก requeue และ re-erase จริง พร้อมจัด live retention ให้ตรงกับที่เอกสารระบุ (backup 35 วัน / log 90 วัน) และครอบ object storage ซึ่งสคริปต์ปัจจุบันไม่แตะ
+- [ ] **Live closure:** รัน restore drill จริงตาม `docs/runbooks/p1-production-security-operations.md` แล้วเก็บหลักฐานว่า case ที่ completed ก่อน snapshot ถูก requeue และ re-erase จริง พร้อมจัด live retention ให้ตรงกับที่เอกสารระบุ (backup 35 วัน / log 14 วัน) และครอบ object storage ซึ่งสคริปต์ปัจจุบันไม่แตะ
 
 ## 4. Governance / compliance evidence checklist
 
@@ -699,7 +700,7 @@
 ### [x] D-06 — แก้ claim ว่าไม่มี documented backup/log window
 
 - **คำตัดสิน:** Factually wrong
-- **Evidence:** `platform-environment-config-spec.md:287-295` ระบุ backup 35 วัน/log 90 วัน; live drift คือ RDS 7 วัน, logs indefinite และไม่มี re-erasure-after-restore proof
+- **Evidence:** `platform-environment-config-spec.md:287-295` ระบุ backup 35 วัน/log 14 วัน; รายงานเดิมบันทึก live drift เป็น RDS 7 วันและ logs indefinite ขณะที่ AWS read-back 2026-08-09 ยืนยัน log retention ตาม policyแล้ว; ยังไม่มี re-erasure-after-restore proof
 
 ### [x] D-07 — ปฏิเสธ blanket claim ว่าไม่พบ XSS/SSRF
 

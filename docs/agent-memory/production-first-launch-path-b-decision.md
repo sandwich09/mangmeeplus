@@ -313,3 +313,37 @@ revision จริงคือ `.../watchdog-bms-ai-gateway-v2/3977...` ซึ�
 
 **แก้:** `AI_SERVICE_NAME="watchdog-bms-ai-gateway-v2"` + เขียน README ให้บอกว่าค่านี้ต้องเท่ากับ
 service ที่ SSM ชี้ ไม่ใช่แค่ "ตาม SSM แล้วพอ"
+
+## รอบ 10 (2026-08-09): ชื่อ ai-gateway ค้างในภาษาที่สอง + ช่องว่างของ recovery
+
+**บั๊กที่ 1 — ชื่อ service ค้างอีกที่หนึ่ง (รูปแบบเดิมครั้งที่ 3)**
+
+แก้ `AI_SERVICE_NAME` ใน `deploy.sh` แล้ว แต่ `run-exclusive-release-operation.ts` มี registry
+ของตัวเองที่ยังใช้ชื่อเก่า:
+
+```ts
+'ai-gateway': [{ serviceName: `${prefix}-ai-gateway`, ... }]   // production → ชื่อที่ถูกลบไปแล้ว
+```
+
+`api-web` ถูก special-case ให้เป็น `-pub` ถูกต้อง แต่ ai-gateway ไม่ได้ตาม ถ้าไม่เจอ deploy จะพัง
+ซ้ำที่ intent validation **หลังจาก build + push image เสร็จแล้ว** และทิ้ง operation ค้างอีกตัว
+
+**บั๊กที่ 2 — non-api target ที่ล้มก่อนสร้าง intent กู้ไม่ได้เลย**
+
+`f77c80bf` (target=ai-gateway, intents=0, UNKNOWN) ไม่มีเส้นทางกู้ที่ถูกต้องสักทาง:
+
+| เครื่องมือ | ผล |
+| --- | --- |
+| `operation-reconcile` | `incomplete target-service intent/orphan coverage` |
+| `PRE_INTENT` | จำกัดไว้เฉพาะ `all\|api-web` ในโค้ด |
+| `ORPHAN` | ต้องมี intent/binder task ARN ที่ไม่เคยถูกสร้าง |
+
+และมันบล็อก **deploy production ทุกตัว** เพราะ writer fence เป็นระดับ environment
+
+**Invariant ที่ทำให้แก้ได้อย่างปลอดภัย:** `deploy.sh` สร้าง intent (บรรทัด 1055) **ก่อน** เรียก
+`UpdateExpressGatewayService` (บรรทัด 1058) ดังนั้น **intent = 0 พิสูจน์ว่า service ไม่เคยถูกแตะ**
+FAILED_CONFIRMED จึงเป็นคำตอบเดียวที่ตรงความจริง
+
+เปิดทางแคบ ๆ: เฉพาะ target `ai-gateway`/`workers` **และ** intent เป็น 0 พอดี **และ** outcome เป็น
+FAILED_CONFIRMED เท่านั้น — api-web ยังใช้เส้น pre-intent ที่เข้มกว่าเพราะมี launch-gate authority
+ต้องปลดระวางด้วย

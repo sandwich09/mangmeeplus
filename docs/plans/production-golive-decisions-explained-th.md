@@ -323,9 +323,13 @@ alarm ที่มี 3 ตัวเป็น rollback alarm ของ deploy �
 **อันตรายยังไง:** ไม่ใช่ช่องโหว่ แต่คือ **การบินโดยไม่มีเครื่องวัด** เกิดอะไรขึ้นก็ไม่มีใครรู้
 จนกว่าลูกค้าจะโทรมา และเมื่อรู้แล้วก็สืบสวนย้อนหลังไม่ได้ถ้า log ถูกลบไปแล้ว
 
-**สถานะจริง:** ✅ โค้ดเสร็จ 2026-07-28 — deploy บังคับ retention 90 วัน + KMS + alert topic,
+**สถานะจริง:** ✅ โค้ดเสร็จ 2026-07-28 — deploy เดิมบังคับ retention 90 วัน + KMS + alert topic,
 สร้าง metric filter/alarm สำหรับ HIGH/CRITICAL, และเหตุการณ์สำคัญ (auth abuse, AI failure,
 erasure failure, malware quarantine) ยิง structured event แล้ว
+
+**นโยบายปัจจุบัน 2026-08-09:** CloudWatch log ใช้ UAT 3 วัน และ production 14 วัน
+(รวมกลุ่ม production เดิมและ production support session) การปรับโค้ด deploy/workflow ให้รับค่าใหม่
+เป็นงานแยก; ต้องทำก่อน deploy รอบถัดไปเพื่อไม่ให้ค่าเดิม 90 วันถูกเขียนทับหรือถูก guard ปฏิเสธ
 
 **ที่ค้าง:** สร้าง KMS key + SNS topic จริงบน AWS แล้วพิสูจน์ทั้งสาย (ดู D2)
 

@@ -294,7 +294,7 @@ LIFF config should be injected through build/runtime config and must not contain
 | `BACKUP_RETENTION_DAYS` | production | `35` | Operational backup retention. |
 | `RESTORE_TEST_REQUIRED` | production readiness | `true` | Restore drill before launch. |
 | `OBJECT_RETENTION_DAYS` | production | `2555` | Business document retention target. |
-| `LOG_RETENTION_DAYS` | production | `90` | App log retention. |
+| `LOG_RETENTION_DAYS` | uat / production | `3` (UAT), `14` (production) | CloudWatch application log retention; support-session and legacy production groups use 14 days. |
 
 ## 21. Production Fail-Fast Rules
 

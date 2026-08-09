@@ -68,7 +68,7 @@
 
 - **Redis**: 6 field ตามข้อ B2
 - **RDS**: `StorageEncrypted`, `MultiAZ`, `DeletionProtection`, `BackupRetentionPeriod`
-- **Log group ทุกตัว**: `retentionInDays` 90, `kmsKeyArn` ต้องเป็น customer key, ต้องมี metric filter,
+- **Log group production ทุกตัว**: `retentionInDays` 14, `kmsKeyArn` ต้องเป็น customer key, ต้องมี metric filter,
   ต้องมี alarm ที่ route ไป SNS
 - **M-16 closure ไม่นับ** ถ้าปลายทาง alert ไม่มีเจ้าของที่เป็นคนจริง หรือไม่ได้เห็นการส่งถึงจริง
 
