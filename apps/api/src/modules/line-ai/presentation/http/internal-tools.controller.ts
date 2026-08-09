@@ -4,6 +4,8 @@
  */
 import { Controller, Post, Body, Headers, UnauthorizedException, Logger, HttpCode } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertInternalSecret } from '../../../../common/security/secret-compare';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -68,11 +70,39 @@ import {
   LedgerGetReportSummaryTool,
 } from '../../application/use-cases/erp-procurement-ledger-tools.use-case';
 
-export type InternalToolCallDto = {
-  toolName: string;
-  context: ErpToolContext;
-  input?: Record<string, unknown>;
-};
+/**
+ * Audit H-23: this was a `type` named `...Dto`, so the global ValidationPipe saw metatype `Object`
+ * and skipped it — on the one endpoint the AI gateway calls to execute ERP tools. As classes the
+ * body is now whitelisted, and an unknown top-level key is a 400 instead of being carried inward.
+ *
+ * Only `userId` and `companyId` are required: those two are dereferenced to resolve access, so a
+ * body without them cannot mean anything. Everything else stays optional ON PURPOSE — this is a
+ * live path, and promoting a field to required here would turn a caller that has always omitted it
+ * into a 400 the moment this deploys. Shape is checked; the contract is not tightened.
+ *
+ * The authoritative values are re-derived anyway: permissions, roles, branch and location scopes
+ * come from resolveAccess(), never from this body, which is why validating them is about shape
+ * rather than trust.
+ */
+class InternalToolContextDto {
+  @IsString() @IsNotEmpty() @MaxLength(64) companyId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(64) userId!: string;
+  @IsString() @IsOptional() @MaxLength(128) requestId?: string;
+  @IsString() @IsOptional() @MaxLength(64) membershipId?: string;
+  @IsString() @IsOptional() @MaxLength(32) locale?: string;
+  @IsArray() @IsString({ each: true }) @IsOptional() roles?: string[];
+  @IsArray() @IsString({ each: true }) @IsOptional() permissions?: string[];
+  @IsArray() @IsString({ each: true }) @IsOptional() branchIds?: string[];
+  @IsArray() @IsString({ each: true }) @IsOptional() locationIds?: string[];
+}
+
+export class InternalToolCallDto {
+  @IsString() @IsNotEmpty() @MaxLength(120) toolName!: string;
+  @ValidateNested() @Type(() => InternalToolContextDto) context!: InternalToolContextDto;
+  // Free-form by design: every tool declares its own input schema and validates it downstream.
+  // Whitelisting the keys here would mean restating each tool's schema in the transport layer.
+  @IsObject() @IsOptional() input?: Record<string, unknown>;
+}
 
 /**
  * L-08: classification is re-enforced here because this executor — not the AI Gateway — is
@@ -338,7 +368,9 @@ export class InternalToolsController {
       permissions: access.permissions,
       branchIds: access.scopes.branchIds,
       locationIds: access.scopes.locationIds,
-      locale: dto.context.locale,
+      // `locale` is optional on the DTO so an existing caller that omits it is not turned into a
+      // 400 by this change; ErpToolContext still wants a value, and Thai is what this channel is.
+      locale: dto.context.locale ?? 'th',
     };
 
     // L-08 deny order — registry entry, then classification, then ERP permissions, then wiring.
