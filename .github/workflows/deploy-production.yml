@@ -443,8 +443,8 @@ jobs:
       - name: Verify legal evidence gate policy and manifest preflight
         env:
           EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
-          EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: a193e0a75b1c88142991305519ba8791e86320fdbc907a38af635cb076956982
-          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 23b2103d0c903dfc538c5da1fd12e4513b4d49c2f1e6c27c3375745ba36dee32
+          EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: 66fdfa5b9fc936d657612f306a741efc321c0565b81750489ebd337db9f52ad1
+          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 833bdaa26ca3ca852d6e23b3274ca990d382bf3f60144652b334057c3ae9cb5e
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \

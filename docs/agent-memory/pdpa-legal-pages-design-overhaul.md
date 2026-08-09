@@ -104,11 +104,17 @@ No legal copy was rewritten; the only text changes are the three page eyebrows (
   no script dependency, and their exact served-byte hashes are covered by the legal-content test:
   Terms `d1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7`, Privacy
   `7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4`.
+- **2026-08-10 CI gate follow-up:** the readiness fixture, evidence-manifest release target and
+  controller-owned contract/validator pins now follow `v1`; the validator accepts the v1 contact
+  context without claiming a verified registered office. Both legal evidence specs,
+  `production-image-security.spec.sh`, shell syntax checks and `git diff --check` pass.
 
 ## Next
 
-- Because this remains pre-launch, the narrowed copy is consolidated into v1. Once v1 has been
-  accepted in production, any content change requires bumping `RELEASE_VERSION`, cutting a new
+- Because this remains pre-launch, the narrowed copy is consolidated into v1. The legal-release
+  evidence manifest now targets `v1` but remains `BLOCKED`; no review evidence was fabricated.
+  Once v1 has been accepted in production, any content change requires bumping `RELEASE_VERSION`,
+  cutting a new
   release directory, updating hashes, and prompting again. `docs/security-evidence/legal-release-evidence.json`
   remains `BLOCKED` on operator identity, rights mailbox, DPO assessment, processor cross-border
   register, and Thai counsel approval.

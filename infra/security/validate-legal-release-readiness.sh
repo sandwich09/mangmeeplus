@@ -177,7 +177,7 @@ test "$(hash_file "$privacy_file")" = "$privacy_hash" || fail "Privacy artifact 
 for artifact in "$terms_file" "$privacy_file"; do
   grep -Fq "mangmeeplus-legal-version\" content=\"$terms_version" "$artifact" ||
     fail "artifact metadata does not match $terms_version"
-  grep -Fq 'ที่อยู่สำหรับติดต่อ' "$artifact" ||
+  grep -Fq 'ติดต่อเรื่องข้อมูลส่วนบุคคล' "$artifact" ||
     fail "artifact must distinguish the contact address from a verified registered office"
   grep -Fq 'contact@mangmeeplus.com' "$artifact" || fail "artifact missing the approved intake mailbox"
   if grep -Eiq 'WatchDog|SudoChatBot|support@mangmeeplus\.com' "$artifact"; then
