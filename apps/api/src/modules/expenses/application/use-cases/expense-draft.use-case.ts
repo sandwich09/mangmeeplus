@@ -151,7 +151,9 @@ export class ListExpensesUseCase {
     const canReadRelated = hasPerm(ctx, 'expense.read_related');
     if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
     if (filter.branchId) assertBranchInScope(ctx, filter.branchId);
-    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId };
+    const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
+    const pageSize = Number.isFinite(filter.pageSize) ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!))) : 20;
+    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize };
     if (!canRead && canReadOwn && !canReadRelated) resolved.createdByUserId = ctx.userId;
     return this.repo.listExpenses(resolved, ctx.scopes, !canRead && canReadRelated ? ctx.userId : undefined);
   }

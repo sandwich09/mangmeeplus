@@ -63,6 +63,13 @@ describe('ListExpensesUseCase branch scope', () => {
     await new ListExpensesUseCase(repo).execute(ctx(['b1', 'b2']), { branchId: 'b2' });
     assert.equal(calls[0].filter.branchId, 'b2');
   });
+
+  it('clamps oversized pagination before querying the repository', async () => {
+    const { repo, calls } = makeRepo();
+    await new ListExpensesUseCase(repo).execute(ctx(), { page: 0, pageSize: 500_000 });
+    assert.equal(calls[0].filter.page, 1);
+    assert.equal(calls[0].filter.pageSize, 200);
+  });
 });
 
 describe('CreateExpenseDraftUseCase branch tagging', () => {
