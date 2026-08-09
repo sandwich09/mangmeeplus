@@ -277,3 +277,39 @@ consumer และทุกภาษาในเส้นทางเดีย�
 
 **operation ค้างใหม่:** `74c72def-8ab5-41ca-a6b9-4bbfc0630648`
 (task `5235ca84a7184cfd8f3ed63d333fb726`, deployment `U3FCkWV9ZGGWCM8DFWVZj`)
+
+## ai-gateway: ชื่อ service ใน deploy.sh ค้างอยู่กับ service ที่ถูกลบไปแล้ว (2026-08-09)
+
+deploy ai-gateway ครั้งแรกตายที่ `Deploy immutable manifest`
+
+```
+ERROR: watchdog-bms-ai-gateway has an incomplete active configuration; refusing remote mutation intent
+```
+
+**ความจริงบน production:**
+
+| service | `deploy.sh` คาด | ของจริง |
+| --- | --- | --- |
+| api-web | `watchdog-bms-api-web-pub` | ตรง |
+| ai-gateway | `watchdog-bms-ai-gateway` | **`watchdog-bms-ai-gateway-v2`** |
+| workers | `watchdog-bms-workers` | ตรง |
+
+`watchdog-bms-ai-gateway` (ไม่มี `-v2`) **ไม่มีอยู่ใน cluster แล้ว** — README บันทึกไว้เองว่าถูกลบ
+เมื่อ 2026-07-03 เพราะ control-plane state พัง (`ROLLBACK_FAILED: No rollback candidate`)
+แล้วแทนด้วย `-v2`
+
+**ทำไมไม่มีใครเจอ:** ตอนนั้นชี้ SSM ARN ไปที่ `-v2` เรียบร้อย และ README เขียนว่า *"the deploy
+script follows the service ARNs stored in SSM"* ซึ่งจริง — แต่จริงเฉพาะตอน **เรียก**
+`UpdateExpressGatewayService` ส่วน `service_name` ยังถูกใช้ตรวจ **revision ARN ที่ ECS ตอบกลับ**:
+
+```bash
+[[ ! "$revision" =~ ^arn:...:service-revision/${CLUSTER_NAME}/${service_name}/[^/]+$ ]] && refuse
+```
+
+revision จริงคือ `.../watchdog-bms-ai-gateway-v2/3977...` ซึ่งไม่แมตช์ `.../watchdog-bms-ai-gateway/`
+เพราะหลังชื่อมี `-v2` ไม่ใช่ `/` — **image กับ GIT_SHA ปกติดีทั้งคู่** ตัวที่ผิดคือชื่ออย่างเดียว
+
+และ production ไม่เคย deploy ai-gateway เลยตั้งแต่ย้าย repo จึงไม่มีอะไรมาสะดุดค่านี้
+
+**แก้:** `AI_SERVICE_NAME="watchdog-bms-ai-gateway-v2"` + เขียน README ให้บอกว่าค่านี้ต้องเท่ากับ
+service ที่ SSM ชี้ ไม่ใช่แค่ "ตาม SSM แล้วพอ"

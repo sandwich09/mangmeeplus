@@ -34,6 +34,28 @@
       "Effect": "Allow",
       "Action": "sns:Publish",
       "Resource": "arn:aws:sns:ap-southeast-1:<ACCOUNT_ID>:watchdog-bms-production-security-alerts"
+    },
+    {
+      "Sid": "WriteSessionTranscriptToS3",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::watchdog-bms-prod-<ACCOUNT_ID>/ssm-session-logs/production/*"
+    },
+    {
+      "Sid": "ReadBucketEncryptionForSessionLogging",
+      "Effect": "Allow",
+      "Action": "s3:GetEncryptionConfiguration",
+      "Resource": "arn:aws:s3:::watchdog-bms-prod-<ACCOUNT_ID>"
+    },
+    {
+      "Sid": "StreamSessionTranscriptToCloudWatch",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:ap-southeast-1:<ACCOUNT_ID>:log-group:/aws/ssm/session-logs/watchdog-bms-production:*"
     }
   ]
 }

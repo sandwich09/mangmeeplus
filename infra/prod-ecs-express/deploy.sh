@@ -265,7 +265,14 @@ if [ "$DEPLOY_ENV" = "production" ]; then
   API_POLICY_NAME="watchdog-bms-prod-api-runtime"
   AI_POLICY_NAME="watchdog-bms-ai-gateway-runtime"
   API_SERVICE_NAME="watchdog-bms-api-web-pub"
-  AI_SERVICE_NAME="watchdog-bms-ai-gateway"
+  # -v2 is the live service. The original watchdog-bms-ai-gateway was deleted on 2026-07-03 after
+  # its control-plane state broke, and its SSM ARN was repointed here - but this constant was left
+  # on the old name. Following the SSM ARN is enough to *call* UpdateExpressGatewayService, which is
+  # why README says the script tracks the live services automatically; the name is also used to
+  # validate the returned service-revision ARN, and that check rejected the real service with
+  # "incomplete active configuration". Nothing caught it because production ai-gateway had never
+  # been deployed until now. Keep this equal to the service the SSM parameter points at.
+  AI_SERVICE_NAME="watchdog-bms-ai-gateway-v2"
   WORKERS_SERVICE_NAME="watchdog-bms-workers"
 else
   EXECUTION_ROLE="watchdog-bms-uat-ecs-execution-role"
