@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01 committed; M8-02 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01/M8-02 committed; M8-03 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -32,6 +32,9 @@ Verification:
 - M8-01 commit: `87d6c0e fix(auth): revoke sessions after credential changes`.
 - M8-02 audit tests: 26/26 pass; RPT E2E file compiles/lists all 8 cases. The endpoint is tenant-explicit at
   `/companies/:companyId/audit/logs`, route/context mismatch fails before repository access, and specs/caller match.
+- M8-02 commit: `5be8d78 fix(audit): bind log queries to route company`.
+- M8-03 AuthGuard/deny-by-default tests: 25/25 pass. Central guard rejects conflicting header/route tenant selectors only
+  after authentication/session validation and before context resolution; missing/invalid credentials retain 401 ordering.
 Next:
-- Commit M8-02 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
-- M8-03: quantify and fix route/header tenant precedence across company-scoped controllers without conflating it with M8-02.
+- Commit M8-03 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
+- M8-04: verify/fix stale permission and entitlement UI after mid-session changes.

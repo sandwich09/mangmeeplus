@@ -204,6 +204,30 @@ describe('AuthGuard', () => {
     assert.equal(call[3], 'co-route');
   });
 
+  it('rejects conflicting header and route companies before resolving request context', async () => {
+    const resolve = { execute: mock.fn(async () => ({})) } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, noopPrisma, acceptedLegal);
+
+    await assert.rejects(
+      () => guard.canActivate(makeContext({
+        authHeader: 'Bearer valid.token',
+        xCompanyId: 'co-header',
+        routeCompanyId: 'co-route',
+      })),
+      (error: unknown) => error instanceof ForbiddenException,
+    );
+    assert.equal(resolve.execute.mock.callCount(), 0);
+  });
+
+  it('authenticates before reporting a conflicting company selector', async () => {
+    const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
+
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ xCompanyId: 'co-header', routeCompanyId: 'co-route' })),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+  });
+
   it('rejects a revoked session token before protected route handling', async () => {
     const verifier = { verify: async () => ({ subject: 'u1', tokenId: 'token-1' }) };
     const prisma = {

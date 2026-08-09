@@ -334,7 +334,7 @@ Database phases also run migration/seed commands added by implementation.
 - [ ] Public routes are explicit with `@Public()`.
 - [ ] Protected routes have `@RequirePermissions(...)`.
 - [ ] Request context is server-derived.
-- [ ] `X-Company-Id` is a selection hint only and is verified.
+- [ ] `X-Company-Id` is a selection hint only, is verified, and must match route `:companyId` when both are present.
 - [ ] No route trusts client-submitted role, permission, company ownership, price, tax, approval, or stock values.
 - [ ] Auth errors do not leak token internals.
 - [ ] Audit metadata redacts secrets and large/sensitive payloads.

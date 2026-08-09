@@ -61,9 +61,9 @@ export class AuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<RequestWithContext>();
     const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
-    const companyId =
-      (req.headers['x-company-id'] as string | undefined) ??
-      (req.params?.['companyId'] as string | undefined);
+    const headerCompanyId = req.headers['x-company-id'] as string | undefined;
+    const routeCompanyId = req.params?.['companyId'] as string | undefined;
+    const companyId = headerCompanyId ?? routeCompanyId;
 
     const authHeader = req.headers['authorization'] as string | undefined;
     // ponytail: cookie fallback for browser clients; Bearer header is primary
@@ -119,6 +119,13 @@ export class AuthGuard implements CanActivate {
     });
     if (!session || session.userId !== subject || session.status !== 'ACTIVE' || session.expiresAt <= new Date()) {
       throw new UnauthorizedException('Session is expired or revoked.');
+    }
+
+    // Header and route are two representations of one tenant selection, never independent
+    // authorities. Enforce this centrally so a controller missing assertRouteCompany cannot
+    // execute company B's URL against company A's request context.
+    if (headerCompanyId !== undefined && routeCompanyId !== undefined && headerCompanyId !== routeCompanyId) {
+      throw new ForbiddenException('Route company does not match request context.');
     }
 
     req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId);

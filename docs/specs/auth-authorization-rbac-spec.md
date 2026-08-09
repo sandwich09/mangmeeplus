@@ -674,6 +674,7 @@ Rules:
 
 - `requestId` comes from `X-Request-Id` or is generated server-side.
 - `companyId` comes from `X-Company-Id`, route context, session preference, or single active membership.
+- When both `X-Company-Id` and route `:companyId` are present they must be identical; an authenticated mismatch is rejected before request-context resolution.
 - `companyId` is always verified against active membership.
 - `X-Company-Id` and explicit company selection are required only for owner multi-company sessions. Non-owner employees should resolve from their single active company membership.
 - `roles`, `permissions`, and `scopes` come from database records only.
