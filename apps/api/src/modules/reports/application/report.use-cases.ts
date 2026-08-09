@@ -719,8 +719,10 @@ export class CreateReportExportUseCase {
       sourceType: 'report_export',
       sourceId: request.id,
       severity: 'info',
-      title: 'Report export ready',
-      body: `${result.dataset.title} CSV export is ready.`,
+      // Thai like every other notification title: this one is pushed to LINE, where it is the whole
+      // message rather than a row in a list the workspace already frames.
+      title: 'ไฟล์รายงานพร้อมดาวน์โหลดแล้ว',
+      body: `ไฟล์ CSV ของรายงาน "${result.dataset.title}" พร้อมให้ดาวน์โหลดแล้ว`,
       deepLinkHref: `/companies/${companyId}/reports`,
       sourceRefs: result.sourceRefs,
       recipientUserIds: [ctx.userId],

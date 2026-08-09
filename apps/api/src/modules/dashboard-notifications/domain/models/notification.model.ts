@@ -125,6 +125,11 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',
   'expense.substitute_receipt_signature_pending',
+  // Reports emits this on every completed export (report.use-cases.ts). While it sat in the future
+  // list below, the preference gate — which defaults to exactly this array — dropped the LINE push
+  // every time, and the preferences screen offers only implemented keys so nobody could opt in
+  // either. The notification existed and could never be delivered.
+  'report_ready',
 ];
 
 // Future triggers — disabled until source module exists
@@ -136,7 +141,6 @@ export const FUTURE_TRIGGER_KEYS: string[] = [
   'approval_pending',
   'follow_up_due',
   'campaign_opportunity',
-  'report_ready',
   'system_security_alert',
 ];
 
