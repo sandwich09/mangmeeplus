@@ -1670,12 +1670,8 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
                 NEEDS_COMPANY_SELECTION means the user belongs to multiple companies and has not yet selected this one.
               </p>
             </div>
-            <Link
-              href="/system/line-settings"
-              className="text-xs text-brand-700 hover:underline flex-shrink-0 ml-4"
-            >
-              Manage shared LINE credentials →
-            </Link>
+            {/* Audit H-14: hidden with the screen it points at — saving there cannot rotate a
+                credential the webhook reads from AWS/env. Restore both together. */}
           </div>
         </SectionCard>
       </div>

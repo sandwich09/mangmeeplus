@@ -9,7 +9,13 @@ const SECTIONS = [
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
   { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
-  { href: '/system/line-settings', label: 'LINE' },
+  // Audit H-14: the shared LINE credential screen is hidden until it can actually rotate a
+  // credential. Saving there writes the database, but the webhook verifies signatures with the
+  // channel secret from AWS/env, so a successful save changed nothing — a screen that reports
+  // success without doing the work is worse than one that is absent. Rotation stays where it
+  // already works: update the secret and redeploy. See SharedLineSettingsPage for the two changes
+  // that have to land before this comes back.
+  // { href: '/system/line-settings', label: 'LINE' },
   { href: '/system/ai-budget', label: 'AI Budget' },
 ];
 

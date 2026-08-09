@@ -1,3 +1,31 @@
+/**
+ * Shared LINE credential console — HIDDEN, not deleted (audit H-14, owner decision 2026-08-10).
+ *
+ * Three things were wrong at once, and only the first is cheap to fix:
+ *
+ * 1. `system-line.controller.ts` requires `system.shared_line_credential.manage`, a key that is not
+ *    in the permission registry. Nobody holds it, SYSTEM_ADMIN included — that role is granted an
+ *    explicit list, not everything — so the endpoint answers 403 to every caller.
+ * 2. Adding the row by hand does not survive: `sync-permissions.ts` revokes grants on system roles
+ *    that the registry does not declare, deliberately, because system roles are code-defined.
+ * 3. Even past both, saving here would change nothing. The webhook verifies signatures with
+ *    `config.lineMessagingChannelSecret` — the value from AWS/env — and never reads the row this
+ *    screen writes.
+ *
+ * So fixing only (1) would be the harmful move: the screen would report success and rotate nothing,
+ * and an operator would believe a credential had been replaced when it had not. A 403 at least
+ * tells the truth. Credential rotation stays where it works today: change the secret in AWS/env and
+ * redeploy.
+ *
+ * To bring this back, both have to land together:
+ *   - declare `system.shared_line_credential.manage` in the permission registry and grant it to
+ *     SYSTEM_ADMIN, so the endpoint is reachable;
+ *   - make the LINE webhook read the stored credential first and fall back to AWS/env, including
+ *     cache invalidation on write, so a save actually takes effect.
+ *
+ * The route and this component stay so that work is a diff rather than a rewrite; only the two
+ * links into it are commented out (SystemHeader, PartnerDetailPage).
+ */
 'use client';
 
 import Link from 'next/link';
