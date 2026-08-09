@@ -803,9 +803,31 @@ export async function reconcileRemoteReleaseOperation(
     if (row.releaseDeployTarget !== null && !await hasCompleteReleaseServiceCoverage(
       client, input.id, row.releaseDeployTarget, row.preIntentApiCleanupCompletedAt,
     )) {
-      throw new RemoteReleaseOperationBlocked(
-        `release operation ${input.id} has incomplete target-service intent/orphan coverage`,
-      );
+      // A single ai-gateway/workers target that produced no intent at all was never mutated.
+      // deploy.sh prepares the durable intent (deploy.sh:1055) *before* it calls
+      // UpdateExpressGatewayService (deploy.sh:1058), so zero intents proves the service was
+      // never touched, and FAILED_CONFIRMED is then the only truthful outcome.
+      //
+      // Without this, such an operation is unrecoverable by any sanctioned path: generic
+      // reconcile stops here, PRE_INTENT recovery is gated to all|api-web, and ORPHAN needs
+      // intent and binder task ARNs that were never created. It blocks every production deploy
+      // until someone edits the row by hand, which the runbook forbids for good reason.
+      //
+      // api-web keeps the stricter pre-intent path above: it also carries launch-gate authority
+      // that has to be retired, so absence of an intent is not the whole story there.
+      const targetIsNonApi = row.releaseDeployTarget === 'ai-gateway'
+        || row.releaseDeployTarget === 'workers';
+      const anyIntent = await client.query<{ count: number }>(`
+        SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1
+      `, [input.id]);
+      const neverMutated = targetIsNonApi
+        && (anyIntent.rows[0]?.count ?? 0) === 0
+        && input.outcome === 'FAILED_CONFIRMED';
+      if (!neverMutated) {
+        throw new RemoteReleaseOperationBlocked(
+          `release operation ${input.id} has incomplete target-service intent/orphan coverage`,
+        );
+      }
     }
     const pendingLegacyCleanup = await client.query<{ count: number }>(`
       SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent"
@@ -1123,14 +1145,23 @@ function parseMutationIntent(environment: Environment, variable = 'RELEASE_MUTAT
   const serviceName = typeof row.serviceName === 'string' ? row.serviceName : '';
   const ssmParameterName = typeof row.ssmParameterName === 'string' ? row.ssmParameterName : '';
   const prefix = environment === 'uat' ? 'watchdog-bms-uat' : 'watchdog-bms';
+  const aiGatewayServiceName = environment === 'uat'
+    ? 'watchdog-bms-uat-ai-gateway'
+    : 'watchdog-bms-ai-gateway-v2';
   const exactIdentities: Record<string, Array<{ serviceName: string; ssmParameterName: string }>> = {
     'api-web': [{
       serviceName: environment === 'uat' ? 'watchdog-bms-uat-api-web' : 'watchdog-bms-api-web-pub',
       ssmParameterName: `/watchdog-bms/${environment}/ecs-express-api-web-service-arn`,
     }],
+    // Production's ai-gateway is -v2. The original watchdog-bms-ai-gateway was deleted 2026-07-03
+    // after its control-plane state broke, and the SSM ARN was repointed then; this map and
+    // deploy.sh's AI_SERVICE_NAME both kept the old name. api-web was already special-cased for
+    // its own -pub suffix, ai-gateway simply was not. The two must agree: deploy.sh builds the
+    // intent from its name and this rejects it, so a mismatch fails only after images are built
+    // and pushed - and leaves an operation open behind it.
     'ai-gateway': [
-      { serviceName: `${prefix}-ai-gateway`, ssmParameterName: `/watchdog-bms/${environment}/ecs-express-ai-gateway-service-arn` },
-      { serviceName: `${prefix}-ai-gateway-priv`, ssmParameterName: `/watchdog-bms/${environment}/ecs-express-ai-gateway-priv-service-arn` },
+      { serviceName: aiGatewayServiceName, ssmParameterName: `/watchdog-bms/${environment}/ecs-express-ai-gateway-service-arn` },
+      { serviceName: `${aiGatewayServiceName}-priv`, ssmParameterName: `/watchdog-bms/${environment}/ecs-express-ai-gateway-priv-service-arn` },
     ],
     workers: [
       { serviceName: `${prefix}-workers`, ssmParameterName: `/watchdog-bms/${environment}/ecs-express-workers-service-arn` },
