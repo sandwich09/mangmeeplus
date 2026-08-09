@@ -11,7 +11,11 @@ import type {
   CancelDocumentNumberInput,
   VoidDocumentNumberInput,
 } from '../../domain/models/document-sequence.model';
-import { formatDocumentNumber, getDefaultDocumentSequenceConfig } from '../../domain/logic/document-sequence.logic';
+import {
+  formatDocumentNumber,
+  getDefaultDocumentSequenceConfig,
+  templateNumbersAreBranchDistinct,
+} from '../../domain/logic/document-sequence.logic';
 
 @Injectable()
 export class PrismaDocumentSequenceRepository implements DocumentSequenceRepositoryPort {
@@ -79,7 +83,6 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
     tx: Prisma.TransactionClient,
     input: ReserveDocumentNumberInput,
   ): Promise<ReservedDocumentNumberRecord> {
-    const branchScopeKey = input.branchId ?? 'GLOBAL';
     // Idempotency check
     const existing = await tx.documentNumber.findFirst({
       where: { companyId: input.companyId, documentType: input.documentType, idempotencyKey: input.idempotencyKey },
@@ -91,6 +94,20 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
       }
       return this.toNumRecord(existing);
     }
+
+    // The template has to be resolved before the scope key, because it decides whether the counter
+    // may be split per branch at all (CR-7). A branch-blind template gets one company-wide counter;
+    // only a template carrying {BRANCH} renders numbers two branches cannot collide on.
+    const stored = await tx.documentSequence.findFirst({
+      where: { companyId: input.companyId, documentType: input.documentType },
+      orderBy: [{ periodKey: 'desc' }, { createdAt: 'desc' }],
+    });
+    if (stored?.status === 'DISABLED') {
+      throw new UnprocessableEntityException('Document sequence is disabled or missing.');
+    }
+    const template = stored?.prefixTemplate ?? getDefaultDocumentSequenceConfig(input.documentType)?.prefixTemplate;
+    const branchDistinct = Boolean(template && templateNumbersAreBranchDistinct(template));
+    const branchScopeKey = branchDistinct ? input.branchId ?? 'GLOBAL' : 'GLOBAL';
 
     let sequence = await tx.documentSequence.findFirst({
       where: {
@@ -112,10 +129,30 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
       if (previous?.status === 'DISABLED') {
         throw new UnprocessableEntityException('Document sequence is disabled or missing.');
       }
-      const config = previous ?? getDefaultDocumentSequenceConfig(input.documentType);
+      // `stored` before the code default: a company that customized its template under a branch
+      // scope must keep that template when its counter becomes company-wide, not silently revert.
+      const config = previous ?? stored ?? getDefaultDocumentSequenceConfig(input.documentType);
       if (!config) {
         throw new UnprocessableEntityException('Document sequence is disabled or missing.');
       }
+      // A company already numbering under a branch scope must not restart at 1 when its counter
+      // becomes company-wide — it would re-issue numbers it has already given out and wedge itself
+      // in exactly the way CR-7 describes. Only one scope can ever have issued within a period (the
+      // second one's first insert always failed and rolled back), so the highest counter in the
+      // period is that scope's, and continuing from it is unambiguous.
+      //
+      // Only for the merge. When the template names the branch, the scopes render different strings
+      // and each one is entitled to its own series starting at 1 — carrying a number over there
+      // would inflate a counter for no reason.
+      const issuedElsewhereThisPeriod = branchDistinct ? null : await tx.documentSequence.findFirst({
+        where: {
+          companyId: input.companyId,
+          documentType: input.documentType,
+          periodKey: input.periodKey,
+          NOT: { branchScopeKey },
+        },
+        orderBy: { nextNumber: 'desc' },
+      });
       sequence = await tx.documentSequence.upsert({
         where: {
           companyId_branchScopeKey_documentType_periodKey: {
@@ -133,7 +170,7 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
           documentType: input.documentType,
           periodKey: input.periodKey,
           prefixTemplate: config.prefixTemplate,
-          nextNumber: 1,
+          nextNumber: Math.max(1, issuedElsewhereThisPeriod?.nextNumber ?? 1),
           padding: config.padding,
           resetPolicy: config.resetPolicy,
           status: 'ACTIVE',

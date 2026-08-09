@@ -37,6 +37,21 @@ export function getDefaultDocumentSequenceConfig(documentType: string): DefaultD
   return DEFAULT_DOCUMENT_SEQUENCE_CONFIGS[documentType];
 }
 
+/**
+ * Whether the numbers this template renders can say which branch issued them, and therefore
+ * whether the counter behind it may be split per branch (audit CR-7).
+ *
+ * DocumentNumber is unique on `(companyId, documentType, documentNumber)` — company-wide. A
+ * per-branch counter under a template with no `{BRANCH}` renders the identical string from two
+ * counters, and the second branch's insert is rejected. Not once: the rejection rolls the whole
+ * reservation transaction back, including the `nextNumber` increment, so that branch retries the
+ * same number forever. None of the default templates above carry `{BRANCH}`, which is why the
+ * counter has to stay company-wide unless the template opts in.
+ */
+export function templateNumbersAreBranchDistinct(template: string): boolean {
+  return template.includes('{BRANCH}');
+}
+
 export function validatePrefixTemplate(template: string): string | null {
   const found: string[] = template.match(PLACEHOLDER_PATTERN) ?? [];
   for (const ph of found) {
