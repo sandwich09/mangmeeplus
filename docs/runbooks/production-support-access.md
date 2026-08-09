@@ -52,8 +52,15 @@
       > **IAM propagation ช้ากว่าที่คิด:** หลัง `put-role-policy` การเชื่อมยังล้มด้วย
       > `pam_authenticate failed: Permission denied` อยู่ ~9 นาที แล้วผ่านเอง อย่าเพิ่งสรุปว่า
       > policy ผิดแล้วไปแก้อย่างอื่น — ให้ retry เป็นระยะก่อน
-- [ ] **SSM session logging** → S3 (KMS-encrypted) + CloudWatch **ตั้งก่อนใช้งานครั้งแรก**
-      session ที่ไม่ถูกบันทึกคือ session ที่ตอบคำถามภายหลังไม่ได้
+- [x] **SSM session logging** เปิดแล้ว 2026-08-09 ผ่าน document `SSM-SessionManagerRunShell`
+      → S3 `watchdog-bms-prod-…/ssm-session-logs/production` (AES256) + CloudWatch
+      `/aws/ssm/session-logs/watchdog-bms-production` (**KMS**, retention 90 วัน)
+      idle timeout 20 นาที, max session 4 ชม.
+      พิสูจน์ด้วย session จริง: transcript ขึ้นครบทั้งสองที่ พร้อมข้อความ error ที่ถูกปฏิเสธ
+      > **`cloudWatchEncryptionEnabled` ต้องเป็น `false`** — ตั้ง `true` แล้ว SSM ปฏิเสธทุก session
+      > ด้วย *"encryption is not set up on the selected CloudWatch Logs log group"* **ทั้งที่ log group
+      > มี KMS key จริงและ key อยู่สถานะ Enabled** ผลคือเปิด bastion ไม่ได้เลยจนกว่าจะปิด flag นี้
+      > ข้อมูลยังเข้ารหัสอยู่ดีเพราะ log group เป็นคนเข้ารหัส flag นี้เป็นแค่ด่านตรวจของ SSM
 - [x] **RDS**: เปิด IAM database authentication บน `watchdog-bms-prod-db` (ทำแล้วใน W1 modify-db-instance)
 - [x] **RDS SG อนุญาต 5432 จาก bastion SG** — เปิดแล้ว 2026-08-08 ด้วย `--source-group` (SG-to-SG
       ไม่ใช่ CIDR) นี่คือ setup ถาวรที่ตั้งใจ ไม่ใช่ workaround: bastion คือทางเข้า DB ที่ออกแบบไว้
@@ -322,3 +329,53 @@ keyword ใหม่ของ conninfo แก้ด้วย `tr -cd 'A-Za-z0-9.
 > เหมือน pagination bug ใน `deploy.sh` และ `PGDATABASE` — รูปแบบเดิมซ้ำ ๆ ทั้งวัน
 > **ข้อ §1 ที่ยังเหลือ "ซ้อม T1/T2 บน UAT ให้จบหนึ่งรอบ" จึงไม่ใช่พิธีกรรม** มันคือสิ่งเดียว
 > ที่จะจับบั๊กประเภทนี้ได้ก่อนถึงเวลาจริง
+
+## สองบั๊กที่เจอตอนทดสอบ session จริงครั้งแรก (2026-08-09)
+
+ทั้งคู่ **ไม่โผล่เลย** ตอนทดสอบผ่าน `ssm send-command` เพราะ Run Command รันเป็น **root**
+ส่วน Session Manager รันเป็น **`ssm-user`** — เป็นคนละ user คนละสิทธิ์
+
+**1. `cloudWatchEncryptionEnabled: true` ทำให้เปิด session ไม่ได้เลย**
+
+```
+We couldn't start the session because encryption is not set up on the
+selected CloudWatch Logs log group.
+```
+
+ทั้งที่ `describe-log-groups` ยืนยันว่า `kmsKeyId` ถูกตั้งและ key `Enabled` ปิด flag เป็น `false`
+แล้ว session ทำงานทันที และ transcript ยังขึ้น CloudWatch ครบเหมือนเดิม — เพราะตัวที่เข้ารหัสคือ
+log group ไม่ใช่ flag นี้
+
+**ผลกระทบถ้าไม่เจอ:** เปิด logging ตอนดึกแล้วเดินจากไป = ล็อกทางเข้า bastion ทั้งหมดโดยไม่รู้ตัว
+จะไปเจอตอนเกิด incident จริงซึ่งเป็นเวลาที่แย่ที่สุด
+
+**2. `/opt/rds-ca` เป็น 0700 → `ssm-user` อ่าน CA ไม่ได้**
+
+```
+psql: root certificate file "/opt/rds-ca/ap-southeast-1-bundle.pem" does not exist
+```
+
+ไฟล์อยู่ครบและเป็น 0644 แต่**ไดเรกทอรี**เป็น `drwx------` เพราะสคริปต์ติดตั้งของผมมี `umask 077`
+ไว้บนสุด (ตั้งใจให้ไฟล์ env ที่มี credential ปลอดภัย) แล้วมันไปมีผลกับ `mkdir` ด้วย
+`ssm-user` traverse เข้าไม่ได้ psql เลยรายงานว่าไฟล์ไม่มี
+
+แก้: `chmod 0755 /opt/rds-ca` — CA bundle เป็นของสาธารณะ ไม่ใช่ความลับ
+**`/opt/watchdog` ยังเป็น 0700 ตามเดิมโดยตั้งใจ** — arm script ต้องรันผ่าน sudo เท่านั้น
+
+**หลักฐานว่าใช้งานได้จริงหลังแก้ทั้งสอง:**
+
+```
+watchdog_support_ro|support:INC-2026-0809-smoke:claude-verify|19
+ERROR:  cannot execute CREATE TABLE in a read-only transaction
+```
+
+และ DB log บันทึกบรรทัดนี้พร้อม `%a`:
+
+```
+…:watchdog_support_ro@watchdog_bms:[2298]:1:25006:…:support:INC-2026-0809-smoke:claude-verify:
+ERROR:  cannot execute CREATE TABLE in a read-only transaction
+STATEMENT:  CREATE TABLE should_fail(x int);
+```
+
+**บทเรียน:** ทดสอบด้วยเส้นทางจริงที่ผู้ใช้จะใช้ ไม่ใช่เส้นทางที่สะดวกกับเรา — `send-command`
+กับ `start-session` ต่างกันที่ user ซึ่งเป็นตัวแปรที่ทำให้บั๊กทั้งสองซ่อนอยู่
