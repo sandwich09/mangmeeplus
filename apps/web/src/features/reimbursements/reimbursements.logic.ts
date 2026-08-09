@@ -158,7 +158,7 @@ export type HubTab = (typeof HUB_TABS)[number];
  * save 403s.
  */
 const HUB_TAB_PERMISSIONS: Record<HubTab, readonly string[]> = {
-  mine: ['reimbursement.read_own'],
+  mine: ['reimbursement.read_related', 'reimbursement.read_own'],
   approvals: ['reimbursement.approve'],
   finance: ['reimbursement.finance_review'],
   policy: ['reimbursement.policy.manage'],

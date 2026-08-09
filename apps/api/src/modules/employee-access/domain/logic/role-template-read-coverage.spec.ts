@@ -1,6 +1,7 @@
 // GAP-01 guard: every job preset that grants a WRITE permission must also grant the paired
 // `.read` (sidebar menus gate on `.read`, so a role without it cannot open the screen it works in).
 // Self-service packs legitimately read only their own scope, so a `.read_own` sibling is accepted.
+// `.read_related` is also a read key, not a mutation that must pull broad `.read` into every preset.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { compileRole } from './capability.logic';
@@ -18,7 +19,7 @@ function missingReads(keys: string[]): string[] {
   const held = new Set(keys);
   const missing = new Set<string>();
   for (const k of keys) {
-    if (k.endsWith('.read')) continue;
+    if (k.endsWith('.read') || k.endsWith('.read_own') || k.endsWith('.read_related')) continue;
     const base = k.replace(/\.[a-z_]+$/, '.read');
     if (!ALL_KEYS.has(base) || held.has(base)) continue;
     const readOwn = k.replace(/\.[a-z_]+$/, '') + '.read_own';
@@ -64,9 +65,8 @@ describe('role-template read coverage (GAP-01)', () => {
   });
 
   it('finance/accounting presets hold the read_own keys the screens gate on', () => {
-    // The expense and reimbursement controllers use `.read_own` as the entry
-    // permission for every screen; a role with only `.read` gets 403 on pages
-    // its sidebar shows.
+    // Self-service screens still keep the narrower compatibility path even though related actors
+    // can now enter the same modules through `.read_related`.
     const fin = new Set(compiledKeys('tpl.x.finance'));
     for (const k of ['expense.read_own', 'reimbursement.read_own']) {
       assert.ok(fin.has(k), `tpl.x.finance should hold ${k}`);

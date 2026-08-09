@@ -212,6 +212,9 @@ describe('visibleHubTabs', () => {
   it('still requires policy.manage from an owner', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own'], ['OWNER']), ['mine']);
   });
+  it('shows the related-record tab with the view-only relation permission', () => {
+    assert.deepEqual(visibleHubTabs(['reimbursement.read_related']), ['mine']);
+  });
   it('hides ตั้งค่านโยบาย from a manager who only approves', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own', 'reimbursement.approve']), ['mine', 'approvals']);
   });
@@ -223,7 +226,7 @@ describe('visibleHubTabs', () => {
       ['mine', 'finance'],
     );
   });
-  it('shows nothing without a reimbursement permission (read-only viewers included)', () => {
+  it('shows nothing without a hub permission (company-wide read alone has no dedicated tab)', () => {
     assert.deepEqual(visibleHubTabs([]), []);
     assert.deepEqual(visibleHubTabs(['reimbursement.read', 'expense.read']), []);
   });

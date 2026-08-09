@@ -199,7 +199,7 @@ export class GetReimbursementDetailUseCase {
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    assertCanReadRequest(ctx, req.requesterUserId);
+    await assertCanReadRequest(ctx, req, this.repo);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
   }
 }
@@ -211,14 +211,30 @@ export class ListReimbursementsUseCase {
   async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<{ items: ReimbursementRequestSummary[]; total: number; page: number; pageSize: number }> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
-    if (!canReadAll && !canReadOwn) throw new ForbiddenException('Missing permission to read reimbursements');
+    const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
+    if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
 
-    // Non-privileged users are always scoped to their own requests.
-    const requesterUserId = !canReadAll || filter.scope === 'own' ? ctx.userId : filter.requesterUserId;
+    let requesterUserId: string | undefined;
+    let relatedUserId: string | undefined;
+    if (filter.scope === 'own') {
+      requesterUserId = ctx.userId;
+    } else if (filter.scope === 'related') {
+      if (!canReadRelated) throw new ForbiddenException('Missing permission: reimbursement.read_related');
+      relatedUserId = ctx.userId;
+    } else if (canReadAll) {
+      requesterUserId = filter.requesterUserId;
+    } else if (canReadRelated) {
+      relatedUserId = ctx.userId;
+      requesterUserId = filter.requesterUserId;
+    } else {
+      requesterUserId = ctx.userId;
+    }
 
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId,
+      relatedUserId,
+      scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
     });
@@ -571,9 +587,18 @@ export class CancelReimbursementUseCase {
   }
 }
 
-export function assertCanReadRequest(ctx: RequestContext, requesterUserId: string): void {
+export async function assertCanReadRequest(
+  ctx: RequestContext,
+  request: Pick<ReimbursementRequestRecord, 'id' | 'branchId' | 'requesterUserId'>,
+  repo: PrismaReimbursementRepository,
+): Promise<void> {
+  if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
+    throw new ForbiddenException('Branch is outside your assigned branch scope.');
+  }
   if (ctx.permissions.includes('reimbursement.read')) return;
-  if (ctx.permissions.includes('reimbursement.read_own') && requesterUserId === ctx.userId) return;
+  if (ctx.permissions.includes('reimbursement.read_own') && request.requesterUserId === ctx.userId) return;
+  if (ctx.permissions.includes('reimbursement.read_related')
+    && await repo.isUserRelatedToRequest(ctx.companyId, request.id, ctx.userId, ctx.scopes ?? {})) return;
   throw new ForbiddenException('Cannot read this reimbursement');
 }
 

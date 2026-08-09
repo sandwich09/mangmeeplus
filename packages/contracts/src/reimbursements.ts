@@ -344,7 +344,7 @@ export type VoidReimbursementPaymentInput = {
 };
 
 export type ListReimbursementsFilter = {
-  scope?: 'own' | 'team' | 'all';
+  scope?: 'own' | 'related' | 'team' | 'all';
   status?: ReimbursementRequestStatus;
   paymentStatus?: ReimbursementPaymentStatus;
   requesterUserId?: string;

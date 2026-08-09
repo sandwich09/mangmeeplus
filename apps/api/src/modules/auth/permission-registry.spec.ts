@@ -62,6 +62,15 @@ describe('permission-registry', () => {
     }
   });
 
+  it('every company role has view-only access to reimbursements it participated in', () => {
+    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      assert.ok(
+        ROLE_GRANTS[role]?.includes('reimbursement.read_related'),
+        `${role} cannot read a reimbursement it participated in`,
+      );
+    }
+  });
+
   it('ADMIN can upload receipt evidence through web', () => {
     assert.ok(ROLE_GRANTS.ADMIN.includes('attachment.create'));
     assert.ok(ROLE_GRANTS.ADMIN.includes('expense.receipt.upload'));

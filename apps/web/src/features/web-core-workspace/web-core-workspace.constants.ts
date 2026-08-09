@@ -245,7 +245,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/reimbursements`,
     iconKey: 'DollarLineIcon',
     navGroup: 'finance',
-    requiredAnyPermissions: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
+    requiredAnyPermissions: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
     status: 'ready',
     deepLinkTargets: ['reimbursement'],
   },

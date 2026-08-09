@@ -96,7 +96,11 @@ export class ListApprovalQueueUseCase {
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
     if (!ctx.permissions.includes('reimbursement.approve')) throw new ForbiddenException('Missing permission: reimbursement.approve');
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    const rows = await this.repo.listRequests({ companyId: ctx.companyId, status: 'PENDING_APPROVAL' });
+    const rows = await this.repo.listRequests({
+      companyId: ctx.companyId,
+      status: 'PENDING_APPROVAL',
+      scopes: ctx.scopes ?? {},
+    });
     // One lookup for the page rather than one per row: a queue of 200 claims routed to five people
     // asks about five ids, not two hundred.
     const activeApprovers = await this.repo.findActiveApproverUserIds(

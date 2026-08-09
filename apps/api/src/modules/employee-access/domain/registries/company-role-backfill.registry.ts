@@ -47,6 +47,13 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'key when the feature is off; mutation permissions and lifecycle checks remain separate.',
   },
   {
+    key: 'reimbursement.read_related',
+    anchor: null,
+    why: 'Requester, approver, reviewer, payment, signature and linked-document actors retain '
+      + 'view-only access to tenant/branch-scoped reimbursement records. The reimbursement '
+      + 'entitlement still strips this key, and no mutation permission is implied.',
+  },
+  {
     key: 'expense.evidence.read',
     anchor: 'expense.read',
     why: 'หลักฐานทางบัญชี moved off expense.read onto its own key. Without this the evidence menu '

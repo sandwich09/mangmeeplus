@@ -488,6 +488,7 @@ Use these keys for Reimbursement Approval:
 
 ```text
 reimbursement.read
+reimbursement.read_related
 reimbursement.read_own
 reimbursement.create
 reimbursement.update_own_draft
@@ -507,6 +508,7 @@ reimbursement.export
 Default grants:
 
 ```text
+ALL company roles: reimbursement.read_related; view-only and reimbursement-entitlement-gated
 OWNER: all reimbursement permissions
 ADMIN: reimbursement.read, reimbursement.read_own, reimbursement.approve, reimbursement.reject, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (team decision 2026-07-28: approvers are OWNER/ADMIN/MANAGER; paying stays FINANCE-only)
 MANAGER: reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
@@ -518,6 +520,13 @@ SALES: reimbursement.read_own, reimbursement.create, reimbursement.update_own_dr
 INVENTORY: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own when company policy grants employee reimbursement
 MARKETING: no reimbursement permissions by default unless company policy grants employee reimbursement
 ```
+
+`reimbursement.read_related` returns only records in the caller's tenant and branch scope where the caller is persisted as
+requester/creator/updater/submitter/current approver, approval-step assignee or decider, finance reviewer, cancellation actor,
+payment/void actor, claim-form signer, signed-copy linker, or an actor on a linked/generated expense. Every linked-expense hop
+repeats branch scope. This permission never grants draft update, submit, cancel, approve/reject, finance review, payment, void,
+evidence upload, signing or export; each mutation still requires its exact permission, exact actor rule and current state.
+`reimbursement.read_own` remains the narrower requester-only compatibility path.
 
 Sensitive reimbursement permissions:
 

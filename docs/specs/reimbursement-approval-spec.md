@@ -600,7 +600,7 @@ Use current route/version conventions. If none exist, prefer:
 
 | Action | Route | Permission | Notes |
 |---|---|---|---|
-| List requests | `GET /v1/companies/:companyId/reimbursements` | `reimbursement.read` or `reimbursement.read_own` | Supports own/team/finance filters, status, date, requester, payment status. |
+| List requests | `GET /v1/companies/:companyId/reimbursements` | `reimbursement.read`, `reimbursement.read_related` or `reimbursement.read_own` | Supports own/related/team/finance filters, status, date, requester, payment status; every path is branch-scoped. |
 | Create draft | `POST /v1/companies/:companyId/reimbursements` | `reimbursement.create` | Creates `DRAFT`; validates attachment ownership if supplied. |
 | Get detail | `GET /v1/companies/:companyId/reimbursements/:requestId` | scoped read | Includes timeline, approval steps, duplicate flags, payment summary. |
 | Update draft | `PATCH /v1/companies/:companyId/reimbursements/:requestId` | `reimbursement.update_own_draft` or finance override | Draft only unless correction flow exists. |
@@ -646,6 +646,7 @@ Permission keys:
 
 ```text
 reimbursement.read
+reimbursement.read_related
 reimbursement.read_own
 reimbursement.create
 reimbursement.update_own_draft
@@ -665,6 +666,7 @@ reimbursement.export
 Default grants:
 
 ```text
+ALL company roles: reimbursement.read_related (related records only; no mutation authority)
 OWNER: all reimbursement permissions
 ADMIN: reimbursement.read, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export
 MANAGER: reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
@@ -676,6 +678,12 @@ SALES: reimbursement.read_own, reimbursement.create, reimbursement.update_own_dr
 INVENTORY: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own when company policy grants employee reimbursement
 MARKETING: no reimbursement permissions by default unless company policy grants employee reimbursement
 ```
+
+2026-08-10 owner amendment: related visibility follows persisted requester/workflow/payment/signature/signed-copy actors and
+linked or generated expense records, under tenant + branch ABAC on every hop. It is view-only. Approval, draft changes,
+submission, cancellation, finance review, payment, void and signing retain their exact permission + actor + state checks.
+Web, API and LINE/AI use the same source predicate; the related list is labelled as such and cannot offer requester actions
+on another employee's draft.
 
 Sensitive reimbursement permissions:
 

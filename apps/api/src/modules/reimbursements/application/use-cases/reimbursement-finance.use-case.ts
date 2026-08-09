@@ -57,6 +57,7 @@ export class ListFinanceQueueUseCase {
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
       statuses: ['FINANCE_REVIEW', 'READY_FOR_PAYMENT', 'PARTIALLY_PAID'],
+      scopes: ctx.scopes ?? {},
     });
     const now = new Date();
     return rows.map((r) => ({

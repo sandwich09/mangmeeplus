@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   APPROVAL_STEP_STATUS_LABELS,
   canUploadSignedCopy,
+  reimbursementOwnActions,
   DUPLICATE_STATUS_LABELS,
   eligibleSignatureRoles,
   PAYMENT_STATUS_LABELS,
@@ -75,6 +76,34 @@ describe('canUploadSignedCopy', () => {
 
   it('has nothing to attach before the claim has a document number', () => {
     assert.equal(canUploadSignedCopy(detail({ requestNo: undefined }), 'staff-1', ['reimbursement.finance_review']), false);
+  });
+});
+
+describe('reimbursementOwnActions', () => {
+  it('never offers requester mutations to a related viewer', () => {
+    assert.deepEqual(
+      reimbursementOwnActions(
+        detail({ status: 'DRAFT' }),
+        'related-approver',
+        ['reimbursement.read_related', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own'],
+      ),
+      { canEditDraft: false, canSubmit: false, canCancel: false },
+    );
+  });
+
+  it('requires the requester, exact permission and current state for each action', () => {
+    assert.deepEqual(
+      reimbursementOwnActions(detail({ status: 'DRAFT' }), 'staff-1', [
+        'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
+      ]),
+      { canEditDraft: true, canSubmit: true, canCancel: true },
+    );
+    assert.deepEqual(
+      reimbursementOwnActions(detail({ status: 'PAID' }), 'staff-1', [
+        'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
+      ]),
+      { canEditDraft: false, canSubmit: false, canCancel: false },
+    );
   });
 });
 

@@ -1,9 +1,11 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { ReimbursementClaimSignatureRole, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
+import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
-import { isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
   ReimbursementPolicyRecord,
@@ -47,10 +49,43 @@ function opt<T>(v: T | null | undefined): T | undefined {
 export type ListRequestsWhere = {
   companyId: string;
   requesterUserId?: string;
+  relatedUserId?: string;
+  scopes?: { branchIds?: string[] };
   status?: string;
   paymentStatus?: string;
   statuses?: string[];
 };
+
+/** View-only actor graph. Linked raw ids are resolved before this predicate is built. */
+export function reimbursementRelatedToUserWhere(
+  userId: string,
+  linkedExpenseIds: readonly string[] = [],
+  signedCopyRequestIds: readonly string[] = [],
+  sourceExpenseScope: Prisma.ExpenseRecordWhereInput = {},
+): Prisma.ReimbursementRequestWhereInput {
+  return {
+    OR: [
+      { requesterUserId: userId },
+      { createdByUserId: userId },
+      { updatedByUserId: userId },
+      { submittedByUserId: userId },
+      { currentApproverUserId: userId },
+      { financeReviewedByUserId: userId },
+      { cancellationPendingByUserId: userId },
+      { approvalSteps: { some: { OR: [{ approverUserId: userId }, { decisionByUserId: userId }] } } },
+      { payments: { some: { OR: [{ paidByUserId: userId }, { voidedByUserId: userId }] } } },
+      { claimSignatures: { some: { signedByUserId: userId } } },
+      { sourceExpenses: { some: { AND: [sourceExpenseScope, expenseRelatedToUserWhere(userId)] } } },
+      ...(linkedExpenseIds.length > 0
+        ? [
+            { linkedExpenseId: { in: [...linkedExpenseIds] } },
+            { lines: { some: { linkedExpenseId: { in: [...linkedExpenseIds] } } } },
+          ]
+        : []),
+      ...(signedCopyRequestIds.length > 0 ? [{ id: { in: [...signedCopyRequestIds] } }] : []),
+    ],
+  };
+}
 
 @Injectable()
 export class PrismaReimbursementRepository {
@@ -58,6 +93,51 @@ export class PrismaReimbursementRepository {
     private readonly prisma: PrismaService,
     private readonly documentNumbers: PrismaDocumentSequenceRepository,
   ) {}
+
+  private async relatedRequestPredicate(
+    companyId: string,
+    userId: string,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<Prisma.ReimbursementRequestWhereInput> {
+    const expenseScope = branchScopeWhere(scopes) as Prisma.ExpenseRecordWhereInput;
+    const [relatedExpenses, signedCopies] = await Promise.all([
+      this.prisma.client.expenseRecord.findMany({
+        where: { companyId, AND: [expenseScope, expenseRelatedToUserWhere(userId)] },
+        select: { id: true },
+      }),
+      this.prisma.client.attachmentLink.findMany({
+        where: {
+          companyId,
+          targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+          purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+          linkedByUserId: userId,
+        },
+        select: { targetId: true },
+      }),
+    ]);
+    return reimbursementRelatedToUserWhere(
+      userId,
+      relatedExpenses.map(({ id }) => id),
+      signedCopies.map(({ targetId }) => targetId),
+      expenseScope,
+    );
+  }
+
+  async isUserRelatedToRequest(
+    companyId: string,
+    requestId: string,
+    userId: string,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<boolean> {
+    const relation = await this.relatedRequestPredicate(companyId, userId, scopes);
+    return (await this.prisma.client.reimbursementRequest.count({
+      where: {
+        companyId,
+        id: requestId,
+        AND: [branchScopeWhere(scopes) as Prisma.ReimbursementRequestWhereInput, relation],
+      },
+    })) > 0;
+  }
 
   async getUserDisplayName(userId: string): Promise<string> {
     const row = await this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } });
@@ -1529,12 +1609,19 @@ export class PrismaReimbursementRepository {
   }
 
   async listRequests(where: ListRequestsWhere): Promise<ReimbursementRequestRecord[]> {
+    const predicates: Prisma.ReimbursementRequestWhereInput[] = [
+      branchScopeWhere(where.scopes ?? {}) as Prisma.ReimbursementRequestWhereInput,
+    ];
+    if (where.relatedUserId) {
+      predicates.push(await this.relatedRequestPredicate(where.companyId, where.relatedUserId, where.scopes));
+    }
     const rows = await this.prisma.client.reimbursementRequest.findMany({
       where: {
         companyId: where.companyId,
         requesterUserId: where.requesterUserId,
         status: (where.status as any) ?? (where.statuses ? { in: where.statuses as any } : undefined),
         paymentStatus: where.paymentStatus as any,
+        AND: predicates,
       },
       // Queues show a line count, not the lines themselves — keep the list query cheap.
       include: {

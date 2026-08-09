@@ -543,3 +543,6 @@ Keep docs as source of truth and close item 14 only after implementation truly p
 - Policy settings UI ships in item 14.
 - Direct manager/HR org chart model should not be built in item 14. Use existing direct manager relation only if present; otherwise use `MANAGER_ROLE` or configured approver user/role.
 - Evidence export supports bounded JSON at minimum. Use existing export framework if present; do not create a broad export framework only for item 14.
+- 2026-08-10: all persisted related actors may view a reimbursement through `reimbursement.read_related`, including linked
+  expense actors, but only within tenant/branch scope. Mutations remain governed by their existing action permission,
+  exact actor and state. API, web and LINE/AI must share the same relation boundary.

@@ -188,6 +188,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     entitlementKeys: ['reimbursement'],
     gatePermissions: [
       'reimbursement.read',
+      'reimbursement.read_related',
       'reimbursement.read_own',
       'reimbursement.approve',
       'reimbursement.finance_review',

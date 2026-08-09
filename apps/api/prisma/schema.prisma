@@ -1035,6 +1035,7 @@ model AttachmentLink {
 
   @@unique([attachmentId, targetType, targetId, purpose])
   @@index([companyId, targetType, targetId])
+  @@index([companyId, targetType, linkedByUserId, targetId], map: "AttachmentLink_company_target_linker_idx")
 }
 
 model DocumentSequence {
@@ -5188,6 +5189,11 @@ model ReimbursementRequest {
   @@index([companyId, requesterUserId, status])
   @@index([companyId, currentApproverUserId, status])
   @@index([companyId, status, paymentStatus])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, submittedByUserId])
+  @@index([companyId, financeReviewedByUserId], map: "ReimbursementRequest_company_finance_reviewer_idx")
+  @@index([companyId, cancellationPendingByUserId], map: "ReimbursementRequest_company_cancel_actor_idx")
 }
 
 /// One expense row of a claim (1 ใบเบิก หลายรายการ). Header `amount` is the
@@ -5236,6 +5242,7 @@ model ReimbursementClaimSignature {
 
   @@unique([reimbursementRequestId, role])
   @@index([companyId, reimbursementRequestId])
+  @@index([companyId, signedByUserId])
 }
 
 model ReimbursementApprovalStep {
@@ -5260,6 +5267,7 @@ model ReimbursementApprovalStep {
   request                ReimbursementRequest            @relation(fields: [reimbursementRequestId], references: [id], onDelete: Cascade)
 
   @@index([companyId, approverUserId, status])
+  @@index([companyId, decisionByUserId])
   @@index([reimbursementRequestId, sequenceNo])
 }
 
@@ -5290,6 +5298,8 @@ model ReimbursementPayment {
   @@unique([companyId, idempotencyKey])
   @@index([companyId, reimbursementRequestId, status])
   @@index([companyId, paidAt, paymentMethod])
+  @@index([companyId, paidByUserId])
+  @@index([companyId, voidedByUserId])
 }
 
 model ReimbursementDuplicateCandidate {

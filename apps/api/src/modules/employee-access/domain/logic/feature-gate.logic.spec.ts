@@ -306,7 +306,7 @@ describe('filterPermissionsByEntitlement', () => {
   });
 
   it('gates reimbursement (การเบิกจ่าย) behind its own entitlement, overriding its ungated pack', () => {
-    const perms = ['reimbursement.read', 'reimbursement.create'];
+    const perms = ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.create'];
     assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['expenses', 'procurement'])), []);
     assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['reimbursement'])), perms);
   });

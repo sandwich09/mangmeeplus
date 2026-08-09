@@ -160,6 +160,14 @@ E4. Drawer sticky header: opaque, flush with the scrollport top, no content show
 E5. Tab gating: the reimbursements route passes server-session permissions into the hub (same pattern as the expenses page). Tabs render only with their permission: คำขอของฉัน → `reimbursement.read_own`; คิวอนุมัติ → `reimbursement.approve`; คิวการเงิน → `reimbursement.finance_review`; ตั้งค่านโยบาย → `reimbursement.policy.manage` only (OWNER/ADMIN). `?tab=` targets outside the visible set fall back to the first visible tab.
 E6. Remove the `?focus=` yellow row tint everywhere (keep the focus behavior: tab switch + drawer auto-open).
 
+### Lane E amendment — related-record visibility (2026-08-10)
+
+The owner-approved cross-document rule supersedes E5's requester-only wording and Lane F's historical "no new permission
+keys" constraint for reads. `reimbursement.read_related` is a universal, entitlement-gated, view-only key. The first tab is
+labelled "รายการที่เกี่ยวข้อง" and lists only tenant/branch-scoped claims where the caller is a persisted request,
+approval, finance, payment, signature, signed-copy or linked-expense actor. Requester update/submit/cancel controls still
+require requester identity, the exact action permission and the allowed state; relation alone never renders them.
+
 ### Lane F — claim-form signatures + signed-copy round trip
 
 Owner intent: the claim form gets an add-signature flow like the substitute receipt (ใบรับรองแทนใบเสร็จ), stays printable for wet-ink signing, and a signed photo/scan can be uploaded back into the system.

@@ -29,7 +29,7 @@ export class PreviewReimbursementClaimFormUseCase {
     const req = await this.repo.findRequestById(ctx.companyId, requestId, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     // Same read guard as GET detail — printing exposes nothing the drawer does not.
-    assertCanReadRequest(ctx, req.requesterUserId);
+    await assertCanReadRequest(ctx, req, this.repo);
     // The document number is what makes this a document. A draft never has one,
     // and neither does a claim cancelled straight out of DRAFT — printing either
     // would produce a form with a blank เลขที่เอกสาร.

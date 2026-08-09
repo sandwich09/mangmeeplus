@@ -90,7 +90,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   },
   {
     path: '/reimbursements',
-    anyOf: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
+    anyOf: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
   },
 ];
 

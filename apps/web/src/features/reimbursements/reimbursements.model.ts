@@ -128,6 +128,19 @@ export function canUploadSignedCopy(detail: any, userId: string, permissions: re
     || permissions.includes('reimbursement.payment.record');
 }
 
+/** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
+export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
+  const isRequester = detail?.requesterUserId === userId;
+  const status = String(detail?.status ?? '');
+  return {
+    canEditDraft: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.update_own_draft'),
+    canSubmit: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
+    canCancel: isRequester
+      && permissions.includes('reimbursement.cancel_own')
+      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
+  };
+}
+
 /** Stable API error codes → Thai. Unknown codes are shown as-is (see `errorMessage`). */
 export const ERROR_CODE_LABELS: Record<string, string> = {
   missing_receipt: 'ต้องแนบใบเสร็จให้ครบทุกรายการ หรือระบุเหตุผลที่ไม่มีใบเสร็จ',

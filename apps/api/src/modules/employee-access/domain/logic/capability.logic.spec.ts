@@ -72,6 +72,7 @@ describe('capability-pack registry integrity', () => {
       const universal = COMPANY_ROLE_BACKFILLS.filter((backfill) => backfill.anchor === null);
       assert.deepEqual(universal.map((backfill) => backfill.key), [
         'account.password.change', 'dashboard.read', 'accounting.document.read_related', 'expense.read_related',
+        'reimbursement.read_related',
       ]);
     });
   });

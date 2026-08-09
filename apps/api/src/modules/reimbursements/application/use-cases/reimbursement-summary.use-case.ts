@@ -16,11 +16,18 @@ export class GetReimbursementAiSummaryUseCase {
   async execute(ctx: RequestContext): Promise<ReimbursementAiSummary> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
-    if (!canReadAll && !canReadOwn) throw new ForbiddenException('Missing permission to read reimbursements');
+    const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
+    if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
 
-    const requesterUserId = canReadAll ? undefined : ctx.userId;
+    const requesterUserId = canReadAll || canReadRelated ? undefined : ctx.userId;
+    const relatedUserId = !canReadAll && canReadRelated ? ctx.userId : undefined;
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    const all = await this.repo.listRequests({ companyId: ctx.companyId, requesterUserId });
+    const all = await this.repo.listRequests({
+      companyId: ctx.companyId,
+      requesterUserId,
+      relatedUserId,
+      scopes: ctx.scopes ?? {},
+    });
     const now = new Date();
 
     let pendingApproval = 0;

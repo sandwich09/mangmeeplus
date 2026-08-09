@@ -30,7 +30,8 @@ import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS,
-  CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles, type ClaimSignatureRole,
+  CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles,
+  reimbursementOwnActions, type ClaimSignatureRole,
 } from './reimbursements.model';
 // The background remover already ships in the expenses feature (signature assets);
 // reimbursements already reuses that feature's upload helper, so reuse it too.
@@ -51,10 +52,10 @@ import { useToast } from '@/common/components/toast';
 function err(e: unknown) { return errorText(e); }
 
 const HUB_TAB_LABELS: Record<HubTab, string> = {
-  mine: 'คำขอของฉัน', approvals: 'คิวอนุมัติ', finance: 'คิวการเงิน', policy: 'ตั้งค่านโยบาย',
+  mine: 'รายการที่เกี่ยวข้อง', approvals: 'คิวอนุมัติ', finance: 'คิวการเงิน', policy: 'ตั้งค่านโยบาย',
 };
 const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
-  mine: 'สร้างคำขอเบิกค่าใช้จ่ายของคุณ ติดตามสถานะ และส่งให้ผู้อนุมัติ',
+  mine: 'ติดตามคำขอของคุณและเอกสารที่คุณเป็นผู้อนุมัติ ผู้ตรวจ ผู้จ่าย หรือผู้ลงนาม',
   approvals: 'ตรวจคำขอที่รอคุณอนุมัติ ดูรายการและใบเสร็จก่อนตัดสินใจ',
   finance: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน',
   policy: 'กำหนดเกณฑ์การอนุมัติ ใบเสร็จ และ SLA ของการเบิกจ่ายทั้งบริษัท',
@@ -449,7 +450,12 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         </div>
       )}
     >
-      {tab === 'mine' && <MyRequests {...queueProps} canCreate={permissions.includes('reimbursement.create')} />}
+      {tab === 'mine' && <MyRequests
+        {...queueProps}
+        userId={userId}
+        permissions={permissions}
+        canCreate={permissions.includes('reimbursement.create')}
+      />}
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
       {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={setPayFor} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} />}
@@ -589,7 +595,11 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 type QueueProps = { companyId: string; refreshKey: number; onOpenDetail: (id: string) => void };
 
 // ── My Requests ───────────────────────────────────────────────────────────────
-function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueueProps & { canCreate: boolean }) {
+function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, canCreate }: QueueProps & {
+  userId: string;
+  permissions: readonly string[];
+  canCreate: boolean;
+}) {
   const toast = useToast();
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -601,9 +611,13 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const r = await listReimbursements(companyId, { scope: 'own' }); setData(r.items ?? []); }
+    try {
+      const scope = permissions.includes('reimbursement.read_related') ? 'related' : 'own';
+      const r = await listReimbursements(companyId, { scope });
+      setData(r.items ?? []);
+    }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
-  }, [companyId]);
+  }, [companyId, permissions]);
   useEffect(() => { load(); }, [load, refreshKey]);
 
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
@@ -628,6 +642,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
       if (statusFilter === 'paid' && r.status !== 'PAID') return false;
       return matchesSearch([
         r.requestNo,
+        r.requesterDisplayNameSnapshot,
         r.reason,
         r.categoryLabelSnapshot ?? r.categoryKey,
         r.lineCount ?? 1,
@@ -707,11 +722,11 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
               <div className="min-w-[980px]">
                 <table className="mangmee-table">
                   <thead>
-                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
+                    <tr><th className="!text-center">เลขที่</th><th className="!text-center">ผู้ขอ</th><th className="!text-center">เหตุผล</th><th className="!text-center">หมวด</th><th className="!text-center">จำนวนรายการ</th><th className="!text-center">จำนวน</th><th className="!text-center">สถานะ</th><th className="!text-center">การจ่าย</th><th className="!text-center">การกระทำ</th></tr>
                   </thead>
                   <tbody>
                     {filteredData.length === 0 ? (
-                      <tr><td colSpan={8}>
+                      <tr><td colSpan={9}>
                         <EmptyState
                           title={data.length === 0 ? 'ยังไม่มีคำขอเบิก' : 'ไม่พบรายการที่ตรงกับตัวกรอง'}
                           description={data.length === 0 ? 'กด "สร้างคำขอเบิก" เพื่อเริ่มคำขอแรกของคุณ' : 'ลองล้างคำค้นหรือเลือกสถานะอื่น'}
@@ -720,6 +735,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
                     ) : pagedData.map((r: any) => (
                       <tr key={r.id} className="cursor-pointer" onClick={() => onOpenDetail(r.id)}>
                         <td className="font-mono text-xs">{r.requestNo ?? '—'}</td>
+                        <td>{r.requesterDisplayNameSnapshot ?? '—'}</td>
                         <td>{r.reason}</td>
                         <td className="text-gray-500">{r.categoryLabelSnapshot ?? r.categoryKey}</td>
                         <td className="text-right tabular-nums text-gray-500">{r.lineCount ?? 1} รายการ</td>
@@ -733,8 +749,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {r.status === 'DRAFT' && <button className={cx(btnClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ส่งอนุมัติ</button>}
-                            {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status) && <button className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ยกเลิก</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ส่งอนุมัติ</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ยกเลิก</button>}
                           </div>
                         </td>
                       </tr>
@@ -758,16 +774,17 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, canCreate }: QueuePro
                       <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{r.requestNo ?? '—'}</span>
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{r.reason}</span>
                     </div>
+                    <div className="mt-1 truncate text-xs text-gray-500">ผู้ขอ: {r.requesterDisplayNameSnapshot ?? '—'}</div>
                     <div className="mt-3 flex items-center justify-between gap-3">
                       <StatusBadge status={r.status} />
                       <span className="shrink-0 text-xs text-gray-500">{shortDate(r.incurredDate)}</span>
                     </div>
                     <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount)} {r.currency}</div>
                   </div>
-                  {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status) && (
+                  {(reimbursementOwnActions(r, userId, permissions).canSubmit || reimbursementOwnActions(r, userId, permissions).canCancel) && (
                     <div className="relative z-20 mt-4 space-y-2 border-t border-gray-100 pt-3">
-                      {r.status === 'DRAFT' && <button className={cx(btnClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')} disabled={busy === r.id}>ส่งอนุมัติ</button>}
-                      {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(r.status) && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว')} disabled={busy === r.id}>ยกเลิก</button>}
+                      {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')} disabled={busy === r.id}>ส่งอนุมัติ</button>}
+                      {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว')} disabled={busy === r.id}>ยกเลิก</button>}
                     </div>
                   )}
                 </MangmeeCard>
@@ -806,21 +823,21 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
   onRecordPayment: () => void;
 }) {
   const lines: any[] = detail.lines ?? [];
-  const isDraft = detail.status === 'DRAFT';
-  const canApprove = context === 'approvals' && detail.status === 'PENDING_APPROVAL';
-  const canFinanceApprove = context === 'finance' && detail.status === 'FINANCE_REVIEW';
-  const canPay = context === 'finance' && detail.status === 'READY_FOR_PAYMENT';
+  const { canEditDraft, canSubmit, canCancel } = reimbursementOwnActions(detail, userId, permissions);
+  const canApprove = context === 'approvals' && permissions.includes('reimbursement.approve') && detail.status === 'PENDING_APPROVAL';
+  const canFinanceApprove = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
+  const canPay = context === 'finance' && permissions.includes('reimbursement.payment.record') && detail.status === 'READY_FOR_PAYMENT';
   const signatures: any[] = detail.signatures ?? [];
   const signedCopies: any[] = detail.signedCopies ?? [];
   const signableRoles = eligibleSignatureRoles(detail, userId);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
-  const showActions = (isDraft && context === 'mine') || canApprove || canFinanceApprove || canPay;
+  const showActions = canSubmit || canCancel || canApprove || canFinanceApprove || canPay;
   const footerButtons = detail.requestNo || showActions ? (
     <>
       {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
       {detail.requestNo && <button className={ghostClass} disabled={busy} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
-      {isDraft && context === 'mine' && <button className={btnClass} disabled={busy} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
-      {isDraft && context === 'mine' && <button className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิกคำขอ</button>}
+      {canSubmit && <button className={btnClass} disabled={busy} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
+      {canCancel && <button className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิกคำขอ</button>}
       {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onApprove}>อนุมัติ</button>}
       {canApprove && <button className={dangerClass} disabled={busy} onClick={onRequestReject}>ปฏิเสธ</button>}
       {canFinanceApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
@@ -898,7 +915,7 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
                           📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
                         </button>
                       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
-                      {isDraft && context === 'mine' && (
+                      {canEditDraft && (
                         <div className="mt-1 space-y-1">
                           <ThemedFile file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
                           {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}

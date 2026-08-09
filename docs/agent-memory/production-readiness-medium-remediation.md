@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-10 committed; owner-approved cross-family related-view remediation in progress.
+Status: IN PROGRESS — M8-01..M8-10 plus expense and reimbursement related-view complete; procurement related-view is next.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -120,6 +120,21 @@ Verification:
   clean PostgreSQL database. Impact gaps fixed before commit: system-role/core-pack parity, expenses.list-off
   stripping, real OCR action guards, nested category-read contract parity, company-central branch visibility,
   collision-safe branch/relation/month predicates, and PostgreSQL-safe index names.
+- Expense/substitute-receipt related-view commit: `6cfea99 fix(expenses): allow related actors to view records`.
+- Reimbursement related-view follows direct request/workflow/payment/signature/signed-copy actors plus related linked or
+  generated expenses. `reimbursement.read_related` is universal through core/backfill but stripped when reimbursement is
+  off; list/detail/claim form/LINE-AI repeat tenant and branch ABAC. Requester UI actions repeat identity, exact permission
+  and state, so a related approver cannot edit, submit or cancel another employee's draft.
+- Impact gaps fixed during reimbursement use-case play: finance queue and AI summary were not branch-filtered; relation
+  filters now keep branch and actor OR clauses under separate AND predicates, retain company-central records, and repeat
+  branch scope on linked expense hops. The old requester-only tab would have exposed submit/cancel buttons after widening;
+  it is now labelled related and mutation controls are independently gated. Actor OR arms received supporting indexes. The
+  role-template guard also misclassified `.read_related` as a write and demanded broad `.read`; it now distinguishes scoped
+  read keys without weakening paired-read checks for real mutations.
+- Reimbursement related-view verification: focused API permission/feature/reimbursement/LINE tests 231/231, focused web
+  126/126, AI Gateway 87/87 and contracts feature tests 12/12 passed. Contracts build, Prisma validate/generate and web/AI
+  Gateway typechecks passed. API typecheck reports only the established 14 substitute-receipt/report spec errors. All 128
+  migrations applied successfully to a clean temporary PostgreSQL database, which was then removed.
 Next:
-- Commit expense/substitute-receipt related-view policy separately; then apply the same rule to
-  reimbursement and procurement families before returning to the next section-8 finding.
+- Apply the same owner rule to procurement without mixing the concurrent branch-scope/expense worktree changes, then
+  return to the next section-8 finding.
