@@ -403,3 +403,24 @@ STATEMENT:  CREATE TABLE should_fail(x int);
 
 **บทเรียน:** ทดสอบด้วยเส้นทางจริงที่ผู้ใช้จะใช้ ไม่ใช่เส้นทางที่สะดวกกับเรา — `send-command`
 กับ `start-session` ต่างกันที่ user ซึ่งเป็นตัวแปรที่ทำให้บั๊กทั้งสองซ่อนอยู่
+
+## Retention ของหลักฐาน support access (ตัดสิน 2026-08-09)
+
+| ที่เก็บ | เก็บนาน | เหตุผล |
+| --- | ---: | --- |
+| CloudWatch `/aws/ssm/session-logs/watchdog-bms-production` | 14 วัน | หน้าต่างสำหรับ **ค้นหา** ตอนสืบเหตุสด ๆ |
+| S3 `ssm-session-logs/` | **90 วัน** (noncurrent 7 วัน) | ตัวบันทึกจริง — อ่านย้อนหลังได้ไกลกว่า CloudWatch |
+| S3 CloudTrail bucket | **400 วัน** (noncurrent 30 วัน) | log เดียวที่การเก็บนานมีค่าจริง |
+| DB log (`%a`) | ตาม RDS log rotation | ผูก statement เข้ากับ incident + operator |
+
+**กับดักที่ต้องรู้: bucket เปิด versioning อยู่** ถ้าใส่แค่ `Expiration` object เก่าจะกลายเป็น
+noncurrent version ค้างตลอดไป — พื้นที่ไม่ลดลงจริงและค่าเก็บยังเดินอยู่ ทุก lifecycle rule
+บน bucket ที่เปิด versioning **ต้องมี `NoncurrentVersionExpiration` คู่เสมอ**
+
+**ทำไม CloudTrail ถึงไม่ลดตาม** — ค่าเก็บที่ 400 วันคือราว **0.07–0.20 บาท/เดือน** สำหรับบัญชี
+ขนาดนี้ การลดจึงไม่ได้ประหยัดอะไรที่วัดได้ ขณะที่การบุกรุกมักถูกพบหลายเดือนหลังเกิดจริง
+ถ้าเก็บ 30 วันแล้วมาเจอเดือนที่สอง ก็ไม่เหลืออะไรให้สืบ
+
+**สิ่งที่ตั้งใจไม่ใส่ lifecycle:** prefix `cmr*` ใน prod bucket (ราว 4 MB จาก 3.94 MB ของทั้ง bucket)
+เป็นใบเสร็จ/ไฟล์แนบของลูกค้าแยกตามบริษัท — **เป็นข้อมูลธุรกิจ ไม่ใช่ log ห้ามลบอัตโนมัติ**
+ตัวที่โตในอนาคตคือกลุ่มนี้ ไม่ใช่ transcript (transcript ~245 bytes ต่อครั้ง)
