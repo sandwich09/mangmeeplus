@@ -67,6 +67,9 @@ describe('LINE staff menu', () => {
     ], 'co-1');
     assert.equal(message.type, 'flex');
     assert.equal((message.contents as any).type, 'carousel');
+    assert.match(JSON.stringify(message), /บริษัท 1/);
+    assert.match(JSON.stringify(message), /บริษัท 2/);
+    assert.match(JSON.stringify(message), /ตอบ 2 หรือกดปุ่มด้านล่าง/);
     assert.match(JSON.stringify(message), /\/company co-2/);
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
   });

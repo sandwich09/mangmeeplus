@@ -76,15 +76,16 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
 
 const boundedLabel = (value: string, fallback: string) => (value.trim() || fallback).slice(0, 80);
 
-function companyBubble(company: CompanyPickerItem, currentCompanyId?: string): Record<string, unknown> {
+function companyBubble(company: CompanyPickerItem, selectionNumber: number, currentCompanyId?: string): Record<string, unknown> {
   const current = company.companyId === currentCompanyId;
   return {
     type: 'bubble',
     body: {
       type: 'box', layout: 'vertical', spacing: 'md', contents: [
-        { type: 'text', text: '🏢 บริษัท', size: 'sm', color: '#667085' },
+        { type: 'text', text: `🏢 บริษัท ${selectionNumber}`, size: 'sm', color: '#667085' },
         { type: 'text', text: boundedLabel(company.companyName, company.companyId), weight: 'bold', size: 'lg', color: '#101828', wrap: true },
         ...(current ? [{ type: 'text', text: '✓ ใช้งานอยู่', size: 'sm', color: '#16A34A', weight: 'bold' }] : []),
+        ...(!current ? [{ type: 'text', text: `ตอบ ${selectionNumber} หรือกดปุ่มด้านล่าง`, size: 'sm', color: '#667085', wrap: true }] : []),
       ],
     },
     ...(!current ? {
@@ -111,7 +112,7 @@ export function buildCompanyPickerMessage(companies: CompanyPickerItem[], curren
     overflow = companies.length - visible.length;
   }
 
-  const bubbles = visible.map((company) => companyBubble(company, currentCompanyId));
+  const bubbles = visible.map((company) => companyBubble(company, companies.findIndex((item) => item.companyId === company.companyId) + 1, currentCompanyId));
   if (overflow > 0) bubbles.push({
     type: 'bubble',
     body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [

@@ -41,7 +41,7 @@ import {
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
 import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4 } from '../../../expenses/application/services/receipt-ocr-apply.service';
-import { normalizeLineText, hashMessagePreview, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
+import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
@@ -136,6 +136,11 @@ function mediaPreviewLabel(pending?: { attachmentId: string } | null): string {
 }
 /** Preview length stored per turn for multi-turn memory (columns are unbounded text). */
 const PREVIEW_MAX_CHARS = 240;
+const COMPANY_SELECTION_PENDING_STATUSES = new Set([
+  'needs_company_selection',
+  'company_context_listed',
+  'company_context_selection_invalid',
+]);
 /** How far back a correction may reach. Older records are corrected in web. */
 const CORRECTION_CANDIDATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LINE_MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -854,7 +859,8 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const companyCommand = parseLineCompanyCommand(event.messageText);
+    const companyCommand = parseLineCompanyCommand(event.messageText)
+      ?? await this.pendingCompanySelectionCommand(event);
     if (companyCommand) {
       await this.handleCompanyCommand(event, requestId, identity.userId, companyCommand);
       return;
@@ -1324,6 +1330,21 @@ export class ProcessLineWebhookUseCase {
       },
       orderBy: { createdAt: 'asc' },
     }) as Promise<LineCompanyMembership[]>;
+  }
+
+  private async pendingCompanySelectionCommand(event: LineTextEvent): Promise<LineCompanyCommand | null> {
+    const candidate = parseBareCompanySelection(event.messageText);
+    if (!candidate) return null;
+    const previous = await this.prisma.client.lineWebhookEventLog.findFirst({
+      where: {
+        webhookEventId: { not: event.webhookEventId },
+        lineUserIdHash: hashMessagePreview(event.lineUserId),
+        createdAt: { gte: new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true },
+    });
+    return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
   }
 
   private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, command: LineCompanyCommand): Promise<void> {

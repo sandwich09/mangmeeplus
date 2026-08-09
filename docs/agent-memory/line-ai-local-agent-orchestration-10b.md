@@ -509,6 +509,7 @@ Artifacts:
 
 Verification:
 - `../../node_modules/.bin/tsx --test src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` from `apps/api`: PASS, 106/106.
+- `../../node_modules/.bin/tsx --test src/modules/line-ai/agents/intent-router.agent.spec.ts src/modules/line-ai/agents/orchestrator-model-loop.agent.spec.ts src/modules/line-ai/agents/response-composer.agent.spec.ts` from `apps/ai-gateway`: PASS, 60/60 (conversation context reaches routing, tool choice, and grounded response composition).
 - `corepack pnpm --filter @watchdog-bms/api typecheck`: BLOCKED by pre-existing unrelated dirty-worktree errors in `substitute-receipt.use-case.spec.ts` and `report.use-cases.spec.ts`; no LINE AI type errors were reported.
 
 Next:

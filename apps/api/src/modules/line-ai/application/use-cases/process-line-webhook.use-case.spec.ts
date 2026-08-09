@@ -75,12 +75,13 @@ function makePrisma(opts: {
 	  aiAssistantOptOutAt?: Date | null;
 	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string } }> }>;
 	  lineCompanyContext?: { companyId: string } | null;
+	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
 	  recentTurns?: any[];
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
 	  branches?: Array<{ name: string }>;
 	  branchFindManyFn?: (args: any) => Promise<Array<{ name: string }>>;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
   const identityQueries: any[] = [];
   const createdLogs: unknown[] = [];
   const updates: unknown[] = [];
@@ -106,6 +107,7 @@ function makePrisma(opts: {
       }),
       lineWebhookEventLog: {
         findUnique: async () => null,
+        findFirst: async () => previousEventLog,
         create: async (args: unknown) => { createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
       },
@@ -920,6 +922,51 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((upserts[0] as any).update.companyId, 'co-2');
     assert.match(replies[0] ?? '', /เปลี่ยนบริษัทเป็น บริษัทสอง/);
     assert.equal((updates.at(-1) as any).data.companyId, 'co-2');
+  });
+
+  it('switches company from a bare number only while the immediately previous turn is a pending picker', async () => {
+    const { prisma, upserts } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' } },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
+      previousEventLog: {
+        webhookEventId: 'evt-company-list',
+        status: 'company_context_listed',
+        createdAt: new Date(),
+      },
+    });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-bare-number', messageText: '๒' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((upserts[0] as any).update.companyId, 'co-2');
+    assert.match(replies[0] ?? '', /เปลี่ยนบริษัทเป็น บริษัทสอง/);
+  });
+
+  it('keeps a bare number as ordinary AI conversation when no company picker is pending', async () => {
+    const { prisma, upserts } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' } },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
+    });
+    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-bare-number', replyText: 'รับทราบว่าเป็นข้อ 2', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 5,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-number-without-picker', messageText: '2' });
+
+    assert.equal(getAiGatewayCalled(), true);
+    assert.equal(upserts.length, 0);
   });
 
   it('blocks non-owner multi-company LINE context selection', async () => {

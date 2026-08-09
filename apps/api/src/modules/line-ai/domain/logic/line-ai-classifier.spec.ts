@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseLineCompanyCommand } from './line-ai-classifier.logic';
+import { normalizeLineText, classifyIntent, chooseAgent, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from './line-ai-classifier.logic';
 
 describe('normalizeLineText', () => {
   it('trims and collapses whitespace', () => {
@@ -74,6 +74,7 @@ describe('parseLineCompanyCommand', () => {
   it('parses the list form', () => {
     assert.deepEqual(parseLineCompanyCommand('/companies'), { kind: 'list' });
     assert.deepEqual(parseLineCompanyCommand(' /company '), { kind: 'list' });
+    assert.deepEqual(parseLineCompanyCommand(' เปลี่ยนบริษัท '), { kind: 'list' });
   });
   it('parses the select form with index or id', () => {
     assert.deepEqual(parseLineCompanyCommand('/company 2'), { kind: 'select', value: '2' });
@@ -82,5 +83,14 @@ describe('parseLineCompanyCommand', () => {
   it('returns null for normal text and non-leading slash', () => {
     assert.equal(parseLineCompanyCommand('ขอรายชื่อลูกค้า'), null);
     assert.equal(parseLineCompanyCommand('ขอ /company 2'), null);
+  });
+});
+
+describe('parseBareCompanySelection', () => {
+  it('accepts one bare Arabic or Thai number as a selection candidate', () => {
+    assert.deepEqual(parseBareCompanySelection(' 2 '), { kind: 'select', value: '2' });
+    assert.deepEqual(parseBareCompanySelection('๒'), { kind: 'select', value: '2' });
+    assert.equal(parseBareCompanySelection('บริษัท 2'), null);
+    assert.equal(parseBareCompanySelection('1 2 3'), null);
   });
 });
