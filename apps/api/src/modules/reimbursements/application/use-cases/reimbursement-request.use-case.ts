@@ -14,7 +14,8 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import type {
   ReimbursementDuplicateCandidateWriteData,
   ReimbursementLineRecord,
@@ -97,6 +98,12 @@ export class CreateReimbursementDraftUseCase {
 
   async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
     if (!ctx.permissions.includes('reimbursement.create')) throw new ForbiddenException('Missing permission: reimbursement.create');
+    // Same two steps as CreateExpenseDraftUseCase, and both matter. The assertion stops a
+    // branch-restricted employee planting a claim in a branch they cannot see; resolveCreateBranchId
+    // stops the opposite failure, where omitting branchId tagged the claim company-central and
+    // `branchScopeWhere` then showed it to every branch's approval and finance queue.
+    assertReimbursementBranchInScope(ctx, input.branchId);
+    const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
 
     const errors = validateRequestFields(input);
     if (errors.length > 0) throw new BadRequestException(errors.join(','));
@@ -115,7 +122,7 @@ export class CreateReimbursementDraftUseCase {
 
     const created = await this.repo.createRequest({
       companyId: ctx.companyId,
-      branchId: input.branchId,
+      branchId: branchId ?? undefined,
       requesterUserId: ctx.userId,
       requesterDisplayNameSnapshot: displayName,
       title: input.title,
@@ -157,6 +164,9 @@ export class UpdateReimbursementDraftUseCase {
     const isOwner = req.requesterUserId === ctx.userId;
     const canUpdate = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft')) || ctx.permissions.includes('reimbursement.finance_review');
     if (!canUpdate) throw new ForbiddenException('Cannot update this reimbursement');
+    // The owner path is self-limiting, but finance_review reaches any claim by id — including the
+    // lines, which are the amount.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     if (req.status !== 'DRAFT') throw new UnprocessableEntityException('Only draft requests can be edited');
 
     const data: Record<string, unknown> = { updatedByUserId: ctx.userId };
@@ -267,6 +277,9 @@ export class SubmitReimbursementUseCase {
     if (req.requesterUserId !== ctx.userId && !ctx.permissions.includes('reimbursement.finance_review')) {
       throw new ForbiddenException('Only the requester can submit this request');
     }
+    // Same finance_review reach as the draft edit above: submitting starts the approval chain and
+    // is what puts the claim in front of another branch's approvers.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     if (!canTransition(req.status, 'PENDING_APPROVAL')) throw new UnprocessableEntityException(`Cannot submit from status ${req.status}`);
 
     const lines = req.lines ?? [];
@@ -483,7 +496,7 @@ export class CancelReimbursementUseCase {
     const canCancel = (isOwner && ctx.permissions.includes('reimbursement.cancel_own')) || ctx.permissions.includes('reimbursement.finance_review');
     if (!canCancel) throw new ForbiddenException('Cannot cancel this reimbursement');
     if (!canTransition(req.status, 'CANCELLED')) throw new UnprocessableEntityException(`Cannot cancel from status ${req.status}`);
-    if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const cancellationReason = reason?.trim() || 'ยกเลิกคำขอเบิกค่าใช้จ่าย';
     const startedAt = new Date();
@@ -592,9 +605,7 @@ export async function assertCanReadRequest(
   request: Pick<ReimbursementRequestRecord, 'id' | 'branchId' | 'requesterUserId'>,
   repo: PrismaReimbursementRepository,
 ): Promise<void> {
-  if (!isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
-    throw new ForbiddenException('Branch is outside your assigned branch scope.');
-  }
+  assertReimbursementBranchInScope(ctx, request.branchId);
   if (ctx.permissions.includes('reimbursement.read')) return;
   if (ctx.permissions.includes('reimbursement.read_own') && request.requesterUserId === ctx.userId) return;
   if (ctx.permissions.includes('reimbursement.read_related')

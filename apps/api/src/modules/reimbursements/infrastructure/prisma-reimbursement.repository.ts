@@ -4,7 +4,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
-import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
 import { expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
@@ -2059,7 +2059,9 @@ export class PrismaReimbursementRepository {
   // The AP page posts sources by explicit id (no generic pending-postings list),
   // so this slim worklist lets finance discover which reimbursement payments
   // still need posting.
-  async listUnpostedReimbursementPayments(companyId: string): Promise<Array<{
+  // Branch lives on the request, not the payment row, so the scope filter travels through the
+  // relation. Same `branchScopeWhere` as listRequests: company-central (null) claims stay visible.
+  async listUnpostedReimbursementPayments(companyId: string, scopes: BranchScopes = {}): Promise<Array<{
     paymentId: string;
     reimbursementRequestId: string;
     requestNo?: string;
@@ -2071,7 +2073,12 @@ export class PrismaReimbursementRepository {
     postingStatus: string;
   }>> {
     const rows = await this.prisma.client.reimbursementPayment.findMany({
-      where: { companyId, status: 'RECORDED', postingStatus: 'pending' as any },
+      where: {
+        companyId,
+        status: 'RECORDED',
+        postingStatus: 'pending' as any,
+        request: { is: branchScopeWhere(scopes) },
+      },
       orderBy: { paidAt: 'asc' },
       include: { request: { select: { requestNo: true, requesterDisplayNameSnapshot: true } } },
     });

@@ -18,7 +18,7 @@ import { CancelDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
 import { effectivePolicy } from '../../domain/reimbursement.constants';
 import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import {
   validatePaymentRecording,
   ageHours,
@@ -84,7 +84,7 @@ export class FinanceReviewReimbursementUseCase {
     if (req.status !== 'FINANCE_REVIEW') {
       throw new UnprocessableEntityException(`Cannot finance-review from status ${req.status}`);
     }
-    if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const now = new Date();
     if (input.resolveDuplicate) {
@@ -298,6 +298,9 @@ export class RecordReimbursementPaymentUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // Ahead of the idempotent-replay return below, so a caller outside the branch cannot even
+    // learn that a payment exists by replaying one.
+    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const recorded = req.payments?.find((payment) => payment.status === 'RECORDED');
     if (req.paymentStatus === 'PAID' && recorded) {
@@ -453,6 +456,9 @@ export class VoidReimbursementPaymentUseCase {
 
     const req = await this.repo.findRequestById(ctx.companyId, requestId);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // Before the payment lookup and well before the ledger reversal: void is the most destructive
+    // action in this module (audited CRITICAL) and it reverses a posted journal.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
     if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment is already voided');
@@ -516,7 +522,9 @@ export class ListUnpostedReimbursementPaymentsUseCase {
   // matching the finance-queue worklist actor.
   async execute(ctx: RequestContext): Promise<Awaited<ReturnType<PrismaReimbursementRepository['listUnpostedReimbursementPayments']>>> {
     if (!ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Missing permission: reimbursement.finance_review');
-    return this.repo.listUnpostedReimbursementPayments(ctx.companyId);
+    // Scoped like the finance queue beside it: this worklist is what finance posts from, so an
+    // unscoped read hands a branch-restricted user another branch's payment ids to post.
+    return this.repo.listUnpostedReimbursementPayments(ctx.companyId, ctx.scopes ?? {});
   }
 }
 
@@ -528,6 +536,9 @@ export class ExportReimbursementEvidenceUseCase {
     if (!ctx.permissions.includes('reimbursement.export')) throw new ForbiddenException('Missing permission: reimbursement.export');
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
+    // The export carries the whole claim — lines, approvals, payments, evidence ids — so it has to
+    // obey the same scope as reading the claim it summarizes.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     const signedCopies = await this.repo.listSignedClaimFormCopies(ctx.companyId, id);
 
     void this.audit.log({
