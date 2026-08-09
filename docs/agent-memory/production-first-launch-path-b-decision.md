@@ -178,3 +178,70 @@ after the reviewed implementation baseline exists"* — จึง pin เป็�
 exhaustive `ListServiceDeployments` สองครั้งที่ตรงกัน แต่ AWS CLI ไม่ auto-paginate และ production
 api-web มี 184 deployment ต่อหน้า 100 แถว **ทุก commit ก่อน dc9081a5 จึงล้มที่การพิสูจน์นั้น
 แบบเดียวกับที่ deploy ล้ม** — executor ที่ต่ำกว่า floor นี้ทำงานบน production ไม่ได้จริง ๆ
+
+## รอบ 8: pagination fix ไปชนเพดานที่ผูกกับ page size (2026-08-08)
+
+recovery ผ่านแล้ว (`19aa6849` → `RECONCILED_FAILED_CONFIRMED`) deploy เดินต่อจนถึง
+`Deploy immutable manifest` แล้วตายที่
+
+```
+release operation failed: mutation intent beforeDeploymentArns must be a bounded array
+```
+
+**ต้นเหตุ:** `run-exclusive-release-operation.ts:1153` เดิมเป็น `length > 100` ซึ่ง**บังเอิญตรง**
+กับหน้าเดียวที่ producer อ่านได้ ทั้งสองฝั่งจึงไม่มีทางขัดกัน พอ pagination fix ทำให้อ่านครบ 184
+ตัวเลข 100 ที่เคยเป็น "เพดานที่ไม่มีวันถึง" กลายเป็นเพดานจริง
+
+แก้เป็น **5000** = เพดานของ pager เอง (`LIST_DEPLOYMENTS_MAX_PAGES=50` × 100) ให้สองค่าขยับด้วยกัน
+ไม่ใช่ค่าหนึ่งไปปิดอีกค่าเงียบ ๆ
+
+**บทเรียน:** ตอนแก้ pagination ผมไล่หา call site ของ `list-service-deployments` ครบทั้ง 5 จุด
+แต่ไม่ได้ไล่หา **ผู้บริโภคของข้อมูลที่ยาวขึ้น** เพดาน 100 อยู่คนละไฟล์ คนละภาษา (TypeScript)
+และไม่ได้อ้างถึง pagination เลย จึงไม่โผล่มาใน grep ใด ๆ
+
+**สิ่งที่ควรทำครั้งหน้าเมื่อแก้อะไรที่ทำให้ข้อมูลยาวขึ้น:** ไล่หาทั้ง producer และ consumer
+ของ field นั้นข้ามภาษา ไม่ใช่แค่ call site ของ API
+
+## สถานะเมื่อจบวัน 2026-08-08
+
+**ได้แล้ว:**
+- production DB: 121 migrations / 195 tables, query ได้จริงผ่าน T1 VIEW (`watchdog_support_ro`)
+- support roles + bastion + RDS CA + IAM ครบ, `arm-support-execute.sh` ติดตั้งและรัน `status` ผ่าน
+- recovery path ของ production ปลดล็อกถาวร (floor pin `dc9081a5`) — รอบหน้าใช้เวลาไม่กี่นาที
+- บั๊ก 10 ตัวที่แก้และพิสูจน์แล้ว ทั้งหมดอยู่ในโค้ดที่ไม่เคยรัน
+
+**ยังไม่ได้:** api-web ยังไม่ขึ้น (`minTaskCount` ยัง 0, `mangmeeplus.com` ยัง 503),
+ai-gateway/workers ยังไม่ deploy
+
+**operation ค้างใหม่:** `fec04e02-4255-48b6-b073-8a21c28a2690` hold หมดอายุ **00:23 น.**
+หลังจากนั้นกู้ด้วย PRE_INTENT ได้ทันที — **อย่าส่ง `parent_task_arn`** (ECS ลบ stopped task
+ภายใน ~1 ชม. evidence จะเป็น null แล้ว recovery จะปฏิเสธ) และใช้ `recovery_ref` ที่มี
+successful push CI บน main แล้วเท่านั้น
+
+## บั๊ก guard ที่ `set -e` เอื้อมไม่ถึง (2026-08-08)
+
+`recover-release-intent.yml` step `Prove optional exact parent release task is stably stopped`
+**รายงาน success ทั้งที่ควรปฏิเสธ** แล้วส่ง evidence ที่เป็น null ทั้งก้อนต่อไป
+
+```
+{"taskArn":"...","taskDefinitionArn":null,"lastStatus":null,"stoppedAt":null,...}
+```
+
+พิสูจน์กลไกแล้ว ไม่ใช่ `jq` ผิด:
+
+| | ผล |
+| --- | --- |
+| `jq -e` เดี่ยว ๆ | exit 1 ถูกต้อง |
+| เรียก function ตรง ๆ | `set -e` หยุดถูกต้อง |
+| เรียก function ใน `$( )` | **ไม่หยุด** คำสั่งถัดไปรันต่อ |
+
+`set -e` ไม่เอื้อมเข้าไปใน command-substitution subshell คำสั่ง `jq -e` ที่ล้มจึงแค่ปล่อยให้บรรทัด
+ถัดไปทำงาน ตัวที่จับได้จริงคือ recovery task ปลายทาง (*"stopped parent task definition is outside
+the exact release family"*) — คำตอบที่ถูกแต่มาถึงผิดที่ หลังจากเสีย build กับ ECS run ไปแล้ว
+
+**สาเหตุที่ evidence เป็น null:** ECS ลบ stopped task ทิ้งภายใน ~1 ชั่วโมง `describe-tasks` คืน
+`tasks: []` + `failures: [MISSING]` ซึ่ง `.tasks[0]` เป็น null แล้ว object constructor เติม null ให้ทุก field
+
+**แก้แล้ว:** ทุกจุดคืนค่าล้มเหลวชัดเจน (`|| return 1`, `|| exit 1`) ไม่พึ่ง `set -e` และเพิ่ม
+ด่านสุดท้ายที่ปฏิเสธ evidence รูปร่าง null ก่อนส่งต่อ พร้อมข้อความบอกทางออก (ไม่ต้องส่ง
+`parent_task_arn`) ทดสอบสามกรณีแล้ว: task หมดอายุ / task ปกติ / task ที่ยังรันอยู่
