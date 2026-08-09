@@ -1,7 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { PrismaExpenseRepository } from './prisma-expense.repository';
+import {
+  PrismaExpenseRepository,
+  SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+} from './prisma-expense.repository';
 
 // H-04 (expenses) closure evidence: void must be a true reversal — the status
 // claim, payable zeroing, and reversing journal are one transaction, repeated
@@ -30,6 +33,7 @@ function fakeClient(seed: {
   expensePayments?: Row[];
   journalEntries?: Row[]; journalLines?: Row[]; periods?: Row[]; taxPeriods?: Row[];
   substituteEvidence?: Row[];
+  documentNumbers?: Row[];
 }) {
   const s = {
     expenses: seed.expenses ?? [], expenseLines: seed.expenseLines ?? [],
@@ -37,6 +41,7 @@ function fakeClient(seed: {
     journalEntries: seed.journalEntries ?? [], journalLines: seed.journalLines ?? [],
     periods: seed.periods ?? [], taxPeriods: seed.taxPeriods ?? [],
     substituteEvidence: seed.substituteEvidence ?? [],
+    documentNumbers: seed.documentNumbers ?? [],
   };
   let idSeq = 0;
   const table = (rows: Row[]) => ({
@@ -95,6 +100,7 @@ function fakeClient(seed: {
     taxPeriod: table(s.taxPeriods),
     journalEntry,
     expenseSubstituteReceiptEvidence: table(s.substituteEvidence),
+    documentNumber: table(s.documentNumbers),
   };
 }
 
@@ -190,6 +196,27 @@ describe('voidExpenseTrueReversal (H-04)', () => {
       postedNet[l.accountId] = (postedNet[l.accountId] ?? 0) + Number(l.debitAmount) - Number(l.creditAmount);
     }
     assert.ok(Object.values(postedNet).every((v) => Math.abs(v) < 0.0001), `net must be zero: ${JSON.stringify(postedNet)}`);
+  });
+
+  it('retires the issued substitute certificate and its running number with the expense', async () => {
+    client.state.substituteEvidence.push({
+      id: 'evidence_1', companyId: CO, expenseId: 'exp_1', status: 'ISSUED',
+      documentNumber: 'SRC-202607-00001', artifactAttachmentId: 'artifact_1',
+    });
+    client.state.documentNumbers.push({
+      id: 'number_1', companyId: CO, ownerType: 'expense_substitute_receipt', ownerId: 'evidence_1',
+      documentNumber: 'SRC-202607-00001', status: 'COMMITTED',
+    });
+
+    await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1');
+
+    const evidence = client.state.substituteEvidence[0];
+    assert.equal(evidence.status, 'SUPERSEDED');
+    assert.equal(evidence.supersedeReason, SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON);
+    assert.ok(evidence.supersededAt instanceof Date);
+    const number = client.state.documentNumbers[0];
+    assert.equal(number.status, 'VOIDED');
+    assert.equal(number.voidedAt.getTime(), evidence.supersededAt.getTime());
   });
 
   it('reverses both the accrual and the settlement journals when the paid expense was fully posted', async () => {

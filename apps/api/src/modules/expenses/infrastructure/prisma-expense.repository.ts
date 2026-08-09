@@ -26,6 +26,7 @@ const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
 const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
 const SUBSTITUTE_RECEIPT_DOCUMENT_TYPE = 'expense.substitute_receipt';
 const SUBSTITUTE_RECEIPT_OWNER_TYPE = 'expense_substitute_receipt';
+export const SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON = 'EXPENSE_VOIDED';
 
 
 type ExpenseTaxFinalizer = (input: {
@@ -1535,15 +1536,44 @@ export class PrismaExpenseRepository {
   ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
+      const voidedAt = new Date();
       const claimed = await tx.expenseRecord.updateMany({
         where: { id: expenseId, companyId, status: 'CONFIRMED' },
         data: {
-          status: 'VOIDED', voidedByUserId: actorUserId, voidedAt: new Date(), voidReason: reason,
+          status: 'VOIDED', voidedByUserId: actorUserId, voidedAt, voidReason: reason,
           updatedByUserId: actorUserId, paidAmount: '0.00', outstandingAmount: '0.00', paymentStatus: 'VOIDED',
         },
       });
       if (claimed.count !== 1) throw new ConflictException({ code: 'expense_changed', message: 'Expense changed before void. Reload and retry.' });
       const expense = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId }, include: { lines: true } });
+
+      // Keep the immutable issued artifact for audit, but retire both its evidence state and
+      // running number in the same transaction as the expense reversal. Downloads derive a
+      // visibly VOID-stamped PDF from the original SVG; the checksummed source is never rewritten.
+      const issuedEvidence = await tx.expenseSubstituteReceiptEvidence.findMany({
+        where: { companyId, expenseId, status: 'ISSUED' },
+        select: { id: true },
+      });
+      if (issuedEvidence.length > 0) {
+        const evidenceIds = issuedEvidence.map((item: { id: string }) => item.id);
+        await tx.expenseSubstituteReceiptEvidence.updateMany({
+          where: { companyId, expenseId, id: { in: evidenceIds }, status: 'ISSUED' },
+          data: {
+            status: 'SUPERSEDED',
+            supersededAt: voidedAt,
+            supersedeReason: SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+          },
+        });
+        await tx.documentNumber.updateMany({
+          where: {
+            companyId,
+            ownerType: SUBSTITUTE_RECEIPT_OWNER_TYPE,
+            ownerId: { in: evidenceIds },
+            status: 'COMMITTED',
+          },
+          data: { status: 'VOIDED', voidedAt },
+        });
+      }
 
       // Filed-form contributions on the tax-line snapshots decide the
       // tax-period lock — the same seam the confirmation gate uses. The

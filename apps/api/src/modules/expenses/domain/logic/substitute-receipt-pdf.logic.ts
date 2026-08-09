@@ -174,7 +174,11 @@ function printableDocumentNumber(value: string | undefined): string | null {
 
 /** `documentNumber` is passed in rather than parsed back out of the SVG: the caller already holds the
  * evidence row, and scraping rendered text would break silently the next time the layout changes. */
-export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: string): Promise<Buffer> {
+export async function renderSubstituteReceiptPdf(
+  svg: Buffer,
+  documentNumber?: string,
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
   }
@@ -235,6 +239,18 @@ export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: s
       width,
       height,
     });
+    if (options.stateStamp) {
+      const stateSize = options.stateStamp === 'VOID' ? 96 : 54;
+      const stateWidth = stampFont.widthOfTextAtSize(options.stateStamp, stateSize);
+      page.drawText(options.stateStamp, {
+        x: (A4_WIDTH - stateWidth) / 2,
+        y: A4_HEIGHT / 2,
+        size: stateSize,
+        font: stampFont,
+        color: rgb(0.78, 0.03, 0.03),
+        opacity: 0.32,
+      });
+    }
     const pageLabel = `Page ${index + 1}/${slices.length}`;
     page.drawText(identity, { x: MARGIN, y: 17, size: stampSize, font: stampFont, color: rgb(0.35, 0.35, 0.35) });
     page.drawText(pageLabel, {
@@ -246,6 +262,6 @@ export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: s
     });
   }
   pdf.setTitle(safeDocumentNumber ?? `SHA256-${sourceDigest.slice(0, 16)}`);
-  pdf.setSubject(`Source SHA256: ${sourceDigest}`);
+  pdf.setSubject(`Source SHA256: ${sourceDigest}${options.stateStamp ? ` | State: ${options.stateStamp}` : ''}`);
   return Buffer.from(await pdf.save());
 }

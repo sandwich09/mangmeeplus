@@ -164,5 +164,12 @@ Verification:
 - Substitute-receipt rendering delegates all civil and signature timestamps to the shared Thai date formatter pinned to
   `Asia/Bangkok`; a payer/approver signing after UTC 17:00 now prints the following Thai day instead of the preceding UTC
   date. The renderer regression covers both signatures at this boundary.
+- Voiding a confirmed expense now retires every issued substitute evidence and its committed running number in the same
+  transaction as the accounting reversal. The immutable/checksummed SVG remains untouched; every page of a derived
+  download is stamped `VOID`, while an older corrected version is stamped `SUPERSEDED`. The hub exposes those historical
+  artifacts for audit instead of showing a dead download journey. This also closes a newly found UI/API mismatch where
+  the wizard offered a superseded artifact but the API always answered 409.
+- Void/download/permission focused tests pass 37/37 and the complete expenses module passes 450/450. Web typecheck passes;
+  API typecheck has no new errors and retains only the established 14 substitute-receipt/report spec errors.
 Next:
-- Continue the substitute-receipt R1 findings: voided certificate state.
+- Verify the already-fixed company-central hub scope and close the substitute-receipt R1 subsection in consolidated.

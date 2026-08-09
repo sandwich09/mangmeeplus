@@ -59,6 +59,14 @@ describe('substitute receipt PDF', () => {
     console.log(`Rendered PDF: ${bytes.byteLength} bytes; Thai ink ratio: ${(inkRatio * 100).toFixed(3)}%`);
   });
 
+  it('marks every derived page when the immutable certificate has been voided', async () => {
+    const bytes = await renderSubstituteReceiptPdf(thaiSvg, 'SRC-EXP-0142-V1', { stateStamp: 'VOID' });
+    const pdf = await PDFDocument.load(bytes);
+    assert.match(pdf.getSubject() ?? '', /State: VOID/);
+    const pageTexts = await extractPageTexts(bytes);
+    pageTexts.forEach((text) => assert.match(text, /VOID/));
+  });
+
   it('rejects an implausibly blank certificate', async () => {
     const blank = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="850" height="180"><rect width="850" height="180" fill="white"/></svg>');
     await assert.rejects(

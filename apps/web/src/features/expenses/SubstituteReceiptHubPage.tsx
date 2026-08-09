@@ -313,7 +313,7 @@ export function SubstituteReceiptHubPage({
                       </td>
                       <td>
                         <div className="flex justify-end gap-1">
-                          {item.status === 'ISSUED' && (
+                          {item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED') && (
                             <IconBtn
                               title={t('expenses.substitute.download_pdf', locale)}
                               tone="primary"
@@ -322,7 +322,7 @@ export function SubstituteReceiptHubPage({
                               {ICON.download}
                             </IconBtn>
                           )}
-                          {item.status === 'ISSUED' && (
+                          {item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED') && (
                             <IconBtn
                               title={previewLoadingId === item.evidenceId
                                 ? t('expenses.loading', locale)

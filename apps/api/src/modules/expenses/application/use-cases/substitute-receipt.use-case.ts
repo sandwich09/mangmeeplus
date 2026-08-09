@@ -9,7 +9,12 @@ import { ObjectVersionCleanupService } from '../../../data-model-core/applicatio
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
-import { expenseDecimalToString, PrismaExpenseRepository, toSubstituteEvidenceSummary } from '../../infrastructure/prisma-expense.repository';
+import {
+  expenseDecimalToString,
+  PrismaExpenseRepository,
+  SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+  toSubstituteEvidenceSummary,
+} from '../../infrastructure/prisma-expense.repository';
 import {
   buildSubstituteCertificationText,
   canonicalSnapshotHash,
@@ -462,7 +467,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     await this.getExpense.execute(ctx, expenseId);
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    if (evidence.status !== 'ISSUED' || !evidence.artifactAttachmentId) {
+    if (!['ISSUED', 'SUPERSEDED'].includes(evidence.status) || !evidence.artifactAttachmentId) {
       throw new ConflictException('The substitute-receipt certificate has not been issued yet.');
     }
     const attachment = await this.repo.findSubstituteArtifactAttachment(
@@ -477,7 +482,10 @@ export class DownloadSubstituteReceiptPdfUseCase {
       ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
     });
     // The immutable, checksummed SVG remains authoritative; this PDF is a derived printout generated on demand.
-    const data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber);
+    const stateStamp = evidence.status === 'SUPERSEDED'
+      ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
+      : undefined;
+    const data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
     void this.audit.log({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -487,9 +495,16 @@ export class DownloadSubstituteReceiptPdfUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { expenseId, artifactAttachmentId: evidence.artifactAttachmentId },
+      metadataJson: {
+        expenseId,
+        artifactAttachmentId: evidence.artifactAttachmentId,
+        evidenceStatus: evidence.status,
+        supersedeReason: evidence.supersedeReason,
+        derivedStamp: stateStamp ?? null,
+      },
     });
-    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}.pdf` };
+    const stateSuffix = stateStamp ? `-${stateStamp}` : '';
+    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}${stateSuffix}.pdf` };
   }
 }
 
