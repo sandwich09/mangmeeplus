@@ -390,3 +390,48 @@ run ที่ล้มจึงทิ้ง service ที่ *เปลี่�
 
 รวมค่าเก็บข้อมูลทั้งหมด ~$1.60/เดือน จากบิล ~$105/เดือน (1.5%) — **การไล่ตั้ง lifecycle เพิ่ม
 ไม่ใช่ทางลดค่าใช้จ่าย** ตัวที่ประหยัดได้จริงคือปิด UAT นอกเวลางาน (~$25–30/เดือน)
+
+## รอบ 12 (2026-08-09): AI ตายมาทั้งเดือน และสองบั๊กที่ปิดปากตัวเอง
+
+ตั้งใจแค่ย้าย secret ของ AgentCore ออกจาก plaintext env แต่พอ deploy จริงกลับเปิดโปงว่า
+**เส้นทาง AI ใช้งานไม่ได้มาตั้งแต่กลางเดือนกรกฎาคม** และมีสองกลไกที่ทำให้ไม่มีใครเห็น
+
+**บั๊กที่ 1 — deploy script สร้าง runtime ที่บูตไม่ผ่านมาตลอด**
+
+`agentcore-deploy.sh` ตั้ง `APP_ENV=production` ซึ่งเปิด `validateProductionConfig` แต่ไม่เคยใส่
+ค่าที่ validation นั้นบังคับ:
+
+```
+- WATCHDOG_JWT_SECRET_ARN is required in production
+- WATCHDOG_JWT_ISSUER is required in production
+- WATCHDOG_JWT_AUDIENCE is required in production
+```
+
+เงื่อนไขผูกกับการมี `JWT_CLOCK_TOLERANCE_SECONDS` ซึ่ง `aiGatewayConfigSchema` มีเสมอ — จึงบังคับ
+กับ runtime ตัวนี้ด้วย **ทั้งที่มันไม่เคยตรวจ token เอง**
+
+**กับดักของชื่อ:** `WATCHDOG_JWT_SECRET_ARN` ไม่ได้เก็บ ARN แต่เก็บ**ตัวกุญแจ** ECS เติมค่าให้ผ่าน
+`valueFrom` ส่วน AgentCore ไม่มีกลไกฉีด ถ้าทำตามตรง ๆ ต้องเอากุญแจใส่ env เป็น plaintext
+ซึ่งย้อนงานที่เพิ่งทำพอดี จึงให้ runtime ไปดึงเองตอน boot ผ่าน `*_SOURCE_ARN` แยกอีกตัว
+
+**บั๊กที่ 2 — smoke test ที่ล้มแล้วบอกว่าสำเร็จ**
+
+smoke ทั้งสองครั้งถูกครอบด้วย `|| true` runtime ที่ตอบ 500 ทุกครั้งจึงพิมพ์ `Deploy Complete`
+แล้ว exit 0 และเพราะ **AgentCore ไม่สร้าง log group ให้เอง** จึงไม่มีที่ไหนบันทึกความล้มเหลวเลย
+วิธีที่ใช้ได้จริงคือ build artifact แล้วรัน `node runtime.js` ในเครื่องด้วย env ชุดเดียวกัน
+
+**บั๊กที่ 3 — ARN ที่คัดลอกตัวเองส่งต่อ**
+
+`AGENTCORE_RUNTIME_ARN` ใน task definition ของ ai-gateway ขาด 8 ตัวท้าย (86 ตัว ควรเป็น 94)
+gateway บูตเขียวปกติ พังเฉพาะตอนผู้ใช้ส่งข้อความจริง
+
+`preserve` ใช้ repo variable ก่อน ถ้าไม่มีก็**อ่านจาก service ที่รันอยู่แล้วเขียนกลับค่าเดิม** และ
+repo variable ตัวนี้ไม่มีอยู่จริง ค่าจึงเป็นได้แค่สิ่งที่มันเป็นอยู่แล้ว ทุก deploy คัดลอกค่าที่พังส่งต่อ
+ส่วน `deploy.sh` ถือค่าถูกต้องเป็น default มาตลอดแต่ไม่เคยได้ใช้
+
+**บทเรียนร่วมของทั้งสามข้อ:** ทุกตัว "สำเร็จ" ในสายตาเครื่องมือ — deploy เขียว, service ACTIVE,
+runtime READY ความล้มเหลวไปโผล่ตอนมีคนใช้จริงเท่านั้น **หลักฐานว่า deploy ผ่านไม่ใช่หลักฐานว่าใช้งานได้**
+ต้องมีการเรียกจริงที่ล้มแล้วทำให้ deploy ล้มด้วย
+
+**สภาพก่อนแก้ที่พิสูจน์ได้:** execution role ไม่ถูกใช้เลยตั้งแต่ 9 ก.ค. และ LINE webhook ชี้
+App Runner ที่ pause ตั้งแต่ 14 ก.ค. — ไม่มี traffic วิ่งเข้าไปอยู่แล้ว
