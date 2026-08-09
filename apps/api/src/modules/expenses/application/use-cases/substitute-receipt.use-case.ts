@@ -744,12 +744,22 @@ export class ListSubstituteReceiptHistoryUseCase {
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
+    // Loaded before the decision because the payer is part of what authorizes the read. Nothing is
+    // returned unless one of the three clauses below passes, and the allowed path costs the same
+    // two queries it always did.
+    const history = await this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
     const canReview = ctx.permissions.includes('expense.review');
-    const canReadOwn = ctx.permissions.includes('expense.read_own') && expense.createdByUserId === ctx.userId;
+    // `read_own` means "created it OR paid it" here, the same as in GetExpenseUseCase and in the
+    // hub list. Reading it as "created it" alone locks out the one person the certificate is
+    // waiting on: the payer is deliberately not the reviewer, and is usually not the creator
+    // either — that separation is the control this feature exists to produce. Any version counts,
+    // matching expenseRelatedToUserWhere, so the read_own and read_related paths agree.
+    const canReadOwn = ctx.permissions.includes('expense.read_own')
+      && (expense.createdByUserId === ctx.userId || history.some((item) => item.payerUserId === ctx.userId));
     const canReadRelated = ctx.permissions.includes('expense.read_related')
       && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
     if (!canReview && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
-    return this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
+    return history;
   }
 }
 
