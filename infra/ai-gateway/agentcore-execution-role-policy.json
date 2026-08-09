@@ -20,7 +20,10 @@
       "Action": [
         "secretsmanager:GetSecretValue"
       ],
-      "Resource": "<AI_GATEWAY_SECRET_ARN>"
+      "Resource": [
+        "<AI_GATEWAY_SECRET_ARN>",
+        "<WATCHDOG_JWT_SECRET_SOURCE_ARN>"
+      ]
     },
     {
       "Sid": "BedrockAgentCoreReadArtifact",

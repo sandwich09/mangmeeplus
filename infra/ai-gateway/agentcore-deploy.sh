@@ -28,6 +28,14 @@ ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/watchdog-bms-agentcore-execution-role"
 AI_GATEWAY_SECRET_ARN=$(aws secretsmanager describe-secret \
   --secret-id watchdog-bms/production/ai-gateway-internal-secret \
   --query ARN --output text --region "$REGION")
+# The runtime loads the shared aiGatewayConfigSchema, which always carries
+# JWT_CLOCK_TOLERANCE_SECONDS - and validateProductionConfig requires the JWT trio of anything that
+# does, whether or not it verifies a token itself. Omitting these does not degrade the runtime, it
+# stops it booting: every invocation returns 500 from config validation, and AgentCore has no log
+# group by default to say so.
+WATCHDOG_JWT_SECRET_SOURCE_ARN=$(aws secretsmanager describe-secret \
+  --secret-id watchdog-bms/production/watchdog-jwt-secret \
+  --query ARN --output text --region "$REGION")
 
 # ── Required env vars ──────────────────────────────────────────────────────────
 : "${ERP_CORE_INTERNAL_URL:?ERP_CORE_INTERNAL_URL is required (private WatchDog API URL)}"
@@ -35,6 +43,11 @@ AI_GATEWAY_SECRET_ARN=$(aws secretsmanager describe-secret \
 : "${BEDROCK_MODEL_ID:=global.anthropic.claude-sonnet-4-6}"
 : "${AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:?AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF is required for the global Sonnet 4.6 profile}"
 : "${SERVICE_VERSION:=$GIT_SHA}"
+# L-04: these pin the token identity and must equal what the API *signs* with, not this runtime's
+# own URL. They default to the values the production api-web task carries; check that task
+# definition before overriding, because a mismatch boots green and then rejects every real token.
+: "${WATCHDOG_JWT_ISSUER:=$PUBLIC_BASE_URL}"
+: "${WATCHDOG_JWT_AUDIENCE:=watchdog-bms-production}"
 
 echo "[agentcore-deploy] account=$ACCOUNT_ID region=$REGION sha=$GIT_SHA"
 
@@ -104,7 +117,13 @@ aws iam update-assume-role-policy \
 # Replace placeholder before applying
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
   -e "s|<AI_GATEWAY_SECRET_ARN>|$AI_GATEWAY_SECRET_ARN|g" \
+  -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|$WATCHDOG_JWT_SECRET_SOURCE_ARN|g" \
   infra/ai-gateway/agentcore-execution-role-policy.json > "$STAGING/policy.json"
+if grep -q '<[A-Z_]*>' "$STAGING/policy.json"; then
+  echo "ERROR: execution role policy still has unsubstituted placeholders" >&2
+  grep -o '<[A-Z_]*>' "$STAGING/policy.json" | sort -u >&2
+  exit 1
+fi
 aws iam put-role-policy \
   --role-name watchdog-bms-agentcore-execution-role \
   --policy-name watchdog-bms-agentcore-permissions \
@@ -155,6 +174,9 @@ ENV_VARS=$(cat <<EOF
   "BEDROCK_MODEL_ID": "${BEDROCK_MODEL_ID}",
   "ERP_CORE_INTERNAL_URL": "${ERP_CORE_INTERNAL_URL}",
   "AI_GATEWAY_INTERNAL_SECRET_ARN": "${AI_GATEWAY_SECRET_ARN}",
+  "WATCHDOG_JWT_SECRET_SOURCE_ARN": "${WATCHDOG_JWT_SECRET_SOURCE_ARN}",
+  "WATCHDOG_JWT_ISSUER": "${WATCHDOG_JWT_ISSUER}",
+  "WATCHDOG_JWT_AUDIENCE": "${WATCHDOG_JWT_AUDIENCE}",
   "AI_FINAL_MUTATION_ENABLED": "false",
   "AI_PROMPT_LOGGING_ENABLED": "false",
   "AI_TOOL_TIMEOUT_MS": "15000",
@@ -228,37 +250,45 @@ if [ "$STATUS" != "READY" ]; then
   exit 1
 fi
 
+# A smoke result that is only printed is not a check. Both invocations below used to swallow their
+# exit status with `|| true` and let the script reach "Deploy Complete" and exit 0 - which is how a
+# runtime that answered 500 to every request was reported as a successful deploy. `invoke-agent-runtime`
+# exits non-zero on a runtime error, so the status is the signal; keep the body for diagnosis.
+smoke_invoke() {
+  local label="$1" payload="$2" out="$3" result rc=0
+  # `if !` rather than `result=$(...); rc=$?` - under `set -e` a failing command substitution
+  # aborts at the assignment, so the diagnosis below would never print on the one path that needs it.
+  if ! result=$(aws bedrock-agentcore invoke-agent-runtime \
+    --region "$REGION" \
+    --agent-runtime-arn "$RUNTIME_ARN" \
+    --qualifier "DEFAULT" \
+    --content-type "application/json" \
+    --accept "application/json" \
+    --cli-binary-format raw-in-base64-out \
+    --payload "$payload" \
+    "$out" \
+    --output json 2>&1); then
+    rc=1
+  fi
+  echo "[agentcore-deploy] ${label} invoke: $result"
+  [ -f "$out" ] && cat "$out" || true
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR: ${label} smoke invocation failed (exit ${rc}). The runtime is deployed but not serving." >&2
+    echo "       AgentCore writes no log group by default, so reproduce locally with the same env:" >&2
+    echo "       bash infra/ai-gateway/build-agentcore-artifact.sh /tmp/ac \"\$SOURCE_COMMIT\" && node /tmp/ac/runtime.js" >&2
+    return 1
+  fi
+}
+
 # ── 7. Smoke: safe read-only Thai invocation ───────────────────────────────────
 echo "[agentcore-deploy] smoke: safe read-only invocation..."
 SAFE_PAYLOAD='{"turnId":"smoke-read-01","companyId":"smoke-company","userId":"smoke-user","messageText":"ดูสรุปยอดขาย","locale":"th-TH","permissions":["sales.read"]}'
-SAFE_RESULT=$(aws bedrock-agentcore invoke-agent-runtime \
-  --region "$REGION" \
-  --agent-runtime-arn "$RUNTIME_ARN" \
-  --qualifier "DEFAULT" \
-  --content-type "application/json" \
-  --accept "application/json" \
-  --cli-binary-format raw-in-base64-out \
-  --payload "$SAFE_PAYLOAD" \
-  "$STAGING/safe-invoke.out" \
-  --output json 2>&1 || true)
-echo "[agentcore-deploy] safe invoke: $SAFE_RESULT"
-cat "$STAGING/safe-invoke.out" || true
+smoke_invoke safe "$SAFE_PAYLOAD" "$STAGING/safe-invoke.out"
 
 # ── 8. Smoke: mutation refusal ─────────────────────────────────────────────────
 echo "[agentcore-deploy] smoke: mutation refusal..."
 MUTATION_PAYLOAD='{"turnId":"smoke-mutation-01","companyId":"smoke-company","userId":"smoke-user","messageText":"อนุมัติจ่ายเงิน 50000 บาท","locale":"th-TH","permissions":["finance.approve"]}'
-MUTATION_RESULT=$(aws bedrock-agentcore invoke-agent-runtime \
-  --region "$REGION" \
-  --agent-runtime-arn "$RUNTIME_ARN" \
-  --qualifier "DEFAULT" \
-  --content-type "application/json" \
-  --accept "application/json" \
-  --cli-binary-format raw-in-base64-out \
-  --payload "$MUTATION_PAYLOAD" \
-  "$STAGING/mutation-invoke.out" \
-  --output json 2>&1 || true)
-echo "[agentcore-deploy] mutation invoke: $MUTATION_RESULT"
-cat "$STAGING/mutation-invoke.out" || true
+smoke_invoke mutation "$MUTATION_PAYLOAD" "$STAGING/mutation-invoke.out"
 
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""

@@ -9,7 +9,7 @@ import { connect, type AddressInfo } from 'node:net';
 import { PassThrough } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, readBody, PayloadTooLargeError } from './runtime';
+import { validatePayload, payloadToTurnRequest, makeHttpServer, loadInternalSecret, loadJwtSecret, readBody, PayloadTooLargeError } from './runtime';
 import { appendUsage } from '../common/usage/usage-context';
 
 // ── Stub orchestrator ──────────────────────────────────────────────────────────
@@ -66,6 +66,38 @@ describe('AgentCore Runtime – payload validation', () => {
     await assert.rejects(
       loadInternalSecret({ AI_GATEWAY_INTERNAL_SECRET_ARN: 'secret-arn' }, async () => ''),
       /AI_GATEWAY_INTERNAL_SECRET is empty/,
+    );
+  });
+
+  // validateProductionConfig requires WATCHDOG_JWT_SECRET_ARN of anything carrying
+  // JWT_CLOCK_TOLERANCE_SECONDS, which the shared schema always does. The deploy script never set
+  // it, so every invocation died in config validation with a 500 and no log group to say why.
+  it('resolves the JWT signing key from its own ARN pointer', async () => {
+    const env: NodeJS.ProcessEnv = {
+      WATCHDOG_JWT_SECRET_SOURCE_ARN: 'arn:aws:secretsmanager:ap-southeast-1:123:secret:watchdog-bms/production/watchdog-jwt-secret-y',
+      AWS_REGION: 'ap-southeast-1',
+    };
+    let requested = '';
+    await loadJwtSecret(env, async (secretId, region) => {
+      requested = `${region}:${secretId}`;
+      return 'jwt-signing-key';
+    });
+    assert.match(requested, /watchdog-jwt-secret-y$/);
+    // The config layer reads material out of the *_ARN name, so that is where it has to land.
+    assert.equal(env['WATCHDOG_JWT_SECRET_ARN'], 'jwt-signing-key');
+  });
+
+  it('leaves an already-injected JWT key alone so ECS valueFrom still wins', async () => {
+    const env: NodeJS.ProcessEnv = { WATCHDOG_JWT_SECRET_ARN: 'injected-by-ecs' };
+    await loadJwtSecret(env, async () => 'should-not-be-read');
+    assert.equal(env['WATCHDOG_JWT_SECRET_ARN'], 'injected-by-ecs');
+  });
+
+  it('fails closed when the JWT secret reference is absent or empty', async () => {
+    await assert.rejects(loadJwtSecret({}), /WATCHDOG_JWT_SECRET_SOURCE_ARN is required/);
+    await assert.rejects(
+      loadJwtSecret({ WATCHDOG_JWT_SECRET_SOURCE_ARN: 'secret-arn' }, async () => ''),
+      /WATCHDOG_JWT_SECRET_ARN is empty/,
     );
   });
 
