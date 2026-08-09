@@ -316,7 +316,6 @@ export class PrepareSubstituteReceiptUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly audit: AuditService,
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
-    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {

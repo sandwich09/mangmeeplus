@@ -14,6 +14,7 @@ import {
   UpdateReportViewUseCase,
   ListReportViewsUseCase,
 } from './report.use-cases';
+import type { EnqueueObjectVersionCleanupInput } from '../../data-model-core/application/services/object-version-cleanup.service';
 import { findReportDefinition } from '../domain/report-catalog';
 import { ReportController } from '../presentation/http/report.controller';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../../common/security/permissions.decorator';
@@ -471,7 +472,7 @@ describe('reports OFF new-root fence', () => {
         };
       }),
     };
-    const cleanup = { enqueue: mock.fn(async () => true) };
+    const cleanup = { enqueue: mock.fn(async (_input: EnqueueObjectVersionCleanupInput) => true) };
     const runQuery = {
       executeForExport: async () => ({
         runId: 'run-1', dataset: findReportDefinition('ar.aging')!, status: 'READY', computedAt: now,
@@ -772,7 +773,7 @@ describe('bounded complete CSV export', () => {
         byteSize: 999, checksumSha256: '0'.repeat(64),
       })),
     };
-    const cleanup = { enqueue: mock.fn(async () => true) };
+    const cleanup = { enqueue: mock.fn(async (_input: EnqueueObjectVersionCleanupInput) => true) };
     const runQuery = { executeForExport: async () => ({ ...pageResult(1, 1, 1), pendingRun: pendingRun('run-mismatch') }) };
     const useCase = new CreateReportExportUseCase(
       repo as any, runQuery as any, { log: async () => undefined } as any, { execute: async () => undefined } as any,
