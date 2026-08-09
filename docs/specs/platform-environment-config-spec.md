@@ -67,7 +67,7 @@ This spec covers:
 | `HOST` | yes | `0.0.0.0` in container | Direct local run can use `127.0.0.1`. |
 | `PORT` | yes | `3001` | Service port. |
 | `PUBLIC_BASE_URL` | deployed env | `https://api.example.com` | External callbacks/links. |
-| `TRUST_PROXY` | deployed env | `true` | Required behind load balancer/proxy. |
+| ~~`TRUST_PROXY`~~ | no | — | **Not wired (2026-08-10).** Setting it does nothing. `trustedClientIp` derives proxy trust from the TCP peer being the private tier, then walks `X-Forwarded-For` right-to-left past our own and Cloudflare's hops. See `apps/api/src/common/security/trusted-client-ip.ts`. |
 
 ## 6. HTTP Security Variables
 
