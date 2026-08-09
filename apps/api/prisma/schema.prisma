@@ -2063,11 +2063,20 @@ model ExpenseCategory {
   name                String
   accountHintKey      String
   /// Reviewed ledger account code this category debits when its expense accrues (audit CR-2,
-  /// bootstrap spec §9.2). Null means "not reviewed yet" and posting reports
+  /// bootstrap spec §9.2). Null means nothing is bound and posting reports
   /// `expense_account_unmapped` rather than falling back to a guessed account — `accountHintKey`
   /// above is a suggestion and is deliberately NOT used as posting authority. Held as a code, not
   /// an FK, because posting resolves accounts by code at journal-creation time.
+  /// Null no longer implies "unreviewed": onboarding binds from the chart template, so
+  /// `ledgerAccountReviewedByUserId` below is what says whether a person chose this.
   ledgerAccountCode   String?
+  /// Who attested the `ledgerAccountCode` above. Onboarding seeds the binding from the chart
+  /// template's mapping and stamps `EXPENSE_CATEGORY_BOOTSTRAP_ACTOR_USER_ID` here, the same
+  /// attestation seam `tax-config-bootstrap` uses: the row is postable on day one, and still
+  /// names a non-human reviewer so an operator can tell a seeded default from a decision someone
+  /// actually made. Not an FK — the value is a `system:` sentinel as often as a user id.
+  ledgerAccountReviewedByUserId String?
+  ledgerAccountReviewedAt       DateTime?
   /// Suggested input Tax Code as its stable external code (e.g. "O7"), never a
   /// TaxCodeDefinition id — that row is one dated version and an FK would pin it.
   defaultInputTaxCode String?

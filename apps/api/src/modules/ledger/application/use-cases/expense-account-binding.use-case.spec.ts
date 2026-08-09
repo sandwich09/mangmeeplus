@@ -13,7 +13,8 @@ const ctx = (permissions: string[]) => ({
 function harness(options: { categories?: any[] } = {}) {
   const calls = { updates: [] as any[], audits: [] as any[], accountWhere: [] as any[] };
   const categories = options.categories ?? [
-    { id: 'cat-fuel', name: 'ค่าน้ำมัน', status: 'ACTIVE', accountHintKey: 'FUEL', ledgerAccountCode: '5320-01' },
+    { id: 'cat-fuel', name: 'ค่าน้ำมัน', status: 'ACTIVE', accountHintKey: 'FUEL', ledgerAccountCode: '5320-01', ledgerAccountReviewedByUserId: 'user-9' },
+    { id: 'cat-seeded', name: 'ค่ารับรอง', status: 'ACTIVE', accountHintKey: 'expense.entertainment', ledgerAccountCode: '5320-01', ledgerAccountReviewedByUserId: 'system:expense-category-bootstrap' },
     { id: 'cat-phone', name: 'ค่าโทรศัพท์', status: 'ACTIVE', accountHintKey: 'PHONE', ledgerAccountCode: null },
     { id: 'cat-stale', name: 'หมวดเก่า', status: 'ACTIVE', accountHintKey: 'OLD', ledgerAccountCode: '9999-99' },
   ];
@@ -48,12 +49,12 @@ describe('ListExpenseAccountBindingsUseCase', () => {
 
     assert.deepEqual(
       rows.map((row) => [row.categoryId, row.postable]),
-      [['cat-fuel', true], ['cat-phone', false], ['cat-stale', false]],
+      [['cat-fuel', true], ['cat-seeded', true], ['cat-phone', false], ['cat-stale', false]],
     );
     // An unmapped category and one pointing at an unusable account are both not-postable, but the
     // operator has to tell them apart to know what to fix.
-    assert.equal(rows[1]!.ledgerAccountCode, null);
-    assert.equal(rows[2]!.ledgerAccountCode, '9999-99');
+    assert.equal(rows[2]!.ledgerAccountCode, null);
+    assert.equal(rows[3]!.ledgerAccountCode, '9999-99');
     assert.equal(rows[0]!.ledgerAccountNameTh, 'ค่าซ่อมแซม');
   });
 
@@ -74,7 +75,12 @@ describe('SetExpenseAccountBindingUseCase', () => {
 
     assert.equal(result.postable, true);
     assert.equal(result.ledgerAccountCode, '5320-01');
-    assert.deepEqual(calls.updates[0].data, { ledgerAccountCode: '5320-01' });
+    // Naming the account IS the review, so the same write records the human who attested it —
+    // that is what separates this row from one the onboarding template bound.
+    assert.equal(calls.updates[0].data.ledgerAccountCode, '5320-01');
+    assert.equal(calls.updates[0].data.ledgerAccountReviewedByUserId, 'user-1');
+    assert.ok(calls.updates[0].data.ledgerAccountReviewedAt instanceof Date);
+    assert.equal(result.awaitingHumanReview, false);
     assert.equal(calls.audits[0].action, 'ledger.expense-account-binding.set');
     assert.equal(calls.audits[0].riskLevel, 'HIGH');
     assert.deepEqual(calls.audits[0].metadataJson.from, null);
@@ -88,8 +94,25 @@ describe('SetExpenseAccountBindingUseCase', () => {
 
     assert.equal(result.ledgerAccountCode, null);
     assert.equal(result.postable, false);
-    assert.deepEqual(calls.updates[0].data, { ledgerAccountCode: null });
+    // Clearing the binding clears the attestation with it: nobody has decided again.
+    assert.deepEqual(calls.updates[0].data, {
+      ledgerAccountCode: null, ledgerAccountReviewedByUserId: null, ledgerAccountReviewedAt: null,
+    });
     assert.equal(calls.audits[0].metadataJson.from, '5320-01');
+  });
+
+  // A company onboarded today arrives with every category already bound by the template. The list
+  // has to keep saying which of those an accountant has actually looked at, or the review queue is
+  // indistinguishable from the work already done.
+  it('separates a template-seeded binding from one a person made', async () => {
+    const { prisma } = harness();
+    const rows = await new ListExpenseAccountBindingsUseCase(prisma).execute(ctx(['ledger.posting-rule.read']));
+    const seeded = rows.find((row) => row.categoryId === 'cat-seeded');
+    const reviewed = rows.find((row) => row.categoryId === 'cat-fuel');
+
+    assert.equal(seeded?.awaitingHumanReview, true);
+    assert.equal(seeded?.postable, true, 'a seeded binding still posts');
+    assert.equal(reviewed?.awaitingHumanReview, false);
   });
 
   // The control account is exactly what a "just point it somewhere" answer would reach for, and the

@@ -37,6 +37,10 @@ import {
   bootstrapCompanyTaxConfiguration,
   type TaxConfigBootstrapSummary,
 } from '../../../tax/application/services/tax-config-bootstrap.service.js';
+import {
+  bootstrapCompanyExpenseCategories,
+  type ExpenseCategoryBootstrapSummary,
+} from '../../../expenses/application/services/expense-category-bootstrap.service.js';
 
 export type CreateCompanyOnboardingCommand = {
   companyName: string;
@@ -78,6 +82,7 @@ export type CreateCompanyOnboardingResult = {
   ownerLineLink?: EmployeeLineLinkPackage; // single-use QR bound to the owner user only; absent when owner LINE is already linked
   chartOfAccounts: ChartTemplateBootstrapSummary;
   taxConfiguration: TaxConfigBootstrapSummary;
+  expenseCategories: ExpenseCategoryBootstrapSummary;
 };
 
 // ponytail: 9 bytes → 12 base64 chars, safe chars only
@@ -267,6 +272,13 @@ export class CreateCompanyOnboardingUseCase {
         createdByUserId: owner.id,
       });
 
+      // An empty category catalogue is not a blank slate, it is three broken journeys: ใบรับรอง
+      // แทนใบเสร็จ refuses to issue, AI/OCR has nothing to classify into, and every confirmed
+      // expense parks at postingStatus `pending` to fail the eventual backfill with
+      // `expense_account_unmapped:no_category`. Seeded after the chart above because each category
+      // binds to an account in it.
+      const expenseCategories = await bootstrapCompanyExpenseCategories(tx, { companyId: company.id });
+
       // Seed the standard feature package: an explicit row for EVERY canonical entitlement key —
       // parents and submenus alike — so the new company is deny-by-default (the permission
       // resolver strips disabled features' permissions) and never reads as the legacy fail-open
@@ -352,11 +364,13 @@ export class CreateCompanyOnboardingUseCase {
             taxCodeCount: taxConfiguration.definitionCount,
             taxAccountRuleCount: taxConfiguration.accountRuleCount,
             taxReportRuleCount: taxConfiguration.reportRuleCount,
+            expenseCategoryTemplateKey: expenseCategories.templateKey,
+            expenseCategoryCount: expenseCategories.categoryCount,
           },
         },
       });
 
-      return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration };
+      return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
     }, { maxWait: 5_000, timeout: 15_000 });
 
     // M-05 register §6 tenant tripwire. The register defers the s.41 limb (b) "large scale"
@@ -396,6 +410,7 @@ export class CreateCompanyOnboardingUseCase {
       lineLinkUrl: cmd.lineLinkUrl,
       chartOfAccounts: result.chartOfAccounts,
       taxConfiguration: result.taxConfiguration,
+      expenseCategories: result.expenseCategories,
       ...(lineLinkToken && {
         ownerLineLink: buildLineLinkPackage(cmd.apiBaseUrl, lineLinkToken.rawToken, lineLinkToken.expiresAt, this.config.lineLiffId),
       }),

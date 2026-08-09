@@ -102,6 +102,22 @@ function chartBootstrapTx(companyId: string) {
   };
 }
 
+/**
+ * The expense-category bootstrap seeds through the same tx and hard-fails onboarding when one of
+ * its accounts is not postable, so the fake has to record what it wrote for the assertions below.
+ */
+function expenseCategoryTx() {
+  seededExpenseCategories = [];
+  return {
+    expenseCategory: {
+      createMany: async ({ data }: any) => {
+        seededExpenseCategories.push(...data);
+        return { count: data.length };
+      },
+    },
+  };
+}
+
 function makeCmd(overrides: Partial<Parameters<CreateCompanyOnboardingUseCase['execute']>[0]> = {}) {
   return {
     companyName: 'Acme Co',
@@ -115,6 +131,9 @@ function makeCmd(overrides: Partial<Parameters<CreateCompanyOnboardingUseCase['e
     ...overrides,
   } as Parameters<CreateCompanyOnboardingUseCase['execute']>[0];
 }
+
+/** Rows the last makePrisma() run seeded, so a test can assert on the catalogue it wrote. */
+let seededExpenseCategories: any[] = [];
 
 function makePrisma(opts: {
   existingUsername?: boolean;
@@ -142,6 +161,7 @@ function makePrisma(opts: {
       $transaction: async (fn: (tx: any) => Promise<any>) => {
         const chart = chartBootstrapTx('co-1');
         const tx = {
+            ...expenseCategoryTx(),
           company: { create: async () => txResult.company, update: chart.companyUpdate },
           chartOfAccount: chart.chartOfAccount,
           user: { create: async () => txResult.owner },
@@ -205,6 +225,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       const chart = chartBootstrapTx('co-1');
       persistedChartRows = chart.rows;
       const tx = {
+            ...expenseCategoryTx(),
         company: { create: async () => ({ id: 'co-1' }), update: chart.companyUpdate },
         chartOfAccount: chart.chartOfAccount,
         user: { create: async () => ({ id: 'owner-1' }) },
@@ -251,6 +272,15 @@ describe('CreateCompanyOnboardingUseCase', () => {
     assert.equal(result.chartOfAccounts.accountCount, 175);
     assert.equal(result.chartOfAccounts.readyForManualLedger, true);
     assert.equal(result.chartOfAccounts.readyForAutomaticPosting, false);
+
+    // Without a catalogue a new company cannot issue ใบรับรองแทนใบเสร็จ, AI/OCR has nothing to
+    // classify into, and every confirmed expense parks at postingStatus `pending` to fail the
+    // eventual backfill. Seeded bound, and stamped machine-attested rather than human-reviewed.
+    assert.equal(result.expenseCategories.categoryCount, seededExpenseCategories.length);
+    assert.ok(seededExpenseCategories.length > 0);
+    assert.ok(seededExpenseCategories.every((row) => row.companyId === 'co-1' && row.ledgerAccountCode));
+    assert.ok(seededExpenseCategories.every((row) => row.ledgerAccountReviewedByUserId === 'system:expense-category-bootstrap'));
+    assert.ok(seededExpenseCategories.some((row) => row.name === 'ค่ารับรอง' && row.defaultInputTaxCode === 'ND'));
     assert.deepEqual(transactionOptions, { maxWait: 5_000, timeout: 15_000 });
     assert.equal(persistedChartRows.length, 175);
     assert.ok(persistedChartRows.every((row) => row.companyId === 'co-1' && row.isSystem === false));
@@ -332,6 +362,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
             : new Proxy(impl, { get: (target, key) => async (args: any) => { written.push(model); return (target as any)[key](args); } })
         );
         return fn({
+          ...expenseCategoryTx(),
           company: { create: async () => ({ id: 'co-1' }), update: chart.companyUpdate },
           chartOfAccount: chart.chartOfAccount,
           user: { create: async () => ({ id: 'owner-1' }) },
@@ -374,6 +405,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
     prisma.client.$transaction = async (fn: (tx: any) => Promise<any>) => {
       const chart = chartBootstrapTx('co-1');
       const tx = {
+            ...expenseCategoryTx(),
         company: { create: async () => ({ id: 'co-1' }), update: chart.companyUpdate },
         chartOfAccount: chart.chartOfAccount,
         user: { create: async () => ({ id: 'owner-1' }) },
@@ -518,6 +550,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
       const chart = chartBootstrapTx('co-1');
       chartRows = chart.rows;
       return fn({
+        ...expenseCategoryTx(),
         company: { create: async () => ({ id: 'co-1' }), update: chart.companyUpdate },
         chartOfAccount: chart.chartOfAccount,
         user: { create: async () => ({ id: 'owner-1' }) },
@@ -652,6 +685,7 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-2');
           const tx = {
+            ...expenseCategoryTx(),
             company: { create: async () => ({ id: 'co-2' }), update: chart.companyUpdate },
             chartOfAccount: chart.chartOfAccount,
             user: {
@@ -749,6 +783,7 @@ describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-1');
           return fn({
+        ...expenseCategoryTx(),
             company: {
               create: async (args: any) => { captured.company = args.data; return { id: 'co-1' }; },
               update: chart.companyUpdate,
@@ -838,6 +873,7 @@ describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
         $transaction: async (fn: (tx: any) => Promise<any>) => {
           const chart = chartBootstrapTx('co-health-1');
           const tx = {
+            ...expenseCategoryTx(),
             company: {
               create: async (args: any) => { captured.companyArgs = args; return { id: 'co-health-1' }; },
               update: chart.companyUpdate,

@@ -27,7 +27,19 @@ export type ExpenseAccountBindingRow = {
   ledgerAccountNameTh: string | null;
   /** False whenever posting this category would fail: unmapped, or mapped to an unusable account. */
   postable: boolean;
+  /**
+   * True while the binding is still the one onboarding seeded from the chart template. Postable
+   * either way — this is the difference between an account the template chose and one a person
+   * did, which is the whole review queue for an accountant taking over a new company.
+   */
+  awaitingHumanReview: boolean;
 };
+
+const SEEDED_REVIEWER_PREFIX = 'system:';
+
+function seededBinding(reviewedByUserId: string | null | undefined): boolean {
+  return typeof reviewedByUserId === 'string' && reviewedByUserId.startsWith(SEEDED_REVIEWER_PREFIX);
+}
 
 function assertPerm(ctx: RequestContext, permission: string): void {
   if (!ctx.permissions?.includes(permission)) throw new ForbiddenException(`Missing permission: ${permission}`);
@@ -57,7 +69,10 @@ export class ListExpenseAccountBindingsUseCase {
     assertPerm(ctx, 'ledger.posting-rule.read');
     const categories = await this.prisma.client.expenseCategory.findMany({
       where: { companyId: ctx.companyId },
-      select: { id: true, name: true, status: true, accountHintKey: true, ledgerAccountCode: true },
+      select: {
+        id: true, name: true, status: true, accountHintKey: true,
+        ledgerAccountCode: true, ledgerAccountReviewedByUserId: true,
+      },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
     const usable = await usableAccountsByCode(
@@ -75,6 +90,7 @@ export class ListExpenseAccountBindingsUseCase {
         ledgerAccountCode: category.ledgerAccountCode,
         ledgerAccountNameTh: account?.nameTh ?? null,
         postable: Boolean(account),
+        awaitingHumanReview: seededBinding(category.ledgerAccountReviewedByUserId),
       };
     });
   }
@@ -94,7 +110,10 @@ export class SetExpenseAccountBindingUseCase {
 
     const category = await this.prisma.client.expenseCategory.findFirst({
       where: { id: categoryId, companyId: ctx.companyId },
-      select: { id: true, name: true, status: true, accountHintKey: true, ledgerAccountCode: true },
+      select: {
+        id: true, name: true, status: true, accountHintKey: true,
+        ledgerAccountCode: true, ledgerAccountReviewedByUserId: true,
+      },
     });
     // Scoped by companyId, so a category belonging to another tenant — or a global default row,
     // which no single company may rebind — reads as not found rather than as a permission error.
@@ -118,7 +137,11 @@ export class SetExpenseAccountBindingUseCase {
 
     await this.prisma.client.expenseCategory.update({
       where: { id: categoryId },
-      data: { ledgerAccountCode: code },
+      // Naming the account IS the review, so the same write records who attested it. Clearing the
+      // binding clears the attestation with it — the category goes back to "nobody has decided".
+      data: code === null
+        ? { ledgerAccountCode: null, ledgerAccountReviewedByUserId: null, ledgerAccountReviewedAt: null }
+        : { ledgerAccountCode: code, ledgerAccountReviewedByUserId: ctx.userId, ledgerAccountReviewedAt: new Date() },
     });
 
     await this.audit.log({
@@ -132,7 +155,10 @@ export class SetExpenseAccountBindingUseCase {
       // Which account a category books to decides where money lands in the statutory accounts, so
       // the before/after pair is kept at the same risk level as a posting-rule change.
       riskLevel: 'HIGH',
-      metadataJson: { categoryName: category.name, from: category.ledgerAccountCode, to: code },
+      metadataJson: {
+        categoryName: category.name, from: category.ledgerAccountCode, to: code,
+        replacedSeededBinding: seededBinding(category.ledgerAccountReviewedByUserId),
+      },
     });
 
     return {
@@ -143,6 +169,7 @@ export class SetExpenseAccountBindingUseCase {
       ledgerAccountCode: code,
       ledgerAccountNameTh: account?.nameTh ?? null,
       postable: Boolean(account),
+      awaitingHumanReview: false,
     };
   }
 }
