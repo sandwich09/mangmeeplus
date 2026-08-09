@@ -506,7 +506,13 @@ jobs:
           # Change the production models in deploy.sh, not by adding a variable back here.
           preserve LINE_AI_AGENT_RUNTIME LINE_AI_AGENT_RUNTIME /tmp/ai-env.json
           preserve AGENTCORE_REGION AGENTCORE_REGION /tmp/ai-env.json
-          preserve AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_ARN /tmp/ai-env.json
+          # AGENTCORE_RUNTIME_ARN is deliberately NOT preserved, for the same reason as the models
+          # above: deploy.sh owns it. Preserving it read the ARN back off the live service and wrote
+          # it straight back, so the value could only ever be whatever it already was. The live
+          # service held one truncated 8 characters short - the gateway booted green and every real
+          # invocation failed - and because no repository variable existed to outrank it, each
+          # deploy faithfully copied the broken value forward. A self-perpetuating value cannot
+          # self-correct; take it from the script, which is version-controlled and reviewable.
           preserve AGENTCORE_RUNTIME_QUALIFIER AGENTCORE_RUNTIME_QUALIFIER /tmp/ai-env.json
           preserve AGENTCORE_INVOKE_TIMEOUT_MS AGENTCORE_INVOKE_TIMEOUT_MS /tmp/ai-env.json
       - name: Log in to ECR
