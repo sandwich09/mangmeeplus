@@ -258,6 +258,15 @@ export function validateConfirm(input: ConfirmValidationInput): string | null {
   if (isNaN(total) || total < 0) {
     return 'Grand total amount is invalid.';
   }
+  // Audit H-11: zero was allowed through, and the way it arrives is a receipt the AI could not read
+  // — the total is left at 0 and the OCR cross-check below has nothing to compare, so it stays
+  // silent. That confirmed a ฿0 expense and auto-posted a journal of nothing. CONFIRMED only moves
+  // to VOIDED, so there is no later moment to notice. An expense that cost nothing is not a
+  // business event; a receipt whose total nobody could establish is the real case, and it should
+  // stop here rather than become a zero.
+  if (total === 0) {
+    return 'Grand total amount must be greater than zero. Enter the amount from the receipt before confirming.';
+  }
   // RA-18: confirmation is the last moment the payee's taxpayer class can be captured — CONFIRMED
   // only transitions to VOIDED — and it decides ภ.ง.ด.3 vs ภ.ง.ด.53, so a withholding expense may
   // not be confirmed unclassified. Without this the PND53 fallback would be a permanent misfiling.

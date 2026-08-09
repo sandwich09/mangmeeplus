@@ -252,6 +252,29 @@ describe('validateConfirm', () => {
     assert.equal(validateConfirm(validInput), null);
   });
 
+  /**
+   * Audit H-11: zero used to pass. The way it arrives is a receipt the AI could not read — the
+   * total stays 0 and the OCR cross-check has nothing to compare against, so it never objects. That
+   * produced a CONFIRMED ฿0 expense and an auto-posted journal of nothing, and CONFIRMED only moves
+   * to VOIDED, so nothing downstream gets a second chance to notice.
+   */
+  it('blocks a zero total, and says what to do about it', () => {
+    const reason = validateConfirm({ ...validInput, grandTotalAmount: '0.0000' });
+    assert.ok(reason !== null);
+    assert.match(reason!, /greater than zero/);
+  });
+
+  it('blocks the other spellings of zero too', () => {
+    for (const grandTotalAmount of ['0', '0.00', '-0.0000']) {
+      assert.ok(validateConfirm({ ...validInput, grandTotalAmount }) !== null, grandTotalAmount);
+    }
+  });
+
+  // The smallest real amount still confirms: the rule is "not nothing", not a minimum worth having.
+  it('still allows the smallest satang', () => {
+    assert.equal(validateConfirm({ ...validInput, grandTotalAmount: '0.0100' }), null);
+  });
+
   it('blocks confirm from wrong status', () => {
     assert.ok(validateConfirm({ ...validInput, status: 'DRAFT' }) !== null);
   });
