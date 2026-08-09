@@ -92,7 +92,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
           </div>
           <div className="max-h-[min(380px,60dvh)] overflow-y-auto">
             {loading ? (
-              <p className="px-4 py-6 text-center text-sm text-gray-500">กำลังโหลด…</p>
+              <p className="px-4 py-6 text-center text-sm text-gray-500">กำลังโหลด...</p>
             ) : items.length === 0 ? (
               <p className="px-4 py-6 text-center text-sm text-gray-500">ยังไม่มีการแจ้งเตือน</p>
             ) : (

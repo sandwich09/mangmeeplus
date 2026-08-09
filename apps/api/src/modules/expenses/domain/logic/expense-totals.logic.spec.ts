@@ -83,6 +83,12 @@ describe('calcLineTotals', () => {
     const r = calcLineTotals({ quantity: '1', unitPrice: '542.06', vatMode: 'NO_VAT', whtRate: '0.03' });
     assert.equal(r.whtAmount, '16.2600');
   });
+
+  it('keeps the Decimal(18,4) upper satang boundary exact without Number precision loss', () => {
+    const r = calcLineTotals({ quantity: '1', unitPrice: '99999999999999.99', vatMode: 'NO_VAT' });
+    assert.equal(r.lineSubtotalAmount, '99999999999999.9900');
+    assert.equal(r.lineTotalAmount, '99999999999999.9900');
+  });
 });
 
 describe('calcDocumentTotals', () => {
@@ -117,6 +123,16 @@ describe('calcDocumentTotals', () => {
     assert.equal(r.whtAmount, '3.0000');
     assert.equal(r.netPayableAmount, '104.0000');
   });
+
+  it('sums decimal fractions without binary floating-point drift', () => {
+    const lines = ['0.1000', '0.2000'].map((amount) => ({
+      taxableAmount: amount, vatAmount: '0.0000', whtAmount: '0.0000',
+      lineSubtotalAmount: amount, discountAmount: '0.0000', lineTotalAmount: amount,
+    }));
+    const r = calcDocumentTotals({ lines });
+    assert.equal(r.subtotalAmount, '0.3000');
+    assert.equal(r.grandTotalAmount, '0.3000');
+  });
 });
 
 describe('calcPaymentAmounts', () => {
@@ -139,6 +155,11 @@ describe('calcPaymentAmounts', () => {
     const { outstandingAmount } = calcPaymentAmounts('580.01', '580.00');
     assert.equal(outstandingAmount, '0.0100');
   });
+
+  it('keeps one satang exact at the Decimal(18,4) upper boundary', () => {
+    const { outstandingAmount } = calcPaymentAmounts('99999999999999.99', '99999999999999.98');
+    assert.equal(outstandingAmount, '0.0100');
+  });
 });
 
 describe('derivePaymentStatus', () => {
@@ -156,5 +177,11 @@ describe('derivePaymentStatus', () => {
   });
   it('PARTIALLY_PAID on a real one-satang shortfall', () => {
     assert.equal(derivePaymentStatus('580.01', '580.00'), 'PARTIALLY_PAID');
+  });
+  it('PARTIALLY_PAID on an exact half-satang boundary', () => {
+    assert.equal(derivePaymentStatus('580.0050', '580.0000'), 'PARTIALLY_PAID');
+  });
+  it('does not collapse a one-satang shortfall at the Decimal(18,4) upper boundary', () => {
+    assert.equal(derivePaymentStatus('99999999999999.99', '99999999999999.98'), 'PARTIALLY_PAID');
   });
 });

@@ -37,7 +37,7 @@ test.describe('RPT — reports & BI', () => {
     await authedPage.getByRole('button', { name: /ส่งออก CSV|Export CSV/i }).click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/\.csv$/);
-    await expect(authedPage.locator('aside').getByText('READY').first()).toBeVisible();
+    await expect(authedPage.locator('aside').getByText('พร้อมดาวน์โหลด').first()).toBeVisible();
   });
 
   test('RPT-05 @p1 saved view and READY export persist after reload', async ({ authedPage, companyId }) => {
@@ -48,7 +48,7 @@ test.describe('RPT — reports & BI', () => {
     await downloadPromise;
     await authedPage.reload();
     await expect(authedPage.getByRole('button', { name: /Trial Balance/i }).first()).toBeVisible();
-    await expect(authedPage.locator('aside').getByText('READY').first()).toBeVisible();
+    await expect(authedPage.locator('aside').getByText('พร้อมดาวน์โหลด').first()).toBeVisible();
     await expect(authedPage.locator('aside').getByText(/\d{4}-\d{2}-\d{2}/).first()).toBeVisible();
   });
 

@@ -48,10 +48,6 @@ export function reviewVendorBillTaxEvidence(companyId: string, id: string, body:
   return apiFetch<VendorBillDetail>(`/companies/${companyId}/accounts-payable/vendor-bills/${id}/tax-evidence/review`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function getVendorBillAttachmentDownloadUrl(companyId: string, attachmentId: string) {
-  return apiFetch<{ downloadUrl: string; expiresAt: string }>(`/companies/${companyId}/attachments/${attachmentId}/download-url`);
-}
-
 // H-07 maker-checker approval policy
 export type ProcurementApprovalPolicy = { id: string; companyId: string; allowSelfApproval: boolean; dualApprovalThresholdAmount: string | null };
 

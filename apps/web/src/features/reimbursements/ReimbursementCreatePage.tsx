@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { EmptyState } from '@/common/components/state/EmptyState';
@@ -188,8 +189,7 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
                     </div>
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">ใบเสร็จ</label>
-                      <input key={l.file?.name ?? `empty-${i}`} aria-label="ใบเสร็จ" className={inputClass} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={e => setLine(i, { file: e.target.files?.[0] ?? null })} />
-                      {l.file && <div className="mt-1 flex items-center justify-between text-xs text-gray-600"><span className="truncate">✓ {l.file.name}</span><button type="button" className="text-red-600 hover:underline" onClick={() => setLine(i, { file: null })}>นำออก</button></div>}
+                      <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />
                     </div>
                   </div>
                 </div>

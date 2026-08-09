@@ -13,7 +13,9 @@ import type {
 } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import {
   applyChartTemplate,
   getChartReadiness,
@@ -92,31 +94,20 @@ function Stepper({
   returnTo?: string;
 }) {
   const active = current === 'chart-review' ? 'chart' : current;
+  const activeIndex = ACCOUNTING_TAX_SETUP_STEPS.findIndex((item) => item.key === active);
   return (
-    <nav aria-label="ขั้นตอนตั้งค่าบัญชีและภาษี" className="mb-6 overflow-x-auto">
-      <ol className="flex w-max min-w-full items-center gap-2">
-        {ACCOUNTING_TAX_SETUP_STEPS.map((item, index) => {
-          const selected = item.key === active;
-          return (
-            <li key={item.key} className="flex items-center gap-2">
-              <Link
-                href={accountingTaxSetupHref(companyId, item.key, { profileId, returnTo })}
-                aria-current={selected ? 'step' : undefined}
-                className={`flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-bold ${
-                  selected ? 'bg-brand-50 text-brand-700' : 'text-gray-500 hover:bg-gray-50'
-                }`}
-              >
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
-                  selected ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-600'
-                }`}>{index + 1}</span>
-                <span className="whitespace-nowrap">{item.label}</span>
-              </Link>
-              {index < ACCOUNTING_TAX_SETUP_STEPS.length - 1 && <span aria-hidden="true" className="text-gray-300">→</span>}
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
+    <div className="mb-6 overflow-x-auto">
+      <ThemedSteps
+        aria-label="ขั้นตอนตั้งค่าบัญชีและภาษี"
+        className="min-w-[36rem]"
+        steps={ACCOUNTING_TAX_SETUP_STEPS.map((item, index) => ({
+          key: item.key,
+          label: item.label,
+          state: index === activeIndex ? 'current' : index < activeIndex ? 'done' : 'upcoming',
+          href: accountingTaxSetupHref(companyId, item.key, { profileId, returnTo }),
+        }))}
+      />
+    </div>
   );
 }
 
@@ -528,11 +519,10 @@ export function AccountingTaxSetupPage({
         )}
         <div className="mt-6 flex justify-between gap-3">
           {back('chart')}
-          <button type="button" className={primary} disabled={!preview || !canChartManage || busy || (conflictCount > 0 && !acknowledgeConflicts)} onClick={() => void applyChart()}>
+          {canChartManage && <button type="button" className={primary} disabled={!preview || busy || (conflictCount > 0 && !acknowledgeConflicts)} onClick={() => void applyChart()}>
             {busy ? 'กำลังบันทึก...' : 'ยืนยันใช้ผังบัญชีและไปต่อ'}
-          </button>
+          </button>}
         </div>
-        {!canChartManage && <p className="mt-2 text-right text-xs text-amber-700">ต้องมีสิทธิ์ ledger.account.manage</p>}
       </MangmeeCard>
     );
   } else if (step === 'profile') {
@@ -561,7 +551,7 @@ export function AccountingTaxSetupPage({
               ))}
             </div>
             <label className="mt-4 block text-sm font-bold">เริ่มมีผลวันที่
-              <input className="mangmee-input mt-2 w-full" type="date" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} />
+              <ThemedDate className="mangmee-input mt-2 w-full" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} />
             </label>
           </>
         )}
@@ -571,13 +561,12 @@ export function AccountingTaxSetupPage({
             <Link className={primary} href={accountingTaxSetupHref(companyId, selectedProfile.status === 'ACTIVE' ? 'review' : 'mappings', workflowParams)}>
               {selectedProfile.status === 'ACTIVE' ? 'ตรวจการตั้งค่าที่ใช้งานอยู่' : 'ถัดไป: ตรวจการผูกบัญชีและรายงาน'}
             </Link>
-          ) : (
-            <button type="button" className={primary} disabled={!canProfileManage || !selectedTemplateKey || !effectiveFrom || busy} onClick={() => void createProfile()}>
+          ) : canProfileManage ? (
+            <button type="button" className={primary} disabled={!selectedTemplateKey || !effectiveFrom || busy} onClick={() => void createProfile()}>
               {busy ? 'กำลังสร้าง...' : 'สร้าง Draft และไปต่อ'}
             </button>
-          )}
+          ) : null}
         </div>
-        {!canProfileManage && <p className="mt-2 text-right text-xs text-amber-700">ต้องมีสิทธิ์ tax.profile.manage และ tax.config.manage</p>}
       </MangmeeCard>
     );
   } else if (step === 'mappings') {
@@ -600,12 +589,12 @@ export function AccountingTaxSetupPage({
                       Template v{mappingManifest.templateVersion} · mapping v{mappingManifest.mappingManifestVersion} · checksum {mappingManifest.mappingManifestChecksum.slice(0, 8)}…
                     </p>
                   )}
-                  <ThemedSelect className="mt-3" value={accountSelections[key] ?? ''} onChange={(event) => setAccountSelections((current) => ({ ...current, [key]: event.target.value }))}>
+                  {canMapAccounts && <ThemedSelect className="mt-3" value={accountSelections[key] ?? ''} onChange={(event) => setAccountSelections((current) => ({ ...current, [key]: event.target.value }))}>
                     <option value="">เลือกบัญชี</option>
                     {accounts.filter((item) => item.status === 'ACTIVE' && item.isPosting).map((item) => (
                       <option key={item.id} value={item.id}>{item.code} · {item.nameTh}</option>
                     ))}
-                  </ThemedSelect>
+                  </ThemedSelect>}
                 </div>
               );
             })}
@@ -631,11 +620,11 @@ export function AccountingTaxSetupPage({
           {back('profile')}
           {profileReadiness?.canActivate || selectedProfile?.status === 'ACTIVE' ? (
             <Link className={primary} href={accountingTaxSetupHref(companyId, 'review', workflowParams)}>ถัดไป: ตรวจและเปิดใช้งาน</Link>
-          ) : (
-            <button type="button" className={primary} disabled={!selectedProfile || busy || requiresAdvancedMapping || otherBlockers.length > 0 || (missingAccountBlockers.length > 0 && !canMapAccounts) || (missingReportBlockers.length > 0 && !canMapReports)} onClick={() => void saveMappings()}>
+          ) : (missingAccountBlockers.length === 0 || canMapAccounts) && (missingReportBlockers.length === 0 || canMapReports) ? (
+            <button type="button" className={primary} disabled={!selectedProfile || busy || requiresAdvancedMapping || otherBlockers.length > 0} onClick={() => void saveMappings()}>
               {busy ? 'กำลังบันทึก...' : 'บันทึกที่ตรวจแล้วและไปต่อ'}
             </button>
-          )}
+          ) : null}
         </div>
         {(otherBlockers.length > 0 || requiresAdvancedMapping) && <p className="mt-3 text-right text-xs text-amber-700">รายการนี้ต้องแก้ใน <Link className="underline" href={`/companies/${companyId}/settings/tax-accounts`}>Tax Account Determination ขั้นสูง</Link></p>}
       </MangmeeCard>
@@ -665,11 +654,11 @@ export function AccountingTaxSetupPage({
             <Link className={primary} href={safeReturnTo ?? `/companies/${companyId}/settings`}>
               {safeReturnTo ? 'กลับไปรายการค่าใช้จ่าย' : 'กลับภาพรวมการตั้งค่า'}
             </Link>
-          ) : (
-            <button type="button" className={primary} disabled={!selectedProfile || !profileReadiness?.canActivate || !canProfileManage || busy} onClick={() => void activateProfile()}>
+          ) : canProfileManage ? (
+            <button type="button" className={primary} disabled={!selectedProfile || !profileReadiness?.canActivate || busy} onClick={() => void activateProfile()}>
               {busy ? 'กำลังเปิดใช้งาน...' : 'ยืนยันและเปิดใช้งานชุดรหัสภาษี (Tax Profile)'}
             </button>
-          )}
+          ) : null}
         </div>
       </MangmeeCard>
     );

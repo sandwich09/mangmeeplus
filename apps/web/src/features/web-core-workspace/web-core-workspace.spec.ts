@@ -4,10 +4,14 @@ import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contra
 import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
 import { WORKSPACE_MODULES, NAV_GROUP_ORDER } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
+import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 
 // Superset of every module permission — an OWNER-like session.
 const ALL_MODULE_PERMISSIONS = Array.from(
-  new Set(WORKSPACE_MODULES.flatMap((mod) => [...mod.requiredAnyPermissions, ...(mod.requiredAllPermissions ?? [])])),
+  new Set([
+    ...WORKSPACE_MODULES.flatMap((mod) => [...mod.requiredAnyPermissions, ...(mod.requiredAllPermissions ?? [])]),
+    ...ROUTE_PERMISSION_RULES.flatMap((rule) => rule.anyOf),
+  ]),
 );
 
 const MODULE_TAB_GATES = [
@@ -80,8 +84,13 @@ describe('filterModulesByPermissions', () => {
     assert.ok(!result.some((m) => m.key === 'roles'));
   });
 
-  it('shows permissions menu for a role reader', () => {
+  it('hides the permissions menu from a role reader without manage access', () => {
     const result = filterModulesByPermissions(WORKSPACE_MODULES, ['access.role.read']);
+    assert.ok(!result.some((m) => m.key === 'roles'));
+  });
+
+  it('shows permissions menu for a role manager', () => {
+    const result = filterModulesByPermissions(WORKSPACE_MODULES, ['access.role.manage']);
     assert.ok(result.some((m) => m.key === 'roles'));
   });
 
@@ -90,9 +99,9 @@ describe('filterModulesByPermissions', () => {
     assert.ok(result.some((m) => m.key === 'roles'));
   });
 
-  it('shows the people menu for an effective-access viewer', () => {
+  it('hides the people menu from an effective-access-only viewer', () => {
     const result = filterModulesByPermissions(WORKSPACE_MODULES, ['access.effective.read']);
-    assert.ok(result.some((m) => m.key === 'roles'));
+    assert.ok(!result.some((m) => m.key === 'roles'));
   });
 
   it('does not let legacy admin grants bypass employee-access navigation', () => {
@@ -237,44 +246,109 @@ describe('buildNavItems', () => {
     assert.equal(item?.disabled, false);
   });
 
+  it('keeps registered top-level routes aligned with their navigation targets', () => {
+    const routeToModule = {
+      '/settings/crm-catalog': 'crmsettings',
+      '/tax': 'tax',
+      '/inventory': 'inventory',
+      '/journal': 'journal',
+      '/reports': 'reports',
+      '/ai-suggestions': 'ai-suggestions',
+      '/crm': 'crm',
+      '/inbox': 'inbox',
+      '/banking': 'banking',
+      '/procurement': 'procurement',
+      '/accounts-payable': 'accounts-payable',
+      '/workflow': 'workflow',
+      '/expenses': 'expenses',
+      '/reimbursements': 'reimbursements',
+    } as const;
+
+    for (const [path, moduleKey] of Object.entries(routeToModule)) {
+      const rule = ROUTE_PERMISSION_RULES.find((candidate) => candidate.path === path);
+      assert.ok(rule, `${path}: missing route rule`);
+      for (const permission of rule.anyOf) {
+        const modules = filterModulesByPermissions(WORKSPACE_MODULES, [permission]);
+        assert.ok(modules.some((module) => module.key === moduleKey), `${path}: module ${permission}`);
+        const item = buildNavItems(modules, 'co', 'th', {}, [permission]).find((nav) => nav.key === moduleKey);
+        if (path === '/reports' && permission === 'report.snapshot.read') {
+          assert.equal(item, undefined, `${path}: retained-only history intentionally has no row`);
+        } else {
+          assert.equal(item?.href, `/companies/co${path}`, `${path}: nav ${permission}`);
+        }
+        assert.equal(
+          canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'co', `/companies/co${path}`),
+          true,
+          `${path}: route ${permission}`,
+        );
+      }
+    }
+  });
+
   it('only includes people submenu entries granted to the current user', () => {
     const employeeModules = filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.read']);
     const employeeItems = buildNavItems(employeeModules, 'employee-company', 'th', {}, ['access.employee.read']);
-    assert.deepEqual(employeeItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key), ['employees']);
+    assert.deepEqual(
+      employeeItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
+      ['roles.individual', 'employees'],
+    );
+    assert.equal(
+      employeeItems.find((item) => item.key === 'roles')?.href,
+      '/companies/employee-company/settings/access-overview',
+    );
 
     const overviewModules = filterModulesByPermissions(WORKSPACE_MODULES, ['access.effective.read']);
     const overviewItems = buildNavItems(overviewModules, 'overview-company', 'th', {}, ['access.effective.read']);
-    assert.deepEqual(overviewItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key), ['roles.individual']);
+    assert.ok(!overviewItems.some((item) => item.key === 'roles'));
   });
 
   // The บทบาทและสิทธิ์ settings card was removed, so the sidebar child is the only route in.
   // It must never be offered to someone canAccessWorkspacePath would bounce off that page.
   it('offers บทบาทและสิทธิ์ only to users the permissions page itself would admit', () => {
     const roleItems = buildNavItems(
-      filterModulesByPermissions(WORKSPACE_MODULES, ['access.role.read']),
-      'role-company', 'th', {}, ['access.role.read'],
+      filterModulesByPermissions(WORKSPACE_MODULES, ['access.role.manage']),
+      'role-company', 'th', {}, ['access.role.manage'],
     );
     const permissionsChild = roleItems.find((item) => item.key === 'roles')?.subItems
       ?.find((sub) => sub.key === 'roles.permissions');
     assert.equal(permissionsChild?.href, '/companies/role-company/settings/permissions');
     assert.equal(
-      canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'role-company', permissionsChild!.href),
+      canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.manage'], 'role-company', permissionsChild!.href),
       true,
     );
 
-    const employeeOnly = buildNavItems(
-      filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.read']),
-      'employee-company', 'th', {}, ['access.employee.read'],
+    const readOnly = buildNavItems(
+      filterModulesByPermissions(WORKSPACE_MODULES, ['access.role.read']),
+      'role-company', 'th', {}, ['access.role.read'],
     );
-    assert.ok(!employeeOnly.find((item) => item.key === 'roles')?.subItems
-      ?.some((sub) => sub.key === 'roles.permissions'));
+    assert.ok(!readOnly.some((item) => item.key === 'roles'));
     assert.equal(
       canAccessWorkspacePath(
-        WORKSPACE_MODULES, ['access.employee.read'], 'employee-company',
-        '/companies/employee-company/settings/permissions',
+        WORKSPACE_MODULES, ['access.role.read'], 'role-company',
+        '/companies/role-company/settings/permissions',
       ),
       false,
     );
+  });
+
+  it('targets the first visible roles child for each isolated permission set', () => {
+    const cases = [
+      ['access.role.manage', 'roles.permissions', '/settings/permissions'],
+      ['access.employee.read', 'roles.individual', '/settings/access-overview'],
+      ['procurement.purchase_order.manage', 'poapproval', '/settings/po-approval'],
+      ['crm.customer.update', 'discount', '/settings/discount-policy'],
+      ['crm.channel.manage', 'lineoa', '/settings/line-oa'],
+    ] as const;
+
+    for (const [permission, childKey, suffix] of cases) {
+      const items = buildNavItems(
+        filterModulesByPermissions(WORKSPACE_MODULES, [permission]),
+        'co', 'th', {}, [permission],
+      );
+      const roles = items.find((item) => item.key === 'roles');
+      assert.equal(roles?.subItems?.[0]?.key, childKey, permission);
+      assert.equal(roles?.href, `/companies/co${suffix}`, permission);
+    }
   });
 
   it('nests settings children under permissions menu instead of rendering them as top-level rows', () => {
@@ -466,9 +540,11 @@ describe('canAccessWorkspacePath', () => {
   });
 
   it('separates employee and role settings permissions', () => {
-    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/access-overview'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/access-overview'), true);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/employees'), false);
-    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.effective.read'], 'abc', '/companies/abc/settings/access-overview'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.effective.read'], 'abc', '/companies/abc/settings/access-overview'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/permissions'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.manage'], 'abc', '/companies/abc/settings/permissions'), true);
   });
 
   it('does not let legacy admin grants bypass employee-access routes', () => {
@@ -496,11 +572,61 @@ describe('canAccessWorkspacePath', () => {
 
   it('closes the discount policy with CRM instead of the universal setup key', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['company.setup.read'], 'abc', '/companies/abc/settings/discount-policy'), false);
-    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['crm.customer.read'], 'abc', '/companies/abc/settings/discount-policy'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['crm.customer.read'], 'abc', '/companies/abc/settings/discount-policy'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['crm.customer.update'], 'abc', '/companies/abc/settings/discount-policy'), true);
+  });
+
+  it('keeps every registered route aligned with the workspace path gate', () => {
+    for (const rule of ROUTE_PERMISSION_RULES) {
+      const path = `/companies/abc${rule.path}`;
+      assert.equal(canSeeRoute(rule.path, []), false, `${rule.path}: direct empty`);
+      assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', path), false, `${rule.path}: path empty`);
+      for (const permission of rule.anyOf) {
+        assert.equal(canSeeRoute(rule.path, [permission]), true, `${rule.path}: direct ${permission}`);
+        assert.equal(
+          canAccessWorkspacePath(WORKSPACE_MODULES, [permission], 'abc', path),
+          true,
+          `${rule.path}: path ${permission}`,
+        );
+      }
+    }
+  });
+
+  it('uses the most specific registered rule on nested routes', () => {
+    assert.equal(canSeeRoute('/tax/evidence', ['tax.period.read']), false);
+    assert.equal(canSeeRoute('/tax/evidence', ['tax.config.read']), true);
+    assert.equal(canSeeRoute('/settings/crm-catalog/new', ['inventory.product.read']), false);
+    assert.equal(canSeeRoute('/settings/crm-catalog/new', ['inventory.product.manage']), true);
+    assert.equal(findRoutePermissionRule('/settings/accounting-tax-setup/review')?.path, '/settings/accounting-tax-setup');
   });
 });
 
 describe('WORKSPACE_MODULES', () => {
+  it('keeps module-backed route rules aligned with their navigation gates', () => {
+    const routeToModule = {
+      '/inventory': 'inventory',
+      '/journal': 'journal',
+      '/reports': 'reports',
+      '/ai-suggestions': 'ai-suggestions',
+      '/crm': 'crm',
+      '/inbox': 'inbox',
+      '/banking': 'banking',
+      '/procurement': 'procurement',
+      '/accounts-payable': 'accounts-payable',
+      '/workflow': 'workflow',
+      '/expenses': 'expenses',
+      '/reimbursements': 'reimbursements',
+    } as const;
+
+    for (const [path, moduleKey] of Object.entries(routeToModule)) {
+      assert.deepEqual(
+        findRoutePermissionRule(path)?.anyOf,
+        WORKSPACE_MODULES.find((module) => module.key === moduleKey)?.requiredAnyPermissions,
+        path,
+      );
+    }
+  });
+
   // A sub-feature is switched off by stripping the permissions its catalog entry owns
   // (featureKeyDeniedByEntitlement resolves a permission through the FIRST submenu claiming it).
   // So a submenu whose nav gate also accepts a permission ANOTHER submenu owns can never be

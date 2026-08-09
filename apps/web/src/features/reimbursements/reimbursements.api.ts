@@ -151,7 +151,7 @@ export async function uploadSignedClaimFormCopy(companyId: string, requestId: st
 }
 
 /** Signed viewer URL for an attached file (same endpoint the expenses viewer uses). */
-export { getAttachmentDownloadUrl } from '../expenses/expenses.api';
+export { fetchAttachmentPreviewBlob, getAttachmentDownloadUrl } from '../expenses/expenses.api';
 
 // ---- Policy ----
 

@@ -92,6 +92,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
   const [result, setResult] = useState<ReportResultDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [busyAction, setBusyAction] = useState<'view' | 'export' | 'runs' | 'download' | null>(null);
   const [historyOnly, setHistoryOnly] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingView = useRef<ReportViewDto | null>(null);
@@ -171,6 +172,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
   async function saveView() {
     if (!selected) return;
     setError(null);
+    setBusyAction('view');
     try {
       const view = await createReportView(companyId, {
         datasetCode: selected.code,
@@ -182,12 +184,15 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
       toast.success('บันทึกมุมมองเรียบร้อยแล้ว');
     } catch (e) {
       setError(err(e));
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function requestExport(format: 'CSV') {
     if (!selected) return;
     setError(null);
+    setBusyAction('export');
     try {
       const item = await createReportExport(companyId, { datasetCode: selected.code, filters, format });
       setExports((items) => [item, ...items]);
@@ -200,27 +205,37 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
       }
     } catch (e) {
       setError(err(e));
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function loadMoreRuns() {
-    if (!runCursor) return;
+    if (!runCursor || busyAction !== null) return;
+    setError(null);
+    setBusyAction('runs');
     try {
       const page = await listReportRuns(companyId, 8, runCursor);
       setRuns((items) => [...items, ...page.items]);
       setRunCursor(page.nextCursor);
     } catch (e) {
       setError(err(e));
+    } finally {
+      setBusyAction(null);
     }
   }
 
   async function downloadExport(item: ReportExportRequestDto) {
+    if (busyAction !== null) return;
     setError(null);
+    setBusyAction('download');
     try {
       const download = await downloadReportExport(companyId, item.id);
       downloadTextFile(download.request.fileName ?? 'report.csv', download.request.fileMimeType ?? 'text/csv', download.content);
     } catch (e) {
       setError(err(e));
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -242,8 +257,8 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
       actions={(
         <div className="flex flex-wrap gap-2">
           <button className={ghostClass} onClick={() => void refresh()} disabled={loading}>รีเฟรช</button>
-          <button className={ghostClass} onClick={() => void saveView()} disabled={historyOnly || !selected || selected.status !== 'ENABLED'}>บันทึกมุมมอง</button>
-          <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={historyOnly || !result || !selected}>ส่งออก CSV</button>
+          <button className={ghostClass} onClick={() => void saveView()} disabled={busyAction !== null || historyOnly || !selected || selected.status !== 'ENABLED'}>{busyAction === 'view' ? 'กำลังบันทึก...' : 'บันทึกมุมมอง'}</button>
+          <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={busyAction !== null || historyOnly || !result || !selected}>{busyAction === 'export' ? 'กำลังส่งออก...' : 'ส่งออก CSV'}</button>
         </div>
       )}
     >
@@ -306,7 +321,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                 </div>
               ))}
               {runs.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีประวัติรายงานที่คุณดูได้</p>}
-              {runCursor && <button className="min-h-11 text-sm font-semibold text-brand-700" onClick={() => void loadMoreRuns()}>ดูประวัติเพิ่ม</button>}
+              {runCursor && <button className="min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void loadMoreRuns()} disabled={busyAction !== null}>{busyAction === 'runs' ? 'กำลังโหลด...' : 'ดูประวัติเพิ่ม'}</button>}
             </div>
           </MangmeeCard>
 
@@ -321,8 +336,8 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   </div>
                   {(item.warnings ?? []).length > 0 && <div className="mt-1 text-xs text-amber-700">ข้อมูลบางส่วน · {item.warnings!.map(reportWarningText).join(' · ')}</div>}
                   {item.status === 'READY' && (
-                    <button className="mt-2 min-h-11 text-sm font-semibold text-brand-700" onClick={() => void downloadExport(item)}>
-                      ดาวน์โหลดไฟล์เดิม
+                    <button className="mt-2 min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void downloadExport(item)} disabled={busyAction !== null}>
+                      {busyAction === 'download' ? 'กำลังดาวน์โหลด...' : 'ดาวน์โหลดไฟล์เดิม'}
                     </button>
                   )}
                 </div>

@@ -156,6 +156,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
   const statusMenuRef = useRef<HTMLDivElement>(null);
   const priorityMenuRef = useRef<HTMLDivElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<'status' | 'priority' | 'assign' | null>(null);
   const [sideTab, setSideTab] = useState<SideTab>('customer');
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -369,9 +370,10 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
 
   const changeStatus = useCallback(
     async (status: CrmConversationStatus) => {
-      if (!detail) return;
+      if (!detail || actionBusy) return;
       setStatusMenuOpen(false);
       setActionError(null);
+      setActionBusy('status');
       try {
         const summary = await setConversationStatus(companyId, detail.id, status);
         applyConversationPatch(summary);
@@ -379,24 +381,29 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
         void loadList(true);
       } catch {
         setActionError(t('inbox.status_change_failed', locale));
+      } finally {
+        setActionBusy(null);
       }
     },
-    [companyId, detail, applyConversationPatch, loadList, locale],
+    [companyId, detail, actionBusy, applyConversationPatch, loadList, locale],
   );
 
   const changePriority = useCallback(
     async (priority: CrmConversationPriority) => {
-      if (!detail) return;
+      if (!detail || actionBusy) return;
       setPriorityMenuOpen(false);
       setActionError(null);
+      setActionBusy('priority');
       try {
         const summary = await setConversationPriority(companyId, detail.id, priority);
         applyConversationPatch(summary);
       } catch {
         setActionError(t('inbox.priority_change_failed', locale));
+      } finally {
+        setActionBusy(null);
       }
     },
-    [companyId, detail, applyConversationPatch, locale],
+    [companyId, detail, actionBusy, applyConversationPatch, locale],
   );
 
   // Throws on failure — the sidebar tag editor shows its own inline error.
@@ -410,8 +417,9 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
   );
 
   const assignToMe = useCallback(async () => {
-    if (!detail) return;
+    if (!detail || actionBusy) return;
     setActionError(null);
+    setActionBusy('assign');
     try {
       const summary = await assignConversation(companyId, detail.id, detail.assignedToUserId === userId ? null : userId);
       applyConversationPatch(summary);
@@ -419,8 +427,10 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
       void loadList(true);
     } catch {
       setActionError(t('inbox.assign_failed', locale));
+    } finally {
+      setActionBusy(null);
     }
-  }, [companyId, detail, userId, applyConversationPatch, loadList, locale]);
+  }, [companyId, detail, actionBusy, userId, applyConversationPatch, loadList, locale]);
 
   // Chip definitions per Flow A: ทั้งหมด · ⏱ เกิน 30 นาที (เมื่อมี) · ของฉัน/ยังไม่มีผู้รับ · สถานะตามลำดับ
   const chips = useMemo(() => {
@@ -639,19 +649,22 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
                   {(canAssign || (canReply && (!detail.assignedToUserId || detail.assignedToUserId === userId))) && (
                     <button
                       onClick={assignToMe}
-                      className={`hidden whitespace-nowrap rounded-[9px] border px-3 py-1.5 text-[13px] font-semibold sm:block ${detail.assignedToUserId === userId ? 'border-gray-300 text-gray-600 hover:bg-gray-50' : 'border-brand-200 bg-brand-25 text-brand-700 hover:bg-brand-50'}`}
+                      disabled={actionBusy !== null}
+                      className={`hidden whitespace-nowrap rounded-[9px] border px-3 py-1.5 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:block ${detail.assignedToUserId === userId ? 'border-gray-300 text-gray-600 hover:bg-gray-50' : 'border-brand-200 bg-brand-25 text-brand-700 hover:bg-brand-50'}`}
                     >
-                      {detail.assignedToUserId === userId ? t('inbox.release', locale) : t('inbox.claim', locale)}
+                      {actionBusy === 'assign'
+                        ? detail.assignedToUserId === userId ? 'กำลังเลิกดูแล...' : 'กำลังรับเรื่อง...'
+                        : detail.assignedToUserId === userId ? t('inbox.release', locale) : t('inbox.claim', locale)}
                     </button>
                   )}
                   <div className="relative" ref={priorityMenuRef}>
                     <button
                       onClick={() => { if (!canResolve) return; setStatusMenuOpen(false); setPriorityMenuOpen((v) => !v); }}
-                      className="flex items-center gap-1 rounded-full px-3 py-1 text-[12.5px] font-semibold"
+                      disabled={actionBusy !== null}
+                      className="flex items-center gap-1 rounded-full px-3 py-1 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                       style={{ color: CONVERSATION_PRIORITY_META[detail.priority].color, background: CONVERSATION_PRIORITY_META[detail.priority].bg }}
                     >
-                      ⚑ {CONVERSATION_PRIORITY_META[detail.priority].label}
-                      {canResolve && <span>▾</span>}
+                      {actionBusy === 'priority' ? 'กำลังบันทึก...' : <>⚑ {CONVERSATION_PRIORITY_META[detail.priority].label}{canResolve && <span>▾</span>}</>}
                     </button>
                     {priorityMenuOpen && (
                       <div className="absolute right-0 top-9 z-30 w-[190px] overflow-hidden rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
@@ -660,7 +673,8 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
                           <button
                             key={p}
                             onClick={() => changePriority(p)}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            disabled={actionBusy !== null}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span className="h-2.5 w-2.5 rounded-full" style={{ background: CONVERSATION_PRIORITY_META[p].color }} />
                             <span className="flex-1">{CONVERSATION_PRIORITY_META[p].label}</span>
@@ -673,11 +687,11 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
                   <div className="relative" ref={statusMenuRef}>
                     <button
                       onClick={() => { if (!canResolve) return; setPriorityMenuOpen(false); setStatusMenuOpen((v) => !v); }}
-                      className="flex items-center gap-1 rounded-full px-3 py-1 text-[12.5px] font-semibold"
+                      disabled={actionBusy !== null}
+                      className="flex items-center gap-1 rounded-full px-3 py-1 text-[12.5px] font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                       style={{ color: CONVERSATION_STATUS_META[detail.status].color, background: CONVERSATION_STATUS_META[detail.status].bg }}
                     >
-                      {CONVERSATION_STATUS_META[detail.status].label}
-                      {canResolve && <span>▾</span>}
+                      {actionBusy === 'status' ? 'กำลังบันทึก...' : <>{CONVERSATION_STATUS_META[detail.status].label}{canResolve && <span>▾</span>}</>}
                     </button>
                     {statusMenuOpen && (
                       <div className="absolute right-0 top-9 z-30 w-[190px] overflow-hidden rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
@@ -686,7 +700,8 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
                           <button
                             key={st}
                             onClick={() => changeStatus(st)}
-                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                            disabled={actionBusy !== null}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span className="h-2.5 w-2.5 rounded-full" style={{ background: CONVERSATION_STATUS_META[st].color }} />
                             <span className="flex-1">{CONVERSATION_STATUS_META[st].label}</span>

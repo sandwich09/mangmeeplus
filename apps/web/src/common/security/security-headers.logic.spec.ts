@@ -4,6 +4,7 @@ import {
   buildContentSecurityPolicy,
   buildS3EndpointOrigin,
   buildS3UploadOrigin,
+  usesDevelopmentCsp,
 } from './security-headers.logic';
 
 function directives(csp: string): Map<string, string> {
@@ -17,7 +18,7 @@ describe('buildContentSecurityPolicy', () => {
   it('keeps the production policy byte-identical by default', () => {
     assert.equal(
       buildContentSecurityPolicy('N', ['http://localhost:3001']),
-      "default-src 'self'; script-src 'self' 'nonce-N' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http://localhost:3001; font-src 'self' data:; connect-src 'self' http://localhost:3001; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
+      "default-src 'self'; script-src 'self' 'nonce-N' 'strict-dynamic'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http://localhost:3001; font-src 'self' data:; connect-src 'self' http://localhost:3001; object-src 'none'; base-uri 'self'; form-action 'self'; frame-src 'self' blob:; frame-ancestors 'none'; worker-src 'self' blob:; upgrade-insecure-requests",
     );
   });
 
@@ -27,8 +28,17 @@ describe('buildContentSecurityPolicy', () => {
     assert.ok(csp.includes("script-src 'self' 'nonce-N' 'strict-dynamic' 'unsafe-eval'"));
     assert.ok(csp.includes("img-src 'self' data: blob: https: http:"));
     assert.ok(csp.includes("connect-src 'self' http: https:"));
+    assert.equal(directives(csp).get('frame-src'), "'self' blob:");
     assert.equal(csp.includes('upgrade-insecure-requests'), false);
     assert.ok(csp.includes("'nonce-N'"));
+  });
+
+  it('uses runtime deployment identity before the compiled Node build mode', () => {
+    assert.equal(usesDevelopmentCsp({ APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'production' }), true);
+    assert.equal(usesDevelopmentCsp({ APP_ENV: 'production', DEPLOY_ENVIRONMENT: 'uat', NODE_ENV: 'development' }), false);
+    assert.equal(usesDevelopmentCsp({ APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'uat', NODE_ENV: 'development' }), false);
+    assert.equal(usesDevelopmentCsp({ NODE_ENV: 'development' }), true);
+    assert.equal(usesDevelopmentCsp({ NODE_ENV: 'production' }), false);
   });
 
   it('changes exactly the four documented directives in development', () => {

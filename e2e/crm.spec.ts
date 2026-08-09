@@ -90,7 +90,8 @@ test.describe('CRM — inbox, customers, payment proofs', () => {
       await enabled.click();
       await cap.fill(String(expectedCap));
       await save.click();
-      await expect(channelCard.getByText('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว')).toBeVisible();
+      // Success feedback moved to the global top-center toast (toast v2) — assert page-wide, not inside the card.
+      await expect(authedPage.getByText('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว')).toBeVisible();
 
       await authedPage.reload();
       const reloadedCard = authedPage.getByRole('heading', { name: channel!.displayName, exact: true })

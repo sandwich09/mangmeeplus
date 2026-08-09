@@ -1,3 +1,5 @@
+import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
+
 // The API answers business-rule failures in English (its messages double as
 // operator/log text). This is the single seam where those reach a Thai screen.
 // Unknown text passes through untouched — a raw English sentence is still more
@@ -75,6 +77,14 @@ const CODE_LABELS: Record<string, string> = {
   substitute_evidence_expense_confirmed: 'ยกเลิกหรือแก้ใบรับรองแทนใบเสร็จได้เฉพาะเอกสารที่ยังไม่ยืนยันเท่านั้น',
   substitute_evidence_idempotency_conflict: 'มีการจัดทำใบรับรองด้วยข้อมูลอื่นไปแล้ว กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   expense_stale_reload: 'เอกสารถูกแก้ไขหลังการตรวจ กรุณาเปิดใหม่ก่อนจัดทำใบรับรองแทนใบเสร็จ',
+  substitute_receipt_too_many_lines:
+    `ใบรับรอง 1 ใบรองรับได้สูงสุด ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} รายการ กรุณาแยกบันทึกเป็นหลายรายการค่าใช้จ่ายและจัดทำคนละใบ`,
+  substitute_receipt_line_description_too_long:
+    `รายละเอียดค่าใช้จ่ายแต่ละรายการต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} ตัวอักษร กรุณากลับไปย่อรายละเอียดก่อนดำเนินการต่อ`,
+  substitute_receipt_too_many_evidence:
+    `ใบรับรอง 1 ใบรองรับหลักฐานรวมได้สูงสุด ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} ไฟล์ กรุณานำไฟล์ที่ไม่จำเป็นออก`,
+  substitute_receipt_evidence_filename_too_long:
+    `ชื่อไฟล์หลักฐานต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength} ตัวอักษร กรุณาเปลี่ยนชื่อไฟล์ให้สั้นลงแล้วอัปโหลดใหม่`,
   // Void-path CAS guards
   posting_state_changed: 'สถานะการลงบัญชีเปลี่ยนระหว่างยกเลิกเอกสาร กรุณาลองอีกครั้ง',
   expense_changed: 'เอกสารถูกแก้ไขก่อนยกเลิก กรุณาเปิดใหม่แล้วลองอีกครั้ง',
@@ -125,6 +135,14 @@ const MESSAGE_LABELS: Record<string, string> = {
   'ใบรับรองแทนใบเสร็จรับเงิน currently supports THB expenses only.':
     'ใบรับรองแทนใบเสร็จรับเงินรองรับเฉพาะรายการสกุลเงินบาท (THB)',
   'A positive reviewed total is required.': 'ยอดรวมที่ตรวจแล้วต้องมากกว่า 0',
+  [`A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.`]:
+    CODE_LABELS['substitute_receipt_too_many_lines']!,
+  [`Each substitute-receipt expense description must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} characters.`]:
+    CODE_LABELS['substitute_receipt_line_description_too_long']!,
+  [`A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} linked evidence files.`]:
+    CODE_LABELS['substitute_receipt_too_many_evidence']!,
+  [`Each linked evidence file name must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength} characters.`]:
+    CODE_LABELS['substitute_receipt_evidence_filename_too_long']!,
   'Reviewed expense item details are required.': 'ต้องตรวจและกรอกรายละเอียดรายการค่าใช้จ่ายให้ครบก่อน',
   'A reviewed expense category or account hint is required.': 'ต้องเลือกหมวดค่าใช้จ่ายที่ตรวจแล้วก่อน',
   'Tax evidence status must be reviewed first.': 'ต้องตรวจสถานะหลักฐานภาษีก่อน',

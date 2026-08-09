@@ -129,17 +129,18 @@ test.describe('SET — settings', () => {
   // inferred editability from `catalog.length > 0`. The catalog fetch is allSettled and needs
   // its own access.permission.read, so a viewer without it saw every control disabled and no
   // reason why — indistinguishable from a broken page.
-  test('SET-09 @p1 roles screen editability follows access.role.manage and explains itself', async ({ pageAs, companyId }) => {
+  test('SET-09 @p1 roles screen is manage-only: no access.role.manage, no page', async ({ pageAs, companyId }) => {
     const owner = await pageAs('OWNER');
     await gotoCompany(owner, companyId, '/settings/permissions');
     await expect(owner.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
     await expect(owner.getByRole('button', { name: 'เพิ่ม' })).toBeEnabled();
-    await expect(owner.getByText(/อ่านอย่างเดียว: บัญชีของคุณไม่มีสิทธิ์/)).toHaveCount(0);
 
-    // COMPANY_VIEW holds access.role.read but not access.role.manage.
+    // COMPANY_VIEW holds access.role.read but not access.role.manage. The old read-only
+    // banner is gone — the page is invisible now: direct navigation bounces to the dashboard.
     const viewer = await pageAs('COMPANY_VIEW');
     await gotoCompany(viewer, companyId, '/settings/permissions');
-    await expect(viewer.getByText(/อ่านอย่างเดียว: บัญชีของคุณไม่มีสิทธิ์/)).toBeVisible();
-    await expect(viewer.getByRole('button', { name: 'เพิ่ม' })).toBeDisabled();
+    await expect(viewer).toHaveURL(new RegExp(`/companies/${companyId}/dashboard`));
+    await expect(viewer.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
+    await expect(viewer.getByText(/อ่านอย่างเดียว/)).toHaveCount(0);
   });
 });

@@ -9,6 +9,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Button } from '@/common/components/button/Button';
 import { SelectField, SwitchField, TextareaField, TextField } from '@/common/components/field/Field';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import {
@@ -75,7 +76,7 @@ function EmptyRow({ colSpan, text = 'ไม่มีข้อมูล' }: { col
   );
 }
 
-export function ProductsPageClient({ companyId, basePath = `/companies/${companyId}/inventory/products`, canManage = true }: { companyId: string; basePath?: string; canManage?: boolean }) {
+export function ProductsPageClient({ companyId, basePath = `/companies/${companyId}/inventory/products`, canManage = false }: { companyId: string; basePath?: string; canManage?: boolean }) {
   const [status, setStatus] = useState<InventoryRecordStatus | ''>('ACTIVE');
   const [kind, setKind] = useState<ProductKind | ''>('');
   const [search, setSearch] = useState('');
@@ -163,7 +164,7 @@ export function ProductsPageClient({ companyId, basePath = `/companies/${company
   );
 }
 
-export function ProductCreatePageClient({ companyId, basePath = `/companies/${companyId}/inventory/products` }: { companyId: string; basePath?: string }) {
+export function ProductCreatePageClient({ companyId, basePath = `/companies/${companyId}/inventory/products`, canManage = false }: { companyId: string; basePath?: string; canManage?: boolean }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -194,6 +195,8 @@ export function ProductCreatePageClient({ companyId, basePath = `/companies/${co
       setLoading(false);
     }
   }
+
+  if (!canManage) return <ForbiddenState />;
 
   return (
     <MangmeePage
@@ -241,13 +244,30 @@ export function ProductCreatePageClient({ companyId, basePath = `/companies/${co
   );
 }
 
-export function ProductDetailPageClient({ companyId, productId, canManage = true, catalogMode = false }: { companyId: string; productId: string; canManage?: boolean; catalogMode?: boolean }) {
+export function ProductDetailPageClient({
+  companyId,
+  productId,
+  canManage = false,
+  canManageLabels = false,
+  canReadBalances = false,
+  canReadMovements = false,
+  catalogMode = false,
+}: {
+  companyId: string;
+  productId: string;
+  canManage?: boolean;
+  canManageLabels?: boolean;
+  canReadBalances?: boolean;
+  canReadMovements?: boolean;
+  catalogMode?: boolean;
+}) {
   const toast = useToast();
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [balances, setBalances] = useState<StockBalance[]>([]);
   const [movements, setMovements] = useState<StockMovementSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -261,12 +281,12 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
       }
       const [nextProduct, nextBalances, nextMovements] = await Promise.all([
         getProduct(companyId, productId),
-        getStockBalance(companyId, { productId }),
-        listMovements(companyId, { productId, pageSize: 10 }),
+        canReadBalances ? getStockBalance(companyId, { productId }) : Promise.resolve([]),
+        canReadMovements ? listMovements(companyId, { productId, pageSize: 10 }) : Promise.resolve(null),
       ]);
       setProduct(nextProduct);
       setBalances(nextBalances);
-      setMovements(nextMovements.items);
+      setMovements(nextMovements?.items ?? []);
     } catch (error) {
       setError(apiErrorMessage(error));
     } finally {
@@ -276,12 +296,13 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
 
   useEffect(() => {
     void load();
-  }, [companyId, productId, catalogMode]);
+  }, [canReadBalances, canReadMovements, companyId, productId, catalogMode]);
 
   async function update(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!product) return;
     setError(null);
+    setBusy(true);
     const form = new FormData(event.currentTarget);
     try {
       await updateProduct(companyId, product.id, {
@@ -298,12 +319,15 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
       await load();
     } catch (error) {
       setError(apiErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
   async function addBarcode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
@@ -313,21 +337,26 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
       await load();
     } catch (error) {
       setError(apiErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
   async function qr() {
     setError(null);
+    setBusy(true);
     try {
       await generateProductQr(companyId, productId);
       toast.success('สร้าง QR สินค้าเรียบร้อยแล้ว');
       await load();
     } catch (error) {
       setError(apiErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
-  if (loading) return <main className="p-6 text-sm text-gray-500">กำลังโหลด...</main>;
+  if (loading) return <main className="p-6"><LoadingState label="กำลังโหลด..." /></main>;
   if (!product) return <main className="p-6">{error ? <ErrorBanner message={error} /> : <span className="text-sm text-gray-500">ไม่พบข้อมูล</span>}</main>;
 
   return (
@@ -341,8 +370,7 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
       </div>
       {error && <ErrorBanner message={error} />}
 
-      <form onSubmit={update} className="grid gap-4 rounded-lg border border-gray-200 bg-white p-4 sm:grid-cols-2">
-        <fieldset disabled={!canManage} className="contents disabled:opacity-70">
+      {canManage && <form onSubmit={update} className="grid gap-4 rounded-lg border border-gray-200 bg-white p-4 sm:grid-cols-2">
         <input name="name" className={inputClass} defaultValue={product.name} required />
         <input name="unit" className={inputClass} defaultValue={product.unit} required />
         <textarea name="description" className={`${inputClass} sm:col-span-2`} defaultValue={product.description ?? ''} placeholder="รายละเอียดที่พนักงานและ AI ใช้ตอบลูกค้า" rows={3} />
@@ -357,18 +385,26 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
           <input name="customerVisible" type="checkbox" defaultChecked={product.customerVisible} />
           เปิดให้ลูกค้าเห็นและอนุญาตให้ CRM AI ใช้ตอบคำถาม
         </label>
-        <button type="submit" className={buttonClass}>บันทึก / Save</button>
-        </fieldset>
-      </form>
+        <button type="submit" className={buttonClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึก / Save'}</button>
+      </form>}
+      {!canManage && <dl className="grid gap-4 rounded-lg border border-gray-200 bg-white p-4 text-sm sm:grid-cols-2">
+        <div><dt className="text-xs font-medium text-gray-500">หน่วย / Unit</dt><dd className="mt-1 font-medium text-gray-900">{product.unit}</dd></div>
+        <div><dt className="text-xs font-medium text-gray-500">หมวดหมู่ / Category</dt><dd className="mt-1 font-medium text-gray-900">{product.category ?? '—'}</dd></div>
+        <div><dt className="text-xs font-medium text-gray-500">จุดสั่งซื้อ / Reorder point</dt><dd className="mt-1 font-medium text-gray-900">{product.reorderPoint ?? '—'}</dd></div>
+        <div><dt className="text-xs font-medium text-gray-500">ราคาขาย</dt><dd className="mt-1 font-medium text-gray-900">{product.salePrice ? `${Number(product.salePrice).toLocaleString('th-TH')} บาท` : '—'}</dd></div>
+        <div><dt className="text-xs font-medium text-gray-500">ระยะเวลาจอง</dt><dd className="mt-1 font-medium text-gray-900">{product.bookingDurationMinutes ? `${product.bookingDurationMinutes} นาที` : '—'}</dd></div>
+        <div><dt className="text-xs font-medium text-gray-500">การมองเห็นของลูกค้า</dt><dd className="mt-1 font-medium text-gray-900">{product.customerVisible ? 'เปิด' : 'ปิด'}</dd></div>
+        <div className="sm:col-span-2"><dt className="text-xs font-medium text-gray-500">รายละเอียด</dt><dd className="mt-1 whitespace-pre-wrap text-gray-900">{product.description ?? '—'}</dd></div>
+      </dl>}
 
       {!catalogMode && <>
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">บาร์โค้ดและ QR</h2>
-            <button type="button" className={ghostButtonClass} onClick={qr}>สร้าง QR</button>
+            {canManageLabels && <button type="button" className={ghostButtonClass} disabled={busy} onClick={qr}>{busy ? 'กำลังทำงาน...' : 'สร้าง QR'}</button>}
           </div>
-          <form onSubmit={addBarcode} className="mb-3 grid gap-2 sm:grid-cols-[140px_1fr_auto]">
+          {canManageLabels && <form onSubmit={addBarcode} className="mb-3 grid gap-2 sm:grid-cols-[140px_1fr_auto]">
             <ThemedSelect name="type" className={inputClass} defaultValue="SUPPLIER">
               <option value="EAN13">EAN13</option>
               <option value="UPC">UPC</option>
@@ -377,38 +413,39 @@ export function ProductDetailPageClient({ companyId, productId, canManage = true
               <option value="OTHER">Other</option>
             </ThemedSelect>
             <input name="value" className={inputClass} placeholder="Barcode" required />
-            <button className={ghostButtonClass}>เพิ่ม</button>
-          </form>
+            <button className={ghostButtonClass} disabled={busy}>{busy ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</button>
+          </form>}
           <ul className="space-y-2 text-sm">
             {product.barcodes.length === 0 && <li className="text-gray-400">ไม่มีข้อมูล</li>}
             {product.barcodes.map((barcode) => <li key={barcode.id} className="font-mono">{barcode.type}: {barcode.value}</li>)}
           </ul>
         </div>
 
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
+        {canReadBalances && <div className="rounded-lg border border-gray-200 bg-white p-4">
           <h2 className="mb-3 font-semibold">ยอดตามสถานที่ / Balances</h2>
           <ul className="space-y-2 text-sm">
             {balances.length === 0 && <li className="text-gray-400">ไม่มีข้อมูล</li>}
             {balances.map((balance) => <li key={`${balance.productId}:${balance.locationId}`} className="flex justify-between gap-4"><span className="font-mono">{balance.locationId}</span><strong>{formatQty(balance.quantity)}</strong></li>)}
           </ul>
-        </div>
+        </div>}
       </section>
 
-      <section className="rounded-lg border border-gray-200 bg-white">
+      {canReadMovements && <section className="rounded-lg border border-gray-200 bg-white">
         <h2 className="border-b border-gray-200 px-4 py-3 font-semibold">ความเคลื่อนไหวล่าสุด</h2>
         <MovementTable movements={movements} />
-      </section>
+      </section>}
       </>}
     </main>
   );
 }
 
-export function LocationsPageClient({ companyId }: { companyId: string }) {
+export function LocationsPageClient({ companyId, canManage = false, canManageLabels = false }: { companyId: string; canManage?: boolean; canManageLabels?: boolean }) {
   const toast = useToast();
   const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -430,6 +467,7 @@ export function LocationsPageClient({ companyId }: { companyId: string }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setBusy(true);
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     try {
@@ -443,16 +481,21 @@ export function LocationsPageClient({ companyId }: { companyId: string }) {
       await load();
     } catch (error) {
       setError(apiErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
   async function qr(locationId: string) {
     setError(null);
+    setBusy(true);
     try {
       await generateLocationQr(companyId, locationId);
       toast.success('สร้าง QR สถานที่จัดเก็บเรียบร้อยแล้ว');
     } catch (error) {
       setError(apiErrorMessage(error));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -460,14 +503,14 @@ export function LocationsPageClient({ companyId }: { companyId: string }) {
     <main className="space-y-6 p-6">
       <h1 className="text-xl font-semibold">สถานที่จัดเก็บ / Inventory Locations</h1>
       {error && <ErrorBanner message={error} />}
-      <form onSubmit={submit} className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 md:grid-cols-[1fr_2fr_180px_auto]">
+      {canManage && <form onSubmit={submit} className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 md:grid-cols-[1fr_2fr_180px_auto]">
         <input name="code" className={inputClass} placeholder="รหัส / Code" required />
         <input name="name" className={inputClass} placeholder="ชื่อ / Name" required />
         <ThemedSelect name="type" className={inputClass} defaultValue="MAIN">
           {Object.entries(LOCATION_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label.th}</option>)}
         </ThemedSelect>
-        <button className={buttonClass}>เพิ่ม</button>
-      </form>
+        <button className={buttonClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'เพิ่ม'}</button>
+      </form>}
       <form onSubmit={(event) => { event.preventDefault(); void load(); }} className="flex gap-2">
         <input value={search} onChange={(event) => setSearch(event.target.value)} className={inputClass} placeholder="ค้นหารหัสหรือชื่อ" />
         <button className={ghostButtonClass} disabled={loading}>ค้นหา</button>
@@ -487,7 +530,7 @@ export function LocationsPageClient({ companyId }: { companyId: string }) {
                 <td className="px-4 py-3 font-medium">{location.name}</td>
                 <td className="px-4 py-3">{LOCATION_TYPE_LABELS[location.type]?.th ?? location.type}</td>
                 <td className="px-4 py-3"><StatusPill status={location.status} /></td>
-                <td className="px-4 py-3 text-right"><button type="button" className="font-semibold text-brand-600 hover:text-brand-700" onClick={() => void qr(location.id)}>QR</button></td>
+                <td className="px-4 py-3 text-right">{canManageLabels && <button type="button" className="font-semibold text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => void qr(location.id)}>{busy ? 'กำลังสร้าง...' : 'QR'}</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -498,7 +541,7 @@ export function LocationsPageClient({ companyId }: { companyId: string }) {
   );
 }
 
-export function MovementsPageClient({ companyId }: { companyId: string }) {
+export function MovementsPageClient({ companyId, canCreate = false }: { companyId: string; canCreate?: boolean }) {
   const [movements, setMovements] = useState<StockMovementSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -523,7 +566,7 @@ export function MovementsPageClient({ companyId }: { companyId: string }) {
     <MangmeePage
       title="ความเคลื่อนไหวสต็อก / Stock Movements"
       description="รายการรับเข้า จ่ายออก โอนย้าย และปรับปรุงสต็อก 50 รายการล่าสุด"
-      actions={<Link href={`/companies/${companyId}/inventory/movements/new`} className={buttonClass}>บันทึก / New</Link>}
+      actions={canCreate && <Link href={`/companies/${companyId}/inventory/movements/new`} className={buttonClass}>บันทึก / New</Link>}
     >
       {error && <ErrorBanner message={error} />}
       <MangmeeCard className="overflow-x-auto">
@@ -579,7 +622,7 @@ function MovementTable({ movements, loading = false }: { movements: StockMovemen
   );
 }
 
-type MovementAction = 'STOCK_IN' | 'STOCK_OUT' | 'TRANSFER' | 'COUNT' | 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT';
+export type MovementAction = 'STOCK_IN' | 'STOCK_OUT' | 'TRANSFER' | 'COUNT' | 'ADJUSTMENT_IN' | 'ADJUSTMENT_OUT';
 
 const MODE_LABELS: Record<MovementAction, string> = {
   STOCK_IN: 'รับเข้า',
@@ -590,9 +633,9 @@ const MODE_LABELS: Record<MovementAction, string> = {
   ADJUSTMENT_OUT: 'ปรับลด',
 };
 
-export function MovementFormPageClient({ companyId, defaultAction = 'STOCK_IN' }: { companyId: string; defaultAction?: MovementAction }) {
+export function MovementFormPageClient({ companyId, defaultAction = 'STOCK_IN', allowedActions = [] }: { companyId: string; defaultAction?: MovementAction; allowedActions?: readonly MovementAction[] }) {
   const toast = useToast();
-  const [action, setAction] = useState<MovementAction>(defaultAction);
+  const [action, setAction] = useState<MovementAction>(allowedActions.includes(defaultAction) ? defaultAction : allowedActions[0] ?? defaultAction);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -631,18 +674,15 @@ export function MovementFormPageClient({ companyId, defaultAction = 'STOCK_IN' }
 
   const needsReason = action === 'COUNT' || action === 'ADJUSTMENT_IN' || action === 'ADJUSTMENT_OUT';
 
+  if (allowedActions.length === 0) return <ForbiddenState />;
+
   return (
     <main className="max-w-2xl p-6">
       <h1 className="mb-6 text-xl font-semibold">บันทึกสต็อก / Stock Action</h1>
       {error && <ErrorBanner message={error} />}
       <form onSubmit={submit} className="space-y-4">
         <ThemedSelect value={action} onChange={(event) => setAction(event.target.value as MovementAction)} className={inputClass}>
-          <option value="STOCK_IN">รับเข้า / Receive</option>
-          <option value="STOCK_OUT">จ่ายออก / Issue</option>
-          <option value="TRANSFER">โอนย้าย / Transfer</option>
-          <option value="COUNT">ตรวจนับ / Count</option>
-          <option value="ADJUSTMENT_IN">ปรับเพิ่ม / Adjust In</option>
-          <option value="ADJUSTMENT_OUT">ปรับลด / Adjust Out</option>
+          {allowedActions.map((value) => <option key={value} value={value}>{MODE_LABELS[value]}</option>)}
         </ThemedSelect>
         <input name="productId" className={inputClass} placeholder="Product ID" required />
         <input name="locationId" className={inputClass} placeholder={action === 'TRANSFER' ? 'From Location ID' : 'Location ID'} required />

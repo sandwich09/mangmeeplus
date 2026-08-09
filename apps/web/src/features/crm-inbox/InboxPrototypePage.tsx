@@ -186,6 +186,7 @@ export function InboxPrototypePage({
   const [customer, setCustomer] = useState<CrmCustomerDetail | null>(null);
   const [summary360, setSummary360] = useState<CrmCustomer360Summary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
   const [autoReplySaving, setAutoReplySaving] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   const [priorityMenuOpen, setPriorityMenuOpen] = useState(false);
@@ -452,8 +453,9 @@ export function InboxPrototypePage({
   );
 
   const assignToMe = useCallback(async () => {
-    if (!detail) return;
+    if (!detail || assigning) return;
     setActionError(null);
+    setAssigning(true);
     try {
       const nextAssignee = detail.assignedToUserId === userId ? null : userId;
       applyConversationPatch(await assignConversation(companyId, detail.id, nextAssignee));
@@ -461,8 +463,10 @@ export function InboxPrototypePage({
       void loadList(true);
     } catch {
       setActionError('มอบหมายไม่สำเร็จ กรุณาลองใหม่');
+    } finally {
+      setAssigning(false);
     }
-  }, [companyId, detail, userId, applyConversationPatch, loadList, toast]);
+  }, [companyId, detail, assigning, userId, applyConversationPatch, loadList, toast]);
 
   const refreshSummary = useCallback(async () => {
     if (!detail?.customerId || !canSeeCustomer) return;
@@ -608,7 +612,7 @@ export function InboxPrototypePage({
             <div className="mt-2 flex-1 overflow-y-auto">
               {listLoading && items.length === 0 && (
                 <div className="text-center text-sm text-gray-400" style={{ padding: '40px 20px' }}>
-                  กำลังโหลด…
+                  กำลังโหลด...
                 </div>
               )}
               {listError && <div className="mx-4 my-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{listError}</div>}
@@ -733,7 +737,7 @@ export function InboxPrototypePage({
           {detail || detailLoading ? (
             <>
               <div className="mangmee-card mangmee-card-muted flex min-w-0 flex-1 flex-col overflow-hidden">
-                {detailLoading && <div className="flex flex-1 items-center justify-center text-sm text-gray-400">กำลังโหลดบทสนทนา…</div>}
+                {detailLoading && <div className="flex flex-1 items-center justify-center text-sm text-gray-400">กำลังโหลดบทสนทนา...</div>}
                 {detail && (
                   <>
                     <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 bg-white" style={{ padding: '14px 18px' }}>
@@ -776,7 +780,7 @@ export function InboxPrototypePage({
                                 disabled={autoReplySaving}
                                 onChange={(event) => void changeAutoReply(event.target.checked)}
                               />
-                              {autoReplySaving ? 'กำลังบันทึก…' : 'AI ตอบแชทนี้'}
+                              {autoReplySaving ? 'กำลังบันทึก...' : 'AI ตอบแชทนี้'}
                             </label>
                           )}
                           {!detail.autoReplyEnabled && (
@@ -790,10 +794,13 @@ export function InboxPrototypePage({
                         <button
                           type="button"
                           onClick={() => void assignToMe()}
-                          className="hidden shrink-0 cursor-pointer rounded-[9px] border px-3 py-1.5 text-[13px] font-semibold sm:block"
+                          disabled={assigning}
+                          className="hidden shrink-0 cursor-pointer rounded-[9px] border px-3 py-1.5 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:block"
                           style={detail.assignedToUserId === userId ? { borderColor: '#D0D5DD', color: '#667085' } : { borderColor: '#ABEFC6', background: '#ECFDF3', color: '#039855' }}
                         >
-                          {detail.assignedToUserId === userId ? 'เลิกดูแล' : 'รับเรื่อง'}
+                          {assigning
+                            ? detail.assignedToUserId === userId ? 'กำลังเลิกดูแล...' : 'กำลังรับเรื่อง...'
+                            : detail.assignedToUserId === userId ? 'เลิกดูแล' : 'รับเรื่อง'}
                         </button>
                       )}
                       <div className="relative" ref={priorityMenuRef}>

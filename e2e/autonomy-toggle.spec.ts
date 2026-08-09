@@ -54,7 +54,8 @@ test.describe('AUTON — AI autonomy toggles', () => {
       await channelCard.getByRole('switch', { name: 'เปิดระบบตอบอัตโนมัติ' }).click();
       await channelCard.getByRole('spinbutton', { name: 'จำนวนตอบอัตโนมัติสูงสุดต่อวัน' }).fill(String(expectedCap));
       await channelCard.getByRole('button', { name: 'บันทึกการตั้งค่า', exact: true }).click();
-      await expect(channelCard.getByText('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว', { exact: true })).toBeVisible();
+      // Success feedback moved to the global top-center toast (toast v2) — assert page-wide, not inside the card.
+      await expect(authedPage.getByText('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว', { exact: true })).toBeVisible();
 
       const persisted = await json<MessagingChannel[]>(await api.get(`companies/${companyId}/crm/channels`));
       expect(persisted.find((item) => item.id === channel!.id)).toMatchObject({

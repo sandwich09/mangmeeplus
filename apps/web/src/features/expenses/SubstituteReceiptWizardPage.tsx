@@ -2,20 +2,24 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type {
-  ExpensePaymentMethod,
-  SubstituteReceiptEvidenceSummary,
-  SubstituteReceiptReasonCode,
-  SubstituteReceiptRuntimePolicy,
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
+  type ExpensePaymentMethod,
+  type SubstituteReceiptEvidenceSummary,
+  type SubstituteReceiptReasonCode,
+  type SubstituteReceiptRuntimePolicy,
 } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
+import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
+import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import {
   approveSubstituteReceipt,
@@ -24,8 +28,9 @@ import {
   createExpenseDraft,
   downloadPaymentVoucherPdf,
   downloadSubstituteReceiptPdf,
+  fetchAttachmentPreviewBlob,
+  fetchSubstituteReceiptPdfBlob,
   generateSubstituteReceipt,
-  getAttachmentDownloadUrl,
   getExpense,
   getSubstituteReceiptRuntimePolicy,
   initPersonalSignatureUpload,
@@ -64,11 +69,33 @@ import {
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile } from '@/common/files/upload-file.logic';
 import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import {
+  defaultSubstituteReceiptReason,
+  evaluateDetailsReadiness,
+  evaluateEvidenceReadiness,
+  evaluateManualLinesReadiness,
+  evaluateSigningReadiness,
+  isSubstituteReceiptCandidateEligible,
+  isSubstituteReceiptCandidateOtherwiseEligible,
+  isManualLineDecimal,
+  manualLineAmount,
+  manualLinesTotal,
+  MAX_SUBSTITUTE_MANUAL_LINES,
   mayApproveSubstituteReceipt,
   payeeTaxIdDigits,
+  resolveWizardEntryMode,
   resolveWizardStep,
+  sortAndPageCandidates,
+  substituteReceiptEvidenceRenderabilityIssue,
+  substituteReceiptRenderabilityIssue,
   validatePayeeIdentity,
+  wizardJourneyStage,
+  type CandidateSortKey,
   type PayeeIdentityIssue,
+  type SubstituteReceiptEvidenceRenderabilityIssue,
+  type SubstituteManualLineDraft,
+  type SubstituteReceiptRenderabilityIssue,
+  type WizardEntryMode,
+  type WizardJourneyStage,
   type WizardStep,
 } from './substitute-receipt-wizard.model';
 import { SignaturePad } from './SignaturePad';
@@ -76,7 +103,118 @@ import { SignaturePad } from './SignaturePad';
 const PAGE_SIZE = 200;
 /** Hard ceiling on per-expense detail requests fired by one candidate scan. */
 const MAX_CANDIDATE_DETAIL_LOOKUPS = 60;
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const RENDERABILITY_ISSUE_KEYS: Record<SubstituteReceiptRenderabilityIssue, DictionaryKey> = {
+  too_many_lines: 'expenses.substitute_wizard.render_limit_lines',
+  line_description_too_long: 'expenses.substitute_wizard.render_limit_description',
+};
+const EVIDENCE_RENDERABILITY_ISSUE_KEYS: Record<SubstituteReceiptEvidenceRenderabilityIssue, DictionaryKey> = {
+  too_many_evidence: 'expenses.substitute_wizard.render_limit_evidence',
+  evidence_filename_too_long: 'expenses.substitute_wizard.render_limit_filename',
+};
+
+function renderabilityIssueMessage(issue: SubstituteReceiptRenderabilityIssue, locale: SupportedLocale): string {
+  const count = issue === 'too_many_lines'
+    ? SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines
+    : SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength;
+  return t(RENDERABILITY_ISSUE_KEYS[issue], locale).replace('{count}', String(count));
+}
+
+function evidenceRenderabilityIssueMessage(
+  issue: SubstituteReceiptEvidenceRenderabilityIssue,
+  locale: SupportedLocale,
+): string {
+  const count = issue === 'too_many_evidence'
+    ? SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments
+    : SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength;
+  return t(EVIDENCE_RENDERABILITY_ISSUE_KEYS[issue], locale).replace('{count}', String(count));
+}
+
+type ManualLineEditor = SubstituteManualLineDraft & { id: string };
+type WizardPreviewSource = DocumentPreviewSource & { onViewed?: () => void };
+const blankManualLine = (id: string): ManualLineEditor => ({
+  id,
+  description: '',
+  expenseCategoryId: '',
+  quantity: '1',
+  unitPrice: '',
+});
+type ManualLineField = 'description' | 'expenseCategoryId' | 'quantity' | 'unitPrice';
+const manualLineControlId = (lineId: string, field: ManualLineField) => `substitute-${lineId}-${field}`;
+function invalidManualLineFields(line: ManualLineEditor): ManualLineField[] {
+  const invalid: ManualLineField[] = [];
+  const quantity = Number(line.quantity);
+  const unitPrice = Number(line.unitPrice);
+  if (!line.description.trim()
+    || line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength) invalid.push('description');
+  if (!line.expenseCategoryId.trim()) invalid.push('expenseCategoryId');
+  if (!isManualLineDecimal(line.quantity) || !Number.isFinite(quantity) || quantity <= 0) invalid.push('quantity');
+  if (!isManualLineDecimal(line.unitPrice) || !Number.isFinite(unitPrice) || unitPrice <= 0 || manualLineAmount(line) <= 0) invalid.push('unitPrice');
+  return invalid;
+}
+const todayIso = () => {
+  const today = new Date();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${today.getFullYear()}-${month}-${day}`;
+};
+
+function RequiredMark() {
+  return <span className="ml-1 font-extrabold text-error-700" aria-hidden="true">*</span>;
+}
+
+function RequiredLegend({ label }: { label: string }) {
+  return (
+    <p className="text-xs font-medium text-gray-500">
+      <span className="mr-1 font-extrabold text-error-700" aria-hidden="true">*</span>{label}
+    </p>
+  );
+}
+
+function ReadinessCard({
+  title,
+  description,
+  completeLabel,
+  incompleteLabel,
+  items,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  completeLabel: string;
+  incompleteLabel: (count: number) => string;
+  items: Array<{ label: ReactNode; complete: boolean }>;
+}) {
+  const completed = items.filter((item) => item.complete).length;
+  const missing = items.length - completed;
+  const progress = items.length === 0 ? 0 : Math.round((completed / items.length) * 100);
+  return (
+    <MangmeeCard className="overflow-hidden border-brand-100 p-0 xl:sticky xl:top-4">
+      <div className="border-b border-brand-100 bg-brand-25 p-4">
+        <div className="flex items-center gap-2 font-bold text-gray-900">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-brand-700 shadow-sm">{ICON.sparkle}</span>
+          {title}
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-gray-600">{description}</p>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+          <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${progress}%` }} />
+        </div>
+        <p className={cx('mt-2 text-xs font-bold', missing === 0 ? 'text-brand-700' : 'text-gray-600')}>
+          {missing === 0 ? completeLabel : incompleteLabel(missing)}
+        </p>
+      </div>
+      <ul className="space-y-1 p-3">
+        {items.map((item, index) => (
+          <li key={index} className="flex items-start gap-2 rounded-xl px-2 py-2 text-sm">
+            <span className={cx(
+              'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-extrabold',
+              item.complete ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-400',
+            )}>{item.complete ? '✓' : '·'}</span>
+            <span className={item.complete ? 'font-medium text-gray-800' : 'text-gray-500'}>{item.label}</span>
+          </li>
+        ))}
+      </ul>
+    </MangmeeCard>
+  );
+}
 
 const REASON_KEYS: Record<SubstituteReceiptReasonCode, DictionaryKey> = {
   PAYEE_CANNOT_ISSUE: 'expenses.substitute_wizard.reason_payee_cannot_issue',
@@ -93,14 +231,13 @@ const PAYMENT_KEYS: Record<ExpensePaymentMethod, DictionaryKey> = {
   OTHER: 'expenses.substitute_wizard.payment_other',
 };
 
-const STEP_KEYS: Record<WizardStep, DictionaryKey> = {
-  expense: 'expenses.substitute_wizard.step_expense',
-  details: 'expenses.substitute_wizard.step_details',
-  evidence: 'expenses.substitute_wizard.step_evidence',
-  certify: 'expenses.substitute_wizard.step_certify',
-  approve: 'expenses.substitute_wizard.step_approve',
-  done: 'expenses.substitute_wizard.step_done',
+const JOURNEY_STAGE_KEYS: Record<WizardJourneyStage, DictionaryKey> = {
+  expense: 'expenses.substitute_wizard.journey_expense',
+  prepare: 'expenses.substitute_wizard.journey_prepare',
+  sign: 'expenses.substitute_wizard.journey_sign',
+  done: 'expenses.substitute_wizard.journey_done',
 };
+const JOURNEY_STAGES: WizardJourneyStage[] = ['expense', 'prepare', 'sign', 'done'];
 
 const PAYEE_ISSUE_KEYS: Record<PayeeIdentityIssue, DictionaryKey> = {
   payee_name_required: 'expenses.substitute_wizard.payee_name_required',
@@ -152,16 +289,48 @@ async function findEvidenceExpenseId(companyId: string, evidenceId: string): Pro
   return null;
 }
 
-function DetailSummary({ detail, title }: { detail: ExpenseDetail; title: ReactNode }) {
+function DetailSummary({ detail, title, categories = [] }: { detail: ExpenseDetail; title: ReactNode; categories?: ExpenseCategorySummary[] }) {
   const locale = useWorkspaceLocale();
+  const renderabilityIssue = substituteReceiptRenderabilityIssue(detail);
+  const categoryName = (categoryId: string | null) => categories.find((category) => category.id === categoryId)?.name
+    ?? (categoryId ? t('expenses.substitute_wizard.category_recorded', locale) : t('expenses.substitute_wizard.not_specified', locale));
   return (
-    <MangmeeCard className="p-4">
-      <div className="text-sm font-bold text-gray-900">{title}</div>
-      <div className="mt-3 grid gap-2 text-sm text-gray-600 sm:grid-cols-3">
-        <div>{detail.vendorNameSnapshot || detail.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}</div>
-        <div>{dateShort(detail.expenseDate)}</div>
-        <div className="font-bold tabular-nums text-gray-900 sm:text-right">{baht(detail.grandTotalAmount)}</div>
+    <MangmeeCard className="border-brand-100 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-bold text-gray-900">{title}</div>
+        <MangmeeBadge tone="brand">{detail.expenseNumber}</MangmeeBadge>
       </div>
+      <div className="mt-3 grid gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+        <div className="min-w-0">
+          <div className="font-semibold text-gray-800">{detail.vendorNameSnapshot || detail.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}</div>
+          <div className="mt-0.5 text-xs text-gray-500">{t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(detail.lines.length))}</div>
+        </div>
+        <div>{dateShort(detail.expenseDate)}</div>
+        <div className="text-lg font-extrabold tabular-nums text-gray-900 sm:text-right">{baht(detail.grandTotalAmount)}</div>
+      </div>
+      <details className="mt-2 rounded-xl border border-gray-100 bg-white" open>
+          <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+            {t('expenses.substitute_wizard.view_all_items', locale).replace('{count}', String(detail.lines.length))}
+          </summary>
+          <ol className="divide-y divide-gray-100 border-t border-gray-100 px-3">
+            {detail.lines.map((line) => (
+              <li key={line.id} className="grid gap-1 py-2 text-xs text-gray-600 sm:grid-cols-[2rem_minmax(0,1fr)_minmax(7rem,auto)_auto_auto] sm:items-center sm:gap-3">
+                <span className="font-bold text-gray-400">#{line.lineNumber}</span>
+                <span className="min-w-0 font-medium text-gray-800">{line.description}</span>
+                <span className="text-gray-500">{categoryName(line.expenseCategoryId)}</span>
+                <span>{t('expenses.substitute_wizard.line_calculation', locale)
+                  .replace('{quantity}', line.quantity)
+                  .replace('{unitPrice}', baht(line.unitPrice))}</span>
+                <span className="font-bold tabular-nums text-gray-900">{baht(line.lineTotalAmount)}</span>
+              </li>
+            ))}
+          </ol>
+      </details>
+      {renderabilityIssue && (
+        <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700">
+          {renderabilityIssueMessage(renderabilityIssue, locale)}
+        </p>
+      )}
     </MangmeeCard>
   );
 }
@@ -189,9 +358,9 @@ function SignatureFields({
   };
   return (
     <div className="space-y-3">
-      <fieldset>
+      <fieldset aria-required="true">
         <legend className="mb-2 text-sm font-semibold text-gray-700">
-          {t('expenses.substitute_wizard.signature_method', locale)}
+          {t('expenses.substitute_wizard.signature_method', locale)}<RequiredMark />
         </legend>
         <div className="grid rounded-xl bg-gray-100 p-1 sm:grid-cols-2">
           {(['draw', 'upload'] as const).map((option) => (
@@ -204,6 +373,7 @@ function SignatureFields({
                 type="radio"
                 name="signature-method"
                 value={option}
+                required
                 checked={method === option}
                 onChange={() => selectMethod(option)}
               />
@@ -218,10 +388,10 @@ function SignatureFields({
         <SignaturePad busy={busy} onChange={() => onSelect(null)} onConfirm={onDrawn} />
       ) : (
         <>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.signature_file', locale)}</span>
-            <input className={inputClass} type="file" accept={IMAGE_UPLOAD_ACCEPT} onChange={(event) => onSelect(event.target.files?.[0] ?? null)} />
-          </label>
+          <div className="block text-sm font-semibold text-gray-700">
+            <span className="mb-1 block">{t('expenses.substitute_wizard.signature_file', locale)}<RequiredMark /></span>
+            <ThemedFile file={signatureFile} aria-required={true} accept={IMAGE_UPLOAD_ACCEPT} aria-label={t('expenses.substitute_wizard.signature_file', locale)} onChange={onSelect} />
+          </div>
           <button type="button" className={ghostClass} disabled={busy || !signatureFile} onClick={onClean}>
             {t('expenses.substitute_wizard.clean_signature', locale)}
           </button>
@@ -266,6 +436,7 @@ export function SubstituteReceiptWizardPage({
   const canReview = permissions.includes('expense.review');
   const canConfirm = permissions.includes('expense.confirm');
   const canCreate = permissions.includes('expense.create');
+  const shouldLoadCategories = canCreate || canReview;
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
   const [receiptEvidence, setReceiptEvidence] = useState<SubstituteReceiptEvidenceSummary | null>(null);
   const [history, setHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
@@ -279,9 +450,16 @@ export function SubstituteReceiptWizardPage({
   const [candidatesLoading, setCandidatesLoading] = useState(!evidenceId);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [candidatesTruncated, setCandidatesTruncated] = useState(false);
+  const [candidatesReloadKey, setCandidatesReloadKey] = useState(0);
   const [categories, setCategories] = useState<ExpenseCategorySummary[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(shouldLoadCategories);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [categoriesReloadKey, setCategoriesReloadKey] = useState(0);
+  const [entryMode, setEntryMode] = useState<WizardEntryMode | null>(initialExpenseId ? 'existing' : null);
+  const [candidateQuery, setCandidateQuery] = useState('');
+  const [candidateSort, setCandidateSort] = useState<CandidateSortKey>('date_desc');
+  const [candidatePage, setCandidatePage] = useState(1);
   const [consent, setConsent] = useState(false);
-  const [presetsApplied, setPresetsApplied] = useState(false);
   const [reasonCode, setReasonCode] = useState<SubstituteReceiptReasonCode>('PAYEE_CANNOT_ISSUE');
   const [missingReason, setMissingReason] = useState('');
   const [businessPurpose, setBusinessPurpose] = useState('');
@@ -298,24 +476,154 @@ export function SubstituteReceiptWizardPage({
   const [supportingFile, setSupportingFile] = useState<File | null>(null);
   const [paymentFile, setPaymentFile] = useState<File | null>(null);
   const [manualDate, setManualDate] = useState(todayIso());
-  const [manualDescription, setManualDescription] = useState('');
-  const [manualAmount, setManualAmount] = useState('');
-  const [manualCategoryId, setManualCategoryId] = useState('');
+  const [manualLines, setManualLines] = useState<ManualLineEditor[]>([blankManualLine('manual-line-1')]);
+  const [manualValidationAttempted, setManualValidationAttempted] = useState(false);
+  const [manualAnnouncement, setManualAnnouncement] = useState('');
   const [signerPosition, setSignerPosition] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
   const [signaturePreview, setSignaturePreview] = useState<{ original: string; cleaned: string } | null>(null);
   const [previewChecksum, setPreviewChecksum] = useState<string | null>(null);
   const [certifiedPreviewed, setCertifiedPreviewed] = useState(false);
-  const [preview, setPreview] = useState<{ name: string; url: string } | null>(null);
+  const [certificationAcknowledged, setCertificationAcknowledged] = useState(false);
+  const [approvalAcknowledged, setApprovalAcknowledged] = useState(false);
+  const [preview, setPreview] = useState<WizardPreviewSource | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [supersedeReason, setSupersedeReason] = useState('');
+  const candidateHeadingRef = useRef<HTMLHeadingElement>(null);
+  const manualHeadingRef = useRef<HTMLHeadingElement>(null);
+  const manualDateTriggerRef = useRef<HTMLButtonElement>(null);
+  const manualLineSequenceRef = useRef(1);
+  const manualLineDescriptionRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const manualLineCardRefs = useRef<Record<string, HTMLFieldSetElement | null>>({});
+  const addManualLineRef = useRef<HTMLButtonElement>(null);
+  const selectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
+  const existingRouteRef = useRef<HTMLButtonElement>(null);
+  const newRouteRef = useRef<HTMLButtonElement>(null);
+  const pendingFocusTargetRef = useRef<'candidate' | 'manual' | 'selection' | 'details' | null>(null);
+  const [focusRevision, setFocusRevision] = useState(0);
+  const previewScope = [
+    companyId,
+    initialExpenseId ?? '',
+    evidenceId ?? '',
+    detail?.id ?? '',
+    receiptEvidence?.id ?? '',
+    receiptEvidence?.updatedAt ?? '',
+  ].join('\u0000');
+  const previewScopeRef = useRef(previewScope);
+  previewScopeRef.current = previewScope;
+
+  const releasePreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+
+  const isPreviewRequestCurrent = (requestId: number, requestScope: string) => (
+    requestId === previewRequestRef.current && requestScope === previewScopeRef.current
+  );
+
+  const commitPreview = useCallback((requestId: number, requestScope: string, source: WizardPreviewSource) => {
+    if (requestId !== previewRequestRef.current || requestScope !== previewScopeRef.current) {
+      if (source.url.startsWith('blob:')) URL.revokeObjectURL(source.url);
+      return false;
+    }
+    releasePreviewUrl();
+    if (source.url.startsWith('blob:')) previewUrlRef.current = source.url;
+    setPreview({
+      ...source,
+      ...(source.onViewed ? {
+        onViewed: () => {
+          if (requestId !== previewRequestRef.current || requestScope !== previewScopeRef.current) return;
+          source.onViewed?.();
+        },
+      } : {}),
+    });
+    return true;
+  }, [releasePreviewUrl]);
+
+  const closePreview = useCallback(() => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+    setPreview(null);
+  }, [releasePreviewUrl]);
+
+  useEffect(() => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+    setPreview(null);
+    setPreviewChecksum(null);
+    setCertifiedPreviewed(false);
+    return () => {
+      previewRequestRef.current += 1;
+      releasePreviewUrl();
+    };
+  }, [companyId, detail?.id, evidenceId, initialExpenseId, receiptEvidence?.id, receiptEvidence?.updatedAt, releasePreviewUrl]);
   const payeeIdentityIssues = validatePayeeIdentity({
     payeeName,
     payeeAddress,
     payeeTaxId,
     vendorNameSnapshot: detail?.vendorNameSnapshot,
   });
+  const filteredCandidates = useMemo(() => {
+    const query = candidateQuery.trim().toLocaleLowerCase(locale === 'th' ? 'th-TH' : 'en-US');
+    if (!query) return candidates;
+    return candidates.filter((item) => [
+      item.expenseNumber,
+      item.vendorNameSnapshot,
+      ...item.lines.map((line) => line.description),
+    ].some((value) => value?.toLocaleLowerCase(locale === 'th' ? 'th-TH' : 'en-US').includes(query)));
+  }, [candidateQuery, candidates, locale]);
+  const candidatePagination = useMemo(
+    () => sortAndPageCandidates(filteredCandidates, candidateSort, candidatePage),
+    [filteredCandidates, candidateSort, candidatePage],
+  );
+  const manualLinesReadiness = useMemo(() => evaluateManualLinesReadiness(manualLines), [manualLines]);
+  const manualMissingCount = manualLinesReadiness.missingCount + (manualDate ? 0 : 1);
+  const manualTotal = useMemo(() => manualLinesTotal(manualLines), [manualLines]);
+  const selectedExpenseRenderabilityIssue = detail ? substituteReceiptRenderabilityIssue(detail) : null;
+  const selectedEvidenceAttachments = useMemo(() => {
+    const selectedIds = new Set([...supportingIds, ...paymentIds]);
+    return detail?.attachments.filter((attachment) => selectedIds.has(attachment.id)) ?? [];
+  }, [detail, paymentIds, supportingIds]);
+  const selectedEvidenceRenderabilityIssue = substituteReceiptEvidenceRenderabilityIssue(selectedEvidenceAttachments);
+
+  const requestWorkflowFocus = (target: 'candidate' | 'manual' | 'selection' | 'details') => {
+    pendingFocusTargetRef.current = target;
+    setFocusRevision((current) => current + 1);
+  };
+
+  const handleEntryModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: WizardEntryMode) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+    const next: WizardEntryMode = forward
+      ? (current === 'existing' ? 'new' : 'existing')
+      : (current === 'new' ? 'existing' : 'new');
+    setEntryMode(next);
+    (next === 'existing' ? existingRouteRef : newRouteRef).current?.focus();
+  };
+
+  useEffect(() => {
+    if (focusRevision === 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = {
+        candidate: candidateHeadingRef.current,
+        manual: manualHeadingRef.current,
+        selection: selectionHeadingRef.current,
+        details: detailsHeadingRef.current,
+      }[pendingFocusTargetRef.current ?? 'selection'];
+      pendingFocusTargetRef.current = null;
+      if (!target) return;
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+      target.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRevision]);
 
   const assertAllowed = (...values: string[]) => {
     const forbidden = findForbiddenChars(values.join(''));
@@ -324,6 +632,7 @@ export function SubstituteReceiptWizardPage({
 
   const initializeDraft = useCallback((nextDetail: ExpenseDetail) => {
     setDetail(nextDetail);
+    setReasonCode(defaultSubstituteReceiptReason(nextDetail.sourceDocumentType));
     setMissingReason(nextDetail.missingReceiptReason ?? '');
     setBusinessPurpose(nextDetail.note ?? '');
     setPayeeName(nextDetail.vendorNameSnapshot ?? '');
@@ -381,6 +690,7 @@ export function SubstituteReceiptWizardPage({
             return;
           }
           initializeDraft(nextDetail);
+          setEntryMode('existing');
         }
       } catch (cause) {
         if (!cancelled) setError(err(cause));
@@ -399,18 +709,36 @@ export function SubstituteReceiptWizardPage({
     listCandidateExpenses(companyId, branchId || undefined)
       .then(({ details, truncated }) => {
         if (cancelled) return;
-        setCandidates(details.filter(expenseNeedsReceiptOrSubstitute));
+        const nextCandidates = details.filter((item) => expenseNeedsReceiptOrSubstitute(item)
+          && isSubstituteReceiptCandidateOtherwiseEligible(item));
+        setCandidates(nextCandidates);
+        setEntryMode((current) => current ?? resolveWizardEntryMode({
+          initialExpenseId,
+          candidateCount: nextCandidates.length,
+        }));
         setCandidatesTruncated(truncated);
       })
       .catch((cause) => { if (!cancelled) setCandidatesError(err(cause)); })
       .finally(() => { if (!cancelled) setCandidatesLoading(false); });
     return () => { cancelled = true; };
-  }, [branchId, companyId, evidenceId]);
+  }, [branchId, candidatesReloadKey, companyId, evidenceId, initialExpenseId]);
 
   useEffect(() => {
-    if (!canCreate) return;
-    void listExpenseCategories(companyId).then(setCategories).catch(() => setCategories([]));
-  }, [canCreate, companyId]);
+    if (!shouldLoadCategories) { setCategoriesLoading(false); return; }
+    let cancelled = false;
+    setCategoriesLoading(true);
+    setCategoriesError(null);
+    void listExpenseCategories(companyId)
+      .then((items) => { if (!cancelled) setCategories(items); })
+      .catch(() => {
+        if (!cancelled) {
+          setCategories([]);
+          setCategoriesError(t('expenses.substitute_wizard.category_load_error', locale));
+        }
+      })
+      .finally(() => { if (!cancelled) setCategoriesLoading(false); });
+    return () => { cancelled = true; };
+  }, [categoriesReloadKey, companyId, locale, shouldLoadCategories]);
 
   useEffect(() => {
     if (!detail || !canReview || receiptEvidence) return;
@@ -436,20 +764,78 @@ export function SubstituteReceiptWizardPage({
     try { await action(); } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
   };
 
-  const selectExpense = (nextDetail: ExpenseDetail) => {
+  const selectExpense = (nextDetail: ExpenseDetail, mode: WizardEntryMode = 'existing') => {
     initializeDraft(nextDetail);
+    setEntryMode(mode);
     setReceiptEvidence(null);
     setHistory([]);
     setConsent(false);
-    setPresetsApplied(false);
     setActiveStep('expense');
     setInfo(null);
     setError(null);
+    requestWorkflowFocus('selection');
+  };
+
+  const updateManualLine = (id: string, patch: Partial<SubstituteManualLineDraft>) => {
+    setManualLines((current) => current.map((line) => line.id === id ? { ...line, ...patch } : line));
+  };
+
+  const addManualLine = () => {
+    if (manualLines.length >= MAX_SUBSTITUTE_MANUAL_LINES) return;
+    manualLineSequenceRef.current += 1;
+    const id = `manual-line-${manualLineSequenceRef.current}`;
+    setManualLines((current) => [...current, blankManualLine(id)]);
+    setManualAnnouncement(t('expenses.substitute_wizard.item_added', locale).replace('{number}', String(manualLines.length + 1)));
+    window.requestAnimationFrame(() => manualLineDescriptionRefs.current[id]?.focus());
+  };
+
+  const removeManualLine = (id: string) => {
+    const removedIndex = manualLines.findIndex((line) => line.id === id);
+    if (removedIndex < 0) return;
+    const nextFocusId = manualLines[removedIndex + 1]?.id ?? manualLines[removedIndex - 1]?.id;
+    setManualLines((current) => current.length <= 1 ? current : current.filter((line) => line.id !== id));
+    setManualAnnouncement(t('expenses.substitute_wizard.item_removed', locale).replace('{number}', String(removedIndex + 1)));
+    window.requestAnimationFrame(() => {
+      if (nextFocusId) manualLineCardRefs.current[nextFocusId]?.focus();
+      else addManualLineRef.current?.focus();
+    });
+  };
+
+  const moveManualLine = (index: number, direction: -1 | 1) => {
+    const destination = index + direction;
+    if (destination < 0 || destination >= manualLines.length) return;
+    setManualLines((current) => {
+      const reordered = [...current];
+      [reordered[index], reordered[destination]] = [reordered[destination]!, reordered[index]!];
+      return reordered;
+    });
+    setManualAnnouncement(t('expenses.substitute_wizard.item_moved', locale)
+      .replace('{number}', String(index + 1))
+      .replace('{position}', String(destination + 1)));
+    const movedId = manualLines[index]?.id;
+    window.requestAnimationFrame(() => { if (movedId) manualLineCardRefs.current[movedId]?.focus(); });
   };
 
   const createManualExpense = async () => {
-    assertAllowed(manualDescription);
-    if (!manualDate || !manualDescription.trim() || Number(manualAmount) <= 0 || !manualCategoryId) {
+    setManualValidationAttempted(true);
+    assertAllowed(...manualLines.map((line) => line.description));
+    if (!canReview) throw new Error(t('expenses.substitute_wizard.review_permission_required', locale));
+    if (!manualDate || !manualLinesReadiness.ready) {
+      const invalidIndex = manualLinesReadiness.invalidLineIndexes[0];
+      window.requestAnimationFrame(() => {
+        if (!manualDate) {
+          manualDateTriggerRef.current?.focus();
+          return;
+        }
+        const invalidLine = invalidIndex === undefined ? undefined : manualLines[invalidIndex];
+        const invalidField = invalidLine ? invalidManualLineFields(invalidLine)[0] : undefined;
+        const invalidControl = invalidLine && invalidField
+          ? document.getElementById(manualLineControlId(invalidLine.id, invalidField))
+          : null;
+        if (invalidControl instanceof HTMLElement) invalidControl.focus();
+        else if (invalidLine) manualLineCardRefs.current[invalidLine.id]?.focus();
+        else manualHeadingRef.current?.focus();
+      });
       throw new Error(t('expenses.substitute_wizard.manual_required', locale));
     }
     const created = await createExpenseDraft(companyId, {
@@ -458,27 +844,30 @@ export function SubstituteReceiptWizardPage({
       ...(branchId ? { branchId } : {}),
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NEEDS_REVIEW',
-      lines: [{
-        lineNumber: 1,
-        description: manualDescription.trim(),
-        quantity: '1',
-        unitPrice: manualAmount,
+      lines: manualLines.map((line, index) => ({
+        lineNumber: index + 1,
+        description: line.description.trim(),
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
         discountAmount: '0',
         vatRate: '0',
-        ...(manualCategoryId ? { expenseCategoryId: manualCategoryId } : {}),
-      }],
+        expenseCategoryId: line.expenseCategoryId,
+      })),
     });
     const nextDetail = await getExpense(companyId, created.id);
-    selectExpense(nextDetail);
-    setManualDescription('');
-    setManualAmount('');
-    setManualCategoryId('');
+    selectExpense(nextDetail, 'new');
+    manualLineSequenceRef.current += 1;
+    setManualLines([blankManualLine(`manual-line-${manualLineSequenceRef.current}`)]);
+    setManualValidationAttempted(false);
+    setManualAnnouncement('');
     setInfo(t('expenses.substitute_wizard.manual_created', locale));
   };
 
   const continueFromExpense = async () => {
     if (!detail || !consent) throw new Error(t('expenses.substitute_wizard.consent_required', locale));
     if (!canReview) throw new Error(t('expenses.substitute_wizard.review_permission_required', locale));
+    const renderabilityIssue = substituteReceiptRenderabilityIssue(detail);
+    if (renderabilityIssue) throw new Error(renderabilityIssueMessage(renderabilityIssue, locale));
     const nextDocType = detail.sourceDocumentType === 'NEEDS_REVIEW' ? 'EXPENSE_NOTE_TEXT' as const : detail.sourceDocumentType;
     const nextTaxStatus = detail.taxEvidenceStatus === 'NEEDS_REVIEW' ? 'SUPPORTING_ONLY' as const : detail.taxEvidenceStatus;
     if (nextDocType !== detail.sourceDocumentType || nextTaxStatus !== detail.taxEvidenceStatus) {
@@ -495,8 +884,8 @@ export function SubstituteReceiptWizardPage({
       });
       setDetail(await getExpense(companyId, detail.id));
     }
-    setPresetsApplied(true);
     setActiveStep('details');
+    requestWorkflowFocus('details');
   };
 
   const continueFromDetails = async () => {
@@ -523,6 +912,11 @@ export function SubstituteReceiptWizardPage({
     const file = purpose === 'expense.payment.evidence' ? paymentFile : supportingFile;
     if (!file) throw new Error(t('expenses.substitute_wizard.file_required', locale));
     assertAllowedUploadFile(file);
+    const pendingIssue = substituteReceiptEvidenceRenderabilityIssue([
+      ...selectedEvidenceAttachments,
+      { id: `pending-${purpose}`, originalFileName: file.name },
+    ]);
+    if (pendingIssue) throw new Error(evidenceRenderabilityIssueMessage(pendingIssue, locale));
     const attachmentId = await uploadExpenseEvidenceFile(companyId, detail.id, detail.branchId, file, purpose);
     if (purpose === 'expense.payment.evidence') {
       setPaymentIds((current) => [...new Set([...current, attachmentId])]);
@@ -558,6 +952,9 @@ export function SubstituteReceiptWizardPage({
       throw new Error(t('expenses.substitute_wizard.details_required', locale));
     }
     if (!policy?.ready) throw new Error(t('expenses.substitute_wizard.policy_not_ready', locale));
+    if (selectedEvidenceRenderabilityIssue) {
+      throw new Error(evidenceRenderabilityIssueMessage(selectedEvidenceRenderabilityIssue, locale));
+    }
     if (supportingIds.length === 0 || (requiresPaymentEvidence && paymentIds.length === 0)) {
       throw new Error(t('expenses.substitute_wizard.evidence_required', locale));
     }
@@ -662,15 +1059,30 @@ export function SubstituteReceiptWizardPage({
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
     assertAllowed(signerPosition);
     if (!signerPosition.trim()) throw new Error(t('expenses.substitute_wizard.position_required', locale));
-    const result = await previewSubstituteReceipt(companyId, detail.id, receiptEvidence.id, { payerPosition: signerPosition.trim() });
-    setPreviewChecksum(result.previewChecksumSha256);
-    setPreview({ name: `${receiptEvidence.documentNumber} · ${t('expenses.substitute_wizard.preview_document', locale)}`, url: result.svgDataUrl });
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    setPreviewChecksum(null);
+    let result;
+    try {
+      result = await previewSubstituteReceipt(companyId, detail.id, receiptEvidence.id, { payerPosition: signerPosition.trim() });
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+      throw cause;
+    }
+    if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+    commitPreview(requestId, requestScope, {
+      name: `${receiptEvidence.documentNumber} · ${t('expenses.substitute_wizard.preview_document', locale)}`,
+      mimeType: 'image/svg+xml',
+      url: result.svgDataUrl,
+      onViewed: () => setPreviewChecksum(result.previewChecksumSha256),
+    });
   };
 
   const certify = async () => {
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
     assertAllowed(signerPosition);
     if (!previewChecksum) throw new Error(t('expenses.substitute_wizard.preview_required', locale));
+    if (!certificationAcknowledged) throw new Error(t('expenses.substitute_wizard.certification_ack_required', locale));
     const signatureAttachmentId = await uploadPersonalSignature();
     const result = await certifySubstituteReceipt(companyId, detail.id, receiptEvidence.id, {
       payerPosition: signerPosition.trim(),
@@ -684,26 +1096,79 @@ export function SubstituteReceiptWizardPage({
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
     setHistory((current) => current.map((item) => item.id === result.id ? result : item));
     resetSignature();
+    setCertificationAcknowledged(false);
     setActiveStep('approve');
     setInfo(t('expenses.substitute_wizard.certified', locale));
   };
 
   const openArtifact = async (attachmentId: string | null, certified = false) => {
     if (!attachmentId || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.document_not_ready', locale));
-    const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId);
-    setPreview({
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    if (certified) setCertifiedPreviewed(false);
+    let blob;
+    try {
+      blob = await fetchAttachmentPreviewBlob(companyId, attachmentId, 'image/svg+xml');
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+      throw cause;
+    }
+    if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+    const url = URL.createObjectURL(blob);
+    commitPreview(requestId, requestScope, {
       name: certified
         ? `${receiptEvidence.documentNumber} · ${t('expenses.substitute_wizard.open_certified', locale)}`
         : receiptEvidence.documentNumber,
-      url: downloadUrl,
+      mimeType: 'image/svg+xml',
+      url,
+      ...(certified ? { onViewed: () => setCertifiedPreviewed(true) } : {}),
     });
-    if (certified) setCertifiedPreviewed(true);
+  };
+
+  const openIssuedPdf = async () => {
+    if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.document_not_ready', locale));
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    let blob;
+    try {
+      blob = await fetchSubstituteReceiptPdfBlob(companyId, detail.id, receiptEvidence.id);
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+      throw cause;
+    }
+    if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+    const url = URL.createObjectURL(blob);
+    commitPreview(requestId, requestScope, {
+      name: `${receiptEvidence.documentNumber}.pdf`,
+      mimeType: 'application/pdf',
+      url,
+    });
+  };
+
+  const openEvidenceAttachment = async (attachment: ExpenseDetail['attachments'][number]) => {
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    let blob;
+    try {
+      blob = await fetchAttachmentPreviewBlob(companyId, attachment.id, attachment.mimeType);
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+      throw cause;
+    }
+    if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+    const url = URL.createObjectURL(blob);
+    commitPreview(requestId, requestScope, {
+      name: attachment.originalFileName,
+      mimeType: attachment.mimeType,
+      url,
+    });
   };
 
   const approve = async () => {
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
     assertAllowed(signerPosition);
     if (!certifiedPreviewed) throw new Error(t('expenses.substitute_wizard.certified_preview_required', locale));
+    if (!approvalAcknowledged) throw new Error(t('expenses.substitute_wizard.approval_ack_required', locale));
     const signatureAttachmentId = await uploadPersonalSignature();
     const result = await approveSubstituteReceipt(companyId, detail.id, receiptEvidence.id, {
       approverPosition: signerPosition.trim(),
@@ -717,6 +1182,7 @@ export function SubstituteReceiptWizardPage({
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
     setHistory((current) => current.map((item) => item.id === result.id ? result : item));
     resetSignature();
+    setApprovalAcknowledged(false);
     setActiveStep('done');
     setInfo(t('expenses.substitute_wizard.approved', locale));
   };
@@ -756,26 +1222,12 @@ export function SubstituteReceiptWizardPage({
   const ownerSelfCollapse = Boolean(receiptEvidence
     && receiptEvidence.payerUserId === userId
     && mayApprove);
-  const resolvedStep = resolveWizardStep(receiptEvidence);
-  const activeDisplayStep = ownerSelfCollapse && activeStep === 'approve' ? 'certify' : activeStep;
-  const visibleSteps = useMemo(() => ownerSelfCollapse
-    ? (['expense', 'details', 'evidence', 'certify', 'done'] as WizardStep[])
-    : (['expense', 'details', 'evidence', 'certify', 'approve', 'done'] as WizardStep[]), [ownerSelfCollapse]);
-
-  const navigateStep = (step: WizardStep) => {
-    if (!receiptEvidence) {
-      if (step === 'expense' || (detail && presetsApplied && (step === 'details' || step === 'evidence'))) setActiveStep(step);
-      return;
-    }
-    if (step === 'expense' || step === 'details' || step === 'evidence' || step === resolvedStep
-      || (ownerSelfCollapse && step === 'certify' && resolvedStep === 'approve')) {
-      setActiveStep(ownerSelfCollapse && step === 'certify' && resolvedStep === 'approve' ? 'approve' : step);
-    }
-  };
+  const activeJourneyStage = wizardJourneyStage(activeStep);
+  const activeJourneyIndex = JOURNEY_STAGES.indexOf(activeJourneyStage);
 
   const renderReadOnlySummary = (step: WizardStep) => {
     if (!detail || !receiptEvidence) return null;
-    if (step === 'expense') return <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} />;
+    if (step === 'expense') return <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />;
     if (step === 'details') {
       return (
         <MangmeeCard className="space-y-2 p-4 text-sm text-gray-600">
@@ -800,141 +1252,546 @@ export function SubstituteReceiptWizardPage({
 
   const renderExpenseStep = () => (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
-        <MangmeeCard className="space-y-3 p-4">
-          <div>
-            <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.candidate_title', locale)}</h2>
-            <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.candidate_help', locale)}</p>
+      {/* The guide collapses to one line so the entry form below is the page's focus;
+          the full conditions stay one click away and the tax notice stays visible. */}
+      {!detail && <MangmeeCard className="overflow-hidden p-0">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 transition hover:bg-gray-50 [&::-webkit-details-marker]:hidden">
+            <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.guide_badge', locale)}</MangmeeBadge>
+            <h2 className="min-w-0 flex-1 text-sm font-extrabold tracking-tight text-gray-900 sm:text-base">{t('expenses.substitute_wizard.guide_title', locale)}</h2>
+            <span className="flex shrink-0 items-center gap-1 text-xs font-bold text-brand-700">
+              {t('expenses.substitute_wizard.guide_toggle', locale)}
+              <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4 transition-transform group-open:rotate-180">
+                <path d="m5.5 8 4.5 4.5L14.5 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </summary>
+          <div className="space-y-3 border-t border-gray-100 px-4 pb-4 pt-3">
+            <p className="text-sm leading-5 text-gray-600">{t('expenses.substitute_wizard.guide_description', locale)}</p>
+            <ol className="grid gap-1.5 md:grid-cols-3">
+              {([
+                ['1', 'expenses.substitute_wizard.guide_actual_expense'],
+                ['2', 'expenses.substitute_wizard.guide_no_receipt'],
+                ['3', 'expenses.substitute_wizard.guide_has_evidence'],
+              ] as const).map(([number, key]) => (
+                <li key={key} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-semibold leading-4 text-gray-700">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-100 text-[11px] font-extrabold text-brand-700">{number}</span>
+                  <span className="min-w-0">{t(key, locale)}</span>
+                </li>
+              ))}
+            </ol>
+            <p className="text-xs font-medium leading-5 text-gray-500">{t('expenses.substitute_wizard.guide_lost_receipt', locale)}</p>
           </div>
-          {candidatesError && <ErrorBanner message={candidatesError} />}
-          {candidatesLoading ? <p className="text-sm text-gray-500">{t('expenses.loading', locale)}</p>
-            : candidates.length === 0 ? <p className="text-sm text-gray-500">{t('expenses.substitute_wizard.candidate_empty', locale)}</p>
-              : <div className="max-h-96 space-y-2 overflow-y-auto">
-                {candidates.map((item) => (
-                  <button key={item.id} type="button" onClick={() => selectExpense(item)}
-                    className={cx('w-full rounded-xl border p-3 text-left transition', detail?.id === item.id ? 'border-brand-400 bg-brand-25' : 'border-gray-200 hover:border-brand-200')}>
-                    <div className="font-semibold text-gray-900">{item.vendorNameSnapshot || item.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}</div>
-                    <div className="mt-1 flex justify-between gap-3 text-xs text-gray-500"><span>{dateShort(item.expenseDate)}</span><span className="font-bold tabular-nums text-gray-800">{baht(item.grandTotalAmount)}</span></div>
-                  </button>
-                ))}
-              </div>}
-          {!candidatesLoading && candidatesTruncated && (
-            <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.candidate_truncated', locale)}</p>
+        </details>
+        <div className="flex items-start gap-2 border-t border-warning-100 bg-warning-50 px-4 py-2.5 text-xs font-semibold leading-5 text-warning-700">
+          <span aria-hidden="true">⚠</span>
+          {t('expenses.substitute_wizard.tax_notice', locale)}
+        </div>
+      </MangmeeCard>}
+
+      {!detail && (
+        <MangmeeCard className="space-y-3 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-extrabold text-gray-900">{t('expenses.substitute_wizard.entry_question', locale)}<RequiredMark /></h2>
+              <p className="mt-0.5 text-xs leading-5 text-gray-500 sm:text-sm">{t('expenses.substitute_wizard.entry_help', locale)}</p>
+            </div>
+            <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
+          </div>
+          {!canReview && <ErrorBanner message={t('expenses.substitute_wizard.review_permission_required', locale)} />}
+          <div className="grid gap-2 md:grid-cols-2" role="radiogroup" aria-required="true" aria-label={t('expenses.substitute_wizard.entry_question', locale)}>
+            <button
+              ref={existingRouteRef}
+              type="button"
+              role="radio"
+              aria-checked={entryMode === 'existing'}
+              tabIndex={entryMode === 'new' ? -1 : 0}
+              disabled={!canReview}
+              onClick={() => { setEntryMode('existing'); requestWorkflowFocus('candidate'); }}
+              onKeyDown={(event) => handleEntryModeKeyDown(event, 'existing')}
+              className={cx(
+                'cursor-pointer rounded-xl border-2 p-3 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+                entryMode === 'existing' ? 'border-brand-500 bg-brand-25 shadow-md' : 'border-gray-200 bg-white hover:-translate-y-px hover:border-brand-300 hover:shadow-md',
+                !canReview && 'cursor-not-allowed opacity-60',
+              )}
+            >
+              <span className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-100 text-brand-700">{ICON.search}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-extrabold text-gray-900">{t('expenses.substitute_wizard.entry_existing_title', locale)}</span>
+                    <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-bold text-brand-700">{t('expenses.substitute_wizard.recommended', locale)}</span>
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.entry_existing_help', locale)}</span>
+                </span>
+                <span aria-hidden="true" className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition', entryMode === 'existing' ? 'border-brand-500 bg-brand-500' : 'border-gray-300 bg-white')}>
+                  {entryMode === 'existing' && <span className="h-2 w-2 rounded-full bg-white" />}
+                </span>
+              </span>
+            </button>
+            <button
+              ref={newRouteRef}
+              type="button"
+              role="radio"
+              aria-checked={entryMode === 'new'}
+              tabIndex={entryMode === 'new' ? 0 : -1}
+              disabled={!canReview}
+              onClick={() => { setEntryMode('new'); requestWorkflowFocus('manual'); }}
+              onKeyDown={(event) => handleEntryModeKeyDown(event, 'new')}
+              className={cx(
+                'cursor-pointer rounded-xl border-2 p-3 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+                entryMode === 'new' ? 'border-brand-500 bg-brand-25 shadow-md' : 'border-gray-200 bg-white hover:-translate-y-px hover:border-brand-300 hover:shadow-md',
+                !canReview && 'cursor-not-allowed opacity-60',
+              )}
+            >
+              <span className="flex items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-50 text-sky-600">{ICON.edit}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-extrabold text-gray-900">{t('expenses.substitute_wizard.entry_new_title', locale)}</span>
+                  <span className="mt-0.5 block text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.entry_new_help', locale)}</span>
+                </span>
+                <span aria-hidden="true" className={cx('mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition', entryMode === 'new' ? 'border-brand-500 bg-brand-500' : 'border-gray-300 bg-white')}>
+                  {entryMode === 'new' && <span className="h-2 w-2 rounded-full bg-white" />}
+                </span>
+              </span>
+            </button>
+          </div>
+        </MangmeeCard>
+      )}
+
+      {!detail && entryMode === 'existing' && (
+        <MangmeeCard className="space-y-4 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 ref={candidateHeadingRef} tabIndex={-1} className="scroll-mt-24 font-bold text-gray-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{t('expenses.substitute_wizard.candidate_title', locale)}<RequiredMark /></h2>
+              <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.candidate_help', locale)}</p>
+            </div>
+            {!candidatesLoading && <MangmeeBadge tone="slate">{t('expenses.substitute_wizard.candidate_count', locale).replace('{count}', String(filteredCandidates.length))}</MangmeeBadge>}
+          </div>
+          {candidatesError ? (
+            <div className="space-y-2">
+              <ErrorBanner message={candidatesError} />
+              <button type="button" className={ghostClass} onClick={() => setCandidatesReloadKey((current) => current + 1)}>{t('expenses.substitute_wizard.retry', locale)}</button>
+            </div>
+          ) : candidatesLoading ? <LoadingState label={t('expenses.loading', locale)} />
+            : candidates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
+                <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-gray-400 shadow-sm">{ICON.receipt}</span>
+                <h3 className="mt-3 font-bold text-gray-900">{t('expenses.substitute_wizard.candidate_empty', locale)}</h3>
+                <p className="mx-auto mt-1 max-w-xl text-sm leading-6 text-gray-500">{t('expenses.substitute_wizard.candidate_empty_help', locale)}</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <button type="button" className={btnClass} onClick={() => { setEntryMode('new'); requestWorkflowFocus('manual'); }}>{t('expenses.substitute_wizard.entry_new_action', locale)}</button>
+                  <Link className={ghostClass} href={`/companies/${companyId}/expenses`}>{t('expenses.substitute_wizard.open_expenses', locale)}</Link>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="relative block min-w-0 flex-1">
+                    <span className="sr-only">{t('expenses.substitute_wizard.candidate_search', locale)}</span>
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICON.search}</span>
+                    <input className={cx(inputClass, 'pl-11')} value={candidateQuery} placeholder={t('expenses.substitute_wizard.candidate_search', locale)} onChange={(event) => { setCandidateQuery(stripDisallowed(event.target.value)); setCandidatePage(1); }} />
+                  </label>
+                  <ThemedSelect aria-label={t('expenses.substitute_wizard.candidate_sort_label', locale)} className={cx(inputClass, 'sm:w-52')} value={candidateSort} onChange={(event) => { setCandidateSort(event.target.value as CandidateSortKey); setCandidatePage(1); }}>
+                    <option value="date_desc">{t('expenses.substitute_wizard.candidate_sort_date_desc', locale)}</option>
+                    <option value="date_asc">{t('expenses.substitute_wizard.candidate_sort_date_asc', locale)}</option>
+                    <option value="amount_desc">{t('expenses.substitute_wizard.candidate_sort_amount_desc', locale)}</option>
+                    <option value="amount_asc">{t('expenses.substitute_wizard.candidate_sort_amount_asc', locale)}</option>
+                  </ThemedSelect>
+                </div>
+                {filteredCandidates.length === 0 ? (
+                  <p className="rounded-xl bg-gray-50 p-4 text-center text-sm text-gray-500">{t('expenses.substitute_wizard.candidate_search_empty', locale)}</p>
+                ) : (
+                  <div className="grid gap-2">
+                    {candidatePagination.rows.map((item) => {
+                      const candidateEligible = isSubstituteReceiptCandidateEligible(item);
+                      const renderabilityIssue = substituteReceiptRenderabilityIssue(item);
+                      return (
+                      <button key={item.id} type="button" disabled={!canReview} onClick={() => selectExpense(item)}
+                        aria-label={`${t('expenses.substitute_wizard.select_action', locale)}: ${item.vendorNameSnapshot || item.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}, ${t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(item.lines.length))}, ${item.expenseNumber}, ${baht(item.grandTotalAmount)}`}
+                        className={cx(
+                          'group rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
+                          candidateEligible
+                            ? 'border-gray-200 hover:border-brand-300 hover:bg-brand-25'
+                            : 'border-warning-200 bg-warning-50 hover:border-warning-300',
+                        )}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-gray-900">{item.vendorNameSnapshot || item.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}</p>
+                            <p className="mt-1 text-xs font-medium text-gray-400">{item.expenseNumber} · {t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(item.lines.length))}</p>
+                          </div>
+                          <span className="shrink-0 text-base font-extrabold tabular-nums text-gray-900">{baht(item.grandTotalAmount)}</span>
+                        </div>
+                        {item.lines.length > 1 && (
+                          <p className="mt-2 truncate text-xs text-gray-500">
+                            {item.lines.slice(0, 2).map((line) => line.description).join(' · ')}
+                            {item.lines.length > 2 ? ` · ${t('expenses.substitute_wizard.more_items', locale).replace('{count}', String(item.lines.length - 2))}` : ''}
+                          </p>
+                        )}
+                        {renderabilityIssue && (
+                          <p className="mt-2 rounded-lg bg-white px-2 py-1.5 text-xs font-semibold leading-5 text-warning-700">
+                            {renderabilityIssueMessage(renderabilityIssue, locale)}
+                          </p>
+                        )}
+                        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-gray-500">
+                          <span>{dateShort(item.expenseDate)}</span>
+                          <span className="font-bold text-brand-700 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-visible:opacity-100">{t('expenses.substitute_wizard.select_action', locale)} →</span>
+                        </div>
+                      </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {candidatePagination.totalPages > 1 && (
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <button type="button" className={ghostClass} disabled={candidatePagination.page <= 1} onClick={() => setCandidatePage(candidatePagination.page - 1)}>‹ {t('expenses.previous', locale)}</button>
+                    <span className="text-xs font-semibold tabular-nums text-gray-500">
+                      {t('expenses.substitute_wizard.candidate_page_of', locale).replace('{page}', String(candidatePagination.page)).replace('{total}', String(candidatePagination.totalPages))}
+                    </span>
+                    <button type="button" className={ghostClass} disabled={candidatePagination.page >= candidatePagination.totalPages} onClick={() => setCandidatePage(candidatePagination.page + 1)}>{t('expenses.next', locale)} ›</button>
+                  </div>
+                )}
+              </>
+            )}
+          {!candidatesError && !candidatesLoading && candidatesTruncated && (
+            <p className="rounded-xl bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.candidate_truncated', locale)}</p>
           )}
         </MangmeeCard>
+      )}
 
-        <MangmeeCard className="space-y-3 p-4">
-          <div>
-            <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.manual_title', locale)}</h2>
-            <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.manual_help', locale)}</p>
+      {!detail && entryMode === 'new' && (
+        <MangmeeCard className="space-y-4 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 ref={manualHeadingRef} tabIndex={-1} className="scroll-mt-24 font-bold text-gray-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{t('expenses.substitute_wizard.manual_title', locale)}</h2>
+              <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.manual_help', locale)}</p>
+            </div>
+            <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
           </div>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.manual_date', locale)}</span>
-            <ThemedDate className={inputClass} value={manualDate} onChange={(event) => setManualDate(event.target.value)} />
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.manual_description', locale)}</span>
-            <input className={inputClass} value={manualDescription} onChange={(event) => setManualDescription(stripDisallowed(event.target.value))} />
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.amount', locale)}</span>
-            <input className={inputClass} type="number" min="0" step="0.01" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} />
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.category', locale)}</span>
-            <ThemedSelect className={inputClass} value={manualCategoryId} onChange={(event) => setManualCategoryId(event.target.value)}>
-              <option value="">{t('expenses.substitute_wizard.category_none', locale)}</option>
-              {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </ThemedSelect>
-          </label>
-          <button type="button" className={btnClass} disabled={!canCreate || busy || !manualDate || !manualDescription.trim() || Number(manualAmount) <= 0 || !manualCategoryId} onClick={() => void run(createManualExpense)}>
-            {t('expenses.substitute_wizard.create_expense', locale)}
-          </button>
-          {!canCreate && <p className="text-xs text-warning-700">{t('expenses.manual_read_only', locale)}</p>}
+          <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm leading-6 text-sky-700">
+            <strong>{t('expenses.substitute_wizard.manual_notice_title', locale)}</strong> {t('expenses.substitute_wizard.manual_notice', locale)}
+          </div>
+          {categoriesError && (
+            <div className="space-y-2">
+              <ErrorBanner message={categoriesError} />
+              <button type="button" className={ghostClass} onClick={() => setCategoriesReloadKey((current) => current + 1)}>{t('expenses.substitute_wizard.retry', locale)}</button>
+            </div>
+          )}
+          {!categoriesLoading && !categoriesError && categories.length === 0 && (
+            <div className="rounded-xl border border-warning-100 bg-warning-50 p-4 text-sm leading-6 text-warning-700">
+              <p>{t('expenses.substitute_wizard.category_empty', locale)}</p>
+              <Link className={cx(ghostClass, 'mt-3 inline-flex')} href={`/companies/${companyId}/expenses/categories`}>{t('expenses.substitute_wizard.manage_categories', locale)}</Link>
+            </div>
+          )}
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(15rem,0.65fr)] sm:items-end">
+            <label className="block text-sm font-semibold text-gray-700">
+              <span className="mb-1 block">{t('expenses.substitute_wizard.shared_expense_date', locale)}<RequiredMark /></span>
+              <ThemedDate
+                triggerRef={manualDateTriggerRef}
+                className={inputClass}
+                value={manualDate}
+                required
+                aria-invalid={manualValidationAttempted && !manualDate}
+                aria-describedby={manualValidationAttempted && !manualDate ? 'substitute-manual-date-error' : undefined}
+                aria-label={t('expenses.substitute_wizard.shared_expense_date', locale)}
+                onChange={(event) => setManualDate(event.target.value)}
+              />
+              {manualValidationAttempted && !manualDate && <span id="substitute-manual-date-error" className="mt-1 block text-xs text-error-700">{t('expenses.substitute_wizard.date_required', locale)}</span>}
+            </label>
+            <div className="rounded-xl border border-brand-100 bg-brand-25 px-3 py-2 text-xs leading-5 text-brand-800">
+              <strong>{t('expenses.substitute_wizard.multi_item_rule_title', locale)}</strong> {t('expenses.substitute_wizard.multi_item_rule', locale)}
+            </div>
+          </div>
+          <section className="space-y-3" aria-labelledby="substitute-manual-items-title">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h3 id="substitute-manual-items-title" className="text-sm font-extrabold text-gray-900">{t('expenses.substitute_wizard.items_title', locale)}<RequiredMark /></h3>
+                <p className="mt-0.5 text-xs text-gray-500">{t('expenses.substitute_wizard.items_help', locale)}</p>
+              </div>
+              <MangmeeBadge tone="slate">{t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(manualLines.length))}</MangmeeBadge>
+            </div>
+            {manualLines.map((line, index) => {
+              const invalidFields = manualValidationAttempted ? invalidManualLineFields(line) : [];
+              const lineErrorId = `substitute-${line.id}-error`;
+              const isInvalid = (field: ManualLineField) => invalidFields.includes(field);
+              return (
+              <fieldset
+                key={line.id}
+                ref={(node) => { manualLineCardRefs.current[line.id] = node; }}
+                tabIndex={-1}
+                aria-invalid={manualValidationAttempted && manualLinesReadiness.invalidLineIndexes.includes(index) || undefined}
+                className={cx(
+                  'overflow-hidden rounded-xl border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2',
+                  manualValidationAttempted && manualLinesReadiness.invalidLineIndexes.includes(index) ? 'border-error-500' : 'border-gray-200',
+                )}
+              >
+                <legend className="sr-only">{t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}</legend>
+                <div className="flex min-h-11 items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-1.5">
+                  <span className="text-xs font-extrabold text-gray-700">{t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}</span>
+                  <div className="flex items-center gap-1">
+                    {manualLines.length > 1 && (
+                      <>
+                        <button type="button" className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white hover:text-brand-700 disabled:opacity-30" disabled={index === 0 || busy} aria-label={`${t('expenses.substitute_wizard.move_item_up', locale)}: ${t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}`} onClick={() => moveManualLine(index, -1)}>↑</button>
+                        <button type="button" className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 transition hover:bg-white hover:text-brand-700 disabled:opacity-30" disabled={index === manualLines.length - 1 || busy} aria-label={`${t('expenses.substitute_wizard.move_item_down', locale)}: ${t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}`} onClick={() => moveManualLine(index, 1)}>↓</button>
+                        <button type="button" className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 transition hover:bg-error-50 hover:text-error-700" disabled={busy} aria-label={`${t('expenses.substitute_wizard.remove_item', locale)}: ${t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}`} onClick={() => removeManualLine(line.id)}>×</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-12">
+                  <label className="block text-sm font-semibold text-gray-700 sm:col-span-2 lg:col-span-7">
+                    <span className="mb-1 block">{t('expenses.manual_description', locale)}<RequiredMark /></span>
+                    <input id={manualLineControlId(line.id, 'description')} ref={(node) => { manualLineDescriptionRefs.current[line.id] = node; }} className={inputClass} required maxLength={200} value={line.description} aria-invalid={isInvalid('description') || undefined} aria-describedby={isInvalid('description') ? lineErrorId : undefined} placeholder={t('expenses.substitute_wizard.manual_description_placeholder', locale)} onChange={(event) => updateManualLine(line.id, { description: stripDisallowed(event.target.value) })} />
+                  </label>
+                  <label className="block text-sm font-semibold text-gray-700 sm:col-span-2 lg:col-span-5">
+                    <span className="mb-1 block">{t('expenses.substitute_wizard.category', locale)}<RequiredMark /></span>
+                    <ThemedSelect id={manualLineControlId(line.id, 'expenseCategoryId')} className={inputClass} value={line.expenseCategoryId} required aria-invalid={isInvalid('expenseCategoryId') || undefined} aria-describedby={isInvalid('expenseCategoryId') ? lineErrorId : undefined} aria-label={`${t('expenses.substitute_wizard.item_n', locale).replace('{number}', String(index + 1))}: ${t('expenses.substitute_wizard.category', locale)}`} onChange={(event) => updateManualLine(line.id, { expenseCategoryId: event.target.value })} disabled={categoriesLoading}>
+                      <option value="">{categoriesLoading ? t('expenses.loading', locale) : t('expenses.substitute_wizard.category_none', locale)}</option>
+                      {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                    </ThemedSelect>
+                  </label>
+                  <label className="block text-sm font-semibold text-gray-700 lg:col-span-3">
+                    <span className="mb-1 block">{t('expenses.substitute_wizard.quantity', locale)}<RequiredMark /></span>
+                    <input id={manualLineControlId(line.id, 'quantity')} className={cx(inputClass, 'text-right tabular-nums')} required type="number" inputMode="decimal" min="0.0001" step="0.0001" value={line.quantity} aria-invalid={isInvalid('quantity') || undefined} aria-describedby={isInvalid('quantity') ? lineErrorId : undefined} onChange={(event) => updateManualLine(line.id, { quantity: event.target.value })} />
+                  </label>
+                  <label className="block text-sm font-semibold text-gray-700 lg:col-span-4">
+                    <span className="mb-1 block">{t('expenses.substitute_wizard.unit_price', locale)}<RequiredMark /></span>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-gray-500">฿</span>
+                      <input id={manualLineControlId(line.id, 'unitPrice')} className={cx(inputClass, 'pl-8 text-right tabular-nums')} required type="number" inputMode="decimal" min="0.0001" step="0.0001" value={line.unitPrice} aria-invalid={isInvalid('unitPrice') || undefined} aria-describedby={isInvalid('unitPrice') ? lineErrorId : undefined} placeholder="0.00" onChange={(event) => updateManualLine(line.id, { unitPrice: event.target.value })} />
+                    </div>
+                  </label>
+                  <div className="rounded-xl bg-gray-50 px-3 py-2 lg:col-span-5 lg:self-end">
+                    <span className="block text-xs font-medium text-gray-500">{t('expenses.substitute_wizard.line_total', locale)}</span>
+                    <span className="mt-0.5 block text-right text-base font-extrabold tabular-nums text-gray-900">{baht(manualLineAmount(line))}</span>
+                  </div>
+                </div>
+                {manualValidationAttempted && manualLinesReadiness.invalidLineIndexes.includes(index) && (
+                  <p id={lineErrorId} className="border-t border-error-50 bg-error-50 px-3 py-2 text-xs font-medium text-error-700">{t('expenses.substitute_wizard.item_incomplete', locale)}</p>
+                )}
+              </fieldset>
+              );
+            })}
+            <p className="sr-only" aria-live="polite">{manualAnnouncement}</p>
+            <button ref={addManualLineRef} type="button" className="flex min-h-11 w-full items-center justify-center rounded-xl border-2 border-dashed border-brand-200 px-3 py-2 text-sm font-bold text-brand-700 transition hover:border-brand-400 hover:bg-brand-25 disabled:cursor-not-allowed disabled:border-gray-200 disabled:text-gray-400" disabled={busy || manualLines.length >= MAX_SUBSTITUTE_MANUAL_LINES} onClick={addManualLine}>
+              + {t('expenses.substitute_wizard.add_item', locale)}
+            </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-gray-900 px-4 py-3 text-white">
+              <span className="text-sm font-semibold">{t('expenses.substitute_wizard.items_total_label', locale).replace('{count}', String(manualLines.length))}</span>
+              <span className="text-xl font-extrabold tabular-nums">{baht(manualTotal)}</span>
+            </div>
+            <p className="text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.item_limit_help', locale).replace('{count}', String(MAX_SUBSTITUTE_MANUAL_LINES))}</p>
+          </section>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
+            {!canCreate && <p className="text-xs text-warning-700">{t('expenses.manual_read_only', locale)}</p>}
+            {canCreate && manualMissingCount > 0 && <p className="text-xs font-medium text-gray-500">{t('expenses.substitute_wizard.manual_missing', locale).replace('{count}', String(manualMissingCount))}</p>}
+            <button type="button" className={cx(btnClass, 'ml-auto')} disabled={!canCreate || !canReview || busy || categoriesLoading || Boolean(categoriesError) || categories.length === 0} onClick={() => void run(createManualExpense)}>
+              {t('expenses.substitute_wizard.create_and_select', locale)}
+            </button>
+          </div>
         </MangmeeCard>
-      </div>
+      )}
 
       {detail && (
-        <div className="space-y-3">
-          <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} />
-          <MangmeeCard className="border-warning-100 bg-warning-50 p-4">
-            <p className="text-sm font-semibold leading-relaxed text-warning-700">{t('expenses.substitute_wizard.consent_text', locale)}</p>
-            <label className="mt-3 flex items-start gap-2 text-sm font-semibold text-gray-800">
-              <input className="mt-1" type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-              <span>{t('expenses.substitute_wizard.consent_confirm', locale)}</span>
-            </label>
-          </MangmeeCard>
-          <div className="flex justify-end">
-            <button type="button" className={btnClass} disabled={busy || !consent || !canReview} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue', locale)}</button>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h2 ref={selectionHeadingRef} tabIndex={-1} className="scroll-mt-24 text-sm font-bold text-gray-700 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{t('expenses.substitute_wizard.selection_confirm_title', locale)}</h2>
+              {!initialExpenseId && !evidenceId && (
+                <button type="button" className="text-sm font-bold text-brand-700 hover:text-brand-800" onClick={() => {
+                  setDetail(null);
+                  setConsent(false);
+                  setEntryMode('existing');
+                  requestWorkflowFocus('candidate');
+                }}>{t('expenses.substitute_wizard.change_expense', locale)}</button>
+              )}
+            </div>
+            <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+            {selectedExpenseRenderabilityIssue && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2">
+                <p className="text-xs font-semibold leading-5 text-warning-700">
+                  {t('expenses.substitute_wizard.render_limit_action_help', locale)}
+                </p>
+                <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>
+                  {t('expenses.substitute_wizard.edit_expense_to_split', locale)}
+                </Link>
+              </div>
+            )}
+            <MangmeeCard className="border-warning-100 bg-warning-50 p-4">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 shrink-0 text-warning-700">{ICON.alert}</span>
+                <div>
+                  <p className="text-sm font-semibold leading-relaxed text-warning-700">{t('expenses.substitute_wizard.consent_text', locale)}</p>
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold text-gray-800">
+                    <input className="mt-0.5 h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+                    <span>{t('expenses.substitute_wizard.consent_confirm', locale)}<RequiredMark /></span>
+                  </label>
+                </div>
+              </div>
+            </MangmeeCard>
+            <div className="flex justify-end border-t border-gray-100 pt-3">
+              <button type="button" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy || !consent || !canReview || Boolean(selectedExpenseRenderabilityIssue)} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue_to_details', locale)}</button>
+            </div>
           </div>
+          <ReadinessCard
+            title={t('expenses.substitute_wizard.readiness_title', locale)}
+            description={t('expenses.substitute_wizard.readiness_description', locale)}
+            completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
+            incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
+            items={[
+              { label: t('expenses.substitute_wizard.readiness_expense', locale), complete: !selectedExpenseRenderabilityIssue },
+              { label: t('expenses.substitute_wizard.readiness_tax_ack', locale), complete: consent },
+              { label: t('expenses.substitute_wizard.readiness_permission', locale), complete: canReview },
+            ]}
+          />
         </div>
       )}
     </div>
   );
 
-  const renderDetailsStep = () => detail && (
+  const detailsReadiness = detail ? evaluateDetailsReadiness({
+    payeeName,
+    payeeAddress,
+    payeeTaxId,
+    vendorNameSnapshot: detail.vendorNameSnapshot,
+    missingReason,
+    businessPurpose,
+    payerId,
+    payerEligible: payers.some((payer) => payer.userId === payerId),
+    paymentDate,
+  }) : null;
+
+  const renderDetailsStep = () => detail && detailsReadiness && (
     <div className="space-y-4">
-      <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} />
-      <MangmeeCard className="space-y-4 p-4">
-        <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.details_title', locale)}</h2>
-        <div className="grid gap-4 border-b border-gray-200 pb-4 sm:grid-cols-2">
-          <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payee_name', locale)}{!detail.vendorNameSnapshot?.trim() ? ' *' : ''}</span>
-            <input className={inputClass} maxLength={201} value={payeeName} aria-invalid={Boolean(payeeIdentityIssues.payeeName) || undefined} onChange={(event) => setPayeeName(stripDisallowed(event.target.value))} />
-            {payeeIdentityIssues.payeeName && <p className="mt-1 text-xs text-error-700">{t(PAYEE_ISSUE_KEYS[payeeIdentityIssues.payeeName], locale)}</p>}
-          </label>
-          <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payee_address', locale)}</span>
-            <textarea className={inputClass} rows={2} maxLength={301} value={payeeAddress} aria-invalid={Boolean(payeeIdentityIssues.payeeAddress) || undefined} onChange={(event) => setPayeeAddress(stripDisallowed(event.target.value))} />
-            {payeeIdentityIssues.payeeAddress && <p className="mt-1 text-xs text-error-700">{t(PAYEE_ISSUE_KEYS[payeeIdentityIssues.payeeAddress], locale)}</p>}
-          </label>
-          <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payee_tax_id', locale)}</span>
-            <input className={inputClass} inputMode="numeric" placeholder="0-0000-00000-00-0" value={payeeTaxId} aria-invalid={Boolean(payeeIdentityIssues.payeeTaxId) || undefined} onChange={(event) => setPayeeTaxId(payeeTaxIdDigits(event.target.value))} />
-            <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payee_tax_id_help', locale)}</p>
-            {payeeTaxId.length > 0 && payeeTaxId.length !== 13 && (
-              <p className="mt-1 text-xs text-error-700">{t('expenses.substitute_wizard.payee_tax_id_count', locale).replace('{count}', String(payeeTaxId.length))}</p>
+      <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4">
+          <MangmeeCard className="space-y-5 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 ref={detailsHeadingRef} tabIndex={-1} className="scroll-mt-24 text-lg font-extrabold text-gray-900 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2">{t('expenses.substitute_wizard.details_title', locale)}</h2>
+                <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.details_help', locale)}</p>
+              </div>
+              <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
+            </div>
+
+            {detail.lines.length > 1 && (
+              <p className="rounded-xl border border-brand-100 bg-brand-25 px-3 py-2 text-sm leading-6 text-brand-800">
+                {t('expenses.substitute_wizard.multi_item_shared_details', locale)}
+              </p>
             )}
-          </label>
+
+            <section className="space-y-4 rounded-2xl border border-gray-200 p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-100 text-sm font-extrabold text-brand-700">1</span>
+                <div>
+                  <h3 className="font-bold text-gray-900">{t('expenses.substitute_wizard.section_payee', locale)}</h3>
+                  <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.section_payee_help', locale)}</p>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.payee_name', locale)}<RequiredMark /></span>
+                  <input className={inputClass} required maxLength={201} value={payeeName} aria-invalid={Boolean(payeeIdentityIssues.payeeName) || undefined} placeholder={t('expenses.substitute_wizard.payee_name_placeholder', locale)} onChange={(event) => setPayeeName(stripDisallowed(event.target.value))} />
+                  {payeeIdentityIssues.payeeName && <p className="mt-1 text-xs text-error-700">{t(PAYEE_ISSUE_KEYS[payeeIdentityIssues.payeeName], locale)}</p>}
+                </label>
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 flex flex-wrap items-center gap-2">{t('expenses.substitute_wizard.payee_address', locale)}<span className="text-xs font-normal text-gray-400">{t('expenses.substitute_wizard.optional_recommended', locale)}</span></span>
+                  <textarea className={inputClass} rows={2} maxLength={301} value={payeeAddress} aria-invalid={Boolean(payeeIdentityIssues.payeeAddress) || undefined} onChange={(event) => setPayeeAddress(stripDisallowed(event.target.value))} />
+                  {payeeIdentityIssues.payeeAddress && <p className="mt-1 text-xs text-error-700">{t(PAYEE_ISSUE_KEYS[payeeIdentityIssues.payeeAddress], locale)}</p>}
+                </label>
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 flex flex-wrap items-center gap-2">{t('expenses.substitute_wizard.payee_tax_id', locale)}<span className="text-xs font-normal text-gray-400">{t('expenses.substitute_wizard.optional_recommended', locale)}</span></span>
+                  <input className={inputClass} inputMode="numeric" placeholder="0-0000-00000-00-0" value={payeeTaxId} aria-invalid={Boolean(payeeIdentityIssues.payeeTaxId) || undefined} onChange={(event) => setPayeeTaxId(payeeTaxIdDigits(event.target.value))} />
+                  <p className="mt-1 text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.payee_tax_id_help', locale)}</p>
+                  {payeeTaxId.length > 0 && payeeTaxId.length !== 13 && (
+                    <p className="mt-1 text-xs text-error-700">{t('expenses.substitute_wizard.payee_tax_id_count', locale).replace('{count}', String(payeeTaxId.length))}</p>
+                  )}
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4 rounded-2xl border border-gray-200 p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-warning-100 text-sm font-extrabold text-warning-700">2</span>
+                <div>
+                  <h3 className="font-bold text-gray-900">{t('expenses.substitute_wizard.section_reason', locale)}</h3>
+                  <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.section_reason_help', locale)}</p>
+                </div>
+              </div>
+              <div className="rounded-xl bg-warning-50 px-3 py-2 text-xs leading-5 text-warning-700">{t('expenses.substitute_wizard.lost_receipt_notice', locale)}</div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.reason_code', locale)}<RequiredMark /></span>
+                  <ThemedSelect className={inputClass} required value={reasonCode} aria-label={t('expenses.substitute_wizard.reason_code', locale)} onChange={(event) => setReasonCode(event.target.value as SubstituteReceiptReasonCode)}>
+                    {Object.entries(REASON_KEYS).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
+                  </ThemedSelect>
+                </label>
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.missing_reason', locale)}<RequiredMark /></span>
+                  <textarea className={inputClass} required rows={3} maxLength={500} value={missingReason} placeholder={t('expenses.substitute_wizard.missing_reason_placeholder', locale)} onChange={(event) => setMissingReason(stripDisallowed(event.target.value))} />
+                  <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.missing_reason_help', locale)}</span>
+                </label>
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.business_purpose', locale)}<RequiredMark /></span>
+                  <textarea className={inputClass} required rows={3} maxLength={500} value={businessPurpose} placeholder={t('expenses.substitute_wizard.business_purpose_placeholder', locale)} onChange={(event) => setBusinessPurpose(stripDisallowed(event.target.value))} />
+                  <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.business_purpose_help', locale)}</span>
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4 rounded-2xl border border-gray-200 p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sm font-extrabold text-sky-600">3</span>
+                <div>
+                  <h3 className="font-bold text-gray-900">{t('expenses.substitute_wizard.section_payment', locale)}</h3>
+                  <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.section_payment_help', locale)}</p>
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.payer', locale)}<RequiredMark /></span>
+                  <ThemedSelect className={inputClass} required value={payerId} aria-label={t('expenses.substitute_wizard.payer', locale)} onChange={(event) => setPayerId(event.target.value)} disabled={payersLoading}>
+                    <option value="">{t('expenses.substitute_wizard.select_payer', locale)}</option>
+                    {payers.map((payer) => <option key={payer.userId} value={payer.userId}>{payer.displayName}</option>)}
+                  </ThemedSelect>
+                  <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.payer_help', locale)}</span>
+                  {payersLoading && <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payers_loading', locale)}</p>}
+                  {!payersLoading && payers.length === 0 && <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-normal leading-5 text-warning-700">{t('expenses.substitute_wizard.payer_empty', locale)}</p>}
+                </label>
+                <label className="block text-sm font-semibold text-gray-700">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.payment_method', locale)}<RequiredMark /></span>
+                  <ThemedSelect className={inputClass} required value={paymentMethod} aria-label={t('expenses.substitute_wizard.payment_method', locale)} onChange={(event) => setPaymentMethod(event.target.value as ExpensePaymentMethod)}>
+                    {Object.entries(PAYMENT_KEYS).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
+                  </ThemedSelect>
+                </label>
+                <label className="block text-sm font-semibold text-gray-700">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.payment_date', locale)}<RequiredMark /></span>
+                  <ThemedDate className={inputClass} required value={paymentDate} aria-label={t('expenses.substitute_wizard.payment_date', locale)} onChange={(event) => setPaymentDate(event.target.value)} />
+                </label>
+              </div>
+            </section>
+          </MangmeeCard>
+          <div className="flex justify-between gap-3 border-t border-gray-100 pt-3">
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => { setActiveStep('expense'); requestWorkflowFocus('selection'); }}>{t('expenses.substitute_wizard.back', locale)}</button>
+            <button type="button" className={btnClass} disabled={busy || payersLoading || !detailsReadiness.ready} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
+          </div>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.reason_code', locale)}</span>
-            <ThemedSelect className={inputClass} value={reasonCode} onChange={(event) => setReasonCode(event.target.value as SubstituteReceiptReasonCode)}>
-              {Object.entries(REASON_KEYS).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
-            </ThemedSelect>
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payer', locale)}</span>
-            <ThemedSelect className={inputClass} value={payerId} onChange={(event) => setPayerId(event.target.value)} disabled={payersLoading}>
-              <option value="">{t('expenses.substitute_wizard.select_payer', locale)}</option>
-              {payers.map((payer) => <option key={payer.userId} value={payer.userId}>{payer.displayName}</option>)}
-            </ThemedSelect>
-            {payersLoading && <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payers_loading', locale)}</p>}
-          </label>
-          <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.missing_reason', locale)}</span>
-            <textarea className={inputClass} rows={3} maxLength={500} value={missingReason} onChange={(event) => setMissingReason(stripDisallowed(event.target.value))} />
-          </label>
-          <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.business_purpose', locale)}</span>
-            <textarea className={inputClass} rows={3} maxLength={500} value={businessPurpose} onChange={(event) => setBusinessPurpose(stripDisallowed(event.target.value))} />
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payment_method', locale)}</span>
-            <ThemedSelect className={inputClass} value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as ExpensePaymentMethod)}>
-              {Object.entries(PAYMENT_KEYS).map(([value, key]) => <option key={value} value={value}>{t(key, locale)}</option>)}
-            </ThemedSelect>
-          </label>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payment_date', locale)}</span>
-            <ThemedDate className={inputClass} value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} />
-          </label>
-        </div>
-      </MangmeeCard>
-      <div className="flex justify-between gap-3">
-        <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('expense')}>{t('expenses.substitute_wizard.back', locale)}</button>
-        <button type="button" className={btnClass} disabled={busy || payersLoading || Object.keys(payeeIdentityIssues).length > 0 || !missingReason.trim() || !businessPurpose.trim() || !payerId || !paymentDate} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue', locale)}</button>
+        <ReadinessCard
+          title={t('expenses.substitute_wizard.readiness_title', locale)}
+          description={t('expenses.substitute_wizard.readiness_description', locale)}
+          completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
+          incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
+          items={[
+            { label: t('expenses.substitute_wizard.payee_name', locale), complete: !detailsReadiness.missing.includes('payeeName') },
+            { label: t('expenses.substitute_wizard.missing_reason', locale), complete: !detailsReadiness.missing.includes('missingReason') },
+            { label: t('expenses.substitute_wizard.business_purpose', locale), complete: !detailsReadiness.missing.includes('businessPurpose') },
+            { label: t('expenses.substitute_wizard.payer', locale), complete: !detailsReadiness.missing.includes('payer') },
+            { label: t('expenses.substitute_wizard.payment_date', locale), complete: !detailsReadiness.missing.includes('paymentDate') },
+            ...(payeeAddress.trim() ? [{ label: t('expenses.substitute_wizard.payee_address', locale), complete: !detailsReadiness.missing.includes('payeeAddress') }] : []),
+            ...(payeeTaxId.trim() ? [{ label: t('expenses.substitute_wizard.payee_tax_id', locale), complete: !detailsReadiness.missing.includes('payeeTaxId') }] : []),
+          ]}
+        />
       </div>
     </div>
   );
@@ -943,6 +1800,7 @@ export function SubstituteReceiptWizardPage({
     purpose: 'expense.receipt.supporting' | 'expense.payment.evidence',
     titleKey: DictionaryKey,
     helpKey: DictionaryKey,
+    required: boolean,
     ids: string[],
     setIds: (next: string[]) => void,
     file: File | null,
@@ -953,25 +1811,67 @@ export function SubstituteReceiptWizardPage({
         ? attachment.purpose === purpose
         : attachment.purpose !== 'expense.payment.evidence' && attachment.purpose !== 'expense.review.evidence')) ?? [];
     return (
-      <MangmeeCard className="space-y-3 p-4">
-        <div>
-          <h2 className="font-bold text-gray-900">{t(titleKey, locale)}</h2>
+      <MangmeeCard className={cx('space-y-4 p-5', required ? 'border-brand-100' : 'border-gray-200')}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+          <h2 className="font-bold text-gray-900">{t(titleKey, locale)}{required && <RequiredMark />}</h2>
           <p className="mt-1 text-sm text-gray-500">{t(helpKey, locale)}</p>
+          </div>
+          <MangmeeBadge tone={ids.length > 0 ? 'brand' : required ? 'amber' : 'slate'}>
+            {ids.length > 0
+              ? t('expenses.substitute_wizard.file_count', locale).replace('{count}', String(ids.length))
+              : t(required ? 'expenses.substitute_wizard.required_badge' : 'expenses.substitute_wizard.optional_badge', locale)}
+          </MangmeeBadge>
         </div>
-        {attachments.map((attachment) => (
-          <label key={attachment.id} className="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => setIds(event.target.checked ? [...new Set([...ids, attachment.id])] : ids.filter((id) => id !== attachment.id))} />
-            <span>{attachment.originalFileName}</span>
-          </label>
-        ))}
-        <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-brand-200 bg-brand-25 p-4 text-center">
-          <span className="text-sm font-semibold text-brand-700">{t('expenses.substitute_wizard.choose_file', locale)}</span>
-          <span className="mt-1 text-xs text-gray-500">{file?.name ?? t('expenses.substitute_wizard.file_types', locale)}</span>
-          <input className="hidden" type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-        </label>
-        <button type="button" className={ghostClass} disabled={busy || !file} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
+        {attachments.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-400">{t('expenses.substitute_wizard.available_files', locale)}</p>
+            {attachments.map((attachment) => (
+              <div key={attachment.id} className={cx(
+                'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition',
+                ids.includes(attachment.id) ? 'border-brand-200 bg-brand-25 text-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-50',
+              )}>
+                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                  <input className="h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => {
+                    const nextIds = event.target.checked
+                      ? [...new Set([...ids, attachment.id])]
+                      : ids.filter((id) => id !== attachment.id);
+                    if (event.target.checked && detail) {
+                      const otherIds = purpose === 'expense.payment.evidence' ? supportingIds : paymentIds;
+                      const selected = new Set([...nextIds, ...otherIds]);
+                      const issue = substituteReceiptEvidenceRenderabilityIssue(
+                        detail.attachments.filter((item) => selected.has(item.id)),
+                      );
+                      if (issue) {
+                        setError(evidenceRenderabilityIssueMessage(issue, locale));
+                        return;
+                      }
+                    }
+                    setError(null);
+                    setIds(nextIds);
+                  }} />
+                  <span className="text-brand-700">{ICON.file}</span>
+                  <span className="min-w-0 flex-1 truncate">{attachment.originalFileName}</span>
+                  {ids.includes(attachment.id) && <span className="text-xs font-bold text-brand-700">✓</span>}
+                </label>
+                <button
+                  type="button"
+                  className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs font-bold text-brand-700 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  disabled={busy}
+                  onClick={() => void run(() => openEvidenceAttachment(attachment))}
+                >
+                  {ICON.eye}<span>{t('expenses.substitute_wizard.open_document', locale)}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="rounded-xl border border-dashed border-brand-200 bg-brand-25 p-3">
+          <ThemedFile file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} placeholder={t('expenses.substitute_wizard.file_types', locale)} aria-label={t(titleKey, locale)} onChange={setFile} />
+          <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy || !file} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
+        </div>
         {purpose === 'expense.payment.evidence' && paymentMethod === 'CASH' && (
-          <div className="border-t border-gray-100 pt-3">
+          <div className="rounded-xl bg-gray-50 p-3">
             <p className="text-sm text-gray-500">{t('expenses.substitute_wizard.payment_voucher_help', locale)}</p>
             <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy} onClick={() => void run(downloadPaymentVoucher)}>
               <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute_wizard.payment_voucher_action', locale)}</span>
@@ -982,45 +1882,97 @@ export function SubstituteReceiptWizardPage({
     );
   };
 
+  const evidenceReadiness = evaluateEvidenceReadiness({
+    policyReady: Boolean(policy?.ready),
+    supportingCount: supportingIds.length,
+    paymentCount: paymentIds.length,
+    requiresPaymentEvidence,
+    renderabilityIssue: selectedEvidenceRenderabilityIssue,
+  });
+
   const renderEvidenceStep = () => detail && (
     <div className="space-y-4">
-      <div className="grid gap-4 lg:grid-cols-2">
-        {renderAttachmentPicker(
-          'expense.receipt.supporting',
-          'expenses.substitute_wizard.supporting_title',
-          'expenses.substitute_wizard.supporting_help',
-          supportingIds,
-          setSupportingIds,
-          supportingFile,
-          setSupportingFile,
-        )}
-        {renderAttachmentPicker(
-          'expense.payment.evidence',
-          'expenses.substitute_wizard.payment_evidence_title',
-          requiresPaymentEvidence ? 'expenses.substitute_wizard.payment_evidence_required' : 'expenses.substitute_wizard.payment_evidence_optional',
-          paymentIds,
-          setPaymentIds,
-          paymentFile,
-          setPaymentFile,
-        )}
-      </div>
-      {paymentMethod === 'CASH' && policy?.cashEvidenceInstructions && (
-        <MangmeeCard className="p-4 text-sm text-gray-600">{policy.cashEvidenceInstructions}</MangmeeCard>
-      )}
-      {!policy?.ready && <ErrorBanner message={t('expenses.substitute_wizard.policy_not_ready', locale)} />}
-      <div className="flex justify-between gap-3">
-        <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
-        <button type="button" className={btnClass} disabled={busy || !policy?.ready || !missingReason.trim() || !businessPurpose.trim() || !payerId || !paymentDate || supportingIds.length === 0 || (requiresPaymentEvidence && paymentIds.length === 0)} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.prepare', locale)}</button>
+      <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-4">
+          <MangmeeCard className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-extrabold text-gray-900">{t('expenses.substitute_wizard.evidence_page_title', locale)}</h2>
+                <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.evidence_page_help', locale)}</p>
+              </div>
+              <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
+            </div>
+          </MangmeeCard>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {renderAttachmentPicker(
+              'expense.receipt.supporting',
+              'expenses.substitute_wizard.supporting_title',
+              'expenses.substitute_wizard.supporting_help',
+              true,
+              supportingIds,
+              setSupportingIds,
+              supportingFile,
+              setSupportingFile,
+            )}
+            {renderAttachmentPicker(
+              'expense.payment.evidence',
+              'expenses.substitute_wizard.payment_evidence_title',
+              requiresPaymentEvidence ? 'expenses.substitute_wizard.payment_evidence_required' : 'expenses.substitute_wizard.payment_evidence_optional',
+              requiresPaymentEvidence,
+              paymentIds,
+              setPaymentIds,
+              paymentFile,
+              setPaymentFile,
+            )}
+          </div>
+          {paymentMethod === 'CASH' && policy?.cashEvidenceInstructions && (
+            <MangmeeCard className="p-4 text-sm leading-6 text-gray-600">{policy.cashEvidenceInstructions}</MangmeeCard>
+          )}
+          {!policy?.ready && <ErrorBanner message={t('expenses.substitute_wizard.policy_not_ready', locale)} />}
+          {selectedEvidenceRenderabilityIssue && (
+            <ErrorBanner message={evidenceRenderabilityIssueMessage(selectedEvidenceRenderabilityIssue, locale)} />
+          )}
+          <p className="rounded-xl bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-500">
+            {t('expenses.substitute_wizard.evidence_limit_help', locale)
+              .replace('{count}', String(SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments))}
+          </p>
+          <div className="flex justify-between gap-3 border-t border-gray-100 pt-3">
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
+            <button type="button" className={btnClass} disabled={busy || !evidenceReadiness.ready} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.prepare', locale)}</button>
+          </div>
+        </div>
+        <ReadinessCard
+          title={t('expenses.substitute_wizard.readiness_title', locale)}
+          description={t('expenses.substitute_wizard.evidence_readiness_description', locale)}
+          completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
+          incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
+          items={[
+            { label: t('expenses.substitute_wizard.readiness_policy', locale), complete: !evidenceReadiness.missing.includes('policy') },
+            { label: t('expenses.substitute_wizard.supporting_title', locale), complete: !evidenceReadiness.missing.includes('supportingEvidence') },
+            { label: requiresPaymentEvidence ? t('expenses.substitute_wizard.payment_evidence_title', locale) : t('expenses.substitute_wizard.payment_evidence_optional_short', locale), complete: !evidenceReadiness.missing.includes('paymentEvidence') },
+            { label: t('expenses.substitute_wizard.readiness_renderable', locale), complete: !evidenceReadiness.missing.includes('renderability') },
+          ]}
+        />
       </div>
     </div>
   );
 
   const renderWaiting = (message: string) => (
-    <MangmeeCard className="border-warning-100 bg-warning-50 p-5">
-      <h2 className="font-bold text-warning-700">{message}</h2>
-      <p className="mt-2 text-sm text-gray-600">{t('expenses.substitute_wizard.waiting_help', locale)}</p>
-      <button type="button" className={cx(ghostClass, 'mt-4')} onClick={() => void copyWizardLink()}>{copied ? t('expenses.substitute_wizard.link_copied', locale) : t('expenses.substitute_wizard.copy_link', locale)}</button>
-    </MangmeeCard>
+    <div className="space-y-4">
+      <MangmeeCard className="border-warning-100 bg-warning-50 p-5">
+        <h2 className="font-bold text-warning-700">{message}</h2>
+        <p className="mt-2 text-sm text-gray-600">{t('expenses.substitute_wizard.waiting_help', locale)}</p>
+        <button type="button" className={cx(ghostClass, 'mt-4')} onClick={() => void copyWizardLink()}>{copied ? t('expenses.substitute_wizard.link_copied', locale) : t('expenses.substitute_wizard.copy_link', locale)}</button>
+      </MangmeeCard>
+      {detail && <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />}
+      {receiptEvidence && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {renderReadOnlySummary('details')}
+          {renderReadOnlySummary('evidence')}
+        </div>
+      )}
+    </div>
   );
 
   const renderCertifyStep = () => {
@@ -1028,6 +1980,12 @@ export function SubstituteReceiptWizardPage({
     if (receiptEvidence.payerUserId !== userId) {
       return renderWaiting(t('expenses.substitute_wizard.waiting_payer', locale).replace('{name}', receiptEvidence.payerName));
     }
+    const signingReadiness = evaluateSigningReadiness({
+      position: signerPosition,
+      previewed: Boolean(previewChecksum),
+      signatureReady: Boolean(cleanedSignatureFile),
+      acknowledged: certificationAcknowledged,
+    });
     return (
       <div className="space-y-4">
         {ownerSelfCollapse && (
@@ -1039,20 +1997,58 @@ export function SubstituteReceiptWizardPage({
             </div>
           </MangmeeCard>
         )}
-        <MangmeeCard className="space-y-4 p-4">
-          <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.certify_title', locale)}</h2>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.payer_position', locale)}</span>
-            <input className={inputClass} maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
-            <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
-          </label>
-          <button type="button" className={ghostClass} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
-            <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
-          </button>
-          <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
-          <p className="text-sm text-gray-600">{t('expenses.substitute_wizard.certify_acknowledgement', locale)}</p>
-          <button type="button" className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || !cleanedSignatureFile} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
-        </MangmeeCard>
+        {detail && <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />}
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-4">
+            <MangmeeCard className="space-y-5 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-extrabold text-gray-900">{t('expenses.substitute_wizard.certify_title', locale)}</h2>
+                  <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.certify_help', locale)}</p>
+                </div>
+                <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
+              </div>
+              <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
+                <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.payer_position', locale)}<RequiredMark /></span>
+                <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
+                <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
+              </label>
+              <div className="rounded-2xl border border-gray-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.preview_document', locale)}<RequiredMark /></p>
+                  {previewChecksum && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.preview_help', locale)}</p>
+                <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
+                  <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
+                </button>
+              </div>
+              <div className="rounded-2xl border border-gray-200 p-4">
+                <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}<RequiredMark /></p>
+                <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
+              </div>
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
+                <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
+                <span>{t('expenses.substitute_wizard.certify_acknowledgement', locale)}<RequiredMark /></span>
+              </label>
+              <div className="flex justify-end border-t border-gray-100 pt-4">
+                <button type="button" className={btnClass} disabled={busy || !signingReadiness.ready} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
+              </div>
+            </MangmeeCard>
+          </div>
+          <ReadinessCard
+            title={t('expenses.substitute_wizard.readiness_title', locale)}
+            description={t('expenses.substitute_wizard.signing_readiness_description', locale)}
+            completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
+            incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
+            items={[
+              { label: t('expenses.substitute_wizard.payer_position', locale), complete: !signingReadiness.missing.includes('position') },
+              { label: t('expenses.substitute_wizard.preview_document', locale), complete: !signingReadiness.missing.includes('preview') },
+              { label: t('expenses.substitute_wizard.signature_title', locale), complete: !signingReadiness.missing.includes('signature') },
+              { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !signingReadiness.missing.includes('acknowledgement') },
+            ]}
+          />
+        </div>
       </div>
     );
   };
@@ -1060,6 +2056,12 @@ export function SubstituteReceiptWizardPage({
   const renderApproveStep = () => {
     if (!receiptEvidence) return null;
     if (!mayApprove) return renderWaiting(t('expenses.substitute_wizard.waiting_approver', locale));
+    const approvalReadiness = evaluateSigningReadiness({
+      position: signerPosition,
+      previewed: certifiedPreviewed,
+      signatureReady: Boolean(cleanedSignatureFile),
+      acknowledged: approvalAcknowledged,
+    });
     return (
       <div className="space-y-4">
         {ownerSelfCollapse && (
@@ -1071,43 +2073,95 @@ export function SubstituteReceiptWizardPage({
             </div>
           </MangmeeCard>
         )}
-        <MangmeeCard className="space-y-4 p-4">
-          <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.approve_title', locale)}</h2>
-          <button type="button" className={ghostClass} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
-            <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_certified', locale)}</span>
-          </button>
-          <label className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.approver_position', locale)}</span>
-            <input className={inputClass} maxLength={120} value={signerPosition} onChange={(event) => setSignerPosition(stripDisallowed(event.target.value))} />
-            <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
-          </label>
-          <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
-          <button type="button" className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || !cleanedSignatureFile} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
-        </MangmeeCard>
+        {detail && <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />}
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <MangmeeCard className="space-y-5 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-extrabold text-gray-900">{t('expenses.substitute_wizard.approve_title', locale)}</h2>
+                <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.approve_help', locale)}</p>
+              </div>
+              <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
+            </div>
+            <div className="rounded-2xl border border-gray-200 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.open_certified', locale)}<RequiredMark /></p>
+                {certifiedPreviewed && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
+              </div>
+              <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
+                <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_certified', locale)}</span>
+              </button>
+            </div>
+            <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
+              <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.approver_position', locale)}<RequiredMark /></span>
+              <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => setSignerPosition(stripDisallowed(event.target.value))} />
+              <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
+            </label>
+            <div className="rounded-2xl border border-gray-200 p-4">
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}<RequiredMark /></p>
+              <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
+            </div>
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
+              <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)} />
+              <span>{t('expenses.substitute_wizard.approve_acknowledgement', locale)}<RequiredMark /></span>
+            </label>
+            <div className="flex justify-end border-t border-gray-100 pt-4">
+              <button type="button" className={btnClass} disabled={busy || !approvalReadiness.ready} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
+            </div>
+          </MangmeeCard>
+          <ReadinessCard
+            title={t('expenses.substitute_wizard.readiness_title', locale)}
+            description={t('expenses.substitute_wizard.approval_readiness_description', locale)}
+            completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
+            incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
+            items={[
+              { label: t('expenses.substitute_wizard.open_certified', locale), complete: !approvalReadiness.missing.includes('preview') },
+              { label: t('expenses.substitute_wizard.approver_position', locale), complete: !approvalReadiness.missing.includes('position') },
+              { label: t('expenses.substitute_wizard.signature_title', locale), complete: !approvalReadiness.missing.includes('signature') },
+              { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !approvalReadiness.missing.includes('acknowledgement') },
+            ]}
+          />
+        </div>
       </div>
     );
   };
 
   const renderDoneStep = () => receiptEvidence && detail && (
     <div className="space-y-4">
-      <MangmeeCard className="p-6 text-center">
-        <MangmeeBadge tone={receiptEvidence.status === 'ISSUED' ? 'brand' : 'slate'}>
-          {t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_hub.status_issued' : 'expenses.substitute_hub.status_superseded', locale)}
-        </MangmeeBadge>
-        <h2 className="mt-4 text-xl font-bold text-gray-900">{t('expenses.substitute_wizard.done_title', locale)}</h2>
-        <p className="mt-2 font-mono text-lg font-bold text-gray-800">{receiptEvidence.documentNumber}</p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          {receiptEvidence.artifactAttachmentId && (
-            <button type="button" className={btnClass} disabled={busy} onClick={() => void run(() => downloadSubstituteReceiptPdf(companyId, detail.id, receiptEvidence.id, receiptEvidence.documentNumber))}>
-              <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute.download_pdf', locale)}</span>
-            </button>
-          )}
-          {receiptEvidence.artifactAttachmentId && (
-            <button type="button" className={ghostClass} disabled={busy} onClick={() => void run(() => openArtifact(receiptEvidence.artifactAttachmentId))}>
-              <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}</span>
-            </button>
-          )}
-          <Link className={btnClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t('expenses.substitute_wizard.back_to_expense', locale)}</Link>
+      <MangmeeCard className="overflow-hidden border-brand-100 p-0 text-center">
+        <div className="bg-brand-25 px-5 py-8 sm:px-8">
+          <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-600 text-3xl font-extrabold text-white shadow-lg">✓</span>
+          <MangmeeBadge className="mt-4" tone={receiptEvidence.status === 'ISSUED' ? 'brand' : 'slate'}>
+            {t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_hub.status_issued' : 'expenses.substitute_hub.status_superseded', locale)}
+          </MangmeeBadge>
+          <h2 className="mt-4 text-2xl font-extrabold tracking-tight text-gray-900">{t('expenses.substitute_wizard.done_title', locale)}</h2>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.done_help', locale)}</p>
+          <p className="mx-auto mt-4 w-fit rounded-xl border border-brand-100 bg-white px-4 py-2 font-mono text-lg font-extrabold text-gray-900 shadow-sm">{receiptEvidence.documentNumber}</p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            {receiptEvidence.artifactAttachmentId && (
+              <button type="button" className={btnClass} disabled={busy} onClick={() => void run(() => downloadSubstituteReceiptPdf(companyId, detail.id, receiptEvidence.id, receiptEvidence.documentNumber))}>
+                <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute.download_pdf', locale)}</span>
+              </button>
+            )}
+            {receiptEvidence.artifactAttachmentId && (
+              <button type="button" className={ghostClass} disabled={busy} onClick={() => void run(openIssuedPdf)}>
+                <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}</span>
+              </button>
+            )}
+            <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t('expenses.substitute_wizard.back_to_expense', locale)}</Link>
+          </div>
+        </div>
+        <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
+          {([
+            ['1', 'expenses.substitute_wizard.done_next_store'],
+            ['2', 'expenses.substitute_wizard.done_next_confirm'],
+            ['3', 'expenses.substitute_wizard.done_next_retain'],
+          ] as const).map(([number, key]) => (
+            <div key={key} className="flex items-start gap-3 bg-white p-4 text-sm leading-5 text-gray-600">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">{number}</span>
+              {t(key, locale)}
+            </div>
+          ))}
         </div>
       </MangmeeCard>
       <details className="rounded-2xl border border-gray-200 bg-white p-4">
@@ -1124,8 +2178,8 @@ export function SubstituteReceiptWizardPage({
           {canReview && receiptEvidence.status !== 'SUPERSEDED' && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && (
             <div className="space-y-2 border-t border-gray-100 pt-3">
               <label className="block text-sm font-semibold text-gray-700">
-                <span className="mb-1 block">{t('expenses.substitute_wizard.supersede_reason', locale)}</span>
-                <textarea className={inputClass} rows={3} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} />
+                <span className="mb-1 block">{t('expenses.substitute_wizard.supersede_reason', locale)}<RequiredMark /></span>
+                <textarea className={inputClass} required rows={3} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} />
               </label>
               <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(supersede)}>{t('expenses.substitute_wizard.supersede_action', locale)}</button>
             </div>
@@ -1137,7 +2191,6 @@ export function SubstituteReceiptWizardPage({
               setPayerId(previousPayerId);
               setReceiptEvidence(null);
               setConsent(true);
-              setPresetsApplied(true);
               setActiveStep('details');
             }}>{t('expenses.substitute_wizard.create_revision', locale)}</button>
           )}
@@ -1163,39 +2216,44 @@ export function SubstituteReceiptWizardPage({
         description={t('expenses.substitute_wizard.description', locale)}
       >
         {loading ? (
-          <MangmeeCard className="p-8 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</MangmeeCard>
+          <LoadingState label={t('expenses.loading', locale)} />
         ) : (
           <div className="space-y-4">
-            {error && <ErrorBanner message={error} />}
+            {error && <div role="alert" aria-live="assertive" aria-atomic="true"><ErrorBanner message={error} /></div>}
             {info && <InfoBanner message={info} />}
-            <MangmeeCard className="overflow-x-auto p-4">
-              <div className="flex min-w-[680px] items-start">
-                {visibleSteps.map((step, index) => {
-                  const active = activeDisplayStep === step;
-                  const labelKey = ownerSelfCollapse && step === 'certify'
-                    ? 'expenses.substitute_wizard.step_combined'
-                    : STEP_KEYS[step];
-                  return (
-                    <div key={step} className="flex flex-1 items-start">
-                      <button type="button" onClick={() => navigateStep(step)} className="group flex min-w-24 flex-col items-center gap-1 text-center">
-                        <span className={cx('flex h-8 w-8 items-center justify-center rounded-full border-2 text-sm font-bold', active ? 'border-brand-500 bg-brand-500 text-white' : 'border-gray-300 bg-white text-gray-500')}>{index + 1}</span>
-                        <span className={cx('text-xs', active ? 'font-bold text-brand-700' : 'font-medium text-gray-500')}>{t(labelKey, locale)}</span>
-                      </button>
-                      {index < visibleSteps.length - 1 && <div className="mt-4 h-0.5 flex-1 bg-gray-200" />}
-                    </div>
-                  );
-                })}
+            <MangmeeCard className="p-4 sm:p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-700">{t('expenses.substitute_wizard.journey_label', locale)}</p>
+                  <p className="mt-1 text-sm text-gray-500">{t('expenses.substitute_wizard.journey_progress', locale)
+                    .replace('{current}', String(activeJourneyIndex + 1))
+                    .replace('{total}', String(JOURNEY_STAGES.length))}</p>
+                </div>
+                <MangmeeBadge tone="brand">{t(JOURNEY_STAGE_KEYS[activeJourneyStage], locale)}</MangmeeBadge>
               </div>
+              <ThemedSteps
+                aria-label={t('expenses.substitute_wizard.journey_label', locale)}
+                steps={JOURNEY_STAGES.map((stage, index) => ({
+                  key: stage,
+                  label: t(JOURNEY_STAGE_KEYS[stage], locale),
+                  state: index === activeJourneyIndex ? 'current' : index < activeJourneyIndex ? 'done' : 'upcoming',
+                }))}
+              />
             </MangmeeCard>
             {content}
           </div>
         )}
       </MangmeePage>
-      {preview && (
-        <Modal open title={preview.name} size="lg" closeLabel={t('expenses.close', locale)} onClose={() => setPreview(null)}>
-          <img src={preview.url} alt={preview.name} className="mx-auto max-h-[75vh] w-auto rounded-lg" />
-        </Modal>
-      )}
+      {preview && <DocumentPreviewModal
+        source={preview}
+        closeLabel={t('expenses.close', locale)}
+        loadingLabel={t('expenses.loading', locale)}
+        errorLabel={t('expenses.substitute_wizard.document_not_ready', locale)}
+        retryLabel={t('expenses.substitute_wizard.retry', locale)}
+        openNewTabLabel={t('expenses.open_new_tab', locale)}
+        onClose={closePreview}
+        onViewed={preview.onViewed}
+      />}
     </>
   );
 }

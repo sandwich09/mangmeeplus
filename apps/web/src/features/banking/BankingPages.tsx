@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { ForbiddenState } from '@/common/components/state';
+import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import {
   listBankAccounts, createBankAccount, deactivateBankAccount,
@@ -64,6 +64,7 @@ function BankAccountList({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ displayName: '', bankName: '', bankCode: '', accountType: 'BANK_SAVINGS', accountNumberMasked: '', accountNumberLast4: '', currency: 'THB', openingBalanceAmount: '' });
 
@@ -82,14 +83,14 @@ function BankAccountList({ companyId }: { companyId: string }) {
   };
 
   const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null);
+    e.preventDefault(); setError(null); setCreating(true);
     try {
       await createBankAccount(companyId, { ...form, openingBalanceAmount: form.openingBalanceAmount || '0.00' });
       setShowForm(false);
       setForm({ displayName: '', bankName: '', bankCode: '', accountType: 'BANK_SAVINGS', accountNumberMasked: '', accountNumberLast4: '', currency: 'THB', openingBalanceAmount: '' });
       await load();
       toast.success('บันทึกบัญชีธนาคารเรียบร้อยแล้ว');
-    } catch (e) { setError(err(e)); }
+    } catch (e) { setError(err(e)); } finally { setCreating(false); }
   };
 
   return (
@@ -119,11 +120,11 @@ function BankAccountList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">ยอดยกมา</label><input className={inputClass} type="number" value={form.openingBalanceAmount} onChange={e => setForm(f => ({ ...f, openingBalanceAmount: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass}>บันทึก</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -169,7 +170,7 @@ function CashPositionPanel({ companyId }: { companyId: string }) {
     getCashPosition(companyId).then(setData).catch(e => setError(err(e))).finally(() => setLoading(false));
   }, [companyId]);
 
-  if (loading) return <div className="text-sm text-gray-500">กำลังโหลด...</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <ErrorBanner message={error} />;
   if (!data) return null;
 
@@ -211,6 +212,7 @@ function ReconciliationList({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ bankAccountId: '', periodStartDate: '', periodEndDate: '', openingStatementBalanceAmount: '', closingStatementBalanceAmount: '', currency: 'THB' });
 
@@ -229,7 +231,7 @@ function ReconciliationList({ companyId }: { companyId: string }) {
   };
 
   const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null);
+    e.preventDefault(); setError(null); setCreating(true);
     try {
       await createReconciliation(companyId, {
         ...form,
@@ -240,7 +242,7 @@ function ReconciliationList({ companyId }: { companyId: string }) {
       setForm({ bankAccountId: '', periodStartDate: '', periodEndDate: '', openingStatementBalanceAmount: '', closingStatementBalanceAmount: '', currency: 'THB' });
       await load();
       toast.success('สร้างรอบกระทบยอดเรียบร้อยแล้ว');
-    } catch (e) { setError(err(e)); }
+    } catch (e) { setError(err(e)); } finally { setCreating(false); }
   };
 
   const reopen = async (id: string) => {
@@ -266,11 +268,11 @@ function ReconciliationList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">วันสิ้นสุด *</label><ThemedDate className={inputClass} required value={form.periodEndDate} onChange={e => setForm(f => ({ ...f, periodEndDate: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass}>สร้าง</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังสร้าง...' : 'สร้าง'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -315,6 +317,7 @@ function AdjustmentList({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ bankAccountId: '', category: '', description: '', signedAmount: '', currency: 'THB', adjustmentDate: '' });
 
@@ -333,14 +336,14 @@ function AdjustmentList({ companyId }: { companyId: string }) {
   };
 
   const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(null);
+    e.preventDefault(); setError(null); setCreating(true);
     try {
       await createAdjustment(companyId, { ...form, signedAmount: form.signedAmount });
       setShowForm(false);
       setForm({ bankAccountId: '', category: '', description: '', signedAmount: '', currency: 'THB', adjustmentDate: '' });
       await load();
       toast.success('บันทึกรายการปรับปรุงเรียบร้อยแล้ว');
-    } catch (e) { setError(err(e)); }
+    } catch (e) { setError(err(e)); } finally { setCreating(false); }
   };
 
   const approve = async (id: string) => {
@@ -384,11 +387,11 @@ function AdjustmentList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">วันที่ *</label><ThemedDate className={inputClass} required value={form.adjustmentDate} onChange={e => setForm(f => ({ ...f, adjustmentDate: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass}>บันทึก</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">

@@ -51,11 +51,13 @@ test.describe('XC — cross-cutting', () => {
     expect(await authedPage.evaluate(() => window.localStorage.getItem('watchdog.workspace.locale'))).toBe('en');
   });
 
-  test('XC-03 @p1 companyView is blocked from owner-only settings controls', async ({ page }) => {
+  test('XC-03 @p1 companyView cannot reach the manage-only permissions screen', async ({ page }) => {
     await login(page, SEED_USERS.companyView.username, SEED_USERS.companyView.password, `/companies/${COMPANY_ID}/settings/permissions`);
     await page.goto(`/companies/${COMPANY_ID}/settings/permissions`);
-    await expect(page.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /^เพิ่ม$|^Add$/i })).toBeDisabled();
+    // access.role.manage is required to SEE the page since the visibility rework —
+    // the route bounces to the dashboard instead of rendering read-only controls.
+    await expect(page).toHaveURL(new RegExp(`/companies/${COMPANY_ID}/dashboard`));
+    await expect(page.getByRole('heading', { name: /สิทธิ์การใช้งาน|Permissions/i })).toHaveCount(0);
   });
 
   test('XC-04 @p1 bogus company id is handled gracefully', async ({ authedPage }) => {

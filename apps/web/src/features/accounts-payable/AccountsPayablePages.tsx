@@ -2,10 +2,13 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, getVendorBillAttachmentDownloadUrl, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, listWhtIncomeCategories } from './accounts-payable.api';
+import { listVendorBills, getVendorBill, createVendorBill, matchVendorBill, submitVendorBill, approveVendorBill, rejectVendorBill, voidVendorBill, getSupplierPayment, listSupplierPayments, createSupplierPayment, voidSupplierPayment, generateSourceJournal, releasePp36InputClaim, getApAging, reviewVendorBillTaxEvidence, updateVendorBillTaxEvidence, getApprovalPolicy, updateApprovalPolicy, listWhtHandoffs, linkExternalWhtCertificate, listWhtIncomeCategories } from './accounts-payable.api';
 import type { WhtIncomeCategoryOption } from './accounts-payable.api';
 import type { PaymentMethod, SupplierPaymentDetail, SupplierPaymentSummary, TradeTaxEvidenceDto, TransactionTaxContext, VendorBillDetail, VendorBillSummary } from '@watchdog-bms/contracts';
 import { listSuppliers } from '@/features/procurement/procurement.api';
@@ -19,6 +22,8 @@ import { apiErrorMessage } from '@/common/api/api-error-message';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
+import { LoadingState } from '@/common/components/state/LoadingState';
+import { fetchAttachmentPreviewBlob } from '@/features/expenses/expenses.api';
 
 function err(e: unknown) { return apiErrorMessage(e); }
 const inputClass = 'mangmee-input';
@@ -57,18 +62,29 @@ function Pp36ClaimAction({ companyId, billId, lineId, supplierId, canClaim, canP
   const [reason, setReason] = useState('ยืนยันใบเสร็จ ภ.พ.36 จากกรมสรรพากร');
   const [adjustmentId, setAdjustmentId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(canClaim);
   const [error, setError] = useState('');
   useEffect(() => {
     if (!canClaim) return;
-    void Promise.all([
-      listTradeTaxEvidence(companyId, { sourceType: 'procurement.vendor_bill', sourceId: billId, transactionContext: 'IMPORT_SERVICE', status: 'VERIFIED' }),
-      listSupplierPayments(companyId, { supplierId, pageSize: 100 }).then((result) => Promise.all(result.data.map((payment) => getSupplierPayment(companyId, payment.id)))),
-    ]).then(([rows, paymentRows]) => {
+    const loadOptions = async () => {
+      setOptionsLoading(true);
+      setError('');
+      try {
+        const [rows, paymentRows] = await Promise.all([
+          listTradeTaxEvidence(companyId, { sourceType: 'procurement.vendor_bill', sourceId: billId, transactionContext: 'IMPORT_SERVICE', status: 'VERIFIED' }),
+          listSupplierPayments(companyId, { supplierId, pageSize: 100 }).then((result) => Promise.all(result.data.map((payment) => getSupplierPayment(companyId, payment.id)))),
+        ]);
         const exact = rows.filter((item) => item.evidenceType === 'PP36_RECEIPT' && item.sourceLineId === lineId);
         const recognized = paymentRows.filter((payment) => payment.status === 'RECORDED' && payment.allocations.some((allocation) => allocation.vendorBillId === billId && allocation.pp36RecognitionStatus === 'ACTIVE'));
         setReceipts(exact); setEvidenceId((current) => current || exact[0]?.id || '');
         setPayments(recognized); setSupplierPaymentId((current) => current || recognized[0]?.id || '');
-      }).catch((cause) => setError(err(cause)));
+      } catch (cause) {
+        setError(err(cause));
+      } finally {
+        setOptionsLoading(false);
+      }
+    };
+    void loadOptions();
   }, [billId, canClaim, companyId, lineId, supplierId]);
   if (!canClaim) return null;
   async function release() {
@@ -80,13 +96,15 @@ function Pp36ClaimAction({ companyId, billId, lineId, supplierId, canClaim, canP
     } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
   }
   return <div className="mt-2 grid gap-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs sm:grid-cols-2">
-    <ThemedSelect value={evidenceId} onChange={(event) => setEvidenceId(event.target.value)}><option value="">เลือกใบเสร็จ ภ.พ.36 ที่ยืนยันแล้ว</option>{receipts.map((item) => <option key={item.id} value={item.id}>{item.referenceNumber} · {item.evidenceDate}</option>)}</ThemedSelect>
-    {payments.length > 0 && <ThemedSelect value={supplierPaymentId} onChange={(event) => setSupplierPaymentId(event.target.value)}><option value="">เลือกการจ่ายที่รับรู้ ภ.พ.36</option>{payments.map((payment) => <option key={payment.id} value={payment.id}>{payment.paymentNumber ?? payment.id.slice(0, 8)} · {formatThaiDate(payment.paymentDate)}</option>)}</ThemedSelect>}
-    <input className={inputClass} type="date" value={claimDate} onChange={(event) => setClaimDate(event.target.value)} />
+    <ThemedSelect value={evidenceId} disabled={optionsLoading} onChange={(event) => setEvidenceId(event.target.value)}>
+      {optionsLoading ? <option value="">กำลังโหลด...</option> : <><option value="">เลือกใบเสร็จ ภ.พ.36 ที่ยืนยันแล้ว</option>{receipts.map((item) => <option key={item.id} value={item.id}>{item.referenceNumber} · {item.evidenceDate}</option>)}</>}
+    </ThemedSelect>
+    {(optionsLoading || payments.length > 0) && <ThemedSelect value={supplierPaymentId} disabled={optionsLoading} onChange={(event) => setSupplierPaymentId(event.target.value)}>{optionsLoading ? <option value="">กำลังโหลด...</option> : <><option value="">เลือกการจ่ายที่รับรู้ ภ.พ.36</option>{payments.map((payment) => <option key={payment.id} value={payment.id}>{payment.paymentNumber ?? payment.id.slice(0, 8)} · {formatThaiDate(payment.paymentDate)}</option>)}</>}</ThemedSelect>}
+    <ThemedDate className={inputClass} value={claimDate} onChange={(event) => setClaimDate(event.target.value)} />
     <input className={`${inputClass} sm:col-span-2`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="เหตุผลการปล่อยสิทธิภาษีซื้อ" />
-    <button className={btnClass} disabled={busy || !evidenceId || (payments.length > 0 && !supplierPaymentId) || !reason.trim()} onClick={() => void release()}>{busy ? 'กำลังปล่อยสิทธิ...' : 'ปล่อยสิทธิภาษีซื้อ ภ.พ.36'}</button>
+    <button className={btnClass} disabled={busy || optionsLoading || !evidenceId || (payments.length > 0 && !supplierPaymentId) || !reason.trim()} onClick={() => void release()}>{busy ? 'กำลังปล่อยสิทธิ...' : 'ปล่อยสิทธิภาษีซื้อ ภ.พ.36'}</button>
     {adjustmentId && canPost && <button className={ghostClass} disabled={busy} onClick={() => { setBusy(true); setError(''); void generateSourceJournal(companyId, 'tax.pp36_input_claim', adjustmentId).then(() => toast.success('ลงบัญชีรายการปล่อยสิทธิเรียบร้อยแล้ว')).catch((cause) => setError(err(cause))).finally(() => setBusy(false)); }}>ลงบัญชีรายการปล่อยสิทธิ</button>}
-    {!receipts.length && <a className="font-bold text-brand-700 underline sm:col-span-2" href={`/companies/${companyId}/tax/evidence?${new URLSearchParams({ context: 'IMPORT_SERVICE', sourceType: 'procurement.vendor_bill', sourceId: billId, sourceLineId: lineId })}`}>แนบและให้ผู้มีสิทธิ์ยืนยัน PP36_RECEIPT บรรทัดนี้ก่อน</a>}
+    {!optionsLoading && !receipts.length && <a className="font-bold text-brand-700 underline sm:col-span-2" href={`/companies/${companyId}/tax/evidence?${new URLSearchParams({ context: 'IMPORT_SERVICE', sourceType: 'procurement.vendor_bill', sourceId: billId, sourceLineId: lineId })}`}>แนบและให้ผู้มีสิทธิ์ยืนยัน PP36_RECEIPT บรรทัดนี้ก่อน</a>}
     {error && <p role="alert" className="sm:col-span-2 text-error-700">{error}</p>}
   </div>;
 }
@@ -99,6 +117,11 @@ const TAX_EVIDENCE_ISSUE_LABELS: Record<string, string> = {
   missing_active_tax_invoice_attachment: 'ยังไม่มีไฟล์ใบกำกับภาษีที่อัปโหลดสำเร็จ',
   tax_evidence_review_required: 'รอผู้อนุมัติตรวจหลักฐาน',
   tax_evidence_rejected: 'ผู้อนุมัติปฏิเสธหลักฐาน',
+};
+
+type VendorBillAttachmentPreviewTarget = {
+  attachmentId: string;
+  name: string;
 };
 
 function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canReview, canReadAttachment, onUpdated }: {
@@ -116,11 +139,37 @@ function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canRe
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [attachmentPreview, setAttachmentPreview] = useState<DocumentPreviewSource | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<VendorBillAttachmentPreviewTarget | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
+  const releaseAttachmentPreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+  const closeAttachmentPreview = useCallback(() => {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+    setAttachmentPreview(null);
+    setPreviewTarget(null);
+    setPreviewLoading(false);
+  }, [releaseAttachmentPreviewUrl]);
+  useEffect(() => () => {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+  }, [releaseAttachmentPreviewUrl]);
   useEffect(() => {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
     setTaxInvoiceNumber(bill.taxInvoiceNumber ?? '');
     setTaxInvoiceDate(bill.taxInvoiceDate?.slice(0, 10) ?? '');
     setFile(null);
-  }, [bill.id, bill.taxInvoiceDate, bill.taxInvoiceNumber, bill.attachmentId]);
+    setAttachmentPreview(null);
+    setPreviewTarget(null);
+    setPreviewLoading(false);
+  }, [bill.id, bill.taxInvoiceDate, bill.taxInvoiceNumber, bill.attachmentId, companyId, releaseAttachmentPreviewUrl]);
   if (!bill.taxEvidenceRequired) return null;
   const editable = canEdit && ['DRAFT', 'NEEDS_REVIEW'].includes(bill.status);
   const reviewable = canReview && ['DRAFT', 'NEEDS_REVIEW'].includes(bill.status) && isVendorBillTaxEvidenceCompleteForReview(bill);
@@ -141,35 +190,70 @@ function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canRe
       onUpdated(updated); toast.success(status === 'VERIFIED' ? 'ยืนยันหลักฐานเรียบร้อยแล้ว' : 'ปฏิเสธหลักฐานเรียบร้อยแล้ว');
     } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
   }
+  async function loadAttachmentPreview(target: VendorBillAttachmentPreviewTarget) {
+    const requestId = ++previewRequestRef.current;
+    setPreviewLoading(true);
+    setError('');
+    try {
+      const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId);
+      if (requestId !== previewRequestRef.current) return;
+      const url = URL.createObjectURL(blob);
+      releaseAttachmentPreviewUrl();
+      previewUrlRef.current = url;
+      setPreviewTarget(target);
+      setAttachmentPreview({ name: target.name, mimeType: blob.type, url });
+    } catch (cause) {
+      if (requestId !== previewRequestRef.current) return;
+      setError(err(cause));
+      throw cause;
+    } finally {
+      if (requestId === previewRequestRef.current) setPreviewLoading(false);
+    }
+  }
   async function openAttachment() {
     if (!bill.attachmentId) return;
-    setBusy(true); setError('');
+    const label = bill.taxInvoiceNumber?.trim() || bill.vendorBillNumber?.trim() || 'เอกสารหลักฐานภาษี';
     try {
-      const { downloadUrl } = await getVendorBillAttachmentDownloadUrl(companyId, bill.attachmentId);
-      window.open(downloadUrl, '_blank', 'noopener,noreferrer');
-    } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
+      await loadAttachmentPreview({ attachmentId: bill.attachmentId, name: `ใบกำกับภาษี ${label}` });
+    } catch {
+      // The active request already reports its localized failure in this panel.
+    }
   }
 
-  return <section className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
+  return <>
+  <section className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <strong>หลักฐานภาษีซื้อในประเทศ</strong>
       <StatusBadge status={bill.taxEvidenceReviewStatus} map={{ DRAFT: 'ยังไม่เริ่ม', REVIEW_REQUIRED: 'รอตรวจ', VERIFIED: 'ยืนยันแล้ว', REJECTED: 'ปฏิเสธ' }} />
     </div>
     {bill.reviewIssues.length > 0 && <ul className="mt-2 list-disc pl-5 text-xs text-amber-900">{bill.reviewIssues.map((issue) => <li key={issue}>{TAX_EVIDENCE_ISSUE_LABELS[issue] ?? issue}</li>)}</ul>}
-    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      <input className={inputClass} value={taxInvoiceNumber} onChange={(event) => setTaxInvoiceNumber(event.target.value)} placeholder="เลขที่ใบกำกับภาษี" disabled={!editable || busy} />
-      <input className={inputClass} type="date" value={taxInvoiceDate} onChange={(event) => setTaxInvoiceDate(event.target.value)} disabled={!editable || busy} />
-      <input className={`${inputClass} sm:col-span-2`} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={(event) => setFile(event.target.files?.[0] ?? null)} disabled={!editable || !canUpload || busy} />
-    </div>
+    {editable ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <input className={inputClass} value={taxInvoiceNumber} onChange={(event) => setTaxInvoiceNumber(event.target.value)} placeholder="เลขที่ใบกำกับภาษี" disabled={busy} />
+      <ThemedDate className={inputClass} value={taxInvoiceDate} onChange={(event) => setTaxInvoiceDate(event.target.value)} disabled={busy} />
+      {canUpload && <ThemedFile className="sm:col-span-2" file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setFile} disabled={busy} />}
+    </div> : <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div><dt className="text-xs text-gray-600">เลขที่ใบกำกับภาษี</dt><dd className="font-medium">{bill.taxInvoiceNumber ?? '—'}</dd></div>
+      <div><dt className="text-xs text-gray-600">วันที่ใบกำกับภาษี</dt><dd className="font-medium">{bill.taxInvoiceDate ? formatThaiDate(bill.taxInvoiceDate) : '—'}</dd></div>
+    </dl>}
     <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-      {editable && <button className={btnClass} disabled={busy || !taxInvoiceNumber.trim() || !taxInvoiceDate || (!file && !bill.attachmentId) || (Boolean(file) && !canUpload)} onClick={() => void saveEvidence()}>{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>}
-      {bill.attachmentId && canReadAttachment && <button className={ghostClass} disabled={busy} onClick={() => void openAttachment()}>เปิดไฟล์หลักฐาน</button>}
+      {editable && (bill.attachmentId || canUpload) && <button className={btnClass} disabled={busy || !taxInvoiceNumber.trim() || !taxInvoiceDate || (!file && !bill.attachmentId)} onClick={() => void saveEvidence()}>{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>}
+      {bill.attachmentId && canReadAttachment && <button className={ghostClass} disabled={busy || previewLoading} onClick={() => void openAttachment()}>{previewLoading ? 'กำลังเปิด...' : 'เปิดไฟล์หลักฐาน'}</button>}
       {reviewable && <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy} onClick={() => void review('VERIFIED')}>ยืนยันหลักฐาน</button>}
       {canReview && ['DRAFT', 'NEEDS_REVIEW'].includes(bill.status) && <button className={dangerClass + ' order-last sm:order-none'} disabled={busy} onClick={() => void review('REJECTED')}>ปฏิเสธหลักฐาน</button>}
     </div>
-    {!canUpload && editable && <p className="mt-2 text-xs text-amber-800">ต้องมีสิทธิ์ attachment.create เพื่ออัปโหลดไฟล์ใหม่</p>}
     {error && <p role="alert" className="mt-2 text-xs text-error-700">{error}</p>}
-  </section>;
+  </section>
+  {attachmentPreview && <DocumentPreviewModal
+    source={attachmentPreview}
+    closeLabel="ปิด"
+    loadingLabel="กำลังเปิดเอกสาร..."
+    errorLabel="แสดงไฟล์หลักฐานไม่สำเร็จ กรุณาลองใหม่"
+    retryLabel="ลองอีกครั้ง"
+    openNewTabLabel="เปิดในแท็บใหม่"
+    onClose={closeAttachmentPreview}
+    onRetry={previewTarget ? () => loadAttachmentPreview(previewTarget) : undefined}
+  />}
+  </>;
 }
 
 function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: string; canCreate: boolean; onCreated: (id: string) => void }) {
@@ -188,8 +272,24 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
   const [vatRate, setVatRate] = useState('');
   const [vatMode, setVatMode] = useState<'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT'>('NO_VAT');
   const [busy, setBusy] = useState(false);
+  const [suppliersLoading, setSuppliersLoading] = useState(canCreate);
   const [error, setError] = useState('');
-  useEffect(() => { if (canCreate) void listSuppliers(companyId, { status: 'ACTIVE', pageSize: 100 }).then((result) => { const rows = (result as { data?: Array<{ id: string; displayName: string }> }).data ?? []; setSuppliers(rows); setSupplierId((current) => current || rows[0]?.id || ''); }).catch((cause) => setError(err(cause))); }, [canCreate, companyId]);
+  useEffect(() => {
+    if (!canCreate) return;
+    const loadSuppliers = async () => {
+      setSuppliersLoading(true);
+      try {
+        const result = await listSuppliers(companyId, { status: 'ACTIVE', pageSize: 100 });
+        const rows = (result as { data?: Array<{ id: string; displayName: string }> }).data ?? [];
+        setSuppliers(rows); setSupplierId((current) => current || rows[0]?.id || '');
+      } catch (cause) {
+        setError(err(cause));
+      } finally {
+        setSuppliersLoading(false);
+      }
+    };
+    void loadSuppliers();
+  }, [canCreate, companyId]);
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
@@ -208,10 +308,10 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
     <summary className="cursor-pointer font-bold text-gray-900">สร้าง Vendor Bill พร้อม Tax Code รายบรรทัด</summary>
     {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
     <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={submit}>
-      <ThemedSelect value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.displayName}</option>)}</ThemedSelect>
+      <ThemedSelect value={supplierId} disabled={!canCreate || suppliersLoading} onChange={(event) => setSupplierId(event.target.value)}>{suppliersLoading ? <option value="">กำลังโหลด...</option> : suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.displayName}</option>)}</ThemedSelect>
       <ThemedSelect value={context} onChange={(event) => { setContext(event.target.value as TransactionTaxContext); setDefinitionId(''); setExternalTaxCode(undefined); setVatRate(''); setVatMode('NO_VAT'); }}><option value="DOMESTIC_PURCHASE">ซื้อในประเทศ</option><option value="IMPORT_GOODS">นำเข้าสินค้า</option><option value="IMPORT_SERVICE">บริการต่างประเทศ / ภ.พ.36</option></ThemedSelect>
-      <input className={inputClass} type="date" value={billDate} onChange={(event) => setBillDate(event.target.value)} required />
-      <input className={inputClass} type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required />
+      <ThemedDate className={inputClass} value={billDate} onChange={(event) => setBillDate(event.target.value)} required />
+      <ThemedDate className={inputClass} value={dueDate} onChange={(event) => setDueDate(event.target.value)} required />
       <input className={`${inputClass} sm:col-span-2`} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="รายละเอียด" required />
       <input className={inputClass} type="number" step="0.0001" min="0" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
       <input className={inputClass} type="number" step="0.01" min="0" value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} required />
@@ -224,44 +324,61 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
 
 // ── H-07 Approval Policy (maker-checker) ─────────────────────────────────────
 function ApprovalPolicyPanel({ companyId, canManage }: { companyId: string; canManage: boolean }) {
+  const toast = useToast();
   const [allowSelfApproval, setAllowSelfApproval] = useState(false);
   const [threshold, setThreshold] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getApprovalPolicy(companyId)
-      .then((policy) => { setAllowSelfApproval(policy.allowSelfApproval); setThreshold(policy.dualApprovalThresholdAmount ? String(Number(policy.dualApprovalThresholdAmount)) : ''); })
-      .catch((cause) => setError(err(cause)));
+    const load = async () => {
+      setLoading(true);
+      setLoaded(false);
+      setError(null);
+      try {
+        const policy = await getApprovalPolicy(companyId);
+        setAllowSelfApproval(policy.allowSelfApproval);
+        setThreshold(policy.dualApprovalThresholdAmount ? String(Number(policy.dualApprovalThresholdAmount)) : '');
+        setLoaded(true);
+      } catch (cause) {
+        setError(err(cause));
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
   }, [companyId]);
 
   const save = async () => {
-    setBusy(true); setError(null); setMessage('');
+    setBusy(true); setError(null);
     try {
       await updateApprovalPolicy(companyId, { allowSelfApproval, dualApprovalThresholdAmount: threshold.trim() ? threshold.trim() : null });
-      setMessage('บันทึกนโยบายแล้ว');
+      toast.success('บันทึกนโยบายการอนุมัติแล้ว');
     } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
   };
 
   return <details className="rounded border border-gray-200 bg-white p-4">
     <summary className="cursor-pointer text-sm font-medium">นโยบายการอนุมัติ (maker-checker)</summary>
     {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
-    {message && <div className="mt-3 rounded border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">{message}</div>}
-    <div className="mt-3 space-y-3 text-sm">
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={allowSelfApproval} disabled={!canManage} onChange={(event) => setAllowSelfApproval(event.target.checked)} />
-        อนุญาตให้ผู้ส่งขออนุมัติบิลอนุมัติเองได้ทุก role (ค่าเริ่มต้น: OWNER/ADMIN/MANAGER อนุมัติเองได้อยู่แล้ว role อื่นต้องมีผู้อนุมัติคนละคนกับผู้ส่ง)
-      </label>
-      <label className="flex items-center gap-2">
-        ยอดบิลตั้งแต่
-        <input className={inputClass + ' max-w-40'} type="number" min="0" step="0.01" value={threshold} disabled={!canManage} onChange={(event) => setThreshold(event.target.value)} placeholder="ปิดใช้งาน" />
-        บาทขึ้นไป ต้องมีผู้อนุมัติ 2 คน (เว้นว่าง = ปิดใช้งาน)
-      </label>
-      {canManage
-        ? <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} onClick={() => void save()}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
-        : <p className="text-xs text-gray-500">ต้องเป็นเจ้าของกิจการ (permission: procurement.approval_policy.manage) จึงจะแก้ไขได้</p>}
-    </div>
+    {loading ? <LoadingState label="กำลังโหลด..." /> : loaded && <div className="mt-3 space-y-3 text-sm">
+      {canManage ? <>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={allowSelfApproval} onChange={(event) => setAllowSelfApproval(event.target.checked)} />
+          อนุญาตให้ผู้ส่งขออนุมัติบิลอนุมัติเองได้ทุก role (ค่าเริ่มต้น: OWNER/ADMIN/MANAGER อนุมัติเองได้อยู่แล้ว role อื่นต้องมีผู้อนุมัติคนละคนกับผู้ส่ง)
+        </label>
+        <label className="flex items-center gap-2">
+          ยอดบิลตั้งแต่
+          <input className={inputClass + ' max-w-40'} type="number" min="0" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} placeholder="ปิดใช้งาน" />
+          บาทขึ้นไป ต้องมีผู้อนุมัติ 2 คน (เว้นว่าง = ปิดใช้งาน)
+        </label>
+        <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} onClick={() => void save()}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
+      </> : <dl className="grid gap-2 sm:grid-cols-2">
+        <div><dt className="text-xs text-gray-500">อนุมัติรายการของตนเอง</dt><dd className="font-medium">{allowSelfApproval ? 'อนุญาต' : 'ไม่อนุญาต'}</dd></div>
+        <div><dt className="text-xs text-gray-500">เกณฑ์ผู้อนุมัติ 2 คน</dt><dd className="font-medium">{threshold ? `ตั้งแต่ ${Number(threshold).toLocaleString('th-TH')} บาท` : 'ปิดใช้งาน'}</dd></div>
+      </dl>}
+    </div>}
   </details>;
 }
 
@@ -276,6 +393,7 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deepLinkLoading, setDeepLinkLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -285,7 +403,21 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
   }, [companyId, statusFilter]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { const id = new URLSearchParams(window.location.search).get('billId'); if (id) void getVendorBill(companyId, id).then(setSelected).catch((cause) => setError(err(cause))); }, [companyId]);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('billId');
+    if (!id) return;
+    const loadDeepLink = async () => {
+      setDeepLinkLoading(true);
+      try {
+        setSelected(await getVendorBill(companyId, id));
+      } catch (cause) {
+        setError(err(cause));
+      } finally {
+        setDeepLinkLoading(false);
+      }
+    };
+    void loadDeepLink();
+  }, [companyId]);
 
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setActionLoading(id); setError(null); setInfo(null);
@@ -335,7 +467,7 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
       </div>
       {error && <ErrorBanner message={error} />}
       {info && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">{info}</div>}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -379,7 +511,7 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
           </table>
         </div>
       )}
-      {selected && <div className="rounded-xl border border-gray-200 bg-white p-4">
+      {deepLinkLoading ? <LoadingState label="กำลังโหลด..." /> : selected && <div className="rounded-xl border border-gray-200 bg-white p-4">
         <div className="flex justify-between gap-3"><div><strong>{selected.vendorBillNumber ?? selected.supplierDocumentNumber ?? selected.id}</strong><div className="text-xs text-gray-500">{selected.status} · {selected.supplierDisplayName ?? selected.supplierId}</div></div><span className="text-xs font-bold text-gray-500">{selected.status === 'DRAFT' || selected.status === 'NEEDS_REVIEW' ? 'Draft' : 'ล็อก Tax Snapshot แล้ว'}</span></div>
         <VendorBillTaxEvidencePanel
           companyId={companyId}
@@ -486,7 +618,7 @@ function CreateSupplierPaymentForm({ companyId, canCreate, onCreated }: { compan
         <option value="">เลือก Vendor Bill</option>
         {bills.map((item) => <option key={item.id} value={item.id}>{item.vendorBillNumber ?? item.supplierDocumentNumber ?? item.id.slice(0, 8)} · {item.outstandingAmount} {item.currency}{item.pp36Candidate ? ' · ภ.พ.36' : ''}</option>)}
       </ThemedSelect>
-      <input className={inputClass} type="date" value={paymentDate} onChange={(event) => { setPaymentDate(event.target.value); resetAttempt(); }} required />
+      <ThemedDate className={inputClass} value={paymentDate} onChange={(event) => { setPaymentDate(event.target.value); resetAttempt(); }} required />
       <input className={inputClass} type="number" min="0.01" step="0.01" max={bill?.outstandingAmount} value={amount} onChange={(event) => { setAmount(event.target.value); resetAttempt(); }} placeholder="ยอดจ่ายครั้งนี้" required />
       <ThemedSelect value={method} onChange={(event) => { setMethod(event.target.value as PaymentMethod); resetAttempt(); }}><option value="BANK_TRANSFER">โอนเงิน</option><option value="CASH">เงินสด</option><option value="CHEQUE">เช็ค</option><option value="CARD">บัตร</option><option value="OTHER">อื่น ๆ</option></ThemedSelect>
       <input className={inputClass} value={reference} onChange={(event) => { setReference(event.target.value); resetAttempt(); }} placeholder="เลขอ้างอิงการจ่าย" required={method === 'BANK_TRANSFER' || method === 'CHEQUE'} />
@@ -576,7 +708,7 @@ function SupplierPaymentList({ companyId, permissions }: { companyId: string; pe
       <CreateSupplierPaymentForm companyId={companyId} canCreate={permissions.includes('procurement.supplier_payment.create') && permissions.includes('procurement.supplier_payment.release')} onCreated={() => void load()} />
       <div className="flex justify-end"><button className={ghostClass} onClick={load}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -624,7 +756,7 @@ function ApAgingPanel({ companyId }: { companyId: string }) {
     getApAging(companyId).then(setData).catch(e => setError(err(e))).finally(() => setLoading(false));
   }, [companyId]);
 
-  if (loading) return <div className="text-sm text-gray-500">กำลังโหลด...</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <ErrorBanner message={error} />;
   if (!data) return null;
 
@@ -717,7 +849,7 @@ function WhtHandoffPanel({ companyId, permissions }: { companyId: string; permis
       </div>
       <div className="flex justify-end"><button type="button" className={`${ghostClass} min-h-11 min-w-11`} onClick={load}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
-      {loading ? <div className="text-sm text-gray-500">กำลังโหลด...</div> : (
+      {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -843,7 +975,7 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
             </label>
             <label className="block" htmlFor={fieldId('issued-date')}>
               <span className="sr-only">วันที่ออกหนังสือรับรอง</span>
-              <input id={fieldId('issued-date')} className={inputClass} type="date" value={issuedDate} onChange={(e) => setIssuedDate(e.target.value)} disabled={busy} />
+              <ThemedDate id={fieldId('issued-date')} className={inputClass} value={issuedDate} onChange={(e) => setIssuedDate(e.target.value)} disabled={busy} />
             </label>
             <label className="block" htmlFor={fieldId('note')}>
               <span className="sr-only">หมายเหตุ (ถ้ามี)</span>
@@ -854,9 +986,7 @@ function WhtHandoffDetail({ companyId, handoff, canLink, onLinked, onStale }: { 
             </button>
           </form>
         </div>
-      ) : (
-        <p className="text-xs text-amber-800">ต้องมีสิทธิ์ wht.external_certificate.link เพื่อแนบหนังสือรับรอง</p>
-      )}
+      ) : null}
     </div>
   );
 }

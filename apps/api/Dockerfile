@@ -1,6 +1,9 @@
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS system
 RUN apt-get update -y \
-  && apt-get install -y --no-install-recommends ca-certificates openssl \
+  && apt-get install -y --no-install-recommends ca-certificates openssl fontconfig fonts-noto-core \
+  && fc-cache -f \
+  && fc-match -f '%{file}\n' 'Noto Sans Thai' | grep -q 'NotoSansThai' \
+  && fc-list :lang=th family | grep -q . \
   && rm -rf /var/lib/apt/lists/*
 ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem

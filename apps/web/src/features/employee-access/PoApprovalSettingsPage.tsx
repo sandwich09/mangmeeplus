@@ -21,6 +21,7 @@ import {
 } from './po-approval-settings.model';
 import { getPoApprovalPolicy, savePoApprovalPolicy } from './employee-access.api';
 import { useConfirm, useInputPrompt } from '@/common/components/modal';
+import { useToast } from '@/common/components/toast';
 
 const stepCircleClass: Record<MangmeeTone, string> = {
   brand: 'bg-brand-50 text-brand-700',
@@ -116,9 +117,11 @@ function DemoTimeline({ steps }: { steps: string[] }) {
 export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
   const { confirm, confirmDialog } = useConfirm();
   const { promptInput, inputPromptDialog } = useInputPrompt();
+  const toast = useToast();
   const [demoAmount, setDemoAmount] = useState('100');
   const [rules, setRules] = useState(PO_APPROVAL_RULES);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(true);
   useEffect(() => {
@@ -129,10 +132,13 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
   }, [companyId]);
   const save = async () => {
     setError(null);
+    setSaving(true);
     try {
       await savePoApprovalPolicy(companyId, { rules: rules.map(({ id, minExclusive, maxInclusive, approverRoleKeys }) => ({ id, minExclusive, maxInclusive, approverRoleKeys })) });
       setSaved(true);
+      toast.success('บันทึกขั้นอนุมัติคำสั่งซื้อแล้ว');
     } catch (e) { setError(apiErrorMessage(e)); }
+    finally { setSaving(false); }
   };
 
   const addRule = async () => {
@@ -181,9 +187,9 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
             กำหนดขั้นการอนุมัติใบสั่งซื้อ (PO) ตามวงเงิน · ใบที่อนุมัติครบขั้นแล้ว ระบบจะสร้างรายการซื้อ/รายจ่ายของวันนั้นในเมนู “ค่าใช้จ่าย+ใบเสร็จ” ให้อัตโนมัติ
           </p>
         </div>
-        <div className="flex items-center gap-3"><MangmeeBranchChip /><button type="button" disabled={loading || saved} onClick={() => void save()} className="h-10 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200">{saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
+        <div className="flex items-center gap-3"><MangmeeBranchChip /><button type="button" disabled={loading || saving || saved} aria-busy={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}{saving ? 'กำลังบันทึก...' : saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
       </div>
-      {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย…</div>}
+      {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย...</div>}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.48fr)_minmax(330px,0.96fr)]">

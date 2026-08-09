@@ -10,6 +10,12 @@ import { DEFAULT_PIPELINE_STAGES } from '../src/modules/crm/domain/crm.constants
 import { TH_SME_COA_V1 } from '../src/modules/ledger/domain/catalog/th-sme-chart-of-accounts-v1';
 import { chartTemplateAccountWriteData } from '../src/modules/ledger/application/services/chart-template-bootstrap.service';
 import { loadChartTemplatePreview } from '../src/modules/ledger/application/services/chart-template-query.service';
+import {
+  buildSeedPaymentProofPng,
+  buildSeedSupportingPdf,
+  putSeedAttachmentObject,
+  type SeedStoredAttachment,
+} from './seed-attachment-storage';
 
 const adapter = new PrismaPg({ connectionString: process.env['DATABASE_URL'] ?? '' });
 const prisma = new PrismaClient({ adapter });
@@ -122,7 +128,7 @@ const ROOM45_MESSAGES: Record<string, Array<{ dir: 'in' | 'out' | 'note'; text: 
   c5: [{ dir: 'in', text: 'ขอบคุณมากค่ะ ประทับใจมาก' }, { dir: 'out', text: 'ขอบคุณมากเช่นกันค่ะ แล้วมาใหม่นะคะ', by: 'nice' }],
   c6: [{ dir: 'in', text: 'สอบถามโปรโมชั่นเดือนนี้ค่ะ มีอะไรบ้าง' }],
   c7: [{ dir: 'in', text: 'ขอที่อยู่ร้านหน่อยครับ' }],
-  c8: [{ dir: 'in', text: 'สนใจจองคิวต่อขนตา Volume วันเสาร์นี้ค่ะ' }, { dir: 'out', text: 'ได้เลยค่ะคุณปูน เสาร์นี้ 14:00 ว่างพอดีค่ะ รบกวนโอนมัดจำ 1,800 บาท เพื่อยืนยันคิวนะคะ', by: 'praew' }, { dir: 'out', text: 'บัญชี กสิกรไทย 123-4-56789-0 ร้าน Room45 Eyes Lashes ค่ะ', by: 'praew' }, { dir: 'in', text: 'โอนมัดจำแล้วนะคะ แนบสลิปค่ะ' }, { dir: 'in', text: 'สลิปโอนเงิน 1,800 บาท · กสิกรไทย K PLUS · ref 0157XX8842', type: 'IMAGE', contentJson: { fileName: 'payment-proof-k8.jpg', mediaError: 'seed_preview_only' } }],
+  c8: [{ dir: 'in', text: 'สนใจจองคิวต่อขนตา Volume วันเสาร์นี้ค่ะ' }, { dir: 'out', text: 'ได้เลยค่ะคุณปูน เสาร์นี้ 14:00 ว่างพอดีค่ะ รบกวนโอนมัดจำ 1,800 บาท เพื่อยืนยันคิวนะคะ', by: 'praew' }, { dir: 'out', text: 'บัญชี กสิกรไทย 123-4-56789-0 ร้าน Room45 Eyes Lashes ค่ะ', by: 'praew' }, { dir: 'in', text: 'โอนมัดจำแล้วนะคะ แนบสลิปค่ะ' }, { dir: 'in', text: 'สลิปโอนเงิน 1,800 บาท · กสิกรไทย K PLUS · ref 0157XX8842', type: 'IMAGE', contentJson: { fileName: 'payment-proof-k8.png', seededPreviewFixture: true } }],
   c9: [{ dir: 'in', text: 'ต่อขนตาช่วงเย็นได้ไหมคะ' }, { dir: 'in', text: 'ร้านปิดกี่โมงคะ' }],
   c10: [{ dir: 'out', text: 'ส่งโปรโมชั่นให้แล้วนะคะ สนใจทักมาได้เลยค่ะ', by: 'toey' }, { dir: 'in', text: 'ไว้ว่างจะทักมาค่ะ' }],
   c11: [{ dir: 'in', text: 'ขนตาหลุดเร็วมากทำไงดีคะ เพิ่งทำมาอาทิตย์เดียว' }],
@@ -907,6 +913,54 @@ async function seedBloomDemoWorkspace(companyId: string, ownerUserId: string, he
   }
 }
 
+async function upsertStoredSeedAttachment(input: {
+  db: any;
+  id: string;
+  companyId: string;
+  branchId: string;
+  originalFileName: string;
+  mimeType: string;
+  bytes: Buffer;
+  stored: SeedStoredAttachment;
+  uploadedByUserId: string;
+  uploadedAt: Date;
+  persistBlob?: boolean;
+}) {
+  const attachmentData = {
+    branchId: input.branchId,
+    storageProvider: input.stored.storageProvider,
+    bucket: input.stored.bucket,
+    objectKey: input.stored.objectKey,
+    objectVersionId: input.stored.objectVersionId,
+    originalFileName: input.originalFileName,
+    mimeType: input.mimeType,
+    byteSize: input.stored.byteSize,
+    checksumSha256: input.stored.checksumSha256,
+    visibility: 'INTERNAL',
+    status: 'ACTIVE',
+    uploadedByUserId: input.uploadedByUserId,
+    uploadedAt: input.uploadedAt,
+    deletedAt: null,
+    metadataJson: { seededPreviewFixture: true },
+  };
+  await input.db.attachmentObject.upsert({
+    where: { id: input.id },
+    update: attachmentData,
+    create: {
+      id: input.id,
+      companyId: input.companyId,
+      ...attachmentData,
+    },
+  });
+  if (input.persistBlob) {
+    await input.db.attachmentBlob.upsert({
+      where: { attachmentId: input.id },
+      update: { companyId: input.companyId, data: new Uint8Array(input.bytes) },
+      create: { attachmentId: input.id, companyId: input.companyId, data: new Uint8Array(input.bytes) },
+    });
+  }
+}
+
 async function seedOperationalDemoData(input: {
   companyId: string;
   ownerUserId: string;
@@ -1180,7 +1234,7 @@ async function seedOperationalDemoData(input: {
         quantity: '1',
         unitPrice: row.subtotal,
         taxableAmount: row.subtotal,
-        vatRate: Number(row.vat) > 0 ? '7' : null,
+        vatRate: Number(row.vat) > 0 ? '0.07' : null,
         vatAmount: row.vat,
         whtRate: Number(row.wht) > 0 ? '5' : null,
         whtAmount: row.wht,
@@ -1198,7 +1252,7 @@ async function seedOperationalDemoData(input: {
         quantity: '1',
         unitPrice: row.subtotal,
         taxableAmount: row.subtotal,
-        vatRate: Number(row.vat) > 0 ? '7' : null,
+        vatRate: Number(row.vat) > 0 ? '0.07' : null,
         vatAmount: row.vat,
         whtRate: Number(row.wht) > 0 ? '5' : null,
         whtAmount: row.wht,
@@ -1292,7 +1346,7 @@ async function seedOperationalDemoData(input: {
       description: 'แพ็กเกจ VIP รายปี',
       quantity: '1',
       unitPrice: '12000',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '840',
       lineSubtotalAmount: '12000',
       lineTotalAmount: '12840',
@@ -1305,7 +1359,7 @@ async function seedOperationalDemoData(input: {
       description: 'แพ็กเกจ VIP รายปี',
       quantity: '1',
       unitPrice: '12000',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '840',
       lineSubtotalAmount: '12000',
       lineTotalAmount: '12840',
@@ -1336,24 +1390,128 @@ async function seedOperationalDemoData(input: {
     },
   });
 
-  // Payment proof awaiting finance verification (item 3 "หลักฐานโอนรอตรวจ" card):
-  // an attachment linked to a conversation with purpose 'payment_proof'.
-  await db.attachmentObject.upsert({
-    where: { id: 'seed-attachment-payment-proof' },
-    update: { status: 'ACTIVE' },
-    create: {
-      id: 'seed-attachment-payment-proof', companyId, branchId, storageProvider: 's3', bucket: 'watchdog-bms-local', objectKey: 'seed/payment-proofs/slip-k8.jpg',
-      originalFileName: 'slip-k8.jpg', mimeType: 'image/jpeg', byteSize: 84213, visibility: 'INTERNAL', status: 'ACTIVE', uploadedByUserId: ownerUserId, uploadedAt: at(0, 9),
-    },
+  // Real passive files for local preview paths. Upload before marking metadata ACTIVE so a
+  // successful seed can never leave a dangling attachment row behind.
+  const paymentProofBytes = buildSeedPaymentProofPng();
+  const supportingPdfBytes = buildSeedSupportingPdf();
+  const [paymentProofStored, expensePaymentStored, expenseSupportingStored] = await Promise.all([
+    putSeedAttachmentObject({
+      objectKey: `seed/${companyId}/crm/payment-proof-k8.png`,
+      mimeType: 'image/png',
+      bytes: paymentProofBytes,
+    }),
+    putSeedAttachmentObject({
+      objectKey: `seed/${companyId}/expenses/team-meal-payment.png`,
+      mimeType: 'image/png',
+      bytes: paymentProofBytes,
+    }),
+    putSeedAttachmentObject({
+      objectKey: `seed/${companyId}/expenses/team-meal-supporting.pdf`,
+      mimeType: 'application/pdf',
+      bytes: supportingPdfBytes,
+    }),
+  ]);
+
+  // Payment proof awaiting finance verification (item 3 "หลักฐานโอนรอตรวจ" card).
+  // CRM deliberately serves retained message media from AttachmentBlob, while AttachmentObject
+  // also points at the real S3 object so generic signed-download paths exercise the same bytes.
+  await upsertStoredSeedAttachment({
+    db,
+    id: 'seed-attachment-payment-proof',
+    companyId,
+    branchId,
+    originalFileName: 'payment-proof-k8.png',
+    mimeType: 'image/png',
+    bytes: paymentProofBytes,
+    stored: paymentProofStored,
+    uploadedByUserId: ownerUserId,
+    uploadedAt: at(0, 9),
+    persistBlob: true,
   });
   await db.attachmentLink.upsert({
     where: { id: 'seed-attachment-link-payment-proof' },
-    update: { purpose: 'payment_proof' },
+    update: {
+      attachmentId: 'seed-attachment-payment-proof',
+      targetType: 'crm_conversation',
+      targetId: 'seed-crm-conversation-c8',
+      purpose: 'payment_proof',
+      linkedByUserId: ownerUserId,
+    },
     create: {
       id: 'seed-attachment-link-payment-proof', companyId, attachmentId: 'seed-attachment-payment-proof',
       targetType: 'crm_conversation', targetId: 'seed-crm-conversation-c8', purpose: 'payment_proof', linkedByUserId: ownerUserId,
     },
   });
+  const updatedPaymentProofMessage = await db.crmMessage.updateMany({
+    where: { id: 'seed-crm-message-c8-5', companyId, conversationId: 'seed-crm-conversation-c8' },
+    data: {
+      attachmentId: 'seed-attachment-payment-proof',
+      contentJson: { fileName: 'payment-proof-k8.png', seededPreviewFixture: true },
+    },
+  });
+  if (updatedPaymentProofMessage.count !== 1) {
+    throw new Error('Could not bind the seeded payment-proof attachment to CRM message c8-5.');
+  }
+
+  // Supporting-only evidence keeps EXP-LOCAL-0005 eligible for a substitute receipt while
+  // giving the expense UI one real image and one real PDF to preview. It intentionally does not
+  // set primaryAttachmentId or alter the expense review/payment/tax states.
+  await upsertStoredSeedAttachment({
+    db,
+    id: 'seed-expense-attachment-team-meal-payment',
+    companyId,
+    branchId,
+    originalFileName: 'team-meal-payment.png',
+    mimeType: 'image/png',
+    bytes: paymentProofBytes,
+    stored: expensePaymentStored,
+    uploadedByUserId: ownerUserId,
+    uploadedAt: at(-3, 19, 5),
+  });
+  await upsertStoredSeedAttachment({
+    db,
+    id: 'seed-expense-attachment-team-meal-supporting',
+    companyId,
+    branchId,
+    originalFileName: 'team-meal-supporting.pdf',
+    mimeType: 'application/pdf',
+    bytes: supportingPdfBytes,
+    stored: expenseSupportingStored,
+    uploadedByUserId: ownerUserId,
+    uploadedAt: at(-3, 19, 6),
+  });
+  for (const link of [
+    {
+      id: 'seed-expense-attachment-link-team-meal-payment',
+      attachmentId: 'seed-expense-attachment-team-meal-payment',
+      purpose: 'expense.payment.evidence',
+    },
+    {
+      id: 'seed-expense-attachment-link-team-meal-supporting',
+      attachmentId: 'seed-expense-attachment-team-meal-supporting',
+      purpose: 'expense.receipt.supporting',
+    },
+  ]) {
+    await db.attachmentLink.upsert({
+      where: { id: link.id },
+      update: {
+        attachmentId: link.attachmentId,
+        targetType: 'expense.record',
+        targetId: 'seed-expense-record-team-meal',
+        purpose: link.purpose,
+        linkedByUserId: ownerUserId,
+      },
+      create: {
+        id: link.id,
+        companyId,
+        attachmentId: link.attachmentId,
+        targetType: 'expense.record',
+        targetId: 'seed-expense-record-team-meal',
+        purpose: link.purpose,
+        linkedByUserId: ownerUserId,
+      },
+    });
+  }
 
   await db.accountingPayment.upsert({
     where: { id: 'seed-accounting-payment-received' },
@@ -1691,7 +1849,7 @@ async function seedOperationalDemoData(input: {
       requestedQuantity: '12',
       estimatedUnitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '336',
       lineSubtotalAmount: '4800',
       lineTotalAmount: '5136',
@@ -1710,7 +1868,7 @@ async function seedOperationalDemoData(input: {
       requestedQuantity: '12',
       estimatedUnitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '336',
       lineSubtotalAmount: '4800',
       lineTotalAmount: '5136',
@@ -1774,7 +1932,7 @@ async function seedOperationalDemoData(input: {
       receivedQuantity: '6',
       unitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '336',
       lineSubtotalAmount: '4800',
       lineTotalAmount: '5136',
@@ -1795,7 +1953,7 @@ async function seedOperationalDemoData(input: {
       receivedQuantity: '6',
       unitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '336',
       lineSubtotalAmount: '4800',
       lineTotalAmount: '5136',
@@ -1920,7 +2078,7 @@ async function seedOperationalDemoData(input: {
       quantity: '6',
       unitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '168',
       lineSubtotalAmount: '2400',
       lineTotalAmount: '2568',
@@ -1941,7 +2099,7 @@ async function seedOperationalDemoData(input: {
       quantity: '6',
       unitPrice: '400',
       vatMode: 'VAT_EXCLUDED',
-      vatRate: '7',
+      vatRate: '0.07',
       vatAmount: '168',
       inputVatClaimStatus: 'CLAIMABLE',
       lineSubtotalAmount: '2400',

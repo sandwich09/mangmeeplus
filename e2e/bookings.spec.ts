@@ -15,20 +15,26 @@ type BookingSlot = { startAt: string; endAt: string; date: string; time: string;
 
 const THAI_MONTHS_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
 
-/** Drive the ThemedDate button+calendar picker (the field is no longer a fillable input). */
-async function pickThemedDate(scope: ReturnType<Page['getByRole']>, targetIso: string, fromIso: string) {
+/** Drive the ThemedDate button+calendar picker (the field is no longer a fillable input).
+ *  The calendar panel is PORTALED out of the dialog (PopoverPanel), so after clicking the
+ *  trigger inside `scope`, every calendar interaction has to run page-wide. */
+async function pickThemedDate(page: Page, scope: ReturnType<Page['getByRole']>, targetIso: string, fromIso: string) {
   const [ty, tm, td] = targetIso.split('-').map(Number);
   const [fy, fm] = fromIso.split('-').map(Number);
   await scope.getByLabel('วันที่').click();
   let steps = (ty * 12 + tm) - (fy * 12 + fm);
   while (steps !== 0) {
-    await scope.getByRole('button', { name: steps > 0 ? 'เดือนถัดไป' : 'เดือนก่อนหน้า' }).click();
+    await page.getByRole('button', { name: steps > 0 ? 'เดือนถัดไป' : 'เดือนก่อนหน้า' }).click();
     steps += steps > 0 ? -1 : 1;
   }
   // ThemedDate renders the calendar header year in Buddhist Era for the Thai workspace locale
   // (see apps/web/src/common/components/field/ThemedDate.tsx), not the Gregorian ISO year.
-  await expect(scope.getByText(`${THAI_MONTHS_FULL[tm - 1]} ${ty + 543}`, { exact: true })).toBeVisible();
-  await scope.getByRole('button', { name: String(td), exact: true }).click();
+  const header = page.getByText(`${THAI_MONTHS_FULL[tm - 1]} ${ty + 543}`, { exact: true });
+  await expect(header).toBeVisible();
+  // Day numbers collide with unrelated buttons (e.g. the notification badge), so pick the day
+  // inside the calendar panel that carries the header.
+  const panel = header.locator('..').locator('..');
+  await panel.getByRole('button', { name: String(td), exact: true }).click();
 }
 
 function nextWeekSlot(day: number, hour: number): BookingSlot {
@@ -103,8 +109,17 @@ async function getBooking(api: APIRequestContext, companyId: string, booking: Bo
   return found!;
 }
 
+/** On Saturday evening the page opens on NEXT week already (initialBookingWeekOffset moves
+ *  past a finished Saturday), so week navigation must start from a known offset: the reset
+ *  button reads "กลับมาวันนี้" only when the view is off the current week. */
+async function resetToCurrentWeek(page: Page) {
+  const reset = page.getByRole('button', { name: 'กลับมาวันนี้' });
+  if (await reset.isVisible().catch(() => false)) await reset.click();
+}
+
 async function openNextWeekBooking(page: Page, companyId: string, booking: Booking) {
   await gotoCompany(page, companyId, '/bookings');
+  await resetToCurrentWeek(page);
   await page.getByRole('button', { name: /สัปดาห์ถัดไป|next week/i }).click();
   const card = page.getByText(booking.serviceName, { exact: true }).first().locator('..');
   await expect(card).toBeVisible();
@@ -132,6 +147,7 @@ test.describe('BOOK — bookings', () => {
     expect(target, 'seed fixture booking for คุณเบล').toBeDefined();
 
     await gotoCompany(authedPage, companyId, '/bookings');
+    await resetToCurrentWeek(authedPage);
     const targetDate = new Date(target!.startAt);
     const targetSunday = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate() - targetDate.getDay());
     const now = new Date();
@@ -172,7 +188,7 @@ test.describe('BOOK — bookings', () => {
 
     const rescheduleDialog = authedPage.getByRole('dialog', { name: 'เลื่อนนัด' });
     const bookingDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok' }).format(new Date(booking.startAt));
-    await pickThemedDate(rescheduleDialog, target.date, bookingDate);
+    await pickThemedDate(authedPage, rescheduleDialog, target.date, bookingDate);
     await rescheduleDialog.getByLabel('เวลา').fill(target.time);
     await rescheduleDialog.getByRole('button', { name: 'บันทึกการเลื่อนนัด' }).click();
     await expect(rescheduleDialog).toBeHidden();
@@ -187,8 +203,9 @@ test.describe('BOOK — bookings', () => {
   test('BOOK-05 @p1 marks a throwaway booking done', async ({ authedPage, api, companyId }) => {
     const booking = await createBooking(api, companyId);
     const dialog = await openNextWeekBooking(authedPage, companyId, booking);
-    authedPage.once('dialog', (confirmation) => void confirmation.accept());
     await dialog.getByRole('button', { name: 'เสร็จสิ้น' }).click();
+    // Confirmation is the app's useConfirm modal (title ยืนยัน), not a native window.confirm.
+    await authedPage.getByRole('dialog', { name: 'ยืนยัน' }).getByRole('button', { name: 'ยืนยัน', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect((await getBooking(api, companyId, booking)).status).toBe('DONE');
   });
@@ -196,8 +213,9 @@ test.describe('BOOK — bookings', () => {
   test('BOOK-06 @p1 marks a throwaway booking no-show', async ({ authedPage, api, companyId }) => {
     const booking = await createBooking(api, companyId);
     const dialog = await openNextWeekBooking(authedPage, companyId, booking);
-    authedPage.once('dialog', (confirmation) => void confirmation.accept());
     await dialog.getByRole('button', { name: 'ไม่มาตามนัด' }).click();
+    // Confirmation is the app's useConfirm modal (title ยืนยัน), not a native window.confirm.
+    await authedPage.getByRole('dialog', { name: 'ยืนยัน' }).getByRole('button', { name: 'ยืนยัน', exact: true }).click();
     await expect(dialog).toBeHidden();
     expect((await getBooking(api, companyId, booking)).status).toBe('NO_SHOW');
   });

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { fetchServerSession } from '@/common/auth/server-session';
 import { ForbiddenState } from '@/common/components/state';
 import { visibleInventoryTabs, type InventoryTab } from '@/features/inventory/inventory.logic';
+import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
 export default async function InventoryPage({
   params,
@@ -10,7 +11,12 @@ export default async function InventoryPage({
 }) {
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
-  const visibleTabs = visibleInventoryTabs(session?.permissions ?? []);
+  const permissions = session?.permissions ?? [];
+  const visibleTabs = visibleInventoryTabs(permissions);
+
+  if (!canSeeRoute('/inventory', permissions)) {
+    return <main className="p-6"><ForbiddenState description="บัญชีของคุณไม่มีสิทธิ์ใช้งานเมนูคลังสินค้า" /></main>;
+  }
 
   const links = ([
     { key: 'products', href: `/companies/${companyId}/inventory/products`, label: 'สินค้า / Products' },

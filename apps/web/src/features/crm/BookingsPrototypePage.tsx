@@ -7,6 +7,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { CRM_BOOKING_BUFFER_MINUTE_OPTIONS, type CrmBookingBufferMinutes, type CrmBookingStatus, type CrmBookingSummary, type CrmCustomerSummary, type CrmStaffBookingSource, type EmployeeSummary } from '@watchdog-bms/contracts';
 import { cx } from '@/common/components/mangmee';
 import { useConfirm } from '@/common/components/modal';
+import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { listBranches, type Branch } from '../branch-settings/branches.api';
@@ -444,6 +445,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
       const saved = await updateCrmBookingSettings(companyId, { bufferMinutes: next });
       setBufferMinutes(saved.bufferMinutes);
       await load();
+      toast.success(`บันทึกเวลาพักระหว่างคิว ${saved.bufferMinutes} นาทีแล้ว`);
     } catch (e) {
       setBufferMinutes(previous);
       setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
@@ -514,7 +516,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
       </section>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-      {loading && bookings.length === 0 && <div className="mangmee-card p-6 text-center text-sm text-gray-400">กำลังโหลด…</div>}
+      {loading && bookings.length === 0 && <LoadingState label="กำลังโหลด..." />}
 
       {!loading && (
         <>
@@ -603,7 +605,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
                 {draftCustomerId && <div className="mt-1.5 text-xs font-semibold text-green-700">เลือกลูกค้าแล้ว · ID {draftCustomerId}</div>}
                 {!draftCustomerId && !createNewCustomer && canReadCustomers && (
                   <div className="mt-1.5 overflow-hidden rounded-[10px] border border-gray-100 bg-white">
-                    {customerSearchLoading && <div className="px-3 py-2 text-xs text-gray-400">กำลังค้นหา…</div>}
+                    {customerSearchLoading && <div className="px-3 py-2 text-xs text-gray-400">กำลังค้นหา...</div>}
                     {!customerSearchLoading && customerOptions.map((customer) => (
                       <button
                         key={customer.id}
@@ -704,7 +706,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
             <div className="flex gap-2.5 border-t border-gray-100 px-6 py-4">
               <button type="button" onClick={() => setCreate(null)} className="flex-1 rounded-[11px] bg-gray-100 p-3 text-center text-[15px] font-semibold text-gray-600">ยกเลิก</button>
               <button type="button" onClick={() => void saveBooking()} disabled={!canSave || saving} className={cx('flex-1 rounded-[11px] p-3 text-center text-[15px] font-bold text-white', canSave && !saving ? 'cursor-pointer bg-brand-500' : 'cursor-not-allowed bg-gray-300')}>
-                {saving ? 'กำลังบันทึก…' : 'บันทึกคิว'}
+                {saving ? 'กำลังบันทึก...' : 'บันทึกคิว'}
               </button>
             </div>
           </div>
@@ -737,7 +739,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
 
             <div className="flex max-h-[65vh] flex-col gap-4 overflow-y-auto px-6 py-5">
               {actionError && <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div>}
-              {actionSaving && <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-brand-700">กำลังบันทึก…</div>}
+              {actionSaving && <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-brand-700">กำลังบันทึก...</div>}
 
               {!reschedule && (
                 <div className="grid gap-2 rounded-[11px] bg-gray-50 px-4 py-3 text-sm">
@@ -858,7 +860,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
                     onClick={() => void saveReschedule()}
                     className="flex-1 rounded-[11px] bg-brand-500 p-3 text-[15px] font-bold text-white disabled:bg-gray-300"
                   >
-                    {actionSaving ? 'กำลังบันทึก…' : 'บันทึกการเลื่อนนัด'}
+                    {actionSaving ? 'กำลังบันทึก...' : 'บันทึกการเลื่อนนัด'}
                   </button>
                 </>
               ) : (

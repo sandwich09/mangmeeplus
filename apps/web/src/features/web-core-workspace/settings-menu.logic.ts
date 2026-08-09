@@ -1,4 +1,5 @@
 import type { MangmeeTone } from '@/common/components/mangmee';
+import { canSeeRoute } from './route-permissions';
 
 export type SettingsMenuIconKey = 'BellIcon' | 'BoxIcon' | 'LockIcon' | 'GroupIcon' | 'DollarLineIcon';
 
@@ -9,7 +10,6 @@ export type SettingsMenuItem = {
   desc: string;
   iconKey: SettingsMenuIconKey;
   tone: MangmeeTone;
-  requiredAnyPermissions: readonly string[];
   section?: 'primary' | 'advanced';
 };
 
@@ -21,7 +21,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'เชื่อม LINE OA ของบริษัทให้ข้อความลูกค้าเข้าสู่ CRM Inbox โดยอัตโนมัติ',
     iconKey: 'BellIcon',
     tone: 'line',
-    requiredAnyPermissions: ['crm.channel.read'],
   },
   {
     key: 'crm-catalog',
@@ -30,7 +29,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'จัดการข้อมูล ราคา และระยะเวลาบริการที่พนักงานและ AI ใช้ตอบลูกค้าและสร้างการจอง',
     iconKey: 'BoxIcon',
     tone: 'purple',
-    requiredAnyPermissions: ['inventory.product.read'],
   },
   // Account-security screen is feature-disabled (owner decision 2026-08-05): recovery email
   // cannot verify without a mailer and the page promised a password form it never had. The
@@ -42,7 +40,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'จัดการสาขาของบริษัท และใช้เป็นขอบเขตข้อมูลของพนักงานทั้งเว็บและ LINE',
     iconKey: 'GroupIcon',
     tone: 'sky',
-    requiredAnyPermissions: ['company.branch.read', 'company.branch.manage'],
   },
   {
     key: 'accounting-tax-setup',
@@ -51,20 +48,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'ทำตามลำดับตั้งแต่ผังบัญชี ชุดรหัสภาษี (Tax Profile) การผูกบัญชีและรายงาน จนพร้อมเปิดใช้งาน',
     iconKey: 'DollarLineIcon',
     tone: 'brand',
-    // Every key here is entitlement-gated on purpose. `company.settings.view` (read-only
-    // viewer) and `company.setup.manage` (always-on, no featureEntitlementKey) were the two
-    // that survived when a company owns neither double_entry_ledger nor thai_tax, so the card
-    // kept offering a wizard whose every step then read "ยังเปิดให้ใช้ไม่ได้". No step uses
-    // either. With only these keys the card follows entitlement the way every other feature
-    // menu does — the resolver strips a disabled family for every role, owner included.
-    requiredAnyPermissions: [
-      'ledger.account.read',
-      'ledger.account.manage',
-      'tax.profile.read',
-      'tax.profile.manage',
-      'tax.config.read',
-      'tax.config.manage',
-    ],
     section: 'primary',
   },
   {
@@ -74,7 +57,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'เลือกรูปแบบการอนุมัติและหลักฐานขั้นต่ำสำหรับรายจ่ายที่ไม่มีใบเสร็จรับเงิน',
     iconKey: 'DollarLineIcon',
     tone: 'brand',
-    requiredAnyPermissions: ['company.setup.manage'],
   },
   {
     key: 'tax-codes',
@@ -83,7 +65,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'จัดการ SAP-compatible Tax Code ตาม profile บริบท อัตรา และช่วงวันที่มีผล',
     iconKey: 'DollarLineIcon',
     tone: 'indigo',
-    requiredAnyPermissions: ['tax.profile.read', 'tax.profile.manage', 'tax.config.read', 'tax.config.manage'],
     section: 'advanced',
   },
   {
@@ -93,7 +74,6 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'ผูก Tax Code กับผังบัญชี บทบาทบัญชี และช่องรายงาน ภ.พ.30/ภ.พ.36',
     iconKey: 'DollarLineIcon',
     tone: 'teal',
-    requiredAnyPermissions: ['tax.config.read', 'tax.config.manage', 'ledger.posting-rule.read', 'ledger.posting-rule.manage'],
     section: 'advanced',
   },
   {
@@ -103,16 +83,12 @@ export const SETTINGS_MENU_ITEMS: readonly SettingsMenuItem[] = [
     desc: 'ตรวจผังบัญชี ที่มาของ Template ความพร้อม และผลกระทบก่อนเพิ่มหรือแทนที่บัญชี',
     iconKey: 'DollarLineIcon',
     tone: 'lime',
-    requiredAnyPermissions: ['ledger.account.read', 'ledger.account.manage'],
     section: 'advanced',
   },
 ];
 
 export function filterSettingsMenuItems(userPermissions: readonly string[]): SettingsMenuItem[] {
-  return SETTINGS_MENU_ITEMS.filter(({ requiredAnyPermissions }) =>
-    requiredAnyPermissions.length === 0
-    || requiredAnyPermissions.some((permission) => userPermissions.includes(permission)),
-  );
+  return SETTINGS_MENU_ITEMS.filter((item) => canSeeRoute(item.href, userPermissions));
 }
 
 const SETTINGS_SIDEBAR_KEYS = [

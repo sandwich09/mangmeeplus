@@ -1,10 +1,11 @@
 import type {
-  ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus, ExpenseVatMode, InputVatClaimStatus,
+  ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus,
   SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult,
 } from './expenses.model';
 import type {
   ApproveSubstituteReceiptInput,
   CertifySubstituteReceiptInput,
+  CreateExpenseDraftInput,
   ExpenseExtractionResult,
   GenerateSubstituteReceiptInput,
   PreviewSubstituteReceiptInput,
@@ -20,10 +21,11 @@ import type {
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
-import type { TransactionTaxContext } from '@watchdog-bms/contracts';
 
 // Same-origin: upload URLs stay relative and proxy through the /local-storage rewrite.
 const BASE = '';
+const PREVIEW_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/svg+xml', 'application/pdf']);
+const PREVIEW_SIGNATURE_READ_BYTES = 4096;
 
 export function normalizeApiBase(rawBase: string): string {
   const trimmed = rawBase.replace(/\/+$/, '');
@@ -96,16 +98,7 @@ export async function deleteExpense(companyId: string, expenseId: string): Promi
 
 export async function createExpenseDraft(
   companyId: string,
-  body: {
-    captureSource: string;
-    expenseDate: string;
-    vatMode: ExpenseVatMode;
-    inputVatClaimStatus: InputVatClaimStatus;
-    branchId?: string;
-    note?: string;
-    missingReceiptReason?: string;
-    lines: Array<{ lineNumber: number; description: string; quantity: string; unitPrice: string; discountAmount?: string; vatRate?: string; whtRate?: string; taxCodeDefinitionId?: string; externalTaxCode?: string; transactionContext?: TransactionTaxContext }>;
-  },
+  body: CreateExpenseDraftInput,
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses`, { method: 'POST', body: JSON.stringify(body) });
 }
@@ -202,9 +195,67 @@ export async function requestExpenseExtraction(companyId: string, expenseId: str
 }
 
 export async function getAttachmentDownloadUrl(companyId: string, attachmentId: string, options?: { disposition?: 'inline' }): Promise<{ downloadUrl: string; expiresAt: string }> {
-  // `inline` is for <img>/<iframe> previews: Chrome's ORB blocks attachment-disposition responses
-  // there. The server only honours it for image/png, image/jpeg and application/pdf.
+  // The preview path fetches this URL as bytes before creating a Blob URL. `inline` keeps safe
+  // PNG/JPEG/PDF responses browser-friendly; SVG deliberately remains attachment-only server-side.
   return apiFetch(`/v1/companies/${companyId}/attachments/${attachmentId}/download-url${options?.disposition === 'inline' ? '?disposition=inline' : ''}`);
+}
+
+function checkedPreviewMimeType(mimeType: string): string {
+  const normalized = mimeType.split(';', 1)[0]!.trim().toLowerCase();
+  if (!PREVIEW_MIME_TYPES.has(normalized)) throw new Error('ไม่รองรับไฟล์ชนิดนี้สำหรับการดูตัวอย่าง');
+  return normalized;
+}
+
+function startsWithBytes(bytes: Uint8Array, signature: readonly number[]): boolean {
+  return signature.every((value, index) => bytes[index] === value);
+}
+
+function isExpectedSvgMarkup(bytes: Uint8Array): boolean {
+  const text = new TextDecoder().decode(bytes).trimStart();
+  if (/^(?:<!doctype\s+html\b|<html\b)/i.test(text)) return false;
+  if (/^<svg(?:\s|>)/i.test(text)) return true;
+  if (!text.startsWith('<?xml')) return false;
+  const declarationEnd = text.indexOf('?>');
+  if (declarationEnd < 0) return false;
+  const root = text.slice(declarationEnd + 2).trimStart();
+  if (/^(?:<!doctype\s+html\b|<html\b)/i.test(root)) return false;
+  return /^<svg(?:\s|>)/i.test(root);
+}
+
+async function assertPreviewBlobSignature(blob: Blob, mimeType: string): Promise<void> {
+  const bytes = new Uint8Array(await blob.slice(0, PREVIEW_SIGNATURE_READ_BYTES).arrayBuffer());
+  const valid = mimeType === 'application/pdf'
+    ? startsWithBytes(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d]) // %PDF-
+    : mimeType === 'image/png'
+      ? startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      : mimeType === 'image/jpeg'
+        ? startsWithBytes(bytes, [0xff, 0xd8]) // JPEG start-of-image marker
+        : mimeType === 'image/svg+xml' && isExpectedSvgMarkup(bytes);
+  if (!valid) throw new Error('เนื้อหาไฟล์สำหรับดูตัวอย่างไม่ตรงกับชนิดเอกสาร');
+}
+
+async function checkedPreviewBlob(response: Response, expectedMimeType?: string): Promise<Blob> {
+  if (!response.ok) throw new Error(`ไม่สามารถโหลดไฟล์เพื่อดูตัวอย่างได้ (HTTP ${response.status})`);
+  // The storage response is authoritative when older DTOs expose only an attachment ID.
+  // It must still be one of the renderer's exact allowlisted MIME types.
+  const actual = checkedPreviewMimeType(response.headers.get('content-type') ?? '');
+  if (expectedMimeType !== undefined && actual !== checkedPreviewMimeType(expectedMimeType)) {
+    throw new Error('ชนิดไฟล์สำหรับดูตัวอย่างไม่ตรงกับข้อมูลเอกสาร');
+  }
+  const blob = await response.blob();
+  if (blob.size === 0) throw new Error('ไฟล์สำหรับดูตัวอย่างไม่มีข้อมูล');
+  await assertPreviewBlobSignature(blob, actual);
+  return blob;
+}
+
+export async function fetchAttachmentPreviewBlob(
+  companyId: string,
+  attachmentId: string,
+  expectedMimeType?: string,
+): Promise<Blob> {
+  if (expectedMimeType !== undefined) checkedPreviewMimeType(expectedMimeType);
+  const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId, { disposition: 'inline' });
+  return checkedPreviewBlob(await fetch(resolveUploadUrl(downloadUrl), { mode: 'cors', credentials: 'omit' }), expectedMimeType);
 }
 
 export async function markExpenseReady(companyId: string, expenseId: string): Promise<ExpenseSummary> {
@@ -291,9 +342,17 @@ export async function downloadSubstituteReceiptPdf(
   evidenceId: string,
   documentNumber: string,
 ): Promise<void> {
-  const res = await authedFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/artifact.pdf`);
-  if (!res.ok) throw new Error(await readErrorMessage(res));
-  downloadBlob(await res.blob(), `${documentNumber}.pdf`);
+  downloadBlob(await fetchSubstituteReceiptPdfBlob(companyId, expenseId, evidenceId), `${documentNumber}.pdf`);
+}
+
+export async function fetchSubstituteReceiptPdfBlob(
+  companyId: string,
+  expenseId: string,
+  evidenceId: string,
+): Promise<Blob> {
+  const response = await authedFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/artifact.pdf`);
+  if (!response.ok) throw new Error(await readErrorMessage(response));
+  return checkedPreviewBlob(response, 'application/pdf');
 }
 
 export async function downloadPaymentVoucherPdf(
@@ -484,9 +543,16 @@ export function downloadIndexXlsx(result: AccountantPackageResult, fileName: str
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
+  link.href = url;
   link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(link.href);
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  try {
+    link.click();
+  } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
 }

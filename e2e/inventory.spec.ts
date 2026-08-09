@@ -78,7 +78,8 @@ test.describe('INV — inventory', () => {
     await authedPage.locator('input[name="locationId"]').fill(location.id);
     await authedPage.locator('input[name="quantity"]').fill('5');
     await authedPage.getByRole('button', { name: /บันทึก|Save/i }).click();
-    await expect(authedPage.getByText(/บันทึกแล้ว|Saved/i)).toBeVisible();
+    // Success now surfaces as the global toast "บันทึกรับเข้าเรียบร้อยแล้ว" (top-center), not inline copy.
+    await expect(authedPage.getByText(/เรียบร้อยแล้ว|Saved/i)).toBeVisible();
 
     const after = await json<Array<{ quantity: string }>>(await api.get(`companies/${companyId}/inventory/balances?productId=${product.id}&locationId=${location.id}`));
     expect(Number(after[0]?.quantity ?? 0)).toBeGreaterThanOrEqual(beforeQty + 5);
@@ -89,7 +90,8 @@ test.describe('INV — inventory', () => {
     await expect(authedPage.getByRole('heading', { name: /บันทึกสต็อก|Stock Action/i })).toBeVisible();
     // The action picker is now a ThemedSelect (details/summary combobox), not a native
     // <select>, so it has to be asserted via its displayed label instead of .value.
-    await expect(authedPage.getByRole('combobox')).toHaveText('ตรวจนับ / Count');
+    // Labels are Thai-only since the movement-type copy sweep.
+    await expect(authedPage.getByRole('combobox')).toHaveText('ตรวจนับ');
   });
 
   test('INV-08 @p1 locations list renders', async ({ authedPage, companyId }) => {

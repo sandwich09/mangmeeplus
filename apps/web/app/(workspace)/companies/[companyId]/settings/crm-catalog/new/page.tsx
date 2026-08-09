@@ -7,5 +7,5 @@ export default async function CrmCatalogCreatePage({ params }: { params: Promise
   const session = await fetchServerSession(companyId);
   if (!session) redirect(`/login?next=${encodeURIComponent(`/companies/${companyId}/settings/crm-catalog/new`)}`);
   if (!session.permissions.includes('inventory.product.manage')) redirect(`/companies/${companyId}/settings/crm-catalog`);
-  return <ProductCreatePageClient companyId={companyId} basePath={`/companies/${companyId}/settings/crm-catalog`} />;
+  return <ProductCreatePageClient companyId={companyId} basePath={`/companies/${companyId}/settings/crm-catalog`} canManage />;
 }

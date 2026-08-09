@@ -4,16 +4,17 @@ import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type Chang
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { InfoTip } from '@/common/components/field/InfoTip';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { CoverLoader } from '@/common/components/state/CoverLoader';
+import { CoverLoader, LoadingState } from '@/common/components/state';
 import {
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
   uploadReceiptFile, updateExpenseDraft, generateSubstituteReceipt, listExpenseCategories,
   updateExpenseReviewFields, uploadExpenseEvidenceFile, previewSubstituteReceipt,
   approveSubstituteReceipt, certifySubstituteReceipt, completePersonalSignatureUpload, initPersonalSignatureUpload, listSubstituteReceiptPayers,
-  createAccountantPackage, downloadIndexXlsx, downloadSubstituteReceiptPdf, getAttachmentDownloadUrl, requestExpenseExtraction, overrideNonExpenseClassification,
+  createAccountantPackage, downloadIndexXlsx, downloadSubstituteReceiptPdf, fetchAttachmentPreviewBlob, fetchSubstituteReceiptPdfBlob, requestExpenseExtraction, overrideNonExpenseClassification,
   listSubstituteReceiptHistory, supersedeSubstituteReceipt,
   getSubstituteReceiptRuntimePolicy,
   createExpenseDraft, deleteExpense,
@@ -34,7 +35,7 @@ import {
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion,
   formatTaxId, taxIdDigits,
 } from './expenses.model';
-import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab } from './expenses.model';
+import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
@@ -368,7 +369,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 }
 
 // ── Document type / tax evidence review + substitute + signature fill ─────────
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, isOwner, onSaved, onOpenFile }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; isOwner: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean }) => void }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, isOwner, onSaved, onOpenFile }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; isOwner: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -392,7 +393,17 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const [signaturePreview, setSignaturePreview] = useState<{ original: string; cleaned: string } | null>(null);
   const [previewChecksum, setPreviewChecksum] = useState<string | null>(null);
   const [certifiedPreviewed, setCertifiedPreviewed] = useState(false);
+  const previewRequestRef = useRef(0);
+  const previewScope = [
+    companyId,
+    detail.id,
+    detail.substituteReceiptEvidence?.id ?? '',
+    detail.substituteReceiptEvidence?.updatedAt ?? '',
+  ].join('\u0000');
+  const previewScopeRef = useRef(previewScope);
+  previewScopeRef.current = previewScope;
   const [evidenceHistory, setEvidenceHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
+  const [evidenceHistoryLoading, setEvidenceHistoryLoading] = useState(canReview);
   const [supersedeReason, setSupersedeReason] = useState('');
   const [payerState, setPayerState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [substitutePolicy, setSubstitutePolicy] = useState<SubstituteReceiptRuntimePolicy | null>(null);
@@ -437,15 +448,35 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       setSelectedPaymentIds(detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence').map((attachment) => attachment.id));
     }
   }, [detail.attachments, detail.substituteReceiptEvidence]);
-  useEffect(() => { setCertifiedPreviewed(false); }, [detail.substituteReceiptEvidence?.id, detail.substituteReceiptEvidence?.updatedAt]);
   useEffect(() => {
-    if (canReview) void listSubstituteReceiptHistory(companyId, detail.id).then(setEvidenceHistory).catch(() => setEvidenceHistory([]));
+    previewRequestRef.current += 1;
+    setPreviewChecksum(null);
+    setCertifiedPreviewed(false);
+    return () => { previewRequestRef.current += 1; };
+  }, [companyId, detail.id, detail.substituteReceiptEvidence?.id, detail.substituteReceiptEvidence?.updatedAt]);
+  useEffect(() => {
+    if (!canReview) { setEvidenceHistoryLoading(false); return; }
+    let cancelled = false;
+    setEvidenceHistoryLoading(true);
+    void listSubstituteReceiptHistory(companyId, detail.id)
+      .then((items) => { if (!cancelled) setEvidenceHistory(items); })
+      .catch(() => { if (!cancelled) setEvidenceHistory([]); })
+      .finally(() => { if (!cancelled) setEvidenceHistoryLoading(false); });
+    return () => { cancelled = true; };
   }, [canReview, companyId, detail.id, detail.substituteReceiptEvidence?.updatedAt]);
 
   const run = async (fn: () => Promise<unknown>, doneText: string, refresh = true, inline = false) => {
     setBusy(true); setError(null); setInfo(null);
-    try { await fn(); if (refresh) await onSaved(); if (inline) setInfo(doneText); else toast.success(doneText); } catch (e) { setError(err(e)); } finally { setBusy(false); }
+    try {
+      const result = await fn();
+      if (result === false) return;
+      if (refresh) await onSaved();
+      if (inline) setInfo(doneText); else toast.success(doneText);
+    } catch (e) { setError(err(e)); } finally { setBusy(false); }
   };
+  const isPreviewRequestCurrent = (requestId: number, requestScope: string) => (
+    requestId === previewRequestRef.current && requestScope === previewScopeRef.current
+  );
   const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
@@ -561,9 +592,28 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const previewPreparedSubstitute = async () => {
     assertAllowed(signerPosition);
     if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
-    const result = await previewSubstituteReceipt(companyId, detail.id, evidence.id, { payerPosition: signerPosition });
-    setPreviewChecksum(result.previewChecksumSha256);
-    onOpenFile({ name: `${evidence.documentNumber}-preview.svg`, mimeType: 'image/svg+xml', url: result.svgDataUrl, hideOpenNewTab: true });
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    setPreviewChecksum(null);
+    let result;
+    try {
+      result = await previewSubstituteReceipt(companyId, detail.id, evidence.id, { payerPosition: signerPosition });
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
+      throw cause;
+    }
+    if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
+    onOpenFile({
+      name: `${evidence.documentNumber}-preview.svg`,
+      mimeType: 'image/svg+xml',
+      url: result.svgDataUrl,
+      hideOpenNewTab: true,
+      onViewed: () => {
+        if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+        setPreviewChecksum(result.previewChecksumSha256);
+      },
+    });
+    return true;
   };
   const certifySubstitute = async () => {
     assertAllowed(signerPosition);
@@ -603,15 +653,37 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     setSupersedeReason(''); setShowSub(true);
   };
   const openSubstituteArtifact = async (attachmentId: string | null, markCertifiedPreview = false) => {
-    if (!attachmentId) return;
-    const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId);
-    onOpenFile({
-      name: `${evidence?.documentNumber ?? 'substitute-receipt'}${markCertifiedPreview ? '-certified' : ''}.svg`,
-      mimeType: 'image/svg+xml',
-      url: downloadUrl,
-      ...(markCertifiedPreview ? { hideOpenNewTab: true } : {}),
-    });
-    if (markCertifiedPreview) setCertifiedPreviewed(true);
+    if (!attachmentId || !evidence) return;
+    const requestId = ++previewRequestRef.current;
+    const requestScope = previewScopeRef.current;
+    if (markCertifiedPreview) setCertifiedPreviewed(false);
+    try {
+      const blob = markCertifiedPreview
+        ? await fetchAttachmentPreviewBlob(companyId, attachmentId, 'image/svg+xml')
+        : await fetchSubstituteReceiptPdfBlob(companyId, detail.id, evidence.id);
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
+      const url = URL.createObjectURL(blob);
+      if (!isPreviewRequestCurrent(requestId, requestScope)) {
+        URL.revokeObjectURL(url);
+        return false;
+      }
+      onOpenFile({
+        name: markCertifiedPreview ? `${evidence.documentNumber}-certified.svg` : `${evidence.documentNumber}.pdf`,
+        mimeType: markCertifiedPreview ? 'image/svg+xml' : 'application/pdf',
+        url,
+        ...(markCertifiedPreview ? {
+          hideOpenNewTab: true,
+          onViewed: () => {
+            if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+            setCertifiedPreviewed(true);
+          },
+        } : {}),
+      });
+      return true;
+    } catch (cause) {
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
+      throw cause;
+    }
   };
   const requiresPaymentEvidence = subPaymentMethod !== 'CASH'
     || substitutePolicy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
@@ -721,7 +793,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               </label>
             ))}
             <div className="flex flex-wrap items-center gap-2 pt-2">
-              <input className={inputClass} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={(event) => setSupportingUploadFile(event.target.files?.[0] ?? null)} />
+              <ThemedFile file={supportingUploadFile} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setSupportingUploadFile} />
               <button className={ghostClass} disabled={busy || !supportingUploadFile} onClick={() => run(() => uploadEvidence('expense.receipt.supporting'), 'เพิ่มหลักฐานประกอบเรียบร้อยแล้ว')}>เพิ่มหลักฐานประกอบ</button>
             </div>
           </div>
@@ -735,7 +807,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </label>
               ))}
               <div className="flex flex-wrap items-center gap-2 pt-2">
-                <input className={inputClass} type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={(event) => setPaymentUploadFile(event.target.files?.[0] ?? null)} />
+                <ThemedFile file={paymentUploadFile} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setPaymentUploadFile} />
                 <button className={ghostClass} disabled={busy || !paymentUploadFile} onClick={() => run(() => uploadEvidence('expense.payment.evidence'), 'เพิ่มหลักฐานการจ่ายเรียบร้อยแล้ว')}>เพิ่มหลักฐานการจ่าย</button>
               </div>
             </div>
@@ -761,7 +833,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               <input className={inputClass} maxLength={120} placeholder="ตำแหน่งตามจริงของผู้จ่าย เช่น เจ้าของกิจการ" value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
               <p className="text-gray-500">ตำแหน่งในเอกสารเป็นข้อมูลที่ผู้ลงนามรับรองเอง ไม่ได้ดึงจากบทบาทหรือชื่อผู้ใช้ในระบบ</p>
               <button className={ghostClass} disabled={busy || !signerPosition.trim()} onClick={() => run(previewPreparedSubstitute, 'สร้างตัวอย่างสำหรับตรวจแล้ว', false, true)}>สร้างและตรวจตัวอย่างก่อนลงนาม</button>
-              <input className={inputClass} type="file" accept={IMAGE_UPLOAD_ACCEPT} onChange={(event) => selectSignatureFile(event.target.files?.[0] ?? null)} />
+              <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
               <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
               {signaturePreview && (
                 <div className="grid grid-cols-2 gap-2">
@@ -781,7 +853,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               <button className={ghostClass} disabled={busy || !evidence.certifiedArtifactAttachmentId} onClick={() => run(() => openSubstituteArtifact(evidence.certifiedArtifactAttachmentId, true), 'เปิดฉบับที่ผู้จ่ายลงนามแล้ว', false, true)}>เปิดตรวจฉบับที่ผู้จ่ายลงนาม</button>
               <input className={inputClass} maxLength={120} placeholder="ตำแหน่งตามจริงของผู้อนุมัติ เช่น เจ้าของกิจการ" value={signerPosition} onChange={(event) => setSignerPosition(stripDisallowed(event.target.value))} />
               <p className="text-gray-500">ตำแหน่งในเอกสารเป็นข้อมูลที่ผู้ลงนามรับรองเอง ไม่ได้ดึงจากบทบาทหรือชื่อผู้ใช้ในระบบ</p>
-              <input className={inputClass} type="file" accept={IMAGE_UPLOAD_ACCEPT} onChange={(event) => selectSignatureFile(event.target.files?.[0] ?? null)} />
+              <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
               <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
               {signaturePreview && (
                 <div className="grid grid-cols-2 gap-2">
@@ -808,7 +880,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               {!supersedeReason.trim() && <p className="text-xs text-gray-500">กรอกเหตุผลด้านบนก่อน จึงจะกดยกเลิก version นี้ได้</p>}
             </div>
           )}
-          {canReview && evidenceHistory.length > 1 && (
+          {canReview && evidenceHistoryLoading && <p className="text-xs text-gray-500">กำลังโหลด...</p>}
+          {canReview && !evidenceHistoryLoading && evidenceHistory.length > 1 && (
             <details className="rounded-lg bg-white p-2">
               <summary className="cursor-pointer font-semibold">ประวัติทุก version ({evidenceHistory.length})</summary>
               <ul className="mt-2 space-y-1">
@@ -1207,6 +1280,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const [rows, setRows] = useState<ExpenseSummary[]>([]);
   const [catNames, setCatNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [categoryNamesLoading, setCategoryNamesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Filters ride in the menu-scoped store so opening a row and coming back does not throw the
   // period away — reviewing กันยายน should not mean re-picking it once per receipt. Refreshing
@@ -1238,7 +1312,13 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     finally { setLoading(false); }
   }, [companyId, branchId, fromDate, toDate]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { void listExpenseCategories(companyId).then((cs) => setCatNames(Object.fromEntries(cs.map((c) => [c.id, c.name])))).catch(() => {}); }, [companyId]);
+  useEffect(() => {
+    setCategoryNamesLoading(true);
+    void listExpenseCategories(companyId)
+      .then((cs) => setCatNames(Object.fromEntries(cs.map((c) => [c.id, c.name]))))
+      .catch(() => {})
+      .finally(() => setCategoryNamesLoading(false));
+  }, [companyId]);
 
   const kpi = useMemo(() => summarizeExpenseKpis(rows, todayCivilDate()), [rows]);
 
@@ -1369,7 +1449,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             </div>
           </div>
 
-          {loading ? <p className="py-8 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</p>
+          {loading || categoryNamesLoading ? <LoadingState label="กำลังโหลด..." />
             : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
               : <>
           <div className="hidden md:block">
@@ -1456,7 +1536,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             {deleteError && <div className="mt-3"><ErrorBanner message={deleteError} /></div>}
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button type="button" className={dangerClass} disabled={deleting} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ…' : 'ลบถาวร'}</button>
+              <button type="button" className={dangerClass} disabled={deleting} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
             </div>
           </div>
         </div>
@@ -1466,13 +1546,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   );
 }
 
-function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { companyId: string; branchId?: string; canCreate: boolean; onSuccess: (expenseId: string) => void }) {
+function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: string; branchId?: string; onSuccess: (expenseId: string) => void }) {
   const locale = useWorkspaceLocale();
   const [expenseDate, setExpenseDate] = useState(todayCivilDate());
-  const [description, setDescription] = useState('');
-  const [quantity, setQuantity] = useState('1');
-  const [unitPrice, setUnitPrice] = useState('');
-  const [discountAmount, setDiscountAmount] = useState('0');
+  const [items, setItems] = useState<ManualExpenseItem[]>([{ description: '', quantity: '1', unitPrice: '', discountAmount: '0' }]);
   const [serviceCharge, setServiceCharge] = useState('');
   const [taxCodeDefinitionId, setTaxCodeDefinitionId] = useState('');
   const [taxCodeName, setTaxCodeName] = useState('');
@@ -1506,10 +1583,15 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
     } finally { setPreparingReceipt(false); }
   };
 
+  const setItem = (index: number, patch: Partial<ManualExpenseItem>) =>
+    setItems((current) => current.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  const itemNet = (item: ManualExpenseItem) =>
+    Math.max(0, Number(item.quantity || '0') * Number(item.unitPrice || '0') - Number(item.discountAmount || '0'));
+
   // A printed service charge becomes its own line, the same shape the OCR path writes for a
   // SERVICE_CHARGE adjustment, so the summary below previews exactly what gets sent.
   const lines = buildManualExpenseLines({
-    description, quantity, unitPrice, discountAmount,
+    items,
     serviceChargeAmount: serviceCharge,
     serviceChargeDescription: t('expenses.manual_service_charge', locale),
     vatRate, taxCodeDefinitionId, externalTaxCode,
@@ -1518,7 +1600,7 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      const forbidden = findForbiddenChars(description);
+      const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
       if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
       const result = await createExpenseDraft(companyId, {
         captureSource: 'WEB_MANUAL', expenseDate, branchId, vatMode,
@@ -1557,6 +1639,7 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
       </div>
     </div>
   );
+  const req = <span aria-hidden="true" className="text-error-500"> *</span>;
   return <div className="space-y-4">
     <div><h2 className="text-lg font-bold text-gray-900">{t('expenses.manual_title', locale)}</h2><p className="text-sm text-gray-500">{t('expenses.manual_intro', locale)}</p></div>
     {error && <ErrorBanner message={error} />}
@@ -1565,33 +1648,47 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
         <MangmeeCard className="space-y-3 p-4">
           {sectionTitle(ICON.doc, 'expenses.manual_document_section', 'expenses.manual_document_helper')}
           <div className="grid gap-3 sm:grid-cols-3">
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)} *</span><ThemedDate className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
-            <label className="sm:col-span-2"><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_description', locale)} *</span><input required className={inputClass} value={description} onChange={(event) => setDescription(stripDisallowed(event.target.value))} /></label>
-            <div className="sm:col-span-3">
+            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)}{req}</span><ThemedDate className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
+            <div className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_receipt', locale)}</span>
-              <input key={receiptFile?.name ?? 'receipt-empty'} type="file" className={inputClass} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} onChange={(event) => void selectReceiptFile(event.target.files?.[0] ?? null)} />
+              <ThemedFile file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} onChange={(file) => void selectReceiptFile(file)} />
               {preparingReceipt ? <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_preparing', locale)}</p>
-                : receiptFile ? (
-                  <div className="mt-1 flex items-center justify-between text-xs text-gray-600">
-                    <span className="truncate">✓ {receiptFile.name}</span>
-                    <button type="button" className="text-error-700 hover:underline" onClick={() => setReceiptFile(null)}>{t('expenses.manual_receipt_remove', locale)}</button>
-                  </div>
-                ) : <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
+                : !receiptFile && <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
             </div>
           </div>
         </MangmeeCard>
         <MangmeeCard className="space-y-3 p-4">
-          {sectionTitle(ICON.wallet, 'expenses.manual_amount_section', 'expenses.manual_amount_helper')}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_quantity', locale)} *</span><input required type="number" min="0" step="0.0001" className={inputClass} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_unit_price', locale)} *</span><input required type="number" min="0" step="0.01" className={inputClass} value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} /></label>
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.01" className={inputClass} value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} /></label>
-            <label className="sm:col-span-3">
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_service_charge', locale)}</span>
-              <input type="number" min="0" step="0.01" className={inputClass} value={serviceCharge} onChange={(event) => setServiceCharge(event.target.value)} />
-              <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_service_charge_helper', locale)}</p>
-            </label>
-          </div>
+          {sectionTitle(ICON.wallet, 'expenses.manual_items_section', 'expenses.manual_items_helper')}
+          {items.map((item, index) => (
+            <div key={index} className="overflow-hidden rounded-xl border border-gray-200">
+              <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
+                <span className="text-xs font-bold text-gray-600">{t('expenses.manual_item_n', locale).replace('{n}', String(index + 1))}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="tabular-nums text-xs font-semibold text-gray-500">{baht(itemNet(item))}</span>
+                  {items.length > 1 && (
+                    <button type="button" aria-label={t('expenses.manual_remove_item', locale)} disabled={busy} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-error-50 hover:text-error-600">
+                      <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4"><path d="M3.5 5.5h13m-9.5 0v-1a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5v1m-6.5 0 .6 10a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4l.6-10M8.2 8.5v5m3.6-5v5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                  )}
+                </span>
+              </div>
+              <div className="grid gap-3 p-3 sm:grid-cols-3">
+                <label className="sm:col-span-3"><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_description', locale)}{req}</span><input required className={inputClass} value={item.description} onChange={(event) => setItem(index, { description: stripDisallowed(event.target.value) })} /></label>
+                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_quantity', locale)}{req}</span><input required type="number" min="0" step="0.0001" className={inputClass} value={item.quantity} onChange={(event) => setItem(index, { quantity: event.target.value })} /></label>
+                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_unit_price', locale)}{req}</span><input required type="number" min="0" step="0.01" className={inputClass} value={item.unitPrice} onChange={(event) => setItem(index, { unitPrice: event.target.value })} /></label>
+                <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_discount', locale)}</span><input type="number" min="0" step="0.01" className={inputClass} value={item.discountAmount} onChange={(event) => setItem(index, { discountAmount: event.target.value })} /></label>
+              </div>
+            </div>
+          ))}
+          <button type="button" disabled={busy} onClick={() => setItems((current) => [...current, { description: '', quantity: '1', unitPrice: '', discountAmount: '0' }])} className="flex w-full items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-gray-200 px-3 py-2.5 text-sm font-bold text-brand-700 transition hover:border-brand-300 hover:bg-brand-25">
+            <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4"><path d="M10 4.5v11m-5.5-5.5h11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+            {t('expenses.manual_add_item', locale)}
+          </button>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_service_charge', locale)}</span>
+            <input type="number" min="0" step="0.01" className={inputClass} value={serviceCharge} onChange={(event) => setServiceCharge(event.target.value)} />
+            <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_service_charge_helper', locale)}</p>
+          </label>
         </MangmeeCard>
         {showsTaxCapture(capture.mode) && <MangmeeCard className="space-y-3 p-4">
           {sectionTitle(ICON.receipt, 'expenses.manual_tax_section', 'expenses.manual_tax_helper')}
@@ -1610,6 +1707,22 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
       <div className="lg:sticky lg:top-4 lg:self-start">
         <MangmeeCard className="space-y-4 p-4">
           <h3 className="font-semibold text-gray-800">{t('expenses.manual_summary_title', locale)}</h3>
+          {(items.length > 1 || Number(serviceCharge || '0') > 0) && (
+            <ul className="space-y-1.5 border-b border-dashed border-gray-200 pb-3 text-xs text-gray-600">
+              {items.map((item, index) => (
+                <li key={index} className="flex items-baseline justify-between gap-2">
+                  <span className="min-w-0 truncate">{item.description || t('expenses.manual_item_n', locale).replace('{n}', String(index + 1))}</span>
+                  <span className="tabular-nums font-medium">{baht(itemNet(item))}</span>
+                </li>
+              ))}
+              {Number(serviceCharge || '0') > 0 && (
+                <li className="flex items-baseline justify-between gap-2">
+                  <span className="min-w-0 truncate">{t('expenses.manual_service_charge', locale)}</span>
+                  <span className="tabular-nums font-medium">{baht(Number(serviceCharge))}</span>
+                </li>
+              )}
+            </ul>
+          )}
           <div className="space-y-2">
             <MoneyRow label={t('expenses.manual_before_tax', locale)} value={String(totals.subtotal)} />
             <MoneyRow label={t('expenses.vat', locale)} value={String(totals.vat)} />
@@ -1621,8 +1734,7 @@ function ManualExpensePanel({ companyId, branchId, canCreate, onSuccess }: { com
           <MangmeeBadge tone={taxCodeDefinitionId ? 'purple' : 'slate'}>{taxCodeName || t('expenses.manual_no_tax_code', locale)}</MangmeeBadge>
           {savedExpenseId
             ? <button type="button" className={cx(btnClass, 'w-full')} onClick={() => onSuccess(savedExpenseId)}>{t('expenses.manual_open_saved', locale)}</button>
-            : <button disabled={!canCreate || busy || preparingReceipt || !expenseDate || !description || !unitPrice} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>}
-          {!canCreate && <p className="text-xs text-amber-700">{t('expenses.manual_read_only', locale)}</p>}
+            : <button disabled={busy || preparingReceipt || !expenseDate || !items.every((item) => item.description.trim() && item.unitPrice)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>}
           <p className="text-xs leading-relaxed text-gray-500">{t('expenses.manual_intro', locale)}</p>
         </MangmeeCard>
       </div>
@@ -1694,7 +1806,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
         <>
           {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
           {tab === 'upload' && <UploadPanel companyId={companyId} {...(branchId ? { branchId } : {})} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
-          {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} canCreate={caps.canCreate} onSuccess={openListExpense} />}
+          {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} onSuccess={openListExpense} />}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} canApprove={caps.canApproveSignatures} />}
           {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}

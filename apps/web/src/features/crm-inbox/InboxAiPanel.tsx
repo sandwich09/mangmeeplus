@@ -312,7 +312,7 @@ export function InboxAiPanel({
             <div className="text-[13px] font-bold" style={{ color: '#6941C6' }}>ความน่าเชื่อถือลูกค้า</div>
             <div className="mt-2">
               <span className="inline-flex items-center rounded-full border px-3 py-1.5 text-[13px] font-bold" style={{ background: trustStyle.bg, color: trustStyle.color, borderColor: trustStyle.border }}>
-                {trustLoading ? 'กำลังโหลด…' : TRUST_LABEL[trust?.tier ?? 'NEW']}
+                {trustLoading ? 'กำลังโหลด...' : TRUST_LABEL[trust?.tier ?? 'NEW']}
               </span>
             </div>
           </div>
@@ -343,7 +343,7 @@ export function InboxAiPanel({
         {summary?.summaryText && <div className="whitespace-pre-wrap rounded-[10px] bg-gray-50 px-3 py-2.5 text-[13px] leading-relaxed text-gray-700">{summary.summaryText}</div>}
         {summaryMessage && <div className="mb-2 text-[12.5px] text-amber-700">{summaryMessage}</div>}
         <button type="button" onClick={() => void runSummary()} disabled={summaryBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-          {summaryBusy ? 'กำลังสรุป…' : summary ? 'สร้างใหม่' : 'สรุปบทสนทนา'}
+          {summaryBusy ? 'กำลังสรุป...' : summary ? 'สร้างใหม่' : 'สรุปบทสนทนา'}
         </button>
       </Section>
 
@@ -352,7 +352,7 @@ export function InboxAiPanel({
         {draftMessage && <div className="mb-2 text-[12.5px] text-amber-700">{draftMessage}</div>}
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => void runDraft()} disabled={draftBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {draftBusy ? 'กำลังร่าง…' : draft ? 'สร้างใหม่' : 'ร่างคำตอบ'}
+            {draftBusy ? 'กำลังร่าง...' : draft ? 'สร้างใหม่' : 'ร่างคำตอบ'}
           </button>
           {draft && canReply && (
             <button type="button" onClick={() => setComposeText(draft.draftText)} className="rounded-[9px] border border-brand-200 bg-brand-25 px-3 py-2 text-[13px] font-semibold text-brand-600">
@@ -386,7 +386,7 @@ export function InboxAiPanel({
         )}
         {insightsMessage && <div className="mb-2 text-[12.5px] text-amber-700">{insightsMessage}</div>}
         <button type="button" onClick={() => void runInsights()} disabled={insightsBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-          {insightsBusy ? 'กำลังวิเคราะห์…' : insights ? 'วิเคราะห์ใหม่' : 'ดู Insights'}
+          {insightsBusy ? 'กำลังวิเคราะห์...' : insights ? 'วิเคราะห์ใหม่' : 'ดู Insights'}
         </button>
       </Section>
 
