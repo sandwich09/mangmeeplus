@@ -245,3 +245,35 @@ the exact release family"*) — คำตอบที่ถูกแต่มา
 **แก้แล้ว:** ทุกจุดคืนค่าล้มเหลวชัดเจน (`|| return 1`, `|| exit 1`) ไม่พึ่ง `set -e` และเพิ่ม
 ด่านสุดท้ายที่ปฏิเสธ evidence รูปร่าง null ก่อนส่งต่อ พร้อมข้อความบอกทางออก (ไม่ต้องส่ง
 `parent_task_arn`) ทดสอบสามกรณีแล้ว: task หมดอายุ / task ปกติ / task ที่ยังรันอยู่
+
+## รอบ 9 (2026-08-09 เช้า): ผ่าน health แล้ว ตายที่ retire — pagination guard ฝั่ง TypeScript
+
+recovery ของ `fec04e02` ใช้เวลา **3 นาที** (เทียบกับทั้งคืนของรอบก่อน) — recovery path ที่ปลดล็อกไว้
+ทำงานตามที่ควร **ข้อควรจำ:** `recovery_ref` ต้องสืบทอดจาก SHA ที่ operation ถือครอง รอบนี้คือ
+`8df0b272` ไม่ใช่ `b6eccc8` จึงใช้ `dc9081a5` ที่เคยสำเร็จไม่ได้อีก
+
+deploy เดินไกลที่สุดเท่าที่เคยมี:
+
+| step | ผล |
+| --- | --- |
+| Deploy immutable manifest | **success** ครั้งแรก (bound 5000 แก้ตรงจุด) |
+| Verify active digest and health | **success** — service serve build ใหม่และตอบ health จริง |
+| Retire superseded launch builds | failure |
+
+```
+release operation failed: service deployment history is paginated and not safe for retirement
+```
+
+**pagination guard ตระกูลเดิม แต่อยู่ใน TypeScript** (`run-exclusive-release-operation.ts`) ซึ่งเป็น
+ภาษาที่ผมไม่ได้กวาดตอนแก้รอบแรก มี 5 call site `maxResults: 100` และ 4 guard `nextToken != null`
+(บรรทัด 1665 / 2001 / 2167 / 3023)
+
+แก้ด้วย `listAllServiceDeployments()` — pager แบบเดียวกับฝั่ง shell เดินทุกหน้าแล้วคืน
+`nextToken: null` เสมอ guard เดิมคงไว้ทั้งหมดเป็น tripwire มี page cap 50 หน้า
+
+**บทเรียนซ้ำรอบที่สาม:** ครั้งแรกพลาดเพราะไล่ call site แต่ไม่ไล่ consumer (bound 100)
+ครั้งนี้พลาดเพราะไล่แค่ภาษาเดียว **เวลาแก้อะไรที่ทำให้ข้อมูลยาวขึ้น ต้องไล่ทั้ง producer,
+consumer และทุกภาษาในเส้นทางเดียวกัน**
+
+**operation ค้างใหม่:** `74c72def-8ab5-41ca-a6b9-4bbfc0630648`
+(task `5235ca84a7184cfd8f3ed63d333fb726`, deployment `U3FCkWV9ZGGWCM8DFWVZj`)
