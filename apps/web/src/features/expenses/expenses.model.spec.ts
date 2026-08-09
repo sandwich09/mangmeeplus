@@ -604,6 +604,12 @@ describe('expenseDeleteErrorMessage', () => {
     assert.equal(expenseDeleteErrorMessage(null, 'th'), 'เกิดข้อผิดพลาด');
     assert.equal(expenseDeleteErrorMessage(null, 'en'), 'An error occurred.');
   });
+
+  it('asks the user to reload after a concurrent delete conflict', () => {
+    const error = { details: { code: 'EXPENSE_CHANGED_DURING_DELETE' } };
+    assert.equal(expenseDeleteErrorMessage(error, 'th'), 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง');
+    assert.equal(expenseDeleteErrorMessage(error, 'en'), 'The expense changed during deletion. Reload and try again.');
+  });
 });
 
 describe('expenseAiSuggestion / applyExpenseAiSuggestion', () => {

@@ -987,6 +987,11 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
       ? `ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: ${label}`
       : `This expense cannot be deleted because it has linked data: ${label}.`;
   }
+  if (code === 'EXPENSE_CHANGED_DURING_DELETE') {
+    return locale === 'th'
+      ? 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง'
+      : 'The expense changed during deletion. Reload and try again.';
+  }
   if (error instanceof Error) return error.message;
   return locale === 'th' ? 'เกิดข้อผิดพลาด' : 'An error occurred.';
 }

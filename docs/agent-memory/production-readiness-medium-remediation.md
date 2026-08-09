@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-05 committed; M8-06 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-06 committed; M8-07 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -51,6 +51,11 @@ Verification:
   was split without losing content: CR-2 is `1b71614`, M8-05 is `6a70e2e`, and all three QA files remain outside git.
 - M8-06 Thai-date boundary tests: 6/6 pass; web `tsc --noEmit` passes. Shared date/time/month formatters and three bypassing
   timestamp call sites now render in `Asia/Bangkok`; the UTC Aug-31 19:00 instant renders as Sep-1 02:00 in Bangkok.
+- M8-06 commit: `062cc73 fix(web): render business dates in Bangkok time`.
+- M8-07 focused tests: DeleteExpense 33/33 and web expense model 47/47 pass; web `tsc --noEmit` passes. Delete now checks
+  branch scope and permission before document state/linked data, preserves company-central visibility, and uses a final
+  `updatedAt` + tenant + branch-scope CAS so a concurrent confirm/branch move rolls the transaction back.
+- Concurrent unrelated LINE media work appeared in two source files plus its memory while M8-07 ran; it remains unstaged.
 Next:
-- Commit M8-06 code/tests plus this memory only; keep the untracked QA files out of the atomic commit.
-- M8-07: enforce branch ABAC in DeleteExpense and trace attachment/substitute-receipt deletion side effects.
+- Re-run API typecheck after the M8-07 fixture type correction, then commit M8-07 only; keep QA and LINE media work out.
+- M8-08: add optimistic concurrency to draft update and align UI retry/conflict behavior.
