@@ -27,7 +27,8 @@
 
 - [~] **Bastion**: `postgresql` (psql 16.14), `jq`, `awscli`, `python3` **มีครบแล้ว** (ตรวจ 2026-08-08);
       RDS CA bundle **ติดตั้งแล้วที่ `/opt/rds-ca/ap-southeast-1-bundle.pem`** (regional bundle,
-      3 certs, `sha256 3c696020a3b7c6721085d182211c28024ab01873ade35dcc7eeebb89c20ee979`, mode 0644)
+      3 certs, `sha256 3c696020a3b7c6721085d182211c28024ab01873ade35dcc7eeebb89c20ee979`, ไฟล์ 0644
+      **ไดเรกทอรีต้องเป็น 0755** ไม่ใช่ 0700 — ดูหัวข้อบั๊กท้ายเอกสาร)
       — **ไม่ใช่** `global-bundle.pem` ตามที่เขียนไว้เดิม ทั้งสองสคริปต์ default มาที่ path นี้แล้ว
       ถ้าย้าย DB ข้าม region ต้องโหลด bundle ของ region ใหม่
       `arm-support-execute.sh` **ติดตั้งแล้ว** ที่ `/opt/watchdog/arm-support-execute.sh`
@@ -69,7 +70,12 @@
       bastion SG เท่านั้น **ห้ามปิด** เว้นแต่จะเปลี่ยนดีไซน์ support path ทั้งชุด
       - เปิด: `aws ec2 authorize-security-group-ingress --group-id <RDS_SG> --protocol tcp --port 5432 --source-group <BASTION_SG> --region ap-southeast-1`
       - ปิด (ถ้าจำเป็นจริง): `revoke-security-group-ingress` ด้วย argument เดียวกัน
-- [ ] **RDS parameter group**: ใส่ `%a` (application_name) ลง `log_line_prefix`
+- [x] **RDS parameter group**: ทำแล้ว 2026-08-09 — custom group `watchdog-bms-prod-pg18`
+      (default group แก้ไม่ได้) ผูกกับ instance แล้ว reboot `--force-failover` ใช้เวลา **80 วินาที**
+      เว็บตอบ 200 ทันทีหลังจบ
+      > **RDS ไม่ให้ตั้ง `log_line_prefix` ตามใจ** มีแค่ 2 ค่าที่อนุญาต ตัวที่มี `%a` คือ
+      > `%m:%r:%u@%d:[%p]:%l:%e:%s:%v:%x:%c:%q%a:` ซึ่งแถม SQLSTATE, transaction id, session id
+      > และ timestamp ระดับมิลลิวินาทีมาด้วย ยืนยันด้วย `SHOW log_line_prefix` หลัง reboot
 - [x] **DB roles**: รันแล้ว 2026-08-08 บน production — `COMMIT` พร้อม
       `NOTICE: support roles verified: ro(login=t, armed_rw=f)` (verification block ผ่านครบ)
       พิสูจน์ปลายทางจริงด้วย RDS IAM token จาก bastion: `current_user=watchdog_support_ro`,
