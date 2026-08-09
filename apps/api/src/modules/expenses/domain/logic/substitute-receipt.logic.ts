@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 
 export const SUBSTITUTE_RECEIPT_TITLE = 'ใบรับรองแทนใบเสร็จรับเงิน';
 
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
-const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter('th', { granularity: 'grapheme' });
 /** Every glyph width below is calibrated at this size; other sizes scale from it. */
@@ -366,9 +366,5 @@ export function formatThaiTaxId(value: string): string {
 }
 
 function formatDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, year, month, day] = match;
-  const monthLabel = THAI_MONTHS[Number(month) - 1];
-  return monthLabel ? `${Number(day)} ${monthLabel} ${Number(year) + 543}` : value;
+  return formatThaiExportDate(value);
 }

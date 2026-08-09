@@ -21,7 +21,7 @@ describe('substitute receipt evidence', () => {
         category: 'อาหาร', businessPurpose: 'ซื้อวัตถุดิบ', lines: [{ description: 'ผักสด', quantity: '1', amount: '65.00' }],
       },
       originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
-      payer: { userId: 'user-1', name: 'สมชาย <script>', position: 'admin', certifiedAt: '2026-07-13T10:00:00.000Z' },
+      payer: { userId: 'user-1', name: 'สมชาย <script>', position: 'admin', certifiedAt: '2026-07-13T18:30:00.000Z' },
       certificationText,
       evidence: [{ id: 'att-secret-id', purpose: 'expense.receipt.supporting', originalFileName: 'หลักฐาน.png', mimeType: 'image/png', checksumSha256: null }],
       note: null,
@@ -29,7 +29,7 @@ describe('substitute receipt evidence', () => {
     const artifact = renderSubstituteReceiptSvg(
       snapshot,
       'data:image/png;base64,aGVsbG8=',
-      { userId: 'user-2', name: 'ผู้อนุมัติ', position: 'owner', approvedAt: '2026-07-13T11:00:00.000Z' },
+      { userId: 'user-2', name: 'ผู้อนุมัติ', position: 'owner', approvedAt: '2026-07-13T19:00:00.000Z' },
       'data:image/jpeg;base64,d29ybGQ=',
     ).toString('utf8');
 
@@ -37,6 +37,8 @@ describe('substitute receipt evidence', () => {
     assert.match(artifact, /เลขอ้างอิงรายการ: SRC-EXP-1-V1/);
     assert.match(artifact, /หกสิบห้าบาทถ้วน/);
     assert.match(artifact, /13 ก\.\u0e04\. 2569/);
+    assert.match(artifact, /ผู้อนุมัติ · 14 ก\.\u0e04\. 2569/);
+    assert.match(artifact, /ผู้จ่ายเงิน\/ผู้รับรอง · 14 ก\.\u0e04\. 2569/);
     assert.match(artifact, /บันทึกค่าใช้จ่าย \(ข้อความ\)/);
     assert.match(artifact, /วิธีชำระเงิน: เงินสด/);
     assert.match(artifact, /ผู้ดูแลระบบ/);

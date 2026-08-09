@@ -161,5 +161,8 @@ Verification:
   not consume another number. The printed form uses the human-readable certificate number as its item reference until
   the expense receives its confirmation number, never `-` or the internal cuid. Sequence/repository/renderer tests
   30/30 pass; API typecheck retains the same established 14 spec-only errors.
+- Substitute-receipt rendering delegates all civil and signature timestamps to the shared Thai date formatter pinned to
+  `Asia/Bangkok`; a payer/approver signing after UTC 17:00 now prints the following Thai day instead of the preceding UTC
+  date. The renderer regression covers both signatures at this boundary.
 Next:
-- Continue the substitute-receipt R1 findings: Bangkok signature date and voided certificate state.
+- Continue the substitute-receipt R1 findings: voided certificate state.
