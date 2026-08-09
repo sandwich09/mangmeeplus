@@ -38,7 +38,11 @@
       `role_is_armed` อ่านค่าจริงจาก `pg_roles` ได้ (ไม่ใช่เดา) และ `ssm:GetParameter` ที่เพิ่งให้ทำงาน
       > **ติดตั้งซ้ำเมื่อแก้สคริปต์:** ไฟล์บน bastion เป็นสำเนา ไม่ได้ผูกกับ repo
       > ถ้าแก้ใน repo แล้วไม่ copy ใหม่ bastion จะยังรันของเก่าเงียบ ๆ เทียบ sha256 ทุกครั้ง
-- [ ] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
+- [~] **Bastion SG**: **ไม่มี inbound rule แม้แต่ข้อเดียว** — ตรวจซ้ำหลังตั้ง SSM ทำงานด้วย outbound เท่านั้น
+      > **ตรวจ 2026-08-09 พบ inbound 1 ข้อ:** `tcp 5432 from sg-0e363ecb391c7dd17` (SG อ้างถึงตัวเอง)
+      > ในทางปฏิบัติไม่มีผล — อนุญาต 5432 ระหว่างสมาชิกใน SG เดียวกัน ซึ่งมีสมาชิกตัวเดียวและ
+      > ไม่ได้รัน PostgreSQL น่าจะหลงมาตอนเปิด rule ฝั่ง RDS **ยังไม่ลบ** เพราะเป็นการแก้ SG
+      > บน production ตัดสินใจก่อนแล้วค่อยทำ — ตอนนี้ alarm ตัวที่สองจับการแก้ SG ได้แล้ว
 - [ ] **Bastion**: บังคับ IMDSv2, เปิด SSM Patch Manager
 - [~] **Bastion instance profile**: `rds-db:connect` สำหรับทั้งสอง db user **ให้แล้ว 2026-08-08**
       (statement `ConnectAsSupportDatabaseRoles` ใน inline policy
@@ -88,9 +92,19 @@
         ตรง ๆ ถ้า schema ยังว่างจะหยุดที่ `relation "_prisma_migrations" does not exist`
         (ยืนยันด้วยการทดสอบจริงบน PostgreSQL 16 เมื่อ 2026-08-08) การล้มแบบนี้ถูกต้องแล้ว
         ทั้งไฟล์อยู่ใน transaction เดียว จึงไม่มี role ครึ่ง ๆ ค้าง
-- [ ] **Alarm** เมื่อมีคนเปิด SSM session บน bastion → alert topic
-- [ ] **Alarm** เมื่อมี `AuthorizeSecurityGroupIngress` บน bastion SG → alert topic
+- [x] **Alarm** เมื่อมีคนเปิด SSM session บน bastion → alert topic
+      EventBridge `watchdog-bms-production-bastion-session-opened` (จับ `StartSession` และ
+      `ResumeSession`) แจ้ง caller ARN, source IP, session id และที่อยู่ของ transcript
+- [x] **Alarm** เมื่อมี `AuthorizeSecurityGroupIngress` บน bastion SG → alert topic
       **ข้อนี้คือสิ่งที่ปิดช่องว่างหลักของ D5 ทาง (ก)** อย่าข้าม
+      EventBridge `watchdog-bms-production-bastion-sg-changed` — จับทั้ง Authorize และ **Revoke**
+      ทั้ง ingress/egress เพราะคนที่เปิดกฎ ใช้ แล้วลบทิ้ง จะโผล่แค่ครั้งเดียวถ้าดักแต่ Authorize
+      และการลบ egress ทำให้ SSM agent ตายซึ่งล็อกทุกคนออกจาก bastion
+      > **ต้องมี CloudTrail trail ก่อน** — EventBridge ไม่ได้รับ `AWS API Call via CloudTrail`
+      > ถ้าไม่มี trail ที่เก็บ management events พิสูจน์แล้วด้วยของจริง: rule ถูกต้องทุกอย่าง
+      > เปิด session จริง แต่ `AWS/Events Invocations` **ไม่มี datapoint เลย**
+      > สร้าง `watchdog-bms-production` (multi-region + log file validation) แล้ว
+      > รายละเอียดทั้งหมดอยู่ใน `infra/production/security-alert-rules.md`
 - [ ] **ซ้อมทั้ง T1 และ T2 บน UAT ให้จบหนึ่งรอบ** ก่อนแตะ production
 
 > **ยังค้าง (ยอมรับความเสี่ยงชั่วคราว):** `arm-support-execute.sh` ต้องการ writer credential
