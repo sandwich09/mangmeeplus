@@ -392,6 +392,28 @@ approver row and date row are filled in by that person.
 > Separately, s.41 limb (b) and the controller/processor question are deliberately deferred
 > behind the §6 tenant tripwire, not answered.
 
+> **Update 2026-08-09 — the production deploy went ahead before the minutes were filed.**
+> The 28 July note above put the filing deadline on "the production deploy, which is not
+> scheduled yet". That deploy happened on 2026-08-09: the AgentCore orchestrator runtime was
+> redeployed citing `AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF=DPO-2026-07-23-bedrock-global`.
+>
+> **Who decided what.** ธวัชชัย ภูชนะ, as project owner, decided on 2026-08-09 to proceed
+> without waiting for the minutes. That is a decision about *deploy timing* and it is his to
+> make. It is **not** a second approval of the model use, and it does not stand in for the
+> committee: the underlying authority is still the 23 July resolution and nothing about the
+> Approver row changes. Recorded this way on purpose, because "the owner said go" and "the
+> body approved it" are different facts and only the second one is an approval.
+>
+> **What is still open — unchanged and now overdue.** The resolution/minutes are still not
+> filed against the Linked evidence row. The reference the running production deploy cites
+> therefore still resolves only to this file. The 28 July reasoning that the deploy "should
+> not be left indefinitely" has now been answered by deploying rather than by filing, so the
+> evidence gap is no longer time-boxed by anything. Owner for the filing is unchanged
+> (company secretary); it should be closed on receipt.
+>
+> **Also closed by this deploy:** the Haiku 4.5 window described in the Approved-model(s) row.
+> The runtime now pins `global.anthropic.claude-sonnet-4-6` only.
+
 | Field | Value |
 |---|---|
 | Reference id | **`DPO-2026-07-23-bedrock-global`** — decided 2026-07-28, matching the 23 July resolution date. Set verbatim as `AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF` in the production environment on 2026-07-28. |
