@@ -107,7 +107,14 @@ export class ListApprovalQueueUseCase {
       const step = currentApprovalStep(request);
       const assignee = step?.approverUserId;
       return isBranchInScope(ctx.scopes ?? {}, request.branchId)
-        && isEligibleApprover(step, ctx.userId, ctx.roles, !assignee || activeApprovers.has(assignee));
+        && isEligibleApprover(step, ctx.userId, ctx.roles, !assignee || activeApprovers.has(assignee))
+        // Audit H-18: the queue used to list the viewer's own claims, so the approve button was
+        // offered on a request that answers `self_approval_denied` — and the pending-approval
+        // notification pushed a deep link straight to it. Same predicate and same company-level
+        // policy the approve gate uses, so the two can never disagree about what is offered and
+        // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
+        // is filtered.
+        && !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval);
     }).map((r) => {
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
       return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };

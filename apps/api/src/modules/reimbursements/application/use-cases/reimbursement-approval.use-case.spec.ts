@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
+import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
@@ -454,5 +454,45 @@ describe('Reimbursement request evidence validation', () => {
       () => submit.execute(requesterCtx(), created.id),
       (error: any) => error?.status === 422 && /missing_receipt/.test(error.message),
     );
+  });
+});
+
+/**
+ * Audit H-18: the queue listed the viewer's own claims, so the approve button was offered on a
+ * request that answers `self_approval_denied` — and the pending-approval notification pushed a deep
+ * link straight at it. The invitation and the rule disagreed.
+ */
+describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
+  function queueRepo(request: any, policy: any = null) {
+    return {
+      findPolicy: async () => policy,
+      listRequests: async () => [request],
+      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+    } as any;
+  }
+
+  it('hides a claim from the person who filed it while self-approval is blocked', async () => {
+    // The owner files their own claim: eligible by role, refused by the self-approval rule.
+    const mine = baseRequest({ requesterUserId: 'approver-1' });
+    const items = await new ListApprovalQueueUseCase(queueRepo(mine)).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.deepEqual(items, [], 'no button is offered for a decision that would be refused');
+  });
+
+  it('still lists everyone else’s claims', async () => {
+    const theirs = baseRequest({ requesterUserId: 'staff-1' });
+    const items = await new ListApprovalQueueUseCase(queueRepo(theirs)).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.equal(items.length, 1);
+  });
+
+  // The company can turn self-approval on, and then the claim is genuinely approvable — the filter
+  // reads the same policy field the approve gate does, so the two cannot come to disagree.
+  it('shows the filer their own claim once the policy allows self-approval', async () => {
+    const mine = baseRequest({ requesterUserId: 'approver-1' });
+    const repo = queueRepo(mine, { allowSelfApproval: true });
+    const items = await new ListApprovalQueueUseCase(repo).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.equal(items.length, 1);
   });
 });
