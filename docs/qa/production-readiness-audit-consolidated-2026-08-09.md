@@ -980,8 +980,16 @@ package.json แต่ยังไม่ถูกติดตั้งในเ�
 - [x] Timestamp การเซ็น render UTC → เซ็นช่วง 00:00–06:59 พิมพ์วันที่ พ.ศ. ผิด 1 วัน — ✅ RESOLVED
   2026-08-10: renderer ใช้ Thai date formatter กลางที่ pin `Asia/Bangkok` สำหรับวันที่รายจ่าย/จ่าย/เซ็น
   ทั้งหมด; regression ครอบ payer และ approver หลัง 17:00 UTC. Commit `49269e1`.
-- Void expense ที่ confirm แล้วทิ้งใบรับรอง ISSUED ค้าง downloadable ไม่มีเครื่องหมายยกเลิก
-- Hub ซ่อนเอกสาร expense สาขา-กลาง (branchId null) จากผู้ใช้ที่จำกัดสาขา
+- [x] Void expense ที่ confirm แล้วทิ้งใบรับรอง ISSUED ค้าง downloadable ไม่มีเครื่องหมายยกเลิก —
+  ✅ RESOLVED 2026-08-10: true-reversal transaction เปลี่ยน issued evidence เป็น cancelled/superseded
+  ด้วย machine reason `EXPENSE_VOIDED` และ void running number พร้อม expense; immutable SVG ต้นฉบับไม่ถูกแก้
+  แต่ PDF ที่ derive ทุกหน้าประทับ `VOID`. เอกสาร version เก่าที่ถูกแทนยังดาวน์โหลดเพื่อ audit ได้โดยประทับ
+  `SUPERSEDED` แทน (ปิด gap ใหม่ที่ UI มีปุ่มแต่ API เดิมตอบ 409). Expenses 450/450, web typecheck ผ่าน;
+  commit `db8261a`.
+- [x] Hub ซ่อนเอกสาร expense สาขา-กลาง (`branchId = null`) จากผู้ใช้ที่จำกัดสาขา — ✅ ALREADY
+  RESOLVED ใน `6cfea99`: hub ใช้ `branchScopeWhere()` ตัวเดียวกับ expense list ซึ่งสร้าง
+  `OR [branchId in assigned branches, branchId null]`; regression ยืนยันว่า branch/relation/month OR แยกกันใต้
+  `AND` จึงไม่ทำให้ relation กว้างขึ้น. ยืนยันซ้ำใน expenses regression 450/450; ไม่มี code diff เพิ่ม.
 
 **ตั้งค่า/feature toggle [R1]**
 - ปิดฟีเจอร์/partner ไม่หยุด campaign/outbox/LINE ที่คิวไว้ (staged design ที่ยังไม่ flip)
@@ -990,12 +998,33 @@ package.json แต่ยังไม่ถูกติดตั้งในเ�
 - ไม่มี CI ตรวจว่า `@RequirePermissions` ทุกคีย์มีจริง (ต้นเหตุ H-14)
 - Business-policy ไม่มี audit, ไม่มี assertRouteCompany, role ปฏิบัติการเปลี่ยน discount ceiling ได้
 
-**dashboard/noti/reports [R1]**
-- `report_ready` เป็น FUTURE trigger → LINE suppress เสมอ, opt-in ไม่ได้, title/body อังกฤษ
-- Tab "7 วันล่าสุด" snapshot ใช้ Mon-Sun แต่ CRM brief ใช้ trailing 7 วัน → tab เดียวแสดงสองช่วง
-- Snapshot cache เสิร์ฟ period ก่อนหลัง rollover (23:50 "today" ถึง 00:05 แสดงยอดเมื่อวาน)
-- `dedupKey` ไม่มี `@@unique` → cron+on-demand สร้าง 2 OPEN event → LINE push ซ้ำ
-- Cursor pagination `id<cursor` แต่ order by `createdAt` → ข้าม/ซ้ำข้ามหน้า
+**dashboard/noti/reports [R1] — 🟡 ปิด 4 ข้อ correctness แล้ว 2026-08-10 (ขอบเขต A: ไม่แตะ schema)**
+- ~~`report_ready` เป็น FUTURE trigger → LINE suppress เสมอ, opt-in ไม่ได้, title/body อังกฤษ~~ ✅
+- ~~Snapshot cache เสิร์ฟ period ก่อนหลัง rollover (23:50 "today" ถึง 00:05 แสดงยอดเมื่อวาน)~~ ✅
+- ~~Cursor pagination `id<cursor` แต่ order by `createdAt` → ข้าม/ซ้ำข้ามหน้า~~ ✅ (3 query)
+- ~~unread-count ดึงทุก row + join ทุก 60 วิ~~ ✅ เปลี่ยนเป็น `groupBy` ฝั่ง DB
+- Tab "7 วันล่าสุด" snapshot ใช้ Mon-Sun แต่ CRM brief ใช้ trailing 7 วัน → tab เดียวแสดงสองช่วง (ยังไม่แก้)
+- `dedupKey` ไม่มี `@@unique` → cron+on-demand สร้าง 2 OPEN event → LINE push ซ้ำ (**ต้อง migration**)
+
+> **แก้ข้อ `dedupKey` ให้ตรง:** ใส่ `@@unique([companyId, dedupKey])` เฉย ๆ **จะพัง** เพราะ dedupKey
+> ซ้ำได้โดยชอบ — `notification.use-cases.ts:218` สร้าง event ใหม่เมื่อของเดิม `status !== 'open'`
+> (resolved แล้วเปิดใหม่) ต้องเป็น **partial unique index `WHERE status = 'open'`** + จัดการ P2002
+> ซึ่งต้องมี migration และทดสอบจริงต้องมี PostgreSQL (ยังไม่มีในเครื่องนี้ — migration spec ก็ fail อยู่)
+
+**เจอเพิ่มระหว่างแก้: trigger ที่ส่งไม่ได้อีก 11 ตัว** — preference gate default = `IMPLEMENTED_TRIGGER_KEYS`
+ดังนั้น key ที่โมดูลยิงออกมาแต่ไม่อยู่ในลิสต์นั้นจะถูก drop ทุกครั้ง ไม่ใช่แค่ `report_ready`:
+`workflow.daily_owner_summary` · `low_stock_alert` · `stockout_risk` · `vendor_bill_pending` ·
+`vendor_bill_second_approval` · `tax_due_soon` · `bank_reconciliation_aging` · `overdue_invoice` ·
+`crm_follow_up_due` · `crm_opportunity_stuck` · `sales_below_target` (ทั้งหมดจาก
+`workflow-template-catalog.ts` ผ่าน `workflow-action-runner` → `notify.execute` เส้นเดียวกัน)
+
+**ไม่เปิดให้เอง** เพราะย้าย key เข้า IMPLEMENTED = เปิด LINE push ชนิดใหม่ให้ทุกบริษัทโดย default
+เป็น product decision ว่ามือถือเจ้าของร้านจะสั่นเรื่องอะไร ไม่ใช่การแก้บั๊ก — บันทึกเป็นลิสต์ใน spec
+พร้อมเหตุผล ให้ลบทีละตัวตอนที่ตัดสินใจเปิด
+
+Verify: `dashboard-notification-correctness.spec.ts` 8 tests · dashboard-notifications + reports +
+workflow 280 ผ่าน 0 fail · api ทั้งชุด 4710 tests · `tsc` ไม่มี error ในไฟล์ที่แตะ
+mutation ทั้ง 3 จุดพร้อมกัน → fail 4 (period check, cursor, report_ready + guard)
 - Notification center ไม่มี pagination; dismissed เข้าถึงไม่ได้ ไม่มี undo
 - Delivery log + retry มี API ไม่มี UI → LINE ที่ส่งล้มมองไม่เห็น
 - DashboardSnapshot โตไม่จำกัด; unread-count ดึงทุก row + join ทุก 60 วิ; stockMovement.groupBy ทั้งประวัติบน request path

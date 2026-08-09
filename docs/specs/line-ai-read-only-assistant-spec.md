@@ -145,7 +145,8 @@ Before implementation, inspect latest code again. Extend existing primitives. Do
 - Conversation retention must be configurable. Item 07 stores message preview plus hash by default, not full user message text.
 - Unknown or unlinked LINE users receive account-link/invite-required guidance and no business data.
 - Normal employee users may have only one active company membership. OWNER users may belong to multiple companies and must use a server-verified active company context. If an OWNER context is ambiguous, send the user to a LIFF/web company selector or LINE context command list.
-- LINE company context commands are control-plane commands, not AI intent classification: `/companies` lists active OWNER-accessible companies, and `/company <number-or-companyId>` switches `LineCompanyContext` only after active membership and OWNER checks pass.
+- LINE company context commands are control-plane commands, not AI intent classification: `/companies`, `/company`, or the exact natural-language request `เปลี่ยนบริษัท` lists active OWNER-accessible companies, and `/company <number-or-companyId>` switches `LineCompanyContext` only after active membership and OWNER checks pass.
+- A company picker creates a short-lived server-side pending-selection state. The immediately following reply may be a bare displayed number (including Thai digits) and must be mapped deterministically to that picker before the same active membership and OWNER checks run. A bare number without that pending state is ordinary conversation text and never switches company.
 - Inactive or removed company membership fails closed: no AI Gateway call, no ERP tool call, no source refs, no upload/capture, and no business data in LINE replies.
 - Item 07 starts with deterministic classifier and answer composer. LLM provider integration can be added later behind a port after read tools, source refs, audit, and refusal behavior are stable.
 - First LINE rich menu for item 07 should expose `Ask AI`, `Open Alerts`, and `Link Account`. `Daily Summary` can reuse item 06 behavior if already enabled, but item 07 should not build a new daily-summary workflow.
@@ -253,9 +254,10 @@ Evidence-capture tools are not final mutation tools. They must be permission-che
 1. API resolves more than one active company membership for the linked LINE user.
 2. API verifies the linked user has an active `OWNER` membership for the selected company. Non-owner multi-company membership is a policy violation and no business tools are called.
 3. If a recent verified conversation context exists, use it only if membership is still active.
-4. If ambiguous, reply with accessible company list and exact command guidance: `/companies` to list and `/company <number-or-companyId>` to switch.
-5. Do not accept a raw company id typed by user as authorization by itself; `/company <number-or-companyId>` is only a selector input and must be rechecked against active OWNER membership before writing `LineCompanyContext`.
-6. Natural-language business questions never switch company context. AI routing starts only after server-side company context is resolved.
+4. If ambiguous, reply with an ordered accessible-company picker and exact command guidance: `/companies` or `เปลี่ยนบริษัท` to list and `/company <number-or-companyId>` to switch.
+5. While that picker is the immediately preceding LINE turn and is at most 15 minutes old, accept a bare displayed number as selector input. Invalid numbers re-display the picker so the next reply can retry; any unrelated intervening turn or timeout ends the pending selection.
+6. Do not accept a raw company id or bare number as authorization by itself; every selector input must be rechecked against active OWNER membership before writing `LineCompanyContext`.
+7. Natural-language business questions never switch company context. AI routing starts only after server-side company context is resolved.
 
 ### Re-link same LINE account to a newly selected company
 
@@ -419,7 +421,7 @@ export type LineAiTurnResponse = {
 
 Keep internal service auth, LINE signatures, raw LINE payloads, tokens, full audit payloads, and raw tool internals out of public contracts.
 
-`conversationContext` is short-term LINE chat context only. It is bounded to the previous 15 `AiTurn` rows within 15 active minutes for the same company/user and is sent only after current `line.ai.query` permission is confirmed. It may help resolve follow-up wording, but it must not select company, authorize access, or serve as source-of-truth business data. Long-lived company selection remains `LineCompanyContext`.
+`conversationContext` is short-term LINE chat context only. It is bounded to the previous 16 `AiTurn` rows within 15 active minutes for the same company/user and is sent only after current `line.ai.query` permission is confirmed. It may help resolve follow-up wording, but it must not select company, authorize access, or serve as source-of-truth business data. Long-lived company selection remains `LineCompanyContext`.
 
 ## 14. Data Model Draft
 

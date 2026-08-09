@@ -172,4 +172,5 @@ Verification:
 - Void/download/permission focused tests pass 37/37 and the complete expenses module passes 450/450. Web typecheck passes;
   API typecheck has no new errors and retains only the established 14 substitute-receipt/report spec errors.
 Next:
-- Verify the already-fixed company-central hub scope and close the substitute-receipt R1 subsection in consolidated.
+- Substitute-receipt R1 is closed: the company-central hub predicate was already fixed and directly regression-tested in
+  `6cfea99`; the complete expenses suite reconfirmed it. Continue the next section-8 R1 finding.
