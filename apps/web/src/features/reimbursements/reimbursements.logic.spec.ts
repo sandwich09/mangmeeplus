@@ -248,6 +248,10 @@ describe('errorMessage', () => {
   it('translates the API error codes the banners actually surface', () => {
     assert.match(errorMessage('missing_receipt'), /ใบเสร็จ/);
     assert.match(errorMessage('self_approval_denied'), /ตนเอง/);
+    // Audit H-18: the refusal has to say the rule is a setting, and name the toggle the way the
+    // settings page labels it, or the reader cannot find what to change.
+    assert.match(errorMessage('self_approval_denied'), /การตั้งค่า/);
+    assert.match(errorMessage('self_approval_denied'), /"อนุญาตให้อนุมัติคำขอตนเอง"/);
     assert.match(errorMessage('claim_form_requires_submitted'), /เลขที่เอกสาร/);
     for (const code of ['stale_approval_snapshot', 'expense_already_claimed', 'attachment_already_claimed',
       'duplicate_unresolved', 'partial_payment_not_allowed', 'missing_receipt_reason_required',
