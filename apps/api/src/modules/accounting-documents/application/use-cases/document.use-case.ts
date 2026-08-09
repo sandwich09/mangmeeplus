@@ -657,7 +657,7 @@ export class ConvertDocumentUseCase {
     if (!hasDocumentPermission(ctx, source.documentType, 'read') && !related) {
       throw new ForbiddenException(`Missing permission: ${docPermission(source.documentType, 'read')}`);
     }
-    if (source.status !== 'ISSUED') throw new UnprocessableEntityException('Only issued documents can be converted');
+    if (source.status !== 'ISSUED' && source.status !== 'CLOSED') throw new UnprocessableEntityException('Only issued documents can be converted');
     if (source.documentType !== 'QUOTATION') throw new UnprocessableEntityException('Only quotations can be converted');
     if (targetType !== 'INVOICE' && targetType !== 'BILLING_NOTE') throw new UnprocessableEntityException('Quotations can only convert to INVOICE or BILLING_NOTE');
     if (!hasDocumentPermission(ctx, targetType, 'create')) {
@@ -679,7 +679,7 @@ export class ConvertDocumentUseCase {
       revenueCategory: l.revenueCategory,
     }));
 
-    const converted = await this.repo.createDocument({
+    const result = await this.repo.convertQuotation(source.id, source.updatedAt, {
       companyId: ctx.companyId,
       branchId: source.branchId,
       documentType: targetType,
@@ -693,18 +693,18 @@ export class ConvertDocumentUseCase {
       note: source.note,
       createdByUserId: ctx.userId,
       lines,
-    });
+    }, ctx.userId);
+    const converted = result.document;
 
-    // Mark source document with conversion link
-    await this.repo.updateDocumentStatus(ctx.companyId, sourceDocumentId, 'CLOSED', ctx.userId);
+    if (result.didConvert) {
+      void this.outbox.append('accounting.document.converted', 'accounting_document', sourceDocumentId, {
+        companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+        aggregateType: 'accounting_document', aggregateId: sourceDocumentId, occurredAt: new Date().toISOString(),
+        data: { sourceDocumentId, targetDocumentId: converted.id, targetType },
+      });
 
-    void this.outbox.append('accounting.document.converted', 'accounting_document', sourceDocumentId, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'accounting_document', aggregateId: sourceDocumentId, occurredAt: new Date().toISOString(),
-      data: { sourceDocumentId, targetDocumentId: converted.id, targetType },
-    });
-
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.document.convert', targetType: 'accounting_document', targetId: sourceDocumentId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { targetType, targetDocumentId: converted.id } });
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.document.convert', targetType: 'accounting_document', targetId: sourceDocumentId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { targetType, targetDocumentId: converted.id } });
+    }
 
     return converted;
   }

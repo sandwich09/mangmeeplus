@@ -126,7 +126,8 @@ Item 08 does not implement full ledger UI, chart of accounts, journal posting, t
 - Minimal accounting counterparty/customer master needed for documents before CRM item 15.
 - API accounting module using hexagonal folder structure.
 - Quotation, invoice, billing note, receipt, tax invoice, payment, and payment allocation use cases.
-- Document conversion: quotation to invoice or billing note without duplicate keying.
+- Document conversion: quotation to exactly one invoice or billing note with atomic source-close + target-create,
+  source-version CAS, and idempotent same-target retry.
 - Draft, quotation approval, issue/finalize, void/correction, credit note, debit note, payment status, tax status, and posting status.
 - Ledger-ready source document query/contract for item 10.
 - Bounded outbox event payloads for accounting document lifecycle.
@@ -287,7 +288,8 @@ Implement web-owned accounting document workflows behind permission-checked API 
 - [ ] Implement counterparty create/update/list/get use cases.
 - [x] Implement document create/update/list/get use cases for quotation, invoice, billing note, receipt, and tax invoice.
 - [ ] Implement quotation submit/approve/reject use cases. Sales can submit and issue only after approval; Manager/Finance approve.
-- [ ] Implement quotation conversion to invoice or billing note.
+- [x] Implement quotation conversion to invoice or billing note atomically under the document lifecycle lock; retry returns
+  the existing same-type target and conflicting/duplicate targets fail closed.
 - [ ] Implement issue/finalize use cases with document sequence reservation/commit.
 - [x] Implement void/cancel use cases with reason, permission, status checks, and audit.
 - [ ] Implement payment create/update/list/get and allocation to invoice.

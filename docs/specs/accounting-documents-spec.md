@@ -42,7 +42,8 @@ Item 08 ships the web-owned source document workflow for quotations, quotation a
 3. Quotation is submitted for approval before final issue.
 4. Manager or Finance approves/rejects quotation issue. Sales cannot self-approve.
 5. Sales or Finance issues approved quotation.
-6. Issued quotation converts to invoice or billing note without duplicate keying.
+6. Issued quotation converts to exactly one invoice or billing note without duplicate keying. Source close and target create
+   are one atomic, version-checked lifecycle mutation; a same-target retry returns the persisted target without another event.
 7. Finance issues invoice/billing note.
 8. Payment is recorded against invoice/customer. Overpayment becomes unapplied customer credit.
 9. Receipt is issued from payment or paid invoice flow.
@@ -494,6 +495,8 @@ POST /documents/:documentId/void
 POST /documents/:documentId/convert
 - Permission: source read plus target create permission.
 - Converts issued quotation to invoice or billing note without losing item/tax data.
+- Uses the source lifecycle lock and loaded version so concurrent conversions cannot create two targets or leave a target
+  while the quotation remains issued. A completed same-target retry is idempotent; a different/duplicate target is a conflict.
 
 GET /payments
 - Permission: accounting.payment.read
@@ -785,7 +788,7 @@ Persistence/use-case tests:
 Web tests:
 
 - List filters by document type/status/date/payment/posting status.
-- Quotation converts to invoice without losing item data.
+- Quotation converts to invoice without losing item data; concurrent/same-target retry creates and emits only once.
 - Quotation approval UI allows Manager/Finance approval and blocks Sales self-approval.
 - Issue action shows validation and locked state.
 - Payment form handles partial payment.

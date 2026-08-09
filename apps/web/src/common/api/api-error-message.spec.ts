@@ -145,6 +145,16 @@ test('maps an accounting document edit/issue race to a reload-and-review instruc
   );
 });
 
+test('maps a conflicting quotation conversion to the persisted-target instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Quotation already has a different converted document.', {
+      status: 409,
+      code: 'accounting_document_already_converted',
+    })),
+    'ใบเสนอราคานี้ถูกแปลงเป็นเอกสารอื่นแล้ว กรุณาโหลดใหม่และตรวจสอบเอกสารที่สร้างไว้',
+  );
+});
+
 test('maps the entitlement command conflicts and cascade preview', () => {
   assert.match(translateApiError('entitlement_set_version_conflict')!, /เปิดใหม่/);
   assert.match(translateApiError('entitlement_command_conflict')!, /ข้อมูลอื่น/);

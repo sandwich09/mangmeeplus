@@ -47,6 +47,7 @@ export type VoidDocumentResult = {
   unappliedCredits: Array<{ paymentId: string; unappliedAmount: string; currency: string }>;
   reversalEntryId: string | null;
 };
+export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boolean };
 
 @Injectable()
 export class PrismaAccountingRepository {
@@ -107,6 +108,10 @@ export class PrismaAccountingRepository {
 
   // ---- Document ----
   async createDocument(input: CreateDocumentInput): Promise<DocumentRecord> {
+    return this.createDocumentWithClient(this.prisma.client, input);
+  }
+
+  private async createDocumentWithClient(db: any, input: CreateDocumentInput): Promise<DocumentRecord> {
     const computedLines = input.lines.map((l) => calculateLine({ ...l, vatMode: input.vatMode, discountAmount: l.discountAmount ?? '0' }));
     const totals = calculateDocumentTotals(input.lines.map((l, i) => ({
       lineSubtotalAmount: computedLines[i].lineSubtotalAmount,
@@ -117,7 +122,7 @@ export class PrismaAccountingRepository {
       lineTotalAmount: computedLines[i].lineTotalAmount,
     })));
 
-    const row = await this.prisma.client.accountingDocument.create({
+    const row = await db.accountingDocument.create({
       data: {
         companyId: input.companyId,
         branchId: input.branchId,
@@ -168,6 +173,69 @@ export class PrismaAccountingRepository {
       include: { lines: true },
     });
     return this.toDocumentRecord(row);
+  }
+
+  async convertQuotation(
+    sourceDocumentId: string,
+    expectedSourceUpdatedAt: Date,
+    input: CreateDocumentInput,
+    actorUserId: string,
+  ): Promise<ConvertQuotationResult> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${sourceDocumentId}:accounting-document-lifecycle`}))`;
+      const source = await tx.accountingDocument.findFirst({
+        where: { id: sourceDocumentId, companyId: input.companyId },
+      });
+      if (!source) throw new NotFoundException(`Source document ${sourceDocumentId} not found`);
+
+      const existing = await tx.accountingDocument.findMany({
+        where: { companyId: input.companyId, convertedFromDocumentId: sourceDocumentId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+        orderBy: { createdAt: 'asc' },
+        take: 2,
+      });
+      if (existing.length > 1 || (existing[0] && existing[0].documentType !== input.documentType)) {
+        throw new ConflictException({
+          code: 'accounting_document_already_converted',
+          message: 'Quotation already has a different or duplicate converted document.',
+        });
+      }
+      if (source.status === 'CLOSED' && existing[0]) {
+        return { document: this.toDocumentRecord(existing[0]), didConvert: false };
+      }
+      if (source.documentType !== 'QUOTATION' || source.status !== 'ISSUED'
+        || source.updatedAt.getTime() !== expectedSourceUpdatedAt.getTime()) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before conversion. Reload and retry.',
+        });
+      }
+
+      const claimed = await tx.accountingDocument.updateMany({
+        where: {
+          id: sourceDocumentId,
+          companyId: input.companyId,
+          documentType: 'QUOTATION',
+          status: 'ISSUED',
+          updatedAt: expectedSourceUpdatedAt,
+        },
+        data: { status: 'CLOSED', updatedByUserId: actorUserId },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before conversion. Reload and retry.',
+        });
+      }
+
+      if (existing[0]) {
+        return { document: this.toDocumentRecord(existing[0]), didConvert: true };
+      }
+      return {
+        document: await this.createDocumentWithClient(tx, input),
+        didConvert: true,
+      };
+    }, { isolationLevel: 'Serializable' });
   }
 
   async deleteDraftDocument(companyId: string, id: string): Promise<void> {

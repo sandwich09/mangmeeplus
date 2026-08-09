@@ -127,18 +127,18 @@ describe('ConvertDocumentUseCase permissions', () => {
   } as any;
 
   it('requires relation or quotation read in addition to target create permission', async () => {
-    const createDocument = mock.fn(async () => document());
+    const convertQuotation = mock.fn(async () => ({ document: document(), didConvert: true }));
     const useCase = new ConvertDocumentUseCase({
       findDocumentById: mock.fn(async () => quotation),
       isDocumentRelatedToUser: mock.fn(async () => false),
-      createDocument,
+      convertQuotation,
     } as any, {} as any, {} as any);
 
     await assert.rejects(
       () => useCase.execute({ ...ctx, permissions: ['accounting.document.read_related', 'accounting.invoice.create'] }, quotation.id, 'INVOICE'),
       ForbiddenException,
     );
-    assert.equal(createDocument.mock.callCount(), 0);
+    assert.equal(convertQuotation.mock.callCount(), 0);
   });
 
   it('lets a related actor create only the permitted target type and persists the conversion link', async () => {
@@ -146,11 +146,10 @@ describe('ConvertDocumentUseCase permissions', () => {
     const useCase = new ConvertDocumentUseCase({
       findDocumentById: mock.fn(async () => quotation),
       isDocumentRelatedToUser: mock.fn(async () => true),
-      createDocument: mock.fn(async (candidate: any) => {
+      convertQuotation: mock.fn(async (_sourceId: string, _version: Date, candidate: any) => {
         input = candidate;
-        return { ...document(), ...candidate, id: 'invoice-1' };
+        return { document: { ...document(), ...candidate, id: 'invoice-1' }, didConvert: true };
       }),
-      updateDocumentStatus: mock.fn(async () => quotation),
     } as any, { log: mock.fn(async () => undefined) } as any, { append: mock.fn(async () => undefined) } as any);
 
     await useCase.execute(
@@ -167,5 +166,24 @@ describe('ConvertDocumentUseCase permissions', () => {
       ),
       ForbiddenException,
     );
+  });
+
+  it('does not emit another event or audit row for an idempotent completed retry', async () => {
+    const closed = { ...quotation, status: 'CLOSED' };
+    const append = mock.fn(async () => undefined);
+    const log = mock.fn(async () => undefined);
+    const useCase = new ConvertDocumentUseCase({
+      findDocumentById: mock.fn(async () => closed),
+      convertQuotation: mock.fn(async () => ({ document: { ...document(), id: 'invoice-1' }, didConvert: false })),
+    } as any, { log } as any, { append } as any);
+
+    const result = await useCase.execute(
+      { ...ctx, permissions: ['accounting.quotation.read', 'accounting.invoice.create'] },
+      quotation.id,
+      'INVOICE',
+    );
+    assert.equal(result.id, 'invoice-1');
+    assert.equal(append.mock.callCount(), 0);
+    assert.equal(log.mock.callCount(), 0);
   });
 });

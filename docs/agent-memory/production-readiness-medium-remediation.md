@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-08 committed; M8-09 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-09 committed; M8-09B implemented, verifying its separate commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -84,8 +84,14 @@ Verification:
 - M8-09 verification: focused API/accounting/auth/access/AI 179/179, LINE/AI API 202/202, AI Gateway 93/93, focused web
   86/86 and full web 863/863 pass. Prisma schema validate, contracts build, AI Gateway/web typechecks pass. API typecheck
   has no M8-09 error and still reports only the established 14 errors in substitute-receipt/report specs.
+- M8-09 commit: `f913945 fix(accounting): secure draft correction and related views`.
+- M8-09B closes the newly found split-transaction conversion gap: quotation lifecycle lock + loaded-version CAS now owns
+  source close and target creation in one serializable transaction. A completed same-target retry returns the persisted
+  target without duplicate audit/outbox; a legacy partial target is completed once, while different/multiple targets fail 409.
+- M8-09B focused conversion/use-case tests: 13/13; expanded accounting/auth/access/AI regression: 184/184; web error copy: 20/20 pass.
+  Web typecheck passes. API typecheck reports no M8-09B errors; it still has the established substitute-receipt/report test errors plus one
+  concurrent reimbursement edit error outside this commit.
 - Concurrent unrelated work continues in the shared worktree and remains outside M8-09 staging.
 Next:
-- Commit M8-09 only; keep the untracked QA consolidation and concurrent onboarding work out.
-- M8-09B (new finding): make quotation conversion target-create + source-close atomic/CAS/idempotent under the shared lifecycle lock.
+- Commit M8-09B only; keep the untracked QA consolidation and concurrent reimbursement work out.
 - Then M8-10: repair expense partial-payment accumulation, history and posting lifecycle.
