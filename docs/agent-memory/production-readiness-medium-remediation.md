@@ -11,8 +11,10 @@ Decisions:
 - Focused runnable verification is required before every commit; broader gates run after each domain group.
 - Preserve and do not stage the pre-existing uncommitted accounting-UI changes in five `apps/web/src/features/expenses`
   and `web-core-workspace` files unless their owner resolves them or a later finding cannot be isolated.
-- `production-readiness-audit-2026-08-09.md` and `production-readiness-usecase-audit-2026-08-09.md` remain untracked and
-  out of all commits.
+- ~~`production-readiness-audit-2026-08-09.md` and `production-readiness-usecase-audit-2026-08-09.md` remain untracked and
+  out of all commits.~~ **SUPERSEDED 2026-08-10 by owner instruction:** both are now tracked. The consolidated audit was
+  already committed by a concurrent session, so keeping its two sources out only meant the reviewer verdicts it cites
+  could not be read from the repo. Anything written into these files from here on is a normal reviewed commit.
 - CR-3 owner decision remains: accounting UI hidden, ledger core/background posting active.
 - Owner decision 2026-08-09: authenticated company members related as creator/requester, assignee/handler, approver,
   payer/payee/payment actor, issuer/void actor, or through linked documents may view the tenant/branch-scoped record chain.
