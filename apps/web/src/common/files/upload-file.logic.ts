@@ -1,3 +1,5 @@
+import { translateApiError } from '../api/api-error-message';
+
 export const ATTACHMENT_UPLOAD_ACCEPT =
   '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg';
 export const IMAGE_UPLOAD_ACCEPT = '.png,.jpg,.jpeg,image/png,image/jpeg';
@@ -53,9 +55,18 @@ export function uploadErrorMessage(error: unknown): string {
   ) {
     return error.message;
   }
-  return /mime[\s_-]*type/i.test(error.message)
-    ? UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE
-    : GENERIC_UPLOAD_ERROR_MESSAGE;
+  if (/mime[\s_-]*type/i.test(error.message)) return UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE;
+  // Every other server answer used to collapse into "ระบบขัดข้อง" before it ever reached the
+  // translator — a quarantined scan, a size limit, a rate limit and a checksum mismatch all read
+  // the same, so the only move the message suggested was retrying the identical bytes. Ask the
+  // translator first — by code as well as message, since `withGenericUploadError` rewraps the
+  // error and the code would otherwise be dropped — and keep the generic line as a real last resort.
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string') {
+    const byCode = translateApiError(code);
+    if (byCode) return byCode;
+  }
+  return translateApiError(error.message) ?? GENERIC_UPLOAD_ERROR_MESSAGE;
 }
 
 export async function withGenericUploadError<T>(operation: () => Promise<T>): Promise<T> {
