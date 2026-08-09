@@ -545,6 +545,37 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'abc', '/companies/abc/expenses'), true);
   });
 
+  /**
+   * Audit H-15: the layout sent every inaccessible path to /dashboard and rendered nothing while it
+   * waited. Turning dashboard_notifications off strips dashboard.* — it is not platform-invariant —
+   * so the redirect target was unreachable too and the whole company became a blank document.
+   *
+   * The layout now lands on the first module the session can actually open. These pin the two
+   * inputs that decision reads, so a future permission change cannot quietly recreate the dead end.
+   */
+  it('leaves a reachable landing when dashboard is the feature that was switched off', () => {
+    // Everything dashboard.* is gone; the company still bought expenses.
+    const withoutDashboard = ['expense.read'];
+    const reachable = filterModulesByPermissions(WORKSPACE_MODULES, withoutDashboard)
+      .filter((module) => canAccessWorkspacePath(WORKSPACE_MODULES, withoutDashboard, 'abc', module.buildHref('abc')));
+
+    assert.ok(reachable.length > 0, 'a landing exists that is not the dashboard');
+    assert.equal(
+      canAccessWorkspacePath(WORKSPACE_MODULES, withoutDashboard, 'abc', '/companies/abc/dashboard'),
+      false,
+      'and the old hardcoded target is exactly the one that is unreachable',
+    );
+  });
+
+  // The other half: with nothing reachable the layout must render an explanation rather than null,
+  // so this asserts the state the layout branches on is genuinely empty rather than merely small.
+  it('reports no reachable landing at all for a session stripped of every module permission', () => {
+    const reachable = filterModulesByPermissions(WORKSPACE_MODULES, [])
+      .filter((module) => canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', module.buildHref('abc')));
+
+    assert.deepEqual(reachable.map((module) => module.key), []);
+  });
+
   it('keeps the ordinary reports label and sub-route access while Reports is enabled', () => {
     const enabledPermissions = ['report.catalog.read', 'report.snapshot.read'];
     const enabledModules = filterModulesByPermissions(WORKSPACE_MODULES, enabledPermissions);
