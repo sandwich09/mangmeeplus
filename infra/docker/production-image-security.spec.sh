@@ -177,14 +177,44 @@ if grep -Eq 'U5_SHADOW_PROMOTION_APPROVAL|u5-shadow-promotion-approval|inputs\.u
   exit 1
 fi
 grep -Fq 'AWS_DEPLOY_ROLE_ARN' "$deploy_workflow"
+grep -Fq 'LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN' "$deploy_workflow"
+grep -Fq 'LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI' "$deploy_workflow"
+grep -Fq 'LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID' "$deploy_workflow"
+grep -Fq 'LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256' "$deploy_workflow"
+grep -Fq 'provision-legal-release-evidence.sh preflight "$GITHUB_WORKSPACE"' "$deploy_workflow"
+grep -Fq 'provision-legal-release-evidence.sh provision "$GITHUB_WORKSPACE"' "$deploy_workflow"
+grep -Fq 'LEGAL_RELEASE_EVIDENCE_DIR: ${{ steps.legal-evidence.outputs.evidence_dir }}' "$deploy_workflow"
+grep -Fq 'printf '\''evidence_dir=%s\n'\'' "$evidence_dir" >> "$GITHUB_OUTPUT"' "$deploy_workflow"
+test "$(grep -Fc 'unset-current-credentials: true' "$deploy_workflow")" -ge 2
+legal_provisioner_hash="$(sha256sum "$repo_root/infra/security/provision-legal-release-evidence.sh" | awk '{print $1}')"
+legal_validator_hash="$(sha256sum "$repo_root/infra/security/validate-legal-release-readiness.sh" | awk '{print $1}')"
+legal_contract_hash="$(sha256sum "$repo_root/packages/contracts/src/legal-acceptance.ts" | awk '{print $1}')"
+grep -Fq "EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: $legal_provisioner_hash" "$deploy_workflow"
+grep -Fq "EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: $legal_validator_hash" "$deploy_workflow"
+grep -Fq "EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: $legal_contract_hash" "$deploy_workflow"
 grep -Fq 'run-release-task.sh' "$deploy_workflow"
 grep -Fq 'PRODUCTION_IMAGE_MANIFEST' "$deploy_workflow"
 grep -Fq 'verify-deployment.sh' "$deploy_workflow"
 grep -Fq 'ECS_DEPLOY_MANAGE_IAM: "false"' "$deploy_workflow"
 recheck_line="$(grep -n 'name: Recheck release authority immediately before AWS' "$deploy_workflow" | cut -d: -f1)"
+legal_policy_line="$(grep -n 'name: Verify legal evidence gate policy and manifest preflight' "$deploy_workflow" | cut -d: -f1)"
+legal_reader_line="$(grep -n 'name: Configure AWS legal evidence reader credentials' "$deploy_workflow" | cut -d: -f1)"
+legal_provision_line="$(grep -n 'name: Provision independently reviewed legal release evidence' "$deploy_workflow" | cut -d: -f1)"
+legal_validate_line="$(grep -n 'name: Validate legal operator and privacy release evidence' "$deploy_workflow" | cut -d: -f1)"
+legal_cleanup_line="$(grep -n 'name: Remove local legal release evidence' "$deploy_workflow" | cut -d: -f1)"
+legal_recheck_line="$(grep -n 'name: Recheck release authority after legal evidence verification' "$deploy_workflow" | cut -d: -f1)"
 aws_line="$(grep -n 'name: Configure AWS deploy credentials' "$deploy_workflow" | cut -d: -f1)"
+test "$legal_policy_line" -lt "$recheck_line"
 test "$recheck_line" -lt "$aws_line"
+test "$recheck_line" -lt "$legal_reader_line"
+test "$legal_reader_line" -lt "$legal_provision_line"
+test "$legal_provision_line" -lt "$legal_validate_line"
+test "$legal_validate_line" -lt "$legal_cleanup_line"
+test "$legal_cleanup_line" -lt "$legal_recheck_line"
+test "$legal_recheck_line" -lt "$aws_line"
 test "$((aws_line - recheck_line))" -lt 100
+grep -Fq 'bash infra/security/provision-legal-release-evidence.spec.sh' "$ci"
+grep -Fq 'bash infra/security/validate-legal-release-readiness.spec.sh' "$ci"
 grep -Fq 'publish_environment:' "$ci"
 grep -Fq "environment: \${{ inputs.publish_environment || 'production' }}" "$ci"
 grep -Fq 'git fetch origin develop --tags --force' "$uat_workflow"
@@ -562,6 +592,7 @@ jq -e '
     and .Status == "Enabled"
     and .Filter.Prefix == "pending/"
     and .Expiration.Days == 1
+    and .NoncurrentVersionExpiration.NoncurrentDays == 1
     and .AbortIncompleteMultipartUpload.DaysAfterInitiation == 1
   )] | length) == 1
   and ([.Rules[] | select(

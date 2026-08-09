@@ -4,7 +4,11 @@ const MUTATING_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
 
 /** Pages that require a signed-in session cookie. */
 export function isProtectedPagePath(pathname: string): boolean {
-  return pathname.startsWith('/companies/') || pathname === '/system' || pathname.startsWith('/system/');
+  return pathname === '/legal-acceptance'
+    || pathname.startsWith('/legal-acceptance/')
+    || pathname.startsWith('/companies/')
+    || pathname === '/system'
+    || pathname.startsWith('/system/');
 }
 
 /** Only same-origin (or non-browser) requests may mutate through the BFF. */
@@ -58,6 +62,15 @@ export function isCsrfTokenValid(csrfCookie: string | undefined, csrfHeader: str
 /** Sanitize a post-login redirect target: same-app absolute paths only. */
 export function sanitizeNextPath(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/\\')) return null;
-  return raw;
+  // Browsers treat backslashes as path separators and strip TAB/LF/CR before URL parsing; values
+  // such as `/\t/evil.example` can therefore become an off-origin protocol-relative URL.
+  if (!raw.startsWith('/') || /[\u0000-\u001F\u007F\\]/.test(raw)) return null;
+  try {
+    const base = 'https://mangmeeplus.invalid';
+    const parsed = new URL(raw, base);
+    if (parsed.origin !== base) return null;
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
 }

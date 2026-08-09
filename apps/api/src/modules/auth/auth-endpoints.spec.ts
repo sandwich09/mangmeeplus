@@ -11,6 +11,10 @@ import { hashPassword, verifyPassword } from './domain/logic/password-credential
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
 
+const pendingLegalAcceptance = {
+  getStatus: async () => ({ required: true }),
+} as any;
+
 // ---- IssueTokenUseCase ----
 
 function makeJwtService(secret: string) {
@@ -86,11 +90,12 @@ describe('PasswordLoginUseCase', () => {
       },
     } as any;
 
-    const result = await new PasswordLoginUseCase(prisma, issueToken).execute('thawatchai.watchdog', 'watchdogbms11');
+    const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('thawatchai.watchdog', 'watchdogbms11');
     assert.equal(result.accessToken, 'access');
     assert.equal(result.passwordChangeRequired, false);
     assert.equal(result.companyId, 'company-1');
     assert.equal(result.redirectPath, '/companies/company-1/dashboard');
+    assert.equal(result.legalAcceptanceRequired, true);
   });
 
   it('matches the trimmed identifier against username or lowercased email', async () => {
@@ -119,7 +124,7 @@ describe('PasswordLoginUseCase', () => {
       },
     } as any;
 
-    await new PasswordLoginUseCase(prisma, issueToken).execute('  Napa@Room45.co ', 'watchdogbms11');
+    await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('  Napa@Room45.co ', 'watchdogbms11');
     assert.deepEqual(capturedWhere.OR, [
       { username: 'Napa@Room45.co' },
       { email: 'napa@room45.co' },
@@ -148,7 +153,7 @@ describe('PasswordLoginUseCase', () => {
       },
     } as any;
 
-    const result = await new PasswordLoginUseCase(prisma, issueToken).execute('thawatchai.watchdog', 'watchdogbms11');
+    const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('thawatchai.watchdog', 'watchdogbms11');
 
     assert.equal(result.companyId, null);
     assert.equal(result.redirectPath, '/system/partners');
@@ -180,7 +185,7 @@ describe('PasswordLoginUseCase', () => {
       },
     } as any;
 
-    await new PasswordLoginUseCase(prisma, issueToken).execute('owner', 'watchdogbms11');
+    await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('owner', 'watchdogbms11');
 
     assert.equal(membershipWhere.status, 'ACTIVE');
     assert.deepEqual(membershipWhere.company, { status: 'ACTIVE' });
@@ -209,7 +214,7 @@ describe('PasswordLoginUseCase', () => {
     } as any;
 
     await assert.rejects(
-      () => new PasswordLoginUseCase(prisma, issueToken).execute('owner', 'watchdogbms11'),
+      () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('owner', 'watchdogbms11'),
       (err: unknown) => {
         assert.ok(err instanceof ForbiddenException);
         assert.equal((err.getResponse() as any).code, 'company_access_unavailable');
@@ -239,7 +244,7 @@ describe('PasswordLoginUseCase', () => {
     const issueToken = { execute: async () => ({}) } as any;
 
     await assert.rejects(
-      () => new PasswordLoginUseCase(prisma, issueToken).execute('owner', 'watchdogbms11'),
+      () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('owner', 'watchdogbms11'),
       (err: unknown) => { assert.ok(err instanceof ForbiddenException); return true; },
     );
   });

@@ -136,6 +136,31 @@ describe('PrismaOutboxRepository', () => {
       assert.equal(/ORDER BY[^)]*priority/i.test(sql), false, 'priority is inert and forces an O(backlog) sort');
     });
 
+    it('supports mutually exclusive include/exclude consumer filters in the atomic claim', async () => {
+      const included = makeRepo();
+      await included.repo.claimBatch({
+        batchSize: 10,
+        claimedBy: 'cleanup-worker',
+        eventTypes: ['storage.object_version_cleanup.requested'],
+      });
+      assert.match(rawSql(included.client), /"eventType" IN \(/);
+      assert.equal(rawValues(included.client).includes('storage.object_version_cleanup.requested'), true);
+
+      const excluded = makeRepo();
+      await excluded.repo.claimBatch({
+        batchSize: 10,
+        claimedBy: 'workflow-worker',
+        excludeEventTypes: ['storage.object_version_cleanup.requested'],
+      });
+      assert.match(rawSql(excluded.client), /"eventType" NOT IN \(/);
+      await assert.rejects(() => excluded.repo.claimBatch({
+        batchSize: 10,
+        claimedBy: 'invalid-worker',
+        eventTypes: ['a'],
+        excludeEventTypes: ['b'],
+      }), /cannot include and exclude/);
+    });
+
     it('caps the caller-controlled batch at MAX_OUTBOX_CLAIM_BATCH', async () => {
       const { repo, client } = makeRepo();
       await repo.claimBatch({ batchSize: 5_000, claimedBy: 'worker-1' });
@@ -233,6 +258,24 @@ describe('PrismaOutboxRepository', () => {
       const { repo } = makeRepo({ updateMany: mock.fn(async () => ({ count: 0 })), findUnique: mock.fn(async () => baseRow) });
       assert.equal(await repo.markPublished({ id: 'out-1', claimToken: 'stale' }), false);
       assert.equal(await repo.markFailed({ id: 'out-1', error: 'boom', claimToken: 'stale' }), false);
+    });
+
+    it('optionally fences completion to the consumer event type', async () => {
+      const updateManyFn = mock.fn(async () => ({ count: 1 }));
+      const { repo } = makeRepo({
+        findUnique: mock.fn(async () => ({ ...baseRow, eventType: 'storage.object_version_cleanup.requested' })),
+        updateMany: updateManyFn,
+      });
+      await repo.markPublished({
+        id: 'out-1', claimToken: 'tok-1', expectedEventType: 'storage.object_version_cleanup.requested',
+      });
+      assert.equal(
+        (updateManyFn.mock.calls as any[])[0]?.arguments[0].where.eventType,
+        'storage.object_version_cleanup.requested',
+      );
+      assert.equal(await repo.markFailed({
+        id: 'out-1', claimToken: 'tok-1', error: 'failed', expectedEventType: 'another.consumer',
+      }), false);
     });
 
     it('releases the token when the reclaim returns a row to PENDING', async () => {

@@ -1,5 +1,10 @@
 import { test, expect } from './harness/fixtures';
-import { COMPANY_ID, SEED_USERS, expectNoClientError } from './harness/auth';
+import {
+  COMPANY_ID,
+  SEED_USERS,
+  ensureBrowserLegalAcceptance,
+  expectNoClientError,
+} from './harness/auth';
 import { unique } from './harness/e2e-utils';
 
 async function login(page: any, username: string, password: string) {
@@ -7,7 +12,9 @@ async function login(page: any, username: string, password: string) {
   await page.locator('#login-identifier').fill(username);
   await page.locator('#login-password').fill(password);
   await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
-  await expect(page).toHaveURL(/\/(companies|system)\//);
+  await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/|system\/)/);
+  await ensureBrowserLegalAcceptance(page.context());
+  await page.goto('/system/partners');
 }
 
 test.describe('SYS — system admin', () => {

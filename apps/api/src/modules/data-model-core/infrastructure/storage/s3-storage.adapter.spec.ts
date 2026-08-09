@@ -1,7 +1,17 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  GetObjectLegalHoldCommand,
+  GetObjectLockConfigurationCommand,
+  GetObjectRetentionCommand,
+  HeadObjectCommand,
+  ListObjectVersionsCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import s3Presigner = require('@aws-sdk/s3-request-presigner');
 import { S3StorageAdapter } from './s3-storage.adapter';
 import { LocalStorageAdapter } from './local-storage.adapter';
@@ -275,6 +285,243 @@ describe('S3StorageAdapter', () => {
     });
 
     assert.equal(send.mock.callCount(), 1);
+    send.mock.restore();
+  });
+
+  it('inventories only the exact key across pages, including delete markers and object-lock metadata', async () => {
+    const retainedUntil = new Date('2026-09-01T00:00:00.000Z');
+    let listPage = 0;
+    const send = mock.method(S3Client.prototype, 'send', async function (command: unknown): Promise<any> {
+      if (command instanceof GetObjectLockConfigurationCommand) {
+        assert.deepEqual(command.input, { Bucket: 'watchdog-evidence' });
+        return { ObjectLockConfiguration: { ObjectLockEnabled: 'Enabled' } };
+      }
+      if (command instanceof ListObjectVersionsCommand) {
+        listPage += 1;
+        if (listPage === 1) {
+          assert.deepEqual(command.input, {
+            Bucket: 'watchdog-evidence',
+            Prefix: 'co-1/receipt.pdf',
+            MaxKeys: 2,
+          });
+          return {
+            IsTruncated: true,
+            NextKeyMarker: 'co-1/receipt.pdf',
+            NextVersionIdMarker: 'version-2',
+            Versions: [
+              {
+                Key: 'co-1/receipt.pdf',
+                VersionId: 'version-2',
+                IsLatest: false,
+                LastModified: new Date('2026-08-02T00:00:00.000Z'),
+                Size: 20,
+                ETag: 'etag-2',
+              },
+              {
+                Key: 'co-1/receipt.pdf.backup',
+                VersionId: 'sibling-version',
+                IsLatest: true,
+              },
+            ],
+            DeleteMarkers: [{
+              Key: 'co-1/receipt.pdf',
+              VersionId: 'delete-marker-1',
+              IsLatest: true,
+              LastModified: new Date('2026-08-03T00:00:00.000Z'),
+            }],
+          };
+        }
+        assert.deepEqual(command.input, {
+          Bucket: 'watchdog-evidence',
+          Prefix: 'co-1/receipt.pdf',
+          MaxKeys: 2,
+          KeyMarker: 'co-1/receipt.pdf',
+          VersionIdMarker: 'version-2',
+        });
+        return {
+          IsTruncated: false,
+          Versions: [{
+            Key: 'co-1/receipt.pdf',
+            VersionId: 'version-1',
+            IsLatest: false,
+            LastModified: new Date('2026-08-01T00:00:00.000Z'),
+            Size: 10,
+            ETag: 'etag-1',
+          }],
+        };
+      }
+      if (command instanceof HeadObjectCommand) {
+        assert.equal(command.input.Bucket, 'watchdog-evidence');
+        assert.equal(command.input.Key, 'co-1/receipt.pdf');
+        return { VersionId: command.input.VersionId };
+      }
+      if (command instanceof GetObjectRetentionCommand) {
+        assert.equal(command.input.Bucket, 'watchdog-evidence');
+        assert.equal(command.input.Key, 'co-1/receipt.pdf');
+        if (command.input.VersionId === 'version-2') {
+          return { Retention: { Mode: 'COMPLIANCE', RetainUntilDate: retainedUntil } };
+        }
+        throw Object.assign(new Error('No retention'), { name: 'NoSuchObjectLockConfiguration' });
+      }
+      assert.ok(command instanceof GetObjectLegalHoldCommand);
+      assert.equal(command.input.Bucket, 'watchdog-evidence');
+      assert.equal(command.input.Key, 'co-1/receipt.pdf');
+      return { LegalHold: { Status: command.input.VersionId === 'version-2' ? 'ON' : 'OFF' } };
+    });
+
+    const inventory = await new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+      bucket: 'watchdog-evidence',
+      objectKey: 'co-1/receipt.pdf',
+      pageSize: 2,
+      maxPages: 2,
+    });
+
+    assert.deepEqual(inventory, {
+      bucket: 'watchdog-evidence',
+      objectKey: 'co-1/receipt.pdf',
+      objectLockConfiguration: 'ENABLED',
+      versions: [
+        {
+          versionId: 'version-2',
+          isLatest: false,
+          lastModified: new Date('2026-08-02T00:00:00.000Z'),
+          byteSize: 20,
+          eTag: 'etag-2',
+          objectLockMode: 'COMPLIANCE',
+          objectLockRetainUntil: retainedUntil,
+          objectLockLegalHoldStatus: 'ON',
+          objectLockMetadataVerified: true,
+        },
+        {
+          versionId: 'version-1',
+          isLatest: false,
+          lastModified: new Date('2026-08-01T00:00:00.000Z'),
+          byteSize: 10,
+          eTag: 'etag-1',
+          objectLockMode: undefined,
+          objectLockRetainUntil: undefined,
+          objectLockLegalHoldStatus: 'OFF',
+          objectLockMetadataVerified: true,
+        },
+      ],
+      deleteMarkers: [{
+        versionId: 'delete-marker-1',
+        isLatest: true,
+        lastModified: new Date('2026-08-03T00:00:00.000Z'),
+      }],
+      pagesScanned: 2,
+      complete: true,
+    });
+    assert.equal(send.mock.callCount(), 9);
+    send.mock.restore();
+  });
+
+  it('fails closed when the bucket Object Lock configuration cannot be read', async () => {
+    const send = mock.method(S3Client.prototype, 'send', async function (command: unknown): Promise<any> {
+      assert.ok(command instanceof GetObjectLockConfigurationCommand);
+      throw Object.assign(new Error('Access denied'), { name: 'AccessDenied' });
+    });
+
+    await assert.rejects(
+      () => new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+        bucket: 'watchdog-evidence',
+        objectKey: 'co-1/receipt.pdf',
+      }),
+      /access denied/i,
+    );
+    assert.equal(send.mock.callCount(), 1);
+    send.mock.restore();
+  });
+
+  it('fails closed when an enabled bucket does not permit exact retention inspection', async () => {
+    const send = mock.method(S3Client.prototype, 'send', async function (command: unknown): Promise<any> {
+      if (command instanceof GetObjectLockConfigurationCommand) {
+        return { ObjectLockConfiguration: { ObjectLockEnabled: 'Enabled' } };
+      }
+      if (command instanceof ListObjectVersionsCommand) {
+        return {
+          IsTruncated: false,
+          Versions: [{
+            Key: 'co-1/receipt.pdf',
+            VersionId: 'version-1',
+            IsLatest: true,
+          }],
+        };
+      }
+      if (command instanceof HeadObjectCommand) return { VersionId: 'version-1' };
+      assert.ok(command instanceof GetObjectRetentionCommand);
+      throw Object.assign(new Error('Access denied'), { name: 'AccessDenied' });
+    });
+
+    await assert.rejects(
+      () => new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+        bucket: 'watchdog-evidence',
+        objectKey: 'co-1/receipt.pdf',
+      }),
+      /access denied/i,
+    );
+    assert.equal(send.mock.callCount(), 4);
+    send.mock.restore();
+  });
+
+  it('fails closed instead of returning a partial inventory at the page bound', async () => {
+    const send = mock.method(S3Client.prototype, 'send', async function (command: unknown): Promise<any> {
+      if (command instanceof GetObjectLockConfigurationCommand) {
+        throw Object.assign(new Error('disabled'), { name: 'ObjectLockConfigurationNotFoundError' });
+      }
+      assert.ok(command instanceof ListObjectVersionsCommand);
+      return {
+        IsTruncated: true,
+        NextKeyMarker: 'co-1/receipt.pdf',
+        NextVersionIdMarker: 'version-1',
+      };
+    });
+
+    await assert.rejects(
+      () => new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+        bucket: 'watchdog-evidence',
+        objectKey: 'co-1/receipt.pdf',
+        maxPages: 1,
+      }),
+      /exceeded the 1-page safety bound/i,
+    );
+    assert.equal(send.mock.callCount(), 2);
+    send.mock.restore();
+  });
+
+  it('fails closed when S3 claims another page without a continuation marker', async () => {
+    const send = mock.method(S3Client.prototype, 'send', async function (command: unknown): Promise<any> {
+      if (command instanceof GetObjectLockConfigurationCommand) {
+        throw Object.assign(new Error('disabled'), { name: 'ObjectLockConfigurationNotFoundError' });
+      }
+      assert.ok(command instanceof ListObjectVersionsCommand);
+      return { IsTruncated: true };
+    });
+
+    await assert.rejects(
+      () => new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+        bucket: 'watchdog-evidence',
+        objectKey: 'co-1/receipt.pdf',
+        maxPages: 2,
+      }),
+      /truncated without a next key marker/i,
+    );
+    assert.equal(send.mock.callCount(), 2);
+    send.mock.restore();
+  });
+
+  it('rejects invalid inventory bounds before calling S3', async () => {
+    const send = mock.method(S3Client.prototype, 'send', async (): Promise<any> => ({}));
+
+    await assert.rejects(
+      () => new S3StorageAdapter(config as AppConfigService).getExactObjectVersionInventory({
+        bucket: 'watchdog-evidence',
+        objectKey: 'co-1/receipt.pdf',
+        pageSize: 101,
+      }),
+      /pageSize must be an integer between 1 and 100/i,
+    );
+    assert.equal(send.mock.callCount(), 0);
     send.mock.restore();
   });
 

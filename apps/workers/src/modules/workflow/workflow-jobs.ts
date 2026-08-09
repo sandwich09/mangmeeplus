@@ -3,7 +3,13 @@
  * Defines job types for BullMQ queues. No framework dependencies.
  */
 
-export type WorkflowJobKind = 'outbox.drain' | 'scan.threshold' | 'scan.sla' | 'scan.schedule' | 'action.retry';
+export type WorkflowJobKind =
+  | 'outbox.drain'
+  | 'object-version-cleanup.drain'
+  | 'scan.threshold'
+  | 'scan.sla'
+  | 'scan.schedule'
+  | 'action.retry';
 
 export type WorkflowJobPayload = { kind: WorkflowJobKind };
 

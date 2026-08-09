@@ -25,13 +25,13 @@ function artifact() {
 }
 
 describe('production A5 reviewed manifest generator', () => {
-  it('binds the exact current 40 Git migration bytes and reviewed 16/12/6/6 classes', () => {
+  it('binds the exact current 42 Git migration bytes and reviewed 18/12/6/6 classes', () => {
     const files = new Map(readProductionA5RepositoryMigrationFiles().map((row) => [row.name, row]));
     const manifest = artifact();
-    assert.equal(manifest.reviewedMigrationManifest.length, 40);
+    assert.equal(manifest.reviewedMigrationManifest.length, 42);
     assert.deepEqual(productionA5MigrationRiskSummary(manifest), {
-      candidateCount: 40,
-      additiveCount: 16,
+      candidateCount: 42,
+      additiveCount: 18,
       backwardCompatibleNonadditiveCount: 12,
       dataBackfillCount: 6,
       blockingContractCount: 6,
@@ -56,6 +56,58 @@ describe('production A5 reviewed manifest generator', () => {
         },
       );
     }
+  });
+
+  it('binds legal acceptance and data-rights tables, enums, constraints, indexes, and exact trigger bodies', () => {
+    const manifest = artifact();
+    assert.equal(
+      manifest.reviewedMigrationManifest.find((row) => (
+        row.migrationName === '20260809110000_legal_document_acceptance'
+      ))?.operationClass,
+      'ADDITIVE',
+    );
+    assert.equal(
+      manifest.reviewedMigrationManifest.find((row) => (
+        row.migrationName === '20260809120000_data_rights_case_orchestration'
+      ))?.operationClass,
+      'ADDITIVE',
+    );
+
+    const legalSql = PRODUCTION_A5_REVIEWED_QUERY_CATALOG.find((row) => (
+      row.migrationName === '20260809110000_legal_document_acceptance' && row.phase === 'POST_SCHEMA'
+    ))?.sql ?? '';
+    for (const token of [
+      'LegalDocumentActionRecord',
+      'LegalDocumentType',
+      'LegalAcceptanceCapacity',
+      'LegalDocumentActionRecord_scopeRef_documentType_documentVersion_action_key',
+      'LegalDocumentActionRecord_prevent_update_delete',
+      'LegalDocumentActionRecord_prevent_truncate',
+      'b3202b486ba0944610d697033503e7c3',
+      'search_path=pg_catalog, public',
+    ]) assert.match(legalSql, new RegExp(token));
+
+    const dataRightsSql = PRODUCTION_A5_REVIEWED_QUERY_CATALOG.find((row) => (
+      row.migrationName === '20260809120000_data_rights_case_orchestration' && row.phase === 'POST_SCHEMA'
+    ))?.sql ?? '';
+    for (const token of [
+      'DataRightsCase',
+      'DataRightsDecisionRecord',
+      'DataRightsEvidenceRecord',
+      'DataRightsCaseActionRecord',
+      'DataRightsCaseStatus',
+      'DataRightsDecisionCategory',
+      'DataRightsCase_target_shape_check',
+      'DataRightsCase_due_after_received_check',
+      'DataRightsDecisionRecord_retention_check',
+      'DataRightsEvidenceRecord_completion_hash_check',
+      'DataRightsCase_active_company_offboarding_target_key',
+      'DataRightsCase_transition_guard',
+      'DataRightsCase_no_truncate',
+      '57a538816992616227edd3d9eb5d5494',
+      'ce430d9ae3e3688fadf34db9dcbcb8fb',
+      'search_path=pg_catalog, public',
+    ]) assert.match(dataRightsSql, new RegExp(token));
   });
 
   it('is deterministic and the manifest references only the reviewed immutable query catalog', () => {

@@ -20,6 +20,7 @@ import { REPORT_PERMISSION_KEYS, todayCivilDate } from '@watchdog-bms/contracts'
 import { AuditService } from '../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort, type PutObjectResult } from '../../data-model-core/domain/ports/attachment-storage.port';
+import { ObjectVersionCleanupService } from '../../data-model-core/application/services/object-version-cleanup.service';
 import { REPORT_CATALOG, findReportDefinition } from '../domain/report-catalog';
 import { canRunReport, hasSourcePermission, visibleDatasetStatus } from '../domain/report-permission.logic';
 import { REPORT_MAX_PAGE_SIZE, REPORT_SYNC_EXPORT_MAX_ROWS, validateReportQuery } from '../domain/report-query-validator.logic';
@@ -603,6 +604,7 @@ export class CreateReportExportUseCase {
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
     private readonly entitlement: ReportEntitlementService,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, companyId: string, input: CreateReportExportInput): Promise<ReportExportRequestDto> {
@@ -662,7 +664,13 @@ export class CreateReportExportUseCase {
       bytes: csvBytes,
     });
     if (stored.checksumSha256 !== hash || stored.byteSize !== csvByteSize) {
-      await this.storage.deleteObject(stored).catch(() => undefined);
+      await this.objectVersionCleanup.enqueue({
+        companyId,
+        bucket: stored.bucket,
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'REPORT_EXPORT',
+      });
       throw new ConflictException({
         code: 'report_export_integrity_failed',
         message: 'ตรวจสอบไฟล์ที่จัดเก็บไม่ผ่าน ระบบยังไม่ได้บันทึกไฟล์ส่งออก',
@@ -694,7 +702,13 @@ export class CreateReportExportUseCase {
         }, tx);
       });
     } catch (error) {
-      await this.storage.deleteObject(stored).catch(() => undefined);
+      await this.objectVersionCleanup.enqueue({
+        companyId,
+        bucket: stored.bucket,
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'REPORT_EXPORT',
+      });
       throw error;
     }
     await this.audit.log({ companyId, actorUserId: ctx.userId, action: 'report.export.request', targetType: 'report_export_request', targetId: request.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { datasetCode: input.datasetCode, rowCount: result.rows.length, sha256: hash } });

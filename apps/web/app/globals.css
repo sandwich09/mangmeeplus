@@ -11,6 +11,10 @@
 
 /* WatchDog design tokens (brand source of truth) */
 @import "../src/common/styles/theme.css";
+/* Ships the two families those tokens name, so the brand type actually loads. */
+@import "../src/common/styles/fonts.css";
+/* Long-form legal/PDPA document typography (privacy, terms, data deletion). */
+@import "../src/common/legal/legal.css";
 
 /* Expose มั่งมี tokens to Tailwind utilities */
 @theme inline {
@@ -57,12 +61,20 @@
 :root {
   color-scheme: light;
   --app-header-h: 68px;
-  /* next/font variables (layout.tsx) take priority; token stack is the fallback */
-  --font-family-sans: var(--font-outfit, 'Outfit'), var(--font-plex-thai, 'IBM Plex Sans Thai'),
-    ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* `--font-family-sans` is intentionally NOT redefined here: it comes from the design
+     tokens (Outfit for Latin, IBM Plex Sans Thai for Thai) and both faces are bundled by
+     fonts.css above. Overriding it locally was what stranded the brand type — the stack
+     listed faces the app never shipped, so each machine substituted its own. */
   font-family: var(--font-family-sans);
   background: var(--color-page-bg);
   color: var(--color-text-primary);
+}
+
+/* Thai carries its meaning in fine upper/lower vowel and tone marks; the heavier stem
+   weight of subpixel smoothing thickens them into each other on macOS. */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {

@@ -263,6 +263,8 @@ export * from './access-matrix.js';
 export * from './feature-entitlements.js';
 export * from './menu-entitlements.js';
 export * from './business-policy.js';
+export * from './legal-acceptance.js';
+export * from './data-rights.js';
 export * from './company-profile.js';
 export * from './civil-date.js';
 export * from './buyer-snapshot-v1.js';

@@ -1,11 +1,20 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Prisma } from '../../../generated/prisma/client';
 import { LineMessageBufferService } from './line-message-buffer.service';
 import type { LineBufferEnvelope } from './line-message-buffer.service';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-type Row = { webhookEventId: string; status: string; createdAt: Date; processedAt?: Date | null; errorCode?: string | null };
+type Row = {
+  webhookEventId: string;
+  status: string;
+  createdAt: Date;
+  processedAt?: Date | null;
+  errorCode?: string | null;
+  companyId?: string | null;
+  payloadJson?: unknown;
+};
 
 function makeHarness(opts: {
   debounceMs?: number;
@@ -16,13 +25,18 @@ function makeHarness(opts: {
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
+  legalAcceptanceRequired?: boolean;
+  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string }) => Promise<{ status: 'continue' } | { status: 'required'; companyId: string }>;
 } = {}) {
   const rows = new Map<string, Row>();
   const executed: any[] = [];
   const receipts: Array<{ event: any; caption?: string }> = [];
   const replies: string[] = [];
+  const replyTokens: string[] = [];
+  const pushes: Array<{ to: string; text: string }> = [];
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
+  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string }> = [];
   let receiptCall = 0;
 
   const prisma = {
@@ -31,7 +45,15 @@ function makeHarness(opts: {
         create: async ({ data }: any) => {
           if (opts.eventStoreUnavailable) throw new Error('database unavailable');
           if (rows.has(data.webhookEventId)) throw new Error('P2002 unique constraint');
-          rows.set(data.webhookEventId, { webhookEventId: data.webhookEventId, status: data.status, createdAt: new Date(), processedAt: data.processedAt, errorCode: data.errorCode });
+          rows.set(data.webhookEventId, {
+            webhookEventId: data.webhookEventId,
+            status: data.status,
+            createdAt: new Date(),
+            processedAt: data.processedAt,
+            errorCode: data.errorCode,
+            companyId: data.companyId,
+            payloadJson: data.payloadJson,
+          });
           return data;
         },
         findUnique: async ({ where }: any) => {
@@ -47,6 +69,8 @@ function makeHarness(opts: {
               if (data.status) row.status = data.status;
               if ('processedAt' in data) row.processedAt = data.processedAt;
               if ('errorCode' in data) row.errorCode = data.errorCode;
+              if ('companyId' in data) row.companyId = data.companyId;
+              if ('payloadJson' in data) row.payloadJson = data.payloadJson;
               count += 1;
             }
           }
@@ -66,15 +90,26 @@ function makeHarness(opts: {
 
   const lineReply = {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
-    sendReply: async (_token: string, messages: Array<{ text: string }>) => {
+    sendReply: async (token: string, messages: Array<{ text: string }>) => {
+      replyTokens.push(token);
       replies.push(messages[0]?.text ?? '');
       return opts.replyResult ?? 'ok';
     },
-    sendPush: async () => opts.pushResult ?? 'ok',
+    sendPush: async (to: string, messages: Array<{ text: string }>) => {
+      pushes.push({ to, text: messages[0]?.text ?? '' });
+      return opts.pushResult ?? 'ok';
+    },
     startLoadingAnimation: async (chatId: string) => { loadingCalls.push(chatId); },
   } as any;
 
   const useCase = {
+    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string }) => {
+      preflightCalls.push(event);
+      if (opts.preflightImpl) return opts.preflightImpl(event);
+      return opts.legalAcceptanceRequired
+        ? { status: 'required' as const, companyId: 'company-1' }
+        : { status: 'continue' as const };
+    },
     execute: async (event: any) => {
       executed.push(event);
       if (opts.executeImpl) await opts.executeImpl(event);
@@ -88,7 +123,7 @@ function makeHarness(opts: {
   } as any;
 
   const service = new LineMessageBufferService(prisma, config, audit, lineReply, useCase);
-  return { service, rows, executed, receipts, replies, loadingCalls, auditLogs };
+  return { service, rows, executed, receipts, replies, replyTokens, pushes, loadingCalls, auditLogs, preflightCalls };
 }
 
 let uniq = 0;
@@ -112,6 +147,101 @@ function mediaEnv(id: string, opts: { chatId?: string; userId?: string; timestam
     item: { kind: 'media', webhookEventId: id, replyToken: `rt-${id}`, lineMessageId: `mid-${id}`, messageType: 'image', timestamp: opts.timestamp ?? uniq },
   };
 }
+
+describe('LineMessageBufferService – legal acceptance pre-storage gate', () => {
+  it('terminalizes pending employee text without persisting or dispatching its raw envelope', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true, loadingEnabled: true });
+    const envelope = textEnv('legal-text', 'ความลับทางธุรกิจ');
+
+    await h.service.enqueue(envelope);
+
+    const row = h.rows.get('legal-text');
+    assert.equal(row?.status, 'legal_acceptance_required');
+    assert.equal(row?.errorCode, 'LINE_AI_FORBIDDEN');
+    assert.equal(row?.companyId, 'company-1');
+    assert.equal(row?.payloadJson, Prisma.DbNull);
+    assert.equal(h.executed.length, 0);
+    assert.equal(h.receipts.length, 0);
+    assert.equal(h.loadingCalls.length, 0);
+    assert.deepEqual(h.replyTokens, ['rt-legal-text']);
+    assert.match(h.replies[0] ?? '', /ยอมรับข้อกำหนดการใช้งาน/);
+    assert.deepEqual(Object.keys(h.preflightCalls[0] ?? {}).sort(), ['lineUserId', 'messagingChannelId']);
+  });
+
+  it('terminalizes pending employee media before any media id or filename is durable', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true });
+    const envelope = mediaEnv('legal-media');
+    if (envelope.item.kind === 'media') {
+      envelope.item.fileName = 'payroll-secret.pdf';
+      envelope.item.fileSize = 9_999;
+    }
+
+    await h.service.enqueue(envelope);
+
+    const row = h.rows.get('legal-media');
+    assert.equal(row?.status, 'legal_acceptance_required');
+    assert.equal(row?.payloadJson, Prisma.DbNull);
+    assert.equal(h.receipts.length, 0);
+    assert.equal(h.executed.length, 0);
+    assert.doesNotMatch(JSON.stringify(row), /mid-legal-media|payroll-secret|rt-legal-media/);
+  });
+
+  it('deduplicates a pending event and sends the neutral reply only once', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true });
+    await h.service.enqueue(textEnv('legal-dup', 'ข้อความแรก'));
+    await h.service.enqueue(textEnv('legal-dup', 'ข้อความที่สอง'));
+
+    assert.equal(h.rows.get('legal-dup')?.status, 'legal_acceptance_required');
+    assert.equal(h.rows.get('legal-dup')?.payloadJson, Prisma.DbNull);
+    assert.equal(h.replies.length, 1);
+    assert.equal(h.executed.length, 0);
+  });
+
+  it('falls back to a chat-scoped push without reopening the terminal event', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true, replyResult: 'failed_token' });
+    await h.service.enqueue(textEnv('legal-push', 'ข้อความ', { chatId: 'group-legal' }));
+
+    assert.equal(h.pushes.length, 1);
+    assert.equal(h.pushes[0]?.to, 'group-legal');
+    assert.match(h.pushes[0]?.text ?? '', /นโยบายความเป็นส่วนตัว/);
+    assert.equal(h.rows.get('legal-push')?.status, 'legal_acceptance_required');
+    assert.equal(h.rows.get('legal-push')?.payloadJson, Prisma.DbNull);
+  });
+
+  it('keeps company-context controls usable but memory-only while acceptance is pending', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true, debounceMs: 5_000 });
+    await h.service.enqueue(textEnv('legal-company', '/company 2'));
+    await sleep(20);
+
+    assert.equal(h.rows.get('legal-company')?.payloadJson, Prisma.DbNull);
+    assert.equal(h.executed.length, 1);
+    assert.equal(h.executed[0]?.messageText, '/company 2');
+    assert.equal(h.replies.length, 0);
+  });
+
+  it('preserves the existing unlinked/unresolved path when preflight says continue', async () => {
+    const h = makeHarness({ debounceMs: 0 });
+    const envelope = textEnv('preflight-continue', 'ขอเชื่อมบัญชี');
+    await h.service.enqueue(envelope);
+    await sleep(20);
+
+    assert.equal(h.rows.get('preflight-continue')?.payloadJson, envelope);
+    assert.equal(h.executed.length, 1);
+  });
+
+  it('fails closed before persistence when preflight infrastructure is unavailable', async () => {
+    const h = makeHarness({
+      preflightImpl: async () => { throw new Error('legal preflight unavailable'); },
+    });
+
+    await assert.rejects(
+      () => h.service.enqueue(textEnv('preflight-down', 'ห้ามเก็บ')),
+      /legal preflight unavailable/,
+    );
+    assert.equal(h.rows.size, 0);
+    assert.equal(h.executed.length, 0);
+  });
+});
 
 describe('LineMessageBufferService – batching', () => {
   it('coalesces rapid fragments into one turn keyed by the last bubble', async () => {

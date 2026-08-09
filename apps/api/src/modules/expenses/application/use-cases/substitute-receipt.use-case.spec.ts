@@ -15,6 +15,7 @@ const now = new Date('2026-07-13T10:00:00.000Z');
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
 const audit = { log: async () => undefined } as any;
 const notification = { execute: async () => ({}) } as any;
+const cleanup = { enqueue: async () => true } as any;
 
 function ctx(userId = 'payer-1', permissions = ['expense.review'], roles: string[] = []) {
   return {
@@ -292,7 +293,7 @@ describe('substitute receipt signing lifecycle', () => {
     } as any;
     const useCase = new CertifySubstituteReceiptUseCase(repo, storage, audit, {
       execute: async (input: any) => { notifications.push(input); return {}; },
-    } as any);
+    } as any, cleanup);
     const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
     await assert.rejects(() => useCase.execute(ctx('other-user'), 'exp-1', 'sub-1', {
       payerPosition: 'พนักงาน', certificationAcknowledged: true, signatureAttachmentId: 'sig-payer',
@@ -342,7 +343,7 @@ describe('substitute receipt signing lifecycle', () => {
       findActiveMemberIdentity: async () => ({ userId: 'approver-1', displayName: 'ผู้จัดการ' }),
     } as any;
     const storage = { putObject: async () => { storageWrites += 1; throw new Error('must not write'); } } as any;
-    const useCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit);
+    const useCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit, cleanup);
 
     await assert.rejects(
       () => useCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', evidence.id, {
@@ -380,7 +381,7 @@ describe('substitute receipt signing lifecycle', () => {
     } as any;
     const useCase = new CertifySubstituteReceiptUseCase(repo, storage, audit, {
       execute: async () => { notificationCount += 1; return {}; },
-    } as any);
+    } as any, cleanup);
     const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('owner-1'), 'exp-1', 'sub-1', { payerPosition: 'เจ้าของกิจการ' });
     await useCase.execute(ctx('owner-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-1', {
       payerPosition: 'เจ้าของกิจการ', certificationAcknowledged: true, signatureAttachmentId: 'sig-owner',
@@ -426,7 +427,7 @@ describe('substitute receipt signing lifecycle', () => {
       putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length }),
       deleteObject: async () => undefined,
     } as any;
-    const useCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit);
+    const useCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit, cleanup);
     await assert.rejects(() => useCase.execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-1', {
       approverPosition: 'ผู้จัดการ', approvalAcknowledged: true, signatureAttachmentId: 'sig-approver',
       certifiedArtifactChecksumSha256: 'certified-checksum',

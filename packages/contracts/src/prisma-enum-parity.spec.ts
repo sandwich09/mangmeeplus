@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import * as companyProfile from './company-profile.js';
 import * as companyTaxIdentity from './company-tax-identity.js';
 import * as crmAi from './crm-ai.js';
+import * as dataRights from './data-rights.js';
 import * as expenses from './expenses.js';
 // The barrel also declares a few inline enums (document sequences); import it as a
 // namespace so the discovery sweep below can resolve what it finds in index.ts.
@@ -64,6 +65,7 @@ const SOURCES = {
   'company-profile.ts': companyProfile,
   'company-tax-identity.ts': companyTaxIdentity,
   'crm-ai.ts': crmAi,
+  'data-rights.ts': dataRights,
   'expenses.ts': expenses,
   'index.ts': index,
   'line-ai.ts': lineAi,
@@ -102,6 +104,13 @@ const REGISTRY: Registration[] = [
   // Cross-named.
   { source: 'crm-ai.ts', arrayName: 'CRM_AI_SENTIMENTS', prismaEnum: 'CrmSentiment' },
   { source: 'crm-ai.ts', arrayName: 'CRM_AI_CUSTOMER_RISKS', prismaEnum: 'CrmRiskLevel' },
+  // Restricted user/company data-rights orchestration.
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_CASE_TYPES', prismaEnum: 'DataRightsCaseType' },
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_CASE_STATUSES', prismaEnum: 'DataRightsCaseStatus' },
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_REQUEST_SOURCES', prismaEnum: 'DataRightsRequestSource' },
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_DECISION_CATEGORIES', prismaEnum: 'DataRightsDecisionCategory' },
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_DISPOSITIONS', prismaEnum: 'DataRightsDisposition' },
+  { source: 'data-rights.ts', arrayName: 'DATA_RIGHTS_EVIDENCE_TYPES', prismaEnum: 'DataRightsEvidenceType' },
   // Step 0 company tax identity.
   { source: 'company-tax-identity.ts', arrayName: 'LEGAL_IDENTITY_AUTHORITY_REASONS', prismaEnum: 'LegalIdentityAuthorityReason' },
   { source: 'company-tax-identity.ts', arrayName: 'TIN_EXISTENCE_STATUSES', prismaEnum: 'TinExistenceStatus' },

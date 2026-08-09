@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "releaseVersion": "2026-08-09.2",
+  "status": "BLOCKED",
+  "evidence": {
+    "operatorIdentity": { "status": "OBTAIN", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null },
+    "rightsMailbox": { "status": "OBTAIN", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null },
+    "dpoAssessment": { "status": "DECIDE", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null },
+    "processorCrossBorderRegister": { "status": "OBTAIN", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null },
+    "thaiCounselApproval": { "status": "OBTAIN", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null }
+  }
+}

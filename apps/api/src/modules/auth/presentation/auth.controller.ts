@@ -16,7 +16,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { Public } from '../../../common/security/public.decorator';
@@ -58,6 +58,8 @@ import { AuditService } from '../../audit/application/audit.service';
 import { AuditAction } from '../../audit/domain/models/audit-action';
 import type { RequestContext } from '../domain/models/request-context.model';
 import { loginChannelAvailability } from '../domain/logic/login-channel.logic';
+import { LegalAcceptanceService } from '../application/legal-acceptance.service';
+import type { AcceptLegalDocumentsInput } from '@watchdog-bms/contracts';
 
 export class EmployeeLineLinkDto {
   @IsString() @Length(32, 32) @Matches(EMPLOYEE_LINE_LINK_TOKEN_PATTERN) token!: string;
@@ -94,6 +96,19 @@ class ChangePasswordDto {
 
 class SetAiAssistantPreferenceDto {
   @IsBoolean() enabled!: boolean;
+}
+
+export class AcceptLegalDocumentsDto implements AcceptLegalDocumentsInput {
+  @IsString() @IsNotEmpty() termsVersion!: string;
+  @IsString() @IsNotEmpty() privacyVersion!: string;
+  @IsString() @IsNotEmpty() statementVersion!: string;
+  @Equals(true) termsAccepted!: true;
+  @Equals(true) privacyAcknowledged!: true;
+  @Equals(true) capacityConfirmed!: true;
+  // The public 2026-08-09.2 artifacts are Thai-only. English must ship as its own
+  // versioned/fingerprinted release before this boundary may accept `en`.
+  @Equals('th') locale!: 'th';
+  @IsString() @Length(64, 64) @MaxLength(64) @Matches(/^[a-f0-9]{64}$/) displayChallenge!: string;
 }
 
 export class PasswordResetRequestDto {
@@ -150,6 +165,7 @@ export class AuthController {
     private readonly resendEmailVerification: ResendEmailVerificationUseCase,
     private readonly confirmEmailVerification: ConfirmEmailVerificationUseCase,
     private readonly authRateLimit: AuthRateLimitService,
+    private readonly legalAcceptance: LegalAcceptanceService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
@@ -550,15 +566,47 @@ export class AuthController {
     });
   }
 
+  @Get('legal-acceptance')
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Return the current Terms acceptance and Privacy Notice acknowledgment status' })
+  @ApiResponse({ status: 200, description: 'Current legal document status and server-authored statements returned' })
+  async legalAcceptanceStatus(@Req() req: Request & { context: RequestContext }) {
+    return this.legalAcceptance.getStatus(req.context);
+  }
+
+  @Post('legal-acceptance')
+  @HttpCode(200)
+  @RequirePermissions('account.session.read')
+  @ApiOperation({ summary: 'Accept the current Terms and acknowledge the current Privacy Notice' })
+  @ApiBody({ type: AcceptLegalDocumentsDto })
+  @ApiResponse({ status: 200, description: 'Versioned acceptance evidence recorded or returned idempotently' })
+  @ApiResponse({ status: 403, description: 'Temporary password must be changed first' })
+  @ApiResponse({ status: 409, description: 'Submitted legal document version is stale' })
+  async acceptLegalDocuments(
+    @Body() dto: AcceptLegalDocumentsDto,
+    @Req() req: Request & { context: RequestContext },
+  ) {
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    const userAgentHeader = req.headers['user-agent'];
+    const userAgent = Array.isArray(userAgentHeader) ? userAgentHeader[0] : userAgentHeader;
+    return this.legalAcceptance.accept({
+      ...req.context,
+      sessionTokenId: tokenId,
+      ...(userAgent ? { userAgent } : {}),
+    }, dto);
+  }
+
   @Get('me')
   @RequirePermissions('account.session.read')
   @ApiOperation({ summary: 'Return current authenticated context' })
   @ApiResponse({ status: 200, description: 'Current user context' })
   async me(@Req() req: Request & { context: RequestContext }) {
     const { userId, companyId, membershipId, roles, permissions, scopes, authProvider } = req.context;
-    const [user, credential] = await Promise.all([
+    const [user, credential, legalAcceptance] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { id: userId }, select: { displayName: true } }),
       this.prisma.client.userCredential.findUnique({ where: { userId }, select: { mustChangePassword: true } }),
+      this.legalAcceptance.getStatus(req.context),
     ]);
     // AuthGuard exempts /v1/auth/* from the temporary-password block, so this route answers for a
     // blocked session too — and it is the only way such a session can learn that it is blocked.
@@ -574,6 +622,7 @@ export class AuthController {
       scopes,
       authProvider,
       mustChangePassword: credential?.mustChangePassword ?? false,
+      legalAcceptanceRequired: legalAcceptance.required,
     };
   }
 

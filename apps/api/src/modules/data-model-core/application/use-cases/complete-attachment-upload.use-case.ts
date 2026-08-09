@@ -10,6 +10,7 @@ import type { AttachmentRecord } from '../../domain/models/attachment.model';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AttachmentMalwareScanner } from '../../infrastructure/attachment-malware-scanner';
+import { ObjectVersionCleanupService } from '../services/object-version-cleanup.service';
 
 export type CompleteAttachmentUploadCommand = {
   attachmentId: string;
@@ -71,6 +72,7 @@ export class CompleteAttachmentUploadUseCase {
     private readonly audit: AuditService,
     private readonly malwareScanner: AttachmentMalwareScanner,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, cmd: CompleteAttachmentUploadCommand): Promise<AttachmentRecord> {
@@ -134,11 +136,13 @@ export class CompleteAttachmentUploadUseCase {
       bytes: uploaded.bytes,
     });
     if (stored.byteSize !== existing.byteSize || stored.checksumSha256 !== checksumSha256) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'ATTACHMENT_FINALIZATION',
+      });
       await this.rejectUpload(ctx, existing.id, 'Final storage object does not match verified upload bytes.');
     }
 
@@ -154,11 +158,13 @@ export class CompleteAttachmentUploadUseCase {
         byteSize: stored.byteSize,
       });
     } catch (error) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'ATTACHMENT_FINALIZATION',
+      });
       throw error;
     }
 

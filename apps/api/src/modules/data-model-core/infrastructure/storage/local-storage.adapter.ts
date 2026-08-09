@@ -16,6 +16,8 @@ import type {
   PutObjectInput,
   PutObjectResult,
   DeleteObjectInput,
+  GetExactObjectVersionInventoryInput,
+  ExactObjectVersionInventory,
 } from '../../domain/ports/attachment-storage.port';
 
 const LOCAL_STORAGE_DIR = join(tmpdir(), 'watchdog-bms-local-storage');
@@ -62,6 +64,41 @@ export class LocalStorageAdapter implements AttachmentStoragePort {
   async deleteObject(input: DeleteObjectInput): Promise<void> {
     if (input.bucket !== this.bucket) throw new Error(`Unknown local storage bucket: ${input.bucket}`);
     await rm(localObjectPath(input.objectKey), { force: true });
+  }
+
+  async getExactObjectVersionInventory(
+    input: GetExactObjectVersionInventoryInput,
+  ): Promise<ExactObjectVersionInventory> {
+    if (input.bucket !== this.bucket) throw new Error(`Unknown local storage bucket: ${input.bucket}`);
+    const metadata = await this.getObjectMetadata({ bucket: input.bucket, objectKey: input.objectKey });
+    if (!metadata.exists) {
+      return {
+        bucket: input.bucket,
+        objectKey: input.objectKey,
+        objectLockConfiguration: 'DISABLED',
+        versions: [],
+        deleteMarkers: [],
+        pagesScanned: 1,
+        complete: true,
+      };
+    }
+    if (!metadata.objectVersionId) {
+      throw new Error('Local storage could not identify the exact object version.');
+    }
+    return {
+      bucket: input.bucket,
+      objectKey: input.objectKey,
+      objectLockConfiguration: 'DISABLED',
+      versions: [{
+        versionId: metadata.objectVersionId,
+        isLatest: true,
+        byteSize: metadata.byteSize,
+        objectLockMetadataVerified: true,
+      }],
+      deleteMarkers: [],
+      pagesScanned: 1,
+      complete: true,
+    };
   }
 
   async getObjectMetadata(input: GetObjectMetadataInput): Promise<StoredObjectMetadata> {

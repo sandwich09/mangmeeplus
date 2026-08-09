@@ -18,8 +18,8 @@ import {
 
 const MAX_MIGRATION_BYTES = 8 * 1024 * 1024;
 const EXPECTED_RISK_SUMMARY = {
-  candidateCount: 40,
-  additiveCount: 16,
+  candidateCount: 42,
+  additiveCount: 18,
   backwardCompatibleNonadditiveCount: 12,
   dataBackfillCount: 6,
   blockingContractCount: 6,

@@ -55,6 +55,7 @@ import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
+import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
 
 export type LineTextEvent = {
   webhookEventId: string;
@@ -84,10 +85,19 @@ export type LineReceiptUploadEvent = {
  *  standalone question (spec §8); the caller should run it as a text turn. */
 export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' };
 
+/** Read-only gate used by the verified employee LINE webhook before it writes
+ * the recoverable buffer payload. `continue` deliberately also covers users
+ * whose company cannot yet be resolved (unlinked / selection / policy flows),
+ * so this preflight never invents a default company. */
+export type LineLegalAcceptancePreflight =
+  | { status: 'continue' }
+  | { status: 'required'; companyId: string };
+
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนใช้งาน\nเปิดเว็บแอปเพื่อเชื่อมต่อ';
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
 const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย';
+export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้';
 const ERROR_REPLY = '⏳ ขออภัย เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง';
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนส่งบิลหรือใบเสร็จ';
@@ -521,6 +531,7 @@ export class ProcessLineWebhookUseCase {
     private readonly lineReply: LineReplyAdapter,
     private readonly receiptOcrApply: ReceiptOcrApplyService,
     private readonly malwareScanner: AttachmentMalwareScanner,
+    private readonly legalAcceptance: LegalAcceptanceService,
     // REQUIRED, and deliberately the last non-optional parameter: an `@Optional()` probe that failed
     // to wire would report zero would_block observations, which R1 cannot distinguish from a route
     // that was measured and never blocked. Absent evidence must fail loudly at boot, not quietly.
@@ -587,6 +598,23 @@ export class ProcessLineWebhookUseCase {
       this.logger.warn({ msg: 'LINE branch scope lookup failed', companyId, branchCount: branchIds.length, error: (error as Error).message });
       return fallback;
     }
+  }
+
+  private async refusePendingLegalAcceptance(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    userId: string,
+    companyId: string,
+    membershipId: string,
+  ): Promise<boolean> {
+    if (!await this.legalAcceptance.isRequired({ userId, companyId, membershipId })) return false;
+    await this.deliverReply(event, LEGAL_ACCEPTANCE_REQUIRED_REPLY);
+    await this.updateEventLog(
+      event.webhookEventId,
+      'legal_acceptance_required',
+      LINE_AI_ERROR_CODES.FORBIDDEN,
+      companyId,
+    );
+    return true;
   }
 
   /**
@@ -708,6 +736,40 @@ export class ProcessLineWebhookUseCase {
     return identity;
   }
 
+  /**
+   * Resolve the same employee/company/membership scope as the turn pipeline,
+   * but before the message buffer stores its crash-recovery payload. This
+   * method is intentionally read-only and receives no message text, reply
+   * token, or media id.
+   *
+   * Unlinked users and unresolved multi-company users continue into the
+   * existing pipeline so they keep receiving the link/company-picker reply.
+   * Once a company is resolvable, infrastructure failures propagate: the
+   * webhook returns non-2xx rather than persisting a possibly forbidden raw
+   * message under a fail-open decision.
+   */
+  async preflightLegalAcceptance(
+    event: { lineUserId: string; messagingChannelId?: string },
+  ): Promise<LineLegalAcceptancePreflight> {
+    const identity = await this.resolveLineIdentity(event);
+    if (!identity || identity.user.status !== 'ACTIVE') return { status: 'continue' };
+
+    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
+    if (!resolved || 'needsSelection' in resolved || 'policyViolation' in resolved) {
+      return { status: 'continue' };
+    }
+
+    const access = await this.permissionResolver.resolveAccess(identity.userId, resolved.companyId);
+    const required = await this.legalAcceptance.isRequired({
+      userId: identity.userId,
+      companyId: resolved.companyId,
+      membershipId: access.membershipId,
+    });
+    return required
+      ? { status: 'required', companyId: resolved.companyId }
+      : { status: 'continue' };
+  }
+
   async execute(event: LineTextEvent): Promise<void> {
     const requestId = randomUUID();
 
@@ -763,8 +825,24 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const companyId = resolved.companyId;
-    await this.recordShadowTurn(companyId);
 
+    // 5. Resolve membership + permissions via existing permission resolver
+    let resolvedAccess: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
+    try {
+      resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
+    } catch {
+      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
+      return;
+    }
+
+    // This check is after server-side company/membership resolution and before feature probes,
+    // model routing, ERP tools, conversation persistence, or attachment storage.
+    if (await this.refusePendingLegalAcceptance(
+      event, identity.userId, companyId, resolvedAccess.membershipId,
+    )) return;
+
+    await this.recordShadowTurn(companyId);
     if (await lineAssistantDisabled(this.prisma, companyId)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -779,16 +857,6 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { reason: 'feature_disabled' },
       });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
-      return;
-    }
-
-    // 5. Resolve membership + permissions via existing permission resolver
-    let resolvedAccess: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
-    try {
-      resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
-    } catch {
-      await this.deliverReply(event, UNLINKED_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
 
@@ -1456,14 +1524,6 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const companyId = resolved.companyId;
-    await this.recordShadowTurn(companyId);
-
-    if (await lineAssistantDisabled(this.prisma, companyId)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'));
-      await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
-      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
-      return;
-    }
 
     let access: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
     try {
@@ -1473,6 +1533,20 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
+
+    // Refuse before downloading bytes, invoking intake/OCR, or creating any attachment/expense.
+    if (await this.refusePendingLegalAcceptance(
+      event, identity.userId, companyId, access.membershipId,
+    )) return;
+
+    await this.recordShadowTurn(companyId);
+    if (await lineAssistantDisabled(this.prisma, companyId)) {
+      await this.deliverReply(event, formatRefusal('feature_disabled'));
+      await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
+      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+      return;
+    }
+
     const canCaptureExpense = access.permissions.includes('expense.receipt.line_upload') || access.permissions.includes('expense.receipt.upload');
     const canSubmitSignature = access.permissions.includes('expense.signature.manage');
     if (!canCaptureExpense && !canSubmitSignature) {

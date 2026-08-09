@@ -10,6 +10,7 @@ import { WatchdogJwtVerifierAdapter } from '../infrastructure/watchdog-jwt-verif
 import { DevJwtVerifierAdapter } from '../infrastructure/dev-jwt-verifier.adapter';
 import { ResolveRequestContextUseCase } from '../application/use-cases/resolve-request-context.use-case';
 import type { RequestContext } from '../domain/models/request-context.model';
+import { LegalAcceptanceService } from '../application/legal-acceptance.service';
 
 export type RequestWithContext = Request & {
   context?: RequestContext;
@@ -17,6 +18,27 @@ export type RequestWithContext = Request & {
 
 // ponytail: exempt auth routes from mustChangePassword block so login/change-password flow works
 const MUST_CHANGE_PASSWORD_EXEMPT_PREFIX = '/v1/auth/';
+
+function cleanRequestPath(path: string): string {
+  const cleanPath = path.split('?')[0] ?? '';
+  return cleanPath.length > 1 ? cleanPath.replace(/\/$/, '') : cleanPath;
+}
+
+function isMustChangePasswordExempt(path: string): boolean {
+  const cleanPath = cleanRequestPath(path);
+  return cleanPath === '/v1/auth' || cleanPath.startsWith(MUST_CHANGE_PASSWORD_EXEMPT_PREFIX);
+}
+
+const LEGAL_ACCEPTANCE_EXEMPT_PATHS = new Set([
+  '/v1/auth/me',
+  '/v1/auth/legal-acceptance',
+  '/v1/auth/password/change',
+  '/v1/auth/logout',
+]);
+
+function isLegalAcceptanceExempt(path: string): boolean {
+  return LEGAL_ACCEPTANCE_EXEMPT_PATHS.has(cleanRequestPath(path));
+}
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -27,6 +49,7 @@ export class AuthGuard implements CanActivate {
     private readonly resolveContext: ResolveRequestContextUseCase,
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
+    private readonly legalAcceptance: LegalAcceptanceService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -104,13 +127,26 @@ export class AuthGuard implements CanActivate {
     // Null credential (LINE-only users) is treated as no block.
     // LINE-login sessions are never blocked: the forced change belongs to the password login.
     const reqPath = req.path ?? req.url ?? '';
-    if (sessionProvider !== 'line' && !reqPath.startsWith(MUST_CHANGE_PASSWORD_EXEMPT_PREFIX)) {
+    if (sessionProvider !== 'line' && !isMustChangePasswordExempt(reqPath)) {
       const credential = await this.prisma.client.userCredential.findUnique({
         where: { userId: req.context.userId },
         select: { mustChangePassword: true },
       });
       if (credential?.mustChangePassword) {
         throw new ForbiddenException('Password change required before accessing business modules.');
+      }
+    }
+
+    if (!isLegalAcceptanceExempt(reqPath)) {
+      if (await this.legalAcceptance.isRequired({
+        userId: req.context.userId,
+        companyId: req.context.companyId,
+        membershipId: req.context.membershipId,
+      })) {
+        throw new ForbiddenException({
+          code: 'legal_acceptance_required',
+          message: 'Accept the current Terms and acknowledge the Privacy Notice before accessing business modules.',
+        });
       }
     }
 

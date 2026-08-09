@@ -80,16 +80,17 @@ function prismaFor(sessionUserId: string, credential: unknown = null) {
 const noopPrisma = prismaFor('test-sub');
 const cookiePrisma = prismaFor('cookie-sub');
 const mustChangePrisma = prismaFor('test-sub', { mustChangePassword: true });
+const acceptedLegal = { isRequired: async () => false } as any;
 
 describe('AuthGuard', () => {
   it('returns true for @Public() routes', async () => {
-    const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     const result = await guard.canActivate(makeContext({ isPublic: true }));
     assert.equal(result, true);
   });
 
   it('throws UnauthorizedException when Authorization header is missing', async () => {
-    const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     await assert.rejects(
       () => guard.canActivate(makeContext({})),
       (err: unknown) => {
@@ -100,7 +101,7 @@ describe('AuthGuard', () => {
   });
 
   it('throws UnauthorizedException when both verifiers fail', async () => {
-    const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     await assert.rejects(
       () => guard.canActivate(makeContext({ authHeader: 'Bearer bad.token.here' })),
       (err: unknown) => {
@@ -119,7 +120,7 @@ describe('AuthGuard', () => {
         return { subject: 'dev-sub' };
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), failVerifier as any, devVerifier, noopResolve, prodConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), failVerifier as any, devVerifier, noopResolve, prodConfig, noopPrisma, acceptedLegal);
     await assert.rejects(
       () => guard.canActivate(makeContext({ authHeader: 'Bearer some.token' })),
       (err: unknown) => {
@@ -131,7 +132,7 @@ describe('AuthGuard', () => {
   });
 
   it('attaches context when watchdog verifier succeeds', async () => {
-    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     const ctx = makeContext({ authHeader: 'Bearer valid.token' });
     const result = await guard.canActivate(ctx);
     assert.equal(result, true);
@@ -148,7 +149,7 @@ describe('AuthGuard', () => {
         return { subject: 'cookie-sub', tokenId: 'session-1' };
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, cookiePrisma);
+    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, cookiePrisma, acceptedLegal);
     const ctx = makeContext({ cookieToken: 'cookie.jwt.value' });
     const result = await guard.canActivate(ctx);
     assert.equal(result, true);
@@ -164,7 +165,7 @@ describe('AuthGuard', () => {
         return { subject: 'cookie-sub', tokenId: 'session-1' };
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, cookiePrisma);
+    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, cookiePrisma, acceptedLegal);
     const result = await guard.canActivate(makeContext({ cookieTokenChunks: ['aaa.', 'bbb.', 'ccc'] }));
     assert.equal(result, true);
     assert.equal(verifiedWith, 'aaa.bbb.ccc');
@@ -178,7 +179,7 @@ describe('AuthGuard', () => {
         return { subject: 'test-sub', tokenId: 'session-1' };
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), verifier, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     await guard.canActivate(makeContext({ authHeader: 'Bearer header.token', cookieToken: 'cookie.token' }));
     assert.equal(verifiedWith, 'header.token');
   });
@@ -197,7 +198,7 @@ describe('AuthGuard', () => {
         authProvider,
       })),
     } as any;
-    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, noopPrisma, acceptedLegal);
     await guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', routeCompanyId: 'co-route' }));
     const call = (resolve.execute.mock.calls as any[])[0]?.arguments;
     assert.equal(call[3], 'co-route');
@@ -217,7 +218,7 @@ describe('AuthGuard', () => {
         userCredential: { findUnique: async () => null },
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), verifier as any, failVerifier as any, noopResolve, localConfig, prisma);
+    const guard = new AuthGuard(makeReflector(false), verifier as any, failVerifier as any, noopResolve, localConfig, prisma, acceptedLegal);
 
     await assert.rejects(
       () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token' })),
@@ -242,7 +243,7 @@ describe('AuthGuard', () => {
         userCredential: { findUnique: async () => null },
       },
     } as any;
-    const guard = new AuthGuard(makeReflector(false), sidlessVerifier, failVerifier as any, resolve, localConfig, prisma);
+    const guard = new AuthGuard(makeReflector(false), sidlessVerifier, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
 
     await assert.rejects(
       () => guard.canActivate(makeContext({ authHeader: 'Bearer sidless.token' })),
@@ -254,7 +255,7 @@ describe('AuthGuard', () => {
 
   it('does not fall back to dev auth when watchdog verifier rejects a refresh token in production', async () => {
     const refreshVerifier = { verify: async () => { throw new UnauthorizedException('Refresh token cannot authorize requests.'); } };
-    const guard = new AuthGuard(makeReflector(false), refreshVerifier as any, noopVerifier as any, noopResolve, prodConfig, noopPrisma);
+    const guard = new AuthGuard(makeReflector(false), refreshVerifier as any, noopVerifier as any, noopResolve, prodConfig, noopPrisma, acceptedLegal);
 
     await assert.rejects(
       () => guard.canActivate(makeContext({ authHeader: 'Bearer refresh.token' })),
@@ -267,18 +268,66 @@ describe('AuthGuard', () => {
 
   it('does not block a LINE-login session that still has mustChangePassword set', async () => {
     const lineVerifier = { verify: async () => ({ subject: 'test-sub', tokenId: 'session-1', provider: 'line' }) };
-    const guard = new AuthGuard(makeReflector(false), lineVerifier as any, failVerifier as any, noopResolve, localConfig, mustChangePrisma);
+    const guard = new AuthGuard(makeReflector(false), lineVerifier as any, failVerifier as any, noopResolve, localConfig, mustChangePrisma, acceptedLegal);
     const result = await guard.canActivate(makeContext({ authHeader: 'Bearer line.token', path: '/v1/crm/customers' }));
     assert.equal(result, true);
   });
 
   it('blocks password-login and legacy (no provider claim) sessions that must change password', async () => {
     for (const verifier of [{ verify: async () => ({ subject: 'test-sub', tokenId: 'session-1', provider: 'watchdog' }) }, noopVerifier]) {
-      const guard = new AuthGuard(makeReflector(false), verifier as any, failVerifier as any, noopResolve, localConfig, mustChangePrisma);
+      const guard = new AuthGuard(makeReflector(false), verifier as any, failVerifier as any, noopResolve, localConfig, mustChangePrisma, acceptedLegal);
       await assert.rejects(
         () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path: '/v1/crm/customers' })),
         (err: unknown) => {
           assert.ok(err instanceof ForbiddenException);
+          return true;
+        },
+      );
+    }
+  });
+
+  it('blocks protected business routes with a stable legal_acceptance_required response', async () => {
+    const pendingLegal = { isRequired: async () => true } as any;
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, noopPrisma, pendingLegal,
+    );
+
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path: '/v1/expenses' })),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.equal((error.getResponse() as any).code, 'legal_acceptance_required');
+        return true;
+      },
+    );
+  });
+
+  it('keeps the legal acceptance status/write path available while acceptance is pending', async () => {
+    const pendingLegal = { isRequired: async () => true } as any;
+    const guard = new AuthGuard(
+      makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+      localConfig, noopPrisma, pendingLegal,
+    );
+
+    assert.equal(await guard.canActivate(makeContext({
+      authHeader: 'Bearer valid.token',
+      path: '/v1/auth/legal-acceptance',
+    })), true);
+  });
+
+  it('does not exempt unrelated authenticated /v1/auth mutations from the legal gate', async () => {
+    const pendingLegal = { isRequired: async () => true } as any;
+    for (const path of ['/v1/auth/account/ai-assistant', '/v1/auth/line/link']) {
+      const guard = new AuthGuard(
+        makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve,
+        localConfig, noopPrisma, pendingLegal,
+      );
+      await assert.rejects(
+        () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', path })),
+        (error: unknown) => {
+          assert.ok(error instanceof ForbiddenException);
+          assert.equal((error.getResponse() as any).code, 'legal_acceptance_required');
           return true;
         },
       );

@@ -539,6 +539,7 @@ describe('CC1 safe-OFF / runoff lifecycle (real database)', () => {
       notify,
       reportEntitlement,
       storage,
+      { enqueue: async () => true } as any,
     );
 
     const run = await runQuery.execute(ctx, companyId, { datasetCode: 'ar.aging' });

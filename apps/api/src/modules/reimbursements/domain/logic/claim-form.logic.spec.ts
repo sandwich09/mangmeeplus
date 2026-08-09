@@ -164,10 +164,26 @@ describe('reimbursement claim form', () => {
       }],
     })).toString('utf8');
 
+    // Wrapping may break a suffix across two tspans, so read the text, not the markup.
+    const text = artifact.replace(/<[^>]+>/g, '');
     for (const suffix of ['END-OF-REASON', 'END-OF-LINE', 'END-OF-PURPOSE']) {
-      assert.match(artifact, new RegExp(suffix));
+      assert.match(text, new RegExp(suffix));
     }
     assert.ok((artifact.match(/<tspan/g) ?? []).length > 20, 'long text is wrapped into many tspans');
+  });
+
+  it('breaks a single word wider than its column instead of letting it run into the next one', () => {
+    // The เปลี่ยนคาปาซิเตอร์ report: a รายการ line printed past the x=480 rule and over
+    // วัตถุประสงค์. `wrapText` accepted any word verbatim while the line was still empty,
+    // so a word wider than the column was never split at all.
+    const word = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEF';
+    const artifact = renderReimbursementClaimFormSvg(snapshot({
+      lines: [{ lineNo: 1, incurredDate: '2026-07-15T00:00:00.000Z', description: word, purpose: null, amount: '10.0000' }],
+    })).toString('utf8');
+
+    const pieces = [...artifact.matchAll(/<tspan x="208"[^>]*>([^<]*)<\/tspan>/g)].map((match) => match[1]!);
+    assert.ok(pieces.length > 1, `expected the word to be split, got ${JSON.stringify(pieces)}`);
+    assert.equal(pieces.join(''), word, 'no character is dropped by the split');
   });
 
   it('draws a stored signature above the ลงชื่อ line and leaves unsigned roles ruled (lane F)', () => {

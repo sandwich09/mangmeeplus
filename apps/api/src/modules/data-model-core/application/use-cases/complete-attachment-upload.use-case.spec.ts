@@ -50,6 +50,7 @@ const makeRepo = () => ({
 
 const makeAudit = () => ({ log: mock.fn(async () => {}) });
 const makeLogger = () => ({ warn: mock.fn() });
+const makeCleanup = () => ({ enqueue: mock.fn(async () => true) });
 const cleanScanner = { assertClean: mock.fn(async () => undefined) };
 const bytes = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(1024 - 9)]);
 const checksumSha256 = createHash('sha256').update(bytes).digest('hex');
@@ -106,7 +107,7 @@ describe('CompleteAttachmentUploadUseCase', () => {
 
   it('rejects completion when storage object is missing', async () => {
     const storage = makeStorage({ getObjectMetadata: mock.fn(async () => ({ exists: false, byteSize: 0 })) });
-    const uc = new CompleteAttachmentUploadUseCase(makeRepo() as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any);
+    const uc = new CompleteAttachmentUploadUseCase(makeRepo() as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
     await assert.rejects(() => uc.execute(ctx, { attachmentId: 'att-1' }), BadRequestException);
   });
 
@@ -115,7 +116,7 @@ describe('CompleteAttachmentUploadUseCase', () => {
     const audit = makeAudit();
     const logger = makeLogger();
     const storage = makeStorage({ getObjectMetadata: mock.fn(async () => ({ exists: true, byteSize: 2048 })) });
-    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, audit as any, cleanScanner as any, logger as any);
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, audit as any, cleanScanner as any, logger as any, makeCleanup() as any);
     await assert.rejects(() => uc.execute(ctx, { attachmentId: 'att-1' }), BadRequestException);
     assert.equal(repo.markQuarantined.mock.callCount(), 1);
     const rejectionAudit = (audit.log.mock.calls as any[])[0]?.arguments[0];
@@ -134,7 +135,7 @@ describe('CompleteAttachmentUploadUseCase', () => {
   it('hashes provider bytes, writes an immutable final key, and pins its object version', async () => {
     const repo = makeRepo();
     const storage = makeStorage();
-    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any);
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
     const result = await uc.execute(ctx, {
       attachmentId: 'att-1',
       checksumSha256: '0'.repeat(64),
@@ -163,7 +164,7 @@ describe('CompleteAttachmentUploadUseCase', () => {
         objectVersionId: 'pending-version-1',
       })),
     });
-    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any);
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
 
     await assert.rejects(() => uc.execute(ctx, { attachmentId: 'att-1' }), /checksum/i);
     assert.equal(repo.markQuarantined.mock.callCount(), 1);
@@ -174,9 +175,36 @@ describe('CompleteAttachmentUploadUseCase', () => {
     const repo = makeRepo();
     repo.findById = mock.fn(async () => ({ ...attachment, status: 'ACTIVE' }));
     const storage = makeStorage();
-    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any);
+    const uc = new CompleteAttachmentUploadUseCase(repo as any, storage as any, makeAudit() as any, cleanScanner as any, makeLogger() as any, makeCleanup() as any);
 
     await assert.rejects(() => uc.execute(ctx, { attachmentId: 'att-1' }), BadRequestException);
     assert.equal((storage.getObjectMetadata as any).mock.callCount(), 0);
+  });
+
+  it('durably queues the exact final object version when activation fails and preserves the primary error', async () => {
+    const primary = new Error('attachment activation lost race');
+    const repo = makeRepo();
+    repo.markActive = mock.fn(async () => { throw primary; });
+    const storage = makeStorage();
+    const cleanup = makeCleanup();
+    const uc = new CompleteAttachmentUploadUseCase(
+      repo as any,
+      storage as any,
+      makeAudit() as any,
+      cleanScanner as any,
+      makeLogger() as any,
+      cleanup as any,
+    );
+
+    await assert.rejects(() => uc.execute(ctx, { attachmentId: 'att-1' }), (error) => error === primary);
+    const writtenPath = (storage.putObject.mock.calls as any[])[0].arguments[0].objectKey;
+    assert.deepEqual((cleanup.enqueue.mock.calls as any[])[0]?.arguments[0], {
+      companyId: 'co-1',
+      bucket: 'local-attachments',
+      objectPath: writtenPath,
+      expectedVersion: checksumSha256,
+      source: 'ATTACHMENT_FINALIZATION',
+    });
+    assert.equal(storage.deleteObject.mock.callCount(), 0, 'the API must not delete an S3 version directly');
   });
 });

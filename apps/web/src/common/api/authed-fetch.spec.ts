@@ -199,6 +199,32 @@ describe('authed-fetch', () => {
     assert.equal(calls.length, 1, 'a permission denial must not trigger a refresh');
   });
 
+  it('redirects the stable legal-acceptance 403 while preserving the current page', async () => {
+    const assigned = withStubbedWindow(async () => {
+      const fetchImpl = scriptedFetch(
+        [() => jsonResponse(403, { message: 'Legal acceptance required.', code: 'legal_acceptance_required' })],
+        [],
+      );
+      const res = await authedFetch('/companies/c1/dashboard', undefined, fetchImpl);
+      assert.equal(res.status, 403);
+    });
+    assert.deepEqual(
+      await assigned,
+      ['/legal-acceptance?companyId=c1&next=%2Fcompanies%2Fc1%2Fdashboard'],
+    );
+  });
+
+  it('does not mistake an ordinary 403 for the legal gate', async () => {
+    const assigned = withStubbedWindow(async () => {
+      const fetchImpl = scriptedFetch(
+        [() => jsonResponse(403, { message: 'Missing permission.', code: 'permission_denied' })],
+        [],
+      );
+      await authedFetch('/companies/c1/dashboard', undefined, fetchImpl);
+    });
+    assert.deepEqual(await assigned, []);
+  });
+
   it('maps error bodies to Error(message) with a status property', async () => {
     const body = { message: ['a is bad', 'b is bad'], code: 'validation_failed', warnings: [{ customerId: 'c-1' }] };
     const fetchImpl = scriptedFetch([() => jsonResponse(422, body)], []);

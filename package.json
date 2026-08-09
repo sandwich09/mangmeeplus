@@ -10,6 +10,7 @@
     "security:audit": "corepack pnpm audit --audit-level=high",
     "config:validate": "tsx scripts/validate-prod-config.ts",
     "security:m14-evidence": "tsx scripts/m14-scanner-evidence.ts",
+    "legal:release-gate": "bash infra/security/validate-legal-release-readiness.sh",
     "e2e": "playwright test",
     "agent:gates": "node scripts/check-agent-gates.mjs",
     "test": "corepack pnpm -r --if-present test",

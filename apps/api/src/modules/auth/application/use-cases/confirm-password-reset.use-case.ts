@@ -16,7 +16,7 @@ export class ConfirmPasswordResetUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
-  async execute(input: { token: string; newPassword: string; requestId?: string }): Promise<PasswordLoginResult> {
+  async execute(input: { token: string; newPassword: string; requestId?: string }): Promise<Omit<PasswordLoginResult, 'legalAcceptanceRequired'>> {
     const tokenHash = hashToken(input.token);
     const now = new Date();
     const token = await this.prisma.client.passwordResetToken.findUnique({ where: { tokenHash } });

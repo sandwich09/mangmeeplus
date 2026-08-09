@@ -36,7 +36,25 @@ export type AppendOutboxEventInput = {
   availableAt?: Date;
 };
 
-export type ClaimOutboxBatchInput = { batchSize: number; claimedBy: string };
+export type ClaimOutboxBatchInput = {
+  batchSize: number;
+  claimedBy: string;
+  /** Include only these event types. Mutually exclusive with excludeEventTypes. */
+  eventTypes?: string[];
+  /** Exclude reserved consumer event types from a general drain. */
+  excludeEventTypes?: string[];
+};
 /** `claimToken` is the lease this completion holds; a stale one matches no row and is a no-op. */
-export type MarkOutboxPublishedInput = { id: string; claimToken?: string | null };
-export type MarkOutboxFailedInput = { id: string; error: string; nextAvailableAt?: Date; claimToken?: string | null };
+export type MarkOutboxPublishedInput = {
+  id: string;
+  claimToken?: string | null;
+  /** Optional consumer fence: an internal worker cannot complete another consumer's event. */
+  expectedEventType?: string;
+};
+export type MarkOutboxFailedInput = {
+  id: string;
+  error: string;
+  nextAvailableAt?: Date;
+  claimToken?: string | null;
+  expectedEventType?: string;
+};

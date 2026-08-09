@@ -72,7 +72,7 @@ Already correct (verified, keep as-is): httpOnly cookie BFF with chunked `watchd
 
 ### 5.1 Design foundation (`apps/web`)
 - `app/globals.css`: point `--color-brand-*` at the มั่งมี green ramp (25–800 from Brand Kit), add gold accent tokens; keep `--color-info-*` for informational states. Menu active states switch from info-blue to brand-green.
-- `app/layout.tsx`: load `IBM Plex Sans Thai` + `Outfit` via `next/font`, set as `--font-family-sans` stack.
+- `app/layout.tsx` / `app/globals.css`: keep the Thai-capable system font stack offline; production builds must not fetch Google Fonts.
 - Primitives: `Button.tsx`, `IconButton.tsx`, `Field.tsx`, `CoverLoader.tsx` — replace hardcoded `blue-*` with `brand-*` utilities. `Button` gains the brand gradient primary per Brand Kit.
 - `AppSidebar.tsx` wordmark: "มั่งมี" (with gold "มี") replaces "WatchDog BMS" text mark.
 

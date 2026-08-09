@@ -86,6 +86,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // the legal tax identity, VAT facts and branch codes of ANY tenant company — a wider authority
   // than system.company_onboarding.create, which only brings a new company into existence.
   { key: 'system.identity_reconciliation.resolve',  description: 'Generate and resolve company tax identity reconciliation items', riskLevel: 'CRITICAL' },
+  { key: 'system.data_rights.manage',               description: 'Orchestrate restricted user/company data-rights and offboarding cases', riskLevel: 'CRITICAL' },
   // Item 05 inventory permissions
   { key: 'inventory.product.read',         description: 'Read inventory products',            riskLevel: 'LOW' },
   { key: 'inventory.product.manage',       description: 'Create/update/archive products',     riskLevel: 'MEDIUM' },
@@ -457,6 +458,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'system.launch_gate.manage',
     // Step 0 identity reconciliation — platform-side repair of Company↔CompanyTaxProfile drift.
     'system.identity_reconciliation.resolve',
+    // Cross-tenant privacy/offboarding case control plane; no tenant role may receive it.
+    'system.data_rights.manage',
   ],
   COMPANY_VIEW: [
     'account.session.read',

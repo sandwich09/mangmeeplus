@@ -10,10 +10,10 @@ const nextConfig = {
   // Lets a second dev server run in this checkout (verify sessions) without fighting over .next
   distDir: process.env.NEXT_DIST_DIR || '.next',
   // The local Rancher VM (~3.8 GB) OOMs (exit 137) when `next build` runs the
-  // separate tsc/eslint passes. Types are validated via package scripts, so skip
-  // those passes during the container build to keep it within the memory budget.
+  // separate tsc pass. Types are validated via package scripts, so skip that pass
+  // during the container build to keep it within the memory budget. Next 16 no longer
+  // runs ESLint from `next build`, so the removed legacy `eslint` key had no effect.
   typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
   // Receipt OCR (POST …/extraction-request) is synchronous and can legitimately run up to the
   // API's own 120s abort; the rewrite proxy's 30s default killed those responses mid-flight
   // and the UI reported failure for extractions that had succeeded. Milliseconds.
@@ -25,16 +25,25 @@ const nextConfig = {
     ];
   },
   async headers() {
-    return [{
-      source: '/:path*',
-      headers: [
-        { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-        { key: 'X-Content-Type-Options', value: 'nosniff' },
-        { key: 'X-Frame-Options', value: 'DENY' },
-        { key: 'Referrer-Policy', value: 'no-referrer' },
-        { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
-      ],
-    }];
+    return [
+      {
+        source: '/legal/releases/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+          { key: 'X-Robots-Tag', value: 'noindex, follow' },
+        ],
+      },
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()' },
+        ],
+      },
+    ];
   },
   turbopack: {
     rules: {

@@ -1,0 +1,15 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DeleteOnlyFailedWriteVersions",
+      "Effect": "Allow",
+      "Action": "s3:DeleteObjectVersion",
+      "Resource": [
+        "arn:aws:s3:::<S3_BUCKET>/evidence/*",
+        "arn:aws:s3:::<S3_BUCKET>/report-export/*",
+        "arn:aws:s3:::<S3_BUCKET>/*/generated/expense-substitute/*"
+      ]
+    }
+  ]
+}

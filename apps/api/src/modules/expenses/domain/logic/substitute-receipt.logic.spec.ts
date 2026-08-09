@@ -120,9 +120,35 @@ describe('substitute receipt evidence', () => {
       note: null,
     };
     const artifact = renderSubstituteReceiptSvg(snapshot).toString('utf8');
+    // Wrapping may break a suffix across two tspans, so read the text, not the markup.
+    const text = artifact.replace(/<[^>]+>/g, '');
     for (const suffix of ['END-OF-PURPOSE', 'END-OF-LINE', 'END-OF-REASON', 'END-OF-CERTIFICATION', 'END-OF-FILE.pdf']) {
-      assert.match(artifact, new RegExp(suffix));
+      assert.match(text, new RegExp(suffix));
     }
     assert.ok((artifact.match(/<tspan/g) ?? []).length > 10);
+  });
+
+  it('breaks a single word wider than its column instead of letting it run into the next one', () => {
+    // Same defect as the reimbursement claim form: `wrapText` accepted any word verbatim while
+    // the line was still empty, so a word wider than the column was never split at all.
+    const word = 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const artifact = renderSubstituteReceiptSvg({
+      documentNumber: 'SRC-WORD-V1', version: 1,
+      company: { name: 'บริษัท ทดสอบ จำกัด', branchName: null, taxId: null },
+      expense: {
+        id: 'exp-word', expenseNumber: null, expenseDate: '2026-07-13T00:00:00.000Z', paymentDate: null,
+        currency: 'THB', grandTotalAmount: '100.00', paymentMethod: 'CASH', paymentReference: null,
+        category: 'ทั่วไป', businessPurpose: 'ทดสอบ',
+        lines: [{ description: word, quantity: '1', amount: '100.00' }],
+      },
+      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'OTHER',
+      missingReceiptReason: 'ทดสอบ',
+      payer: { userId: 'payer-1', name: 'ผู้จ่าย', position: 'พนักงาน', certifiedAt: '0000-01-01T00:00:00.000Z' },
+      certificationText: 'ทดสอบ', evidence: [], note: null,
+    }).toString('utf8');
+
+    const pieces = [...artifact.matchAll(/<tspan x="165"[^>]*>([^<]*)<\/tspan>/g)].map((match) => match[1]!);
+    assert.ok(pieces.length > 1, `expected the word to be split, got ${JSON.stringify(pieces)}`);
+    assert.equal(pieces.join(''), word, 'no character is dropped by the split');
   });
 });

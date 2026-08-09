@@ -70,6 +70,7 @@ infra_role="watchdog-bms-uat-ecs-infrastructure-role"
 api_role="watchdog-bms-uat-ecs-api-role"
 ai_role="watchdog-bms-uat-ecs-ai-gateway-role"
 workers_role="watchdog-bms-uat-ecs-workers-role"
+workers_cleanup_policy_name="watchdog-bms-uat-workers-object-version-cleanup"
 release_role="watchdog-bms-uat-release-task-role"
 publish_role="watchdog-bms-ci-uat"
 deploy_role="watchdog-bms-deploy-uat"
@@ -124,6 +125,7 @@ fi
 
 probe_inline_policy_read "$deploy_role" watchdog-bms-uat-deploy
 probe_inline_policy_read "$release_role" watchdog-bms-uat-release-task-ecs-read
+probe_inline_policy_read "$workers_role" "$workers_cleanup_policy_name"
 
 ensure_role "$execution_role" "$task_trust"
 aws_cmd iam attach-role-policy --role-name "$execution_role" --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy >/dev/null
@@ -145,7 +147,8 @@ jq -n --arg region "$region" --arg account "$account_id" '{
   Statement:[
     {Effect:"Allow",Action:["secretsmanager:GetSecretValue"],Resource:("arn:aws:secretsmanager:"+$region+":"+$account+":secret:watchdog-bms/uat/*")},
     {Effect:"Allow",Action:["ssm:GetParameter"],Resource:("arn:aws:ssm:"+$region+":"+$account+":parameter/watchdog-bms/uat/*")},
-    {Effect:"Allow",Action:["s3:GetObject","s3:GetObjectVersion","s3:PutObject","s3:DeleteObject","s3:DeleteObjectVersion"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account+"/*")}
+    {Effect:"Allow",Action:["s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account)},
+    {Effect:"Allow",Action:["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"],Resource:("arn:aws:s3:::watchdog-bms-uat-"+$account+"/*")}
   ]
 }' > "$tmp_dir/api-policy.json"
 aws_cmd iam put-role-policy --role-name "$api_role" --policy-name watchdog-bms-uat-api-runtime --policy-document "file://$tmp_dir/api-policy.json"
@@ -167,6 +170,23 @@ jq -n --arg account "$account_id" '{
 aws_cmd iam put-role-policy --role-name "$ai_role" --policy-name watchdog-bms-uat-ai-gateway-runtime --policy-document "file://$tmp_dir/ai-policy.json"
 
 ensure_role "$workers_role" "$task_trust"
+workers_cleanup_policy="$tmp_dir/workers-object-version-cleanup-policy.json"
+sed "s/<S3_BUCKET>/watchdog-bms-uat-${account_id}/g" \
+  infra/security/object-version-cleanup-worker-policy.template.json > "$workers_cleanup_policy"
+aws_cmd iam put-role-policy \
+  --role-name "$workers_role" \
+  --policy-name "$workers_cleanup_policy_name" \
+  --policy-document "file://$workers_cleanup_policy"
+if ! aws_cmd iam get-role-policy --role-name "$workers_role" --policy-name "$workers_cleanup_policy_name" \
+  --query PolicyDocument --output json | jq -S . > "$tmp_dir/workers-cleanup-policy-actual.json"; then
+  echo "APPLIED_BUT_UNVERIFIED: role=${workers_role} policy=${workers_cleanup_policy_name}" >&2
+  exit 1
+fi
+jq -S . "$workers_cleanup_policy" > "$tmp_dir/workers-cleanup-policy-expected.json"
+if ! cmp -s "$tmp_dir/workers-cleanup-policy-actual.json" "$tmp_dir/workers-cleanup-policy-expected.json"; then
+  echo "APPLIED_BUT_UNVERIFIED: role=${workers_role} policy=${workers_cleanup_policy_name} (readback mismatch)" >&2
+  exit 1
+fi
 
 # Release/F2/retirement tasks use a deliberately narrow task role. The retirement wrapper re-reads
 # the exact ECS Express deployment and active revision manifest from inside the durable DB fence;

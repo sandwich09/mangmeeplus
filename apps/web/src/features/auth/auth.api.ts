@@ -1,11 +1,17 @@
 'use client';
 
+import type {
+  AcceptLegalDocumentsInput,
+  AcceptLegalDocumentsResponse,
+  LegalAcceptanceStatusResponse,
+} from '@watchdog-bms/contracts';
 import { createWebApiClient } from '@/common/api/http-client';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 
 // Session responses no longer contain tokens: the BFF stores them in httpOnly cookies.
 export type LoginSessionResponse = {
   passwordChangeRequired: boolean;
+  legalAcceptanceRequired: boolean;
   companyId: string | null;
   redirectPath: string;
 };
@@ -32,8 +38,8 @@ export function loginWithPassword(username: string, password: string, remember =
  * Local-development only (LoginPage hides it outside dev builds); the BFF route
  * 404s in production builds and the API endpoint 404s unless APP_ENV=local.
  */
-export function loginAsDevOwner(): Promise<{ redirectPath: string }> {
-  return publicApi.post<{ redirectPath: string }>('/api/auth/dev-login', {});
+export function loginAsDevOwner(): Promise<LoginSessionResponse> {
+  return publicApi.post<LoginSessionResponse>('/api/auth/dev-login', {});
 }
 
 /** Attempt to restore a session from the refresh cookie. Resolves false when signed out. */
@@ -66,6 +72,25 @@ export async function changePassword(currentPassword: string, newPassword: strin
 
 export function getAccountSecurityState(): Promise<AccountSecurityState> {
   return authedApiFetch<AccountSecurityState>('/auth/account/security');
+}
+
+export function getLegalAcceptanceStatus(companyId: string): Promise<LegalAcceptanceStatusResponse> {
+  return authedApiFetch<LegalAcceptanceStatusResponse>('/auth/legal-acceptance', {
+    headers: { 'X-Company-Id': companyId },
+    suppressErrorToast: true,
+  });
+}
+
+export function acceptLegalDocuments(
+  companyId: string,
+  input: AcceptLegalDocumentsInput,
+): Promise<AcceptLegalDocumentsResponse> {
+  return authedApiFetch<AcceptLegalDocumentsResponse>('/auth/legal-acceptance', {
+    method: 'POST',
+    headers: { 'X-Company-Id': companyId },
+    body: JSON.stringify(input),
+    suppressErrorToast: true,
+  });
 }
 
 /** PDPA objection route (M-05 §3.1): toggle the LINE AI assistant for the current user. */

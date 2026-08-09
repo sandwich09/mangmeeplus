@@ -142,7 +142,7 @@ App Runner is not a default target for new deployments because it is no longer o
 | `S3_ENDPOINT` | local only | forbidden unless explicit | MinIO/local emulator only. |
 | `S3_PUBLIC_ENDPOINT` | self-hosted only | optional | Browser-reachable presigning endpoint; unset falls back to `S3_ENDPOINT` or the SDK AWS URL. |
 | `UPLOAD_MAX_BYTES` | required | required | Bounded upload size. |
-| `UPLOAD_PENDING_MAX_BYTES_PER_COMPANY` | required | required | Tenant quota for pending/quarantined objects within the 24-hour cleanup window. |
+| `UPLOAD_PENDING_MAX_BYTES_PER_COMPANY` | required | required | Tenant quota for pending/quarantined objects. Provider lifecycle expires the current `pending/` object after 1 day and removes its noncurrent byte version after 1 further day; rejected/quarantined evidence follows the reviewed case policy. |
 | `ALLOWED_UPLOAD_MIME_TYPES` | required | required | Explicit allowlist. |
 | `SIGNED_URL_TTL_SECONDS` | required | required | Upload-intent lifetime, hard-capped at 300 seconds. |
 

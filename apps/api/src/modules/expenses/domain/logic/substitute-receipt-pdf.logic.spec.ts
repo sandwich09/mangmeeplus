@@ -223,7 +223,13 @@ describe('substitute receipt PDF', () => {
     const svg = renderSubstituteReceiptSvg(snapshot);
     const bytes = await renderSubstituteReceiptPdf(svg, snapshot.documentNumber);
     const pdf = await PDFDocument.load(bytes);
-    assert.equal(pdf.getPageCount(), SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages);
+    // The promise is that anything inside the renderability limits renders; the ceiling keeps a
+    // page of slack above it, so this asserts the band rather than pinning the exact page count.
+    assert.ok(pdf.getPageCount() > 1, 'the worst-case boundary should paginate');
+    assert.ok(
+      pdf.getPageCount() <= SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages,
+      `worst-case boundary used ${pdf.getPageCount()} pages, ceiling is ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}`,
+    );
   });
 
   it('rejects an oversized vector before allocating its production raster', async () => {

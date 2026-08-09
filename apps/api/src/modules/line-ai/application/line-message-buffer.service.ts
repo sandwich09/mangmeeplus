@@ -13,12 +13,16 @@
  */
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { LINE_AI_ERROR_CODES } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { LineReplyAdapter, type LineDeliveryResult } from '../infrastructure/line-reply.adapter';
-import { ProcessLineWebhookUseCase } from './use-cases/process-line-webhook.use-case';
+import {
+  LEGAL_ACCEPTANCE_REQUIRED_REPLY,
+  ProcessLineWebhookUseCase,
+} from './use-cases/process-line-webhook.use-case';
 import type { LineTextEvent, LineReceiptUploadEvent } from './use-cases/process-line-webhook.use-case';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
 import {
@@ -112,7 +116,24 @@ export class LineMessageBufferService implements OnModuleDestroy {
    *  `received` log row (both DB-backed, ~ms) and appends to memory. All slow
    *  work (AI turns, replies) happens asynchronously on the worker loop. */
   async enqueue(envelope: LineBufferEnvelope): Promise<void> {
-    const accepted = await this.acceptEvent(envelope);
+    // The legal gate must run before acceptEvent: its recoverable payload contains raw chat
+    // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
+    // employee message never crosses the durable-payload boundary.
+    const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
+    const legal = await this.processWebhook.preflightLegalAcceptance({
+      lineUserId: envelope.lineUserId,
+      messagingChannelId: envelope.messagingChannelId,
+    });
+    if (legal.status === 'required' && !companyCommand) {
+      const shouldReply = await this.terminalizePendingLegalAcceptance(envelope, legal.companyId);
+      if (shouldReply) await this.deliverLegalAcceptanceReply(envelope);
+      return;
+    }
+
+    // Company-context controls intentionally remain available while acceptance is pending so a
+    // multi-company user can switch to the intended membership. Their raw command/reply token is
+    // memory-only; a crash may require the harmless control to be resent.
+    const accepted = await this.acceptEvent(envelope, legal.status !== 'required');
     if (!accepted) return;
     // Everything below is synchronous: no interleaving between state reads and
     // writes, which is what keeps the buffer race-free on the event loop.
@@ -130,15 +151,74 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
+  /** Create (or atomically convert) the event into a terminal dedup marker. The envelope is used
+   * only in memory; none of its text, reply token, chat id, or media metadata enters payloadJson. */
+  private async terminalizePendingLegalAcceptance(
+    envelope: LineBufferEnvelope,
+    companyId: string,
+  ): Promise<boolean> {
+    const webhookEventId = envelope.item.webhookEventId;
+    const terminal = {
+      companyId,
+      status: 'legal_acceptance_required',
+      errorCode: LINE_AI_ERROR_CODES.FORBIDDEN,
+      processedAt: new Date(),
+      payloadJson: Prisma.DbNull,
+    } as const;
+    try {
+      await this.prisma.client.lineWebhookEventLog.create({
+        data: {
+          webhookEventId,
+          lineUserIdHash: hashMessagePreview(envelope.lineUserId),
+          eventType: 'message',
+          ...terminal,
+        },
+      });
+      return true;
+    } catch {
+      // Unique violation or DB hiccup: as with acceptEvent, only a durable row lets us ack safely.
+    }
+
+    const existing = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId } });
+    if (!existing) throw new Error('LINE_WEBHOOK_EVENT_NOT_DURABLE');
+    if (existing.status !== 'received') return false;
+
+    // Scrub a row written by an older replica/redelivery race before it can be replayed. The
+    // downstream use case retains the same legal gate as defense in depth for an already-claimed
+    // in-memory turn.
+    const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
+      where: { webhookEventId, status: 'received' },
+      data: terminal,
+    });
+    return updated.count === 1;
+  }
+
+  private async deliverLegalAcceptanceReply(envelope: LineBufferEnvelope): Promise<void> {
+    const messages = [this.lineReply.buildTextMessage(LEGAL_ACCEPTANCE_REQUIRED_REPLY)];
+    let result: LineDeliveryResult = await this.lineReply
+      .sendReply(envelope.item.replyToken, messages)
+      .catch(() => 'failed_other' as const);
+    if (result === 'failed_token') {
+      result = await this.lineReply
+        .sendPush(envelope.chatId, messages)
+        .catch(() => 'failed_other' as const);
+    }
+    if (result !== 'ok') {
+      this.logger.warn({ msg: 'LINE legal acceptance reply delivery failed', result });
+    }
+  }
+
   /** Age-aware dedup (spec §9): terminal row → drop; young `received` row →
    *  in someone's buffer/turn → drop; old `received` row → orphaned by a crash,
    *  and the payload comes back either from a LINE redelivery or from the orphan
    *  sweep replaying `payloadJson` (spec §11.1) → accept. */
-  private async acceptEvent(envelope: LineBufferEnvelope): Promise<boolean> {
+  private async acceptEvent(envelope: LineBufferEnvelope, persistPayload = true): Promise<boolean> {
     const webhookEventId = envelope.item.webhookEventId;
     // The payload rides the row this call already writes before the 200 ack — no extra query,
     // and it is what the orphan sweep replays when this process dies mid-turn.
-    const payloadJson = envelope as unknown as Prisma.InputJsonValue;
+    const payloadJson = persistPayload
+      ? envelope as unknown as Prisma.InputJsonValue
+      : Prisma.DbNull;
     try {
       await this.prisma.client.lineWebhookEventLog.create({
         data: {
@@ -167,7 +247,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
       });
       return reclaimed.count === 1;
     }
-    return Date.now() - (existing.processedAt ?? existing.createdAt).getTime() >= LINE_BUFFER_ORPHAN_REPROCESS_MS;
+    const orphaned = Date.now() - (existing.processedAt ?? existing.createdAt).getTime() >= LINE_BUFFER_ORPHAN_REPROCESS_MS;
+    if (!orphaned || persistPayload) return orphaned;
+    const scrubbed = await this.prisma.client.lineWebhookEventLog.updateMany({
+      where: { webhookEventId, status: 'received' },
+      data: { payloadJson: Prisma.DbNull },
+    });
+    return scrubbed.count === 1;
   }
 
   private appendAccepted(envelope: LineBufferEnvelope): void {

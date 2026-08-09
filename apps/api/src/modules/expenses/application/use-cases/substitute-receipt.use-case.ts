@@ -5,6 +5,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
+import { ObjectVersionCleanupService } from '../../../data-model-core/application/services/object-version-cleanup.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
@@ -309,6 +310,7 @@ export class PrepareSubstituteReceiptUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly audit: AuditService,
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -531,6 +533,7 @@ export class CertifySubstituteReceiptUseCase {
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: CertifySubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -604,11 +607,13 @@ export class CertifySubstituteReceiptUseCase {
       }
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'SUBSTITUTE_RECEIPT_CERTIFIED',
+      });
       throw new ConflictException((error as Error).message);
     }
   }
@@ -621,6 +626,7 @@ export class ApproveSubstituteReceiptUseCase {
     private readonly repo: PrismaExpenseRepository,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: ApproveSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -716,11 +722,13 @@ export class ApproveSubstituteReceiptUseCase {
       });
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'SUBSTITUTE_RECEIPT_ISSUED',
+      });
       throw new ConflictException((error as Error).message);
     }
   }

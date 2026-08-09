@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ProductionA5MigrationOperationClass } from '../../src/scripts/production-a5-evidence.logic';
 import { sha256, stableJson } from '../../src/scripts/a5-readonly-evidence.logic';
 
@@ -84,6 +85,36 @@ function uniqueIndexExists(table: string, index: string, columns: string[], pred
   )`;
 }
 
+function exactPartialUniqueIndexExists(
+  table: string,
+  index: string,
+  columns: string[],
+  predicate: string,
+): string {
+  return `EXISTS (
+    SELECT 1 FROM pg_index i
+    JOIN pg_class idx ON idx.oid = i.indexrelid
+    JOIN pg_class tbl ON tbl.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = tbl.relnamespace
+    WHERE n.nspname = 'public' AND tbl.relname = ${literal(table)} AND tbl.relkind IN ('r','p')
+      AND idx.relname = ${literal(index)} AND idx.relkind = 'i'
+      AND i.indisunique AND i.indisvalid AND i.indisready AND i.indnkeyatts = ${columns.length}
+      AND (SELECT array_agg(a.attname::text ORDER BY key.ordinality)
+             FROM unnest(i.indkey) WITH ORDINALITY key(attnum, ordinality)
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = key.attnum)
+          = ARRAY[${columns.map(literal).join(',')} ]::text[]
+      AND i.indpred IS NOT NULL
+      AND regexp_replace(pg_get_expr(i.indpred, i.indrelid), '\\s+', '', 'g')
+          = regexp_replace(${literal(predicate)}, '\\s+', '', 'g')
+  )`;
+}
+
+function activeDataRightsPredicate(caseType: string): string {
+  return `(("caseType" = ${literal(caseType)}::"DataRightsCaseType") AND ("status" <> ALL (ARRAY[${[
+    'COMPLETED', 'COMPLETED_WITH_EXCEPTION', 'BLOCKED', 'REJECTED', 'CANCELLED',
+  ].map((status) => `${literal(status)}::"DataRightsCaseStatus"`).join(', ')}])))`;
+}
+
 function constraintExists(table: string, constraint: string, suffix = ''): string {
   return `EXISTS (
     SELECT 1 FROM pg_constraint con
@@ -98,6 +129,41 @@ function enumValueExists(type: string, value: string): string {
     SELECT 1 FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
     JOIN pg_namespace n ON n.oid = t.typnamespace
     WHERE n.nspname = 'public' AND t.typname = ${literal(type)} AND e.enumlabel = ${literal(value)}
+  )`;
+}
+
+function enumValuesEqual(type: string, values: readonly string[]): string {
+  const valuesHash = createHash('md5').update(values.join(',')).digest('hex');
+  return `(SELECT COUNT(*) = ${values.length}
+      AND md5(COALESCE(string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder), '')) = ${literal(valuesHash)}
+    FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public' AND t.typname = ${literal(type)})`;
+}
+
+function exactTriggerFunctionExists(
+  table: string,
+  trigger: string,
+  functionName: string,
+  triggerType: number,
+  functionBodyMd5: string,
+): string {
+  return `EXISTS (
+    SELECT 1 FROM pg_trigger tg
+    JOIN pg_class tbl ON tbl.oid = tg.tgrelid
+    JOIN pg_namespace tbl_ns ON tbl_ns.oid = tbl.relnamespace
+    JOIN pg_proc fn ON fn.oid = tg.tgfoid
+    JOIN pg_namespace fn_ns ON fn_ns.oid = fn.pronamespace
+    JOIN pg_language lang ON lang.oid = fn.prolang
+    WHERE tbl_ns.nspname = 'public' AND tbl.relname = ${literal(table)} AND tbl.relkind IN ('r','p')
+      AND fn_ns.nspname = 'public' AND fn.proname = ${literal(functionName)}
+      AND tg.tgname = ${literal(trigger)} AND NOT tg.tgisinternal AND tg.tgenabled = 'O'
+      AND tg.tgtype = ${triggerType} AND tg.tgnargs = 0 AND tg.tgqual IS NULL
+      AND tg.tgattr = ''::int2vector
+      AND lang.lanname = 'plpgsql' AND fn.prorettype = 'trigger'::regtype AND fn.pronargs = 0
+      AND NOT fn.prosecdef AND fn.provolatile = 'v'
+      AND fn.proconfig = ARRAY['search_path=pg_catalog, public']::text[]
+      AND md5(fn.prosrc) = ${literal(functionBodyMd5)}
   )`;
 }
 
@@ -575,4 +641,196 @@ export const PRODUCTION_A5_REVIEWED_MIGRATIONS: readonly ProductionA5ReviewedMig
     pre: [['PRE_LINE_TABLE_ABSENT', `to_regclass('"ReimbursementLine"') IS NULL`]],
     postData: [['POST_DATA_FIXED_POINT', reimbursementBackfillFixedPoint]],
   }),
+  migration('20260809110000_legal_document_acceptance', 'ADDITIVE', all(
+    tableExists('LegalDocumentActionRecord'),
+    enumValuesEqual('LegalDocumentType', ['TERMS_OF_USE', 'PRIVACY_NOTICE']),
+    enumValuesEqual('LegalDocumentAction', ['ACCEPTED', 'ACKNOWLEDGED']),
+    enumValuesEqual('LegalAcceptanceCapacity', [
+      'AUTHORIZED_REPRESENTATIVE', 'INVITED_MEMBER', 'SYSTEM_OPERATOR',
+    ]),
+    enumValuesEqual('LegalAcceptanceSurface', ['FIRST_ACCEPTANCE', 'MATERIAL_UPDATE']),
+    constraintExists('LegalDocumentActionRecord', 'LegalDocumentActionRecord_pkey', " AND con.contype = 'p'"),
+    uniqueIndexExists(
+      'LegalDocumentActionRecord',
+      'LegalDocumentActionRecord_scopeRef_documentType_documentVersion_action_key',
+      ['scopeRef', 'documentType', 'documentVersion', 'action'],
+    ),
+    indexExists('LegalDocumentActionRecord_acceptedByUserId_acceptedAt_idx'),
+    indexExists('LegalDocumentActionRecord_companyId_acceptedAt_idx'),
+    indexExists('LegalDocumentActionRecord_membershipId_acceptedAt_idx'),
+    indexExists('LegalDocumentActionRecord_batchId_idx'),
+    exactTriggerFunctionExists(
+      'LegalDocumentActionRecord',
+      'LegalDocumentActionRecord_prevent_update_delete',
+      'prevent_legal_document_action_record_mutation',
+      27,
+      'b3202b486ba0944610d697033503e7c3',
+    ),
+    exactTriggerFunctionExists(
+      'LegalDocumentActionRecord',
+      'LegalDocumentActionRecord_prevent_truncate',
+      'prevent_legal_document_action_record_mutation',
+      34,
+      'b3202b486ba0944610d697033503e7c3',
+    ),
+  )),
+  migration('20260809120000_data_rights_case_orchestration', 'ADDITIVE', all(
+    tableExists('DataRightsCase'),
+    tableExists('DataRightsDecisionRecord'),
+    tableExists('DataRightsEvidenceRecord'),
+    tableExists('DataRightsCaseActionRecord'),
+    enumValuesEqual('DataRightsCaseType', [
+      'USER_ACCOUNT_ERASURE', 'MEMBERSHIP_EXIT', 'COMPANY_WORKSPACE_OFFBOARDING',
+    ]),
+    enumValuesEqual('DataRightsCaseStatus', [
+      'RECEIVED', 'IDENTITY_VERIFIED', 'RETENTION_REVIEW', 'APPROVED', 'EXECUTING', 'VERIFICATION',
+      'COMPLETED', 'COMPLETED_WITH_EXCEPTION', 'BLOCKED', 'REJECTED', 'CANCELLED',
+    ]),
+    enumValuesEqual('DataRightsRequestSource', ['EMAIL', 'SUPPORT', 'IN_APP', 'OTHER_MONITORED_CHANNEL']),
+    enumValuesEqual('DataRightsDecisionCategory', [
+      'ACCOUNT_IDENTITY', 'AUTHENTICATION_SECRETS', 'MEMBERSHIPS_ACCESS', 'TENANT_OPERATIONAL_DATA',
+      'ACCOUNTING_TAX_DOCUMENTS', 'ATTACHMENTS_OBJECT_VERSIONS', 'AI_OCR_DATA', 'AUDIT_SECURITY_LOGS',
+      'QUEUES_CACHES', 'PROCESSORS', 'BACKUPS', 'LEGAL_ACCEPTANCE_EVIDENCE',
+    ]),
+    enumValuesEqual('DataRightsDisposition', [
+      'DELETE', 'ANONYMIZE', 'RESTRICT', 'RETAIN', 'RETURN', 'NOT_APPLICABLE',
+    ]),
+    enumValuesEqual('DataRightsEvidenceType', [
+      'IDENTITY_VERIFICATION', 'AUTHORITY_VERIFICATION', 'EXPORT_DELIVERY', 'ACCESS_REVOCATION',
+      'DATABASE_EXECUTION', 'OBJECT_STORAGE_INVENTORY', 'QUEUE_CACHE_PURGE', 'PROCESSOR_CONFIRMATION',
+      'BACKUP_MANIFEST', 'RETENTION_HOLD', 'INDEPENDENT_VERIFICATION',
+    ]),
+    constraintExists('DataRightsCase', 'DataRightsCase_pkey', " AND con.contype = 'p'"),
+    constraintExists(
+      'DataRightsCase',
+      'DataRightsCase_target_shape_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%USER_ACCOUNT_ERASURE%' AND pg_get_constraintdef(con.oid, true) LIKE '%MEMBERSHIP_EXIT%' AND pg_get_constraintdef(con.oid, true) LIKE '%COMPANY_WORKSPACE_OFFBOARDING%' AND pg_get_constraintdef(con.oid, true) LIKE '%companyId%IS NULL%' AND pg_get_constraintdef(con.oid, true) LIKE '%targetUserId%IS NULL%'",
+    ),
+    constraintExists(
+      'DataRightsCase',
+      'DataRightsCase_due_after_received_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%dueAt%>%receivedAt%'",
+    ),
+    constraintExists(
+      'DataRightsCase',
+      'DataRightsCase_completion_shape_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%COMPLETED_WITH_EXCEPTION%' AND pg_get_constraintdef(con.oid, true) LIKE '%BLOCKED%' AND pg_get_constraintdef(con.oid, true) LIKE '%completedByUserId%' AND pg_get_constraintdef(con.oid, true) LIKE '%outcomeSummary%'",
+    ),
+    constraintExists('DataRightsDecisionRecord', 'DataRightsDecisionRecord_pkey', " AND con.contype = 'p'"),
+    constraintExists(
+      'DataRightsDecisionRecord',
+      'DataRightsDecisionRecord_caseId_fkey',
+      " AND con.contype = 'f' AND con.confdeltype = 'r'",
+    ),
+    constraintExists(
+      'DataRightsDecisionRecord',
+      'DataRightsDecisionRecord_revision_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%revision%> 0%'",
+    ),
+    constraintExists(
+      'DataRightsDecisionRecord',
+      'DataRightsDecisionRecord_retention_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%retentionUntil%' AND pg_get_constraintdef(con.oid, true) LIKE '%accessRestriction%' AND pg_get_constraintdef(con.oid, true) LIKE '%RESTRICT%' AND pg_get_constraintdef(con.oid, true) LIKE '%RETAIN%'",
+    ),
+    constraintExists('DataRightsEvidenceRecord', 'DataRightsEvidenceRecord_pkey', " AND con.contype = 'p'"),
+    constraintExists(
+      'DataRightsEvidenceRecord',
+      'DataRightsEvidenceRecord_caseId_fkey',
+      " AND con.contype = 'f' AND con.confdeltype = 'r'",
+    ),
+    constraintExists(
+      'DataRightsEvidenceRecord',
+      'DataRightsEvidenceRecord_sha256_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%sha256%' AND pg_get_constraintdef(con.oid, true) LIKE '%64%'",
+    ),
+    constraintExists(
+      'DataRightsEvidenceRecord',
+      'DataRightsEvidenceRecord_completion_hash_check',
+      " AND con.contype = 'c' AND pg_get_constraintdef(con.oid, true) LIKE '%IDENTITY_VERIFICATION%' AND pg_get_constraintdef(con.oid, true) LIKE '%AUTHORITY_VERIFICATION%' AND pg_get_constraintdef(con.oid, true) LIKE '%sha256%IS NOT NULL%'",
+    ),
+    constraintExists('DataRightsCaseActionRecord', 'DataRightsCaseActionRecord_pkey', " AND con.contype = 'p'"),
+    constraintExists(
+      'DataRightsCaseActionRecord',
+      'DataRightsCaseActionRecord_caseId_fkey',
+      " AND con.contype = 'f' AND con.confdeltype = 'r'",
+    ),
+    uniqueIndexExists('DataRightsCase', 'DataRightsCase_requestKey_key', ['requestKey']),
+    exactPartialUniqueIndexExists(
+      'DataRightsCase', 'DataRightsCase_active_user_erasure_target_key', ['targetUserId'],
+      activeDataRightsPredicate('USER_ACCOUNT_ERASURE'),
+    ),
+    exactPartialUniqueIndexExists(
+      'DataRightsCase', 'DataRightsCase_active_membership_exit_target_key', ['membershipId'],
+      activeDataRightsPredicate('MEMBERSHIP_EXIT'),
+    ),
+    exactPartialUniqueIndexExists(
+      'DataRightsCase', 'DataRightsCase_active_company_offboarding_target_key', ['companyId'],
+      activeDataRightsPredicate('COMPANY_WORKSPACE_OFFBOARDING'),
+    ),
+    uniqueIndexExists(
+      'DataRightsDecisionRecord', 'DataRightsDecisionRecord_caseId_category_revision_key',
+      ['caseId', 'category', 'revision'],
+    ),
+    uniqueIndexExists('DataRightsCaseActionRecord', 'DataRightsCaseActionRecord_commandId_key', ['commandId']),
+    indexExists('DataRightsCase_status_dueAt_idx'),
+    indexExists('DataRightsCase_targetUserId_createdAt_idx'),
+    indexExists('DataRightsCase_companyId_createdAt_idx'),
+    indexExists('DataRightsCase_membershipId_createdAt_idx'),
+    indexExists('DataRightsDecisionRecord_caseId_category_recordedAt_idx'),
+    indexExists('DataRightsEvidenceRecord_caseId_evidenceType_recordedAt_idx'),
+    indexExists('DataRightsCaseActionRecord_caseId_createdAt_idx'),
+    indexExists('DataRightsCaseActionRecord_actorUserId_createdAt_idx'),
+    exactTriggerFunctionExists(
+      'DataRightsDecisionRecord', 'DataRightsDecisionRecord_scope_guard',
+      'enforce_data_rights_decision_scope', 7, '5f554968954664366632567b32707c26',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsEvidenceRecord', 'DataRightsEvidenceRecord_phase_guard',
+      'enforce_data_rights_evidence_phase', 7, '57a538816992616227edd3d9eb5d5494',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCase', 'DataRightsCase_initial_state_guard',
+      'enforce_data_rights_case_initial_state', 7, '03cba8f44d3bef57eb5cd7d8d78c0c6a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCase', 'DataRightsCase_active_scope_guard',
+      'enforce_data_rights_active_scope', 7, '6557d03feea2fa22df12ee280c7f39a4',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsDecisionRecord', 'DataRightsDecisionRecord_append_only',
+      'deny_data_rights_append_only_mutation', 27, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsEvidenceRecord', 'DataRightsEvidenceRecord_append_only',
+      'deny_data_rights_append_only_mutation', 27, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCaseActionRecord', 'DataRightsCaseActionRecord_append_only',
+      'deny_data_rights_append_only_mutation', 27, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsDecisionRecord', 'DataRightsDecisionRecord_no_truncate',
+      'deny_data_rights_append_only_mutation', 34, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsEvidenceRecord', 'DataRightsEvidenceRecord_no_truncate',
+      'deny_data_rights_append_only_mutation', 34, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCaseActionRecord', 'DataRightsCaseActionRecord_no_truncate',
+      'deny_data_rights_append_only_mutation', 34, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCase', 'DataRightsCase_transition_guard',
+      'enforce_data_rights_case_transition', 19, 'ce430d9ae3e3688fadf34db9dcbcb8fb',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCase', 'DataRightsCase_no_delete',
+      'deny_data_rights_case_delete', 11, '6b753e490e1d8ea0a6db533429ca9d1d',
+    ),
+    exactTriggerFunctionExists(
+      'DataRightsCase', 'DataRightsCase_no_truncate',
+      'deny_data_rights_append_only_mutation', 34, 'eee32992c92a981106efbaf8c3db8d3a',
+    ),
+  )),
 ] as const;

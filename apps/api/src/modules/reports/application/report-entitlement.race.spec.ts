@@ -212,7 +212,10 @@ describe('Reports final writes vs entitlement generation (real database)', () =>
           : surface === 'view'
             ? () => new CreateReportViewUseCase(repository, adapters as any, audit as any, staleEntitlement as any)
               .execute(ctx(), companyId, { datasetCode: 'ar.aging', name: `${mode}-${surface}` })
-            : () => new CreateReportExportUseCase(repository, query, audit as any, notify as any, staleEntitlement as any, storage as any)
+            : () => new CreateReportExportUseCase(
+              repository, query, audit as any, notify as any, staleEntitlement as any, storage as any,
+              { enqueue: async () => true } as any,
+            )
               .execute(ctx(), companyId, { datasetCode: 'ar.aging', format: 'CSV' });
 
         await assert.rejects(operation, (error: unknown) => {
@@ -228,10 +231,10 @@ describe('Reports final writes vs entitlement generation (real database)', () =>
   }
 
   for (const mode of ['OFF', 'ABA'] as const) {
-    it(`${mode} after object upload deletes bytes and leaves no export or deferred run`, async (t) => {
+    it(`${mode} after object upload queues exact cleanup and leaves no export or deferred run`, async (t) => {
       if (!reachable) return t.skip('no database reachable');
       await resetOn();
-      let deleted = 0;
+      let cleanupRequests = 0;
       const storage = {
         putObject: async (input: { bytes: Buffer }) => {
           await setReportsEnabled(false);
@@ -241,10 +244,12 @@ describe('Reports final writes vs entitlement generation (real database)', () =>
             storageProvider: 'test', byteSize: input.bytes.byteLength, checksumSha256: sha256(input.bytes.toString('utf8')),
           };
         },
-        deleteObject: async () => { deleted += 1; },
       };
+      const cleanup = { enqueue: async () => { cleanupRequests += 1; return true; } };
       const query = new RunReportQueryUseCase(repository, adapters as any, audit as any, entitlement);
-      const create = new CreateReportExportUseCase(repository, query, audit as any, notify as any, entitlement, storage as any);
+      const create = new CreateReportExportUseCase(
+        repository, query, audit as any, notify as any, entitlement, storage as any, cleanup as any,
+      );
 
       await assert.rejects(
         () => create.execute(ctx(), companyId, { datasetCode: 'ar.aging', format: 'CSV' }),
@@ -253,7 +258,7 @@ describe('Reports final writes vs entitlement generation (real database)', () =>
           return true;
         },
       );
-      assert.equal(deleted, 1, 'uploaded object is compensated exactly once');
+      assert.equal(cleanupRequests, 1, 'uploaded object version cleanup is durably requested exactly once');
       assert.equal(await clients[0]!.reportRun.count({ where: { companyId } }), 0);
       assert.equal(await clients[0]!.reportExportRequest.count({ where: { companyId } }), 0);
     });

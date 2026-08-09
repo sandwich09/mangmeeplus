@@ -224,6 +224,10 @@ jobs:
       AGENTCORE_MAX_MESSAGE_CHARS: ${{ vars.AGENTCORE_MAX_MESSAGE_CHARS || '8000' }}
       AGENTCORE_MAX_ATTACHMENTS: ${{ vars.AGENTCORE_MAX_ATTACHMENTS || '10' }}
       AGENTCORE_MAX_CONCURRENT_INVOCATIONS: ${{ vars.AGENTCORE_MAX_CONCURRENT_INVOCATIONS || '16' }}
+      LEGAL_RELEASE_EVIDENCE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_SHA256 }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -433,9 +437,63 @@ jobs:
             jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" >/dev/null
             test -s "release/cosign-${service}.json"
           done
+      # These pins are controller-owned policy. A candidate checkout must not be able to
+      # replace the parser, validator or runtime legal contract before receiving even the
+      # narrowly scoped compliance-bucket credential.
+      - name: Verify legal evidence gate policy and manifest preflight
+        env:
+          EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
+          EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: a193e0a75b1c88142991305519ba8791e86320fdbc907a38af635cb076956982
+          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 23b2103d0c903dfc538c5da1fd12e4513b4d49c2f1e6c27c3375745ba36dee32
+        run: |
+          set -euo pipefail
+          test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256"
+          test "$(sha256sum infra/security/validate-legal-release-readiness.sh | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256"
+          test "$(sha256sum packages/contracts/src/legal-acceptance.ts | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256"
+          bash infra/security/provision-legal-release-evidence.sh preflight "$GITHUB_WORKSPACE"
       # Last gate before any credential exists: the approval is valid for 1800s, and everything
       # between the wait and here (artifact validation, image checks) can burn that window.
       - name: Recheck release authority immediately before AWS
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        run: |
+          set -euo pipefail
+          bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+            "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+      - name: Configure AWS legal evidence reader credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 900
+          role-session-name: watchdog-bms-legal-evidence-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Provision independently reviewed legal release evidence
+        id: legal-evidence
+        run: |
+          set -euo pipefail
+          evidence_dir="$(bash infra/security/provision-legal-release-evidence.sh provision "$GITHUB_WORKSPACE")"
+          [[ "$evidence_dir" == "$RUNNER_TEMP"/legal-release-evidence.*/reviewed-evidence ]]
+          [[ "$evidence_dir" != *$'\n'* && "$evidence_dir" != *$'\r'* ]]
+          printf 'evidence_dir=%s\n' "$evidence_dir" >> "$GITHUB_OUTPUT"
+      - name: Validate legal operator and privacy release evidence
+        env:
+          LEGAL_RELEASE_EVIDENCE_DIR: ${{ steps.legal-evidence.outputs.evidence_dir }}
+        run: bash infra/security/validate-legal-release-readiness.sh
+      - name: Remove local legal release evidence
+        if: always() && steps.legal-evidence.outputs.evidence_dir != ''
+        env:
+          LEGAL_RELEASE_EVIDENCE_DIR: ${{ steps.legal-evidence.outputs.evidence_dir }}
+        run: |
+          set -euo pipefail
+          [[ "$LEGAL_RELEASE_EVIDENCE_DIR" == "$RUNNER_TEMP"/legal-release-evidence.*/reviewed-evidence ]]
+          evidence_work="${LEGAL_RELEASE_EVIDENCE_DIR%/reviewed-evidence}"
+          test "$evidence_work" != "$RUNNER_TEMP"
+          rm -rf -- "$evidence_work"
+      - name: Recheck release authority after legal evidence verification
         if: needs.resolve-release.outputs.release_mode == 'promotion'
         run: |
           set -euo pipefail
@@ -448,6 +506,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: watchdog-bms-deploy-${{ github.run_id }}
+          unset-current-credentials: true
       - name: Preserve active non-secret configuration
         env:
           TARGET: ${{ inputs.target }}

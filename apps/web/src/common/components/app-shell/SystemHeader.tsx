@@ -8,6 +8,7 @@ import { AlertModal } from '@/common/components/modal';
 const SECTIONS = [
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
+  { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
   { href: '/system/line-settings', label: 'LINE' },
   { href: '/system/ai-budget', label: 'AI Budget' },
 ];

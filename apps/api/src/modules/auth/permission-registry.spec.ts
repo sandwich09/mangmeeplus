@@ -246,6 +246,15 @@ describe('permission-registry', () => {
       }
     });
 
+    it('keeps data-rights orchestration CRITICAL and platform-side only', () => {
+      assert.equal(riskOf('system.data_rights.manage'), 'CRITICAL');
+      assert.ok(ROLE_GRANTS['SYSTEM_ADMIN'].includes('system.data_rights.manage'));
+      assert.equal(COMPANY_PERMISSION_KEYS.includes('system.data_rights.manage'), false);
+      for (const role of ['OWNER', 'ADMIN', 'ACCOUNTANT', 'FINANCE']) {
+        assert.equal((ROLE_GRANTS[role] ?? []).includes('system.data_rights.manage'), false);
+      }
+    });
+
     it('answers VAT with the accountant and reads it with finance', () => {
       assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('company.vat_registration.manage'));
       assert.ok(ROLE_GRANTS['ACCOUNTANT'].includes('company.vat_registration.read'));

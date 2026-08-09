@@ -12,6 +12,7 @@ const shadowProbe = {
     flush: async () => ({}),
   }),
 } as any;
+const acceptedLegal = { isRequired: async () => false } as any;
 
 function makePrisma() {
   const updates: any[] = [];
@@ -138,6 +139,7 @@ function makeHarness(opts: {
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     { assertClean: async () => undefined } as any,
+    acceptedLegal,
     shadowProbe,
     // initReceiptUpload / completeReceiptUpload
     { execute: async (_ctx: any, cmd: any) => { initCalls.push(cmd); return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,

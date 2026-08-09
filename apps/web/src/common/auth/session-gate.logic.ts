@@ -32,6 +32,20 @@ function usableLanding(path: string | null): string | null {
   return path === '/login' || path.startsWith('/login/') || path.startsWith('/login?') ? null : path;
 }
 
+/** A target that is safe and meaningful after the one-time legal gate is complete. */
+function usablePostAcceptanceLanding(path: string | null): string | null {
+  const usable = usableLanding(path);
+  if (!usable) return null;
+  if (
+    usable === '/legal-acceptance' ||
+    usable.startsWith('/legal-acceptance/') ||
+    usable.startsWith('/legal-acceptance?') ||
+    usable === '/change-password' ||
+    usable.startsWith('/change-password?')
+  ) return null;
+  return usable;
+}
+
 // NextResponse.cookies.set percent-encodes values, so the home cookie is read back encoded.
 function decodeCookie(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -53,13 +67,75 @@ export function resolveLoginLanding(
   session: WebSession,
 ): string | null {
   const explicit = usableLanding(sanitizeNextPath(next));
-  if (explicit) return explicit;
-
   const home = usableLanding(sanitizeNextPath(decodeCookie(homeCookie)));
-  if (home) return home;
+  const landing = explicit
+    ?? home
+    ?? (isSystemAdmin(session)
+      ? '/system/partners'
+      : session.companyId
+        ? `/companies/${session.companyId}/dashboard`
+        : null);
 
+  // Only an explicit false from the current API proves the clickwrap is current. Missing fields
+  // during a rolling deployment fail closed into the gate instead of bypassing it.
+  if (session.legalAcceptanceRequired === false) return landing;
+  // A direct recovery back to the gate is already correct; wrapping it again would grow a nested
+  // `next=/legal-acceptance?...` query on every pass.
+  if (explicit?.startsWith('/legal-acceptance')) return explicit;
+  return legalAcceptancePath(landing, session.companyId);
+}
+
+/** Build the post-auth legal gate URL while retaining only a same-app business destination. */
+export function legalAcceptanceContextCompanyId(
+  next: string | null | undefined,
+  fallbackCompanyId?: string | null,
+): string | null {
+  const sanitized = sanitizeNextPath(next);
+  const match = sanitized?.match(/^\/companies\/([^/?#]+)/);
+  if (match) {
+    try {
+      const companyId = decodeURIComponent(match[1]);
+      if (/^[A-Za-z0-9_-]{1,128}$/.test(companyId)) return companyId;
+    } catch {
+      // Invalid percent encoding is not a usable company context.
+    }
+  }
+  return fallbackCompanyId && /^[A-Za-z0-9_-]{1,128}$/.test(fallbackCompanyId)
+    ? fallbackCompanyId
+    : null;
+}
+
+export function legalAcceptancePath(
+  next: string | null | undefined,
+  fallbackCompanyId?: string | null,
+): string {
+  const sanitized = sanitizeNextPath(next);
+  // Middleware can send a cookie-less visitor to `/login?next=/legal-acceptance?next=…`.
+  // Preserve that already-safe gate URL after sign-in instead of discarding its nested business
+  // destination or wrapping it into an ever-growing acceptance loop.
+  if (
+    sanitized === '/legal-acceptance'
+    || sanitized?.startsWith('/legal-acceptance?')
+    || sanitized?.startsWith('/legal-acceptance/')
+  ) return sanitized;
+  const safeNext = usablePostAcceptanceLanding(sanitized);
+  const companyId = legalAcceptanceContextCompanyId(safeNext, fallbackCompanyId);
+  const params = new URLSearchParams();
+  if (companyId) params.set('companyId', companyId);
+  if (safeNext) params.set('next', safeNext);
+  const query = params.toString();
+  return query ? `/legal-acceptance?${query}` : '/legal-acceptance';
+}
+
+/** Resolve the destination after acceptance without permitting an open redirect or gate loop. */
+export function resolvePostLegalAcceptanceTarget(
+  next: string | null | undefined,
+  session: WebSession,
+): string {
+  const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
+  if (explicit) return explicit;
   if (isSystemAdmin(session)) return '/system/partners';
-  return session.companyId ? `/companies/${session.companyId}/dashboard` : null;
+  return session.companyId ? `/companies/${session.companyId}/dashboard` : '/';
 }
 
 /** Query marker that spends the login page's single silent-recovery attempt. */

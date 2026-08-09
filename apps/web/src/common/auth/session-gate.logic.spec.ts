@@ -2,9 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isSystemAdmin,
+  legalAcceptanceContextCompanyId,
+  legalAcceptancePath,
   mapAuthMeStatus,
   recoveryReturnUrl,
   resolveLoginLanding,
+  resolvePostLegalAcceptanceTarget,
   resolvePasswordChangeTarget,
   shouldAttemptSessionRecovery,
 } from './session-gate.logic';
@@ -20,6 +23,7 @@ function session(overrides: Partial<WebSession> = {}): WebSession {
     permissions: [],
     authProvider: 'watchdog',
     mustChangePassword: false,
+    legalAcceptanceRequired: false,
     ...overrides,
   };
 }
@@ -57,6 +61,8 @@ describe('resolveLoginLanding', () => {
     assert.equal(resolveLoginLanding('//example.com', undefined, session()), '/companies/c1/dashboard');
     assert.equal(resolveLoginLanding('https://example.com/x', undefined, session()), '/companies/c1/dashboard');
     assert.equal(resolveLoginLanding('/\\example.com', undefined, session()), '/companies/c1/dashboard');
+    assert.equal(resolveLoginLanding('/\t/evil.example', undefined, session()), '/companies/c1/dashboard');
+    assert.equal(resolveLoginLanding('/\n/evil.example', undefined, session()), '/companies/c1/dashboard');
   });
 
   it('falls back to the percent-encoded home cookie', () => {
@@ -88,6 +94,54 @@ describe('resolveLoginLanding', () => {
     // a valid session must still resolve a landing, never fall through to a loop.
     assert.equal(resolveLoginLanding(null, undefined, session()), '/companies/c1/dashboard');
     assert.equal(resolveLoginLanding(null, '', session()), '/companies/c1/dashboard');
+  });
+
+  it('sends a signed-in user through the legal gate while preserving the intended destination', () => {
+    const gated = session({ legalAcceptanceRequired: true });
+    assert.equal(
+      resolveLoginLanding('/companies/c1/expenses', undefined, gated),
+      '/legal-acceptance?companyId=c1&next=%2Fcompanies%2Fc1%2Fexpenses',
+    );
+    assert.equal(resolveLoginLanding('/legal-acceptance', undefined, gated), '/legal-acceptance');
+  });
+
+  it('fails closed when a rolling-deployment response omits the legal flag', () => {
+    const mixedVersion = session({ legalAcceptanceRequired: undefined as unknown as boolean });
+    assert.equal(
+      resolveLoginLanding('/companies/c1/dashboard', undefined, mixedVersion),
+      '/legal-acceptance?companyId=c1&next=%2Fcompanies%2Fc1%2Fdashboard',
+    );
+  });
+});
+
+describe('legal acceptance redirects', () => {
+  it('carries only safe same-app paths into and out of the gate', () => {
+    assert.equal(legalAcceptancePath('/companies/c1/expenses?tab=draft'), '/legal-acceptance?companyId=c1&next=%2Fcompanies%2Fc1%2Fexpenses%3Ftab%3Ddraft');
+    assert.equal(legalAcceptancePath('//evil.example'), '/legal-acceptance');
+    assert.equal(
+      legalAcceptancePath('/legal-acceptance?next=%2Fsystem%2Fpartners'),
+      '/legal-acceptance?next=%2Fsystem%2Fpartners',
+    );
+    assert.equal(resolvePostLegalAcceptanceTarget('/companies/c1/inbox', session()), '/companies/c1/inbox');
+    assert.equal(resolvePostLegalAcceptanceTarget('https://evil.example', session()), '/companies/c1/dashboard');
+  });
+
+  it('binds the gate to the company in the destination before using a fallback company', () => {
+    assert.equal(legalAcceptanceContextCompanyId('/companies/c2/inbox', 'c1'), 'c2');
+    assert.equal(legalAcceptanceContextCompanyId('/system/partners', 'system-company'), 'system-company');
+    assert.equal(legalAcceptanceContextCompanyId('/companies/%2Fescape/inbox', 'c1'), 'c1');
+    assert.equal(
+      legalAcceptancePath('/companies/c2/inbox', 'c1'),
+      '/legal-acceptance?companyId=c2&next=%2Fcompanies%2Fc2%2Finbox',
+    );
+  });
+
+  it('uses the correct role-based fallback after acceptance', () => {
+    assert.equal(resolvePostLegalAcceptanceTarget(null, session()), '/companies/c1/dashboard');
+    assert.equal(
+      resolvePostLegalAcceptanceTarget(null, session({ roles: ['SYSTEM_ADMIN'] })),
+      '/system/partners',
+    );
   });
 });
 

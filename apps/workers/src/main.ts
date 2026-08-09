@@ -45,7 +45,16 @@ logHeartbeat();
 if (config.QUEUE_ENABLED) {
   startNotificationWorker(config.REDIS_URL);
   workerLog('info', { event: 'notification_worker_started' });
-  startWorkflowWorker(config.REDIS_URL);
+  startWorkflowWorker(config.REDIS_URL, {
+    internalApiUrl: config.INTERNAL_API_URL,
+    workerToken: config.WORKER_INTERNAL_TOKEN ?? '',
+    bucket: config.S3_BUCKET,
+    region: config.S3_REGION,
+    ...(config.S3_ENDPOINT ? { endpoint: config.S3_ENDPOINT } : {}),
+    ...(config.S3_FORCE_PATH_STYLE !== undefined ? { forcePathStyle: config.S3_FORCE_PATH_STYLE } : {}),
+    ...(config.S3_ACCESS_KEY_ID ? { accessKeyId: config.S3_ACCESS_KEY_ID } : {}),
+    ...(config.S3_SECRET_ACCESS_KEY ? { secretAccessKey: config.S3_SECRET_ACCESS_KEY } : {}),
+  });
   workerLog('info', { event: 'workflow_worker_started' });
   startAiDraftWorker(config.REDIS_URL);
   workerLog('info', { event: 'ai_draft_worker_started' });

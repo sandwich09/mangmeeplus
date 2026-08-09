@@ -7,6 +7,7 @@
 // - On the middleware's CSRF 403 only: refreshes once (which reissues the double-submit cookie)
 //   and retries once. Business permission 403s are never retried.
 import { CSRF_COOKIE, CSRF_ERROR_CODE, CSRF_HEADER } from '../auth/auth-cookies.constants';
+import { legalAcceptancePath } from '../auth/session-gate.logic';
 import { emitApiErrorToast } from '../feedback/toast-bus';
 
 const API_PREFIX = '/api/v1';
@@ -14,6 +15,7 @@ const REFRESH_ENDPOINT = '/api/auth/refresh';
 /** The BFF refresh route's success status. */
 const REFRESH_ROTATED = 204;
 const MUTATING_METHOD = /^(POST|PUT|PATCH|DELETE)$/i;
+const LEGAL_ACCEPTANCE_REQUIRED_CODE = 'legal_acceptance_required';
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 export type AuthedInit = RequestInit & { suppressErrorToast?: boolean };
@@ -74,6 +76,23 @@ function redirectToLogin(): void {
   window.location.assign(`/login?next=${encodeURIComponent(pathname + search)}`);
 }
 
+function redirectToLegalAcceptance(): void {
+  if (typeof window === 'undefined') return;
+  const { pathname, search } = window.location;
+  if (pathname === '/legal-acceptance' || pathname.startsWith('/legal-acceptance/')) return;
+  window.location.assign(legalAcceptancePath(pathname + search));
+}
+
+async function isLegalAcceptanceRejection(res: Response): Promise<boolean> {
+  if (res.status !== 403) return false;
+  try {
+    const body = (await res.clone().json()) as { code?: unknown };
+    return body.code === LEGAL_ACCEPTANCE_REQUIRED_CODE;
+  } catch {
+    return false;
+  }
+}
+
 // The stable code is emitted only by the middleware CSRF gate — a valid session whose double-submit
 // cookie went missing or stale. Any other 403 (permission, entitlement, cross-origin) is a real
 // denial and is returned untouched, so recovery can never mask a business rule.
@@ -113,6 +132,9 @@ export async function authedFetch(path: string, init?: RequestInit, fetchImpl: F
     // At most one refresh + one retry: a second CSRF rejection is returned to the caller.
     if ((await refreshSession(fetchImpl)) === REFRESH_ROTATED) res = await exec();
   }
+  // The API uses a stable code rather than a translated message, so every raw and JSON call is
+  // caught consistently. Preserve the current same-app destination for the post-acceptance return.
+  if (await isLegalAcceptanceRejection(res)) redirectToLegalAcceptance();
   return res;
 }
 
