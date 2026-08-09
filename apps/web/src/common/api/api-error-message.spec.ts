@@ -125,6 +125,16 @@ test('maps a reimbursement edit/submit race to a reload-and-review instruction',
   );
 });
 
+test('maps an expense draft edit race to a reload-and-review instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Expense was changed by another user.', {
+      status: 409,
+      code: 'EXPENSE_UPDATE_CONFLICT',
+    })),
+    'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
+  );
+});
+
 test('maps the entitlement command conflicts and cascade preview', () => {
   assert.match(translateApiError('entitlement_set_version_conflict')!, /เปิดใหม่/);
   assert.match(translateApiError('entitlement_command_conflict')!, /ข้อมูลอื่น/);

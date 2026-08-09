@@ -201,6 +201,7 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   id: string;
   companyId: string;
   updatedByUserId: string;
+  expectedUpdatedAt?: Date;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
   vendorBranchCodeSnapshot?: string;

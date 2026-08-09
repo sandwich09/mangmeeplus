@@ -168,7 +168,7 @@ export class UpdateExpenseDraftUseCase {
     ctx: RequestContext,
     expenseId: string,
     input: UpdateExpenseDraftInput,
-    options: { db?: any; suppressGenericAudit?: boolean } = {},
+    options: { db?: any; suppressGenericAudit?: boolean; requireExpectedUpdatedAt?: boolean } = {},
   ): Promise<ExpenseRecord> {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -188,8 +188,19 @@ export class UpdateExpenseDraftUseCase {
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
       throw new BadRequestException(`Cannot update expense in status ${r.status}`);
     }
+    if (options.requireExpectedUpdatedAt && !input.expectedUpdatedAt) {
+      throw new BadRequestException({
+        code: 'EXPENSE_UPDATE_VERSION_REQUIRED',
+        message: 'expectedUpdatedAt is required. Reload the expense before saving.',
+      });
+    }
+    const expectedUpdatedAt = input.expectedUpdatedAt ? new Date(input.expectedUpdatedAt) : undefined;
+    if (expectedUpdatedAt && Number.isNaN(expectedUpdatedAt.getTime())) {
+      throw new BadRequestException({ code: 'EXPENSE_UPDATE_VERSION_INVALID', message: 'expectedUpdatedAt must be a valid timestamp.' });
+    }
 
     const lines = input.lines;
+    let resolvedLines: ExpenseLineInput[] | undefined;
     const nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
     const nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
     const disallowsTaxCode = isReceiptOrSupportingOnly(nextSourceDocumentType, nextTaxEvidenceStatus);
@@ -219,11 +230,10 @@ export class UpdateExpenseDraftUseCase {
           ...taxSelection(l),
         };
       });
-      const resolved = await this.transactionTax.resolveLines(ctx, {
+      resolvedLines = await this.transactionTax.resolveLines(ctx, {
         expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
         expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
       }, prepared, 'DRAFT', options.db);
-      await this.repo.upsertLines(ctx.companyId, expenseId, resolved, options.db);
     }
 
     const reviewedAt = canReview ? new Date() : undefined;
@@ -342,6 +352,7 @@ export class UpdateExpenseDraftUseCase {
 
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+      ...(expectedUpdatedAt && { expectedUpdatedAt }),
       ...(input.branchId !== undefined && { branchId: input.branchId }),
       ...(input.expenseDate && { expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)) }),
       ...(input.vatMode && { vatMode: input.vatMode }),
@@ -374,7 +385,9 @@ export class UpdateExpenseDraftUseCase {
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
       ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
-    }, undefined, options.db);
+    }, resolvedLines
+      ? (tx) => this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines!, tx)
+      : undefined, options.db);
     if (options.suppressGenericAudit) return updated;
     void this.audit.log({
       companyId: ctx.companyId,

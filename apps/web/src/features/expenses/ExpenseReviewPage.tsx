@@ -650,6 +650,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
               const forbidden = findForbiddenChars(ocrTotalReason);
               if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
               await acknowledgeOcrTotal(companyId, detail.id, {
+                expectedUpdatedAt: detail.updatedAt,
                 acknowledged: true,
                 acknowledgedTotalAmount: detail.grandTotalAmount,
                 reason: ocrTotalReason.trim(),

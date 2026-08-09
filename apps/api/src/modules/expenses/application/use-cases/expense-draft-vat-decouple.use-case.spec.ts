@@ -30,7 +30,11 @@ function makeUseCase(overrides: Record<string, unknown> = {}) {
       ...overrides,
     }),
     findByIdWithRelations: async () => ({ lines: [] }),
-    updateExpense: async (input: any) => { updates.push(input); return input; },
+    updateExpense: async (input: any, withinTransaction?: (tx: unknown) => Promise<void>) => {
+      updates.push(input);
+      await withinTransaction?.({ transaction: 'expense-update' });
+      return input;
+    },
     upsertLines: async (_companyId: string, _expenseId: string, lines: any[]) => { upserted.push(...lines); },
   } as any;
   return { useCase: new UpdateExpenseDraftUseCase(repo, audit, transactionTax), updates, upserted };

@@ -12,6 +12,7 @@ type Row = Record<string, any>;
 
 function matches(row: Row, where: Row): boolean {
   return Object.entries(where).every(([key, cond]) => {
+    if (cond instanceof Date && row[key] instanceof Date) return row[key].getTime() === cond.getTime();
     if (cond && typeof cond === 'object' && !Array.isArray(cond) && !(cond instanceof Date)) {
       if ('not' in cond) return row[key] !== cond.not;
       if ('in' in cond) return (cond.in as any[]).includes(row[key]);
@@ -364,5 +365,43 @@ describe('updateExpense payee taxpayer class', () => {
       () => repo.updateExpense({ id: 'exp_1', companyId: CO, vendorNameSnapshot: 'ร้านใหม่' } as any),
       ConflictException,
     );
+  });
+});
+
+describe('updateExpense optimistic concurrency', () => {
+  it('updates only the version the reviewer loaded and runs dependent writes in the same transaction', async () => {
+    const seed = { expenses: [{ id: 'exp_1', companyId: CO, status: 'DRAFT', updatedAt: NOW, note: 'old' }] };
+    const client = makeClient(seed);
+    const repo = new PrismaExpenseRepository({ client } as any);
+    let callbackClient: unknown;
+
+    await repo.updateExpense({
+      id: 'exp_1', companyId: CO, updatedByUserId: 'u1', expectedUpdatedAt: new Date(NOW), note: 'new',
+    } as any, async (tx) => { callbackClient = tx; });
+
+    assert.equal(client.state.expenses[0].note, 'new');
+    assert.equal(callbackClient, client);
+  });
+
+  it('returns a stable conflict and skips dependent writes when the loaded version is stale', async () => {
+    const seed = { expenses: [{ id: 'exp_1', companyId: CO, status: 'DRAFT', updatedAt: NOW, note: 'current' }] };
+    const client = makeClient(seed);
+    const repo = new PrismaExpenseRepository({ client } as any);
+    let callbackCalled = false;
+
+    await assert.rejects(
+      () => repo.updateExpense({
+        id: 'exp_1', companyId: CO, updatedByUserId: 'u1',
+        expectedUpdatedAt: new Date('2026-07-17T00:00:00.000Z'), note: 'stale overwrite',
+      } as any, async () => { callbackCalled = true; }),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.equal((error.getResponse() as any).code, 'EXPENSE_UPDATE_CONFLICT');
+        return true;
+      },
+    );
+
+    assert.equal(client.state.expenses[0].note, 'current');
+    assert.equal(callbackCalled, false);
   });
 });

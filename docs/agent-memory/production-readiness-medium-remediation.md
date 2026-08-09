@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-06 committed; M8-07 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-07 committed; M8-08 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -55,7 +55,14 @@ Verification:
 - M8-07 focused tests: DeleteExpense 33/33 and web expense model 47/47 pass; web `tsc --noEmit` passes. Delete now checks
   branch scope and permission before document state/linked data, preserves company-central visibility, and uses a final
   `updatedAt` + tenant + branch-scope CAS so a concurrent confirm/branch move rolls the transaction back.
+- M8-07 commit: `d89df19 fix(expenses): enforce branch scope on deletion`.
+- M8-08 focused API tests 72/72 and web error-message tests 18/18 pass; contracts build and web typecheck pass. Interactive
+  draft/review/override/OCR writes require the loaded `updatedAt` and return a stable 409 on a stale save; LINE correction
+  also carries its loaded version. Replacement-line writes were moved into the successful header CAS transaction, fixing
+  the related partial-update window where lines could persist even though the header write failed.
+- API `tsc --noEmit` still reaches only the established 14 unrelated errors in substitute-receipt/report specs; no M8-08
+  file error.
 - Concurrent unrelated LINE media work appeared in two source files plus its memory while M8-07 ran; it remains unstaged.
 Next:
-- Re-run API typecheck after the M8-07 fixture type correction, then commit M8-07 only; keep QA and LINE media work out.
-- M8-08: add optimistic concurrency to draft update and align UI retry/conflict behavior.
+- Commit M8-08 only; keep the untracked QA consolidation and unrelated LINE media work out.
+- M8-09: verify and implement the required draft edit/delete/void lifecycle for revenue documents.

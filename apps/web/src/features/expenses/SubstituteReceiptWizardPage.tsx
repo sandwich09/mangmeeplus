@@ -874,6 +874,7 @@ export function SubstituteReceiptWizardPage({
       const disallowsTaxCode = !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus);
       const currentReview = reviewValues(detail);
       await updateExpenseReviewFields(companyId, detail.id, {
+        expectedUpdatedAt: detail.updatedAt,
         ...(disallowsTaxCode ? buildExpenseDraftReviewPayload({
           ...currentReview,
           lines: clearExpenseTaxSelections(currentReview.lines),
@@ -900,6 +901,7 @@ export function SubstituteReceiptWizardPage({
       throw new Error(t('expenses.substitute_wizard.payer_required', locale));
     }
     await updateExpenseReviewFields(companyId, detail.id, {
+      expectedUpdatedAt: detail.updatedAt,
       missingReceiptReason: missingReason.trim(),
       note: businessPurpose.trim(),
     });

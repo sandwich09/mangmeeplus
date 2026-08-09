@@ -108,6 +108,7 @@ export class CorrectLineCapturedExpenseUseCase {
 
       const { fields } = evaluated;
       await this.updateDraft.execute(ctx, target.expenseId, {
+        expectedUpdatedAt: record.updatedAt.toISOString(),
         ...(fields.expenseDate ? { expenseDate: fields.expenseDate.to } : {}),
         ...(fields.vendorName ? { vendorNameSnapshot: fields.vendorName.to } : {}),
         ...(fields.documentNumber ? { vendorDocumentNumber: fields.documentNumber.to } : {}),

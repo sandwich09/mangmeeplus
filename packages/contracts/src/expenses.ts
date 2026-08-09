@@ -421,6 +421,8 @@ export type CreateExpenseDraftInput = {
 };
 
 export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines'>> & {
+  /** Interactive callers send the version they loaded; API PATCH/override routes require it. */
+  expectedUpdatedAt?: string;
   lines?: CreateExpenseDraftInput['lines'];
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;

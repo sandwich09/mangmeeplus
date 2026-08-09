@@ -525,7 +525,7 @@ export class PrismaExpenseRepository {
    * from it rolls the update back.
    */
   async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any): Promise<ExpenseRecord> {
-    const { id, companyId, ...rest } = input;
+    const { id, companyId, expectedUpdatedAt, ...rest } = input;
     // H-04: VOIDED is intentionally rejected here — voids must go through
     // voidExpenseTrueReversal so the GL reversal and status change stay atomic.
     if (rest.status === 'VOIDED') {
@@ -572,8 +572,19 @@ export class PrismaExpenseRepository {
           throw new ConflictException({ code: 'substitute_evidence_doc_type_locked', message: 'The original source document type is locked while substitute evidence is active.' });
         }
       }
-      const updated = await tx.expenseRecord.updateMany({ where: { id, companyId }, data });
-      if (updated.count !== 1) throw new Error(`Expense ${id} not found in company ${companyId}`);
+      const updated = await tx.expenseRecord.updateMany({
+        where: { id, companyId, ...(expectedUpdatedAt && { updatedAt: expectedUpdatedAt }) },
+        data,
+      });
+      if (updated.count !== 1) {
+        if (expectedUpdatedAt) {
+          throw new ConflictException({
+            code: 'EXPENSE_UPDATE_CONFLICT',
+            message: 'Expense was changed by another user. Reload and review before saving again.',
+          });
+        }
+        throw new Error(`Expense ${id} not found in company ${companyId}`);
+      }
       const record = mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId } }));
       await withinTx?.(tx);
       return record;

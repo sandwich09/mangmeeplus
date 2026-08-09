@@ -65,6 +65,9 @@ const CODE_LABELS: Record<string, string> = {
   expense_confirmation_tax_evidence_changed: 'หลักฐานภาษีเปลี่ยนไประหว่างยืนยัน กรุณาตรวจสอบแล้วลองอีกครั้ง',
   expense_confirmation_accounting_period_locked: 'งวดบัญชีของเอกสารนี้ปิดแล้ว ต้องเปิดงวดก่อนจึงจะยืนยันได้',
   expense_confirmation_tax_period_locked: 'งวดภาษีของเอกสารนี้ยื่นหรือปิดแล้ว จึงยืนยันเข้างวดนี้ไม่ได้',
+  EXPENSE_UPDATE_VERSION_REQUIRED: 'ข้อมูลเวอร์ชันเอกสารหายไป กรุณาโหลดรายการใหม่ก่อนบันทึก',
+  EXPENSE_UPDATE_VERSION_INVALID: 'ข้อมูลเวอร์ชันเอกสารไม่ถูกต้อง กรุณาโหลดรายการใหม่ก่อนบันทึก',
+  EXPENSE_UPDATE_CONFLICT: 'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
   // Substitute-receipt lifecycle
   substitute_evidence_locks_lines: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกรายการไว้ ต้องจัดทำ version แก้ไขก่อนจึงจะแก้ได้',
   substitute_evidence_locks_expense: 'ใบรับรองแทนใบเสร็จที่ลงนามแล้วล็อกข้อมูลเอกสารไว้ ต้องจัดทำ version แก้ไขก่อนจึงจะแก้ได้',

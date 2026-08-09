@@ -355,14 +355,14 @@ export class ExpenseController {
 
   @Patch(':expenseId')
   @RequirePermissions('expense.update')
-  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
-    return this.update.execute(ctx, expenseId, body);
+  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
   }
 
   @Patch(':expenseId/review-fields')
   @RequirePermissions('expense.review')
-  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
-    return this.update.execute(ctx, expenseId, body);
+  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/non-expense-classification-override')
@@ -370,21 +370,26 @@ export class ExpenseController {
   overrideNonExpenseClassification(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
-    @Body() body: NonExpenseClassificationOverrideInput & { sourceDocumentType: SourceDocumentType },
+    @Body() body: NonExpenseClassificationOverrideInput & { sourceDocumentType: SourceDocumentType; expectedUpdatedAt: string },
   ) {
     return this.update.execute(ctx, expenseId, {
       sourceDocumentType: body.sourceDocumentType,
+      expectedUpdatedAt: body.expectedUpdatedAt,
       nonExpenseClassificationOverride: {
         acknowledged: body.acknowledged,
         reason: body.reason,
       },
-    });
+    }, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/ocr-total-acknowledgement')
   @RequirePermissions('expense.review')
-  acknowledgeOcrTotal(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: OcrTotalAcknowledgementInput) {
-    return this.update.execute(ctx, expenseId, { ocrTotalAcknowledgement: body });
+  acknowledgeOcrTotal(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: OcrTotalAcknowledgementInput & { expectedUpdatedAt: string }) {
+    const { expectedUpdatedAt, ...acknowledgement } = body;
+    return this.update.execute(ctx, expenseId, {
+      expectedUpdatedAt,
+      ocrTotalAcknowledgement: acknowledgement,
+    }, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/receipt-uploads/:attachmentId/complete')
