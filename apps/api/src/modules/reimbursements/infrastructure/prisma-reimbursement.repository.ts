@@ -809,6 +809,9 @@ export class PrismaReimbursementRepository {
       if (row.status !== 'PENDING_APPROVAL') {
         throw new UnprocessableEntityException(`Cannot approve from status ${row.status}`);
       }
+      if (row.cancellationPendingAt) {
+        throw new ConflictException('reimbursement_cancellation_pending');
+      }
       if (row.updatedAt.getTime() !== data.expectedUpdatedAt.getTime()) {
         throw new ConflictException('stale_approval_snapshot');
       }
@@ -864,6 +867,7 @@ export class PrismaReimbursementRepository {
           status: 'PENDING_APPROVAL',
           updatedAt: data.expectedUpdatedAt,
           currentApprovalStepId: step.id,
+          cancellationPendingAt: null,
         },
         data: data.financeReviewRequired
           ? { ...data.financeRequestPatch, updatedAt: this.nextVersion(data.expectedUpdatedAt) }

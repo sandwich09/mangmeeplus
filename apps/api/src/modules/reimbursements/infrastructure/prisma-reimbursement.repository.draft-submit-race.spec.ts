@@ -557,4 +557,33 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal(after.approvalSteps.filter((step: any) => step.status === 'APPROVED').length, 1,
       'the losing transaction must not leave a second decided step behind');
   });
+
+  it('blocks approval after a requester cancellation intent has started', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const { pending, approverUserId } = await submitValidPending('approve-during-cancel');
+    const intent = await repos[0]!.beginCancellationAtomic({
+      companyId,
+      requestId: pending.id,
+      expectedStatus: 'PENDING_APPROVAL',
+      expectedUpdatedAt: pending.updatedAt,
+      actorUserId: pending.requesterUserId,
+      scopes: {},
+      reason: 'requester cancelled while awaiting approval',
+      startedAt: new Date(),
+      onIntentPersisted: async () => undefined,
+    });
+
+    await assert.rejects(
+      () => repos[1]!.beginApprovalDecisionAtomic(decisionInput(intent.request, approverUserId)),
+      (error: unknown) => errorMessage(error) === 'reimbursement_cancellation_pending',
+    );
+
+    const after = await clients[0]!.reimbursementRequest.findUniqueOrThrow({
+      where: { id: pending.id },
+      include: { approvalSteps: true },
+    });
+    assert.ok(after.cancellationPendingAt);
+    assert.equal(after.status, 'PENDING_APPROVAL');
+    assert.equal(after.approvalSteps[0]?.status, 'PENDING');
+  });
 });
