@@ -253,8 +253,9 @@ export class ListCompanySubstituteReceiptsUseCase {
   async execute(ctx: RequestContext, filter: SubstituteReceiptListFilter): Promise<SubstituteReceiptListResult> {
     assertWeb(ctx);
     const canSeeAll = ctx.permissions.includes('expense.review') || ctx.permissions.includes('expense.confirm');
-    if (!canSeeAll && !ctx.permissions.includes('expense.read_own')) {
-      throw new ForbiddenException('Missing permission: expense.review, expense.confirm, or expense.read_own');
+    const canSeeRelated = ctx.permissions.includes('expense.read_related');
+    if (!canSeeAll && !canSeeRelated && !ctx.permissions.includes('expense.read_own')) {
+      throw new ForbiddenException('Missing permission to read substitute receipts');
     }
     if (filter.status && !SUBSTITUTE_RECEIPT_STATUSES.has(filter.status)) {
       throw new BadRequestException('Invalid substitute receipt status.');
@@ -266,11 +267,11 @@ export class ListCompanySubstituteReceiptsUseCase {
     const pageSize = Number.isFinite(filter.pageSize)
       ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!)))
       : 50;
-    const onlyPayerUserId = canSeeAll ? null : ctx.userId;
+    const onlyPayerUserId = canSeeAll || canSeeRelated ? null : ctx.userId;
     const { rows, total } = await this.repo.listCompanySubstituteReceipts(
       ctx.companyId,
       { ...filter, page, pageSize },
-      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId },
+      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId, relatedUserId: !canSeeAll && canSeeRelated ? ctx.userId : null },
     );
     return {
       items: rows.map((row) => ({
@@ -740,10 +741,14 @@ export class ListSubstituteReceiptHistoryUseCase {
 
   async execute(ctx: RequestContext, expenseId: string): Promise<SubstituteReceiptEvidenceSummary[]> {
     assertWeb(ctx);
-    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
+    const canReview = ctx.permissions.includes('expense.review');
+    const canReadOwn = ctx.permissions.includes('expense.read_own') && expense.createdByUserId === ctx.userId;
+    const canReadRelated = ctx.permissions.includes('expense.read_related')
+      && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
+    if (!canReview && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
     return this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
   }
 }

@@ -34,6 +34,51 @@ export function expenseDecimalToString(value: { toString(): string } | null | un
   return value?.toString() ?? '0';
 }
 
+/** View-only ABAC for people persisted as actors on an expense or its source claim. */
+export function expenseRelatedToUserWhere(userId: string): Prisma.ExpenseRecordWhereInput {
+  return {
+    OR: [
+      { createdByUserId: userId },
+      { updatedByUserId: userId },
+      { reviewedByUserId: userId },
+      { confirmedByUserId: userId },
+      { rejectedByUserId: userId },
+      { voidedByUserId: userId },
+      { substituteReceiptGeneratedByUserId: userId },
+      { payments: { some: { OR: [{ createdByUserId: userId }, { voidedByUserId: userId }] } } },
+      {
+        substituteReceiptEvidences: {
+          some: {
+            OR: [
+              { preparedByUserId: userId },
+              { payerUserId: userId },
+              { approverUserId: userId },
+              { issuedByUserId: userId },
+            ],
+          },
+        },
+      },
+      {
+        sourceReimbursementRequest: {
+          is: {
+            OR: [
+              { requesterUserId: userId },
+              { createdByUserId: userId },
+              { submittedByUserId: userId },
+              { currentApproverUserId: userId },
+              { financeReviewedByUserId: userId },
+              { cancellationPendingByUserId: userId },
+              { approvalSteps: { some: { OR: [{ approverUserId: userId }, { decisionByUserId: userId }] } } },
+              { payments: { some: { OR: [{ paidByUserId: userId }, { voidedByUserId: userId }] } } },
+              { claimSignatures: { some: { signedByUserId: userId } } },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
 function mapExpense(r: any): ExpenseRecord {
   return {
     ...r,
@@ -538,18 +583,40 @@ export class PrismaExpenseRepository {
     };
   }
 
+  async isUserRelatedToExpense(
+    companyId: string,
+    expenseId: string,
+    userId: string,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<boolean> {
+    const row = await this.prisma.client.expenseRecord.findFirst({
+      where: {
+        companyId,
+        id: expenseId,
+        ...branchScopeWhere(scopes),
+        AND: [expenseRelatedToUserWhere(userId)],
+      },
+      select: { id: true },
+    });
+    return Boolean(row);
+  }
+
   async findByLineMessageId(companyId: string, lineMessageId: string): Promise<ExpenseRecord | null> {
     const r = await this.prisma.client.expenseRecord.findFirst({ where: { companyId, lineMessageId } });
     return r ? mapExpense(r) : null;
   }
 
-  async listExpenses(filter: ListExpensesFilter, scopes?: { branchIds?: string[] }): Promise<PaginatedExpenses> {
+  async listExpenses(
+    filter: ListExpensesFilter,
+    scopes?: { branchIds?: string[] },
+    relatedUserId?: string,
+  ): Promise<PaginatedExpenses> {
     const { companyId, page = 1, pageSize = 20, ...rest } = filter;
     const skip = (page - 1) * pageSize;
     // 10D branch ABAC: restricted scope sees its branches plus company-central (null) rows.
     // Explicit branchId filter (already scope-asserted by the use-case) is narrower and wins.
     const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
-    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
+    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
     const [data, total] = await Promise.all([
       this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy: { expenseDate: 'desc' } }),
       this.prisma.client.expenseRecord.count({ where }),
@@ -560,7 +627,7 @@ export class PrismaExpenseRepository {
   async listCompanySubstituteReceipts(
     companyId: string,
     filter: SubstituteReceiptListFilter,
-    scope: { branchIds?: string[]; onlyPayerUserId: string | null },
+    scope: { branchIds?: string[]; onlyPayerUserId: string | null; relatedUserId?: string | null },
   ) {
     const page = filter.page ?? 1;
     const pageSize = filter.pageSize ?? 50;
@@ -574,19 +641,35 @@ export class PrismaExpenseRepository {
         lt: new Date(Date.UTC(year!, month!, 1)),
       };
     }
-    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = {
-      companyId,
-      ...(scope.branchIds?.length ? { branchId: { in: scope.branchIds } } : {}),
-      ...(scope.onlyPayerUserId
-        ? { payerUserId: scope.onlyPayerUserId }
-        : filter.payerUserId ? { payerUserId: filter.payerUserId } : {}),
-      ...(filter.status ? { status: filter.status } : {}),
-      ...(monthRange ? {
+    const predicates: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput[] = [];
+    const branchWhere = branchScopeWhere({ branchIds: scope.branchIds });
+    if (Object.keys(branchWhere).length > 0) predicates.push(branchWhere);
+    if (scope.relatedUserId) {
+      predicates.push({
+        OR: [
+          { preparedByUserId: scope.relatedUserId },
+          { payerUserId: scope.relatedUserId },
+          { approverUserId: scope.relatedUserId },
+          { issuedByUserId: scope.relatedUserId },
+          { expense: { is: expenseRelatedToUserWhere(scope.relatedUserId) } },
+        ],
+      });
+    }
+    if (monthRange) {
+      predicates.push({
         OR: [
           { paymentDate: monthRange },
           { paymentDate: null, expense: { expenseDate: monthRange } },
         ],
-      } : {}),
+      });
+    }
+    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = {
+      companyId,
+      ...(scope.onlyPayerUserId
+        ? { payerUserId: scope.onlyPayerUserId }
+        : filter.payerUserId ? { payerUserId: filter.payerUserId } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(predicates.length > 0 ? { AND: predicates } : {}),
     };
     const [rows, total] = await this.prisma.client.$transaction([
       this.prisma.client.expenseSubstituteReceiptEvidence.findMany({

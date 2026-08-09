@@ -268,13 +268,19 @@ describe('ExpenseGetBreakdownTool', () => {
   it('applies the caller branch scope to the query (10D ABAC)', async () => {
     const captured: { where?: any } = {};
     await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });
-    assert.deepEqual(captured.where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
+    assert.deepEqual(captured.where.AND[0].OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
   });
 
   it('limits read_own callers to their own records', async () => {
     const captured: { where?: any } = {};
     await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_own'] });
-    assert.equal(captured.where.createdByUserId, 'u1');
+    assert.equal(captured.where.AND[1].createdByUserId, 'u1');
+  });
+
+  it('limits read_related callers to the persisted actor relation', async () => {
+    const captured: { where?: any } = {};
+    await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
+    assert.ok(captured.where.AND[1].OR.some((clause: any) => clause.payments?.some));
   });
 });
 

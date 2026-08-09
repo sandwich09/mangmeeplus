@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-09B committed; M8-10 verified and ready for its separate commit.
+Status: IN PROGRESS — M8-01..M8-10 committed; owner-approved cross-family related-view remediation in progress.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -108,5 +108,18 @@ Verification:
   Contracts build and web typecheck passed. API typecheck has no M8-10 errors and reaches only the established
   14 substitute-receipt/report spec errors. Prisma validate/generate passed, and all 126 migrations including
   the final claim-excluding backfill applied successfully to a clean temporary PostgreSQL database.
+- M8-10 commit: `40d0fb7 fix(expenses): preserve partial payment history`.
+- Owner access-policy follow-up: accounting documents already comply. Expense/substitute-receipt is the first
+  remaining family: `expense.read_related` is universal only while the expenses feature is enabled, and its
+  list/detail/LINE-AI paths resolve persisted actors under tenant/branch scope. No mutation capability is implied.
+- Expense related-view verification: focused API permission/feature/ABAC/LINE tests 138/138 passed; final
+  feature-off and relation subset 43/43 passed; focused web and AI Gateway tests passed (AI 81/81).
+  Contracts build plus web/AI Gateway typechecks passed. API typecheck has no related-view errors: it retains
+  the established 14 test errors plus one error in an untracked concurrent payer-access spec excluded from
+  this commit. Prisma validate/generate passed, and all 127 migrations applied to a
+  clean PostgreSQL database. Impact gaps fixed before commit: system-role/core-pack parity, expenses.list-off
+  stripping, real OCR action guards, nested category-read contract parity, company-central branch visibility,
+  collision-safe branch/relation/month predicates, and PostgreSQL-safe index names.
 Next:
-- Review and commit only M8-10 files, keeping all untracked QA audit files outside the commit.
+- Commit expense/substitute-receipt related-view policy separately; then apply the same rule to
+  reimbursement and procurement families before returning to the next section-8 finding.

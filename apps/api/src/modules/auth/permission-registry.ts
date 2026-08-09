@@ -152,6 +152,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'accounting.payment.void',             description: 'Void payment records',                   riskLevel: 'CRITICAL' },
   // Item 09 expense permissions
   { key: 'expense.read',                        description: 'Read all company expenses',              riskLevel: 'LOW' },
+  { key: 'expense.read_related',                description: 'Read expenses related to the current user', riskLevel: 'LOW' },
   { key: 'expense.evidence.read',               description: 'Read shared accounting evidence',       riskLevel: 'LOW' },
   { key: 'expense.read_own',                    description: 'Read own expense drafts',               riskLevel: 'LOW' },
   { key: 'expense.create',                      description: 'Create manual expense drafts',          riskLevel: 'MEDIUM' },
@@ -478,7 +479,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'crm.report.read',
     'expense.read',
     'expense.evidence.read',
-    'expense.read_own',
+    'expense.read_related', 'expense.read_own',
     'reimbursement.read',
     'ledger.journal.read',
     'accounting.document.read',
@@ -493,6 +494,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'account.session.read',
     'account.password.change',
     'accounting.document.read_related',
+    'expense.read_related',
     'account.identity.link',
     'account.identity.unlink',
     'company.setup.read',
@@ -596,7 +598,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.approve', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.review', 'expense.duplicate.resolve',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.review', 'expense.duplicate.resolve',
     // Item 10
     'ledger.report.read', 'ledger.period.read',
     // Item 11 – Manager sees tax summary
@@ -647,7 +649,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.counterparty.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.quotation.create',
     'accounting.quotation.update', 'accounting.quotation.submit_approval', 'accounting.quotation.issue',
     'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.payment.read',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 15 CRM – Sales owns own/assigned records (scope enforced server-side)
     'crm.customer.read', 'crm.customer.create', 'crm.customer.update',
@@ -680,7 +682,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'inventory.movement.create', 'inventory.movement.adjust', 'inventory.stock_count.create',
     'inventory.report.read', 'inventory.label.manage',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 12 procurement – Inventory receives goods against issued purchase orders
     'procurement.purchase_order.read', 'procurement.goods_receipt.read', 'procurement.goods_receipt.create',
@@ -720,7 +722,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Step 0 §10: Finance reads the VAT registration status it depends on but does not answer it.
     'company.vat_registration.read',
     // Item 09 – Finance has full expense access except owner-level signature approval
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve', 'expense.ocr.request', 'expense.ai.verify',
     'expense.category.manage', 'expense.signature.manage', 'expense.export',
@@ -777,7 +779,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.export',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.export',
     // Item 10 – Accountant has full ledger access
     'ledger.account.read', 'ledger.account.manage',
     'ledger.journal.read', 'journal.entry.create', 'journal.entry.post', 'journal.entry.reverse',
@@ -827,7 +829,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.receipt.line_upload',
+    'expense.read_related', 'expense.read_own', 'expense.receipt.line_upload',
     // Item 15 CRM – Marketing reads permitted customer/segment context
     'crm.customer.read', 'crm.report.read', 'crm.ai.read',
     // Item 16 Workflow Automation – Marketing works own workflow tasks
@@ -842,7 +844,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 16 Workflow Automation – Staff works own workflow tasks
     'workflow.task.read', 'workflow.task.work',
@@ -860,7 +862,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.export',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.export',
     // Item 10 – Auditor can read all ledger data and export
     'ledger.account.read', 'ledger.journal.read', 'ledger.posting-rule.read',
     'ledger.report.read', 'ledger.period.read', 'ledger.export',

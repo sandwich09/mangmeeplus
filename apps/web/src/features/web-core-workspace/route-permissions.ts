@@ -84,7 +84,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   {
     path: '/expenses',
     anyOf: [
-      'expense.read', 'expense.read_own', 'expense.receipt.upload', 'expense.create',
+      'expense.read', 'expense.read_related', 'expense.read_own', 'expense.receipt.upload', 'expense.create',
       'expense.confirm', 'expense.category.manage', 'expense.signature.manage', 'expense.evidence.read',
     ],
   },

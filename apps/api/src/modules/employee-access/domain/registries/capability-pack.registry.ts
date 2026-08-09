@@ -30,6 +30,7 @@ const RAW_PACKS: RawPack[] = [
       'account.session.read', 'account.password.change', 'account.identity.link', 'account.identity.unlink',
       'notification.read', 'notification.preference.manage', 'dashboard.read', 'attachment.read',
       'company.branch.read', 'ai.tool.invoke', 'line.ai.query', 'accounting.document.read_related',
+      'expense.read_related',
     ],
   },
   {

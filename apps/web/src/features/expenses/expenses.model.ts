@@ -878,7 +878,7 @@ export type ExpenseCapabilities = {
 export function expenseCapabilities(permissions: string[]): ExpenseCapabilities {
   const has = (key: string) => permissions.includes(key);
   return {
-    canViewList: has('expense.read') || has('expense.read_own'),
+    canViewList: has('expense.read') || has('expense.read_related') || has('expense.read_own'),
     canReview: has('expense.review'),
     canConfirm: has('expense.confirm'),
     canCreate: has('expense.create'),

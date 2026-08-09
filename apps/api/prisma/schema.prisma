@@ -2196,6 +2196,13 @@ model ExpenseRecord {
   @@index([companyId, captureSource])
   @@index([companyId, uploadedAt])
   @@index([companyId, taxEvidenceStatus])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, reviewedByUserId])
+  @@index([companyId, confirmedByUserId])
+  @@index([companyId, rejectedByUserId])
+  @@index([companyId, voidedByUserId])
+  @@index([companyId, substituteReceiptGeneratedByUserId], map: "ExpenseRecord_company_substitute_generator_idx")
 }
 
 model ExpensePayment {
@@ -2222,6 +2229,8 @@ model ExpensePayment {
   @@unique([companyId, id])
   @@index([companyId, expenseId, paidAt])
   @@index([companyId, postingStatus, paidAt])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, voidedByUserId])
 }
 
 model ExpenseLine {
@@ -2470,6 +2479,9 @@ model ExpenseSubstituteReceiptEvidence {
   @@unique([companyId, expenseId, idempotencyKey])
   @@index([companyId, expenseId, status])
   @@index([companyId, payerUserId, status])
+  @@index([companyId, preparedByUserId, status], map: "ExpSubEvidence_company_preparer_status_idx")
+  @@index([companyId, approverUserId, status], map: "ExpSubEvidence_company_approver_status_idx")
+  @@index([companyId, issuedByUserId, status], map: "ExpSubEvidence_company_issuer_status_idx")
 }
 
 model ExpenseSubstituteReceiptPolicy {

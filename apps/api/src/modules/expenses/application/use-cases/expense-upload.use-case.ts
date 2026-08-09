@@ -260,7 +260,8 @@ export class ListExpenseCategoriesUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
   async execute(ctx: RequestContext) {
-    if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.read_own') && !ctx.permissions.includes('expense.review')) {
+    if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.read_related')
+      && !ctx.permissions.includes('expense.read_own') && !ctx.permissions.includes('expense.review')) {
       throw new ForbiddenException('Missing permission: expense.read');
     }
     return this.repo.listCategories(ctx.companyId);

@@ -57,6 +57,7 @@ describe('permission-registry', () => {
       const grants = ROLE_GRANTS[role] ?? [];
       assert.ok(grants.includes('attachment.create'), `${role} cannot store LINE receipt evidence`);
       assert.ok(grants.includes('expense.read_own'), `${role} cannot read its own reported expense`);
+      assert.ok(grants.includes('expense.read_related'), `${role} cannot read an expense they participated in`);
       assert.ok(grants.includes('expense.receipt.line_upload'), `${role} cannot report expenses through LINE`);
     }
   });

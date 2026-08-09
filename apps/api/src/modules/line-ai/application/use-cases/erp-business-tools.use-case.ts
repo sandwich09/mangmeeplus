@@ -14,6 +14,7 @@ import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.l
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { resolvePeriodInput } from './erp-tools.use-case';
 import { civilDayRangeToUtc } from '@watchdog-bms/contracts';
+import { expenseRelatedToUserWhere } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -295,7 +296,8 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
     const asOf = now();
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
-    if (!canReadAll && !ctx.permissions.includes('expense.read_own')) {
+    const canReadRelated = ctx.permissions.includes('expense.read_related');
+    if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
@@ -303,10 +305,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       companyId: ctx.companyId,
       status: { notIn: ['REJECTED', 'VOIDED'] as never[] },
       expenseDate: civilDayRangeToUtc(period.fromDate, period.toDate),
-      // Branch ABAC (10D): restricted scopes see their branches plus company-central rows.
-      ...branchScopeWhere({ branchIds: ctx.branchIds }),
-      // read_own limitation mirrors ListExpensesUseCase
-      ...(!canReadAll && { createdByUserId: ctx.userId }),
+      AND: [
+        // Branch ABAC (10D): restricted scopes see their branches plus company-central rows.
+        branchScopeWhere({ branchIds: ctx.branchIds }),
+        ...(!canReadAll
+          ? [canReadRelated ? expenseRelatedToUserWhere(ctx.userId) : { createdByUserId: ctx.userId }]
+          : []),
+      ],
     };
 
     const [byCategory, byBranch] = await Promise.all([

@@ -40,6 +40,13 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'returns nothing unless the caller is persisted as an actor in the tenant/branch graph.',
   },
   {
+    key: 'expense.read_related',
+    anchor: null,
+    why: 'Expense, payment and substitute-receipt actors must retain view-only access to the '
+      + 'tenant/branch-scoped records they participated in. The expenses entitlement strips the '
+      + 'key when the feature is off; mutation permissions and lifecycle checks remain separate.',
+  },
+  {
     key: 'expense.evidence.read',
     anchor: 'expense.read',
     why: 'หลักฐานทางบัญชี moved off expense.read onto its own key. Without this the evidence menu '

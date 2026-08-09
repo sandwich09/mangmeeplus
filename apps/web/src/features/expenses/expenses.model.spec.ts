@@ -412,6 +412,7 @@ describe('expenseCapabilities', () => {
 
   it('maps each backend permission to its capability', () => {
     assert.equal(expenseCapabilities(['expense.read']).canViewList, true);
+    assert.equal(expenseCapabilities(['expense.read_related']).canViewList, true);
     assert.equal(expenseCapabilities(['expense.read_own']).canViewList, true);
     assert.equal(expenseCapabilities(['expense.review']).canReview, true);
     assert.equal(expenseCapabilities(['expense.confirm']).canConfirm, true);
@@ -434,8 +435,18 @@ describe('expenseCapabilities', () => {
   it('gates list and evidence tabs with their own view permissions', () => {
     assert.equal(canAccessExpenseTab('list', expenseCapabilities([])), false);
     assert.equal(canAccessExpenseTab('list', expenseCapabilities(['expense.read_own'])), true);
+    assert.equal(canAccessExpenseTab('list', expenseCapabilities(['expense.read_related'])), true);
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.read'])), false);
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.evidence.read'])), true);
+  });
+
+  it('keeps related-view authority read-only', () => {
+    const caps = expenseCapabilities(['expense.read_related']);
+    assert.equal(caps.canViewList, true);
+    assert.equal(caps.canUpdate, false);
+    assert.equal(caps.canConfirm, false);
+    assert.equal(caps.canRecordPayment, false);
+    assert.equal(caps.canVoid, false);
   });
 
   it('allows OCR request via expense.ocr.request or expense.review', () => {

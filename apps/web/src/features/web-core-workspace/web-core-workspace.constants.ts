@@ -163,6 +163,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     // so `reimbursement.read` must not leak the expenses menu when expenses is off.
     requiredAnyPermissions: [
       'expense.read',
+      'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
       'expense.create',

@@ -221,6 +221,7 @@ Use these keys for Expense and Receipt Upload:
 
 ```text
 expense.read
+expense.read_related
 expense.read_own
 expense.evidence.read
 expense.create
@@ -262,6 +263,8 @@ MARKETING: expense.read_own, expense.receipt.line_upload
 `expense.delete` hard-deletes DRAFT expenses only. OWNER, ADMIN, and FINANCE hold it by default and may delete any company draft; otherwise, a draft's creator holding `expense.update` may delete their own draft.
 
 `expense.evidence.read` is the dedicated read boundary for the หลักฐานทางบัญชี screen and `GET /expenses/shared-evidence`. It is granted to every protected role bundle that already has `expense.read`, so introducing the narrower guard does not remove existing access. Disabling the `expenses.evidence` child entitlement strips `expense.evidence.read` and `expense.export` while leaving the other expense sub-menus intact.
+
+`expense.read_related` is universal but view-only and is stripped when the `expenses.list` route is off. It returns only tenant/branch-scoped expenses where the caller is persisted as creator/updater/reviewer/confirmer/rejector/voider, a payment actor, a substitute-receipt preparer/payer/approver/issuer, or an actor on the source reimbursement. It never grants update, review, confirm, payment, reject, void, OCR, or signature authority; those actions still require their exact permission, actor rule, and document state. `expense.read_own` remains the narrower creator/self-service compatibility path.
 
 `expense.ai.verify` is normally granted to service/internal actors, not broad human roles.
 

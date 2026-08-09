@@ -125,12 +125,16 @@ export class GetExpenseUseCase {
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecordWithRelations> {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    if (!canRead && !canReadOwn) throw new ForbiddenException('Missing permission: expense.read');
+    const canReadRelated = hasPerm(ctx, 'expense.read_related');
+    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
-    // ABAC: read_own limits to own records
-    if (!canRead && r.createdByUserId !== ctx.userId && r.substituteReceiptEvidence?.payerUserId !== ctx.userId) {
+    const canReadThisRelated = !canRead && canReadRelated
+      && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
+    const canReadThisOwn = canReadOwn
+      && (r.createdByUserId === ctx.userId || r.substituteReceiptEvidence?.payerUserId === ctx.userId);
+    if (!canRead && !canReadThisOwn && !canReadThisRelated) {
       throw new ForbiddenException('Access denied');
     }
     return r;
@@ -144,11 +148,12 @@ export class ListExpensesUseCase {
   async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>): Promise<PaginatedExpenses> {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    if (!canRead && !canReadOwn) throw new ForbiddenException('Missing permission: expense.read');
+    const canReadRelated = hasPerm(ctx, 'expense.read_related');
+    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
     if (filter.branchId) assertBranchInScope(ctx, filter.branchId);
     const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId };
-    if (!canRead && canReadOwn) resolved.createdByUserId = ctx.userId;
-    return this.repo.listExpenses(resolved, ctx.scopes);
+    if (!canRead && canReadOwn && !canReadRelated) resolved.createdByUserId = ctx.userId;
+    return this.repo.listExpenses(resolved, ctx.scopes, !canRead && canReadRelated ? ctx.userId : undefined);
   }
 }
 

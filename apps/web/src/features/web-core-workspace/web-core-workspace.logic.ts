@@ -191,7 +191,7 @@ export function buildNavItems(
 
     if (mod.key === 'expenses') {
       const childItems: NavItem['subItems'] = [];
-      if (hasAnyPermission(userPermissions, ['expense.read', 'expense.read_own'])) {
+      if (hasAnyPermission(userPermissions, ['expense.read', 'expense.read_related', 'expense.read_own'])) {
         childItems.push({
           key: 'expenses.list',
           label: t('expenses.tab_list' as Parameters<typeof t>[0], locale),
@@ -234,7 +234,7 @@ export function buildNavItems(
       // The nav is built here, not from FEATURE_CATALOG — that catalog only decides what a company may
       // buy. A submenu missing from this list simply does not exist for the user, however the catalog
       // is wired.
-      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_own'])) {
+      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own'])) {
         childItems.push({
           key: 'expenses.substitute_receipt',
           label: t('expenses.tab_substitute_receipts' as Parameters<typeof t>[0], locale),

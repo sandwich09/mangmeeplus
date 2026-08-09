@@ -106,6 +106,22 @@ describe('filterPermissionsByEntitlement', () => {
     );
   });
 
+  it('keeps expense related-view authority only while expenses are enabled', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], entitledWithChildren('sales_documents')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], entitledWithChildren('expenses')),
+      ['expense.read_related'],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], new Set(['expenses'])),
+      [],
+      'an explicitly disabled expenses.list child must remove the related-view route too',
+    );
+  });
+
   it('does not retain a child permission when only the child entitlement is enabled', () => {
     assert.deepEqual(
       filterPermissionsByEntitlement(['expense.evidence.read'], new Set(['expenses.evidence'])),

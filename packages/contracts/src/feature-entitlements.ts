@@ -79,7 +79,7 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
         labelTh: 'รายการค่าใช้จ่าย',
         descriptionTh: 'ดูรายการค่าใช้จ่ายและใบเสร็จทั้งหมด',
         route: '/expenses',
-        permissionKeys: ['expense.read', 'expense.read_own'],
+        permissionKeys: ['expense.read', 'expense.read_related', 'expense.read_own'],
       },
       {
         key: 'expenses.upload',

@@ -166,6 +166,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     entitlementKeys: ['expenses'],
     gatePermissions: [
       'expense.read',
+      'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
       'expense.create',

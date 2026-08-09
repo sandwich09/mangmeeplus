@@ -434,6 +434,14 @@ describe('buildNavItems', () => {
     assert.deepEqual(expenses?.subItems?.map((sub) => sub.key), ['expenses.list', 'expenses.substitute_receipt']);
   });
 
+  it('shows related expense and substitute-receipt views without mutation menus', () => {
+    const permissions = ['expense.read_related'];
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const expenses = buildNavItems(modules, 'related-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
+
+    assert.deepEqual(expenses?.subItems?.map((sub) => sub.key), ['expenses.list', 'expenses.substitute_receipt']);
+  });
+
   it('shows the expenses module and only upload to an upload-only user', () => {
     const permissions = ['expense.receipt.upload'];
     const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
