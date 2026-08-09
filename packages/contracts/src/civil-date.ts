@@ -18,7 +18,11 @@ export type CivilDate = string;
 /** Fallback for companies with no `timezone` set. Every tenant is Thai today. */
 export const DEFAULT_COMPANY_TIME_ZONE = 'Asia/Bangkok';
 
-const CIVIL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * Exported so HTTP DTOs validate a calendar day against the SAME definition the domain uses
+ * (audit H-23). A boundary that copies this pattern is a boundary that can drift from it.
+ */
+export const CIVIL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * A value that should have been a calendar day was not one. Subclasses TypeError so existing

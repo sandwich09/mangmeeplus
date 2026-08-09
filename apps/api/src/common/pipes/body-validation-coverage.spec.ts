@@ -5,7 +5,7 @@
  * `forbidNonWhitelisted` need, and a body without one is unvalidated no matter how precisely its
  * TypeScript type is written.
  *
- * 167 endpoints were in that state when this was measured, which is far too many to convert in one
+ * 167 endpoints were in that state when this was first measured, which is far too many to convert in one
  * change: a DTO that names the wrong fields does not fail loudly, it rejects a legitimate request
  * in production, because forbidNonWhitelisted turns an unlisted key into a 400.
  *
@@ -53,13 +53,17 @@ export function unvalidatedBodyParams(): Array<{ file: string; param: string; ty
 }
 
 /**
- * Endpoints whose body is not validated at the HTTP boundary, as of 2026-08-09.
+ * Endpoints whose body is not validated at the HTTP boundary.
  *
  * Ordering is by module so a conversion pass can take one module at a time — the DTO for a
  * controller is usually one file, and the fields come from the use case it calls.
+ *
+ * expenses went 28 -> 16: the twelve inline object literals became classes in expense.dtos.ts.
+ * The sixteen left are imported contract types, whose field sets have to be read from the contract
+ * before they can be declared — a guess there costs a 400 on a legitimate request.
  */
 const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
-  'modules/expenses/presentation/http/expense.controller.ts': 28,
+  'modules/expenses/presentation/http/expense.controller.ts': 16,
   'modules/tax/presentation/http/transaction-tax.controller.ts': 16,
   'modules/crm/presentation/http/crm-customer.controller.ts': 9,
   'modules/tax/presentation/http/tax.controller.ts': 9,
@@ -70,7 +74,7 @@ const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
 };
 
 /** Total across every controller, including the long tail not listed individually above. */
-const KNOWN_UNVALIDATED_TOTAL = 167;
+const KNOWN_UNVALIDATED_TOTAL = 155;
 
 describe('request body validation coverage (audit H-23)', () => {
   it('does not grow the unvalidated-body backlog', () => {

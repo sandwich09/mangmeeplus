@@ -1,5 +1,15 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
+import {
+  ReasonOptionalDto,
+  ReasonRequiredDto,
+  ReceiptUploadCompletionDto,
+  ReceiptUploadIntentDto,
+  RecordExpensePaymentDto,
+  SetSignatureDerivedAssetDto,
+  UploadCompletionDto,
+  UploadIntentDto,
+} from './expense.dtos';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -200,7 +210,7 @@ export class ExpenseController {
   @RequirePermissions('expense.receipt.upload')
   initReceiptUpload(
     @ReqCtx() ctx: RequestContext,
-    @Body() body: { originalFileName: string; mimeType: string; byteSize: number; expenseDate?: string; branchId?: string; note?: string },
+    @Body() body: ReceiptUploadIntentDto,
   ) {
     return this.initUpload.execute(ctx, { ...body, expenseDate: body.expenseDate ?? todayCivilDate() });
   }
@@ -302,7 +312,7 @@ export class ExpenseController {
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
     @Param('evidenceId') evidenceId: string,
-    @Body() body: { originalFileName: string; mimeType: string; byteSize: number },
+    @Body() body: UploadIntentDto,
   ) {
     return this.initSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, body);
   }
@@ -314,7 +324,7 @@ export class ExpenseController {
     @Param('expenseId') expenseId: string,
     @Param('evidenceId') evidenceId: string,
     @Param('attachmentId') attachmentId: string,
-    @Body() body: { checksumSha256?: string; byteSize?: number },
+    @Body() body: UploadCompletionDto,
   ) {
     return this.completeSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, attachmentId, body);
   }
@@ -398,7 +408,7 @@ export class ExpenseController {
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
     @Param('attachmentId') attachmentId: string,
-    @Body() body: { checksumSha256?: string; byteSize?: number; purpose?: string },
+    @Body() body: ReceiptUploadCompletionDto,
   ) {
     return this.completeUpload.execute(ctx, { expenseId, attachmentId, ...body });
   }
@@ -423,13 +433,13 @@ export class ExpenseController {
 
   @Post(':expenseId/reject')
   @RequirePermissions('expense.reject')
-  rejectExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+  rejectExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
     return this.reject.execute(ctx, expenseId, body.reason);
   }
 
   @Post(':expenseId/void')
   @RequirePermissions('expense.void')
-  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
     return this.void_.execute(ctx, expenseId, body.reason);
   }
 
@@ -438,7 +448,7 @@ export class ExpenseController {
   recordPayment(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
-    @Body() body: { paidAmount: string; paymentMethod?: string; paidAt?: string; bankAccountRef?: string },
+    @Body() body: RecordExpensePaymentDto,
   ) {
     return this.payment.execute(ctx, expenseId, body);
   }
@@ -451,13 +461,13 @@ export class ExpenseController {
 
   @Post(':expenseId/duplicates/:candidateId/dismiss')
   @RequirePermissions('expense.duplicate.resolve')
-  dismissDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+  dismissDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: ReasonOptionalDto) {
     return this.dupResolve.execute(ctx, expenseId, candidateId, 'dismiss', body.reason);
   }
 
   @Post(':expenseId/duplicates/:candidateId/confirm')
   @RequirePermissions('expense.duplicate.resolve')
-  confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+  confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: ReasonOptionalDto) {
     return this.dupResolve.execute(ctx, expenseId, candidateId, 'confirm', body.reason);
   }
 
@@ -567,7 +577,7 @@ export class ExpenseSignatureController {
 
   @Post('uploads')
   @RequirePermissions('expense.signature.manage')
-  initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: { originalFileName: string; mimeType: string; byteSize: number }) {
+  initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: UploadIntentDto) {
     return this.initUpload.execute(ctx, body);
   }
 
@@ -585,7 +595,7 @@ export class ExpenseSignatureController {
 
   @Post(':signatureId/reject')
   @RequirePermissions('expense.signature.approve')
-  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { reason: string }) {
+  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: ReasonRequiredDto) {
     return this.rejectAsset.execute(ctx, signatureId, body?.reason ?? '');
   }
 
@@ -598,7 +608,7 @@ export class ExpenseSignatureController {
   /** Records the web-canvas background-removed derived PNG. Original is kept. */
   @Post(':signatureId/derived')
   @RequirePermissions('expense.signature.manage')
-  setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { attachmentId: string; checksumSha256?: string; byteSize?: number }) {
+  setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: SetSignatureDerivedAssetDto) {
     return this.setDerived.execute(ctx, signatureId, body);
   }
 }
