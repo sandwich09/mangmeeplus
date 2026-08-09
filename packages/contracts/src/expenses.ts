@@ -504,6 +504,13 @@ export type ExpenseSourcePostingInput = {
 export type DuplicateCandidateSummary = {
   id: string;
   candidateExpenseId: string;
+  /** Identity of the other expense, joined from the candidate row. The reviewer has to decide
+   *  "same document or not" from this card alone, and an opaque id cannot answer that.
+   *  Null only when the candidate row is gone or out of the caller's branch scope. */
+  candidateExpenseNumber: string | null;
+  candidateVendorName: string | null;
+  candidateExpenseDate: string | null;
+  candidateGrandTotalAmount: string | null;
   reasonCodesJson: string[];
   score: number;
   status: 'OPEN' | 'DISMISSED' | 'CONFIRMED_DUPLICATE';

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  postingErrorText,
   buildExpenseDraftReviewPayload,
   formatTaxId,
   taxIdDigits,
@@ -652,5 +653,28 @@ describe('expenseAiSuggestion / applyExpenseAiSuggestion', () => {
     assert.equal(filled.vendorNameSnapshot, 'ร้านที่ผู้ตรวจพิมพ์เอง');
     assert.equal(filled.vendorDocumentNumber, '260705-02-17420');
     assert.deepEqual(filled.lines, typed.lines);
+  });
+});
+
+describe('postingErrorText', () => {
+  it('translates the ledger code the API stores', () => {
+    assert.equal(
+      postingErrorText('posting_rule_missing'),
+      'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ กรุณาตั้งค่ากฎการลงบัญชีก่อน',
+    );
+  });
+
+  it('keeps the account id that codes carry after the colon', () => {
+    assert.equal(postingErrorText('account_not_found:5100'), 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง กรุณาตรวจผังบัญชี (5100)');
+  });
+
+  it('passes through the Thai sentence the auto-post worker writes', () => {
+    const written = 'ลงบัญชีอัตโนมัติไม่สำเร็จ (AUTO_POST_FAILED)';
+    assert.equal(postingErrorText(written), written);
+  });
+
+  it('returns null when nothing is stored', () => {
+    assert.equal(postingErrorText(null), null);
+    assert.equal(postingErrorText(''), null);
   });
 });

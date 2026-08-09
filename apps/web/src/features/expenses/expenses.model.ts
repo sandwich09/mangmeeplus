@@ -323,6 +323,10 @@ export type ExpenseDetail = ExpenseSummary & {
   duplicateCandidates: Array<{
     id: string;
     candidateExpenseId: string;
+    candidateExpenseNumber: string | null;
+    candidateVendorName: string | null;
+    candidateExpenseDate: string | null;
+    candidateGrandTotalAmount: string | null;
     reasonCodesJson: string[];
     score: number;
     status: string;
@@ -445,6 +449,35 @@ export const POSTING_STATUS_LABELS: Record<ExpensePostingStatus, string> = {
   posting_error: 'บันทึกผิดพลาด',
   reversed: 'ยกเลิกแล้ว',
 };
+
+/**
+ * `postingError` holds a machine code on purpose — the ledger stores it that way and
+ * template-company-posting.use-case.spec asserts it — so the wording belongs here, not in the API.
+ * Codes ending in `:<accountId>` name the account that is missing or unusable.
+ */
+const POSTING_ERROR_LABELS: Record<string, string> = {
+  posting_rule_missing: 'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ กรุณาตั้งค่ากฎการลงบัญชีก่อน',
+  posting_unbalanced: 'รายการบัญชีไม่สมดุล เดบิตและเครดิตไม่เท่ากัน กรุณาตรวจกฎการลงบัญชี',
+  account_not_found: 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง กรุณาตรวจผังบัญชี',
+  account_not_available: 'บัญชีที่กฎการลงบัญชีอ้างถึงถูกปิดใช้งานหรืออยู่นอกบริษัท',
+  tax_snapshot_missing: 'ไม่พบข้อมูลภาษีของเอกสาร กรุณาตรวจรหัสภาษีของรายการ',
+  tax_snapshot_needs_review: 'ข้อมูลภาษีของเอกสารยังรอตรวจสอบ กรุณายืนยันรหัสภาษีก่อนลงบัญชี',
+  tax_source_currency_mismatch: 'สกุลเงินของภาษีไม่ตรงกับสกุลเงินของเอกสาร',
+  mixed_currency_tax_snapshot: 'เอกสารมีหลายสกุลเงินหรือหลายอัตราแลกเปลี่ยน จึงลงบัญชีภาษีไม่ได้',
+  functional_currency_fx_required: 'ต้องระบุอัตราแลกเปลี่ยนก่อนลงบัญชีเอกสารสกุลเงินต่างประเทศ',
+  legacy_o0_tax_review_required: 'รหัสภาษี O0 ต้องระบุบริบทอัตราศูนย์และผ่านการตรวจสอบก่อนลงบัญชี',
+  legacy_tax_snapshot_review_required: 'ข้อมูลภาษีรูปแบบเดิมต้องผ่านการตรวจสอบก่อนลงบัญชี',
+};
+
+/** Thai wording for a stored posting error. Values that are not codes (the auto-post worker
+ *  writes a Thai sentence) pass through unchanged. */
+export function postingErrorText(postingError: string | null | undefined): string | null {
+  if (!postingError) return null;
+  const [code, detail] = postingError.split(':');
+  const label = POSTING_ERROR_LABELS[code];
+  if (!label) return postingError;
+  return detail ? `${label} (${detail})` : label;
+}
 
 export const TAX_EVIDENCE_REASON_LABELS: Record<TaxEvidenceReasonCode, string> = {
   VALID_TAX_INVOICE_FIELDS: 'ข้อมูลใบกำกับภาษีครบถ้วน',

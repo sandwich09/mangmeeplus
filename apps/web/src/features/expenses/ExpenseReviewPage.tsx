@@ -28,7 +28,7 @@ import {
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
   hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled,
-  vatModeRequiresRate,
+  postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
 import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
@@ -535,7 +535,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
             {detail.postingStatus === 'posted'
               ? `ผ่านรายการแล้ว${detail.journalEntryNumber ? ` · ${detail.journalEntryNumber}` : ''}`
               : detail.postingStatus === 'posting_error'
-                ? (detail.postingError || 'ลงบัญชีไม่สำเร็จ กรุณาแก้ไขเงื่อนไขแล้วลองอีกครั้ง')
+                ? (postingErrorText(detail.postingError) || 'ลงบัญชีไม่สำเร็จ กรุณาแก้ไขเงื่อนไขแล้วลองอีกครั้ง')
                 : detail.postingStatus === 'not_required'
                   ? 'เอกสารนี้ไม่ต้องลงสมุดรายวัน'
                   : detail.postingStatus === 'reversed'
@@ -705,6 +705,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   );
   const openDuplicateCandidates = detail.duplicateCandidates.filter((candidate) => candidate.status === 'OPEN');
   const confirmedDuplicateCandidates = detail.duplicateCandidates.filter((candidate) => candidate.status === 'CONFIRMED_DUPLICATE');
+  // "Is this the same document?" is answerable from the number, payee, date and amount —
+  // never from an id. Older rows (or ones outside the branch scope) still fall back to the id.
+  const duplicateCandidateLabel = (candidate: ExpenseDetail['duplicateCandidates'][number]) => [
+    candidate.candidateExpenseNumber || candidate.candidateExpenseId.slice(-8),
+    candidate.candidateVendorName,
+    candidate.candidateExpenseDate ? dateShort(candidate.candidateExpenseDate) : null,
+    candidate.candidateGrandTotalAmount ? baht(candidate.candidateGrandTotalAmount) : null,
+  ].filter(Boolean).join(' · ');
+  // t() echoes the key when a code has no label yet, so an unmapped reason drops out silently
+  // instead of printing `expenses.duplicate_reason_*` at the reviewer.
+  const duplicateReasonText = (candidate: ExpenseDetail['duplicateCandidates'][number]) => candidate.reasonCodesJson
+    .map((code) => t(`expenses.duplicate_reason_${code}` as DictionaryKey, locale))
+    .filter((label) => !label.startsWith('expenses.duplicate_reason_'))
+    .join(' · ');
   const duplicatesCard = hasDuplicates && (
     <MangmeeCard className="space-y-2 border-warning-100 bg-warning-50 p-4">
       <h3 className="text-sm font-semibold text-warning-700">⚠ {t('expenses.duplicate_warning_title', locale)}</h3>
@@ -716,17 +730,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
       )}
       {confirmedDuplicateCandidates.map((candidate) => (
         <div key={candidate.id} className="flex flex-col items-start gap-1.5 rounded-lg bg-white px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${candidate.candidateExpenseId}`} target="_blank">
-            {t('expenses.item_label', locale)} · {candidate.candidateExpenseId.slice(-8)} ({t('expenses.score_label', locale)} {candidate.score})
-          </Link>
+          <span className="flex flex-col gap-0.5">
+            <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${candidate.candidateExpenseId}`} target="_blank">
+              {duplicateCandidateLabel(candidate)} ({t('expenses.score_label', locale)} {candidate.score})
+            </Link>
+            {duplicateReasonText(candidate) && <span className="text-gray-500">{duplicateReasonText(candidate)}</span>}
+          </span>
           <span className="font-semibold text-error-700">{t('expenses.confirm_duplicate', locale)}</span>
         </div>
       ))}
       {openDuplicateCandidates.map((d, index) => (
         <div key={d.id} className="flex flex-col items-start gap-1.5 rounded-lg bg-white px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${d.candidateExpenseId}`} target="_blank">
-            {t('expenses.item_label', locale)} {index + 1} · {d.candidateExpenseId.slice(-8)} ({t('expenses.score_label', locale)} {d.score})
-          </Link>
+          <span className="flex flex-col gap-0.5">
+            <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${d.candidateExpenseId}`} target="_blank">
+              {t('expenses.item_label', locale)} {index + 1} · {duplicateCandidateLabel(d)} ({t('expenses.score_label', locale)} {d.score})
+            </Link>
+            {duplicateReasonText(d) && <span className="text-gray-500">{duplicateReasonText(d)}</span>}
+          </span>
           {caps.canResolveDuplicates && <span className="flex gap-3">
             <button className="py-1 sm:py-0 font-semibold text-success-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'confirm' }); }} disabled={actionLoading}>{t('expenses.confirm_duplicate', locale)}</button>
             <button className="py-1 sm:py-0 font-semibold text-warning-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'dismiss' }); }} disabled={actionLoading}>{t('expenses.not_duplicate', locale)}</button>
