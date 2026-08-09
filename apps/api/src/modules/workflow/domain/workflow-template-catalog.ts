@@ -132,6 +132,15 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
           // owner-only company (no MANAGER membership) resolved zero recipients and notified nobody.
           // The sibling approval-review TASK stays MANAGER-assigned — that is a worklist, not an alert.
           recipientRoles: ['MANAGER', 'OWNER'],
+          // Audit H-18: the filer used to be invited to approve their own claim, landing on a
+          // button that answers self_approval_denied. The submit payload only carries
+          // requesterUserId while the policy forbids self-approval, so a company that allows it
+          // keeps notifying the filer — one rule, expressed once, at the point that knows it.
+          excludeRecipientPayloadKeys: ['requesterUserId'],
+          // An owner-only company has nobody left to tell once the filer is excluded, and that is
+          // correct rather than a failure. Opt-in: the dual-approval vendor bill wants the opposite,
+          // where nobody left means the company genuinely lacks a second approver.
+          skipWhenAllRecipientsExcluded: true,
           severity: 'action',
           // Title comes from the sibling task template; the body must carry the numbers instead of
           // repeating it (the live notification showed the same line twice).

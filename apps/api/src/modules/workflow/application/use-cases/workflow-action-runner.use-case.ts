@@ -194,9 +194,23 @@ export class ExecuteWorkflowActionUseCase {
       if (Array.isArray(value)) return value.filter((id): id is string => typeof id === 'string');
       return [];
     }));
-    const recipientUserIds = [...new Set([...roleRecipientUserIds, ...permissionRecipientUserIds, ...payloadRecipientUserIds])]
-      .filter((userId) => !excludedUserIds.has(userId));
+    const resolvedUserIds = [...new Set([...roleRecipientUserIds, ...permissionRecipientUserIds, ...payloadRecipientUserIds])];
+    const recipientUserIds = resolvedUserIds.filter((userId) => !excludedUserIds.has(userId));
     if (recipientUserIds.length === 0) {
+      // Audit H-18: whether "everyone was excluded" is a failure depends on the template, so it is
+      // opt-in rather than a blanket rule.
+      //
+      // The dual-approval vendor bill excludes the submitter and the first approver, and a company
+      // with nobody left genuinely lacks an eligible second approver — that must stay a retryable
+      // failure so it surfaces. An owner-only company filing its own reimbursement excludes the
+      // filer and correctly has nobody to tell; retrying that would dead-letter an action on every
+      // claim and make a working configuration look broken.
+      //
+      // Nothing resolving AT ALL is the old error in both cases: the roles or permissions name
+      // people who do not exist, which a later membership change can fix.
+      if (resolvedUserIds.length > 0 && cfg['skipWhenAllRecipientsExcluded'] === true) {
+        return { resultJson: { skipped: true, reason: 'all_recipients_excluded' }, targetType: 'notification_event' };
+      }
       throw new RetryableActionError('No active recipients resolved for configured recipientRoles, recipientPermissions, or recipientPayloadKeys (after exclusions)');
     }
     const titleTemplate = findTitleTemplate(actionRun.actionKey, cfg, context.siblingActions);

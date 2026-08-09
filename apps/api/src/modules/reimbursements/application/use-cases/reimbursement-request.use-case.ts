@@ -381,7 +381,14 @@ export class SubmitReimbursementUseCase {
       aggregateType: 'reimbursement_request', aggregateId: id, occurredAt: now.toISOString(),
       // requestId must be present: the reimbursement_pending_approval workflow template's
       // default condition matches on it (same fix as billId in vendor_bill.submitted).
-      data: { requestId: id, status: 'PENDING_APPROVAL', requestNo, amount: req.amount, currency: req.currency, approverRole: policy.defaultApproverRole },
+      // requesterUserId is here for the notification's excludeRecipientPayloadKeys (audit H-18):
+      // the person who filed the claim must not be invited to approve it while the policy forbids
+      // self-approval, which is the same rule the approval queue filters on.
+      data: {
+        requestId: id, status: 'PENDING_APPROVAL', requestNo, amount: req.amount, currency: req.currency,
+        approverRole: policy.defaultApproverRole,
+        ...(policy.allowSelfApproval ? {} : { requesterUserId: req.requesterUserId }),
+      },
     });
     void this.outbox.append('reimbursement.approval_assigned', 'reimbursement_request', id, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
