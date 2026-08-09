@@ -429,7 +429,6 @@ describe('expenseCapabilities', () => {
     // Evidence moved off expense.read onto its own key, so expense.read alone no longer grants it.
     assert.equal(expenseCapabilities(['expense.evidence.read']).canViewSharedEvidence, true);
     assert.equal(expenseCapabilities(['expense.read']).canViewSharedEvidence, false);
-    assert.equal(expenseCapabilities(['ledger.journal.read']).canReadLedger, true);
   });
 
   it('gates list and evidence tabs with their own view permissions', () => {
@@ -451,10 +450,16 @@ describe('expenseCapabilities', () => {
     assert.equal(expenseCapabilities(['expense.export', 'expense.read']).canExportPackage, true);
   });
 
-  it('requires both create and post permissions for source posting', () => {
-    assert.equal(expenseCapabilities(['journal.entry.create']).canPostLedger, false);
-    assert.equal(expenseCapabilities(['journal.entry.post']).canPostLedger, false);
-    assert.equal(expenseCapabilities(['journal.entry.create', 'journal.entry.post']).canPostLedger, true);
+  // Owner decision 2026-08-09: the accounting screens are closed this launch while the ledger keeps
+  // posting server-side, so the ledger affordances inside the expense workspace — the
+  // "ลงบัญชี"/backfill buttons and the "ดู JV" link — are off regardless of permissions. The
+  // permissions and POST /posting/generate are untouched; only the buttons are gone.
+  it('withholds the ledger affordances while the accounting screens are closed', () => {
+    const everyLedgerPermission = ['ledger.journal.read', 'journal.entry.create', 'journal.entry.post'];
+    assert.equal(expenseCapabilities(everyLedgerPermission).canPostLedger, false);
+    assert.equal(expenseCapabilities(everyLedgerPermission).canReadLedger, false);
+    // Non-ledger capabilities in the same object are unaffected by the hide.
+    assert.equal(expenseCapabilities([...everyLedgerPermission, 'expense.read']).canViewList, true);
   });
 
   it('review permission alone does not grant finance actions', () => {

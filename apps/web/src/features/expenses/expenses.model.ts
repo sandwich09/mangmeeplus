@@ -16,6 +16,7 @@ import {
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
 
 export type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType, AiVerificationStatus, DuplicateStatus,
@@ -891,9 +892,13 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
     canViewSharedEvidence: has('expense.evidence.read'),
     // POST /accountant-package requires both expense.export AND expense.read.
     canExportPackage: has('expense.export') && has('expense.read'),
-    canReadLedger: has('ledger.journal.read'),
+    // Both stay false while the accounting screens are closed (owner decision 2026-08-09): the
+    // "ลงบัญชี"/backfill buttons and the "ดู JV" link are the only ledger affordances outside the
+    // ledger workspace itself. The permissions and the API are untouched — posting keeps happening
+    // server-side, the user just has no button for it. See ACCOUNTING_UI_HIDDEN.
+    canReadLedger: !ACCOUNTING_UI_HIDDEN && has('ledger.journal.read'),
     // POST /posting/generate is guarded by both controller permissions.
-    canPostLedger: has('journal.entry.create') && has('journal.entry.post'),
+    canPostLedger: !ACCOUNTING_UI_HIDDEN && has('journal.entry.create') && has('journal.entry.post'),
   };
 }
 

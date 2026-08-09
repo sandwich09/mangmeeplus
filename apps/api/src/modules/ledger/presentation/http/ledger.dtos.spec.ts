@@ -7,6 +7,7 @@ import {
   CreateChartOfAccountDto,
   CreateManualJournalDto,
   GenerateJournalFromSourceDto,
+  SetExpenseAccountBindingDto,
   UpdateChartOfAccountDto,
 } from './ledger.dtos';
 
@@ -182,5 +183,36 @@ describe('GenerateJournalFromSourceDto (G1)', () => {
     await rejects(GenerateJournalFromSourceDto, { sourceType: 'expense.record' });
     await rejects(GenerateJournalFromSourceDto, { sourceId: 'exp_1' });
     await rejects(GenerateJournalFromSourceDto, { sourceType: '', sourceId: 'exp_1' });
+  });
+});
+
+describe('SetExpenseAccountBindingDto (audit CR-2)', () => {
+  const run = (value: unknown) =>
+    pipe.transform(value, { type: 'body', metatype: SetExpenseAccountBindingDto });
+
+  it('accepts a chart account code', async () => {
+    assert.equal((await run({ ledgerAccountCode: '5320-01' })).ledgerAccountCode, '5320-01');
+  });
+
+  // null is a real instruction — "clear this binding" — so it has to survive the pipe rather than
+  // being rejected as a missing string.
+  it('accepts an explicit null as the clear instruction', async () => {
+    assert.equal((await run({ ledgerAccountCode: null })).ledgerAccountCode, null);
+  });
+
+  // ...while an omitted key is NOT the same thing, and must not silently read as a clear.
+  it('rejects an omitted key so a clear is always explicit', async () => {
+    await assert.rejects(() => run({}), BadRequestException);
+  });
+
+  it('rejects free text in place of an account code', async () => {
+    await assert.rejects(() => run({ ledgerAccountCode: 'ค่าน้ำมัน' }), BadRequestException);
+  });
+
+  it('strips anything else the caller sends', async () => {
+    await assert.rejects(
+      () => run({ ledgerAccountCode: '5320-01', companyId: 'co-2' }),
+      BadRequestException,
+    );
   });
 });

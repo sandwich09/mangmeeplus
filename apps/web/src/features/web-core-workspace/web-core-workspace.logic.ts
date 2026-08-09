@@ -4,6 +4,12 @@ import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { filterSettingsSidebarItems } from './settings-menu.logic';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
+import { ACCOUNTING_UI_HIDDEN, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
+
+/** Accounting screens are closed this launch while the ledger keeps posting — see the constant. */
+function accountingUiHidden(moduleKey: string): boolean {
+  return ACCOUNTING_UI_HIDDEN && ACCOUNTING_UI_HIDDEN_MODULE_KEYS.has(moduleKey);
+}
 
 const ROUTE_GATED_MODULE_PATHS = new Map([
   ['poapproval', '/settings/po-approval'],
@@ -23,6 +29,7 @@ export function filterModulesByPermissions(
   userPermissions: string[],
 ): WorkspaceModule[] {
   return modules.filter((mod) => {
+    if (accountingUiHidden(mod.key)) return false;
     if (mod.key === 'roles') {
       return ROLE_NAV_ROUTE_PATHS.some((path) => canSeeRoute(path, userPermissions));
     }
@@ -72,14 +79,20 @@ export function canAccessWorkspacePath(
   const workspacePath = pathname.startsWith(`/companies/${companyId}`)
     ? pathname.slice(`/companies/${companyId}`.length) || '/'
     : pathname;
-  if (findRoutePermissionRule(workspacePath)) return canSeeRoute(workspacePath, userPermissions);
-
   const matchingModule = modules
     .filter((module) => {
       const href = module.buildHref(companyId);
       return pathname === href || pathname.startsWith(`${href}/`);
     })
     .sort((a, b) => b.buildHref(companyId).length - a.buildHref(companyId).length)[0];
+
+  // Hoisted above BOTH gates below on purpose. `/journal` also owns a ROUTE_PERMISSION_RULES entry,
+  // so the rule branch would open it to any holder of `ledger.journal.read`; `/period-closing` has
+  // no rule and would fall through to the no-match default, which is "allowed". Either path would
+  // leave a hidden screen reachable by a typed-in URL.
+  if (matchingModule && accountingUiHidden(matchingModule.key)) return false;
+
+  if (findRoutePermissionRule(workspacePath)) return canSeeRoute(workspacePath, userPermissions);
 
   if (!matchingModule || matchingModule.requiredAnyPermissions.length === 0) return true;
   if (!hasAnyPermission(userPermissions, matchingModule.requiredAnyPermissions)) return false;

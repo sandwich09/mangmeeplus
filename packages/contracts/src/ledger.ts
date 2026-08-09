@@ -289,6 +289,12 @@ export type LedgerSourcePostingInput = {
     vatAmount?: string;
     whtAmount?: string;
     categoryKey?: string;
+    /**
+     * Identity of the line's ExpenseCategory, used to look up its REVIEWED ledger account
+     * (audit CR-2). Distinct from `categoryKey`/`accountHint` above, which are suggestions and must
+     * never be posting authority.
+     */
+    expenseCategoryId?: string;
     accountHint?: string;
     taxSnapshot?: import('./transaction-tax.js').TransactionTaxSnapshot;
     taxComponents?: import('./transaction-tax.js').TransactionTaxComponentPreview[];

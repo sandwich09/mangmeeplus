@@ -2052,6 +2052,12 @@ model ExpenseCategory {
   companyId           String?
   name                String
   accountHintKey      String
+  /// Reviewed ledger account code this category debits when its expense accrues (audit CR-2,
+  /// bootstrap spec §9.2). Null means "not reviewed yet" and posting reports
+  /// `expense_account_unmapped` rather than falling back to a guessed account — `accountHintKey`
+  /// above is a suggestion and is deliberately NOT used as posting authority. Held as a code, not
+  /// an FK, because posting resolves accounts by code at journal-creation time.
+  ledgerAccountCode   String?
   /// Suggested input Tax Code as its stable external code (e.g. "O7"), never a
   /// TaxCodeDefinition id — that row is one dated version and an FK would pin it.
   defaultInputTaxCode String?

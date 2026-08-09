@@ -10,10 +10,13 @@ import { PrismaProcurementRepository } from '../../../procurement/infrastructure
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { validateJournalBalance, buildReversalLines } from '../../domain/logic/journal-balance.logic';
 import {
+  BOUND_EXPENSE_ACCRUAL_EVENTS,
+  buildBoundExpenseAccrualLines,
   buildDefaultPostingLines,
   buildTransactionTaxPostingLines,
   derivePeriodKey,
   requiresReviewedPostingRules,
+  type ExpenseAccountBindings,
 } from '../../domain/logic/posting-engine.logic';
 import { buildAccountingPaymentPostingSource, buildDocumentPostingInput } from '../../../accounting-documents/application/use-cases/posting-source.use-case';
 import { buildVendorBillPostingSource, buildVendorBillPp36PostingSource } from '../../../procurement/application/use-cases/vendor-bill.use-case';
@@ -66,6 +69,25 @@ function hasCallerOwnedManualMetadata(line: {
 }): boolean {
   return [line.sourceType, line.sourceId, line.taxCode, line.taxSnapshot, line.taxComponentKey, line.reportContributions]
     .some((value) => value !== null && value !== undefined);
+}
+
+/**
+ * Reviewed payable accounts for `TH_SME_COA_V1` (owner decision 2026-08-09, audit CR-2). The
+ * template has no dedicated เจ้าหนี้พนักงาน, so employee reimbursement accrues to the generic
+ * accrued-expense account rather than being merged into trade AP.
+ */
+const REVIEWED_PAYABLE_CODES = { accountsPayableCode: '2120-01', employeePayableCode: '2131-09' } as const;
+
+/** Human-readable Thai message per stable binding-gap code. */
+function postingBindingMessage(code: string): string {
+  if (code.startsWith('expense_account_unmapped')) {
+    return 'ยังไม่ได้กำหนดบัญชีแยกประเภทให้หมวดค่าใช้จ่ายนี้ กรุณากำหนดบัญชีของหมวดก่อน';
+  }
+  if (code === 'wht_account_unmapped') {
+    return 'ยังไม่รองรับการลงบัญชีเอกสารที่มีภาษีหัก ณ ที่จ่าย เพราะบัญชีภาษีหัก ณ ที่จ่ายแยกตามแบบยื่น (ภ.ง.ด.3/53)';
+  }
+  if (code === 'expense_allocation_base_zero') return 'ยอดตามรายการเป็นศูนย์ จึงปันส่วนค่าใช้จ่ายเข้าบัญชีไม่ได้';
+  return 'บริษัทที่ใช้ผังบัญชีมาตรฐานต้องกำหนดและอนุมัติกฎการลงบัญชีก่อนบันทึกอัตโนมัติ';
 }
 
 function normalizeExpenseVatForLedger(source: LedgerSourcePostingInput, evidence: any): LedgerSourcePostingInput {
@@ -157,6 +179,9 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
         vatAmount: line.vatAmount,
         whtAmount: line.whtAmount,
         categoryKey: line.accountHintKey ?? line.taxCategory,
+        // Falls back to the record-level category so a single-category expense whose lines carry no
+        // category of their own still resolves a reviewed account instead of reporting no_category.
+        expenseCategoryId: line.expenseCategoryId ?? input.expenseCategoryId ?? undefined,
         taxSnapshot: line.taxSnapshot,
         taxComponents: line.taxComponents,
       })),
@@ -471,6 +496,27 @@ export class GenerateJournalFromSourceUseCase {
     throw new BadRequestException({ code: 'unsupported_posting_source', message: 'Journal generation accepts only a recognized server-owned source. Use the manual-journal flow for manual entries.' });
   }
 
+  /**
+   * Reviewed account bindings for this company's expense categories. Only the categories the source
+   * actually references are loaded, so an unrelated unmapped category never blocks a posting.
+   */
+  private async loadExpenseAccountBindings(
+    companyId: string,
+    source: LedgerSourcePostingInput,
+  ): Promise<ExpenseAccountBindings> {
+    const categoryIds = [...new Set(source.lines.map((line) => line.expenseCategoryId).filter(Boolean))] as string[];
+    const rows = categoryIds.length
+      ? await this.prisma.client.expenseCategory.findMany({
+        where: { id: { in: categoryIds }, companyId, ledgerAccountCode: { not: null } },
+        select: { id: true, ledgerAccountCode: true },
+      })
+      : [];
+    return {
+      ...REVIEWED_PAYABLE_CODES,
+      expenseByCategoryId: new Map(rows.map((row) => [row.id, row.ledgerAccountCode!])),
+    };
+  }
+
   async execute(ctx: RequestContext, rawSource: PostingSourceRef): Promise<JournalEntrySummary> {
     requirePerm(ctx, 'journal.entry.post');
     const source = await this.canonicalSource(ctx, rawSource);
@@ -524,32 +570,44 @@ export class GenerateJournalFromSourceUseCase {
       source.sourceEventType,
       reviewedRulesRequired,
     );
+    // Audit CR-2: a governed company has no PostingRule and must not fall back to
+    // DEFAULT_ACCOUNT_CODES — those predate TH_SME_COA_V1 and would book every expense to เงินเดือน.
+    // Expense accrual instead resolves the reviewed per-category bindings; every other event type
+    // still has no reviewed mapping and keeps failing closed with the actionable code.
+    let boundLines: LedgerJournalLineInput[] | null = null;
     if (!rule && reviewedRulesRequired) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'posting_rule_missing');
-      await this.audit.log({
-        companyId: ctx.companyId,
-        actorUserId: ctx.userId,
-        action: 'ledger.journal.generate',
-        targetType: 'journal_entry',
-        targetId: source.sourceId,
-        requestId: ctx.requestId,
-        result: 'FAILED',
-        riskLevel: 'HIGH',
-        metadataJson: {
+      const bindable = (BOUND_EXPENSE_ACCRUAL_EVENTS as readonly string[]).includes(source.sourceEventType);
+      const bound = bindable
+        ? buildBoundExpenseAccrualLines(source, await this.loadExpenseAccountBindings(ctx.companyId, source))
+        : { error: 'posting_rule_missing' as const };
+      if ('error' in bound) {
+        await this.markSource(ctx, source, 'posting_error', undefined, bound.error);
+        await this.audit.log({
+          companyId: ctx.companyId,
+          actorUserId: ctx.userId,
+          action: 'ledger.journal.generate',
+          targetType: 'journal_entry',
+          targetId: source.sourceId,
+          requestId: ctx.requestId,
+          result: 'FAILED',
+          riskLevel: 'HIGH',
+          metadataJson: {
+            sourceType: source.sourceType,
+            sourceId: source.sourceId,
+            error: bound.error,
+            chartTemplateKey: company.chartOfAccountsTemplateKey,
+          },
+        });
+        throw new BadRequestException({
+          code: bound.error,
           sourceType: source.sourceType,
-          sourceId: source.sourceId,
-          error: 'posting_rule_missing',
-          chartTemplateKey: company.chartOfAccountsTemplateKey,
-        },
-      });
-      throw new BadRequestException({
-        code: 'posting_rule_missing',
-        sourceType: source.sourceType,
-        eventType: source.sourceEventType,
-        message: 'บริษัทที่ใช้ผังบัญชีมาตรฐานต้องกำหนดและอนุมัติกฎการลงบัญชีก่อนบันทึกอัตโนมัติ',
-      });
+          eventType: source.sourceEventType,
+          message: postingBindingMessage(bound.error),
+        });
+      }
+      boundLines = bound.lines;
     }
-    let baseLines = rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' });
+    let baseLines = boundLines ?? (rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' }));
     if (rule) {
       const { resolvePostingLinesFromRule } = await import('../../domain/logic/posting-engine.logic.js');
       baseLines = resolvePostingLinesFromRule(source, rule.mappingJson);

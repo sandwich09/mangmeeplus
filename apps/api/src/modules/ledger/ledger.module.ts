@@ -9,6 +9,10 @@ import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 import { PrismaLedgerRepository } from './infrastructure/prisma-ledger.repository';
 import { ListAccountsUseCase, GetAccountUseCase, CreateAccountUseCase, UpdateAccountUseCase } from './application/use-cases/account.use-case';
 import {
+  ListExpenseAccountBindingsUseCase,
+  SetExpenseAccountBindingUseCase,
+} from './application/use-cases/expense-account-binding.use-case';
+import {
   ListJournalsUseCase, GetJournalUseCase, CreateManualJournalUseCase,
   PostJournalUseCase, ReverseJournalUseCase, GenerateJournalFromSourceUseCase,
 } from './application/use-cases/journal.use-case';
@@ -44,6 +48,8 @@ import { ChartReadinessService } from './application/services/chart-readiness.se
     ListJournalsUseCase,
     GetJournalUseCase,
     CreateManualJournalUseCase,
+    ListExpenseAccountBindingsUseCase,
+    SetExpenseAccountBindingUseCase,
     PostJournalUseCase,
     ReverseJournalUseCase,
     GenerateJournalFromSourceUseCase,

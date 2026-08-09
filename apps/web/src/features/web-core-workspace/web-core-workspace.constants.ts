@@ -1,5 +1,21 @@
 import type { WorkspaceModule, NavGroup } from './web-core-workspace.model';
 
+/**
+ * Accounting screens are not open to users in this launch (owner decision 2026-08-09; audit CR-2,
+ * CR-3). This is PRESENTATION ONLY: the `double_entry_ledger` entitlement stays ON so background
+ * posting, account codes and tax mapping keep working server-side, and no entitlement migration is
+ * needed for companies already onboarded. Hiding here rather than in the entitlement is the whole
+ * point — turning the feature off would stop the posting we still want.
+ *
+ * Covers both the sidebar row and direct-URL access (`filterModulesByPermissions` and
+ * `canAccessWorkspacePath`). Set to false / empty the set to reopen the screens; the routes,
+ * permissions and APIs are untouched.
+ */
+export const ACCOUNTING_UI_HIDDEN: boolean = true;
+
+/** Workspace modules hidden by {@link ACCOUNTING_UI_HIDDEN}: สมุดรายวัน and รอบบัญชี. */
+export const ACCOUNTING_UI_HIDDEN_MODULE_KEYS: ReadonlySet<string> = new Set(['journal', 'closing']);
+
 export const WORKSPACE_MODULES: WorkspaceModule[] = [
   {
     key: 'dashboard',
