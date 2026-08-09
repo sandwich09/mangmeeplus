@@ -17,13 +17,31 @@ export type CreateRoleCommand = CreateRoleInput & {
   isOwner?: boolean;
 };
 
-function roleKeyFromName(name: string): string {
-  const slug = name
+/**
+ * Audit H-19: the slug keeps only ASCII, so every Thai name stripped to nothing and became `ROLE`.
+ * Role keys are what routing compares — `approverRoleSnapshot: 'MANAGER'` is pinned on every
+ * reimbursement — so the most natural setup a Thai company can do (add a member, give them the
+ * "ผู้จัดการ" preset) produced a role that could never match anything. The employee saw an approval
+ * screen with a permanently empty queue.
+ *
+ * When the name yields nothing, the preset the role was created from already carries the canonical
+ * key: `tpl.x.manager` -> `MANAGER`, which is exactly what the routing expects. That is a lookup,
+ * not a transliteration guess.
+ *
+ * A hand-typed Thai name with no preset still falls back to `ROLE`, and the caller's retry loop
+ * numbers the collisions. Such a role does not match role-routed steps — the OWNER fallback in
+ * matchesApproverRole is what keeps that company able to act, and naming a person on the step is
+ * the other way.
+ */
+export function roleKeyFromName(name: string, roleTemplateKey?: string): string {
+  const asciiSlug = (value: string) => value
     .normalize('NFKD')
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toUpperCase();
-  return slug || 'ROLE';
+
+  // The last segment is the role identity; the prefix is catalogue bookkeeping (industry tag).
+  return asciiSlug(name) || asciiSlug(roleTemplateKey?.split('.').pop() ?? '') || 'ROLE';
 }
 
 @Injectable()
@@ -55,7 +73,7 @@ export class CreateRoleUseCase {
       select: { id: true },
     });
 
-    const baseKey = roleKeyFromName(cmd.name);
+    const baseKey = roleKeyFromName(cmd.name, cmd.roleTemplateKey);
     const role = await this.prisma.client.$transaction(async (tx) => {
       let created;
       for (let attempt = 0; attempt < 5; attempt++) {
