@@ -456,6 +456,18 @@ export type LineAiOpenClarification = {
   /** Correction-target shortlist the question named (≤ 5). A snapshot for wording only — the
    *  dispatcher re-runs the candidate query on the answer and intersects; never authorization. */
   candidateExpenseIds?: string[];
+  /**
+   * Set when the question was asked ABOUT a file the customer already sent and the server still
+   * holds. Without this the model only knows a picture was mentioned once and has no way to tell
+   * "answer about the stored file" from "ask them to send a picture" — which is what made the
+   * clarify loop back on itself. Ids are opaque handles for the dispatcher to resolve; the model
+   * never dereferences them itself.
+   */
+  pendingMedia?: {
+    pendingMediaId: string;
+    attachmentId: string;
+    mimeType: string;
+  };
 };
 
 // ── Item 10F: per-sub-request coverage (critic verdicts) ─────────────────────

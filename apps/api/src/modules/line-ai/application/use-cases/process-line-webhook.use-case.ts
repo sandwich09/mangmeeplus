@@ -111,9 +111,29 @@ const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่�
 const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัย';
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
-const MEDIA_CLARIFY_REPLY = '🤔 รูปนี้เป็นใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก หรือเป็นภาพประกอบคำถามครับ?';
+const MEDIA_CLARIFY_REPLY = [
+  '🤔 รูปนี้เป็นอะไรครับ ตอบเลขข้อได้เลย',
+  '1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก',
+  '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
+].join('\n');
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
+/** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
+const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
+
+/** Same chatKey the text path and the message buffer use: the group, else the person. */
+function mediaChatKey(event: LineReceiptUploadEvent): string {
+  return event.pushTargetId ?? event.lineUserId;
+}
+
+/**
+ * Multi-turn memory preview for a media turn. Naming the stored attachment is the difference
+ * between the model knowing "a picture was mentioned" and knowing "this exact file is on the
+ * server" — without the id it can only ask the customer to send it again.
+ */
+function mediaPreviewLabel(pending?: { attachmentId: string } | null): string {
+  return pending ? `[ผู้ใช้ส่งรูป/ไฟล์ #${pending.attachmentId}]` : '[ผู้ใช้ส่งรูป/ไฟล์]';
+}
 /** Preview length stored per turn for multi-turn memory (columns are unbounded text). */
 const PREVIEW_MAX_CHARS = 240;
 /** How far back a correction may reach. Older records are corrected in web. */
@@ -289,7 +309,14 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
  *  ponytail: substring match over a fixed keyword set — enough for the short yes/no follow-up;
  *  swap for the intake router only if free-form replies start slipping through. */
 export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'ambiguous' {
-  const t = (text ?? '').toLowerCase();
+  const t = (text ?? '').toLowerCase().trim();
+  // The question is numbered, so a lone choice is unambiguous. Anchored to the whole reply on
+  // purpose: a bare '1' is an answer, but '1500' or 'จ่ายไป 2 ใบ' is not.
+  const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([12])[.)]?$/.exec(t);
+  if (numbered) return numbered[1] === '1' ? 'receipt' : 'illustration';
+  // Thai ordinals are the same answer spelled out, and just as unambiguous against a numbered list.
+  if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:แรก|หนึ่ง)$/.test(t)) return 'receipt';
+  if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สอง|ที่สอง)$/.test(t)) return 'illustration';
   // Detect a refusal FIRST: receipt keywords like 'บันทึก' are substrings of refusals such as
   // 'ไม่ต้องบันทึก' ("no need to save"), so a plain keyword scan would build a draft from an
   // explicit "no". Thai negation is 'ไม่' (NOT the yes/no question particle 'ไหม'); English
@@ -297,7 +324,13 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   // receipt — treat it as an illustration and answer the original caption instead.
   const negation = /ไม่|ยกเลิก|\b(?:no|don't|do not|cancel)\b/.test(t);
   const illustration = negation || ['ภาพประกอบ', 'แค่ถาม', 'illustration'].some((k) => t.includes(k));
-  const receipt = !negation && ['ใบเสร็จ', 'บันทึก', 'ใช่', 'receipt', 'บิล', 'สลิป'].some((k) => t.includes(k));
+  const receipt = !negation && [
+    'ใบเสร็จ', 'บันทึก', 'ใช่', 'receipt', 'บิล', 'สลิป',
+    // Named documents. 'เอกสารค่าใช้จ่าย' and 'ค่าใช้จ่าย' are the words the question itself uses —
+    // echoing them back used to read as ambiguous, which is how the loop began.
+    'ใบกำกับภาษี', 'ใบแจ้งหนี้', 'ใบส่งของ', 'ใบวางบิล', 'เอกสารค่าใช้จ่าย', 'ค่าใช้จ่าย',
+    'invoice', 'bill', 'slip', 'tax invoice',
+  ].some((k) => t.includes(k));
   if (receipt && !illustration) return 'receipt';
   if (illustration && !receipt) return 'illustration';
   return 'ambiguous';
@@ -919,15 +952,20 @@ export class ProcessLineWebhookUseCase {
     if (pendingMedia) {
       const decision = classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         await this.resolvePendingMediaAsReceipt(event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText);
         return;
       }
       if (decision === 'illustration') {
         await this.prisma.client.lineIntakePendingMedia.update({ where: { id: pendingMedia.id }, data: { status: 'RESOLVED_ILLUSTRATION' } });
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
         normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
       }
-      // ambiguous → fall through with the original reply; the row stays PENDING.
+      // ambiguous → fall through with the original reply; the row stays PENDING. Unlike before, the
+      // ledger now carries this question as an open clarification WITH the stored file, so the turn
+      // below reaches the model knowing the picture is already on the server — it can answer or
+      // re-ask about THAT file instead of asking the customer to send one.
     }
 
     const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, resolvedAccess.permissions) : undefined;
@@ -1690,13 +1728,19 @@ export class ProcessLineWebhookUseCase {
       if (caption && canCaptureExpense) {
         // Only the delivery that CREATES the pending row asks the clarify question. A redelivery
         // (new webhookEventId, same lineMessageId) reuses the row and stays silent — idempotent.
-        const { created } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
         if (created) {
           await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-            userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
+            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
           });
+          if (pending) {
+            await this.appendMediaClarification({
+              companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+              userId: identity.userId, caption, question: MEDIA_CLARIFY_REPLY, pending,
+            });
+          }
         }
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return { outcome: 'done' };
@@ -1755,13 +1799,19 @@ export class ProcessLineWebhookUseCase {
         ? MEDIA_CLARIFY_REPLY
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       if (decision.persistMedia && canCaptureExpense) {
-        const { created } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
         if (created) {
           await this.deliverReply(event, reply);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-            userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
+            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
+          if (pending) {
+            await this.appendMediaClarification({
+              companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+              userId: identity.userId, caption, question: reply, pending,
+            });
+          }
         }
       } else {
         await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply);
@@ -1923,9 +1973,20 @@ export class ProcessLineWebhookUseCase {
     userId: string,
     caption: string,
     media: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer },
-  ): Promise<{ created: boolean }> {
+  ): Promise<{ created: boolean; pending?: { id: string; attachmentId: string; mimeType: string } }> {
     const key = { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } };
-    if (await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key })) return { created: false };
+    const redelivered = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    // Redelivery of the SAME message: stay silent, exactly as before.
+    if (redelivered) return { created: false, pending: redelivered };
+    // A DIFFERENT picture while one question is still open. Before, this opened a second row and
+    // asked again — which is what turned an unrecognised answer into an endless loop, storing one
+    // more copy of the image every round. Answer the open question about the newest file instead:
+    // repoint the existing row at this upload and stay silent.
+    const open = await this.prisma.client.lineIntakePendingMedia.findFirst({
+      where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (open) return { created: false, pending: open };
     if (!this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('LINE_ATTACHMENT_MODULE_UNAVAILABLE');
     // Reserve an attachment id (cheap DB intent, no bytes yet), then CLAIM the unique pending row
     // BEFORE transferring bytes. Only the race winner uploads + completes the attachment.
@@ -1943,14 +2004,77 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       // Lost the unique race — another delivery already claimed the row. Skip the byte upload so
       // no second copy is stored; the reserved intent stays incomplete for storage GC.
-      if ((err as { code?: string }).code === 'P2002') return { created: false };
+      if ((err as { code?: string }).code === 'P2002') {
+        const winner = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+        return { created: false, ...(winner ? { pending: winner } : {}) };
+      }
       throw err;
     }
     await this.uploadLineMedia(intent, media);
     await this.completeAttachmentUpload.execute(ctx, {
       attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize,
     });
-    return { created: true };
+    const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    return { created: true, ...(pending ? { pending } : {}) };
+  }
+
+  /** Carry the open media question into the ledger so the NEXT turn arrives knowing a file is
+   *  already stored — the text path has always done this for its own clarifies, and the media path
+   *  not doing it is what left the follow-up answer with no context to attach to. Ledger writes
+   *  fail open (§13); LineIntakePendingMedia in Postgres stays the source of truth either way. */
+  private async appendMediaClarification(input: {
+    companyId: string;
+    chatKey: string;
+    requestId: string;
+    webhookEventId: string;
+    userId: string;
+    caption: string;
+    question: string;
+    pending: { id: string; attachmentId: string; mimeType: string };
+  }): Promise<void> {
+    await this.ledger?.appendSubRequests({
+      companyId: input.companyId, chatKey: input.chatKey, turnId: input.requestId,
+      webhookEventId: input.webhookEventId, userId: input.userId,
+      items: [{
+        // The caption is the request the question defers, mirroring the text path. With no caption
+        // the file itself is the request, so name it rather than storing an empty ask.
+        text: input.caption || MEDIA_PENDING_REQUEST_TEXT,
+        state: 'waiting_user',
+        clarifyQuestion: input.question,
+        intent: 'CLARIFY',
+        clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        pendingMedia: {
+          pendingMediaId: input.pending.id,
+          attachmentId: input.pending.attachmentId,
+          mimeType: input.pending.mimeType,
+        },
+      }],
+    });
+  }
+
+  /** Close the ledger copy of a media question once its Postgres row is resolved, so the next turn
+   *  does not carry a question the customer has already answered. Best-effort by design: the ledger
+   *  is a carrier, `LineIntakePendingMedia` is the source of truth, and Redis fails open (§13). */
+  private async ackMediaClarification(
+    companyId: string,
+    event: LineTextEvent,
+    userId: string,
+    pendingMediaId: string,
+    outcome: 'acked' | 'followed_up',
+  ): Promise<void> {
+    if (!this.ledger) return;
+    try {
+      const chatKey = event.pushTargetId ?? event.lineUserId;
+      const open = await this.ledger.openWaitingUser(companyId, chatKey, userId);
+      for (const clarification of open) {
+        if (clarification.pendingMedia?.pendingMediaId !== pendingMediaId) continue;
+        await this.ledger.ack(clarification.entry, outcome, { pendingMediaId });
+      }
+    } catch (err) {
+      // Includes ConsumptionMarkerUnavailableError: failing to tidy up must never sink a reply the
+      // customer is waiting for. A stale entry expires on its own via the reclaim path.
+      this.logger.warn({ msg: 'line_ai_media_clarify_ack_failed', pendingMediaId, error: (err as Error).message });
+    }
   }
 
   /** RECEIPT-05: the customer confirmed the pending media is an expense document. Build the

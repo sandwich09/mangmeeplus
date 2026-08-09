@@ -95,6 +95,8 @@ function makeHarness(opts: {
   receiptOcrResult?: any;
   findExpenseByLineMessageId?: (companyId: string, lineMessageId: string) => Promise<any>;
   prisma?: any;
+  /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
+  captureLedger?: any[];
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -198,8 +200,15 @@ function makeHarness(opts: {
       createDuplicateCandidate: async () => undefined,
     } as any,
     // ledger: only the open-clarification read matters for the correction evidence tests
-    (opts.openWaiting
-      ? { enabled: true, openWaitingUser: async () => opts.openWaiting, ack: async () => undefined, appendTurn: async () => null, appendSubRequests: async () => undefined, coverageToSubRequests: () => [] }
+    (opts.openWaiting || opts.captureLedger
+      ? {
+        enabled: true,
+        openWaitingUser: async () => opts.openWaiting ?? [],
+        ack: async () => undefined,
+        appendTurn: async () => null,
+        appendSubRequests: async (input: any) => { opts.captureLedger?.push(input); },
+        coverageToSubRequests: () => [],
+      }
       : undefined) as any,
     // createUploadIntent (RECEIPT-05 byte persist)
     { execute: async (_ctx: any, cmd: any) => { createUploadIntentCalls.push(cmd); return { attachmentId: 'pending-att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() }; } } as any,
@@ -676,7 +685,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
     assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /ใบเสร็จ.*หรือเป็นภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
   it('explicit expense caption keeps the existing manual-review draft when OCR is unavailable', async () => {
@@ -875,7 +884,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
     assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /ใบเสร็จ.*หรือเป็นภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
   it('router unavailable with a caption still clarifies even when OCR sees a receipt', async () => {
@@ -886,7 +895,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.completeCalls.length, 0);
     assert.equal(recordUpdates.length, 0);
     assert.equal(pendingMediaRows.length, 1);
-    assert.match(h.replies[0] ?? '', /ใบเสร็จ.*หรือเป็นภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
   it('mutation request with media is refused with web guidance and remembered as refused', async () => {
@@ -959,7 +968,7 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.equal(pendingMediaRows[0].lineMessageId, 'msg-media-1');
     assert.equal(recordUpdates.length, 0, 'no expense draft created');
     assert.equal(h.createExpenseCalls.length, 0);
-    assert.match(h.replies[0] ?? '', /ใบเสร็จ.*หรือเป็นภาพประกอบ/);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
     const statuses = updates.map((u: any) => u.data?.status);
     assert.ok(statuses.includes('completed'), `expected completed, got ${statuses.join(',')}`);
     assert.ok(!statuses.includes('caption_deferred_to_text'), 'no longer defers the caption');
@@ -998,7 +1007,10 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
     await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-race' }, 'ยอดขายเดือนนี้เท่าไหร่');
-    assert.equal(h.createUploadIntentCalls.length, 2, 'both racers reserve an upload intent (row claimed before upload)');
+    // Was 2 before the media-clarify context fix: every racer reserved an intent and the loser
+    // orphaned it. The loser now sees the winner's still-open PENDING row and attaches to it, so no
+    // second intent is reserved at all — strictly fewer orphans, same one-upload invariant.
+    assert.equal(h.createUploadIntentCalls.length, 1, 'the loser attaches to the open row instead of reserving its own intent');
     assert.equal(h.uploads.length, 1, 'only the race winner uploaded bytes — the loser orphans nothing');
     assert.equal(h.completeAttachmentCalls.length, 1, 'exactly one attachment persisted');
     assert.equal(pendingMediaRows.length, 1, 'exactly one pending row');
@@ -1171,6 +1183,66 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
   });
 });
 
+describe('media clarify carries its file into the next turn', () => {
+  // The defect this closes: the media path stored the picture and asked a question, but wrote
+  // nothing to the ledger. The follow-up reply therefore arrived with no open clarification and no
+  // handle on the stored file, so the assistant asked the customer to send a picture it already had.
+  it('appends a waiting_user clarification naming the stored attachment', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      captureLedger,
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
+
+    assert.equal(captureLedger.length, 1, 'the question is carried, not dropped');
+    const item = captureLedger[0].items[0];
+    assert.equal(item.state, 'waiting_user');
+    assert.equal(item.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+    // The caption is the deferred request, mirroring the text path.
+    assert.equal(item.text, 'ยอดขายเดือนนี้เท่าไหร่');
+    // The handle that lets the next turn talk about THIS file instead of asking for a new one.
+    assert.equal(item.pendingMedia?.attachmentId, 'pending-att-1');
+    assert.ok(item.pendingMedia?.pendingMediaId, 'the pending row id rides along');
+  });
+
+  it('names the file in the turn preview so multi-turn memory can refer back to it', async () => {
+    const { prisma, turnCreates } = makePrisma();
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      prisma,
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
+
+    // Was the bare '[ผู้ใช้ส่งรูป/ไฟล์]': the model could see a picture had been sent but had no
+    // way to say WHICH, so a later turn could only ask for it again.
+    assert.match(turnCreates.at(-1)?.data?.userMessagePreview ?? '', /\[ผู้ใช้ส่งรูป\/ไฟล์ #pending-att-1\]/);
+  });
+
+  // Step 3 of the reported loop: an unrecognised answer left the row PENDING, the customer sent the
+  // picture again, and a SECOND row + question came back — forever, storing a copy each round.
+  it('re-sending a picture while a question is open does not ask again or store a second copy', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
+    const repliesAfterFirst = h.replies.length;
+    await h.useCase.executeReceiptUpload(
+      { ...MEDIA_EVENT, webhookEventId: 'evt-media-2', lineMessageId: 'line-msg-2' },
+      'ยอดขายเดือนนี้เท่าไหร่',
+    );
+
+    assert.equal(h.replies.length, repliesAfterFirst, 'the open question is not repeated');
+    assert.equal(h.uploads.length, 1, 'the picture is not stored twice');
+  });
+});
+
 describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
   it('affirmative / receipt words → receipt', () => {
     for (const t of ['ใช่ ใบเสร็จ', 'บันทึกเลย', 'receipt please', 'บิลค่าอาหาร', 'สลิปโอน']) {
@@ -1199,5 +1271,43 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
     assert.equal(classifyPendingMediaReply('เดี๋ยวก่อนนะ'), 'ambiguous');
     assert.equal(classifyPendingMediaReply('ใช่ แต่แค่ภาพประกอบ'), 'ambiguous');
     assert.equal(classifyPendingMediaReply(''), 'ambiguous');
+  });
+
+  // The reported loop: the question offers choices, the customer answers with one, and the resolver
+  // did not recognise it — so the row stayed PENDING and the reply was routed as a fresh message
+  // with no picture attached to it, which made the assistant ask for a picture again.
+  it('accepts the numbered choice the question actually offers', () => {
+    for (const t of ['1', '1.', '1)', 'ข้อ 1', 'แรก', 'อันแรก', 'ข้อแรก', 'อันที่ 1']) {
+      assert.equal(classifyPendingMediaReply(t), 'receipt', t);
+    }
+    for (const t of ['2', '2)', 'ข้อ 2', 'สอง', 'อันที่สอง']) {
+      assert.equal(classifyPendingMediaReply(t), 'illustration', t);
+    }
+  });
+
+  // Anchored to the whole reply: a lone digit is a choice, a number inside a sentence is data.
+  it('never reads an amount or a count as a menu choice', () => {
+    for (const t of ['1500', 'จ่ายไป 2 ใบ', '1 พันบาท', '12']) {
+      assert.equal(classifyPendingMediaReply(t), 'ambiguous', t);
+    }
+  });
+
+  it('accepts the document names customers actually type, including the question’s own words', () => {
+    for (const t of ['ใบกำกับภาษี', 'ใบแจ้งหนี้', 'ใบส่งของ', 'ใบวางบิล', 'invoice', 'เอกสารค่าใช้จ่าย']) {
+      assert.equal(classifyPendingMediaReply(t), 'receipt', t);
+    }
+  });
+
+  // Deliberate non-goal: against an A-or-B question a bare "yes" picks a side by guessing. These
+  // fall through to the model, which now receives the open clarification WITH the stored file.
+  it('leaves a bare affirmative to the model rather than guessing a side', () => {
+    for (const t of ['ครับ', 'ค่ะ', 'ok', 'โอเค']) {
+      assert.equal(classifyPendingMediaReply(t), 'ambiguous', t);
+    }
+  });
+
+  it('keeps refusing a negation that also names the document', () => {
+    assert.notEqual(classifyPendingMediaReply('ไม่ใช่ใบกำกับภาษี'), 'receipt');
+    assert.notEqual(classifyPendingMediaReply('ไม่ต้องบันทึกใบเสร็จ'), 'receipt');
   });
 });

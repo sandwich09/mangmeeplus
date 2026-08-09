@@ -67,9 +67,14 @@ export type LedgerEntry = {
   clarifyForIntent?: LineIntakeRouteIntent;
   /** Correction-target shortlist the question named; wording snapshot only, never authorization. */
   candidateExpenseIds?: string[];
+  /** The already-stored file this question was asked about (see LineAiOpenClarification). */
+  pendingMedia?: LedgerPendingMedia;
   valueCandidates?: LineAiValueCandidates;
   createdAt: string;
 };
+
+/** Handle to a file the customer already sent and the server still holds, carried on a clarify. */
+export type LedgerPendingMedia = { pendingMediaId: string; attachmentId: string; mimeType: string };
 
 export type LedgerSubRequestInput = {
   text: string;
@@ -80,6 +85,7 @@ export type LedgerSubRequestInput = {
   clarifyQuestion?: string;
   clarifyForIntent?: LineIntakeRouteIntent;
   candidateExpenseIds?: string[];
+  pendingMedia?: LedgerPendingMedia;
 };
 
 export function ledgerKey(companyId: string, chatKey: string): string {
@@ -105,6 +111,10 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     try { valueCandidates = JSON.parse(map['valueCandidates']) as LineAiValueCandidates; } catch { valueCandidates = undefined; }
   }
   const candidateExpenseIds = (map['candidateExpenseIds'] ?? '').split(',').filter((id) => id.length > 0);
+  // All three or none: a partially written trio would hand the dispatcher an id it cannot resolve.
+  const pendingMedia = map['pendingMediaId'] && map['pendingMediaAttachmentId'] && map['pendingMediaMimeType']
+    ? { pendingMediaId: map['pendingMediaId'], attachmentId: map['pendingMediaAttachmentId'], mimeType: map['pendingMediaMimeType'] }
+    : undefined;
   return {
     id,
     key,
@@ -122,6 +132,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(map['clarifyQuestion'] ? { clarifyQuestion: map['clarifyQuestion'] } : {}),
     ...(map['clarifyForIntent'] ? { clarifyForIntent: map['clarifyForIntent'] as LineIntakeRouteIntent } : {}),
     ...(candidateExpenseIds.length > 0 ? { candidateExpenseIds } : {}),
+    ...(pendingMedia ? { pendingMedia } : {}),
     ...(valueCandidates ? { valueCandidates } : {}),
     createdAt: map['createdAt'] ?? '',
   };
@@ -227,6 +238,11 @@ export class LineAiLedgerService implements OnModuleDestroy {
         ...(item.clarifyQuestion ? { clarifyQuestion: item.clarifyQuestion } : {}),
         ...(item.clarifyForIntent ? { clarifyForIntent: item.clarifyForIntent } : {}),
         ...(item.candidateExpenseIds?.length ? { candidateExpenseIds: item.candidateExpenseIds.join(',') } : {}),
+        ...(item.pendingMedia ? {
+          pendingMediaId: item.pendingMedia.pendingMediaId,
+          pendingMediaAttachmentId: item.pendingMedia.attachmentId,
+          pendingMediaMimeType: item.pendingMedia.mimeType,
+        } : {}),
       }, input.now ?? new Date(), input.turnId);
     }
   }
@@ -297,6 +313,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
           ...(entry.subject ? { subject: entry.subject } : {}),
           ...(entry.clarifyForIntent ? { clarifyForIntent: entry.clarifyForIntent } : {}),
           ...(entry.candidateExpenseIds?.length ? { candidateExpenseIds: entry.candidateExpenseIds } : {}),
+          ...(entry.pendingMedia ? { pendingMedia: entry.pendingMedia } : {}),
           askedAt: entry.createdAt,
           entry,
         });
