@@ -25,33 +25,31 @@ describe('expense Auto-post rules', () => {
   });
 
   it('resolves accrual before a later plain-expense payment leg', () => {
-    assert.equal(nextExpensePostingSource({
-      paymentStatus: 'PAID',
+    assert.deepEqual(nextExpensePostingSource({
+      expenseId: 'expense-1',
       sourceReimbursementRequestId: null,
-      generatedSourceTypes: new Set(),
-    }), 'expense.record');
-    assert.equal(nextExpensePostingSource({
-      paymentStatus: 'PAID',
+      accrualPosted: false,
+      pendingPaymentId: 'payment-1',
+    }), { sourceType: 'expense.record', sourceId: 'expense-1' });
+    assert.deepEqual(nextExpensePostingSource({
+      expenseId: 'expense-1',
       sourceReimbursementRequestId: null,
-      generatedSourceTypes: new Set(['expense.record']),
-    }), 'expense.payment');
+      accrualPosted: true,
+      pendingPaymentId: 'payment-1',
+    }), { sourceType: 'expense.payment', sourceId: 'payment-1' });
   });
 
   it('does not create an expense payment leg for claim expenses or completed sources', () => {
     assert.equal(nextExpensePostingSource({
-      paymentStatus: 'PAID',
+      expenseId: 'expense-1',
       sourceReimbursementRequestId: 'claim-1',
-      generatedSourceTypes: new Set(['expense.record']),
+      accrualPosted: true,
+      pendingPaymentId: 'payment-1',
     }), null);
     assert.equal(nextExpensePostingSource({
-      paymentStatus: 'PAID',
+      expenseId: 'expense-1',
       sourceReimbursementRequestId: null,
-      generatedSourceTypes: new Set(['expense.record', 'expense.payment']),
-    }), null);
-    assert.equal(nextExpensePostingSource({
-      paymentStatus: 'PARTIALLY_PAID',
-      sourceReimbursementRequestId: null,
-      generatedSourceTypes: new Set(['expense.record']),
+      accrualPosted: true,
     }), null);
   });
 });

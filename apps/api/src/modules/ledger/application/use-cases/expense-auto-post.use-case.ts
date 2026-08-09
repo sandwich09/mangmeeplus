@@ -50,34 +50,67 @@ function workerContext(companyId: string): RequestContext {
 
 export function expenseAutoPostCandidateSql(companyId: string, activationAt: Date, limit: number): Prisma.Sql {
   return Prisma.sql`
-    SELECT expense."id"
-    FROM "ExpenseRecord" AS expense
-    WHERE expense."companyId" = ${companyId}
-      AND expense."status"::text = 'CONFIRMED'
-      AND expense."postingStatus"::text = 'pending'
-      AND expense."confirmedAt" >= ${activationAt}
-      AND btrim(coalesce(expense."vendorNameSnapshot", '')) <> ''
-      AND expense."taxEvidenceStatus"::text NOT IN ('NEEDS_REVIEW', 'NOT_TAX_EVIDENCE')
-      AND EXISTS (
-        SELECT 1
-        FROM "AttachmentLink" AS link
-        INNER JOIN "AttachmentObject" AS attachment
-          ON attachment."companyId" = link."companyId"
-          AND attachment."id" = link."attachmentId"
-        WHERE link."companyId" = expense."companyId"
-          AND link."targetType" = 'expense.record'
-          AND link."targetId" = expense."id"
-          AND attachment."status"::text = 'ACTIVE'
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "JournalEntry" AS journal
-        WHERE journal."companyId" = expense."companyId"
-          AND journal."sourceType" = 'expense.record'
-          AND journal."sourceId" = expense."id"
-          AND journal."entryType"::text = 'GENERATED'
-      )
-    ORDER BY expense."confirmedAt" ASC, expense."id" ASC
+    SELECT candidate."sourceType", candidate."sourceId"
+    FROM (
+      SELECT 'expense.record'::text AS "sourceType", expense."id" AS "sourceId",
+        expense."confirmedAt" AS "eventAt", 0 AS "sortOrder"
+      FROM "ExpenseRecord" AS expense
+      WHERE expense."companyId" = ${companyId}
+        AND expense."status"::text = 'CONFIRMED'
+        AND expense."postingStatus"::text = 'pending'
+        AND expense."confirmedAt" >= ${activationAt}
+        AND btrim(coalesce(expense."vendorNameSnapshot", '')) <> ''
+        AND expense."taxEvidenceStatus"::text NOT IN ('NEEDS_REVIEW', 'NOT_TAX_EVIDENCE')
+        AND EXISTS (
+          SELECT 1
+          FROM "AttachmentLink" AS link
+          INNER JOIN "AttachmentObject" AS attachment
+            ON attachment."companyId" = link."companyId"
+            AND attachment."id" = link."attachmentId"
+          WHERE link."companyId" = expense."companyId"
+            AND link."targetType" = 'expense.record'
+            AND link."targetId" = expense."id"
+            AND attachment."status"::text = 'ACTIVE'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "JournalEntry" AS journal
+          WHERE journal."companyId" = expense."companyId"
+            AND journal."sourceType" = 'expense.record'
+            AND journal."sourceId" = expense."id"
+            AND journal."entryType"::text = 'GENERATED'
+        )
+      UNION ALL
+      SELECT 'expense.payment'::text AS "sourceType", payment."id" AS "sourceId",
+        payment."createdAt" AS "eventAt", 1 AS "sortOrder"
+      FROM "ExpensePayment" AS payment
+      INNER JOIN "ExpenseRecord" AS expense
+        ON expense."companyId" = payment."companyId" AND expense."id" = payment."expenseId"
+      WHERE payment."companyId" = ${companyId}
+        AND payment."status"::text = 'RECORDED'
+        AND payment."postingStatus"::text = 'pending'
+        AND payment."createdAt" >= ${activationAt}
+        AND expense."status"::text = 'CONFIRMED'
+        AND expense."sourceReimbursementRequestId" IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM "JournalEntry" AS accrual
+          WHERE accrual."companyId" = expense."companyId"
+            AND accrual."sourceType" = 'expense.record'
+            AND accrual."sourceId" = expense."id"
+            AND accrual."entryType"::text = 'GENERATED'
+            AND accrual."status"::text = 'POSTED'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "JournalEntry" AS journal
+          WHERE journal."companyId" = payment."companyId"
+            AND journal."sourceType" = 'expense.payment'
+            AND journal."sourceId" = payment."id"
+            AND journal."entryType"::text = 'GENERATED'
+        )
+    ) AS candidate
+    ORDER BY candidate."eventAt" ASC, candidate."sortOrder" ASC, candidate."sourceId" ASC
     LIMIT ${limit}
   `;
 }
@@ -133,7 +166,7 @@ export class DrainExpenseAutoPostUseCase {
       for (const company of companies) {
         const activationAt = company.featureEntitlements.find((row) => row.featureKey === 'expense_auto_post')?.updatedAt;
         if (!activationAt) continue;
-        const rows = await this.prisma.client.$queryRaw<Array<{ id: string }>>(
+        const rows = await this.prisma.client.$queryRaw<Array<{ sourceType: 'expense.record' | 'expense.payment'; sourceId: string }>>(
           expenseAutoPostCandidateSql(company.id, activationAt, limit),
         );
         candidates += rows.length;
@@ -142,16 +175,18 @@ export class DrainExpenseAutoPostUseCase {
           try {
             await this.generateJournal.execute(ctx, {
               companyId: company.id,
-              sourceType: 'expense.record',
-              sourceId: row.id,
+              sourceType: row.sourceType,
+              sourceId: row.sourceId,
             } as any);
             posted += 1;
           } catch (error) {
             failed += 1;
-            await this.expenseRepo.updatePostingStatus(company.id, row.id, {
-              postingStatus: 'posting_error',
-              postingError: redactedExpensePostingError(error),
-            });
+            const postingError = redactedExpensePostingError(error);
+            if (row.sourceType === 'expense.payment') {
+              await this.expenseRepo.updatePaymentPostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });
+            } else {
+              await this.expenseRepo.updatePostingStatus(company.id, row.sourceId, { postingStatus: 'posting_error', postingError });
+            }
           }
         }
       }

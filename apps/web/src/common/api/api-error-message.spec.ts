@@ -35,6 +35,12 @@ test('translates chart-template and posting-readiness failures', () => {
   assert.match(translateApiError('posting_rule_missing')!, /ยังไม่มีกฎลงบัญชี/);
 });
 
+test('translates partial-payment validation and settlement-route failures', () => {
+  assert.match(translateApiError('expense_payment_exceeds_outstanding')!, /ไม่เกินยอดคงเหลือ/);
+  assert.match(translateApiError('expense_payment_changed')!, /โหลดรายการใหม่/);
+  assert.match(translateApiError('claim_expense_settles_via_reimbursement')!, /ผ่านขั้นตอนจ่ายคืนของใบเบิก/);
+});
+
 test('falls back to the status text only for the client placeholder message', () => {
   assert.equal(apiErrorMessage(apiError('API error 403', { status: 403 })), 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน');
   // A real server sentence says more than the generic status text, so it stays.

@@ -32,10 +32,12 @@ describe('VoidExpenseUseCase (H-04)', () => {
       findById: mock.fn(async () => ({ id: 'exp_1', status: 'CONFIRMED', branchId: null, grandTotalAmount: '107.00' })),
       // GAP-07: the accrual leg is posted, the settlement leg is not (unpaid expense).
       findPostedGeneratedJournalId: mock.fn(async (_c: string, _id: string, sourceType: string = 'expense.record') => (sourceType === 'expense.record' ? 'je_orig' : null)),
+      findPostedExpensePaymentJournals: mock.fn(async () => []),
       voidExpenseTrueReversal: mock.fn(async () => ({
         expense: { id: 'exp_1', status: 'VOIDED' },
         reversalEntryId: 'je_rev',
         paymentReversalEntryId: null,
+        paymentReversalEntryIds: [],
       })),
     };
   });
@@ -63,7 +65,7 @@ describe('VoidExpenseUseCase (H-04)', () => {
   });
 
   it('releases the reserved number when the journal was already reversed elsewhere', async () => {
-    repo.voidExpenseTrueReversal = mock.fn(async () => ({ expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: null }));
+    repo.voidExpenseTrueReversal = mock.fn(async () => ({ expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: null, paymentReversalEntryIds: [] }));
     await make().execute(ctx, 'exp_1', 'บันทึกผิด');
     assert.equal(s.cancelNumber.execute.mock.callCount(), 1);
     assert.equal(s.commitNumber.execute.mock.callCount(), 0);
@@ -71,7 +73,7 @@ describe('VoidExpenseUseCase (H-04)', () => {
 
   it('skips number reservation entirely for unposted expenses', async () => {
     repo.findPostedGeneratedJournalId = mock.fn(async () => null);
-    repo.voidExpenseTrueReversal = mock.fn(async () => ({ expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: null }));
+    repo.voidExpenseTrueReversal = mock.fn(async () => ({ expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: null, paymentReversalEntryIds: [] }));
     await make().execute(ctx, 'exp_1', 'บันทึกผิด');
     assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
     assert.equal(repo.voidExpenseTrueReversal.mock.calls[0].arguments[4], undefined);
@@ -80,9 +82,10 @@ describe('VoidExpenseUseCase (H-04)', () => {
   it('reserves and commits two reversal numbers when both accrual and settlement legs were posted', async () => {
     // GAP-07: a paid expense has BOTH an accrual (expense.record) and a settlement
     // (expense.payment) posted journal; the void reverses and commits each.
-    repo.findPostedGeneratedJournalId = mock.fn(async (_c: string, _id: string, sourceType: string = 'expense.record') => (sourceType === 'expense.record' ? 'je_orig' : 'je_pay'));
+    repo.findPostedExpensePaymentJournals = mock.fn(async () => [{ paymentId: 'payment-1', journalId: 'je_pay' }]);
     repo.voidExpenseTrueReversal = mock.fn(async () => ({
       expense: { id: 'exp_1', status: 'VOIDED' }, reversalEntryId: 'je_rev', paymentReversalEntryId: 'je_pay_rev',
+      paymentReversalEntryIds: [{ paymentId: 'payment-1', reversalEntryId: 'je_pay_rev' }],
     }));
     let seq = 0;
     s.reserveNumber.execute = mock.fn(async () => { seq += 1; return { id: `num_${seq}`, documentNumber: `JV-REV-${seq}` }; });
@@ -92,7 +95,7 @@ describe('VoidExpenseUseCase (H-04)', () => {
     assert.equal(s.reserveNumber.execute.mock.callCount(), 2);
     // Both reserved numbers are passed to the repo (accrual arg[4], settlement arg[5]).
     assert.equal(repo.voidExpenseTrueReversal.mock.calls[0].arguments[4], 'JV-REV-1');
-    assert.equal(repo.voidExpenseTrueReversal.mock.calls[0].arguments[5], 'JV-REV-2');
+    assert.deepEqual(repo.voidExpenseTrueReversal.mock.calls[0].arguments[5], [{ paymentId: 'payment-1', reversalEntryNumber: 'JV-REV-2' }]);
     assert.equal(s.commitNumber.execute.mock.callCount(), 2);
     const committedOwners = s.commitNumber.execute.mock.calls.map((c: any) => c.arguments[0].ownerId);
     assert.deepEqual(committedOwners.sort(), ['je_pay_rev', 'je_rev']);

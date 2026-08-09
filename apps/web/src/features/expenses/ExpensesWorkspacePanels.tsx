@@ -518,10 +518,11 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   const postExpense = async (
     expenseId: string,
     sourceType: 'expense.record' | 'expense.payment',
+    sourceId: string,
   ) => {
     setPostingExpenseId(expenseId); setError(null);
     try {
-      await generateSourceJournal(companyId, sourceType, expenseId);
+      await generateSourceJournal(companyId, sourceType, sourceId);
       await load();
       toast.success('สร้างสมุดรายวันเรียบร้อยแล้ว');
     } catch (e) { setError(err(e)); }
@@ -781,7 +782,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                           <td className="w-px whitespace-nowrap text-xs">
                             {canPostLedger && r.pendingPostingSourceType ? (
                               <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId}
-                                onClick={(event) => { event.stopPropagation(); void postExpense(r.expenseId, r.pendingPostingSourceType!); }}>
+                                onClick={(event) => { event.stopPropagation(); if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
                                 {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
                               </button>
                             ) : canReadLedger && r.journalEntryId ? (

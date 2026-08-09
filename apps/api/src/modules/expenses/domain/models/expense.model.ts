@@ -7,7 +7,7 @@ import type {
   SourceDocumentType, TaxEvidenceStatus, TaxEvidenceReasonCode, ExpenseLineReviewStatus,
   SignatureAssetStatus, SignatureSubmitChannel,
   SubstituteReceiptEvidenceStatus, SubstituteReceiptEvidenceSummary, SubstituteReceiptReasonCode,
-  SubstituteReceiptCashEvidencePolicy, BuyerEntityKind,
+  SubstituteReceiptCashEvidencePolicy, BuyerEntityKind, ExpensePaymentRecordStatus,
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
@@ -73,6 +73,7 @@ export type ExpenseRecord = {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   pendingPostingSourceType: 'expense.record' | 'expense.payment' | null;
+  pendingPostingSourceId: string | null;
   postingError: string | null;
   note: string | null;
   internalMemo: string | null;
@@ -92,11 +93,33 @@ export type ExpenseRecord = {
   updatedAt: Date;
 };
 
+export type ExpensePaymentRecord = {
+  id: string;
+  companyId: string;
+  expenseId: string;
+  amount: string;
+  currency: string;
+  paymentMethod: ExpensePaymentMethod | null;
+  paidAt: Date;
+  bankAccountRef: string | null;
+  status: ExpensePaymentRecordStatus;
+  postingStatus: ExpensePostingStatus;
+  journalEntryId: string | null;
+  journalEntryNumber: string | null;
+  postingError: string | null;
+  createdByUserId: string;
+  voidedByUserId: string | null;
+  voidedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type ExpenseRecordWithRelations = ExpenseRecord & {
   lines: ExpenseLineSummary[];
   attachments: ExpenseAttachmentRef[];
   duplicateCandidates: DuplicateCandidateSummary[];
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
+  payments: ExpensePaymentRecord[];
   /**
    * The suggested input Tax Code of the category this expense is filed under, as its external
    * code. A hint for the line picker, not a stored property of the expense.

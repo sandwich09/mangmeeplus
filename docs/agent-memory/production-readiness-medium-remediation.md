@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-09 committed; M8-09B implemented, verifying its separate commit.
+Status: IN PROGRESS — M8-01..M8-09B committed; M8-10 verified and ready for its separate commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -92,6 +92,21 @@ Verification:
   Web typecheck passes. API typecheck reports no M8-09B errors; it still has the established substitute-receipt/report test errors plus one
   concurrent reimbursement edit error outside this commit.
 - Concurrent unrelated work continues in the shared worktree and remains outside M8-09 staging.
+- M8-09B commit: `c6f381d fix(accounting): make quotation conversion atomic`.
+- M8-10 replaces the lossy payment aggregate mutation with append-only `ExpensePayment` facts. Each partial
+  payment accumulates through Decimal arithmetic under a serializable lifecycle lock and CAS; accrual and
+  settlement posting states/JV identities no longer overwrite one another.
+- M8-10 impact gaps fixed during use-case play: substitute-receipt approval now appends only its remaining
+  paid amount; Auto-post drains payment events only after the accrual is posted; void reverses every posted
+  payment journal and terminalizes all events; an unposted void no longer leaves a false pending status;
+  bank matching now allocates each payment event independently instead of collapsing partial payments into
+  one aggregate source.
+- Legacy migration reuses the expense id for the single backfilled payment so immutable existing settlement
+  journals remain linked, and distinguishes an accrual posting error from a settlement posting error.
+- M8-10 verification: focused payment/posting/substitute/void/Auto-post/banking tests 57/57 and web error-copy
+  tests 21/21 passed; broader API expense/ledger and web expense/common-api suites passed without failures.
+  Contracts build and web typecheck passed. API typecheck has no M8-10 errors and reaches only the established
+  14 substitute-receipt/report spec errors. Prisma validate/generate passed, and all 126 migrations including
+  the final claim-excluding backfill applied successfully to a clean temporary PostgreSQL database.
 Next:
-- Commit M8-09B only; keep the untracked QA consolidation and concurrent reimbursement work out.
-- Then M8-10: repair expense partial-payment accumulation, history and posting lifecycle.
+- Review and commit only M8-10 files, keeping all untracked QA audit files outside the commit.

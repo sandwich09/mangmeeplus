@@ -21,15 +21,20 @@ export class PrismaMatchSourceQuery {
   constructor(private readonly prisma: PrismaService) {}
 
   async listCandidates(companyId: string, branchIds?: string[]): Promise<BankMatchCandidate[]> {
-    const [customerPayments, expenses, supplierPayments, reimbursementPayments, adjustments, confirmedMatches] =
+    const [customerPayments, expensePayments, supplierPayments, reimbursementPayments, adjustments, confirmedMatches] =
       await Promise.all([
         this.prisma.client.accountingPayment.findMany({
           where: { companyId, ...branchScopeWhere({ branchIds }), status: 'RECORDED', direction: 'RECEIVED' },
           orderBy: { paidAt: 'desc' },
         }),
-        this.prisma.client.expenseRecord.findMany({
-          where: { companyId, ...branchScopeWhere({ branchIds }), paymentStatus: { in: ['PARTIALLY_PAID', 'PAID'] }, status: { not: 'VOIDED' } },
+        this.prisma.client.expensePayment.findMany({
+          where: {
+            companyId,
+            status: 'RECORDED',
+            expense: { is: { ...branchScopeWhere({ branchIds }), status: { not: 'VOIDED' }, sourceReimbursementRequestId: null } },
+          },
           orderBy: { paidAt: 'desc' },
+          include: { expense: { select: { expenseNumber: true, vendorNameSnapshot: true, vendorDocumentNumber: true } } },
         }),
         this.prisma.client.supplierPayment.findMany({
           where: { companyId, ...branchScopeWhere({ branchIds }), status: 'RECORDED' },
@@ -77,18 +82,18 @@ export class PrismaMatchSourceQuery {
         status: p.status,
         webUrl: `/companies/${companyId}/accounting`,
       })),
-      ...expenses.map((e): RawCandidate => ({
+      ...expensePayments.map((p): RawCandidate => ({
         sourceType: 'EXPENSE_PAYMENT',
-        sourceId: e.id,
-        sourceDisplayNumber: e.expenseNumber ?? undefined,
+        sourceId: p.id,
+        sourceDisplayNumber: p.expense.expenseNumber ?? undefined,
         companyId,
         direction: 'WITHDRAWAL',
-        paymentDate: e.paidAt ? isoDate(e.paidAt) : isoDate(e.updatedAt),
-        amount: e.paidAmount.toString(),
-        currency: 'THB',
-        counterpartyName: e.vendorNameSnapshot ?? undefined,
-        reference: e.vendorDocumentNumber ?? undefined,
-        status: e.paymentStatus,
+        paymentDate: isoDate(p.paidAt),
+        amount: p.amount.toString(),
+        currency: p.currency,
+        counterpartyName: p.expense.vendorNameSnapshot ?? undefined,
+        reference: p.bankAccountRef ?? p.expense.vendorDocumentNumber ?? undefined,
+        status: p.status,
         webUrl: `/companies/${companyId}/expenses`,
       })),
       ...supplierPayments.map((p): RawCandidate => ({

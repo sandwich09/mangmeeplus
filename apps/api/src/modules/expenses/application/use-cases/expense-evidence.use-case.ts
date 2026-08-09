@@ -70,6 +70,7 @@ export class GetSharedEvidenceViewUseCase {
         journalEntryId: r.journalEntryId,
         journalEntryNumber: r.journalEntryNumber,
         pendingPostingSourceType: r.pendingPostingSourceType,
+        pendingPostingSourceId: r.pendingPostingSourceId,
         expenseCategoryId: r.expenseCategoryId,
         categoryName: r.categoryName,
         createdByUserId: r.createdByUserId,

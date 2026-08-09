@@ -30,8 +30,7 @@ accounting offices:
 
 ## 4. Non-goals
 
-- Auto-posting sales documents, procurement bills, later expense-payment settlement
-  (`expense.payment`), supplier payments, or reimbursements in this phase.
+- Auto-posting sales documents, procurement bills, supplier payments, or reimbursements in this phase.
 - Bypassing evidence, account mapping, tax snapshot, branch, permission, or period-close rules.
 - Automatically backfilling historical pending expenses when Auto-post is enabled.
 - Public permanent evidence links or public folders.
@@ -69,6 +68,10 @@ accounting offices:
 8. The accountant can open the exact JV from the expense/evidence view.
 9. Historical pending expenses are excluded from automatic processing. An accountant must preview counts
    and blockers, confirm, then run the bounded backfill action.
+10. Each expense payment appends a separate immutable payment fact. The aggregate expense keeps only the
+    cumulative paid/outstanding summary; it never owns the settlement JV state.
+11. A payment may post independently after its accrual JV is posted. In Auto-post mode the worker scans
+    new payment facts by their creation time; in manual mode the detail page selects the oldest pending payment.
 
 ## 7. Business Rules
 
@@ -97,6 +100,10 @@ Informational evidence states, such as `SUPPORTING_ONLY`, do not block Auto-post
 ledger validation remains authoritative for chart accounts, posting rules, tax account determination,
 currency, branch scope, journal balance, and open periods.
 
+The evidence gate applies to the accrual source. A payment source becomes eligible only after the parent
+expense is confirmed and its generated accrual journal is `POSTED`; it cannot clear a payable that has not
+yet been recognized.
+
 ### 7.3 Manual queue and retry
 
 - `pending` plus an evidence warning means `รอนักบัญชีตรวจ`.
@@ -109,6 +116,9 @@ currency, branch scope, journal balance, and open periods.
 - Posting is idempotent per `(companyId, sourceType, sourceId)`. A retry returns the existing generated
   journal if one already exists.
 - A closed period is a blocker, not an override path.
+- Partial payments are cumulative and append-only. Each `ExpensePayment.id` is its own `expense.payment`
+  source, posting status, journal identity, retry boundary, and reversal boundary.
+- A claim-born expense cannot be settled through this path; it settles through `reimbursement.payment`.
 
 ### 7.4 Evidence and export
 
@@ -136,16 +146,19 @@ currency, branch scope, journal balance, and open periods.
 
 ## 9. Data Model
 
-No new table is required.
-
 - Reuse `CompanyFeatureEntitlement(featureKey='double_entry_ledger')`.
 - Add approved feature key `expense_auto_post`; it is disabled by default.
 - Reuse its `updatedAt` as the new-document activation boundary.
-- Reuse `ExpenseRecord.postingStatus`, `postingError`, `journalEntryId`, `confirmedAt`.
-- Compute the next outstanding expense posting source from existing generated journals; do not add another
-  persisted posting-state field in this phase.
+- `ExpenseRecord.paidAmount`, `outstandingAmount`, `paymentStatus`, `paymentMethod`, and `paidAt` are a
+  compatibility/read summary only. Recording a payment increments this summary under a serializable lifecycle
+  lock and optimistic CAS; it never overwrites accrual `postingStatus`, `postingError`, or `journalEntryId`.
+- `ExpensePayment` stores one append-only payment event with exact amount/date/method, actor, lifecycle status,
+  and its own posting status/error/JV pointer. Existing paid expenses are migrated as one legacy payment source
+  while preserving the old immutable `expense.payment` journal source identity.
+- Compute the next outstanding source from the accrual journal and ordered payment events: accrual first, then
+  the oldest `RECORDED` payment in `pending`/`posting_error`.
 - Reuse `OutboxEvent` as durable source-event evidence, but do not treat its single publish status as a
-  multi-consumer ledger queue. The worker scans authoritative pending expense rows.
+  multi-consumer ledger queue. The worker scans authoritative pending expense and payment rows.
 
 ## 10. Permission and Audit
 
@@ -187,7 +200,7 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - Backfill requires an explicit request and processes only eligible pre-activation expenses in a bounded
   batch. It returns posted, failed, skipped, and remaining counts.
 - Internal drain requires the worker token, considers active companies with both entitlements, and processes
-  only post-activation pending expenses.
+  only post-activation pending accruals and payment events. A payment waits for a posted accrual.
 - All mutations remain idempotent and company scoped.
 
 ## 12. UI Behavior
@@ -202,6 +215,7 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - Auto mode: `รอระบบลงบัญชีอัตโนมัติ`.
 - Posting error with permission: show redacted reason and `แก้ไขแล้ว ลองลงบัญชีอีกครั้ง`.
 - Posted: show `ลงบัญชีแล้ว` and the exact JV number/link.
+- Show append-only payment history with amount, date, method, payment lifecycle, and per-payment posting state.
 
 ### Accounting evidence
 
@@ -235,6 +249,14 @@ POST /v1/internal/ledger/expense-auto-post/drain
   or move its activation boundary.
 - Worker and accountant post the same expense concurrently: idempotency returns one journal.
 - Period closes after preview but before execution: generation fails closed and the row remains retryable.
+- Two partial payments recorded concurrently: the lifecycle lock serializes them; a stale/overpaying request
+  rolls back its payment row and aggregate update together.
+- A substitute receipt marks an expense paid: approval appends only the remaining amount as a payment event;
+  an already fully paid record gets no duplicate event.
+- Voiding a paid expense reverses every posted payment JV and marks every payment event voided in the same
+  transaction; unposted legs become `not_required`.
+- Bank reconciliation treats every recorded payment event as a separate candidate with its exact amount,
+  date, currency, and source id; it must not collapse partial payments back to the expense aggregate.
 - Warning disappears after source correction: accountant retry or the next eligible worker pass may post.
 - Export contains more than 500 rows: return explicit truncation metadata.
 - Signed evidence links expire: UI explains expiry and allows package regeneration.
@@ -249,6 +271,9 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - [x] `double_entry_ledger` alone gives manual mode.
 - [x] `expense_auto_post` cannot be enabled without ledger and is off by default.
 - [x] Auto-post processes only clean, post-activation confirmed expenses.
+- [x] Partial payments accumulate without overwriting accrual posting state and retain per-payment history.
+- [x] Manual and Auto-post can post each partial payment independently after accrual posting.
+- [x] Void reverses all posted partial-payment journals and terminalizes all payment events atomically.
 - [x] Warning rows remain in the manual queue and are not silently discarded.
 - [x] Mapping/tax/account/period failures are actionable and retryable.
 - [x] Manual retry and worker races do not create duplicate JVs.
@@ -264,6 +289,8 @@ POST /v1/internal/ledger/expense-auto-post/drain
 - Unit: export posting columns and truncation metadata.
 - API: manual post/retry permission, idempotency, posting-error recovery, and branch scope.
 - API: worker token failure, active-company check, entitlement check, and bounded drain.
+- API: concurrent partial payments, overpayment rollback, substitute-payment creation, per-payment posting,
+  period close blockers, multi-payment reversal, and independent bank-match allocation.
 - API: backfill preview/run excludes post-activation rows and warning rows.
 - Web: truthful confirmation copy, posting badges/actions, export warning confirmation, and JV deep link.
 - Worker: repeatable job calls the internal endpoint and reports non-2xx failures.

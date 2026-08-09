@@ -27,11 +27,13 @@ function matches(row: Row, where: Row): boolean {
 // same store; rollback semantics are covered by the live-DB verification run.
 function fakeClient(seed: {
   expenses?: Row[]; expenseLines?: Row[];
+  expensePayments?: Row[];
   journalEntries?: Row[]; journalLines?: Row[]; periods?: Row[]; taxPeriods?: Row[];
   substituteEvidence?: Row[];
 }) {
   const s = {
     expenses: seed.expenses ?? [], expenseLines: seed.expenseLines ?? [],
+    expensePayments: seed.expensePayments ?? [],
     journalEntries: seed.journalEntries ?? [], journalLines: seed.journalLines ?? [],
     periods: seed.periods ?? [], taxPeriods: seed.taxPeriods ?? [],
     substituteEvidence: seed.substituteEvidence ?? [],
@@ -88,6 +90,7 @@ function fakeClient(seed: {
   return {
     state: s,
     expenseRecord,
+    expensePayment: table(s.expensePayments),
     accountingPeriod: table(s.periods),
     taxPeriod: table(s.taxPeriods),
     journalEntry,
@@ -225,6 +228,32 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     assert.ok(Object.values(postedNet).every((v) => Math.abs(v) < 0.0001), `net must be zero: ${JSON.stringify(postedNet)}`);
   });
 
+  it('reverses every partial-payment journal and voids the append-only payment history', async () => {
+    client.state.expensePayments.push(
+      { id: 'pay_1', companyId: CO, expenseId: 'exp_1', status: 'RECORDED', postingStatus: 'posted', paidAt: NOW, createdAt: NOW },
+      { id: 'pay_2', companyId: CO, expenseId: 'exp_1', status: 'RECORDED', postingStatus: 'posted', paidAt: NOW, createdAt: new Date(NOW.getTime() + 1) },
+    );
+    for (const [id, amount] of [['pay_1', '20.0000'], ['pay_2', '30.0000']] as const) {
+      client.state.journalEntries.push({
+        id: `je_${id}`, companyId: CO, periodId: 'p_1', entryNumber: `JV-${id}`, entryType: 'GENERATED',
+        sourceType: 'expense.payment', sourceId: id, status: 'POSTED', entryDate: NOW,
+      });
+      client.state.journalLines.push(
+        { id: `jl_${id}_1`, journalEntryId: `je_${id}`, companyId: CO, accountId: 'acc_payable', lineNumber: 1, description: 'จ่ายชำระเจ้าหนี้', debitAmount: amount, creditAmount: '0.0000', currency: 'THB', taxCode: null, branchId: null },
+        { id: `jl_${id}_2`, journalEntryId: `je_${id}`, companyId: CO, accountId: 'acc_cash', lineNumber: 2, description: 'จ่ายเงิน', debitAmount: '0.0000', creditAmount: amount, currency: 'THB', taxCode: null, branchId: null },
+      );
+    }
+
+    const result = await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1', [
+      { paymentId: 'pay_1', reversalEntryNumber: 'JV-REV-2' },
+      { paymentId: 'pay_2', reversalEntryNumber: 'JV-REV-3' },
+    ]);
+
+    assert.deepEqual(result.paymentReversalEntryIds.map((entry) => entry.paymentId), ['pay_1', 'pay_2']);
+    assert.equal(client.state.journalEntries.filter((entry: any) => entry.entryType === 'REVERSAL').length, 3);
+    assert.ok(client.state.expensePayments.every((payment: any) => payment.status === 'VOIDED' && payment.postingStatus === 'reversed'));
+  });
+
   it('reverses only the accrual leg when the settlement was never posted', async () => {
     // Regression: unpaid/partially-paid expense has no settlement journal; the void
     // reverses just the accrual and returns a null settlement reversal id.
@@ -326,8 +355,7 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     assert.equal(client.state.journalEntries.length, 0);
     const expense = client.state.expenses[0];
     assert.equal(expense.status, 'VOIDED');
-    // postingStatus stays truthful when nothing was ever posted.
-    assert.equal(expense.postingStatus, 'pending');
+    assert.equal(expense.postingStatus, 'not_required');
   });
 });
 

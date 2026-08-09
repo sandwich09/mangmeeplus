@@ -378,10 +378,10 @@ export class GenerateJournalFromSourceUseCase {
       await this.accountingRepo.updatePaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null });
     } else if (source.sourceType === 'procurement.supplier_payment') {
       await this.procurementRepo.updateSupplierPaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null });
-    } else if (source.sourceType === 'expense.record' || source.sourceType === 'expense.payment') {
-      // GAP-07: the settlement leg flips the same expense posting flag the accrual
-      // uses — pending (set by RecordExpensePayment) → posted / posting_error.
+    } else if (source.sourceType === 'expense.record') {
       await this.expenseRepo.updatePostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null, postingError: error ?? null });
+    } else if (source.sourceType === 'expense.payment') {
+      await this.expenseRepo.updatePaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null, postingError: error ?? null });
     } else if (source.sourceType === 'reimbursement.payment') {
       // GAP-02: settlement payment is a real posting source now — flip it to
       // 'posted' on success like every other generate source. It carries no
@@ -415,31 +415,26 @@ export class GenerateJournalFromSourceUseCase {
         idempotencyKey: `expense:${expense.status}:${expense.id}` } as any);
     }
     if (raw.sourceType === 'expense.payment') {
-      // GAP-07: settlement of a plain (non-claim) expense — Dr 2120-01 trade AP /
-      // Cr 1110-01 cash. Expenses carry no payment rows, so paidAmount on the
-      // record is the single full settlement: one journal per expense id.
-      const expense = await this.expenseRepo.findByIdWithRelations(ctx.companyId, raw.sourceId);
-      if (!expense) throw new NotFoundException('Expense source not found');
+      const payment = await this.expenseRepo.findPaymentById(ctx.companyId, raw.sourceId);
+      if (!payment) throw new NotFoundException('Expense payment source not found');
+      const expense = payment.expense;
       if (expense.status !== 'CONFIRMED') throw new BadRequestException({ code: 'expense_not_confirmed', message: 'Only a confirmed expense can post its settlement' });
-      // Claim-born expenses settle through reimbursement.payment (Dr 2130-01), not here.
-      if ((expense as any).sourceReimbursementRequestId != null) throw new BadRequestException({ code: 'claim_expense_settles_via_reimbursement', message: 'A claim-born expense settles through reimbursement.payment, not expense.payment' });
-      // Full settlement only — partial-payment posting is a documented limitation.
-      if (expense.paymentStatus !== 'PAID') throw new BadRequestException({ code: 'expense_payment_not_settled', message: 'Only a fully paid expense can post its settlement; partial payments are not yet supported' });
-      const paidAt = (expense as any).paidAt as Date | null;
-      const sourceDate = coerceCivilDate(paidAt ?? expense.expenseDate);
+      if (expense.sourceReimbursementRequestId != null) throw new BadRequestException({ code: 'claim_expense_settles_via_reimbursement', message: 'A claim-born expense settles through reimbursement.payment, not expense.payment' });
+      if (payment.status !== 'RECORDED') throw new BadRequestException({ code: 'expense_payment_not_recorded', message: 'Only a recorded expense payment can post its settlement' });
+      const sourceDate = coerceCivilDate(payment.paidAt);
       return {
         companyId: expense.companyId,
         branchId: expense.branchId ?? undefined,
         sourceType: 'expense.payment',
-        sourceId: expense.id,
+        sourceId: payment.id,
         sourceEventType: 'expense.payment',
-        idempotencyKey: `expense.payment:${expense.status}:${expense.id}`,
+        idempotencyKey: `expense.payment:${payment.id}`,
         documentNumber: expense.expenseNumber ?? undefined,
         sourceDate,
         periodKey: derivePeriodKey(sourceDate),
         currency: expense.currency,
         counterpartyId: expense.vendorCounterpartyId ?? undefined,
-        totalAmount: expense.paidAmount,
+        totalAmount: payment.amount,
         lines: [],
       } as LedgerSourcePostingInput;
     }

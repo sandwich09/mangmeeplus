@@ -498,7 +498,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
           <>
             {canReview && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate_short', locale)}</button>}
             {canGenerateJournal && detail.pendingPostingSourceType && (
-              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, expenseId), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading}>
+              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId}>
                 {detail.postingStatus === 'posting_error'
                   ? 'แก้ไขแล้ว ลองลงบัญชีอีกครั้ง'
                   : detail.pendingPostingSourceType === 'expense.payment'
@@ -760,13 +760,25 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
-        {isConfirmed && caps.canRecordPayment && (
+        {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <input className={inputClass} type="number" min="0" step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
+            <input className={inputClass} type="number" min="0.01" max={detail.outstandingAmount} step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
             <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </ThemedSelect>
             <button className={btnClass} onClick={() => doAction(() => recordExpensePayment(companyId, expenseId, { paidAmount, paymentMethod }), 'บันทึกการจ่ายเรียบร้อยแล้ว')} disabled={actionLoading || !paidAmount}>{t('expenses.record_payment', locale)}</button>
+          </div>
+        )}
+        {(detail.payments?.length ?? 0) > 0 && (
+          <div className="space-y-2 border-t border-gray-100 pt-3">
+            <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
+            {detail.payments?.map((payment) => (
+              <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+                <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
+                <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
+                <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
+              </div>
+            ))}
           </div>
         )}
         {detail.status === 'VOIDED' && <p className="text-sm text-gray-400">{t('expenses.document_voided', locale)}{detail.voidReason ? ` — ${detail.voidReason}` : ''}</p>}

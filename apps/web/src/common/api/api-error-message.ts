@@ -56,6 +56,9 @@ const CODE_LABELS: Record<string, string> = {
   ledger_account_invalid_for_bank: 'บัญชีที่ผูกกับธนาคารต้องเป็นบัญชีของบริษัทที่ใช้งานและลงรายการได้',
   output_tax_code_line_mismatch: 'Tax Code ที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจ Tax Code ก่อนบันทึก',
   posting_rule_missing: 'ยังไม่มีกฎลงบัญชีที่ผ่านการตรวจสำหรับเอกสารนี้ จึงยังไม่สร้างรายการบัญชี',
+  expense_payment_exceeds_outstanding: 'ยอดจ่ายต้องมากกว่า 0 และไม่เกินยอดคงเหลือที่ต้องจ่าย',
+  expense_payment_changed: 'ยอดหรือสถานะการจ่ายถูกเปลี่ยนระหว่างบันทึก กรุณาโหลดรายการใหม่แล้วลองอีกครั้ง',
+  claim_expense_settles_via_reimbursement: 'รายการที่มาจากใบเบิกต้องบันทึกการจ่ายผ่านขั้นตอนจ่ายคืนของใบเบิก',
   // Expense confirmation CAS guards — all mean "reload and try again"
   expense_confirmation_source_status_changed: 'เอกสารถูกเปลี่ยนสถานะระหว่างยืนยัน กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   expense_confirmation_source_version_changed: 'เอกสารถูกแก้ไขระหว่างยืนยัน กรุณาเปิดใหม่แล้วลองอีกครั้ง',

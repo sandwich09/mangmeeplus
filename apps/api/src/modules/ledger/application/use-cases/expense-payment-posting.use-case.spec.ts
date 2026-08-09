@@ -4,9 +4,8 @@ import { GenerateJournalFromSourceUseCase } from './journal.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 // GAP-07: the expense settlement (payment) leg is a real posting source now.
-// RecordExpensePayment leaves the expense postingStatus 'pending'; generating the
-// expense.payment journal posts Dr 2120-01 / Cr 1110-01 and flips it to 'posted',
-// so a paid expense stops blocking period close forever.
+// Each append-only payment is its own source. Generating its expense.payment journal
+// posts Dr 2120-01 / Cr 1110-01 without overwriting the accrual status on ExpenseRecord.
 
 const noopAudit = { log: async () => undefined } as any;
 const noopOutbox = { append: async () => undefined } as any;
@@ -61,8 +60,11 @@ function generateFakes(expense: Record<string, unknown>) {
     postJournalEntry: async (id: string) => { const e = created.find((x) => x.id === id); e.status = 'POSTED'; e.postedAt = new Date(); return e; },
   } as any;
   const expenseRepo = {
-    findByIdWithRelations: async () => expense,
-    updatePostingStatus: mock.fn(async (_c: string, id: string, data: any) => { flips.push({ id, postingStatus: data.postingStatus }); }),
+    findPaymentById: async () => ({
+      id: 'payment-1', companyId: 'co-1', expenseId: expense.id, status: 'RECORDED',
+      amount: expense.paidAmount, paidAt: expense.paidAt ?? expense.expenseDate, expense,
+    }),
+    updatePaymentPostingStatus: mock.fn(async (_c: string, id: string, data: any) => { flips.push({ id, postingStatus: data.postingStatus }); }),
   } as any;
   const reserve = { execute: async () => ({ id: 'seq-1', documentNumber: 'JV-1' }) } as any;
   const commit = { execute: async () => undefined } as any;
@@ -72,9 +74,9 @@ function generateFakes(expense: Record<string, unknown>) {
 }
 
 describe('GenerateJournalFromSourceUseCase — expense.payment canonical source', () => {
-  it('posts Dr 2120-01 / Cr 1110-01 from paidAmount and flips the expense to posted', async () => {
+  it('posts Dr 2120-01 / Cr 1110-01 from the payment event and flips only that payment to posted', async () => {
     const { uc, created, flips } = generateFakes(paidExpense());
-    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
 
     assert.equal(summary.sourceType, 'expense.payment');
     const lines = created[0].lines;
@@ -82,14 +84,14 @@ describe('GenerateJournalFromSourceUseCase — expense.payment canonical source'
     assert.equal(lines.find((l: any) => l.accountId === '1110-01')?.creditAmount, '107.0000');
     // pending (pre-generate) then posted (success) — mirrors every other source.
     assert.deepEqual(flips.map((f) => f.postingStatus), ['pending', 'posted']);
-    assert.equal(flips.at(-1)?.id, 'exp-1');
+    assert.equal(flips.at(-1)?.id, 'payment-1');
   });
 
   it('uses the settlement (paidAt) date for the posting period, not the expense date', async () => {
     const { uc, created } = generateFakes(paidExpense({
       expenseDate: new Date('2026-06-01T00:00:00.000Z'), paidAt: new Date('2026-07-20T00:00:00.000Z'),
     }));
-    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
     assert.equal(created[0].entryDate.toISOString(), '2026-07-20T00:00:00.000Z');
   });
 
@@ -97,21 +99,21 @@ describe('GenerateJournalFromSourceUseCase — expense.payment canonical source'
     const { uc, created, periodKeys } = generateFakes(paidExpense({
       paidAt: new Date('2026-08-31T19:00:00.000Z'),
     }));
-    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
     assert.deepEqual(periodKeys, ['2026-09']);
     assert.equal(created[0].entryDate.toISOString(), '2026-09-01T00:00:00.000Z');
   });
 
-  it('falls back to the expense date when no paid date is stored', async () => {
+  it('uses the migrated payment date when a legacy header had no paid date', async () => {
     const { uc, created } = generateFakes(paidExpense({ paidAt: null, expenseDate: new Date('2026-07-05T00:00:00.000Z') }));
-    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
     assert.equal(created[0].entryDate.toISOString(), '2026-07-05T00:00:00.000Z');
   });
 
   it('rejects a claim-born expense (it settles through reimbursement.payment)', async () => {
     const { uc } = generateFakes(paidExpense({ sourceReimbursementRequestId: 'rb-1' }));
     await assert.rejects(
-      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
+      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any),
       (e: any) => e?.getResponse?.().code === 'claim_expense_settles_via_reimbursement',
     );
   });
@@ -119,27 +121,25 @@ describe('GenerateJournalFromSourceUseCase — expense.payment canonical source'
   it('rejects a non-CONFIRMED expense', async () => {
     const { uc } = generateFakes(paidExpense({ status: 'READY_FOR_CONFIRMATION' }));
     await assert.rejects(
-      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
+      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any),
       (e: any) => e?.getResponse?.().code === 'expense_not_confirmed',
     );
   });
 
-  it('rejects a not-fully-PAID expense', async () => {
-    const { uc } = generateFakes(paidExpense({ paymentStatus: 'PARTIALLY_PAID', paidAmount: '50.0000' }));
-    await assert.rejects(
-      () => uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any),
-      (e: any) => e?.getResponse?.().code === 'expense_payment_not_settled',
-    );
+  it('posts a partial payment without waiting for the expense to be fully paid', async () => {
+    const { uc, created } = generateFakes(paidExpense({ paymentStatus: 'PARTIALLY_PAID', paidAmount: '50.0000' }));
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
+    assert.equal(created[0].lines.find((line: any) => line.accountId === '2120-01')?.debitAmount, '50.0000');
   });
 
   it('returns the existing settlement journal on a repeat generate (idempotent per expense)', async () => {
     const { uc, created } = generateFakes(paidExpense());
     (uc as any).repo.findGeneratedJournal = async () => ({
       id: 'je-existing', companyId: 'co-1', periodId: 'period-1', entryNumber: 'JV-0', entryType: 'GENERATED',
-      sourceType: 'expense.payment', sourceId: 'exp-1', reversalOfJournalEntryId: null, status: 'POSTED',
+      sourceType: 'expense.payment', sourceId: 'payment-1', reversalOfJournalEntryId: null, status: 'POSTED',
       entryDate: new Date(), postedAt: new Date(), memo: null, createdAt: new Date(), lines: [],
     });
-    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    const summary: any = await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-1' } as any);
     assert.equal(summary.id, 'je-existing');
     assert.equal(created.length, 0);
   });
@@ -152,12 +152,14 @@ type Row = Record<string, any>;
 function whereMatch(row: Row, where: Row): boolean {
   return Object.entries(where).every(([key, cond]) => {
     if (cond && typeof cond === 'object' && !Array.isArray(cond) && !(cond instanceof Date)) {
+      if ('is' in cond) return whereMatch(row[key] ?? {}, cond.is as Row);
       if ('not' in cond) return row[key] !== cond.not;
       if ('in' in cond) return (cond.in as any[]).includes(row[key]);
-      if ('gte' in cond || 'lte' in cond) {
+      if ('gte' in cond || 'lte' in cond || 'lt' in cond) {
         const v = row[key] as Date;
         if ('gte' in cond && v < cond.gte) return false;
         if ('lte' in cond && v > cond.lte) return false;
+        if ('lt' in cond && v >= cond.lt) return false;
         return true;
       }
       return true;
@@ -166,15 +168,15 @@ function whereMatch(row: Row, where: Row): boolean {
   });
 }
 
-function blockersClient(expenses: Row[], journalEntries: Row[]) {
+function blockersClient(expenses: Row[], payments: Row[]) {
   return {
     client: {
       expenseRecord: {
         count: async ({ where }: any) => expenses.filter((r) => whereMatch(r, where)).length,
         findMany: async ({ where }: any) => expenses.filter((r) => whereMatch(r, where)).map((r) => ({ id: r.id })),
       },
-      journalEntry: {
-        findMany: async ({ where }: any) => journalEntries.filter((r) => whereMatch(r, where)).map((r) => ({ sourceId: r.sourceId })),
+      expensePayment: {
+        count: async ({ where }: any) => payments.filter((r) => whereMatch(r, where)).length,
       },
     },
   } as any;
@@ -199,10 +201,12 @@ describe('PrismaExpenseRepository.countPostingBlockers — GAP-07 settlement blo
       base('e5', { postingStatus: 'posting_error' }),                          // error bucket
       base('e6', { postingStatus: 'pending' }),                                // accrual pending
     ];
-    const journalEntries: Row[] = [
-      { companyId: CO, sourceType: 'expense.payment', sourceId: 'e3' },
+    const payments: Row[] = [
+      { companyId: CO, expenseId: 'e1', status: 'RECORDED', postingStatus: 'pending', paidAt: D, expense: expenses[0] },
+      { companyId: CO, expenseId: 'e3', status: 'RECORDED', postingStatus: 'posted', paidAt: D, expense: expenses[2] },
+      { companyId: CO, expenseId: 'e4', status: 'RECORDED', postingStatus: 'pending', paidAt: D, expense: expenses[3] },
     ];
-    const repo = new PrismaExpenseRepository(blockersClient(expenses, journalEntries));
+    const repo = new PrismaExpenseRepository(blockersClient(expenses, payments));
     const result = await repo.countPostingBlockers(CO, FROM, TO);
     // pending bucket: e2, e6 = 2; settlement blocker: e1 = 1 → 3. errors: e5 = 1.
     assert.deepEqual(result, { pending: 3, errors: 1 });
@@ -210,7 +214,9 @@ describe('PrismaExpenseRepository.countPostingBlockers — GAP-07 settlement blo
 
   it('does not count a claim-born paid expense as a settlement blocker', async () => {
     const expenses: Row[] = [base('c1', { paymentStatus: 'PAID', postingStatus: 'posted', sourceReimbursementRequestId: 'rb-9' })];
-    const repo = new PrismaExpenseRepository(blockersClient(expenses, []));
+    const repo = new PrismaExpenseRepository(blockersClient(expenses, [
+      { companyId: CO, expenseId: 'c1', status: 'RECORDED', postingStatus: 'pending', paidAt: D, expense: expenses[0] },
+    ]));
     assert.deepEqual(await repo.countPostingBlockers(CO, FROM, TO), { pending: 0, errors: 0 });
   });
 });

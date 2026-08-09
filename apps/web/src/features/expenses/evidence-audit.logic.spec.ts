@@ -26,6 +26,7 @@ const cleanRow: SharedEvidenceRow = {
   journalEntryId: 'journal-1',
   journalEntryNumber: 'JV-202607-00001',
   pendingPostingSourceType: null,
+  pendingPostingSourceId: null,
   expenseCategoryId: 'category-1',
   categoryName: 'สำนักงาน',
   createdByUserId: 'user-1',

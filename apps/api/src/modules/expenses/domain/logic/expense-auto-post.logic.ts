@@ -1,5 +1,4 @@
 import type {
-  ExpensePaymentStatus,
   ExpensePostingSourceType,
   TaxEvidenceStatus,
 } from '@watchdog-bms/contracts';
@@ -24,15 +23,14 @@ export function expenseAutoPostBlockers(input: {
 }
 
 export function nextExpensePostingSource(input: {
-  paymentStatus: ExpensePaymentStatus;
+  expenseId: string;
   sourceReimbursementRequestId: string | null;
-  generatedSourceTypes: ReadonlySet<string>;
-}): ExpensePostingSourceType | null {
-  if (!input.generatedSourceTypes.has('expense.record')) return 'expense.record';
-  if (
-    input.paymentStatus === 'PAID'
-    && input.sourceReimbursementRequestId === null
-    && !input.generatedSourceTypes.has('expense.payment')
-  ) return 'expense.payment';
+  accrualPosted: boolean;
+  pendingPaymentId?: string;
+}): { sourceType: ExpensePostingSourceType; sourceId: string } | null {
+  if (!input.accrualPosted) return { sourceType: 'expense.record', sourceId: input.expenseId };
+  if (input.sourceReimbursementRequestId === null && input.pendingPaymentId) {
+    return { sourceType: 'expense.payment', sourceId: input.pendingPaymentId };
+  }
   return null;
 }

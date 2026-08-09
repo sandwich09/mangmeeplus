@@ -384,6 +384,7 @@ model Company {
   accountingPaymentAllocations      AccountingPaymentAllocation[]
   // Item 09
   expenseRecords                    ExpenseRecord[]
+  expensePayments                   ExpensePayment[]
   expenseLines                      ExpenseLine[]
   expenseCategories                 ExpenseCategory[]
   receiptExtractions                ReceiptExtraction[]
@@ -1942,6 +1943,11 @@ enum ExpensePaymentStatus {
   VOIDED
 }
 
+enum ExpensePaymentRecordStatus {
+  RECORDED
+  VOIDED
+}
+
 enum ExpensePostingStatus {
   not_required
   pending
@@ -2170,8 +2176,10 @@ model ExpenseRecord {
   duplicateCandidates                ExpenseDuplicateCandidate[]        @relation("DuplicateExpense")
   duplicateOf                        ExpenseDuplicateCandidate[]        @relation("CandidateExpense")
   substituteReceiptEvidences         ExpenseSubstituteReceiptEvidence[]
+  payments                           ExpensePayment[]
 
   @@unique([companyId, expenseNumber])
+  @@unique([companyId, id])
   // RECEIPT-02: hard idempotency for LINE media intake — one expense per LINE message.
   // Postgres treats NULL lineMessageId as distinct, so web-created expenses are unaffected.
   @@unique([companyId, lineMessageId])
@@ -2188,6 +2196,32 @@ model ExpenseRecord {
   @@index([companyId, captureSource])
   @@index([companyId, uploadedAt])
   @@index([companyId, taxEvidenceStatus])
+}
+
+model ExpensePayment {
+  id              String                     @id @default(cuid())
+  companyId       String
+  expenseId       String
+  amount          Decimal                    @db.Decimal(18, 4)
+  currency        String                     @default("THB")
+  paymentMethod   ExpensePaymentMethod?
+  paidAt          DateTime
+  bankAccountRef  String?
+  status          ExpensePaymentRecordStatus @default(RECORDED)
+  postingStatus   ExpensePostingStatus        @default(pending)
+  journalEntryId  String?
+  postingError    String?
+  createdByUserId String
+  voidedByUserId  String?
+  voidedAt        DateTime?
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  company         Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  expense         ExpenseRecord              @relation(fields: [companyId, expenseId], references: [companyId, id], onDelete: Restrict)
+
+  @@unique([companyId, id])
+  @@index([companyId, expenseId, paidAt])
+  @@index([companyId, postingStatus, paidAt])
 }
 
 model ExpenseLine {

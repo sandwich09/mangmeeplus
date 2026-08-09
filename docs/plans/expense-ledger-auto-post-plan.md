@@ -146,6 +146,8 @@ Enable guarded automatic posting only for new clean expenses while leaving excep
   - no evidence blocker;
   - no existing generated `expense.record` journal;
   - canonical generator remains authoritative.
+- [x] 2026-08-10 hardening: scan append-only `ExpensePayment` candidates created after activation, require
+  the parent accrual JV to be posted, and write a failed attempt only to that payment's posting state.
 - [x] Add worker-token-protected internal controller with least-privilege system context.
 - [x] Add BullMQ repeatable worker using the existing internal HTTP pattern.
 - [x] Surface pending-warning and posting-error rows as accountant queue states.
@@ -216,6 +218,17 @@ Verify the complete journey and reconcile source docs/task memory.
   user-verified confirmation/evidence/export journey.
 - [x] Review permissions, loading/error/readonly states, and external export copy.
 - [x] Update linked specs/known-gap status and task memory with exact evidence.
+
+## Phase 5: Partial-payment lifecycle hardening (2026-08-10)
+
+- [x] Add append-only `ExpensePayment` history and migrate legacy paid rows without rewriting ledger sources.
+- [x] Accumulate paid/outstanding totals with Decimal arithmetic under one serializable lifecycle transaction.
+- [x] Keep accrual and each settlement posting state/JV independent.
+- [x] Post each partial payment manually or through the guarded drain after accrual posting.
+- [x] Add payment history to expense detail and use the exact pending source id for manual posting.
+- [x] Make substitute-receipt approval create only the missing payment fact.
+- [x] Reverse and void every payment event atomically with expense void.
+- [x] Expose each payment event as a separate bank-match candidate and preserve legacy confirmed match identity.
 
 Final build note: the production build completed earlier in the implementation, but the final rerun after the
 Phase 3 UI change hung in Next.js optimization twice and was stopped without a compile error. Final web

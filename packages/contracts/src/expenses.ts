@@ -19,6 +19,7 @@ export type ExpenseExtractionResult = {
 export type AiVerificationStatus = 'NOT_VERIFIED' | 'VERIFYING' | 'AI_VERIFIED' | 'PARTIAL' | 'NEEDS_REVIEW' | 'FAILED' | 'HUMAN_VERIFIED';
 export type DuplicateStatus = 'NOT_CHECKED' | 'NO_MATCH' | 'POSSIBLE_DUPLICATE' | 'CONFIRMED_DUPLICATE' | 'OVERRIDDEN';
 export type ExpensePaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'VOIDED';
+export type ExpensePaymentRecordStatus = 'RECORDED' | 'VOIDED';
 export type ExpensePostingStatus = 'not_required' | 'pending' | 'posted' | 'posting_error' | 'reversed';
 export type ExpensePostingSourceType = 'expense.record' | 'expense.payment';
 export type ExpenseVatMode = 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
@@ -308,6 +309,22 @@ export type ExpenseAttachmentRef = {
   createdAt: string;
 };
 
+export type ExpensePaymentSummary = {
+  id: string;
+  amount: string;
+  currency: string;
+  paymentMethod: ExpensePaymentMethod | null;
+  paidAt: string;
+  bankAccountRef: string | null;
+  status: ExpensePaymentRecordStatus;
+  postingStatus: ExpensePostingStatus;
+  journalEntryId: string | null;
+  journalEntryNumber: string | null;
+  postingError: string | null;
+  createdByUserId: string;
+  createdAt: string;
+};
+
 export type ExpenseSummary = {
   id: string;
   companyId: string;
@@ -386,7 +403,9 @@ export type ExpenseDetail = ExpenseSummary & {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   pendingPostingSourceType: ExpensePostingSourceType | null;
+  pendingPostingSourceId: string | null;
   postingError: string | null;
+  payments: ExpensePaymentSummary[];
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
 };
 
@@ -776,6 +795,7 @@ export type SharedEvidenceRow = {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   pendingPostingSourceType: ExpensePostingSourceType | null;
+  pendingPostingSourceId: string | null;
   expenseCategoryId: string | null;
   categoryName: string | null;
   createdByUserId: string;

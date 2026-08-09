@@ -7,6 +7,7 @@ import type {
   AccountantPackageResult, EvidenceManifestEntry, CreateExpenseDraftInput, UpdateExpenseDraftInput,
   SubstituteReceiptEvidenceSummary, TransactionTaxComponentPreview, TransactionTaxSnapshot,
   BuyerEntityKind,
+  ExpensePaymentSummary,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -25,6 +26,7 @@ export type {
   SignatureAssetSummary, SignatureAssetStatus, SharedEvidenceView, SharedEvidenceRow,
   AccountantPackageResult, EvidenceManifestEntry,
   SubstituteReceiptEvidenceSummary,
+  ExpensePaymentSummary,
 };
 
 export {
@@ -289,7 +291,9 @@ export type ExpenseDetail = ExpenseSummary & {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   pendingPostingSourceType: ExpensePostingSourceType | null;
+  pendingPostingSourceId: string | null;
   postingError: string | null;
+  payments: ExpensePaymentSummary[];
   lines: Array<{
     id: string;
     lineNumber: number;
