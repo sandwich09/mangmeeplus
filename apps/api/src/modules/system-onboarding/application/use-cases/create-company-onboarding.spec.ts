@@ -732,6 +732,92 @@ describe('CreateCompanyOnboardingUseCase attachExistingOwner', () => {
  * Capture is via `Logger.overrideLogger` — the emitter uses Nest's `Logger`, bridged to the
  * pino stream by M-02, per the `security-event-emitters.spec.ts` precedent.
  */
+
+/**
+ * Audit H-31: the admin knows the company's tax id at handover, but company.legal_identity.manage
+ * lives inside the company, so until now the number could not be captured until the owner first
+ * logged in — and sellerIdentityComplete could never become true.
+ */
+describe('CreateCompanyOnboardingUseCase tax identity capture', () => {
+  function harness(taxId?: string) {
+    const captured: { company?: any; revisions: any[]; taxProfiles: any[] } = { revisions: [], taxProfiles: [] };
+    const prisma = {
+      client: {
+        user: { findUnique: async () => null },
+        company: { findFirst: async () => null },
+        role: { findUnique: async () => ({ id: 'role-owner' }) },
+        $transaction: async (fn: (tx: any) => Promise<any>) => {
+          const chart = chartBootstrapTx('co-1');
+          return fn({
+            company: {
+              create: async (args: any) => { captured.company = args.data; return { id: 'co-1' }; },
+              update: chart.companyUpdate,
+            },
+            companyLegalIdentityRevision: { create: async (args: any) => { captured.revisions.push(args.data); return args.data; } },
+            companyTaxProfile: { upsert: async (args: any) => { captured.taxProfiles.push(args); return args.create; } },
+            chartOfAccount: chart.chartOfAccount,
+            user: { create: async () => ({ id: 'owner-1' }) },
+            userCredential: { create: async () => ({}) },
+            companyMembership: { create: async () => ({ id: 'mem-1' }) },
+            membershipRole: { create: async () => ({}) },
+            employeeLineLinkToken: { create: async () => ({}) },
+            branch: { create: async () => ({}) },
+            companyVatRegistrationState: { create: async () => ({}) },
+            ...entitlementTx(),
+            ...taxConfigTx(),
+            companyOnboardingRun: { create: async () => ({ id: 'run-1' }) },
+            auditLog: { create: async () => ({}) },
+            ...workflowTx(),
+          });
+        },
+      },
+    } as any;
+    const run = () => new CreateCompanyOnboardingUseCase(prisma, configMock).execute(makeCmd(taxId ? { taxId } as any : {}));
+    return { run, captured };
+  }
+
+  it('stores the tax id as a versioned initial capture, not a bare column', async () => {
+    const { run, captured } = harness('0105536000021');
+    await run();
+
+    assert.equal(captured.company.taxId, '0105536000021');
+    // A bare column write would leave the version at 0 with no revision behind it, and the identity
+    // screen's optimistic concurrency and its history would both describe a value nobody wrote.
+    assert.equal(captured.company.legalIdentityVersion, 1);
+    assert.equal(captured.revisions.length, 1);
+    assert.equal(captured.revisions[0].changeKind, 'INITIAL_CAPTURE');
+    assert.equal(captured.revisions[0].legalIdentityVersion, 1);
+    assert.deepEqual(captured.revisions[0].snapshotJson.taxId, '0105536000021');
+    // The legacy mirror patch() also writes — skipping it would leave the tax profile disagreeing
+    // with the company row from day one.
+    assert.equal(captured.taxProfiles.length, 1);
+    assert.equal(captured.taxProfiles[0].create.taxId, '0105536000021');
+  });
+
+  it('accepts the printed form and stores digits, so both entry points agree on the value', async () => {
+    const { run, captured } = harness('0-1055-36000-02-1');
+    await run();
+    assert.equal(captured.company.taxId, '0105536000021');
+  });
+
+  it('leaves the company untouched when the admin does not have the number', async () => {
+    const { run, captured } = harness();
+    await run();
+
+    assert.equal(captured.company.taxId, undefined);
+    assert.equal(captured.company.legalIdentityVersion, undefined, 'version stays at the schema default');
+    assert.equal(captured.revisions.length, 0);
+    assert.equal(captured.taxProfiles.length, 0);
+  });
+
+  it('refuses a number that is not 13 digits rather than storing a partial one', async () => {
+    for (const bad of ['12345', '010553600002199', 'abcdefghijklm']) {
+      const { run } = harness(bad);
+      await assert.rejects(run, /13 digits/, bad);
+    }
+  });
+});
+
 describe('CreateCompanyOnboardingUseCase PDPA tenant tripwire', () => {
   function captureWarnings(): { lines: Array<Record<string, unknown>>; restore: () => void } {
     const lines: Array<Record<string, unknown>> = [];

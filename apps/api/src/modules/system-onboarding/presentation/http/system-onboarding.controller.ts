@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import { COMPANY_BUSINESS_CATEGORIES, VAT_FACT_STATUSES, type CompanyBusinessCategory, type VatFactStatus } from '@watchdog-bms/contracts';
@@ -26,6 +26,10 @@ class CreateOnboardingDto {
   // Required, closed set: the PDPA tenant tripwire (M-05 register §6) has no other input,
   // and an omitted category would be a silently uncategorised tenant.
   @IsIn(COMPANY_BUSINESS_CATEGORIES) businessCategory!: CompanyBusinessCategory;
+  // Optional like vatRegistration: an admin without the number leaves it out and the owner captures
+  // it later. Bounded here only — the use case owns the 13-digit rule, shared with the identity
+  // screen, so the two can never disagree about what a valid tax id is.
+  @IsString() @IsOptional() @MaxLength(32) taxId?: string;
   @IsString() @IsNotEmpty() ownerDisplayName!: string;
   @IsString() @IsNotEmpty() ownerUsername!: string;
   @IsBoolean() @IsOptional() attachExistingOwner?: boolean;
@@ -65,6 +69,7 @@ export class SystemOnboardingController {
     return this.createOnboarding.execute({
       companyName: dto.companyName,
       businessCategory: dto.businessCategory,
+      ...(dto.taxId ? { taxId: dto.taxId } : {}),
       ...(dto.vatRegistration && { vatRegistration: dto.vatRegistration as any }),
       ownerDisplayName: dto.ownerDisplayName,
       ownerUsername: dto.ownerUsername,
