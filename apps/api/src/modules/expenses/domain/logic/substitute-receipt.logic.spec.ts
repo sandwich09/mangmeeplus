@@ -34,6 +34,7 @@ describe('substitute receipt evidence', () => {
     ).toString('utf8');
 
     assert.match(artifact, /ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.match(artifact, /เลขอ้างอิงรายการ: SRC-EXP-1-V1/);
     assert.match(artifact, /หกสิบห้าบาทถ้วน/);
     assert.match(artifact, /13 ก\.\u0e04\. 2569/);
     assert.match(artifact, /บันทึกค่าใช้จ่าย \(ข้อความ\)/);

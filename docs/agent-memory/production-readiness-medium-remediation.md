@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-10 plus expense/reimbursement complete; procurement related-view verified and pending commit.
+Status: IN PROGRESS — M8-01..M8-10 and related-view follow-ups committed through procurement; substitute-receipt R1 in progress.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -152,5 +152,14 @@ Verification:
   generate pass, and all 129 migrations applied to a clean PostgreSQL database; the migration table confirmed 129
   completed rows before the temporary database was removed. API typecheck has no procurement error and retains only the
   established 14 substitute-receipt/report spec errors.
+- Substitute-receipt H-4 follow-up aligns `expense.read_own` across detail, hub and history: the payer of any current or
+  superseded evidence version can open the certificate journey without `expense.review`, while an unrelated company
+  member remains denied. Focused payer/relation tests 15/15 and the expanded expenses + permission suite 555/555 pass;
+  committed as `0e9421a`.
+- Substitute-receipt running number is allocated and committed atomically with the evidence under
+  `expense.substitute_receipt` (`SRC-{YYYY}{MM}-{SEQ}`), uses the Bangkok preparation month, and an idempotent retry does
+  not consume another number. The printed form uses the human-readable certificate number as its item reference until
+  the expense receives its confirmation number, never `-` or the internal cuid. Sequence/repository/renderer tests
+  30/30 pass; API typecheck retains the same established 14 spec-only errors.
 Next:
-- Commit procurement without staging concurrent shared-worktree changes; then continue the next section-8 finding.
+- Continue the substitute-receipt R1 findings: Bangkok signature date and voided certificate state.

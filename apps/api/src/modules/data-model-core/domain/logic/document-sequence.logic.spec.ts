@@ -50,6 +50,11 @@ describe('document-sequence.logic', () => {
         padding: 5,
         resetPolicy: 'MONTHLY',
       });
+      assert.deepEqual(getDefaultDocumentSequenceConfig('expense.substitute_receipt'), {
+        prefixTemplate: 'SRC-{YYYY}{MM}-{SEQ}',
+        padding: 5,
+        resetPolicy: 'MONTHLY',
+      });
       assert.equal(getDefaultDocumentSequenceConfig('custom.unknown'), undefined);
     });
   });

@@ -3,6 +3,7 @@ import Decimal from 'decimal.js';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
   ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
@@ -23,6 +24,8 @@ type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & {
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
 const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
+const SUBSTITUTE_RECEIPT_DOCUMENT_TYPE = 'expense.substitute_receipt';
+const SUBSTITUTE_RECEIPT_OWNER_TYPE = 'expense_substitute_receipt';
 
 
 type ExpenseTaxFinalizer = (input: {
@@ -263,7 +266,10 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
 
 @Injectable()
 export class PrismaExpenseRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly documentNumbers = new PrismaDocumentSequenceRepository(prisma),
+  ) {}
 
   async recordPaymentAtomic(input: {
     companyId: string;
@@ -1124,14 +1130,22 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, expenseId: input.expenseId }, orderBy: { version: 'desc' }, select: { version: true },
       });
       const version = (latest?.version ?? 0) + 1;
-      const documentNumber = `SRC-${expense.expenseNumber ?? expense.id}-V${version}`;
-      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.create({
+      const preparedAt = new Date();
+      const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId ?? undefined,
+        documentType: SUBSTITUTE_RECEIPT_DOCUMENT_TYPE,
+        periodKey: civilPeriodKey(civilDate(preparedAt)),
+        idempotencyKey: `${input.expenseId}:${input.idempotencyKey}`,
+        reservedByUserId: input.preparedByUserId,
+      });
+      const evidence = await tx.expenseSubstituteReceiptEvidence.create({
         data: {
           companyId: input.companyId,
           expenseId: input.expenseId,
           branchId: input.branchId,
           version,
-          documentNumber,
+          documentNumber: reserved.documentNumber,
           idempotencyKey: input.idempotencyKey,
           originalSourceDocumentType: input.originalSourceDocumentType,
           reasonCode: input.reasonCode,
@@ -1143,7 +1157,7 @@ export class PrismaExpenseRepository {
           paymentMethod: input.paymentMethod,
           note: input.note,
           preparedByUserId: input.preparedByUserId,
-          preparedAt: new Date(),
+          preparedAt,
           expenseUpdatedAtAtPreparation: safeExpense.updatedAt,
           payerUserId: input.payerUserId,
           payerName: input.payerName,
@@ -1151,7 +1165,14 @@ export class PrismaExpenseRepository {
           payeeAddress: input.payeeAddress,
           payeeTaxId: input.payeeTaxId,
         },
-      }));
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: reserved.id,
+        companyId: input.companyId,
+        ownerType: SUBSTITUTE_RECEIPT_OWNER_TYPE,
+        ownerId: evidence.id,
+      });
+      return mapSubstituteEvidence(evidence);
     });
   }
 
