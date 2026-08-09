@@ -50,6 +50,24 @@ describe('isSystemAdmin', () => {
 });
 
 describe('resolveLoginLanding', () => {
+  /**
+   * Audit H-16: "go to an available company" linked to /login, the remembered home pointed back at
+   * the company the user could not open, and the redirect looped — sign out was the only exit.
+   * That screen now asks for the remembered landing to be skipped, which is this call shape.
+   */
+  it('falls back to the session company when the remembered home is skipped', () => {
+    // What /login passes once ?home=reset is present.
+    assert.equal(
+      resolveLoginLanding(null, undefined, session({ companyId: 'c2' })),
+      '/companies/c2/dashboard',
+    );
+    // ...instead of the stale home, which is what produced the loop.
+    assert.equal(
+      resolveLoginLanding(null, '/companies/c1/dashboard', session({ companyId: 'c2' })),
+      '/companies/c1/dashboard',
+    );
+  });
+
   it('prefers an explicit safe next target', () => {
     assert.equal(
       resolveLoginLanding('/companies/c1/expenses', '/companies/c1/dashboard', session()),
