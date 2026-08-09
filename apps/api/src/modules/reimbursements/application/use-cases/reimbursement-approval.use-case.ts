@@ -9,6 +9,7 @@ import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
 import { effectivePolicy } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
+  SELF_APPROVAL_EXEMPT_ROLES,
   matchesApproverRole,
   validateRejectionReason,
   canTransition,
@@ -114,7 +115,7 @@ export class ListApprovalQueueUseCase {
         // policy the approve gate uses, so the two can never disagree about what is offered and
         // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
         // is filtered.
-        && !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval);
+        && !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles);
     }).map((r) => {
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
       return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
@@ -138,7 +139,7 @@ export class ApproveReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
 
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
@@ -190,6 +191,20 @@ export class ApproveReimbursementUseCase {
             currency: req.currency,
             comment,
             projectionPending: !policy.financeReviewRequired,
+            // The exemption buys convenience, not anonymity. Recorded in the SAME transaction as
+            // the decision, so the trail cannot exist without the approval or the approval without
+            // the trail — a post-commit audit write can be lost exactly when it matters most.
+            // `via` distinguishes the company having opened the policy from a role standing in for
+            // it, which is the question support has to answer when a customer disputes a claim.
+            ...(req.requesterUserId === ctx.userId
+              ? {
+                selfApproval: {
+                  approvedOwnRequest: true,
+                  via: policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
+                  actorRoles: ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+                },
+              }
+              : {}),
           },
         }, tx);
         const eventType = policy.financeReviewRequired
@@ -298,7 +313,7 @@ export class RejectReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
 
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       throw new ForbiddenException('self_approval_denied');
     }
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');

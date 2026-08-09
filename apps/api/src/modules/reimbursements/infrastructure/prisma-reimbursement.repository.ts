@@ -735,7 +735,7 @@ export class PrismaReimbursementRepository {
 
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
-      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
         throw new ForbiddenException('self_approval_denied');
       }
       const storedHash = this.assertApprovalSnapshot(request, data.expectedApprovalSnapshotHash);
@@ -1349,7 +1349,7 @@ export class PrismaReimbursementRepository {
 
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
-      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval)) {
+      if (isSelfApproval(request.requesterUserId, data.actorUserId, data.allowSelfApproval, data.actorRoles)) {
         throw new ForbiddenException('self_approval_denied');
       }
       if (request.currentApproverUserId && request.currentApproverUserId !== data.actorUserId) {
