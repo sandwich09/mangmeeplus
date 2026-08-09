@@ -555,6 +555,14 @@ EOF
 
   ensure_role "$AI_TASK_ROLE" '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
   local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-6xOx1tCbz0}"
+  # A malformed ARN does not fail anything at deploy time - the gateway boots green and only fails
+  # when a user actually sends a message, as an AgentCore invoke error with no obvious cause. The
+  # live service carried one truncated 8 characters short for weeks. Shape-check it here so a bad
+  # value cannot reach a task definition.
+  if [[ ! "$agentcore_arn" =~ ^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$ ]]; then
+    echo "ERROR: AGENTCORE_RUNTIME_ARN is not a well-formed AgentCore runtime ARN: ${agentcore_arn}" >&2
+    exit 2
+  fi
   # The foundation-model ARN stays region-wildcarded on purpose. Production runs a
   # `global.` inference profile under the recorded transfer exception, and a global
   # profile invokes the underlying foundation model in whichever region it routes to —
@@ -1277,6 +1285,14 @@ ai_container_json() {
   local public_web_url
   public_web_url="$(normalize_url "${PUBLIC_DOMAIN_URL:-$api_web_url}")"
   local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-6xOx1tCbz0}"
+  # A malformed ARN does not fail anything at deploy time - the gateway boots green and only fails
+  # when a user actually sends a message, as an AgentCore invoke error with no obvious cause. The
+  # live service carried one truncated 8 characters short for weeks. Shape-check it here so a bad
+  # value cannot reach a task definition.
+  if [[ ! "$agentcore_arn" =~ ^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$ ]]; then
+    echo "ERROR: AGENTCORE_RUNTIME_ARN is not a well-formed AgentCore runtime ARN: ${agentcore_arn}" >&2
+    exit 2
+  fi
   jq -n \
     --arg image "$image" \
     --arg sha "$SHA" \
