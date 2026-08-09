@@ -85,7 +85,11 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
+  // Which row is saving, not merely whether one is: `disabled={updating}` on every row dimmed all
+  // seven selects and both toggle columns on a single change, so picking one Tax Code flashed the
+  // whole table. The single-writer guard below still reads off this.
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const updating = updatingId !== null;
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -94,11 +98,15 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
   const [editName, setEditName] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  // `keepVisible` for the refresh that follows a write: `loading` swaps the whole table for the
+  // spinner, so re-reading the list after one selection unmounted all eighteen rows and remounted
+  // them, which is the jump users see. Only the first load has nothing to keep on screen.
+  const load = useCallback(async (keepVisible = false) => {
+    if (!keepVisible) setLoading(true);
+    setError(null);
     try { setCategories(await listManageCategories(companyId)); }
     catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
+    finally { if (!keepVisible) setLoading(false); }
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -111,7 +119,11 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
           context: 'DOMESTIC_PURCHASE', direction: 'INPUT', documentDate: todayCivilDate(),
         }).map((item) => ({ externalCode: item.externalCode, displayName: item.displayName })));
       })
-      .catch(() => { if (!cancelled) setTaxCodes([]); });
+      // An empty list must not stand in for a failed read: with the codes swallowed, the Tax Code
+      // column silently collapses to "ไม่กำหนด" only, which is indistinguishable from a company
+      // that genuinely has no codes — and the setting quietly becomes impossible to make. A stale
+      // legal acceptance (403 legal_acceptance_required) reaches here exactly that way.
+      .catch((cause) => { if (!cancelled) { setTaxCodes([]); setActionError(err(cause)); } });
     return () => { cancelled = true; };
   }, [companyId, showsTax]);
 
@@ -127,7 +139,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
         ...(showsTax && newTaxCode ? { defaultInputTaxCode: newTaxCode } : {}),
       });
       setName(''); setNewTaxCode('');
-      await load();
+      await load(true);
       setShowCreate(false);
       toast.success('เพิ่มหมวดหมู่เรียบร้อยแล้ว');
     } catch (e) { setCreateError(err(e)); }
@@ -136,11 +148,11 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
 
   const runUpdate = async (id: string, body: Parameters<typeof updateExpenseCategory>[2], successMessage?: string) => {
     if (updating) return;
-    setUpdating(true);
+    setUpdatingId(id);
     setActionError(null);
-    try { await updateExpenseCategory(companyId, id, body); await load(); if (successMessage) toast.success(successMessage); }
+    try { await updateExpenseCategory(companyId, id, body); await load(true); if (successMessage) toast.success(successMessage); }
     catch (e) { setActionError(err(e)); }
-    finally { setUpdating(false); }
+    finally { setUpdatingId(null); }
   };
   const saveName = async (id: string) => {
     const trimmed = editName.trim();
@@ -189,7 +201,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                       {showsTax && <td className="whitespace-nowrap text-xs">
                         {owned ? (
                           <ThemedSelect className={cx(inputClass, 'h-9 w-auto !text-xs')} value={c.defaultInputTaxCode ?? ''}
-                            disabled={updating}
+                            disabled={updatingId === c.id}
                             onChange={(e) => void runUpdate(c.id, { defaultInputTaxCode: e.target.value || null })}>
                             <option value="">ไม่กำหนด</option>
                             {taxCodes.map((code) => <option key={code.externalCode} value={code.externalCode}>{code.externalCode} · {code.displayName}</option>)}
@@ -197,7 +209,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                         ) : <span className="text-gray-400">{c.defaultInputTaxCode ?? '—'}</span>}
                       </td>}
                       <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
-                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updating} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
+                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
                       <td className="w-px whitespace-nowrap text-right">
                         {owned ? (
                           <span className="inline-flex items-center justify-end gap-1.5">
@@ -249,13 +261,19 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
 }
 
 // ── Signature assets ──────────────────────────────────────────────────────────
+// No asset id can collide with this, so a whole-panel action stays distinguishable from a row's.
+const ALL_ROWS_BUSY = '*';
+
 export function SignaturePanel({ companyId, canApprove }: { companyId: string; canApprove: boolean }) {
   const toast = useToast();
   const [assets, setAssets] = useState<SignatureAssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionBusy, setActionBusy] = useState(false);
+  // Which row is busy, not merely whether one is — see CategoryManagePanel. The sentinel covers the
+  // modal action that belongs to no single row.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const actionBusy = busyId !== null;
   const fileRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [label, setLabel] = useState('');
@@ -267,11 +285,14 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  // `keepVisible` as in CategoryManagePanel above: a refresh after a write must not swap the table
+  // for the spinner, or approving one signature unmounts and remounts every row.
+  const load = useCallback(async (keepVisible = false) => {
+    if (!keepVisible) setLoading(true);
+    setError(null);
     try { setAssets(await listSignatureAssets(companyId)); }
     catch (e) { setError(err(e)); }
-    finally { setLoading(false); }
+    finally { if (!keepVisible) setLoading(false); }
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
 
@@ -324,20 +345,22 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
       }
       setLabel(''); setFileName(''); setPreview(null); setDerivedBlob(null);
       if (fileRef.current) fileRef.current.value = '';
-      await load();
+      await load(true);
       setShowUpload(false);
       toast.success('อัปโหลดลายเซ็นเรียบร้อยแล้ว');
     } catch (e) { setActionError(err(e)); }
     finally { setSaving(false); }
   };
 
-  const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
+  // `assetId` names the row the action belongs to, so only that row's buttons go busy instead of
+  // every row's at once. Omitted by the modal, whose buttons are already about a single target.
+  const doAction = async (fn: () => Promise<unknown>, successMessage?: string, assetId?: string) => {
     if (actionBusy) return;
-    setActionBusy(true);
+    setBusyId(assetId ?? ALL_ROWS_BUSY);
     setActionError(null);
-    try { await fn(); await load(); if (successMessage) toast.success(successMessage); }
+    try { await fn(); await load(true); if (successMessage) toast.success(successMessage); }
     catch (e) { setActionError(err(e)); }
-    finally { setActionBusy(false); }
+    finally { setBusyId(null); }
   };
 
   const pending = assets.filter((a) => a.status === 'PENDING_OWNER_APPROVAL');
@@ -364,7 +387,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                       </div>
                       {canApprove && (
                         <div className="flex gap-2">
-                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" disabled={actionBusy} onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว')}>{actionBusy ? 'กำลังดำเนินการ...' : 'อนุมัติ'}</button>
+                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" disabled={busyId === a.id} onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว', a.id)}>{busyId === a.id ? 'กำลังดำเนินการ...' : 'อนุมัติ'}</button>
                           <button className="mangmee-btn mangmee-btn-danger h-9 px-3 text-xs" onClick={() => { setRejectId(a.id); setRejectReason(''); }}>ปฏิเสธ</button>
                         </div>
                       )}
@@ -401,7 +424,7 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                           <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.approvedAt ? dateShort(a.approvedAt) : '-'}</td>
-                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" disabled={actionBusy} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว')}>{ICON.trash}</IconBtn>}</td>
+                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}</td>
                         </tr>
                       ))}
                     </tbody>
