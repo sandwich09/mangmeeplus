@@ -1,12 +1,19 @@
 import { createHash } from 'node:crypto';
+import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 
 export const SUBSTITUTE_RECEIPT_TITLE = 'ใบรับรองแทนใบเสร็จรับเงิน';
 
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
-const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
 const GRAPHEME_SEGMENTER = new Intl.Segmenter('th', { granularity: 'grapheme' });
+/** Every glyph width below is calibrated at this size; other sizes scale from it. */
+const BODY_FONT_SIZE = 15;
+/** Text budgets of the two wrapped table columns, inside their rules at x=560 and x=805. */
+const DESCRIPTION_WIDTH = 380;
+const NOTE_WIDTH = 52;
+/** The baht-in-words row spans the sheet from x=54, less a few px of ink allowance. */
+const BAHT_TEXT_WIDTH = 745;
 const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   RECEIPT: 'ใบเสร็จรับเงิน', TAX_INVOICE: 'ใบกำกับภาษี', TRANSFER_SLIP: 'สลิปโอนเงิน',
   HANDWRITTEN_CASH_BILL: 'บิลเงินสดเขียนมือ', SUPPLIER_BILL: 'บิลผู้ขาย', MARKETPLACE_ORDER_SCREENSHOT: 'ภาพคำสั่งซื้อจากมาร์เก็ตเพลส',
@@ -142,16 +149,16 @@ export function renderSubstituteReceiptSvg(
   let rowY = tableTop + headerHeight;
   const rowBreaks: number[] = [];
   const rows = sourceLines.map((line, index) => {
-    const descriptions = wrapText(line.description, 380);
-    const rowNotes = index === 0 && snapshot.note ? wrapText(snapshot.note, 52) : ['-'];
+    const descriptions = wrapText(line.description, DESCRIPTION_WIDTH);
+    const rowNotes = index === 0 && snapshot.note ? wrapText(snapshot.note, NOTE_WIDTH) : ['-'];
     const rowHeight = Math.max(36, descriptions.length * 21 + 12, rowNotes.length * 21 + 12);
     const contentY = rowY + 24;
     const markup = `<line x1="45" y1="${rowY}" x2="805" y2="${rowY}" stroke="#bbb"/>
       <text x="54" y="${contentY}">${xml(formatDate(snapshot.expense.expenseDate))}</text>
-      ${multilineText(165, contentY, descriptions, 21)}
+      ${multilineText(165, contentY, descriptions, 21, DESCRIPTION_WIDTH)}
       <text x="615" y="${contentY}" text-anchor="end">${xml(line.quantity)}</text>
       <text x="710" y="${contentY}" text-anchor="end">${xml(money(line.amount))}</text>
-      ${multilineText(742, contentY, rowNotes, 21)}`;
+      ${multilineText(742, contentY, rowNotes, 21, NOTE_WIDTH)}`;
     rowY += rowHeight;
     rowBreaks.push(rowY);
     return markup;
@@ -209,7 +216,7 @@ export function renderSubstituteReceiptSvg(
   const approverBlock = approver && approverSignatureDataUrl
     ? `<image href="${approverSignatureDataUrl}" x="500" y="${approverSignatureY}" width="220" height="78" preserveAspectRatio="xMidYMid meet"/>
        <line x1="480" y1="${signaturesStart + 92}" x2="750" y2="${signaturesStart + 92}" stroke="#222"/>
-       <text x="615" y="${signaturesStart + 116}" text-anchor="middle">${xml(approver.name)} · ${xml(positionLabel(approver.position))}</text>
+       <text x="615" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(`${approver.name} · ${positionLabel(approver.position)}`, 270)}>${xml(approver.name)} · ${xml(positionLabel(approver.position))}</text>
        <text x="615" y="${signaturesStart + 140}" text-anchor="middle">ผู้อนุมัติ · ${xml(formatDate(approver.approvedAt))}</text>`
     : `<text x="615" y="${signaturesStart + 75}" text-anchor="middle" fill="#777">รอผู้อนุมัติลงนาม</text>`;
 
@@ -219,11 +226,11 @@ export function renderSubstituteReceiptSvg(
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
     <text x="425" y="76" text-anchor="middle" fill="#555">เลขที่ ${xml(snapshot.documentNumber)} · version ${snapshot.version}</text>
-    <text x="50" y="120">บริษัท: ${xml(snapshot.company.name)}</text>
-    <text x="470" y="120">สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
+    <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
+    <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
     <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
     <text x="470" y="148">วันที่รายจ่าย: ${xml(formatDate(snapshot.expense.expenseDate))}</text>
-    <text x="50" y="176">เลขที่รายการ: ${xml(snapshot.expense.expenseNumber ?? '-')}</text>
+    <text x="50" y="176">เลขอ้างอิงรายการ: ${xml(snapshot.expense.expenseNumber ?? snapshot.documentNumber)}</text>
     <text x="470" y="176">วันที่จ่าย: ${xml(snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-')}</text>
     <text x="50" y="204">หลักฐานต้นทาง: ${xml(DOCUMENT_TYPE_LABELS[snapshot.originalSourceDocumentType] ?? 'เอกสารค่าใช้จ่าย')}</text>
     <text x="470" y="204">วิธีชำระเงิน: ${xml(snapshot.expense.paymentMethod ? PAYMENT_METHOD_LABELS[snapshot.expense.paymentMethod] ?? 'อื่น ๆ' : '-')}</text>
@@ -244,7 +251,7 @@ export function renderSubstituteReceiptSvg(
     <text x="767" y="${tableTop + 25}" text-anchor="middle">หมายเหตุ</text>
     ${rows}
     <text x="620" y="${totalY}" text-anchor="end" font-weight="700">รวมทั้งสิ้น</text><text x="720" y="${totalY}" text-anchor="end" font-weight="700">${xml(money(snapshot.expense.grandTotalAmount))}</text>
-    <text x="54" y="${totalY + 34}">รวมเป็นตัวอักษร: ${xml(thaiBahtText(snapshot.expense.grandTotalAmount))}</text>
+    <text x="54" y="${totalY + 34}"${fitToWidth(`รวมเป็นตัวอักษร: ${thaiBahtText(snapshot.expense.grandTotalAmount)}`, BAHT_TEXT_WIDTH)}>รวมเป็นตัวอักษร: ${xml(thaiBahtText(snapshot.expense.grandTotalAmount))}</text>
     ${multilineText(50, reasonY, reasonLines, 22)}
     ${multilineText(50, purposeY, purposeLines, 22)}
     ${noteLines.length ? multilineText(50, noteY, noteLines, 22) : ''}
@@ -254,7 +261,7 @@ export function renderSubstituteReceiptSvg(
     ${evidence}
     ${payerSignatureBlock}
     <line x1="105" y1="${signaturesStart + 92}" x2="375" y2="${signaturesStart + 92}" stroke="#222"/>
-    <text x="240" y="${signaturesStart + 116}" text-anchor="middle">${xml(snapshot.payer.name)} · ${xml(positionLabel(snapshot.payer.position))}</text>
+    <text x="240" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(`${snapshot.payer.name} · ${positionLabel(snapshot.payer.position)}`, 270)}>${xml(snapshot.payer.name)} · ${xml(positionLabel(snapshot.payer.position))}</text>
     <text x="240" y="${signaturesStart + 140}" text-anchor="middle">ผู้จ่ายเงิน/ผู้รับรอง${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
     ${approverBlock}
     ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
@@ -264,21 +271,24 @@ export function renderSubstituteReceiptSvg(
   return Buffer.from(svg, 'utf8');
 }
 
-export function wrapText(value: unknown, maxWidth: number): string[] {
+/** `fontSize` defaults to this sheet's body size; ใบสำคัญรับเงิน prints at 18 and passes its own. */
+export function wrapText(value: unknown, maxWidth: number, fontSize?: number): string[] {
   const text = String(value ?? '').trim();
   if (!text) return ['-'];
   const lines: string[] = [];
   let line = '';
   for (const { segment } of WORD_SEGMENTER.segment(text)) {
     const candidate = `${line}${segment}`;
-    if (!line || estimatedWidth(candidate) <= maxWidth) {
+    if (estimatedWidth(candidate, fontSize) <= maxWidth) {
       line = candidate;
       continue;
     }
-    lines.push(line.trim());
+    // `!line` used to short-circuit here, which accepted a single word wider than the
+    // column verbatim and never reached the grapheme split below.
+    if (line) lines.push(line.trim());
     line = '';
     for (const { segment: grapheme } of GRAPHEME_SEGMENTER.segment(segment.trimStart())) {
-      if (line && estimatedWidth(`${line}${grapheme}`) > maxWidth) {
+      if (line && estimatedWidth(`${line}${grapheme}`, fontSize) > maxWidth) {
         lines.push(line.trim());
         line = '';
       }
@@ -289,22 +299,48 @@ export function wrapText(value: unknown, maxWidth: number): string[] {
   return lines;
 }
 
-function estimatedWidth(value: string): number {
+/** Text too wide for its column condenses into it instead of running past the rule. */
+export function fitToWidth(value: string, maxWidth: number, fontSize?: number): string {
+  return estimatedWidth(value, fontSize) > maxWidth ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+}
+
+/**
+ * Advance width of one line, measured from the print font stack instead of guessed.
+ * The previous flat 8px/7.5px estimate under-measured Thai by 5-18%, and callers at a
+ * larger font-size under-measured by that much again on top.
+ */
+function estimatedWidth(value: string, fontSize = BODY_FONT_SIZE): number {
   let width = 0;
-  for (const { segment } of GRAPHEME_SEGMENTER.segment(value)) {
-    if (/^\s+$/.test(segment)) width += 4;
-    else if (/^[\u0000-\u007f]+$/.test(segment)) width += /^[.,:;|!()\-]$/.test(segment) ? 5 : 7.5;
-    else width += 8;
-  }
-  return width;
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(value)) width += graphemeWidth(segment);
+  return width * (fontSize / BODY_FONT_SIZE);
+}
+
+/**
+ * Advance of one grapheme cluster, keyed on its base glyph — the vowel/tone marks
+ * stacked on top of it carry no advance of their own. Thai glyph widths spread from
+ * 5px (เ) to 13px (ฒ), so a single average is wrong at both ends: the buckets below
+ * are the measured extremes, chosen to round up rather than down on real sentences.
+ */
+function graphemeWidth(segment: string): number {
+  if (/^\s+$/.test(segment)) return 4.5;
+  if (/^[.,:;|!()\-]$/.test(segment)) return 5.5;
+  if (/^[%@WM#]/.test(segment)) return 14.5;
+  if (/^[A-Z0-9]/.test(segment)) return 9.5;
+  if (/^[\u0000-\u007f]/.test(segment)) return 8;
+  if (/^[ฌญฑฒณ]/.test(segment)) return 13.2;
+  if (/^[ซฆทพฟษหฬ]/.test(segment)) return 11.3;
+  if (/^[เรใะวาำงโๆไ]/.test(segment)) return 6.8;
+  return 9.7;
 }
 
 function positionLabel(value: string): string {
   return POSITION_LABELS[value.trim().toLowerCase()] ?? value;
 }
 
-function multilineText(x: number, y: number, lines: string[], lineHeight: number): string {
-  return `<text x="${x}" y="${y}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${xml(line)}</tspan>`).join('')}</text>`;
+/** `maxWidth` condenses any line the estimate still puts over its column, so a font
+ *  wider than the one this renderer was measured against cannot spill either. */
+function multilineText(x: number, y: number, lines: string[], lineHeight: number, maxWidth?: number): string {
+  return `<text x="${x}" y="${y}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}"${maxWidth ? fitToWidth(line, maxWidth) : ''}>${xml(line)}</tspan>`).join('')}</text>`;
 }
 
 function assertSignatureDataUrl(value: string): void {
@@ -330,9 +366,5 @@ export function formatThaiTaxId(value: string): string {
 }
 
 function formatDate(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
-  if (!match) return value;
-  const [, year, month, day] = match;
-  const monthLabel = THAI_MONTHS[Number(month) - 1];
-  return monthLabel ? `${Number(day)} ${monthLabel} ${Number(year) + 543}` : value;
+  return formatThaiExportDate(value);
 }

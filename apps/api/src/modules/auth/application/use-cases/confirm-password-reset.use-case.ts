@@ -16,7 +16,7 @@ export class ConfirmPasswordResetUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
-  async execute(input: { token: string; newPassword: string; requestId?: string }): Promise<PasswordLoginResult> {
+  async execute(input: { token: string; newPassword: string; requestId?: string }): Promise<Omit<PasswordLoginResult, 'legalAcceptanceRequired'>> {
     const tokenHash = hashToken(input.token);
     const now = new Date();
     const token = await this.prisma.client.passwordResetToken.findUnique({ where: { tokenHash } });
@@ -78,6 +78,7 @@ export class ConfirmPasswordResetUseCase {
     }
 
     let revokedSessionCount = 0;
+    let credentialUpdatedAt: Date | null = null;
     const usedAt = new Date();
     let claimed = true;
 
@@ -98,7 +99,7 @@ export class ConfirmPasswordResetUseCase {
         });
         revokedSessionCount = revoked.count;
 
-        await tx.userCredential.update({
+        const updatedCredential = await tx.userCredential.update({
           where: { userId: user.id },
           data: {
             passwordHash: hashPassword(input.newPassword),
@@ -109,6 +110,7 @@ export class ConfirmPasswordResetUseCase {
             tempPasswordEncrypted: null,
           },
         });
+        credentialUpdatedAt = updatedCredential.updatedAt;
 
         await tx.auditLog.create({
           data: {
@@ -131,7 +133,8 @@ export class ConfirmPasswordResetUseCase {
       throw error;
     }
 
-    const tokens = await this.issueToken.execute(user.id, 'watchdog');
+    if (!credentialUpdatedAt) throw new Error('Password reset completed without a credential version.');
+    const tokens = await this.issueToken.execute(user.id, 'watchdog', credentialUpdatedAt);
     return {
       ...tokens,
       passwordChangeRequired: false,

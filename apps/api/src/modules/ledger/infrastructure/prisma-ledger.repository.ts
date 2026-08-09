@@ -5,8 +5,6 @@ import type { LedgerJournalLineInput, UpdateChartOfAccountInput } from '@watchdo
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
 import { selectPostingRuleCandidate } from '../domain/logic/posting-engine.logic.js';
 
-function n(s: string | undefined | null): number { return parseFloat(s ?? '0') || 0; }
-
 function journalBranchScopeWhere(branchIds?: string[]): Record<string, unknown> {
   if (!branchIds) return {};
   return {
@@ -223,8 +221,14 @@ export class PrismaLedgerRepository {
             // companyId is inherited from the parent journalEntry compound FK; passing it explicitly is rejected by Prisma 7
             accountId: l.accountId, branchId: l.branchId,
             lineNumber: idx + 1, description: l.description,
-            debitAmount: n(l.debitAmount),
-            creditAmount: n(l.creditAmount),
+            // Decimal(18,4) columns take the string as-is, the way every other money and rate
+            // field in this create already does. Going through parseFloat first spent the
+            // value's precision on a float64: the DTO accepts up to 14 integer digits and 4
+            // decimals (18 significant), float64 holds ~15-16, so `12345678901234.5678` posted
+            // as `...4.568`. Amounts that large have not been posted yet, which is the only
+            // reason this never showed up as a wrong balance.
+            debitAmount: l.debitAmount || '0',
+            creditAmount: l.creditAmount || '0',
             currency: l.currency ?? 'THB', sourceType: l.sourceType, sourceId: l.sourceId,
             taxCode: l.taxCode,
             componentKey: l.taxComponentKey as any,

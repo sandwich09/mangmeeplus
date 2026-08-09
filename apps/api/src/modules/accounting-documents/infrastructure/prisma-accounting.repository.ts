@@ -27,7 +27,7 @@ import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDo
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
-import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 
 export type AccountingDocumentTaxFinalizer = (input: {
   db: any;
@@ -47,6 +47,7 @@ export type VoidDocumentResult = {
   unappliedCredits: Array<{ paymentId: string; unappliedAmount: string; currency: string }>;
   reversalEntryId: string | null;
 };
+export type ConvertQuotationResult = { document: DocumentRecord; didConvert: boolean };
 
 @Injectable()
 export class PrismaAccountingRepository {
@@ -107,6 +108,10 @@ export class PrismaAccountingRepository {
 
   // ---- Document ----
   async createDocument(input: CreateDocumentInput): Promise<DocumentRecord> {
+    return this.createDocumentWithClient(this.prisma.client, input);
+  }
+
+  private async createDocumentWithClient(db: any, input: CreateDocumentInput): Promise<DocumentRecord> {
     const computedLines = input.lines.map((l) => calculateLine({ ...l, vatMode: input.vatMode, discountAmount: l.discountAmount ?? '0' }));
     const totals = calculateDocumentTotals(input.lines.map((l, i) => ({
       lineSubtotalAmount: computedLines[i].lineSubtotalAmount,
@@ -117,7 +122,7 @@ export class PrismaAccountingRepository {
       lineTotalAmount: computedLines[i].lineTotalAmount,
     })));
 
-    const row = await this.prisma.client.accountingDocument.create({
+    const row = await db.accountingDocument.create({
       data: {
         companyId: input.companyId,
         branchId: input.branchId,
@@ -170,18 +175,179 @@ export class PrismaAccountingRepository {
     return this.toDocumentRecord(row);
   }
 
+  async convertQuotation(
+    sourceDocumentId: string,
+    expectedSourceUpdatedAt: Date,
+    input: CreateDocumentInput,
+    actorUserId: string,
+  ): Promise<ConvertQuotationResult> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${sourceDocumentId}:accounting-document-lifecycle`}))`;
+      const source = await tx.accountingDocument.findFirst({
+        where: { id: sourceDocumentId, companyId: input.companyId },
+      });
+      if (!source) throw new NotFoundException(`Source document ${sourceDocumentId} not found`);
+
+      const existing = await tx.accountingDocument.findMany({
+        where: { companyId: input.companyId, convertedFromDocumentId: sourceDocumentId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+        orderBy: { createdAt: 'asc' },
+        take: 2,
+      });
+      if (existing.length > 1 || (existing[0] && existing[0].documentType !== input.documentType)) {
+        throw new ConflictException({
+          code: 'accounting_document_already_converted',
+          message: 'Quotation already has a different or duplicate converted document.',
+        });
+      }
+      if (source.status === 'CLOSED' && existing[0]) {
+        return { document: this.toDocumentRecord(existing[0]), didConvert: false };
+      }
+      if (source.documentType !== 'QUOTATION' || source.status !== 'ISSUED'
+        || source.updatedAt.getTime() !== expectedSourceUpdatedAt.getTime()) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before conversion. Reload and retry.',
+        });
+      }
+
+      const claimed = await tx.accountingDocument.updateMany({
+        where: {
+          id: sourceDocumentId,
+          companyId: input.companyId,
+          documentType: 'QUOTATION',
+          status: 'ISSUED',
+          updatedAt: expectedSourceUpdatedAt,
+        },
+        data: { status: 'CLOSED', updatedByUserId: actorUserId },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Quotation changed before conversion. Reload and retry.',
+        });
+      }
+
+      if (existing[0]) {
+        return { document: this.toDocumentRecord(existing[0]), didConvert: true };
+      }
+      return {
+        document: await this.createDocumentWithClient(tx, input),
+        didConvert: true,
+      };
+    }, { isolationLevel: 'Serializable' });
+  }
+
   async deleteDraftDocument(companyId: string, id: string): Promise<void> {
     await this.prisma.client.accountingDocument.deleteMany({ where: { id, companyId, status: 'DRAFT' as any } });
+  }
+
+  async updateDraftDocument(
+    documentId: string,
+    expectedUpdatedAt: Date,
+    input: CreateDocumentInput,
+    updatedByUserId: string,
+    withinTransaction?: (db: any, document: DocumentRecord) => Promise<void>,
+  ): Promise<DocumentRecord> {
+    const computedLines = input.lines.map((line) => calculateLine({
+      ...line,
+      vatMode: input.vatMode,
+      discountAmount: line.discountAmount ?? '0',
+    }));
+    const totals = calculateDocumentTotals(input.lines.map((_line, index) => ({
+      lineSubtotalAmount: computedLines[index].lineSubtotalAmount,
+      discountAmount: computedLines[index].discountAmount,
+      taxableAmount: computedLines[index].taxableAmount,
+      vatAmount: computedLines[index].vatAmount,
+      whtAmount: computedLines[index].whtAmount,
+      lineTotalAmount: computedLines[index].lineTotalAmount,
+    })));
+
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${documentId}:accounting-document-lifecycle`}))`;
+      const changed = await tx.accountingDocument.updateMany({
+        where: {
+          id: documentId,
+          companyId: input.companyId,
+          status: 'DRAFT',
+          updatedAt: expectedUpdatedAt,
+        },
+        data: {
+          branchId: input.branchId ?? null,
+          documentDate: new Date(input.documentDate),
+          dueDate: input.dueDate ? new Date(input.dueDate) : null,
+          counterpartyId: input.counterpartyId ?? null,
+          currency: input.currency ?? 'THB',
+          vatMode: input.vatMode,
+          outputTaxCode: input.outputTaxCode ?? null,
+          subtotalAmount: totals.subtotalAmount,
+          discountAmount: totals.discountAmount,
+          taxableAmount: totals.taxableAmount,
+          vatAmount: totals.vatAmount,
+          whtAmount: totals.whtAmount,
+          grandTotalAmount: totals.grandTotalAmount,
+          outstandingAmount: totals.grandTotalAmount,
+          note: input.note ?? null,
+          internalMemo: input.internalMemo ?? null,
+          updatedByUserId,
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException({
+          code: 'accounting_document_changed',
+          message: 'Document changed after it was loaded. Reload and review before saving.',
+        });
+      }
+
+      await tx.accountingDocumentLine.deleteMany({ where: { companyId: input.companyId, documentId } });
+      if (input.lines.length) {
+        await tx.accountingDocumentLine.createMany({
+          data: input.lines.map((line, index) => ({
+            companyId: input.companyId,
+            documentId,
+            lineNumber: line.lineNumber,
+            productId: line.productId,
+            skuSnapshot: line.skuSnapshot,
+            description: line.description,
+            unitName: line.unitName,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            discountAmount: computedLines[index].discountAmount,
+            vatRate: line.vatRate,
+            vatAmount: computedLines[index].vatAmount,
+            whtRate: line.whtRate,
+            whtAmount: computedLines[index].whtAmount,
+            lineSubtotalAmount: computedLines[index].lineSubtotalAmount,
+            lineTotalAmount: computedLines[index].lineTotalAmount,
+            taxCategory: line.taxCategory,
+            revenueCategory: line.revenueCategory,
+          })),
+        });
+      }
+
+      const draft = await tx.accountingDocument.findFirstOrThrow({
+        where: { id: documentId, companyId: input.companyId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+      });
+      await withinTransaction?.(tx, this.toDocumentRecord(draft));
+      const final = await tx.accountingDocument.findFirstOrThrow({
+        where: { id: documentId, companyId: input.companyId },
+        include: { lines: { orderBy: { lineNumber: 'asc' } } },
+      });
+      return this.toDocumentRecord(final);
+    }, { isolationLevel: 'Serializable' });
   }
 
   async saveLineTaxSnapshots(
     companyId: string,
     documentId: string,
     snapshots: Array<{ lineId: string; preview: import('@watchdog-bms/contracts').ResolveTransactionTaxPreviewDto }>,
+    db?: any,
   ): Promise<void> {
-    await this.prisma.client.$transaction(snapshots.map(({ lineId, preview }) => {
+    const client = db ?? this.prisma.client;
+    const writes = snapshots.map(({ lineId, preview }) => {
       const snapshot = preview.snapshot;
-      return this.prisma.client.accountingDocumentLine.updateMany({
+      return client.accountingDocumentLine.updateMany({
         where: { id: lineId, companyId, documentId },
         data: {
           taxCodeDefinitionId: snapshot.taxCodeDefinitionId,
@@ -212,15 +378,19 @@ export class PrismaAccountingRepository {
           accountAssignmentsJson: preview.components.flatMap((component) => component.accountAssignments) as any,
         } as any,
       });
-    }));
+    });
+    if (db) await Promise.all(writes);
+    else await this.prisma.client.$transaction(writes);
   }
 
   async saveInheritedLineTaxSnapshots(
     companyId: string,
     documentId: string,
     snapshots: Array<{ lineId: string; snapshot: import('@watchdog-bms/contracts').TransactionTaxSnapshot; components: import('@watchdog-bms/contracts').TransactionTaxComponentPreview[] }>,
+    db?: any,
   ): Promise<void> {
-    await this.prisma.client.$transaction(snapshots.map(({ lineId, snapshot, components }) => this.prisma.client.accountingDocumentLine.updateMany({
+    const client = db ?? this.prisma.client;
+    const writes = snapshots.map(({ lineId, snapshot, components }) => client.accountingDocumentLine.updateMany({
       where: { id: lineId, companyId, documentId },
       data: {
         taxCodeDefinitionId: snapshot.taxCodeDefinitionId,
@@ -250,11 +420,88 @@ export class PrismaAccountingRepository {
         taxComponentsJson: components as any,
         accountAssignmentsJson: components.flatMap((component) => component.accountAssignments) as any,
       } as any,
-    })));
+    }));
+    if (db) await Promise.all(writes);
+    else await this.prisma.client.$transaction(writes);
   }
 
   async findActiveBranch(companyId: string, id: string): Promise<{ id: string } | null> {
     return this.prisma.client.branch.findFirst({ where: { id, companyId, status: 'ACTIVE' }, select: { id: true } });
+  }
+
+  private async relatedDocumentIds(companyId: string, userId: string, branchIds?: string[]): Promise<string[]> {
+    const actor = [
+      { createdByUserId: userId }, { updatedByUserId: userId }, { issuedByUserId: userId },
+      { voidedByUserId: userId }, { submittedByUserId: userId }, { approvedByUserId: userId },
+      { rejectedByUserId: userId },
+    ];
+    const allocations = await this.prisma.client.accountingPaymentAllocation.findMany({
+      where: {
+        companyId,
+        OR: [
+          { createdByUserId: userId },
+          { payment: { is: { OR: [{ createdByUserId: userId }, { updatedByUserId: userId }, { voidedByUserId: userId }] } } },
+        ],
+      } as any,
+      select: { documentId: true },
+    });
+    const direct = await this.prisma.client.accountingDocument.findMany({
+      where: {
+        companyId,
+        AND: [
+          branchScopeWhere({ branchIds }),
+          { OR: [...actor, ...(allocations.length ? [{ id: { in: allocations.map((row) => row.documentId) } }] : [])] },
+        ],
+      } as any,
+      select: { id: true, sourceDocumentId: true, convertedFromDocumentId: true },
+    });
+    const authorized = new Set(direct.map((row) => row.id));
+    let frontier = direct;
+    const visitedPayments = new Set<string>();
+
+    // Walk the persisted graph to closure. `authorized` makes cycles finite; branch scope is
+    // reapplied when candidate ids become documents, including ids reached through a payment.
+    while (frontier.length) {
+      const frontierIds = frontier.map((row) => row.id);
+      const paymentLinks = await this.prisma.client.accountingPaymentAllocation.findMany({
+        where: { companyId, documentId: { in: frontierIds } },
+        select: { paymentId: true },
+      });
+      const paymentIds = [...new Set(paymentLinks.map((row) => row.paymentId))]
+        .filter((paymentId) => !visitedPayments.has(paymentId));
+      for (const paymentId of paymentIds) visitedPayments.add(paymentId);
+      const siblingAllocations = paymentIds.length
+        ? await this.prisma.client.accountingPaymentAllocation.findMany({
+          where: { companyId, paymentId: { in: paymentIds } },
+          select: { documentId: true },
+        })
+        : [];
+      const targetIds = [...new Set([
+        ...frontier.flatMap((row) => [row.sourceDocumentId, row.convertedFromDocumentId]),
+        ...siblingAllocations.map((row) => row.documentId),
+      ].filter((id): id is string => Boolean(id)))];
+      const rows = await this.prisma.client.accountingDocument.findMany({
+        where: {
+          companyId,
+          AND: [
+            branchScopeWhere({ branchIds }),
+            { OR: [
+              { id: { in: targetIds } },
+              { sourceDocumentId: { in: frontierIds } },
+              { convertedFromDocumentId: { in: frontierIds } },
+            ] },
+          ],
+        },
+        select: { id: true, sourceDocumentId: true, convertedFromDocumentId: true },
+      });
+      frontier = rows.filter((row) => !authorized.has(row.id));
+      for (const row of frontier) authorized.add(row.id);
+    }
+    return [...authorized];
+  }
+
+  async isDocumentRelatedToUser(companyId: string, documentId: string, userId: string, branchIds?: string[]): Promise<boolean> {
+    return (await this.relatedDocumentIds(companyId, userId, branchIds)).includes(documentId);
   }
 
   async findDocumentById(companyId: string, id: string, branchIds?: string[]): Promise<DocumentRecord | null> {
@@ -269,8 +516,19 @@ export class PrismaAccountingRepository {
     const page = filter.page ?? 1;
     const pageSize = Math.min(filter.pageSize ?? 20, 100);
     const skip = (page - 1) * pageSize;
-    const where: Record<string, unknown> = { companyId: filter.companyId, ...branchScopeWhere({ branchIds }) };
-    if (filter.documentType) where.documentType = filter.documentType;
+    const where: Record<string, unknown> = { companyId: filter.companyId };
+    const and: Record<string, unknown>[] = [branchScopeWhere({ branchIds })];
+    const relatedIds = filter.relatedUserId
+      ? await this.relatedDocumentIds(filter.companyId, filter.relatedUserId, branchIds)
+      : [];
+    if (filter.documentType) {
+      where.documentType = filter.documentType;
+      if (filter.documentTypes && !filter.documentTypes.includes(filter.documentType)) where.id = { in: relatedIds };
+    } else if (filter.documentTypes && filter.relatedUserId) {
+      and.push({ OR: [{ documentType: { in: filter.documentTypes } }, { id: { in: relatedIds } }] });
+    } else if (filter.documentTypes) where.documentType = { in: filter.documentTypes };
+    else if (filter.relatedUserId) where.id = { in: relatedIds };
+    where.AND = and;
     if (filter.status) where.status = filter.status;
     if (filter.paymentStatus) where.paymentStatus = filter.paymentStatus;
     if (filter.postingStatus) where.postingStatus = filter.postingStatus;
@@ -301,6 +559,7 @@ export class PrismaAccountingRepository {
   ): Promise<{ document: DocumentRecord; taxPreviews: ResolveTransactionTaxPreviewDto[] }> {
     const posting = initialPostingStatus(documentType, 'ISSUED');
     return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:accounting-document-lifecycle`}))`;
       const currentRow = await tx.accountingDocument.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (!currentRow) throw new NotFoundException(`Document ${id} not found`);
       if (currentRow.documentType !== documentType || currentRow.status !== expectedStatus
@@ -318,7 +577,7 @@ export class PrismaAccountingRepository {
       const taxRelevant = ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType);
       let taxPreviews: ResolveTransactionTaxPreviewDto[] = [];
       if (taxRelevant) {
-        const periodKey = current.documentDate.toISOString().slice(0, 7);
+        const periodKey = civilPeriodKey(coerceCivilDate(current.documentDate));
         const [accountingPeriod, lockedTaxPeriod] = await Promise.all([
           tx.accountingPeriod.findUnique({ where: { companyId_periodKey: { companyId, periodKey } }, select: { status: true } }),
           tx.taxPeriod.findFirst({ where: { companyId, formType: 'PP30', periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { status: true } }),
@@ -671,6 +930,7 @@ export class PrismaAccountingRepository {
     reversalEntryNumber?: string,
   ): Promise<VoidDocumentResult> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${documentId}:accounting-document-lifecycle`}))`;
       const claimed = await tx.accountingDocument.updateMany({
         where: { id: documentId, companyId, status: expectedStatus },
         data: {

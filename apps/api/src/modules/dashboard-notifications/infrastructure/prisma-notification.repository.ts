@@ -15,6 +15,26 @@ import type {
 } from '../domain/models/notification.model';
 import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS } from '../domain/models/notification.model';
 
+/**
+ * Keyset page for the three cursor-paginated lists here.
+ *
+ * They used to filter `id < cursor` while sorting by `createdAt desc` — a filter on one key and an
+ * order on another. Whenever the two disagree, and cuid ids only approximate creation order across
+ * processes, a row sorted after the cursor but with a larger id is skipped and one sorted before it
+ * with a smaller id repeats. Page 2 of a notification list quietly lost items.
+ *
+ * `createdAt` is not unique either — a batch of recipients is written in the same millisecond — so
+ * `id` is kept as the tiebreaker, which also makes it a valid Prisma cursor. `skip: 1` steps past
+ * the cursor row itself.
+ */
+function keysetPage(cursor: string | undefined, pageSize: number) {
+  return {
+    orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
+    take: pageSize + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  };
+}
+
 function toRule(r: any): NotificationRule {
   return {
     ...r,
@@ -103,11 +123,9 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
     if (filter.status) where.status = filter.status.toUpperCase();
     if (filter.severity) where.severity = filter.severity.toUpperCase();
     if (filter.triggerKey) where.triggerKey = filter.triggerKey;
-    if (filter.cursor) where.id = { lt: filter.cursor };
     const rows = await this.prisma.client.notificationEvent.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
-      take: pageSize + 1,
+      ...keysetPage(filter.cursor, pageSize),
       include: { recipients: { where: { userId }, take: 1 } },
     });
     const hasMore = rows.length > pageSize;
@@ -160,17 +178,34 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
     const where: any = { companyId, userId };
     if (filter.read === false) where.readAt = null;
     if (filter.read === true) where.readAt = { not: null };
-    if (filter.cursor) where.id = { lt: filter.cursor };
-    const rows = await this.prisma.client.notificationRecipient.findMany({ where, orderBy: { createdAt: 'desc' }, take: pageSize + 1, include: { event: true } });
+    const rows = await this.prisma.client.notificationRecipient.findMany({ where, ...keysetPage(filter.cursor, pageSize), include: { event: true } });
     const hasMore = rows.length > pageSize;
     const items = hasMore ? rows.slice(0, pageSize) : rows;
     return { items: items.map(toRecipient), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };
   }
+  /**
+   * The workspace polls this every 60 seconds per open tab. It used to fetch every unread row with
+   * its event joined and count them in JS, so the cost grew with the user's unread backlog — the
+   * one number that grows fastest for exactly the users who ignore notifications.
+   *
+   * Counted from the event side because `(eventId, userId)` is unique on the recipient, so one
+   * matching event is one unread row; that lets the database group by severity and return four
+   * numbers instead of the whole backlog.
+   */
   async countUnread(companyId: string, userId: string) {
-    const rows = await this.prisma.client.notificationRecipient.findMany({ where: { companyId, userId, readAt: null, dismissedAt: null }, include: { event: { select: { severity: true } } } });
-    const bySeverity: Record<string, number> = { CRITICAL: 0, ACTION: 0, INSIGHT: 0, INFO: 0 };
-    for (const r of rows) bySeverity[r.event.severity] = (bySeverity[r.event.severity] ?? 0) + 1;
-    return { total: rows.length, bySeverity: { critical: bySeverity['CRITICAL'] ?? 0, action: bySeverity['ACTION'] ?? 0, insight: bySeverity['INSIGHT'] ?? 0, info: bySeverity['INFO'] ?? 0 } };
+    const groups = await this.prisma.client.notificationEvent.groupBy({
+      by: ['severity'],
+      where: { companyId, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
+      _count: { _all: true },
+    });
+    const count = (severity: string) => groups.find((group) => group.severity === severity)?._count._all ?? 0;
+    return {
+      total: groups.reduce((sum, group) => sum + group._count._all, 0),
+      bySeverity: {
+        critical: count('CRITICAL'), action: count('ACTION'),
+        insight: count('INSIGHT'), info: count('INFO'),
+      },
+    };
   }
   async create(data: Omit<NotificationRecipient, 'id' | 'createdAt'>) { const r = await this.prisma.client.notificationRecipient.create({ data }); return toRecipient(r); }
   async update(companyId: string, id: string, data: Partial<NotificationRecipient>) { const r = await this.prisma.client.notificationRecipient.update({ where: { id }, data }); return toRecipient(r); }
@@ -186,8 +221,7 @@ export class PrismaNotificationDeliveryRepository implements NotificationDeliver
     const where: any = { companyId };
     if (filter.channel) where.channel = filter.channel.toUpperCase();
     if (filter.status) where.status = filter.status.toUpperCase();
-    if (filter.cursor) where.id = { lt: filter.cursor };
-    const rows = await this.prisma.client.notificationDelivery.findMany({ where, orderBy: { createdAt: 'desc' }, take: pageSize + 1 });
+    const rows = await this.prisma.client.notificationDelivery.findMany({ where, ...keysetPage(filter.cursor, pageSize) });
     const hasMore = rows.length > pageSize;
     const items = hasMore ? rows.slice(0, pageSize) : rows;
     return { items: items.map(toDelivery), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };

@@ -4,7 +4,7 @@
  * Uses BullMQ for job processing.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import type { NotificationJobPayload } from './notification-jobs.js';
 import {
@@ -37,6 +37,7 @@ export function startNotificationWorker(redisUrl: string): Worker {
   });
 
   void scheduleRepeatableJobs(redisUrl);
+  attachDeadLetterQueue(worker, 'notifications', redisUrl);
   return worker;
 }
 

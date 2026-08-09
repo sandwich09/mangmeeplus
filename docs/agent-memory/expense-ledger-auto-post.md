@@ -11,14 +11,16 @@ Decisions:
 - `double_entry_ledger` enabled alone means manual posting.
 - Add `expense_auto_post` entitlement for guarded Auto-post; it requires ledger.
 - Auto-post applies only to expenses confirmed at/after the entitlement `updatedAt`.
-- Auto-post in this scope creates only the confirmation/accrual `expense.record` JV. A later
-  `expense.payment` settlement remains a manual posting concern.
+- 2026-08-10 amendment: Auto-post creates confirmation/accrual `expense.record` JVs and then eligible
+  append-only `expense.payment` settlement JVs. A settlement waits for its posted accrual and uses its
+  own payment id, posting state, retry boundary, and reversal boundary.
 - Manual post/retry resolves the next outstanding source from generated journals, not only the shared
   `ExpenseRecord.postingStatus`.
 - Warning and accounting-blocker rows stay in accountant handling; retry never bypasses canonical rules.
 - Historical pending rows require preview and explicit backfill confirmation.
 - Reuse pending source scan rather than `OutboxEvent.status`, which is not a multi-subscriber queue.
 - No new dependency or configuration table.
+- `ExpensePayment` is the durable history table; aggregate payment fields on `ExpenseRecord` are read summaries.
 
 Open questions:
 - None for approved scope.
@@ -50,6 +52,10 @@ Verification:
 - Phase 3 combined API regression passed: 75/75.
 - Phase 3 API and web TypeScript checks passed; contracts build passed.
 - Final Prisma schema validation passed.
+- 2026-08-10 partial-payment focused API/ledger/banking tests passed 57/57; payment error-copy tests passed
+  21/21. Broader expense/ledger and web expense/common-api suites passed without failures. The final migration
+  also applied with the complete 126-migration chain on a clean PostgreSQL database. Full evidence is recorded
+  in the production-readiness memory.
 - Final web production build was stopped after hanging in optimization twice (including with network access);
   no compile error was reported. The last completed production build passed before the Phase 3 UI change, and
   the final Phase 3 UI passed TypeScript validation.

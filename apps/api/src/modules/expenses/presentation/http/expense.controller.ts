@@ -1,5 +1,15 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
+import {
+  ReasonOptionalDto,
+  ReasonRequiredDto,
+  ReceiptUploadCompletionDto,
+  ReceiptUploadIntentDto,
+  RecordExpensePaymentDto,
+  SetSignatureDerivedAssetDto,
+  UploadCompletionDto,
+  UploadIntentDto,
+} from './expense.dtos';
 import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -116,13 +126,13 @@ export class ExpenseController {
   // the form asks Thai VAT questions, and the registration fact itself stays masked without
   // `company.vat_registration.read`. Declared before `:expenseId` so the literal path wins.
   @Get('capture-policy')
-  @RequireAnyPermission('expense.read', 'expense.read_own', 'expense.create', 'expense.review')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review')
   captureExpensePolicy(@ReqCtx() ctx: RequestContext, @Query('on') on?: string) {
     return this.capturePolicy.execute(ctx, on);
   }
 
   @Get()
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
   listExpenses(
     @ReqCtx() ctx: RequestContext,
     @Query('status') status?: string,
@@ -200,7 +210,7 @@ export class ExpenseController {
   @RequirePermissions('expense.receipt.upload')
   initReceiptUpload(
     @ReqCtx() ctx: RequestContext,
-    @Body() body: { originalFileName: string; mimeType: string; byteSize: number; expenseDate?: string; branchId?: string; note?: string },
+    @Body() body: ReceiptUploadIntentDto,
   ) {
     return this.initUpload.execute(ctx, { ...body, expenseDate: body.expenseDate ?? todayCivilDate() });
   }
@@ -213,13 +223,13 @@ export class ExpenseController {
   }
 
   @Get(':expenseId')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
   getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.get.execute(ctx, expenseId);
   }
 
   @Get(':expenseId/payment-voucher.pdf')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
   async downloadPaymentVoucher(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
@@ -253,13 +263,13 @@ export class ExpenseController {
   }
 
   @Get(':expenseId/substitute-receipt/history')
-  @RequirePermissions('expense.review')
+  @RequireAnyPermission('expense.review', 'expense.read_related', 'expense.read_own')
   listSubstituteHistory(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.substituteReceiptHistory.execute(ctx, expenseId);
   }
 
   @Get(':expenseId/substitute-receipt/:evidenceId/artifact.pdf')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
   async downloadSubstitutePdf(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
@@ -275,7 +285,7 @@ export class ExpenseController {
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/certify')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read_related', 'expense.read_own')
   certifySubstitute(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
@@ -286,7 +296,7 @@ export class ExpenseController {
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/preview')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read_related', 'expense.read_own')
   previewSubstitute(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
@@ -297,24 +307,24 @@ export class ExpenseController {
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/signature-upload-intent')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read_related', 'expense.read_own')
   initSubstituteSignature(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
     @Param('evidenceId') evidenceId: string,
-    @Body() body: { originalFileName: string; mimeType: string; byteSize: number },
+    @Body() body: UploadIntentDto,
   ) {
     return this.initSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, body);
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/signature-uploads/:attachmentId/complete')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read_related', 'expense.read_own')
   completeSubstituteSignature(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
     @Param('evidenceId') evidenceId: string,
     @Param('attachmentId') attachmentId: string,
-    @Body() body: { checksumSha256?: string; byteSize?: number },
+    @Body() body: UploadCompletionDto,
   ) {
     return this.completeSubstituteSignatureUpload.execute(ctx, expenseId, evidenceId, attachmentId, body);
   }
@@ -342,7 +352,7 @@ export class ExpenseController {
   }
 
   @Post(':expenseId/extraction-request')
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.ocr.request', 'expense.review', 'expense.receipt.upload')
   requestReceiptExtraction(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.requestExtraction.execute(ctx, expenseId);
   }
@@ -355,14 +365,14 @@ export class ExpenseController {
 
   @Patch(':expenseId')
   @RequirePermissions('expense.update')
-  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
-    return this.update.execute(ctx, expenseId, body);
+  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
   }
 
   @Patch(':expenseId/review-fields')
   @RequirePermissions('expense.review')
-  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput) {
-    return this.update.execute(ctx, expenseId, body);
+  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/non-expense-classification-override')
@@ -370,21 +380,26 @@ export class ExpenseController {
   overrideNonExpenseClassification(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
-    @Body() body: NonExpenseClassificationOverrideInput & { sourceDocumentType: SourceDocumentType },
+    @Body() body: NonExpenseClassificationOverrideInput & { sourceDocumentType: SourceDocumentType; expectedUpdatedAt: string },
   ) {
     return this.update.execute(ctx, expenseId, {
       sourceDocumentType: body.sourceDocumentType,
+      expectedUpdatedAt: body.expectedUpdatedAt,
       nonExpenseClassificationOverride: {
         acknowledged: body.acknowledged,
         reason: body.reason,
       },
-    });
+    }, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/ocr-total-acknowledgement')
   @RequirePermissions('expense.review')
-  acknowledgeOcrTotal(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: OcrTotalAcknowledgementInput) {
-    return this.update.execute(ctx, expenseId, { ocrTotalAcknowledgement: body });
+  acknowledgeOcrTotal(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: OcrTotalAcknowledgementInput & { expectedUpdatedAt: string }) {
+    const { expectedUpdatedAt, ...acknowledgement } = body;
+    return this.update.execute(ctx, expenseId, {
+      expectedUpdatedAt,
+      ocrTotalAcknowledgement: acknowledgement,
+    }, { requireExpectedUpdatedAt: true });
   }
 
   @Post(':expenseId/receipt-uploads/:attachmentId/complete')
@@ -393,7 +408,7 @@ export class ExpenseController {
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
     @Param('attachmentId') attachmentId: string,
-    @Body() body: { checksumSha256?: string; byteSize?: number; purpose?: string },
+    @Body() body: ReceiptUploadCompletionDto,
   ) {
     return this.completeUpload.execute(ctx, { expenseId, attachmentId, ...body });
   }
@@ -418,13 +433,13 @@ export class ExpenseController {
 
   @Post(':expenseId/reject')
   @RequirePermissions('expense.reject')
-  rejectExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+  rejectExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
     return this.reject.execute(ctx, expenseId, body.reason);
   }
 
   @Post(':expenseId/void')
   @RequirePermissions('expense.void')
-  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: { reason: string }) {
+  voidExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ReasonRequiredDto) {
     return this.void_.execute(ctx, expenseId, body.reason);
   }
 
@@ -433,7 +448,7 @@ export class ExpenseController {
   recordPayment(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
-    @Body() body: { paidAmount: string; paymentMethod?: string; paidAt?: string; bankAccountRef?: string },
+    @Body() body: RecordExpensePaymentDto,
   ) {
     return this.payment.execute(ctx, expenseId, body);
   }
@@ -446,13 +461,13 @@ export class ExpenseController {
 
   @Post(':expenseId/duplicates/:candidateId/dismiss')
   @RequirePermissions('expense.duplicate.resolve')
-  dismissDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+  dismissDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: ReasonOptionalDto) {
     return this.dupResolve.execute(ctx, expenseId, candidateId, 'dismiss', body.reason);
   }
 
   @Post(':expenseId/duplicates/:candidateId/confirm')
   @RequirePermissions('expense.duplicate.resolve')
-  confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: { reason?: string }) {
+  confirmDuplicate(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('candidateId') candidateId: string, @Body() body: ReasonOptionalDto) {
     return this.dupResolve.execute(ctx, expenseId, candidateId, 'confirm', body.reason);
   }
 
@@ -473,7 +488,7 @@ export class ExpenseCategoryController {
   ) {}
 
   @Get()
-  @RequirePermissions('expense.read_own')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
   listCategories(@ReqCtx() ctx: RequestContext) {
     return this.listCats.execute(ctx);
   }
@@ -503,7 +518,7 @@ export class CompanySubstituteReceiptController {
   constructor(private readonly listSubstituteReceipts: ListCompanySubstituteReceiptsUseCase) {}
 
   @Get()
-  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_own')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
   list(@ReqCtx() ctx: RequestContext, @Query() query: Record<string, string | undefined>) {
     const filter: SubstituteReceiptListFilter = {
       ...(query['status'] && { status: query['status'] as SubstituteReceiptEvidenceStatus }),
@@ -530,7 +545,7 @@ export class ExpenseSettingsController {
   }
 
   @Get('substitute-receipt/runtime')
-  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_own')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
   getRuntimePolicy(@ReqCtx() ctx: RequestContext) {
     return this.getSubstitutePolicy.executeRuntime(ctx);
   }
@@ -562,7 +577,7 @@ export class ExpenseSignatureController {
 
   @Post('uploads')
   @RequirePermissions('expense.signature.manage')
-  initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: { originalFileName: string; mimeType: string; byteSize: number }) {
+  initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: UploadIntentDto) {
     return this.initUpload.execute(ctx, body);
   }
 
@@ -580,7 +595,7 @@ export class ExpenseSignatureController {
 
   @Post(':signatureId/reject')
   @RequirePermissions('expense.signature.approve')
-  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { reason: string }) {
+  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: ReasonRequiredDto) {
     return this.rejectAsset.execute(ctx, signatureId, body?.reason ?? '');
   }
 
@@ -593,7 +608,7 @@ export class ExpenseSignatureController {
   /** Records the web-canvas background-removed derived PNG. Original is kept. */
   @Post(':signatureId/derived')
   @RequirePermissions('expense.signature.manage')
-  setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: { attachmentId: string; checksumSha256?: string; byteSize?: number }) {
+  setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: SetSignatureDerivedAssetDto) {
     return this.setDerived.execute(ctx, signatureId, body);
   }
 }

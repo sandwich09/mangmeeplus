@@ -9,6 +9,7 @@ const TX = Symbol('expense-delete-tx');
 
 const baseExpense = {
   id: EXPENSE_ID,
+  branchId: 'branch-1' as string | null,
   status: 'DRAFT',
   expenseNumber: 'EXP-2026-0001',
   vendorNameSnapshot: 'ร้านทดสอบ',
@@ -18,6 +19,7 @@ const baseExpense = {
   paymentStatus: 'UNPAID',
   captureSource: 'WEB_MANUAL',
   createdByUserId: 'creator-1',
+  updatedAt: new Date('2026-07-29T08:00:00.000Z'),
   _count: { lines: 3 },
 };
 
@@ -77,7 +79,7 @@ const linkedDataCases: Array<{ model: LinkedModel; where: Record<string, unknown
   { model: 'notificationEvent', where: workflowSource },
 ];
 
-function requestContext(permissions: string[], userId = 'actor-1') {
+function requestContext(permissions: string[], userId = 'actor-1', branchIds?: string[]) {
   return {
     requestId: 'request-1',
     authSubject: userId,
@@ -86,7 +88,7 @@ function requestContext(permissions: string[], userId = 'actor-1') {
     membershipId: 'membership-1',
     roles: [],
     permissions,
-    scopes: {},
+    scopes: { branchIds },
     authProvider: 'watchdog' as const,
   };
 }
@@ -103,6 +105,7 @@ function setup(input: {
   readLog?: boolean;
   duplicateReferencedBy?: Array<{ expenseId: string }>;
   duplicateRemaining?: Array<{ candidateExpenseId: string; status: string; resolvedByUserId: string | null }>;
+  deleteCount?: number;
 } = {}) {
   const order: string[] = [];
   const auditCalls: Array<{ entry: any; tx: unknown }> = [];
@@ -119,9 +122,9 @@ function setup(input: {
       order.push('expense.updateMany');
       return { count: 1 };
     }),
-    delete: mock.fn(async () => {
+    deleteMany: mock.fn(async () => {
       order.push('expense.delete');
-      return expense;
+      return { count: input.deleteCount ?? 1 };
     }),
   };
   // Two reads share this delegate: the referencing lookup keys on candidateExpenseId, the
@@ -310,6 +313,43 @@ describe('DeleteExpenseUseCase', () => {
       },
     });
     assert.equal(harness.order.indexOf('audit.success') + 1, harness.order.indexOf('expense.delete'));
+    assert.deepEqual(firstCallArgs(harness.expenseRecord.deleteMany), {
+      where: {
+        id: EXPENSE_ID,
+        companyId: COMPANY_ID,
+        updatedAt: new Date('2026-07-29T08:00:00.000Z'),
+      },
+    });
+  });
+
+  it('denies deletion outside the actor branch scope before inspecting state or linked data', async () => {
+    const harness = setup({ expense: { ...baseExpense, status: 'CONFIRMED', branchId: 'branch-2' } });
+
+    await assert.rejects(
+      () => harness.useCase.execute(requestContext(['expense.delete'], 'actor-1', ['branch-1']), EXPENSE_ID),
+      ForbiddenException,
+    );
+
+    assert.equal(harness.committed(), true);
+    assert.deepEqual(harness.auditCalls[0]?.entry.metadataJson, {
+      reason: 'BRANCH_OUT_OF_SCOPE',
+      branchId: 'branch-2',
+    });
+    assert.equal(harness.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
+  });
+
+  it('allows a company-central expense for a branch-restricted actor', async () => {
+    const harness = setup({ expense: { ...baseExpense, branchId: null } });
+
+    await harness.useCase.execute(requestContext(['expense.delete'], 'actor-1', ['branch-1']), EXPENSE_ID);
+
+    assert.deepEqual(firstCallArgs(harness.expenseRecord.deleteMany).where, {
+      id: EXPENSE_ID,
+      companyId: COMPANY_ID,
+      updatedAt: baseExpense.updatedAt,
+      OR: [{ branchId: { in: ['branch-1'] } }, { branchId: null }],
+    });
   });
 
   it('does not treat ReportDrilldownAccessLog as linked business data', async () => {
@@ -318,7 +358,7 @@ describe('DeleteExpenseUseCase', () => {
     await harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
 
     assert.equal(harness.reportDrilldownAccessLog.findFirst.mock.callCount(), 0);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
   });
 
   it('deletes a draft another expense flagged as its duplicate and clears that flag', async () => {
@@ -329,7 +369,7 @@ describe('DeleteExpenseUseCase', () => {
 
     await harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.deepEqual(firstCallArgs(harness.expenseDuplicateCandidate.findMany), {
       where: { companyId: COMPANY_ID, candidateExpenseId: EXPENSE_ID, expenseId: { not: EXPENSE_ID } },
       select: { expenseId: true },
@@ -401,7 +441,7 @@ describe('DeleteExpenseUseCase', () => {
 
     await harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.equal(harness.auditCalls.at(-1)?.entry.result, 'SUCCESS');
   });
 
@@ -410,7 +450,7 @@ describe('DeleteExpenseUseCase', () => {
 
     await harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID);
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.equal(harness.auditCalls.at(-1)?.entry.result, 'SUCCESS');
   });
 
@@ -419,7 +459,7 @@ describe('DeleteExpenseUseCase', () => {
 
     await harness.useCase.execute(requestContext(['expense.update'], 'creator-1'), EXPENSE_ID);
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.equal(harness.auditCalls.at(-1)?.entry.result, 'SUCCESS');
   });
 
@@ -431,7 +471,7 @@ describe('DeleteExpenseUseCase', () => {
       ForbiddenException,
     );
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
     assert.deepEqual(harness.auditCalls[0]?.entry.metadataJson, { reason: 'MISSING_PERMISSION' });
   });
 
@@ -453,7 +493,7 @@ describe('DeleteExpenseUseCase', () => {
       );
 
       assert.equal(harness.committed(), true, status);
-      assert.equal(harness.expenseRecord.delete.mock.callCount(), 0, status);
+      assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0, status);
       assert.equal(harness.auditCalls.length, 1, status);
       assert.equal(harness.auditCalls[0]?.tx, harness.tx, status);
       assert.deepEqual(harness.auditCalls[0]?.entry.metadataJson, {
@@ -474,7 +514,7 @@ describe('DeleteExpenseUseCase', () => {
     );
 
     assert.equal(harness.auditCalls.length, 0);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
     assert.deepEqual(firstCallArgs(harness.expenseRecord.findFirst).where, {
       id: EXPENSE_ID,
       companyId: 'company-1',
@@ -508,7 +548,7 @@ describe('DeleteExpenseUseCase', () => {
       reason: 'SUBSTITUTE_EVIDENCE_RETENTION_LOCKED',
     });
     assert.equal(harness.attachmentLink.deleteMany.mock.callCount(), 0);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
   });
 
   for (const testCase of linkedDataCases) {
@@ -543,7 +583,7 @@ describe('DeleteExpenseUseCase', () => {
         blocker,
       });
       assert.equal(harness.attachmentLink.findMany.mock.callCount(), 0, blocker);
-      assert.equal(harness.expenseRecord.delete.mock.callCount(), 0, blocker);
+      assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0, blocker);
     });
   }
 
@@ -574,7 +614,7 @@ describe('DeleteExpenseUseCase', () => {
       });
       assert.equal(harness.auditCalls[0]?.tx, harness.tx);
       assert.equal(harness.auditCalls[0]?.entry.result, 'DENIED');
-      assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+      assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
     });
   }
 
@@ -633,7 +673,7 @@ describe('DeleteExpenseUseCase', () => {
     assert.equal(harness.commits(), 1);
     assert.equal(harness.rollbacks(), 1);
     assert.equal(harness.prisma.client.$transaction.mock.callCount(), 2);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
     assert.equal(harness.auditCalls.length, 1);
     assert.equal(harness.auditCalls[0]?.tx, harness.tx);
     assert.deepEqual(harness.auditCalls[0]?.entry.metadataJson, {
@@ -655,7 +695,7 @@ describe('DeleteExpenseUseCase', () => {
     assert.equal(harness.auditCalls[0]?.tx, harness.tx);
     assert.deepEqual(harness.auditCalls[0]?.entry.metadataJson, { reason: 'MISSING_PERMISSION' });
     assert.equal(harness.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 0);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
   });
 
   it('allows the creator holding expense.update to delete their own DRAFT', async () => {
@@ -663,7 +703,7 @@ describe('DeleteExpenseUseCase', () => {
 
     await harness.useCase.execute(requestContext(['expense.update'], 'creator-1'), EXPENSE_ID);
 
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
     assert.equal(harness.auditCalls[0]?.entry.result, 'SUCCESS');
   });
 
@@ -676,9 +716,36 @@ describe('DeleteExpenseUseCase', () => {
     );
 
     assert.equal(harness.rolledBack(), true);
-    assert.equal(harness.expenseRecord.delete.mock.callCount(), 0);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 0);
     assert.equal(harness.auditCalls.length, 1);
     assert.equal(harness.auditCalls[0]?.tx, harness.tx);
     assert.deepEqual(harness.order.slice(-2), ['audit.success', 'transaction.rollback']);
+  });
+
+  it('rolls back attachment and duplicate side effects when the expense changes before final delete', async () => {
+    const harness = setup({
+      deleteCount: 0,
+      links: [{ attachmentId: 'attachment-1' }],
+      duplicateReferencedBy: [{ expenseId: 'expense-2' }],
+    });
+
+    await assert.rejects(
+      () => harness.useCase.execute(requestContext(['expense.delete']), EXPENSE_ID),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.deepEqual(exceptionResponse(error), {
+          code: 'EXPENSE_CHANGED_DURING_DELETE',
+          message: 'Expense changed while it was being deleted. Reload and try again.',
+        });
+        return true;
+      },
+    );
+
+    assert.equal(harness.rollbacks(), 1);
+    assert.equal(harness.commits(), 0);
+    assert.equal(harness.attachments.markDeleted.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.updateMany.mock.callCount(), 1);
+    assert.equal(harness.expenseRecord.deleteMany.mock.callCount(), 1);
+    assert.deepEqual(harness.order.slice(-2), ['expense.delete', 'transaction.rollback']);
   });
 });

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Param, Body, Query, HttpCode, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type {
@@ -116,7 +116,7 @@ export class ReimbursementController {
   }
 
   @Get('summary')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @ApiOperation({ summary: 'Read-only reimbursement summary for AI/LINE' })
   summary(@ReqCtx() ctx: RequestContext) {
     return this.aiSummary.execute(ctx);
@@ -125,11 +125,11 @@ export class ReimbursementController {
   // ---- Request CRUD ----
 
   @Get()
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @ApiOperation({ summary: 'List reimbursement requests' })
   list(
     @ReqCtx() ctx: RequestContext,
-    @Query('scope') scope?: 'own' | 'team' | 'all',
+    @Query('scope') scope?: 'own' | 'related' | 'team' | 'all',
     @Query('status') status?: ReimbursementRequestStatus,
     @Query('paymentStatus') paymentStatus?: ReimbursementPaymentStatus,
     @Query('requesterUserId') requesterUserId?: string,
@@ -152,7 +152,7 @@ export class ReimbursementController {
   }
 
   @Get(':requestId')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @ApiOperation({ summary: 'Get reimbursement detail' })
   get(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.getDetail.execute(ctx, requestId);
@@ -239,7 +239,7 @@ export class ReimbursementController {
   // ---- Printable claim form ----
 
   @Post(':requestId/claim-form/preview')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @HttpCode(200)
   @ApiOperation({ summary: 'Render the printable ใบเบิกค่าใช้จ่าย for this claim' })
   previewClaimForm(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
@@ -252,14 +252,14 @@ export class ReimbursementController {
   // the use case is the gate (only the real approver may sign ผู้อนุมัติ).
 
   @Post(':requestId/claim-form/signature-upload-intent')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @ApiOperation({ summary: 'Start a claim-form signature image upload' })
   initClaimSignature(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: InitClaimSignatureUploadDto) {
     return this.initSignature.execute(ctx, requestId, body);
   }
 
   @Post(':requestId/claim-form/signature-uploads/:attachmentId/complete')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @ApiOperation({ summary: 'Complete a claim-form signature image upload' })
   completeClaimSignature(
     @ReqCtx() ctx: RequestContext,
@@ -271,7 +271,7 @@ export class ReimbursementController {
   }
 
   @Post(':requestId/claim-form/signatures')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @HttpCode(200)
   @ApiOperation({ summary: 'Sign the claim form for one role' })
   signClaimForm(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: SignReimbursementClaimFormDto) {
@@ -279,7 +279,7 @@ export class ReimbursementController {
   }
 
   @Post(':requestId/claim-form/signed-copies')
-  @RequirePermissions('reimbursement.read_own')
+  @RequireAnyPermission('reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own')
   @HttpCode(200)
   @ApiOperation({ summary: 'Attach a scan of the wet-ink signed claim form' })
   linkSignedCopy(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: LinkReimbursementSignedCopyDto) {

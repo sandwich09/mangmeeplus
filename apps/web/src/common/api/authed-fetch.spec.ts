@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { authedFetch, authedApiFetch, readCookieValue } from './authed-fetch';
+import { ACCESS_CONTEXT_STALE_EVENT, authedFetch, authedApiFetch, readCookieValue } from './authed-fetch';
 import { subscribeToastBus, type ToastEvent } from '../feedback/toast-bus';
 
 type Call = { url: string; init?: RequestInit };
@@ -197,6 +197,52 @@ describe('authed-fetch', () => {
       (err: Error & { status?: number }) => err.status === 403,
     );
     assert.equal(calls.length, 1, 'a permission denial must not trigger a refresh');
+  });
+
+  it('signals the workspace to revalidate access after a permission or entitlement denial', async () => {
+    const events: string[] = [];
+    (globalThis as Record<string, unknown>)['window'] = {
+      location: { pathname: '/companies/c1/expenses', search: '', assign: () => undefined },
+      dispatchEvent: (event: Event) => { events.push(event.type); return true; },
+    };
+    try {
+      for (const body of [
+        { message: 'Insufficient permissions.' },
+        { message: 'Feature disabled.', code: 'feature_not_enabled' },
+      ]) {
+        const fetchImpl = scriptedFetch([() => jsonResponse(403, body)], []);
+        await assert.rejects(() => authedApiFetch('/companies/c1/expenses', undefined, fetchImpl));
+      }
+    } finally {
+      delete (globalThis as Record<string, unknown>)['window'];
+    }
+    assert.deepEqual(events, [ACCESS_CONTEXT_STALE_EVENT, ACCESS_CONTEXT_STALE_EVENT]);
+  });
+
+  it('redirects the stable legal-acceptance 403 while preserving the current page', async () => {
+    const assigned = withStubbedWindow(async () => {
+      const fetchImpl = scriptedFetch(
+        [() => jsonResponse(403, { message: 'Legal acceptance required.', code: 'legal_acceptance_required' })],
+        [],
+      );
+      const res = await authedFetch('/companies/c1/dashboard', undefined, fetchImpl);
+      assert.equal(res.status, 403);
+    });
+    assert.deepEqual(
+      await assigned,
+      ['/legal-acceptance?companyId=c1&next=%2Fcompanies%2Fc1%2Fdashboard'],
+    );
+  });
+
+  it('does not mistake an ordinary 403 for the legal gate', async () => {
+    const assigned = withStubbedWindow(async () => {
+      const fetchImpl = scriptedFetch(
+        [() => jsonResponse(403, { message: 'Missing permission.', code: 'permission_denied' })],
+        [],
+      );
+      await authedFetch('/companies/c1/dashboard', undefined, fetchImpl);
+    });
+    assert.deepEqual(await assigned, []);
   });
 
   it('maps error bodies to Error(message) with a status property', async () => {

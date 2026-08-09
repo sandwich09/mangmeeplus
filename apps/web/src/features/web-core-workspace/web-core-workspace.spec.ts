@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { FEATURE_CATALOG, MENU_ENTITLEMENT_BINDINGS } from '@watchdog-bms/contracts';
 import { filterModulesByPermissions, getActiveModuleKey, groupNavItems, buildNavItems, canAccessWorkspacePath, collectMenuTargets, resolveMenuKey } from './web-core-workspace.logic';
-import { WORKSPACE_MODULES, NAV_GROUP_ORDER } from './web-core-workspace.constants';
+import { WORKSPACE_MODULES, NAV_GROUP_ORDER, ACCOUNTING_UI_HIDDEN_MODULE_KEYS } from './web-core-workspace.constants';
 import type { NavItem } from './web-core-workspace.model';
 import { canSeeRoute, findRoutePermissionRule, ROUTE_PERMISSION_RULES } from './route-permissions';
 
@@ -159,7 +159,16 @@ describe('filterModulesByPermissions', () => {
 
   it('shows every module for a session holding all module permissions', () => {
     const result = filterModulesByPermissions(WORKSPACE_MODULES, ALL_MODULE_PERMISSIONS);
-    assert.equal(result.length, WORKSPACE_MODULES.length);
+    assert.equal(result.length, WORKSPACE_MODULES.length - ACCOUNTING_UI_HIDDEN_MODULE_KEYS.size);
+  });
+
+  // Owner decision 2026-08-09: the accounting screens are closed this launch while the ledger keeps
+  // posting server-side. The hide is presentation-only, so it must survive a session that holds
+  // every ledger permission — the entitlement is deliberately still ON.
+  it('hides the accounting screens even from a session holding every ledger permission', () => {
+    const keys = filterModulesByPermissions(WORKSPACE_MODULES, ALL_MODULE_PERMISSIONS).map((m) => m.key);
+    assert.ok(!keys.includes('journal'), 'สมุดรายวัน is hidden');
+    assert.ok(!keys.includes('closing'), 'รอบบัญชี is hidden');
   });
 });
 
@@ -251,7 +260,9 @@ describe('buildNavItems', () => {
       '/settings/crm-catalog': 'crmsettings',
       '/tax': 'tax',
       '/inventory': 'inventory',
-      '/journal': 'journal',
+      // '/journal' is deliberately absent: its route rule and its module still exist, but the
+      // screen is closed this launch (ACCOUNTING_UI_HIDDEN), so it has no nav target to align
+      // with. The dedicated hide tests below cover it instead.
       '/reports': 'reports',
       '/ai-suggestions': 'ai-suggestions',
       '/crm': 'crm',
@@ -368,6 +379,37 @@ describe('buildNavItems', () => {
     assert.equal(permissionsItem.subItems?.[5]?.href, '/companies/owner-company/settings/line-oa');
   });
 
+  // คู่มือการใช้งานระบบ carries no company data and gates on nothing, so a session holding no
+  // permission at all still gets the row — and both manuals must stay reachable from it.
+  it('always offers the user-guide menu with one sub-item per manual', () => {
+    const guide = buildNavItems([], 'guide-company', 'th', {}, []).find((nav) => nav.key === 'guide');
+
+    assert.ok(guide);
+    // ลำดับต้องตรงกับลำดับเมนูจริงในแถบซ้าย ไม่ใช่ลำดับที่เขียนไฟล์คู่มือ
+    assert.deepEqual(guide.subItems?.map((sub) => sub.key), [
+      'guide.expenses',
+      'guide.substitute_receipts',
+      'guide.reimbursements',
+      'guide.tax',
+      'guide.reports',
+    ]);
+    assert.deepEqual(guide.subItems?.map((sub) => sub.href), [
+      '/companies/guide-company/user-guide/expenses',
+      '/companies/guide-company/user-guide/substitute-receipts',
+      '/companies/guide-company/user-guide/reimbursements',
+      '/companies/guide-company/user-guide/tax',
+      '/companies/guide-company/user-guide/reports',
+    ]);
+    assert.equal(guide.href, '/companies/guide-company/user-guide/expenses');
+    for (const slug of ['expenses', 'substitute-receipts', 'reimbursements', 'tax', 'reports']) {
+      assert.equal(
+        canAccessWorkspacePath(WORKSPACE_MODULES, [], 'guide-company', `/companies/guide-company/user-guide/${slug}`),
+        true,
+        slug,
+      );
+    }
+  });
+
   it('builds the ordered accounting workflow and advanced settings submenu from effective permissions', () => {
     const permissions = [
       'company.settings.view', 'ledger.account.read', 'tax.profile.read', 'tax.config.read',
@@ -420,6 +462,14 @@ describe('buildNavItems', () => {
 
     // A solo owner reaches their own substitute receipts on expense.read_own alone — that is the
     // gate at web-core-workspace.logic.ts, not a leak. Nothing else opens on read-own.
+    assert.deepEqual(expenses?.subItems?.map((sub) => sub.key), ['expenses.list', 'expenses.substitute_receipt']);
+  });
+
+  it('shows related expense and substitute-receipt views without mutation menus', () => {
+    const permissions = ['expense.read_related'];
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const expenses = buildNavItems(modules, 'related-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
+
     assert.deepEqual(expenses?.subItems?.map((sub) => sub.key), ['expenses.list', 'expenses.substitute_receipt']);
   });
 
@@ -517,6 +567,54 @@ describe('canAccessWorkspacePath', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, retainedPermissions, 'abc', '/companies/abc/reports/new'), false);
   });
 
+  // Owner decision 2026-08-09: closing the accounting screens must not be defeatable by typing the
+  // URL. `/journal` is the sharp case — it owns a ROUTE_PERMISSION_RULES entry, so the rule branch
+  // would answer first and open it to any holder of `ledger.journal.read`. `/period-closing` owns
+  // no rule and would otherwise reach the "no module matched → allowed" default.
+  it('blocks the closed accounting screens by URL, even with every ledger permission', () => {
+    const ledgerPermissions = ['ledger.journal.read', 'ledger.period.read', 'journal.entry.create', 'journal.entry.post'];
+    for (const path of ['/journal', '/journal/jv_01HZ', '/period-closing']) {
+      assert.equal(
+        canAccessWorkspacePath(WORKSPACE_MODULES, ledgerPermissions, 'abc', `/companies/abc${path}`),
+        false,
+        `${path} must not open`,
+      );
+    }
+    // Sibling finance screens that are open this launch are untouched by the hide.
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.read'], 'abc', '/companies/abc/expenses'), true);
+  });
+
+  /**
+   * Audit H-15: the layout sent every inaccessible path to /dashboard and rendered nothing while it
+   * waited. Turning dashboard_notifications off strips dashboard.* — it is not platform-invariant —
+   * so the redirect target was unreachable too and the whole company became a blank document.
+   *
+   * The layout now lands on the first module the session can actually open. These pin the two
+   * inputs that decision reads, so a future permission change cannot quietly recreate the dead end.
+   */
+  it('leaves a reachable landing when dashboard is the feature that was switched off', () => {
+    // Everything dashboard.* is gone; the company still bought expenses.
+    const withoutDashboard = ['expense.read'];
+    const reachable = filterModulesByPermissions(WORKSPACE_MODULES, withoutDashboard)
+      .filter((module) => canAccessWorkspacePath(WORKSPACE_MODULES, withoutDashboard, 'abc', module.buildHref('abc')));
+
+    assert.ok(reachable.length > 0, 'a landing exists that is not the dashboard');
+    assert.equal(
+      canAccessWorkspacePath(WORKSPACE_MODULES, withoutDashboard, 'abc', '/companies/abc/dashboard'),
+      false,
+      'and the old hardcoded target is exactly the one that is unreachable',
+    );
+  });
+
+  // The other half: with nothing reachable the layout must render an explanation rather than null,
+  // so this asserts the state the layout branches on is genuinely empty rather than merely small.
+  it('reports no reachable landing at all for a session stripped of every module permission', () => {
+    const reachable = filterModulesByPermissions(WORKSPACE_MODULES, [])
+      .filter((module) => canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', module.buildHref('abc')));
+
+    assert.deepEqual(reachable.map((module) => module.key), []);
+  });
+
   it('keeps the ordinary reports label and sub-route access while Reports is enabled', () => {
     const enabledPermissions = ['report.catalog.read', 'report.snapshot.read'];
     const enabledModules = filterModulesByPermissions(WORKSPACE_MODULES, enabledPermissions);
@@ -577,7 +675,15 @@ describe('canAccessWorkspacePath', () => {
   });
 
   it('keeps every registered route aligned with the workspace path gate', () => {
+    // Screens closed this launch (ACCOUNTING_UI_HIDDEN) keep their route rule and their permissions
+    // but must NOT open — the alignment invariant does not apply to them. Derived from the module
+    // list so it follows the hidden set rather than restating it.
+    const closedPaths = new Set(WORKSPACE_MODULES
+      .filter((module) => ACCOUNTING_UI_HIDDEN_MODULE_KEYS.has(module.key))
+      .map((module) => module.buildHref('abc').slice('/companies/abc'.length)));
+
     for (const rule of ROUTE_PERMISSION_RULES) {
+      if (closedPaths.has(rule.path)) continue;
       const path = `/companies/abc${rule.path}`;
       assert.equal(canSeeRoute(rule.path, []), false, `${rule.path}: direct empty`);
       assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', path), false, `${rule.path}: path empty`);
@@ -735,10 +841,11 @@ describe('resolveMenuKey', () => {
     assert.equal(at('/unknown/path'), null);
   });
 
-  // Resolution reads the pre-whitelist nav list. 'journal' is not in the sidebar's
-  // design-handoff order, and it still has to count as a menu of its own.
-  it('resolves menus the sidebar whitelist drops', () => {
-    assert.equal(at('/companies/abc/journal'), 'journal');
+  // 'journal' used to resolve here: it is absent from the sidebar's design-handoff order but still
+  // counted as a menu of its own. The accounting screens are closed this launch, so it is now not a
+  // menu at all and claims no path.
+  it('claims no menu for a screen closed this launch', () => {
+    assert.equal(at('/companies/abc/journal'), null);
   });
 
   it('skips targets with no href', () => {

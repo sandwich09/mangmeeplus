@@ -42,7 +42,8 @@ Item 08 ships the web-owned source document workflow for quotations, quotation a
 3. Quotation is submitted for approval before final issue.
 4. Manager or Finance approves/rejects quotation issue. Sales cannot self-approve.
 5. Sales or Finance issues approved quotation.
-6. Issued quotation converts to invoice or billing note without duplicate keying.
+6. Issued quotation converts to exactly one invoice or billing note without duplicate keying. Source close and target create
+   are one atomic, version-checked lifecycle mutation; a same-target retry returns the persisted target without another event.
 7. Finance issues invoice/billing note.
 8. Payment is recorded against invoice/customer. Overpayment becomes unapplied customer credit.
 9. Receipt is issued from payment or paid invoice flow.
@@ -454,15 +455,17 @@ PATCH /counterparties/:counterpartyId
 - Updates non-issued master data only. Historical document snapshots do not change.
 
 GET /documents
-- Permission: accounting.document.read or document-type-specific read permission.
-- Lists documents by type, status, date range, counterparty, payment status, posting status.
+- Permission: accounting.document.read, document-type-specific read, or accounting.document.read_related.
+- Lists broadly readable documents plus records related to the caller through actor, source/conversion, or payment-allocation
+  links; tenant and branch scope apply at every link. Supports type, status, date range, counterparty, payment status, and
+  posting status filters.
 
 POST /documents
 - Permission: document-type-specific create permission.
 - Creates draft quotation, invoice, billing note, receipt, or tax invoice.
 
 GET /documents/:documentId
-- Permission: document-type-specific read permission.
+- Permission: document-type-specific read permission, or accounting.document.read_related plus a source-owned relation match.
 - Returns header, lines, payments, lifecycle, posting status, and safe refs.
 
 PATCH /documents/:documentId
@@ -492,6 +495,8 @@ POST /documents/:documentId/void
 POST /documents/:documentId/convert
 - Permission: source read plus target create permission.
 - Converts issued quotation to invoice or billing note without losing item/tax data.
+- Uses the source lifecycle lock and loaded version so concurrent conversions cannot create two targets or leave a target
+  while the quotation remains issued. A completed same-target retry is idempotent; a different/duplicate target is a conflict.
 
 GET /payments
 - Permission: accounting.payment.read
@@ -548,6 +553,7 @@ Add these keys if missing:
 accounting.counterparty.read
 accounting.counterparty.manage
 accounting.document.read
+accounting.document.read_related
 accounting.document.create
 accounting.document.update
 accounting.document.issue
@@ -597,7 +603,7 @@ Default role intent:
 ```text
 OWNER: all accounting document permissions
 ADMIN: read/manage configuration and read documents unless owner grants mutation
-SALES: quotation create/update/submit approval, issue only after Manager/Finance approval, own or assigned document read
+SALES: quotation create/update/submit approval, issue only after Manager/Finance approval, and related document-chain read
 FINANCE: all document, payment, receipt, tax invoice, credit note, debit note, and counterparty workflow permissions except role/security admin
 ACCOUNTANT: read all accounting documents, read/export, tax invoice review, credit/debit note review, and correction visibility; mutation only when explicitly granted or through finance/accounting policy
 AUDITOR_READONLY: accounting document/payment read and export where policy allows
@@ -782,7 +788,7 @@ Persistence/use-case tests:
 Web tests:
 
 - List filters by document type/status/date/payment/posting status.
-- Quotation converts to invoice without losing item data.
+- Quotation converts to invoice without losing item data; concurrent/same-target retry creates and emits only once.
 - Quotation approval UI allows Manager/Finance approval and blocks Sales self-approval.
 - Issue action shows validation and locked state.
 - Payment form handles partial payment.

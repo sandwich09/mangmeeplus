@@ -415,6 +415,7 @@ Web permission behavior is user experience only. Backend remains enforcement sou
 Rules:
 
 - Shell receives current user, selected company, roles, and permissions from auth/session API when available.
+- Shell revalidates roles, permissions, entitlement-filtered permissions, and branch scope while active: once per minute while visible, on focus/visibility return, and immediately after a stable permission/feature denial. It refreshes the server workspace only when that access context changed.
 - Navigation filters by `requiredAnyPermissions`.
 - Buttons and bulk actions check required permissions before enabling.
 - Direct route access without permission shows `ForbiddenState`.
@@ -559,6 +560,7 @@ Web core implementation can add typed adapters and fixtures only when backend co
 - Deep-link parser rejects unknown target type.
 - HTTP client maps `401` to signed-out/session-expired error.
 - HTTP client maps `403` to forbidden error.
+- Permission/feature `403` signals access-context revalidation without retrying the denied mutation.
 - Password login does not issue a session for a user without membership in an active company.
 - Disabled-company or revoked-membership deep links do not render the framework 404 page.
 - Unknown routes render the branded 404 state and runtime errors expose retry without raw exception details.

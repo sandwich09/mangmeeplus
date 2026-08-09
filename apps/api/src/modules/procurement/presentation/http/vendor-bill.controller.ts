@@ -1,5 +1,5 @@
 import { Controller, Get, Patch, Post, Put, Param, Body, Query } from '@nestjs/common';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { assertRouteCompany } from '../../../data-model-core/presentation/http/assert-route-company';
@@ -28,7 +28,7 @@ export class VendorBillController {
   ) {}
 
   @Get()
-  @RequirePermissions('procurement.vendor_bill.read')
+  @RequireAnyPermission('procurement.vendor_bill.read', 'procurement.vendor_bill.read_related')
   async list(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query() q: any) {
     assertRouteCompany(ctx, companyId);
     return this.listBills.execute(ctx, { status: q['status'], supplierId: q['supplierId'], purchaseOrderId: q['purchaseOrderId'], matchingStatus: q['matchingStatus'], postingStatus: q['postingStatus'], fromDate: q['fromDate'], toDate: q['toDate'], page: q['page'] ? Number(q['page']) : undefined, pageSize: q['pageSize'] ? Number(q['pageSize']) : undefined });
@@ -64,7 +64,7 @@ export class VendorBillController {
   }
 
   @Get(':id')
-  @RequirePermissions('procurement.vendor_bill.read')
+  @RequireAnyPermission('procurement.vendor_bill.read', 'procurement.vendor_bill.read_related')
   async get(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('id') id: string) {
     assertRouteCompany(ctx, companyId);
     return this.getBill.execute(ctx, id);

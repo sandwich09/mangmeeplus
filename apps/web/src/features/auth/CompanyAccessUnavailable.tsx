@@ -31,7 +31,9 @@ export default function CompanyAccessUnavailable() {
         ? 'บริษัทอาจถูกปิดใช้งาน หรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลบริษัท หากต้องการเปลี่ยนบัญชีให้ออกจากระบบแล้วเข้าสู่ระบบใหม่'
         : 'The company may be inactive or your access may have been removed. Contact your company administrator, or sign out to use another account.'}
     >
-      <Link href="/login" className="inline-flex h-10 items-center rounded-lg bg-linear-to-br from-brand-500 to-brand-700 px-4 text-sm font-medium text-white hover:from-brand-600 hover:to-brand-800">
+      {/* home=reset: without it the remembered landing points back at this same company and the
+          redirect loops (audit H-16). */}
+      <Link href="/login?home=reset" className="inline-flex h-10 items-center rounded-lg bg-linear-to-br from-brand-500 to-brand-700 px-4 text-sm font-medium text-white hover:from-brand-600 hover:to-brand-800">
         {th ? 'ไปยังบริษัทที่ใช้งานได้' : 'Go to an available company'}
       </Link>
       <Button type="button" variant="secondary" onClick={() => window.location.reload()}>

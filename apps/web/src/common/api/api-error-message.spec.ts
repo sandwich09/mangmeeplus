@@ -35,6 +35,12 @@ test('translates chart-template and posting-readiness failures', () => {
   assert.match(translateApiError('posting_rule_missing')!, /ยังไม่มีกฎลงบัญชี/);
 });
 
+test('translates partial-payment validation and settlement-route failures', () => {
+  assert.match(translateApiError('expense_payment_exceeds_outstanding')!, /ไม่เกินยอดคงเหลือ/);
+  assert.match(translateApiError('expense_payment_changed')!, /โหลดรายการใหม่/);
+  assert.match(translateApiError('claim_expense_settles_via_reimbursement')!, /ผ่านขั้นตอนจ่ายคืนของใบเบิก/);
+});
+
 test('falls back to the status text only for the client placeholder message', () => {
   assert.equal(apiErrorMessage(apiError('API error 403', { status: 403 })), 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน');
   // A real server sentence says more than the generic status text, so it stays.
@@ -122,6 +128,36 @@ test('maps a reimbursement edit/submit race to a reload-and-review instruction',
       code: 'reimbursement_draft_changed',
     })),
     'ใบเบิกถูกแก้ไขหรือส่งอนุมัติแล้ว กรุณาเปิดรายการใหม่ ตรวจสอบข้อมูล แล้วลองอีกครั้ง',
+  );
+});
+
+test('maps an expense draft edit race to a reload-and-review instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Expense was changed by another user.', {
+      status: 409,
+      code: 'EXPENSE_UPDATE_CONFLICT',
+    })),
+    'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
+  );
+});
+
+test('maps an accounting document edit/issue race to a reload-and-review instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Document changed after it was loaded.', {
+      status: 409,
+      code: 'accounting_document_changed',
+    })),
+    'เอกสารถูกแก้ไขหรือเปลี่ยนสถานะโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงทำรายการอีกครั้ง',
+  );
+});
+
+test('maps a conflicting quotation conversion to the persisted-target instruction', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Quotation already has a different converted document.', {
+      status: 409,
+      code: 'accounting_document_already_converted',
+    })),
+    'ใบเสนอราคานี้ถูกแปลงเป็นเอกสารอื่นแล้ว กรุณาโหลดใหม่และตรวจสอบเอกสารที่สร้างไว้',
   );
 });
 

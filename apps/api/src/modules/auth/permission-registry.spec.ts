@@ -57,7 +57,30 @@ describe('permission-registry', () => {
       const grants = ROLE_GRANTS[role] ?? [];
       assert.ok(grants.includes('attachment.create'), `${role} cannot store LINE receipt evidence`);
       assert.ok(grants.includes('expense.read_own'), `${role} cannot read its own reported expense`);
+      assert.ok(grants.includes('expense.read_related'), `${role} cannot read an expense they participated in`);
       assert.ok(grants.includes('expense.receipt.line_upload'), `${role} cannot report expenses through LINE`);
+    }
+  });
+
+  it('every company role has view-only access to reimbursements it participated in', () => {
+    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      assert.ok(
+        ROLE_GRANTS[role]?.includes('reimbursement.read_related'),
+        `${role} cannot read a reimbursement it participated in`,
+      );
+    }
+  });
+
+  it('every company role has view-only access to each procurement document family it participated in', () => {
+    const related = [
+      'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
+    ];
+    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      for (const permission of related) {
+        assert.ok(ROLE_GRANTS[role]?.includes(permission), `${role} missing ${permission}`);
+      }
     }
   });
 
@@ -131,6 +154,16 @@ describe('permission-registry', () => {
       assert.ok(ownerGrants.has(perm), `OWNER missing permission: ${perm}`);
     }
     assert.equal([...ownerGrants].some((perm) => perm.startsWith('system.')), false);
+  });
+
+  it('lets every company role reach accounting relation ABAC without widening document reads', () => {
+    for (const role of SYSTEM_ROLES.map((entry) => entry.key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      const grants = ROLE_GRANTS[role] ?? [];
+      assert.ok(
+        grants.includes('accounting.document.read') || grants.includes('accounting.document.read_related'),
+        `${role} must have broad or relation-scoped accounting document view`,
+      );
+    }
   });
 
   it('keeps financial role assignment approval OWNER-only', () => {
@@ -243,6 +276,15 @@ describe('permission-registry', () => {
           false,
           `${role} must not resolve cross-tenant identity`,
         );
+      }
+    });
+
+    it('keeps data-rights orchestration CRITICAL and platform-side only', () => {
+      assert.equal(riskOf('system.data_rights.manage'), 'CRITICAL');
+      assert.ok(ROLE_GRANTS['SYSTEM_ADMIN'].includes('system.data_rights.manage'));
+      assert.equal(COMPANY_PERMISSION_KEYS.includes('system.data_rights.manage'), false);
+      for (const role of ['OWNER', 'ADMIN', 'ACCOUNTANT', 'FINANCE']) {
+        assert.equal((ROLE_GRANTS[role] ?? []).includes('system.data_rights.manage'), false);
       }
     });
 

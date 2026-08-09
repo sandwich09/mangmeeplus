@@ -72,18 +72,30 @@ export function canonicalAttachmentExtension(mimeType: string): string | null {
   return CANONICAL_EXTENSION_BY_MIME_TYPE[mimeType] ?? null;
 }
 
+// CR-10: a scanned receipt is one compressed image stream per page, and compressed bytes are
+// statistically random — so short needles like `/js` hit by chance. Measured on well-formed
+// PDFs, the old whole-stream scan quarantined 13% of 0.5 MB scans and 78% of 10 MB ones,
+// permanently and behind a HIGH security alert. Strip stream payloads and match only the object
+// structure a reader parses for behaviour. Detection is unchanged in practice: active content
+// only works from a dictionary, and anything hidden inside a compressed stream was already
+// unreadable to a regex. Anchored on `>>` so the literal word "stream" cannot blind the scan.
+const PDF_STREAM_PAYLOAD = />>\s*stream\b[\s\S]*?endstream/g;
+
 export function inspectAttachmentBytes(mimeType: string, bytes: Buffer): string | null {
   if (detectAttachmentMimeType(bytes) !== mimeType) return 'File signature does not match the declared MIME type.';
 
   const ascii = bytes.toString('latin1').toLowerCase();
   if (ascii.includes('eicar-standard-antivirus-test-file')) return 'Malware test signature detected.';
-  if (/<script\b|<svg\b|javascript:|vbscript:|data:text\/html/.test(ascii)) {
+
+  const isPdf = mimeType === 'application/pdf';
+  const scanned = isPdf ? ascii.replace(PDF_STREAM_PAYLOAD, '>>') : ascii;
+  if (/<script\b|<svg\b|javascript:|vbscript:|data:text\/html/.test(scanned)) {
     return 'Active content is not allowed in attachments.';
   }
-  if (mimeType === 'application/pdf' && /\/(javascript|js|openaction|launch|richmedia|embeddedfile|xfa)\b/i.test(ascii)) {
+  if (isPdf && /\/(javascript|js|openaction|launch|richmedia|embeddedfile|xfa)\b/.test(scanned)) {
     return 'Active PDF content is not allowed.';
   }
-  const pdfObjectCount = mimeType === 'application/pdf' ? (ascii.match(/\bobj\b/g) ?? []).length : 0;
+  const pdfObjectCount = isPdf ? (scanned.match(/\bobj\b/g) ?? []).length : 0;
   if (pdfObjectCount > 100_000) return 'PDF object count exceeds the parser safety limit.';
   return null;
 }

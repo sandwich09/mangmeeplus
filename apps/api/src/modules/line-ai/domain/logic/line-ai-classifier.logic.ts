@@ -2,7 +2,7 @@
  * Pure domain logic for LINE AI message classification.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import type { LineAiIntent, LineAiAgent } from '@watchdog-bms/contracts';
+import { mapThaiDigits, type LineAiIntent, type LineAiAgent } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 
 // Thai and English mutation keywords that LINE must block
@@ -48,9 +48,17 @@ export type LineCompanyCommand =
  *  because `parseLineCompanyCommand` only matches at the start of a message. */
 export function parseLineCompanyCommand(text: string): LineCompanyCommand | null {
   const trimmed = text.trim();
-  if (trimmed === '/companies' || trimmed === '/company') return { kind: 'list' };
+  const normalized = trimmed.replace(/\s+/g, ' ').toLowerCase();
+  if (normalized === '/companies' || normalized === '/company' || normalized === 'เปลี่ยนบริษัท') return { kind: 'list' };
   const match = trimmed.match(/^\/company\s+(.+)$/i);
   return match?.[1] ? { kind: 'select', value: match[1].trim() } : null;
+}
+
+/** A bare number is only a selection candidate. The webhook state machine decides whether
+ * the immediately preceding turn actually asked the user to choose a company. */
+export function parseBareCompanySelection(text: string): LineCompanyCommand | null {
+  const value = mapThaiDigits(text.trim());
+  return /^\d+$/.test(value) ? { kind: 'select', value } : null;
 }
 
 /** Normalize LINE text message: trim, collapse whitespace, lowercase. */

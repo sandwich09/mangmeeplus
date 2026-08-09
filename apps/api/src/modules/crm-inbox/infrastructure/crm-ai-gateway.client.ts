@@ -24,7 +24,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { assertCompanyAiBudget, recordCompanyAiUsage } from '../../line-ai/application/company-ai-usage-meter';
+import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 
 @Injectable()
 export class CrmAiGatewayClient {
@@ -74,15 +74,28 @@ export class CrmAiGatewayClient {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-    // Monthly cap after the per-window limiter, still ahead of the gateway call (spec §6.6).
-    // No retryAfterSeconds — a monthly cap has no meaningful retry window.
-    if (this.prisma && companyId) {
-      const budget = await assertCompanyAiBudget(this.prisma, this.config, companyId);
-      if (!budget.allowed) throw new HttpException(
-        { code: budget.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+    if (!this.prisma || !companyId) return this.postAdmitted<T>(path, request, requestId, companyId);
+    const admission = await runWithCompanyAiBudgetAdmission(
+      this.prisma,
+      this.config,
+      this.rateLimits,
+      companyId,
+      (monthKey) => this.postAdmitted<T>(path, request, requestId, companyId, monthKey),
+    );
+    if (admission.allowed) return admission.value;
+    const body = admission.reason === 'busy'
+      ? { code: 'AI_BUDGET_BUSY', retryAfterSeconds: admission.retryAfterSeconds }
+      : { code: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' };
+    throw new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
+  }
+
+  private async postAdmitted<T>(
+    path: string,
+    request: unknown,
+    requestId: string,
+    companyId: string | undefined,
+    budgetMonthKey?: string,
+  ): Promise<T> {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
     if (!secret) {
@@ -135,7 +148,7 @@ export class CrmAiGatewayClient {
         await recordCompanyAiUsage(
           this.prisma,
           this.config,
-          { companyId, sourceRoute: path.replace('/internal/ai/', ''), requestId },
+          { companyId, sourceRoute: path.replace('/internal/ai/', ''), requestId, monthKey: budgetMonthKey },
           (result as { usage?: AiUsageEntry[] })?.usage,
         );
       } catch (err) {

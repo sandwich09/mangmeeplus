@@ -493,6 +493,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       })
       : {};
     return updateExpenseReviewFields(companyId, detail.id, {
+      expectedUpdatedAt: detail.updatedAt,
       ...sanitizedReview,
       sourceDocumentType: nextDocType,
       taxEvidenceStatus: nextTaxStatus,
@@ -506,11 +507,15 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const saveSubstituteDraft = (field: 'missingReceiptReason' | 'note', value: string, stored: string | null) => {
     const next = value.trim();
     if (next === (stored ?? '')) return;
-    void run(() => updateExpenseReviewFields(companyId, detail.id, field === 'note' ? { note: next } : { missingReceiptReason: next }), 'บันทึกร่างใบรับรองแล้ว', true, true);
+    void run(() => updateExpenseReviewFields(companyId, detail.id, {
+      expectedUpdatedAt: detail.updatedAt,
+      ...(field === 'note' ? { note: next } : { missingReceiptReason: next }),
+    }), 'บันทึกร่างใบรับรองแล้ว', true, true);
   };
   const overrideClassification = () => {
     assertAllowed(classificationOverrideReason);
     return overrideNonExpenseClassification(companyId, detail.id, {
+      expectedUpdatedAt: detail.updatedAt,
       sourceDocumentType: docType,
       acknowledged: true,
       reason: classificationOverrideReason.trim(),
@@ -985,6 +990,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       const update = canReview ? updateExpenseReviewFields : updateExpenseDraft;
       const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
       await update(companyId, detail.id, {
+        expectedUpdatedAt: detail.updatedAt,
         ...buildExpenseDraftReviewPayload(disallowsTaxCode
           ? { ...values, lines: clearExpenseTaxSelections(values.lines) }
           : values),

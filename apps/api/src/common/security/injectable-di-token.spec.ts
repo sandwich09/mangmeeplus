@@ -9,6 +9,12 @@ import { join } from 'node:path';
 // test in this suite can catch. That is exactly how a `Pick<>` injection in
 // RedisRateLimitService shipped: every suite stayed green while the API could not start.
 //
+// A parameter property with a default initializer and no annotation
+// (`private readonly documentNumbers = new PrismaDocumentSequenceRepository(prisma)`) fails the
+// same way for a different reason: with nothing to annotate, the emitted `design:paramtypes` entry
+// is `undefined`. That shape shipped in 9933b52 and killed API boot on `develop` while this very
+// scan stayed green, because it skipped any parameter without a `:`.
+//
 // The check here has to be source-level, because under `tsx --test` esbuild emits no decorator
 // metadata at all — `design:paramtypes` is undefined for *every* class, healthy or not — so a
 // runtime probe run from this suite would report confident false positives. Only the swc build
@@ -35,6 +41,30 @@ function walk(dir: string, out: string[] = []): string[] {
     else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.spec.ts')) out.push(full);
   }
   return out;
+}
+
+/** The declaration half of a parameter, before any default-value `=`. */
+function beforeDefault(param: string): string {
+  let depth = 0;
+  for (let i = 0; i < param.length; i += 1) {
+    const char = param[i]!;
+    if (char === '<' || char === '(' || char === '[' || char === '{') depth += 1;
+    else if (char === '>' || char === ')' || char === ']' || char === '}') depth -= 1;
+    else if (char === '=' && depth === 0) return param.slice(0, i);
+  }
+  return param;
+}
+
+/**
+ * True when a parameter emits no usable `design:paramtypes` entry, in either shape:
+ * a mapped-type/inline-object annotation erasing to `Object`, or — the
+ * PrismaExpenseRepository shape — a default initializer with no annotation at all,
+ * which emits `undefined` and leaves Nest with nothing to resolve.
+ */
+function isTokenless(param: string): boolean {
+  const declaration = beforeDefault(param);
+  if (!declaration.includes(':')) return declaration !== param;
+  return TOKENLESS_TYPE.test(declaration.slice(declaration.indexOf(':') + 1));
 }
 
 /** Split a constructor parameter list on top-level commas, so `Pick<A, 'b' | 'c'>` stays intact. */
@@ -74,6 +104,30 @@ describe('Nest provider constructors expose a resolvable injection token', () =>
     assert.ok(registeredProviders.has('RedisRateLimitService'), 'the known-affected provider must be in scope');
   });
 
+  // Pins the detector against the two shapes that have actually broken boot, so neither regresses
+  // into a blind spot again. The second one shipped in 9933b52 and this scan missed it entirely:
+  // a parameter with no `:` was skipped before its default was ever considered.
+  it('detects both shapes that emit no paramtypes entry', () => {
+    assert.ok(isTokenless(`private readonly limits: Pick<RedisService, 'eval'>`), 'mapped type');
+    assert.ok(isTokenless(`private readonly limits: { eval(): void }`), 'inline object');
+    assert.ok(
+      isTokenless(`private readonly documentNumbers = new PrismaDocumentSequenceRepository(prisma)`),
+      'default initializer without an annotation',
+    );
+
+    assert.ok(!isTokenless(`private readonly prisma: PrismaService`), 'plain class annotation');
+    assert.ok(
+      !isTokenless(`private readonly documentNumbers: PrismaDocumentSequenceRepository`),
+      'the shape that replaced the broken one',
+    );
+    // An annotation plus a default is healthy — Nest injects from the annotation and ignores the
+    // default, which is what lets the repository specs still construct the class with one argument.
+    assert.ok(
+      !isTokenless(`private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma)`),
+      'annotated and defaulted',
+    );
+  });
+
   it('has no tokenless constructor parameter without an explicit @Inject', () => {
     const offenders: string[] = [];
 
@@ -86,9 +140,7 @@ describe('Nest provider constructors expose a resolvable injection token', () =>
         if (!registeredProviders.has(className)) continue;
 
         for (const param of splitParams(match[2]!)) {
-          const annotation = param.slice(param.indexOf(':') + 1);
-          if (!param.includes(':') || !TOKENLESS_TYPE.test(annotation)) continue;
-          if (param.includes('@Inject')) continue;
+          if (!isTokenless(param) || param.includes('@Inject')) continue;
           offenders.push(`${file.replace(SRC, '')} → ${className}: ${param.trim().slice(0, 80)}`);
         }
       }

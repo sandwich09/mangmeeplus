@@ -21,7 +21,7 @@ describe('substitute receipt evidence', () => {
         category: 'อาหาร', businessPurpose: 'ซื้อวัตถุดิบ', lines: [{ description: 'ผักสด', quantity: '1', amount: '65.00' }],
       },
       originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
-      payer: { userId: 'user-1', name: 'สมชาย <script>', position: 'admin', certifiedAt: '2026-07-13T10:00:00.000Z' },
+      payer: { userId: 'user-1', name: 'สมชาย <script>', position: 'admin', certifiedAt: '2026-07-13T18:30:00.000Z' },
       certificationText,
       evidence: [{ id: 'att-secret-id', purpose: 'expense.receipt.supporting', originalFileName: 'หลักฐาน.png', mimeType: 'image/png', checksumSha256: null }],
       note: null,
@@ -29,13 +29,16 @@ describe('substitute receipt evidence', () => {
     const artifact = renderSubstituteReceiptSvg(
       snapshot,
       'data:image/png;base64,aGVsbG8=',
-      { userId: 'user-2', name: 'ผู้อนุมัติ', position: 'owner', approvedAt: '2026-07-13T11:00:00.000Z' },
+      { userId: 'user-2', name: 'ผู้อนุมัติ', position: 'owner', approvedAt: '2026-07-13T19:00:00.000Z' },
       'data:image/jpeg;base64,d29ybGQ=',
     ).toString('utf8');
 
     assert.match(artifact, /ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.match(artifact, /เลขอ้างอิงรายการ: SRC-EXP-1-V1/);
     assert.match(artifact, /หกสิบห้าบาทถ้วน/);
     assert.match(artifact, /13 ก\.\u0e04\. 2569/);
+    assert.match(artifact, /ผู้อนุมัติ · 14 ก\.\u0e04\. 2569/);
+    assert.match(artifact, /ผู้จ่ายเงิน\/ผู้รับรอง · 14 ก\.\u0e04\. 2569/);
     assert.match(artifact, /บันทึกค่าใช้จ่าย \(ข้อความ\)/);
     assert.match(artifact, /วิธีชำระเงิน: เงินสด/);
     assert.match(artifact, /ผู้ดูแลระบบ/);
@@ -120,9 +123,35 @@ describe('substitute receipt evidence', () => {
       note: null,
     };
     const artifact = renderSubstituteReceiptSvg(snapshot).toString('utf8');
+    // Wrapping may break a suffix across two tspans, so read the text, not the markup.
+    const text = artifact.replace(/<[^>]+>/g, '');
     for (const suffix of ['END-OF-PURPOSE', 'END-OF-LINE', 'END-OF-REASON', 'END-OF-CERTIFICATION', 'END-OF-FILE.pdf']) {
-      assert.match(artifact, new RegExp(suffix));
+      assert.match(text, new RegExp(suffix));
     }
     assert.ok((artifact.match(/<tspan/g) ?? []).length > 10);
+  });
+
+  it('breaks a single word wider than its column instead of letting it run into the next one', () => {
+    // Same defect as the reimbursement claim form: `wrapText` accepted any word verbatim while
+    // the line was still empty, so a word wider than the column was never split at all.
+    const word = 'ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const artifact = renderSubstituteReceiptSvg({
+      documentNumber: 'SRC-WORD-V1', version: 1,
+      company: { name: 'บริษัท ทดสอบ จำกัด', branchName: null, taxId: null },
+      expense: {
+        id: 'exp-word', expenseNumber: null, expenseDate: '2026-07-13T00:00:00.000Z', paymentDate: null,
+        currency: 'THB', grandTotalAmount: '100.00', paymentMethod: 'CASH', paymentReference: null,
+        category: 'ทั่วไป', businessPurpose: 'ทดสอบ',
+        lines: [{ description: word, quantity: '1', amount: '100.00' }],
+      },
+      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'OTHER',
+      missingReceiptReason: 'ทดสอบ',
+      payer: { userId: 'payer-1', name: 'ผู้จ่าย', position: 'พนักงาน', certifiedAt: '0000-01-01T00:00:00.000Z' },
+      certificationText: 'ทดสอบ', evidence: [], note: null,
+    }).toString('utf8');
+
+    const pieces = [...artifact.matchAll(/<tspan x="165"[^>]*>([^<]*)<\/tspan>/g)].map((match) => match[1]!);
+    assert.ok(pieces.length > 1, `expected the word to be split, got ${JSON.stringify(pieces)}`);
+    assert.equal(pieces.join(''), word, 'no character is dropped by the split');
   });
 });

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import SystemHeader from '@/common/components/app-shell/SystemHeader';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
-import { isSystemAdmin } from '@/common/auth/session-gate.logic';
+import { isSystemAdmin, legalAcceptancePath } from '@/common/auth/session-gate.logic';
 import SystemAccessDenied from '@/features/auth/SystemAccessDenied';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +22,12 @@ export default async function SystemLayout({ children }: { children: ReactNode }
   }
   if (result.status === 'forbidden' || !isSystemAdmin(result.session)) {
     return <SystemAccessDenied />;
+  }
+  if (result.session.mustChangePassword) {
+    redirect(`/change-password?next=${encodeURIComponent('/system/partners')}`);
+  }
+  if (result.session.legalAcceptanceRequired !== false) {
+    redirect(legalAcceptancePath('/system/partners', result.session.companyId));
   }
 
   return (

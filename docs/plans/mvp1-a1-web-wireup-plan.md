@@ -38,7 +38,7 @@ Files: `apps/web/app/(workspace)/companies/[companyId]/inbox/page.tsx`, `apps/we
 - **W6 AI tab placeholder** per rule 10 (keep the tab shell so Phase 3 slots in).
 - Keep `inbox-prototype.model.ts` helpers that are pure presentation (chip building, paginate) by retyping them over contract types; DELETE mock-coupled ones (`buildAutoReplyMessage`, booking-slot helpers) together with their spec cases; update `inbox-prototype.model.spec.ts` accordingly (web test glob picks it up automatically).
 
-Verify (Codex runs): `pnpm --filter @watchdog-bms/web typecheck` + `test` all green; `grep -n "mangmee-crm-data" apps/web/src/features/crm-inbox/InboxPrototypePage.tsx` returns nothing (or only `CONV_STATUS_META`-style presentational consts per rule 2); `git diff --check`. (`next build` runs harness-side — next/font/google needs network, which the Codex sandbox lacks.)
+Verify (Codex runs): `pnpm --filter @watchdog-bms/web typecheck` + `test` + the offline `next build --webpack` all green; `grep -n "mangmee-crm-data" apps/web/src/features/crm-inbox/InboxPrototypePage.tsx` returns nothing (or only `CONV_STATUS_META`-style presentational consts per rule 2); `git diff --check`.
 
 ## Phase 2 — prototype-data banner on still-mock CRM routes
 

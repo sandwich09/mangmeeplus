@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Logger } from '@nestjs/common';
 import type { AiUsageEntry } from '@watchdog-bms/contracts';
+import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { __resetFxCache } from './ai-fx-rate';
 import {
   __resetCompanyAiBudgetCache,
@@ -9,6 +10,7 @@ import {
   bangkokMonthKey,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
+  runWithCompanyAiBudgetAdmission,
 } from './company-ai-usage-meter';
 
 const config = { aiThbPerUsd: 33 } as any;
@@ -142,6 +144,20 @@ describe('recordCompanyAiUsage', () => {
     assert.deepEqual(second, { pre: 347, post: 347 + 694 });
   });
 
+  it('records against the month pinned when budget admission began', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    await recordCompanyAiUsage(
+      prisma,
+      config,
+      { companyId: 'co-1', sourceRoute: 'line-turn', monthKey: '2026-07' },
+      [usage()],
+    );
+
+    assert.equal(transactions[0]![0]!.args.data[0].monthKey, '2026-07');
+    assert.equal(transactions[0]![1]!.args.where.companyId_monthKey.monthKey, '2026-07');
+  });
+
   it('warns ai.usage.absent and writes nothing when the response carried no usage', async () => {
     const { prisma, transactions } = fakePrisma();
 
@@ -261,6 +277,35 @@ describe('assertCompanyAiBudget resolution', () => {
   it('treats a missing aggregate row as zero spend', async () => {
     const { prisma } = budgetPrisma({ monthlyBudgetSatang: 1 });
     assert.deepEqual(await assertCompanyAiBudget(prisma, budgetConfig, 'co-no-aggregate'), { allowed: true });
+  });
+});
+
+describe('runWithCompanyAiBudgetAdmission', () => {
+  it('refuses a concurrent company action until the admitted action finishes', async () => {
+    const { prisma } = budgetPrisma({ spendSatang: 0 });
+    const leases = new RedisRateLimitService({ redisUrl: '', isProduction: false } as any);
+    let unblock!: () => void;
+    let markStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+
+    const first = runWithCompanyAiBudgetAdmission(prisma, budgetConfig, leases, 'co-race', async () => {
+      markStarted();
+      await blocked;
+      return 'first';
+    });
+    await started;
+
+    const second = await runWithCompanyAiBudgetAdmission(prisma, budgetConfig, leases, 'co-race', async () => 'second');
+    assert.equal(second.allowed, false);
+    if (!second.allowed) assert.equal(second.reason, 'busy');
+
+    unblock();
+    assert.deepEqual(await first, { allowed: true, value: 'first' });
+    assert.deepEqual(
+      await runWithCompanyAiBudgetAdmission(prisma, budgetConfig, leases, 'co-race', async () => 'next'),
+      { allowed: true, value: 'next' },
+    );
   });
 });
 

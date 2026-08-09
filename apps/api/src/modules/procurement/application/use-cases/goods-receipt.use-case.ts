@@ -6,8 +6,9 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CreateMovementUseCase } from '../../../inventory/application/use-cases/create-movement.use-case';
-import { PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { civilPeriodKey, PROCUREMENT_SEQUENCE_KEYS, todayCivilDate } from '@watchdog-bms/contracts';
 import type { GoodsReceiptRecord } from '../../domain/models/procurement.model';
+import { assertProcurementBranchScope, PROCUREMENT_RELATED_READ_PERMISSIONS, resolveProcurementCreateBranch } from './procurement-access';
 
 @Injectable()
 export class CreateGoodsReceiptUseCase {
@@ -19,7 +20,18 @@ export class CreateGoodsReceiptUseCase {
     lines: { purchaseOrderLineId: string; lineNumber: number; lineType?: string; productId?: string; description: string; inventoryLocationId?: string; orderedQuantity: string; previouslyReceivedQuantity: string; receivedQuantity: string; acceptedQuantity: string; rejectedQuantity?: string; unitName?: string; varianceReason?: string }[];
   }): Promise<GoodsReceiptRecord> {
     if (!ctx.permissions.includes('procurement.goods_receipt.create')) throw new ForbiddenException();
-    const gr = await this.repo.createGoodsReceipt(ctx.companyId, dto, ctx.userId);
+    const purchaseOrder = await this.repo.findPurchaseOrderById(ctx.companyId, dto.purchaseOrderId);
+    if (!purchaseOrder) throw new BadRequestException('Purchase order not found');
+    assertProcurementBranchScope(ctx, purchaseOrder.branchId, 'Purchase order');
+    if (!['ISSUED', 'PARTIALLY_RECEIVED'].includes(purchaseOrder.status)) throw new BadRequestException('Purchase order is not open for receiving');
+    if (purchaseOrder.supplierId !== dto.supplierId) throw new BadRequestException('Purchase order supplier does not match the goods receipt supplier');
+    const branchId = resolveProcurementCreateBranch(ctx, dto.branchId ?? purchaseOrder.branchId);
+    if ((purchaseOrder.branchId ?? null) !== (branchId ?? null)) throw new BadRequestException('Purchase order branch does not match the goods receipt branch');
+    const orderLineIds = new Set((purchaseOrder.lines ?? []).map((line) => line.id));
+    if (dto.lines.some((line) => !orderLineIds.has(line.purchaseOrderLineId))) {
+      throw new BadRequestException('Goods receipt line references a line outside the purchase order');
+    }
+    const gr = await this.repo.createGoodsReceipt(ctx.companyId, { ...dto, branchId }, ctx.userId);
     void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'procurement.goods_receipt.create', targetType: 'goods_receipt', targetId: gr.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { purchaseOrderId: dto.purchaseOrderId } });
     return gr;
   }
@@ -30,9 +42,13 @@ export class GetGoodsReceiptUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, id: string): Promise<GoodsReceiptRecord> {
-    if (!ctx.permissions.includes('procurement.goods_receipt.read')) throw new ForbiddenException();
+    const canReadAll = ctx.permissions.includes('procurement.goods_receipt.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.GOODS_RECEIPT);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
     const gr = await this.repo.findGoodsReceiptById(ctx.companyId, id);
     if (!gr) throw new NotFoundException('Goods receipt not found');
+    assertProcurementBranchScope(ctx, gr.branchId, 'Goods receipt');
+    if (!canReadAll && !await this.repo.isProcurementDocumentRelatedToUser(ctx.companyId, 'GOODS_RECEIPT', id, ctx.userId, ctx.scopes ?? {})) throw new ForbiddenException();
     return gr;
   }
 }
@@ -42,8 +58,12 @@ export class ListGoodsReceiptsUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, filter: { status?: string; purchaseOrderId?: string; supplierId?: string; branchId?: string; page?: number; pageSize?: number }): Promise<{ data: GoodsReceiptRecord[]; total: number; page: number; pageSize: number }> {
-    if (!ctx.permissions.includes('procurement.goods_receipt.read')) throw new ForbiddenException();
-    const { data, total } = await this.repo.listGoodsReceipts(ctx.companyId, filter);
+    const canReadAll = ctx.permissions.includes('procurement.goods_receipt.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.GOODS_RECEIPT);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    const { data, total } = await this.repo.listGoodsReceipts(ctx.companyId, {
+      ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
+    }, ctx.scopes ?? {});
     return { data, total, page: filter.page ?? 1, pageSize: filter.pageSize ?? 20 };
   }
 }
@@ -63,6 +83,7 @@ export class PostGoodsReceiptUseCase {
     if (!ctx.permissions.includes('procurement.goods_receipt.post')) throw new ForbiddenException();
     const gr = await this.repo.findGoodsReceiptById(ctx.companyId, id);
     if (!gr) throw new NotFoundException('Goods receipt not found');
+    assertProcurementBranchScope(ctx, gr.branchId, 'Goods receipt');
     if (gr.status !== 'DRAFT') throw new BadRequestException(`Cannot post goods receipt with status ${gr.status}`);
 
     const stockLines = (gr.lines ?? []).filter((line) => line.lineType === 'STOCK' && line.productId && line.inventoryLocationId && Number(line.acceptedQuantity) > 0);
@@ -71,7 +92,7 @@ export class PostGoodsReceiptUseCase {
     await this.createMovement.assertStockTargets(ctx, stockLines.map((line) => ({ productId: line.productId!, locationId: line.inventoryLocationId! })));
 
     const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate(undefined, now));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.GOODS_RECEIPT, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `post:${id}` });
 
     // One movement number per receipt line, keyed by line id. Keying on
@@ -146,6 +167,7 @@ export class VoidGoodsReceiptUseCase {
     if (!ctx.permissions.includes('procurement.goods_receipt.void')) throw new ForbiddenException();
     const gr = await this.repo.findGoodsReceiptById(ctx.companyId, id);
     if (!gr) throw new NotFoundException('Goods receipt not found');
+    assertProcurementBranchScope(ctx, gr.branchId, 'Goods receipt');
     if (gr.status !== 'POSTED') throw new BadRequestException(`Cannot void goods receipt with status ${gr.status}`);
 
     // The reversal is transaction-coupled inside the repository: reversing

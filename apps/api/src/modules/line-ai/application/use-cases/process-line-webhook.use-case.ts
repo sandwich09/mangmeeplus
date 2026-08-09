@@ -41,12 +41,12 @@ import {
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
 import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4 } from '../../../expenses/application/services/receipt-ocr-apply.service';
-import { normalizeLineText, hashMessagePreview, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
+import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import type { BusinessDocumentClassification, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, todayCivilDate } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -55,6 +55,7 @@ import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
+import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
 
 export type LineTextEvent = {
   webhookEventId: string;
@@ -84,10 +85,19 @@ export type LineReceiptUploadEvent = {
  *  standalone question (spec §8); the caller should run it as a text turn. */
 export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' };
 
+/** Read-only gate used by the verified employee LINE webhook before it writes
+ * the recoverable buffer payload. `continue` deliberately also covers users
+ * whose company cannot yet be resolved (unlinked / selection / policy flows),
+ * so this preflight never invents a default company. */
+export type LineLegalAcceptancePreflight =
+  | { status: 'continue' }
+  | { status: 'required'; companyId: string };
+
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนใช้งาน\nเปิดเว็บแอปเพื่อเชื่อมต่อ';
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
 const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย';
+export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้';
 const ERROR_REPLY = '⏳ ขออภัย เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง';
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนส่งบิลหรือใบเสร็จ';
@@ -101,11 +111,36 @@ const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่�
 const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัย';
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
-const MEDIA_CLARIFY_REPLY = '🤔 รูปนี้เป็นใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก หรือเป็นภาพประกอบคำถามครับ?';
+const MEDIA_CLARIFY_REPLY = [
+  '🤔 รูปนี้เป็นอะไรครับ ตอบเลขข้อได้เลย',
+  '1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก',
+  '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
+].join('\n');
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
+/** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
+const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
+
+/** Same chatKey the text path and the message buffer use: the group, else the person. */
+function mediaChatKey(event: LineReceiptUploadEvent): string {
+  return event.pushTargetId ?? event.lineUserId;
+}
+
+/**
+ * Multi-turn memory preview for a media turn. Naming the stored attachment is the difference
+ * between the model knowing "a picture was mentioned" and knowing "this exact file is on the
+ * server" — without the id it can only ask the customer to send it again.
+ */
+function mediaPreviewLabel(pending?: { attachmentId: string } | null): string {
+  return pending ? `[ผู้ใช้ส่งรูป/ไฟล์ #${pending.attachmentId}]` : '[ผู้ใช้ส่งรูป/ไฟล์]';
+}
 /** Preview length stored per turn for multi-turn memory (columns are unbounded text). */
 const PREVIEW_MAX_CHARS = 240;
+const COMPANY_SELECTION_PENDING_STATUSES = new Set([
+  'needs_company_selection',
+  'company_context_listed',
+  'company_context_selection_invalid',
+]);
 /** How far back a correction may reach. Older records are corrected in web. */
 const CORRECTION_CANDIDATE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LINE_MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -124,6 +159,30 @@ type DownloadedLineMedia = {
   contentBase64?: string;
   bytes: Buffer;
 };
+
+/** Reads a fetch body without ever retaining more than `maxBytes`. This is the authoritative
+ *  limit for chunked responses whose Content-Length is absent or dishonest. */
+export async function readResponseBodyLimited(response: Pick<Response, 'body'>, maxBytes: number): Promise<Buffer | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 type LineBusinessDocumentDecision =
   | { outcome: 'expense'; manualReview: boolean; classification: BusinessDocumentClassification | null }
@@ -279,7 +338,14 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
  *  ponytail: substring match over a fixed keyword set — enough for the short yes/no follow-up;
  *  swap for the intake router only if free-form replies start slipping through. */
 export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'ambiguous' {
-  const t = (text ?? '').toLowerCase();
+  const t = (text ?? '').toLowerCase().trim();
+  // The question is numbered, so a lone choice is unambiguous. Anchored to the whole reply on
+  // purpose: a bare '1' is an answer, but '1500' or 'จ่ายไป 2 ใบ' is not.
+  const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([12])[.)]?$/.exec(t);
+  if (numbered) return numbered[1] === '1' ? 'receipt' : 'illustration';
+  // Thai ordinals are the same answer spelled out, and just as unambiguous against a numbered list.
+  if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:แรก|หนึ่ง)$/.test(t)) return 'receipt';
+  if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สอง|ที่สอง)$/.test(t)) return 'illustration';
   // Detect a refusal FIRST: receipt keywords like 'บันทึก' are substrings of refusals such as
   // 'ไม่ต้องบันทึก' ("no need to save"), so a plain keyword scan would build a draft from an
   // explicit "no". Thai negation is 'ไม่' (NOT the yes/no question particle 'ไหม'); English
@@ -287,7 +353,13 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   // receipt — treat it as an illustration and answer the original caption instead.
   const negation = /ไม่|ยกเลิก|\b(?:no|don't|do not|cancel)\b/.test(t);
   const illustration = negation || ['ภาพประกอบ', 'แค่ถาม', 'illustration'].some((k) => t.includes(k));
-  const receipt = !negation && ['ใบเสร็จ', 'บันทึก', 'ใช่', 'receipt', 'บิล', 'สลิป'].some((k) => t.includes(k));
+  const receipt = !negation && [
+    'ใบเสร็จ', 'บันทึก', 'ใช่', 'receipt', 'บิล', 'สลิป',
+    // Named documents. 'เอกสารค่าใช้จ่าย' and 'ค่าใช้จ่าย' are the words the question itself uses —
+    // echoing them back used to read as ambiguous, which is how the loop began.
+    'ใบกำกับภาษี', 'ใบแจ้งหนี้', 'ใบส่งของ', 'ใบวางบิล', 'เอกสารค่าใช้จ่าย', 'ค่าใช้จ่าย',
+    'invoice', 'bill', 'slip', 'tax invoice',
+  ].some((k) => t.includes(k));
   if (receipt && !illustration) return 'receipt';
   if (illustration && !receipt) return 'illustration';
   return 'ambiguous';
@@ -295,10 +367,9 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
 
 function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[]): boolean {
   if (!toolNames || toolNames.length === 0) return true;
-  const permissionSet = new Set(permissions);
   return toolNames.every((toolName) => {
     const meta = LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName);
-    return !!meta && meta.requiredPermissions.every((permission) => permissionSet.has(permission));
+    return !!meta && hasToolPermissions(meta, permissions);
   });
 }
 
@@ -521,6 +592,7 @@ export class ProcessLineWebhookUseCase {
     private readonly lineReply: LineReplyAdapter,
     private readonly receiptOcrApply: ReceiptOcrApplyService,
     private readonly malwareScanner: AttachmentMalwareScanner,
+    private readonly legalAcceptance: LegalAcceptanceService,
     // REQUIRED, and deliberately the last non-optional parameter: an `@Optional()` probe that failed
     // to wire would report zero would_block observations, which R1 cannot distinguish from a route
     // that was measured and never blocked. Absent evidence must fail loudly at boot, not quietly.
@@ -587,6 +659,23 @@ export class ProcessLineWebhookUseCase {
       this.logger.warn({ msg: 'LINE branch scope lookup failed', companyId, branchCount: branchIds.length, error: (error as Error).message });
       return fallback;
     }
+  }
+
+  private async refusePendingLegalAcceptance(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    userId: string,
+    companyId: string,
+    membershipId: string,
+  ): Promise<boolean> {
+    if (!await this.legalAcceptance.isRequired({ userId, companyId, membershipId })) return false;
+    await this.deliverReply(event, LEGAL_ACCEPTANCE_REQUIRED_REPLY);
+    await this.updateEventLog(
+      event.webhookEventId,
+      'legal_acceptance_required',
+      LINE_AI_ERROR_CODES.FORBIDDEN,
+      companyId,
+    );
+    return true;
   }
 
   /**
@@ -708,6 +797,40 @@ export class ProcessLineWebhookUseCase {
     return identity;
   }
 
+  /**
+   * Resolve the same employee/company/membership scope as the turn pipeline,
+   * but before the message buffer stores its crash-recovery payload. This
+   * method is intentionally read-only and receives no message text, reply
+   * token, or media id.
+   *
+   * Unlinked users and unresolved multi-company users continue into the
+   * existing pipeline so they keep receiving the link/company-picker reply.
+   * Once a company is resolvable, infrastructure failures propagate: the
+   * webhook returns non-2xx rather than persisting a possibly forbidden raw
+   * message under a fail-open decision.
+   */
+  async preflightLegalAcceptance(
+    event: { lineUserId: string; messagingChannelId?: string },
+  ): Promise<LineLegalAcceptancePreflight> {
+    const identity = await this.resolveLineIdentity(event);
+    if (!identity || identity.user.status !== 'ACTIVE') return { status: 'continue' };
+
+    const resolved = await resolveCompanyForLineUser(this.prisma, identity.userId, event.lineUserId);
+    if (!resolved || 'needsSelection' in resolved || 'policyViolation' in resolved) {
+      return { status: 'continue' };
+    }
+
+    const access = await this.permissionResolver.resolveAccess(identity.userId, resolved.companyId);
+    const required = await this.legalAcceptance.isRequired({
+      userId: identity.userId,
+      companyId: resolved.companyId,
+      membershipId: access.membershipId,
+    });
+    return required
+      ? { status: 'required', companyId: resolved.companyId }
+      : { status: 'continue' };
+  }
+
   async execute(event: LineTextEvent): Promise<void> {
     const requestId = randomUUID();
 
@@ -736,7 +859,8 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const companyCommand = parseLineCompanyCommand(event.messageText);
+    const companyCommand = parseLineCompanyCommand(event.messageText)
+      ?? await this.pendingCompanySelectionCommand(event);
     if (companyCommand) {
       await this.handleCompanyCommand(event, requestId, identity.userId, companyCommand);
       return;
@@ -763,8 +887,24 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const companyId = resolved.companyId;
-    await this.recordShadowTurn(companyId);
 
+    // 5. Resolve membership + permissions via existing permission resolver
+    let resolvedAccess: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
+    try {
+      resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
+    } catch {
+      await this.deliverReply(event, UNLINKED_REPLY);
+      await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
+      return;
+    }
+
+    // This check is after server-side company/membership resolution and before feature probes,
+    // model routing, ERP tools, conversation persistence, or attachment storage.
+    if (await this.refusePendingLegalAcceptance(
+      event, identity.userId, companyId, resolvedAccess.membershipId,
+    )) return;
+
+    await this.recordShadowTurn(companyId);
     if (await lineAssistantDisabled(this.prisma, companyId)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -779,16 +919,6 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { reason: 'feature_disabled' },
       });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
-      return;
-    }
-
-    // 5. Resolve membership + permissions via existing permission resolver
-    let resolvedAccess: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
-    try {
-      resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
-    } catch {
-      await this.deliverReply(event, UNLINKED_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN);
       return;
     }
 
@@ -851,15 +981,20 @@ export class ProcessLineWebhookUseCase {
     if (pendingMedia) {
       const decision = classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         await this.resolvePendingMediaAsReceipt(event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText);
         return;
       }
       if (decision === 'illustration') {
         await this.prisma.client.lineIntakePendingMedia.update({ where: { id: pendingMedia.id }, data: { status: 'RESOLVED_ILLUSTRATION' } });
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
         normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
       }
-      // ambiguous → fall through with the original reply; the row stays PENDING.
+      // ambiguous → fall through with the original reply; the row stays PENDING. Unlike before, the
+      // ledger now carries this question as an open clarification WITH the stored file, so the turn
+      // below reaches the model knowing the picture is already on the server — it can answer or
+      // re-ask about THAT file instead of asking the customer to send one.
     }
 
     const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, resolvedAccess.permissions) : undefined;
@@ -1197,6 +1332,21 @@ export class ProcessLineWebhookUseCase {
     }) as Promise<LineCompanyMembership[]>;
   }
 
+  private async pendingCompanySelectionCommand(event: LineTextEvent): Promise<LineCompanyCommand | null> {
+    const candidate = parseBareCompanySelection(event.messageText);
+    if (!candidate) return null;
+    const previous = await this.prisma.client.lineWebhookEventLog.findFirst({
+      where: {
+        webhookEventId: { not: event.webhookEventId },
+        lineUserIdHash: hashMessagePreview(event.lineUserId),
+        createdAt: { gte: new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true },
+    });
+    return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
+  }
+
   private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
@@ -1456,14 +1606,6 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const companyId = resolved.companyId;
-    await this.recordShadowTurn(companyId);
-
-    if (await lineAssistantDisabled(this.prisma, companyId)) {
-      await this.deliverReply(event, formatRefusal('feature_disabled'));
-      await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
-      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
-      return;
-    }
 
     let access: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
     try {
@@ -1473,6 +1615,20 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'no_membership', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
+
+    // Refuse before downloading bytes, invoking intake/OCR, or creating any attachment/expense.
+    if (await this.refusePendingLegalAcceptance(
+      event, identity.userId, companyId, access.membershipId,
+    )) return;
+
+    await this.recordShadowTurn(companyId);
+    if (await lineAssistantDisabled(this.prisma, companyId)) {
+      await this.deliverReply(event, formatRefusal('feature_disabled'));
+      await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
+      await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
+      return;
+    }
+
     const canCaptureExpense = access.permissions.includes('expense.receipt.line_upload') || access.permissions.includes('expense.receipt.upload');
     const canSubmitSignature = access.permissions.includes('expense.signature.manage');
     if (!canCaptureExpense && !canSubmitSignature) {
@@ -1616,13 +1772,19 @@ export class ProcessLineWebhookUseCase {
       if (caption && canCaptureExpense) {
         // Only the delivery that CREATES the pending row asks the clarify question. A redelivery
         // (new webhookEventId, same lineMessageId) reuses the row and stays silent — idempotent.
-        const { created } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
         if (created) {
           await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-            userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
+            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
           });
+          if (pending) {
+            await this.appendMediaClarification({
+              companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+              userId: identity.userId, caption, question: MEDIA_CLARIFY_REPLY, pending,
+            });
+          }
         }
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return { outcome: 'done' };
@@ -1681,13 +1843,19 @@ export class ProcessLineWebhookUseCase {
         ? MEDIA_CLARIFY_REPLY
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       if (decision.persistMedia && canCaptureExpense) {
-        const { created } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
         if (created) {
           await this.deliverReply(event, reply);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-            userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
+            userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
+          if (pending) {
+            await this.appendMediaClarification({
+              companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+              userId: identity.userId, caption, question: reply, pending,
+            });
+          }
         }
       } else {
         await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply);
@@ -1849,9 +2017,20 @@ export class ProcessLineWebhookUseCase {
     userId: string,
     caption: string,
     media: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer },
-  ): Promise<{ created: boolean }> {
+  ): Promise<{ created: boolean; pending?: { id: string; attachmentId: string; mimeType: string } }> {
     const key = { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } };
-    if (await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key })) return { created: false };
+    const redelivered = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    // Redelivery of the SAME message: stay silent, exactly as before.
+    if (redelivered) return { created: false, pending: redelivered };
+    // A DIFFERENT picture while one question is still open. Before, this opened a second row and
+    // asked again — which is what turned an unrecognised answer into an endless loop, storing one
+    // more copy of the image every round. Answer the open question about the newest file instead:
+    // repoint the existing row at this upload and stay silent.
+    const open = await this.prisma.client.lineIntakePendingMedia.findFirst({
+      where: { companyId, userId, status: 'PENDING', expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (open) return { created: false, pending: open };
     if (!this.createUploadIntent || !this.completeAttachmentUpload) throw new Error('LINE_ATTACHMENT_MODULE_UNAVAILABLE');
     // Reserve an attachment id (cheap DB intent, no bytes yet), then CLAIM the unique pending row
     // BEFORE transferring bytes. Only the race winner uploads + completes the attachment.
@@ -1869,14 +2048,77 @@ export class ProcessLineWebhookUseCase {
     } catch (err) {
       // Lost the unique race — another delivery already claimed the row. Skip the byte upload so
       // no second copy is stored; the reserved intent stays incomplete for storage GC.
-      if ((err as { code?: string }).code === 'P2002') return { created: false };
+      if ((err as { code?: string }).code === 'P2002') {
+        const winner = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+        return { created: false, ...(winner ? { pending: winner } : {}) };
+      }
       throw err;
     }
     await this.uploadLineMedia(intent, media);
     await this.completeAttachmentUpload.execute(ctx, {
       attachmentId: intent.attachmentId, checksumSha256: media.checksumSha256, byteSize: media.byteSize,
     });
-    return { created: true };
+    const pending = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
+    return { created: true, ...(pending ? { pending } : {}) };
+  }
+
+  /** Carry the open media question into the ledger so the NEXT turn arrives knowing a file is
+   *  already stored — the text path has always done this for its own clarifies, and the media path
+   *  not doing it is what left the follow-up answer with no context to attach to. Ledger writes
+   *  fail open (§13); LineIntakePendingMedia in Postgres stays the source of truth either way. */
+  private async appendMediaClarification(input: {
+    companyId: string;
+    chatKey: string;
+    requestId: string;
+    webhookEventId: string;
+    userId: string;
+    caption: string;
+    question: string;
+    pending: { id: string; attachmentId: string; mimeType: string };
+  }): Promise<void> {
+    await this.ledger?.appendSubRequests({
+      companyId: input.companyId, chatKey: input.chatKey, turnId: input.requestId,
+      webhookEventId: input.webhookEventId, userId: input.userId,
+      items: [{
+        // The caption is the request the question defers, mirroring the text path. With no caption
+        // the file itself is the request, so name it rather than storing an empty ask.
+        text: input.caption || MEDIA_PENDING_REQUEST_TEXT,
+        state: 'waiting_user',
+        clarifyQuestion: input.question,
+        intent: 'CLARIFY',
+        clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        pendingMedia: {
+          pendingMediaId: input.pending.id,
+          attachmentId: input.pending.attachmentId,
+          mimeType: input.pending.mimeType,
+        },
+      }],
+    });
+  }
+
+  /** Close the ledger copy of a media question once its Postgres row is resolved, so the next turn
+   *  does not carry a question the customer has already answered. Best-effort by design: the ledger
+   *  is a carrier, `LineIntakePendingMedia` is the source of truth, and Redis fails open (§13). */
+  private async ackMediaClarification(
+    companyId: string,
+    event: LineTextEvent,
+    userId: string,
+    pendingMediaId: string,
+    outcome: 'acked' | 'followed_up',
+  ): Promise<void> {
+    if (!this.ledger) return;
+    try {
+      const chatKey = event.pushTargetId ?? event.lineUserId;
+      const open = await this.ledger.openWaitingUser(companyId, chatKey, userId);
+      for (const clarification of open) {
+        if (clarification.pendingMedia?.pendingMediaId !== pendingMediaId) continue;
+        await this.ledger.ack(clarification.entry, outcome, { pendingMediaId });
+      }
+    } catch (err) {
+      // Includes ConsumptionMarkerUnavailableError: failing to tidy up must never sink a reply the
+      // customer is waiting for. A stale entry expires on its own via the reclaim path.
+      this.logger.warn({ msg: 'line_ai_media_clarify_ack_failed', pendingMediaId, error: (err as Error).message });
+    }
   }
 
   /** RECEIPT-05: the customer confirmed the pending media is an expense document. Build the
@@ -2133,7 +2375,8 @@ export class ProcessLineWebhookUseCase {
     if (!response?.ok) return null;
     const declaredSize = Number(response.headers.get('content-length') ?? 0);
     if (declaredSize > this.config.uploadMaxBytes) return null;
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = await readResponseBodyLimited(response, this.config.uploadMaxBytes);
+    if (!bytes) return null;
     const mimeType = normalizeAttachmentMimeType(response.headers.get('content-type'), bytes);
     const extension = canonicalAttachmentExtension(mimeType) ?? 'bin';
     return {

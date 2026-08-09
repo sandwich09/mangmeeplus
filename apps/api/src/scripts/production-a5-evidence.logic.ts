@@ -565,7 +565,26 @@ function parseExecutionBudget(value: unknown, label: string): ProductionA5Execut
 }
 
 function normalizedSql(sql: string): string {
-  return sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\r\n]*/g, ' ').replace(/\s+/g, ' ').toUpperCase();
+  const withoutComments = sql.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\r\n]*/g, ' ');
+  return withoutComments.replace(/\s+/g, ' ').toUpperCase();
+}
+
+function withoutRaiseMessageLiterals(sql: string): string {
+  // PL/pgSQL RAISE messages are diagnostics, not executable SQL. Remove only the leading message
+  // literal while retaining the surrounding function body and every other string literal.
+  return sql.replace(
+    /\bRAISE\s+(?:(?:DEBUG|LOG|INFO|NOTICE|WARNING|EXCEPTION)\s+)?'(?:''|[^'])*'/g,
+    'RAISE',
+  );
+}
+
+function dynamicExecutePayloads(sql: string): string[] {
+  const payloads: string[] = [];
+  const pattern = /\bEXECUTE\s+(?:FORMAT\s*\(\s*)?'((?:''|[^'])*)'/g;
+  for (let match = pattern.exec(sql); match; match = pattern.exec(sql)) {
+    payloads.push((match[1] ?? '').replace(/''/g, "'"));
+  }
+  return payloads;
 }
 
 function assertReviewedSqlOperation(
@@ -573,19 +592,30 @@ function assertReviewedSqlOperation(
   sqlBytes: string,
 ): void {
   const sql = normalizedSql(sqlBytes);
+  const executableScan = withoutRaiseMessageLiterals(sql);
+  const dynamicPayloads = dynamicExecutePayloads(sql);
   // A bare UPDATE token also appears in FK clauses (`ON UPDATE CASCADE`). Only statement/block
   // boundaries classify DML; this still catches seed INSERTs and PL/pgSQL mutations.
-  const dataMutation = /(?:^|;|\bBEGIN\b|\bTHEN\b|\bELSE\b)\s*(?:UPDATE\b|INSERT\s+INTO\b|DELETE\s+FROM\b|MERGE\s+INTO\b)/
-    .test(sql);
-  const nonAdditive = /\b(?:DROP\s+(?:CONSTRAINT|INDEX|DEFAULT|NOT\s+NULL)|RENAME\s+(?:TO|CONSTRAINT)|CREATE\s+OR\s+REPLACE|ALTER\s+COLUMN\s+[^;]+\s+TYPE)\b/.test(sql);
-  const blocking = /\b(?:SET\s+NOT\s+NULL|ADD\s+CONSTRAINT|CREATE\s+UNIQUE\s+INDEX|ALTER\s+TYPE\s+[^;]+\s+ADD\s+VALUE)\b/.test(sql);
-  const withoutTempDrops = sql.replace(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?PG_TEMP\.[A-Z0-9_".]+/g, ' ');
+  const mutationPattern = /(?:^|;|\bBEGIN\b|\bTHEN\b|\bELSE\b)\s*(?:UPDATE\b|INSERT\s+INTO\b|DELETE\s+FROM\b|MERGE\s+INTO\b)/;
+  const dataMutation = mutationPattern.test(executableScan)
+    || dynamicPayloads.some((payload) => mutationPattern.test(payload));
+  const nonAdditive = /\b(?:DROP\s+(?:CONSTRAINT|INDEX|DEFAULT|NOT\s+NULL)|RENAME\s+(?:TO|CONSTRAINT)|CREATE\s+OR\s+REPLACE|ALTER\s+COLUMN\s+[^;]+\s+TYPE)\b/.test(executableScan);
+  const blocking = /\b(?:SET\s+NOT\s+NULL|ADD\s+CONSTRAINT|CREATE\s+UNIQUE\s+INDEX|ALTER\s+TYPE\s+[^;]+\s+ADD\s+VALUE)\b/.test(executableScan);
+  const withoutTempDrops = executableScan.replace(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?PG_TEMP\.[A-Z0-9_".]+/g, ' ');
+  // Protective append-only DDL names TRUNCATE as a trigger event; it does not execute a
+  // truncation. Remove only the complete BEFORE TRUNCATE trigger declaration, and remove
+  // non-executable RAISE messages, while leaving every executable statement/function body intact.
+  const destructiveScan = withoutTempDrops
+    .replace(
+      /\bCREATE\s+TRIGGER\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+BEFORE\s+TRUNCATE\s+ON\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+FOR\s+EACH\s+STATEMENT\s+EXECUTE\s+FUNCTION\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s*\(\s*\)/g,
+      'CREATE TRIGGER',
+    );
   if (/\b(?:DROP\s+(?:TABLE|COLUMN|TYPE|SCHEMA|DATABASE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE)|TRUNCATE|DELETE\s+FROM)\b/
-    .test(withoutTempDrops)) {
+    .test(destructiveScan)) {
     throw new Error('production_a5_destructive_data_loss_operation');
   }
   if (dataMutation && operation.operationClass !== 'DATA_BACKFILL') {
-    throw new Error('production_a5_data_mutation_class_mismatch');
+    throw new Error(`production_a5_data_mutation_class_mismatch:${operation.migrationName}`);
   }
   if (!dataMutation && operation.operationClass === 'DATA_BACKFILL') {
     throw new Error('production_a5_data_backfill_without_transform');

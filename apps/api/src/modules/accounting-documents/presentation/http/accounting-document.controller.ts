@@ -1,11 +1,12 @@
-import { Controller, Get, Post, Param, Body, Query, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, HttpCode } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext, AccountingDocumentType } from '@watchdog-bms/contracts';
-import { CreateAccountingDocumentDto } from './accounting-money.dtos';
+import { CreateAccountingDocumentDto, UpdateAccountingDocumentDto } from './accounting-money.dtos';
 import {
   CreateDocumentUseCase,
+  UpdateDocumentUseCase,
   GetDocumentUseCase,
   ListDocumentsUseCase,
   IssueDocumentUseCase,
@@ -17,11 +18,29 @@ import {
 } from '../../application/use-cases/document.use-case';
 import { GetDocumentPostingSourceUseCase } from '../../application/use-cases/posting-source.use-case';
 
+const DOCUMENT_READ_PERMISSIONS = [
+  'accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
+  'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read',
+];
+const DOCUMENT_CREATE_PERMISSIONS = [
+  'accounting.document.create', 'accounting.quotation.create', 'accounting.invoice.create', 'accounting.billing_note.create',
+  'accounting.receipt.create', 'accounting.credit_note.create', 'accounting.debit_note.create',
+];
+const DOCUMENT_ISSUE_PERMISSIONS = [
+  'accounting.document.issue', 'accounting.quotation.issue', 'accounting.invoice.issue', 'accounting.billing_note.issue',
+  'accounting.receipt.issue', 'accounting.tax_invoice.issue', 'accounting.credit_note.issue', 'accounting.debit_note.issue',
+];
+const DOCUMENT_VOID_PERMISSIONS = [
+  'accounting.document.void', 'accounting.quotation.void', 'accounting.invoice.void', 'accounting.billing_note.void',
+  'accounting.receipt.void', 'accounting.tax_invoice.void', 'accounting.credit_note.void', 'accounting.debit_note.void',
+];
+
 @ApiTags('accounting')
 @Controller('companies/:companyId/accounting/documents')
 export class AccountingDocumentController {
   constructor(
     private readonly createDoc: CreateDocumentUseCase,
+    private readonly updateDoc: UpdateDocumentUseCase,
     private readonly getDoc: GetDocumentUseCase,
     private readonly listDocs: ListDocumentsUseCase,
     private readonly issueDoc: IssueDocumentUseCase,
@@ -34,7 +53,7 @@ export class AccountingDocumentController {
   ) {}
 
   @Get()
-  @RequirePermissions('accounting.document.read')
+  @RequireAnyPermission(...DOCUMENT_READ_PERMISSIONS)
   @ApiOperation({ summary: 'List accounting documents' })
   async list(
     @ReqCtx() ctx: RequestContext,
@@ -60,7 +79,7 @@ export class AccountingDocumentController {
   }
 
   @Get(':documentId')
-  @RequirePermissions('accounting.document.read')
+  @RequireAnyPermission(...DOCUMENT_READ_PERMISSIONS)
   @ApiOperation({ summary: 'Get accounting document by id' })
   async getOne(@ReqCtx() ctx: RequestContext, @Param('documentId') documentId: string) {
     return this.getDoc.execute(ctx, documentId);
@@ -74,14 +93,35 @@ export class AccountingDocumentController {
   }
 
   @Post()
-  @RequirePermissions('accounting.document.create')
+  @RequireAnyPermission(...DOCUMENT_CREATE_PERMISSIONS)
   @ApiOperation({ summary: 'Create accounting document draft' })
   async create(@ReqCtx() ctx: RequestContext, @Body() body: CreateAccountingDocumentDto) {
     return this.createDoc.execute(ctx, body);
   }
 
+  @Patch(':documentId')
+  @RequireAnyPermission(
+    'accounting.document.update',
+    'accounting.quotation.update',
+    'accounting.invoice.update',
+    'accounting.billing_note.update',
+    'accounting.receipt.update',
+  )
+  @ApiOperation({ summary: 'Update an accounting document draft' })
+  async update(
+    @ReqCtx() ctx: RequestContext,
+    @Param('documentId') documentId: string,
+    @Body() body: UpdateAccountingDocumentDto,
+  ) {
+    return this.updateDoc.execute(ctx, {
+      ...body,
+      documentId,
+      expectedUpdatedAt: new Date(body.expectedUpdatedAt),
+    });
+  }
+
   @Post(':documentId/issue')
-  @RequirePermissions('accounting.document.issue')
+  @RequireAnyPermission(...DOCUMENT_ISSUE_PERMISSIONS)
   @HttpCode(200)
   @ApiOperation({ summary: 'Issue accounting document' })
   async issue(@ReqCtx() ctx: RequestContext, @Param('documentId') documentId: string) {
@@ -89,7 +129,7 @@ export class AccountingDocumentController {
   }
 
   @Post(':documentId/void')
-  @RequirePermissions('accounting.document.void')
+  @RequireAnyPermission(...DOCUMENT_VOID_PERMISSIONS)
   @HttpCode(200)
   @ApiOperation({ summary: 'Void accounting document' })
   async void(@ReqCtx() ctx: RequestContext, @Param('documentId') documentId: string, @Body() body: { reason: string }) {
@@ -121,7 +161,7 @@ export class AccountingDocumentController {
   }
 
   @Post(':documentId/convert')
-  @RequirePermissions('accounting.document.create')
+  @RequireAnyPermission(...DOCUMENT_CREATE_PERMISSIONS)
   @HttpCode(200)
   @ApiOperation({ summary: 'Convert issued quotation to invoice or billing note' })
   async convert(

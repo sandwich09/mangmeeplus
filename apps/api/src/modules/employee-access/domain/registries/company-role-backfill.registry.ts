@@ -33,6 +33,38 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'not a new capability. Universal because pack.core.basics grants it to everyone.',
   },
   {
+    key: 'accounting.document.read_related',
+    anchor: null,
+    why: 'Related-record visibility is a universal, view-only ABAC path. The sales_documents '
+      + 'entitlement still strips this key when the feature is off, and the accounting source '
+      + 'returns nothing unless the caller is persisted as an actor in the tenant/branch graph.',
+  },
+  {
+    key: 'expense.read_related',
+    anchor: null,
+    why: 'Expense, payment and substitute-receipt actors must retain view-only access to the '
+      + 'tenant/branch-scoped records they participated in. The expenses entitlement strips the '
+      + 'key when the feature is off; mutation permissions and lifecycle checks remain separate.',
+  },
+  {
+    key: 'reimbursement.read_related',
+    anchor: null,
+    why: 'Requester, approver, reviewer, payment, signature and linked-document actors retain '
+      + 'view-only access to tenant/branch-scoped reimbursement records. The reimbursement '
+      + 'entitlement still strips this key, and no mutation permission is implied.',
+  },
+  ...[
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
+    'procurement.supplier_payment.read_related',
+  ].map((key) => ({
+    key,
+    anchor: null,
+    why: 'Persisted actors retain view-only access to their tenant/branch-scoped procurement chain. '
+      + 'The exact document feature entitlement strips this key, while supplier master/bank details '
+      + 'and every mutation remain separately authorized.',
+  })),
+  {
     key: 'expense.evidence.read',
     anchor: 'expense.read',
     why: 'หลักฐานทางบัญชี moved off expense.read onto its own key. Without this the evidence menu '

@@ -32,6 +32,7 @@ import { AUTH_MAILER_TOKEN } from './domain/ports/auth-mailer.port';
 import { DisabledAuthMailerAdapter } from './infrastructure/disabled-auth-mailer.adapter';
 import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-auth-mailer.adapter';
 import { AppConfigService } from '../../common/config/app-config.service';
+import { LegalAcceptanceService } from './application/legal-acceptance.service';
 
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
@@ -62,6 +63,7 @@ import { AppConfigService } from '../../common/config/app-config.service';
     ConfirmEmailVerificationUseCase,
     AuthRateLimitService,
     LineChannelBindingService,
+    LegalAcceptanceService,
     AuthGuard,
     DisabledAuthMailerAdapter,
     LocalConsoleAuthMailerAdapter,
@@ -80,6 +82,6 @@ import { AppConfigService } from '../../common/config/app-config.service';
       },
     },
   ],
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService],
+  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService],
 })
 export class AuthModule {}

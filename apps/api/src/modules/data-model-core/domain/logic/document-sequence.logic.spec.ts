@@ -34,16 +34,24 @@ describe('document-sequence.logic', () => {
   });
 
   describe('buildPeriodKey', () => {
-    const date = new Date(2026, 5, 24); // June 24 2026
+    const date = new Date('2026-06-24T00:00:00.000Z');
     it('returns ALL for NONE policy', () => assert.equal(buildPeriodKey('NONE', date), 'ALL'));
     it('returns year for YEARLY policy', () => assert.equal(buildPeriodKey('YEARLY', date), '2026'));
     it('returns YYYY-MM for MONTHLY policy', () => assert.equal(buildPeriodKey('MONTHLY', date), '2026-06'));
+    it('uses the Bangkok month at the UTC month boundary', () => {
+      assert.equal(buildPeriodKey('MONTHLY', new Date('2026-08-31T19:00:00.000Z')), '2026-09');
+    });
   });
 
   describe('getDefaultDocumentSequenceConfig', () => {
     it('returns the system expense default without accepting unknown types', () => {
       assert.deepEqual(getDefaultDocumentSequenceConfig('expense.record'), {
         prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}',
+        padding: 5,
+        resetPolicy: 'MONTHLY',
+      });
+      assert.deepEqual(getDefaultDocumentSequenceConfig('expense.substitute_receipt'), {
+        prefixTemplate: 'SRC-{YYYY}{MM}-{SEQ}',
         padding: 5,
         resetPolicy: 'MONTHLY',
       });

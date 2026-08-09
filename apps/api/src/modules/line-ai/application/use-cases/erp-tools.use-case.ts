@@ -227,7 +227,8 @@ export class ExpenseListRecentTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; branchId?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.review') && !ctx.permissions.includes('expense.read_own')) {
+    if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.review')
+      && !ctx.permissions.includes('expense.read_related') && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);

@@ -1,3 +1,5 @@
+import { civilDate, civilPeriodKey } from '@watchdog-bms/contracts';
+
 const VALID_PLACEHOLDERS = new Set(['{YYYY}', '{YY}', '{MM}', '{BRANCH}', '{DOC}', '{SEQ}']);
 const PLACEHOLDER_PATTERN = /\{[^}]+\}/g;
 
@@ -21,6 +23,7 @@ const DEFAULT_DOCUMENT_SEQUENCE_CONFIGS: Readonly<Record<string, DefaultDocument
   'inventory.movement': { prefixTemplate: 'MOV-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'expense.claim': { prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'expense.record': { prefixTemplate: 'EXP-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
+  'expense.substitute_receipt': { prefixTemplate: 'SRC-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'ledger.journal': { prefixTemplate: 'JRN-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'procurement.purchase_request': { prefixTemplate: 'PR-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
   'procurement.purchase_order': { prefixTemplate: 'PO-{YYYY}{MM}-{SEQ}', padding: 5, resetPolicy: 'MONTHLY' },
@@ -33,6 +36,21 @@ const DEFAULT_DOCUMENT_SEQUENCE_CONFIGS: Readonly<Record<string, DefaultDocument
 
 export function getDefaultDocumentSequenceConfig(documentType: string): DefaultDocumentSequenceConfig | undefined {
   return DEFAULT_DOCUMENT_SEQUENCE_CONFIGS[documentType];
+}
+
+/**
+ * Whether the numbers this template renders can say which branch issued them, and therefore
+ * whether the counter behind it may be split per branch (audit CR-7).
+ *
+ * DocumentNumber is unique on `(companyId, documentType, documentNumber)` — company-wide. A
+ * per-branch counter under a template with no `{BRANCH}` renders the identical string from two
+ * counters, and the second branch's insert is rejected. Not once: the rejection rolls the whole
+ * reservation transaction back, including the `nextNumber` increment, so that branch retries the
+ * same number forever. None of the default templates above carry `{BRANCH}`, which is why the
+ * counter has to stay company-wide unless the template opts in.
+ */
+export function templateNumbersAreBranchDistinct(template: string): boolean {
+  return template.includes('{BRANCH}');
 }
 
 export function validatePrefixTemplate(template: string): string | null {
@@ -75,11 +93,10 @@ export function formatDocumentNumber(template: string, ctx: FormatContext): stri
 }
 
 export function buildPeriodKey(policy: 'NONE' | 'MONTHLY' | 'YEARLY', date: Date): string {
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
+  const civil = civilDate(date);
   switch (policy) {
     case 'NONE':    return 'ALL';
-    case 'YEARLY':  return String(year);
-    case 'MONTHLY': return `${year}-${String(month).padStart(2, '0')}`;
+    case 'YEARLY':  return civil.slice(0, 4);
+    case 'MONTHLY': return civilPeriodKey(civil);
   }
 }

@@ -9,7 +9,7 @@ const PROFILE = { id: 'emp-1', companyId: 'company-1', userId: 'user-1', user: {
 const COMMAND = { companyId: 'company-1', employeeId: 'emp-1', requestingUserId: 'admin-1', requestId: 'req-1' };
 
 function makePrisma(identity: { providerUserId: string } | null) {
-  const state = { committed: false, auditLogs: [] as any[], identityLookupAfterCommit: false };
+  const state = { committed: false, auditLogs: [] as any[], identityLookupAfterCommit: false, revocations: [] as any[] };
   const prisma = {
     client: {
       employeeAccessProfile: { findFirst: async () => PROFILE },
@@ -24,6 +24,12 @@ function makePrisma(identity: { providerUserId: string } | null) {
       $transaction: async (fn: any) => {
         const result = await fn({
           userCredential: { update: async () => ({}) },
+          authSession: {
+            updateMany: async (args: any) => {
+              state.revocations.push(args);
+              return { count: 2 };
+            },
+          },
           auditLog: { create: async ({ data }: any) => { state.auditLogs.push(data); } },
         });
         state.committed = true;
@@ -58,6 +64,9 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
       assert.equal(line.pushes.length, 1);
       assert.equal(line.pushes[0]!.to, 'line-staff-1');
       assert.ok(line.pushes[0]!.text.includes(handoff.temporaryPassword));
+      assert.deepEqual(state.revocations[0].where, { userId: 'user-1', status: 'ACTIVE' });
+      assert.equal(state.revocations[0].data.status, 'REVOKED');
+      assert.equal(state.auditLogs[0].metadataJson.revokedSessionCount, 2);
       // The password must never reach audit metadata.
       assert.equal(JSON.stringify(state.auditLogs).includes(handoff.temporaryPassword), false);
     } finally {

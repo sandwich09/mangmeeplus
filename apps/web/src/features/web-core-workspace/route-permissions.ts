@@ -68,11 +68,16 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
     anyOf: [
       'procurement.supplier.read', 'procurement.purchase_request.read',
       'procurement.purchase_order.read', 'procurement.goods_receipt.read',
+      'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
     ],
   },
   {
     path: '/accounts-payable',
-    anyOf: ['procurement.vendor_bill.read', 'procurement.supplier_payment.read', 'procurement.ap.report'],
+    anyOf: [
+      'procurement.vendor_bill.read', 'procurement.supplier_payment.read',
+      'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related', 'procurement.ap.report',
+    ],
   },
   {
     path: '/workflow',
@@ -84,13 +89,13 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   {
     path: '/expenses',
     anyOf: [
-      'expense.read', 'expense.read_own', 'expense.receipt.upload', 'expense.create',
+      'expense.read', 'expense.read_related', 'expense.read_own', 'expense.receipt.upload', 'expense.create',
       'expense.confirm', 'expense.category.manage', 'expense.signature.manage', 'expense.evidence.read',
     ],
   },
   {
     path: '/reimbursements',
-    anyOf: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
+    anyOf: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
   },
 ];
 

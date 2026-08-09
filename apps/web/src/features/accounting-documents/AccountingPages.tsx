@@ -22,6 +22,7 @@ import {
   listPayments,
   rejectQuotation,
   submitQuotationApproval,
+  updateDocument,
   voidDocument,
 } from './accounting-documents.api';
 import {
@@ -52,6 +53,32 @@ const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed di
 const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
 const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
 const DOCUMENT_TYPES: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'];
+
+function documentPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void') {
+  return `accounting.${documentType.toLowerCase()}.${action}`;
+}
+
+function canDocumentAction(permissions: string[], documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void') {
+  return permissions.includes(`accounting.document.${action}`) || permissions.includes(documentPermission(documentType, action));
+}
+
+type DraftEditLine = {
+  lineNumber: number;
+  productId?: string;
+  skuSnapshot?: string;
+  description: string;
+  unitName?: string;
+  quantity: string;
+  unitPrice: string;
+  discountAmount?: string;
+  vatRate?: string;
+  whtRate?: string;
+  taxCategory?: string;
+  revenueCategory?: string;
+  taxCodeDefinitionId?: string;
+  externalTaxCode?: string;
+  transactionContext?: TransactionTaxContext;
+};
 
 function err(e: unknown) {
   return apiErrorMessage(e);
@@ -222,10 +249,12 @@ function DocumentList({
   );
 }
 
-function CreateDocumentForm({ companyId, onCreated }: { companyId: string; onCreated: (documentId?: string) => void }) {
+function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { companyId: string; onCreated: (documentId?: string) => void; allowedDocumentTypes: AccountingDocumentType[] }) {
   const toast = useToast();
   const branch = useBranchFilter();
-  const [docType, setDocType] = useState<AccountingDocumentType>('INVOICE');
+  const docTypes = (['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'] as AccountingDocumentType[])
+    .filter((documentType) => allowedDocumentTypes.includes(documentType));
+  const [docType, setDocType] = useState<AccountingDocumentType>(docTypes[0] ?? 'QUOTATION');
   const [vatMode, setVatMode] = useState<AccountingVatMode>('NO_VAT');
   const [outputTaxCode, setOutputTaxCode] = useState<AccountingOutputTaxCode | undefined>();
   const [taxCodeDefinitionId, setTaxCodeDefinitionId] = useState('');
@@ -241,7 +270,9 @@ function CreateDocumentForm({ companyId, onCreated }: { companyId: string; onCre
   const [unitPrice, setUnitPrice] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const docTypes: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE'];
+  useEffect(() => {
+    if (!docTypes.includes(docType) && docTypes[0]) setDocType(docTypes[0]);
+  }, [docType, docTypes]);
   // Preview only — the server recomputes every total. VAT_INCLUDED already carries its VAT.
   const lineGross = (Number(quantity) || 0) * (Number(unitPrice) || 0);
   const expectedGross = vatMode === 'VAT_EXCLUDED' ? lineGross * (1 + (Number(vatRate) || 0) / 100) : lineGross;
@@ -382,6 +413,11 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
   const [linkedTaxInvoiceDate, setLinkedTaxInvoiceDate] = useState(todayCivilDate());
   const [linkedTaxContext, setLinkedTaxContext] = useState<TransactionTaxContext>('DOMESTIC_SALE');
   const [linkedTaxSelections, setLinkedTaxSelections] = useState<Record<number, LinkedTaxSelection | undefined>>({});
+  const [editingDraft, setEditingDraft] = useState(false);
+  const [editDocumentDate, setEditDocumentDate] = useState(todayCivilDate());
+  const [editVatMode, setEditVatMode] = useState<AccountingVatMode>('NO_VAT');
+  const [editNote, setEditNote] = useState('');
+  const [editLines, setEditLines] = useState<DraftEditLine[]>([]);
 
   const load = useCallback(async () => {
     if (!documentId) {
@@ -394,6 +430,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
       setDetail(await getDocument(companyId, documentId));
       setLinkedTaxInvoiceOpen(false);
       setLinkedTaxSelections({});
+      setEditingDraft(false);
     } catch (e) {
       setError(err(e));
     } finally {
@@ -431,6 +468,64 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
     const reason = await promptInput({ title: 'ยกเลิกเอกสาร', label: 'เหตุผลยกเลิกเอกสาร' });
     if (!reason) return;
     await run(() => voidDocument(companyId, detail.id, reason), 'ยกเลิกเอกสารเรียบร้อยแล้ว');
+  }
+
+  function beginDraftEdit() {
+    if (!detail) return;
+    setEditDocumentDate(detail.documentDate.slice(0, 10));
+    setEditVatMode(detail.vatMode);
+    setEditNote(detail.note ?? '');
+    setEditLines(detail.lines.map((line) => ({
+      lineNumber: line.lineNumber,
+      productId: line.productId,
+      skuSnapshot: line.skuSnapshot,
+      description: line.description,
+      unitName: line.unitName,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discountAmount: line.discountAmount,
+      vatRate: line.vatRate,
+      whtRate: line.whtRate,
+      taxCategory: line.taxCategory,
+      revenueCategory: line.revenueCategory,
+      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
+      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
+      transactionContext: line.taxSnapshot?.taxContext ?? undefined,
+    })));
+    setEditingDraft(true);
+    setError(null);
+  }
+
+  async function saveDraftEdit() {
+    if (!detail) return;
+    const externalCodes = editLines.map((line) => line.externalTaxCode).filter(Boolean) as string[];
+    const uniqueCodes = new Set(externalCodes);
+    const compatibleOutputTaxCode = externalCodes.length === editLines.length && uniqueCodes.size === 1
+      && ['O7', 'OX', 'O0'].includes(externalCodes[0]!)
+      ? externalCodes[0] as AccountingOutputTaxCode
+      : null;
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await updateDocument(companyId, detail.id, {
+        expectedUpdatedAt: detail.updatedAt,
+        documentDate: editDocumentDate,
+        vatMode: editVatMode,
+        outputTaxCode: ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(detail.documentType)
+          ? compatibleOutputTaxCode
+          : null,
+        note: editNote.trim() || null,
+        lines: editLines,
+      });
+      setDetail(updated);
+      setEditingDraft(false);
+      onChanged(updated.id);
+      toast.success('แก้ไขร่างเอกสารเรียบร้อยแล้ว');
+    } catch (e) {
+      setError(err(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createLinked(type: AccountingDocumentType) {
@@ -491,10 +586,15 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
     }), 'สร้างร่างใบกำกับภาษีเรียบร้อยแล้ว');
   }
 
-  const canIssue = detail && ['DRAFT', 'APPROVED'].includes(detail.status) && permissions.includes('accounting.document.issue');
-  const canSubmit = detail?.documentType === 'QUOTATION' && detail.status === 'DRAFT';
+  const canEdit = detail?.status === 'DRAFT' && canDocumentAction(permissions, detail.documentType, 'update');
+  const canIssue = detail && ['DRAFT', 'APPROVED'].includes(detail.status) && canDocumentAction(permissions, detail.documentType, 'issue');
+  const canSubmit = detail?.documentType === 'QUOTATION' && detail.status === 'DRAFT'
+    && permissions.includes('accounting.quotation.submit_approval');
   const canApprove = detail?.documentType === 'QUOTATION' && detail.status === 'PENDING_APPROVAL' && permissions.includes('accounting.quotation.approve');
-  const canConvert = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED' && permissions.includes('accounting.document.create');
+  const canConvertToInvoice = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED'
+    && canDocumentAction(permissions, 'INVOICE', 'create');
+  const canConvertToBillingNote = detail?.documentType === 'QUOTATION' && detail.status === 'ISSUED'
+    && canDocumentAction(permissions, 'BILLING_NOTE', 'create');
   const canRecordPayment = detail && ['INVOICE', 'BILLING_NOTE', 'DEBIT_NOTE'].includes(detail.documentType) && detail.status === 'ISSUED' && detail.paymentStatus !== 'PAID' && permissions.includes('accounting.payment.create');
   const paymentSettles = (Number(paymentAmount) || 0) + (Number(paymentWht) || 0);
   // Seed the withheld field from the document, but only while nothing has been received: after a
@@ -506,8 +606,12 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
     seededWhtFor.current = detail.id;
     setPaymentWht(Number(detail.whtAmount) > 0 && Number(detail.paidAmount) === 0 ? String(detail.whtAmount) : '');
   }, [detail]);
-  const canCorrect = detail?.documentType === 'TAX_INVOICE' && detail.status === 'ISSUED' && detail.lines.some((line) => line.taxSnapshot?.taxCodeDefinitionId) && permissions.includes('accounting.document.create');
+  const correctionSourceReady = detail?.documentType === 'TAX_INVOICE' && detail.status === 'ISSUED'
+    && detail.lines.some((line) => line.taxSnapshot?.taxCodeDefinitionId);
+  const canCreateCreditNote = correctionSourceReady && canDocumentAction(permissions, 'CREDIT_NOTE', 'create');
+  const canCreateDebitNote = correctionSourceReady && canDocumentAction(permissions, 'DEBIT_NOTE', 'create');
   const canTaxInvoice = detail && ['INVOICE', 'RECEIPT'].includes(detail.documentType) && detail.status === 'ISSUED' && permissions.includes('accounting.document.create');
+  const canVoid = detail && detail.status !== 'VOIDED' && canDocumentAction(permissions, detail.documentType, 'void');
 
   if (!documentId) return <section className="mangmee-card p-4 text-sm text-gray-500">Select a document to review actions.</section>;
   if (loading) return <section className="mangmee-card p-4"><LoadingState label="กำลังโหลด..." /></section>;
@@ -523,6 +627,58 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
         <div className="flex gap-2"><StatusBadge status={detail.status} /><StatusBadge status={detail.paymentStatus} /></div>
       </div>
       {error && <ErrorBanner message={error} />}
+      {editingDraft && (
+        <section className="space-y-3 rounded-lg border border-brand-200 bg-brand-25 p-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-bold text-gray-600">วันที่เอกสาร<ThemedDate className={inputClass} value={editDocumentDate} onChange={(event) => setEditDocumentDate(event.target.value)} /></label>
+            <label className="text-xs font-bold text-gray-600">รูปแบบ VAT<ThemedSelect className={inputClass} value={editVatMode} onChange={(event) => setEditVatMode(event.target.value as AccountingVatMode)}>
+              <option value="NO_VAT">No VAT</option><option value="VAT_EXCLUDED">VAT excluded</option><option value="VAT_INCLUDED">VAT included</option><option value="EXEMPT">VAT exempt</option>
+            </ThemedSelect></label>
+            <label className="text-xs font-bold text-gray-600">หมายเหตุ<input className={inputClass} value={editNote} maxLength={1000} onChange={(event) => setEditNote(event.target.value)} /></label>
+          </div>
+          <div className="space-y-3">
+            {editLines.map((line, index) => (
+              <div key={`${line.lineNumber}:${index}`} className="space-y-2 rounded-lg border border-gray-200 bg-white p-3">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_100px_140px_120px]">
+                  <input aria-label={`รายละเอียดบรรทัด ${index + 1}`} className={inputClass} value={line.description} maxLength={500} onChange={(event) => setEditLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item))} />
+                  <input aria-label={`จำนวนบรรทัด ${index + 1}`} className={inputClass} type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={(event) => setEditLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: event.target.value } : item))} />
+                  <input aria-label={`ราคาบรรทัด ${index + 1}`} className={inputClass} type="number" min="0.01" step="0.01" value={line.unitPrice} onChange={(event) => setEditLines((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitPrice: event.target.value } : item))} />
+                  <button type="button" className={ghostClass} disabled={editLines.length === 1} onClick={() => setEditLines((current) => current.filter((_item, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, lineNumber: itemIndex + 1 })))}>ลบบรรทัด</button>
+                </div>
+                {detail.documentType === 'TAX_INVOICE' && <TransactionTaxLineSelector
+                  companyId={companyId}
+                  sourceType="accounting.document"
+                  sourceId={detail.id}
+                  sourceLineId={detail.lines[index]?.id ?? `draft-line-${index + 1}`}
+                  transactionContext={line.transactionContext ?? 'DOMESTIC_SALE'}
+                  direction="OUTPUT"
+                  documentDate={editDocumentDate}
+                  netAmount={String((Number(line.quantity) || 0) * (Number(line.unitPrice) || 0))}
+                  grossAmount={String((Number(line.quantity) || 0) * (Number(line.unitPrice) || 0))}
+                  value={line.taxCodeDefinitionId ?? ''}
+                  allowNoTax={false}
+                  onChange={(_id, definition) => {
+                    setEditLines((current) => current.map((item, itemIndex) => itemIndex === index ? {
+                      ...item,
+                      taxCodeDefinitionId: definition?.id,
+                      externalTaxCode: definition?.externalCode,
+                      vatRate: definition?.rate ?? '0',
+                    } : item));
+                    if (!definition || definition.calculationMethod === 'NONE' || ['NON_TAXABLE', 'OUTSIDE_SCOPE'].includes(definition.treatment)) setEditVatMode('NO_VAT');
+                    else if (definition.treatment === 'EXEMPT') setEditVatMode('EXEMPT');
+                    else setEditVatMode(definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED');
+                  }}
+                />}
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={ghostClass} onClick={() => setEditLines((current) => [...current, { lineNumber: current.length + 1, description: '', quantity: '1', unitPrice: '' }])}>เพิ่มบรรทัด</button>
+            <button type="button" className={btnClass} disabled={busy || !editLines.length} onClick={() => void saveDraftEdit()}>{busy ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</button>
+            <button type="button" className={ghostClass} disabled={busy} onClick={() => setEditingDraft(false)}>ยกเลิก</button>
+          </div>
+        </section>
+      )}
       <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
         <div><dt className="text-gray-500">Date</dt><dd className="font-medium text-gray-900">{formatThaiDate(detail.documentDate)}</dd></div>
         <div><dt className="text-gray-500">Total</dt><dd className="font-medium text-gray-900">{money(detail.grandTotalAmount)} {detail.currency}</dd></div>
@@ -554,16 +710,17 @@ function DocumentDetailPanel({ companyId, documentId, permissions, onChanged }: 
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+        {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>แก้ไข Draft</button>}
         {canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>Submit approval</button>}
         {canApprove && <button className={btnClass} disabled={busy} onClick={() => run(() => approveQuotation(companyId, detail.id, 'Approved in accounting workspace'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว')}>Approve</button>}
         {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>Reject</button>}
         {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>Issue</button>}
-        {canConvert && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>Convert to invoice</button>}
-        {canConvert && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>Convert to billing note</button>}
+        {canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>Convert to invoice</button>}
+        {canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>Convert to billing note</button>}
         {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>Create tax invoice</button>}
-        {canCorrect && <button className={ghostClass} disabled={busy} onClick={() => createLinked('CREDIT_NOTE')}>Create credit note</button>}
-        {canCorrect && <button className={ghostClass} disabled={busy} onClick={() => createLinked('DEBIT_NOTE')}>Create debit note</button>}
-        {detail.status !== 'VOIDED' && permissions.includes('accounting.document.void') && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>Void</button>}
+        {canCreateCreditNote && <button className={ghostClass} disabled={busy} onClick={() => createLinked('CREDIT_NOTE')}>Create credit note</button>}
+        {canCreateDebitNote && <button className={ghostClass} disabled={busy} onClick={() => createLinked('DEBIT_NOTE')}>Create debit note</button>}
+        {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>Void</button>}
       </div>
       {canTaxInvoice && linkedTaxInvoiceOpen && (
         <section className="space-y-3 rounded-lg border border-brand-200 bg-brand-25 p-4">
@@ -764,8 +921,10 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
     setReloadKey((value) => value + 1);
   }, []);
   const contentKey = useMemo(() => `${companyId}:${reloadKey}`, [companyId, reloadKey]);
-  const canReadDocuments = permissions.includes('accounting.document.read');
-  const canCreateDocuments = permissions.includes('accounting.document.create');
+  const readableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'read'));
+  const creatableDocumentTypes = DOCUMENT_TYPES.filter((documentType) => canDocumentAction(permissions, documentType, 'create'));
+  const canReadDocuments = readableDocumentTypes.length > 0 || permissions.includes('accounting.document.read_related');
+  const canCreateDocuments = creatableDocumentTypes.length > 0;
   const canReadCounterparties = permissions.includes('accounting.counterparty.read');
   const canReadPayments = permissions.includes('accounting.payment.read');
 
@@ -777,7 +936,7 @@ export function AccountingHubPage({ companyId, permissions }: { companyId: strin
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
         <div className="space-y-4">
-          {canCreateDocuments && <CreateDocumentForm companyId={companyId} onCreated={refresh} />}
+          {canCreateDocuments && <CreateDocumentForm companyId={companyId} onCreated={refresh} allowedDocumentTypes={creatableDocumentTypes} />}
           {canReadDocuments && <DocumentList
             key={contentKey}
             companyId={companyId}

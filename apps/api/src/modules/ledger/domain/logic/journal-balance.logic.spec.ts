@@ -59,6 +59,41 @@ describe('validateJournalBalance', () => {
     const result = validateJournalBalance([]);
     assert.equal(result.isBalanced, false);
   });
+
+  // Every line below is legal for the DTO (14 integer digits, 4 decimals) and fits Decimal(18,4),
+  // and the debits sum to the credit exactly. Summing them as float64 drifted further than the
+  // 0.0001 tolerance, so the gate rejected the entry and printed two totals that were both wrong.
+  it('accepts a balanced entry at the top of the accepted amount range', () => {
+    const result = validateJournalBalance([
+      { accountId: 'a', debitAmount: '159420246493.1018' },
+      { accountId: 'b', debitAmount: '10599731556750.1360' },
+      { accountId: 'c', debitAmount: '9698641791708.7330' },
+      { accountId: 'd', creditAmount: '20457793594951.9708' },
+    ]);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.isBalanced, true);
+    assert.equal(result.totalDebit, '20457793594951.9708');
+    assert.equal(result.totalCredit, '20457793594951.9708');
+  });
+
+  it('still rejects an entry that is off by a single stored digit', () => {
+    const result = validateJournalBalance([
+      { accountId: 'a', debitAmount: '10599731556750.1360' },
+      { accountId: 'b', creditAmount: '10599731556750.1361' },
+    ]);
+    assert.equal(result.isBalanced, false);
+    assert.ok(result.errors.some((e) => e.includes('ไม่เท่ากับ')));
+  });
+
+  it('reports the totals a reader can reconcile against the lines', () => {
+    const result = validateJournalBalance([
+      { accountId: 'a', debitAmount: '0.1' },
+      { accountId: 'b', debitAmount: '0.2' },
+      { accountId: 'c', creditAmount: '0.3' },
+    ]);
+    assert.equal(result.totalDebit, '0.3000');
+    assert.equal(result.isBalanced, true);
+  });
 });
 
 describe('buildReversalLines', () => {

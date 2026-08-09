@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApproveReimbursementUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
+import { ApproveReimbursementUseCase, ListApprovalQueueUseCase, RejectReimbursementUseCase } from './reimbursement-approval.use-case';
 import {
   CreateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
@@ -45,9 +45,13 @@ function fakeTx(events: any[]) {
   return { outboxEvent: { createMany: async ({ data }: any) => { events.push(...data); } } } as any;
 }
 
-function fakeRepo(req: any, policy: any = null, events: any[] = []) {
+function fakeRepo(req: any, policy: any = null, events: any[] = [], activeApprovers?: string[]) {
   return {
     findRequestById: async () => ({ ...req, payments: [], duplicateCandidates: [], signatures: [], signedCopies: [] }),
+    // Audit H-20: named approvers who can still act. Defaults to "all of them", so every existing
+    // test keeps the exact-match behaviour it was written for.
+    findActiveApproverUserIds: async (_companyId: string, ids: string[]) =>
+      new Set(activeApprovers ?? ids),
     findPolicy: async () => policy,
     beginApprovalDecisionAtomic: async (data: any) => {
       const step = req.approvalSteps[0];
@@ -73,10 +77,12 @@ function fakeRepo(req: any, policy: any = null, events: any[] = []) {
 }
 
 describe('ApproveReimbursementUseCase', () => {
+  // Audit H-17: the default ctx() holds MANAGER, which is now exempt, so the maker-checker rule is
+  // asserted with a role outside the exemption. The rule itself is unchanged for everyone else.
   it('blocks self-approval with self_approval_denied', async () => {
-    const req = baseRequest({ requesterUserId: 'approver-1' });
+    const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }] });
     const uc = approveUC(fakeRepo(req));
-    await assert.rejects(() => uc.execute(ctx(), 'rb-1'), /self_approval_denied/);
+    await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /self_approval_denied/);
   });
 
   it('rejects when missing approve permission', async () => {
@@ -109,6 +115,38 @@ describe('ApproveReimbursementUseCase', () => {
     // Deputising for a named approver is a different decision than holding rank.
     const req = baseRequest({ approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver', approverRoleSnapshot: undefined }] });
     const uc = approveUC(fakeRepo(req));
+    await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
+  });
+
+  // Audit H-20: with no reassign route, a step naming someone who has left froze the request AND
+  // hid it from every queue, because the queue filters on the same predicate. Cancelling was the
+  // only exit, and that burns the document number.
+  it('lets the OWNER decide a step whose named approver can no longer act', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
+    });
+    // Nobody active: the assignment no longer binds and the step falls back to its recorded role.
+    const uc = approveUC(fakeRepo(req, null, [], []));
+
+    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+
+    assert.equal(result.status, 'FINANCE_REVIEW');
+  });
+
+  it('still refuses someone who matches neither the departed assignee nor its role', async () => {
+    // The fallback widens to the role the step was routed with and OWNER — never to everyone.
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'departed-approver' }],
+    });
+    const uc = approveUC(fakeRepo(req, null, [], []));
+    await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /not_eligible_approver/);
+  });
+
+  it('keeps a step exact-match while its named approver is still active', async () => {
+    const req = baseRequest({
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverUserId: 'other-approver' }],
+    });
+    const uc = approveUC(fakeRepo(req, null, [], ['other-approver']));
     await assert.rejects(() => uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1'), /not_eligible_approver/);
   });
 
@@ -190,9 +228,9 @@ describe('RejectReimbursementUseCase', () => {
   });
 
   it('blocks self-rejection by requester', async () => {
-    const req = baseRequest({ requesterUserId: 'approver-1' });
+    const req = baseRequest({ requesterUserId: 'approver-1', approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }] });
     const uc = new RejectReimbursementUseCase(fakeRepo(req), noopAudit);
-    await assert.rejects(() => uc.execute(ctx(), 'rb-1', 'reason'), /self_approval_denied/);
+    await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1', 'reason'), /self_approval_denied/);
   });
 });
 
@@ -418,5 +456,124 @@ describe('Reimbursement request evidence validation', () => {
       () => submit.execute(requesterCtx(), created.id),
       (error: any) => error?.status === 422 && /missing_receipt/.test(error.message),
     );
+  });
+});
+
+/**
+ * Audit H-18: the queue listed the viewer's own claims, so the approve button was offered on a
+ * request that answers `self_approval_denied` — and the pending-approval notification pushed a deep
+ * link straight at it. The invitation and the rule disagreed.
+ */
+/**
+ * Audit H-17 (owner decision 2026-08-10): a small company is one person doing everything, so
+ * OWNER/ADMIN/MANAGER may approve their own claim without the company first turning the policy on —
+ * the same exemption procurement already carries. The trade is that every such decision is recorded
+ * inside the approving transaction, so support can always say who did it.
+ */
+describe('self-approval role exemption (audit H-17)', () => {
+  const auditOf = (calls: any[]) => calls.find((c: any) => String(c.action ?? '').startsWith('reimbursement.approval.'));
+
+  function auditingUC(req: any) {
+    const entries: any[] = [];
+    const uc = new ApproveReimbursementUseCase(
+      fakeRepo(req) as any,
+      { log: async (entry: any) => { entries.push(entry); } } as any,
+      { runApprovalProjection: async () => undefined } as any,
+    );
+    return { uc, entries };
+  }
+
+  it('lets an owner approve their own claim without the policy being opened', async () => {
+    const { uc } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
+    const result = await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    assert.equal(result.status, 'FINANCE_REVIEW');
+  });
+
+  // Routed to the role under test: whether that role may approve THIS step is a separate rule
+  // (matchesApproverRole), and mixing the two would hide which one the test proves.
+  for (const role of ['ADMIN', 'MANAGER']) {
+    it(`extends the same exemption to ${role}`, async () => {
+      const mine = baseRequest({
+        requesterUserId: 'approver-1',
+        approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: role }],
+      });
+      const { uc } = auditingUC(mine);
+      const result = await uc.execute(ctx({ roles: [role] }), 'rb-1');
+      assert.equal(result.status, 'FINANCE_REVIEW');
+    });
+  }
+
+  it('still refuses a role outside the exemption', async () => {
+    const { uc } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
+    await assert.rejects(() => uc.execute(ctx({ roles: ['ACCOUNTANT'] }), 'rb-1'), /self_approval_denied/);
+  });
+
+  // The point of the trade: an exempted self-approval is never anonymous.
+  it('records who self-approved and that a role stood in for the policy', async () => {
+    const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'approver-1' }));
+
+    await uc.execute(ctx({ roles: ['OWNER', 'ACCOUNTANT'] }), 'rb-1');
+
+    const entry = auditOf(entries);
+    assert.equal(entry.actorUserId, 'approver-1');
+    assert.deepEqual(entry.metadataJson.selfApproval, {
+      approvedOwnRequest: true,
+      via: 'role_exemption',
+      // Only the roles that actually granted the exemption, not everything the actor holds.
+      actorRoles: ['OWNER'],
+    });
+  });
+
+  it('does not attach a self-approval note when approving someone else\u2019s claim', async () => {
+    const { uc, entries } = auditingUC(baseRequest({ requesterUserId: 'staff-1' }));
+    await uc.execute(ctx({ roles: ['OWNER'] }), 'rb-1');
+    assert.equal(auditOf(entries).metadataJson.selfApproval, undefined);
+  });
+});
+
+describe('ListApprovalQueueUseCase self-approval (audit H-18)', () => {
+  function queueRepo(request: any, policy: any = null) {
+    return {
+      findPolicy: async () => policy,
+      listRequests: async () => [request],
+      findActiveApproverUserIds: async (_c: string, ids: string[]) => new Set(ids),
+    } as any;
+  }
+
+  it('hides a claim from the person who filed it while self-approval is blocked', async () => {
+    // A role outside the H-17 exemption: eligible to approve this step, refused by maker-checker.
+    // (An OWNER filing their own claim now CAN approve it, so their claim correctly stays listed —
+    // the queue and the approve gate share one predicate and move together.)
+    const mine = baseRequest({
+      requesterUserId: 'approver-1',
+      approvalSteps: [{ ...baseRequest().approvalSteps[0], approverRoleSnapshot: 'ACCOUNTANT' }],
+    });
+    const items = await new ListApprovalQueueUseCase(queueRepo(mine)).execute(ctx({ roles: ['ACCOUNTANT'] }));
+
+    assert.deepEqual(items, [], 'no button is offered for a decision that would be refused');
+  });
+
+  it('keeps an exempt role’s own claim listed, because they can now decide it', async () => {
+    const mine = baseRequest({ requesterUserId: 'approver-1' });
+    const items = await new ListApprovalQueueUseCase(queueRepo(mine)).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.equal(items.length, 1);
+  });
+
+  it('still lists everyone else’s claims', async () => {
+    const theirs = baseRequest({ requesterUserId: 'staff-1' });
+    const items = await new ListApprovalQueueUseCase(queueRepo(theirs)).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.equal(items.length, 1);
+  });
+
+  // The company can turn self-approval on, and then the claim is genuinely approvable — the filter
+  // reads the same policy field the approve gate does, so the two cannot come to disagree.
+  it('shows the filer their own claim once the policy allows self-approval', async () => {
+    const mine = baseRequest({ requesterUserId: 'approver-1' });
+    const repo = queueRepo(mine, { allowSelfApproval: true });
+    const items = await new ListApprovalQueueUseCase(repo).execute(ctx({ roles: ['OWNER'] }));
+
+    assert.equal(items.length, 1);
   });
 });

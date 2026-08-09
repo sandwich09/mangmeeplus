@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/c
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
+import { LegalAcceptanceService } from '../legal-acceptance.service';
 
 // ponytail: constant-cost verify — unknown accounts still pay one scrypt so
 // response timing cannot reveal whether an identifier exists (user enumeration).
@@ -11,6 +12,7 @@ export type PasswordLoginResult = AuthTokensResult & {
   passwordChangeRequired: boolean;
   companyId: string | null;
   redirectPath: string;
+  legalAcceptanceRequired: boolean;
 };
 
 @Injectable()
@@ -18,6 +20,7 @@ export class PasswordLoginUseCase {
   constructor(
     private readonly prisma: PrismaService,
     private readonly issueToken: IssueTokenUseCase,
+    private readonly legalAcceptance: LegalAcceptanceService,
   ) {}
 
   // `identifier` matches the login screen field "ชื่อผู้ใช้ หรือ อีเมล": username or email.
@@ -50,6 +53,7 @@ export class PasswordLoginUseCase {
     const membership = await this.prisma.client.companyMembership.findFirst({
       where: { userId: user.id, status: 'ACTIVE', company: { status: 'ACTIVE' } },
       select: {
+        id: true,
         companyId: true,
         roles: { select: { role: { select: { key: true } } } },
       },
@@ -65,13 +69,19 @@ export class PasswordLoginUseCase {
 
     const isSystemAdmin = membership.roles.some((mr) => mr.role.key === 'SYSTEM_ADMIN');
     const companyId = isSystemAdmin ? null : membership.companyId;
+    const legalAcceptance = await this.legalAcceptance.getStatus({
+      userId: user.id,
+      companyId: membership.companyId,
+      membershipId: membership.id,
+    });
 
-    const tokens = await this.issueToken.execute(user.id, 'watchdog');
+    const tokens = await this.issueToken.execute(user.id, 'watchdog', credential.updatedAt);
     return {
       ...tokens,
       passwordChangeRequired: credential.mustChangePassword,
       companyId,
       redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/dashboard`,
+      legalAcceptanceRequired: legalAcceptance.required,
     };
   }
 }

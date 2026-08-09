@@ -93,7 +93,10 @@ describe('ConfirmPasswordResetUseCase', () => {
             updateMany: async () => ({ count: 3 }),
           },
           userCredential: {
-            update: async (args: unknown) => { updatedCredential = args; return {}; },
+            update: async (args: unknown) => {
+              updatedCredential = args;
+              return { updatedAt: new Date('2026-08-09T08:00:00.000Z') };
+            },
           },
           auditLog: {
             create: async (args: unknown) => { auditRows.push(args); return {}; },

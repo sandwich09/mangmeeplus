@@ -212,6 +212,9 @@ describe('visibleHubTabs', () => {
   it('still requires policy.manage from an owner', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own'], ['OWNER']), ['mine']);
   });
+  it('shows the related-record tab with the view-only relation permission', () => {
+    assert.deepEqual(visibleHubTabs(['reimbursement.read_related']), ['mine']);
+  });
   it('hides ตั้งค่านโยบาย from a manager who only approves', () => {
     assert.deepEqual(visibleHubTabs(['reimbursement.read_own', 'reimbursement.approve']), ['mine', 'approvals']);
   });
@@ -223,7 +226,7 @@ describe('visibleHubTabs', () => {
       ['mine', 'finance'],
     );
   });
-  it('shows nothing without a reimbursement permission (read-only viewers included)', () => {
+  it('shows nothing without a hub permission (company-wide read alone has no dedicated tab)', () => {
     assert.deepEqual(visibleHubTabs([]), []);
     assert.deepEqual(visibleHubTabs(['reimbursement.read', 'expense.read']), []);
   });
@@ -248,6 +251,10 @@ describe('errorMessage', () => {
   it('translates the API error codes the banners actually surface', () => {
     assert.match(errorMessage('missing_receipt'), /ใบเสร็จ/);
     assert.match(errorMessage('self_approval_denied'), /ตนเอง/);
+    // Audit H-18: the refusal has to say the rule is a setting, and name the toggle the way the
+    // settings page labels it, or the reader cannot find what to change.
+    assert.match(errorMessage('self_approval_denied'), /การตั้งค่า/);
+    assert.match(errorMessage('self_approval_denied'), /"อนุญาตให้อนุมัติคำขอตนเอง"/);
     assert.match(errorMessage('claim_form_requires_submitted'), /เลขที่เอกสาร/);
     for (const code of ['stale_approval_snapshot', 'expense_already_claimed', 'attachment_already_claimed',
       'duplicate_unresolved', 'partial_payment_not_allowed', 'missing_receipt_reason_required',

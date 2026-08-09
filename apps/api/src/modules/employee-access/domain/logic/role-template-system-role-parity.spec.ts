@@ -13,7 +13,8 @@ function compiledKeys(roleTemplateKey: string): string[] {
 }
 
 function isWrite(key: string): boolean {
-  return !key.endsWith('.read') && !key.endsWith('.read_own') && !key.endsWith('.export') && !key.endsWith('.report');
+  return !key.endsWith('.read') && !key.endsWith('.read_own') && !key.endsWith('.read_related')
+    && !key.endsWith('.export') && !key.endsWith('.report');
 }
 
 // Preset ↔ system-role pairs the parity principle applies to (team decision 2026-07-29, GAP-06).

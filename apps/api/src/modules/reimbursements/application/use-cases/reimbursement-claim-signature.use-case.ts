@@ -104,7 +104,7 @@ async function loadSignableRequest(
 ): Promise<ReimbursementRequestRecord> {
   const req = await repo.findRequestById(ctx.companyId, requestId, true);
   if (!req) throw new NotFoundException('Reimbursement request not found');
-  assertCanReadRequest(ctx, req.requesterUserId);
+  await assertCanReadRequest(ctx, req, repo);
   if (!eligibleClaimSignatureRoles(req, ctx.userId).includes(role)) {
     throw new ForbiddenException('claim_signature_role_not_eligible');
   }
@@ -202,7 +202,7 @@ export class LinkSignedClaimFormCopyUseCase {
   async execute(ctx: RequestContext, requestId: string, input: LinkReimbursementSignedCopyInput): Promise<ReimbursementSignedCopySummary[]> {
     const req = await this.repo.findRequestById(ctx.companyId, requestId);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    assertCanReadRequest(ctx, req.requesterUserId);
+    await assertCanReadRequest(ctx, req, this.repo);
     // Nothing to scan back before the claim has a document number.
     if (!req.requestNo) throw new UnprocessableEntityException('claim_form_requires_submitted');
     const canUpload = req.requesterUserId === ctx.userId

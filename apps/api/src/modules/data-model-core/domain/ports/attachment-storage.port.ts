@@ -67,6 +67,50 @@ export type PutObjectResult = {
 
 export type DeleteObjectInput = GetObjectInput;
 
+export type GetExactObjectVersionInventoryInput = {
+  bucket: string;
+  objectKey: string;
+  /** Provider page size. Paginated adapters must reject values outside their hard safety bound. */
+  pageSize?: number;
+  /** Maximum pages to inspect. Paginated adapters must throw instead of returning partial inventory. */
+  maxPages?: number;
+};
+
+export type StoredObjectVersionInventoryEntry = {
+  versionId: string;
+  isLatest: boolean;
+  lastModified?: Date;
+  byteSize?: number;
+  eTag?: string;
+  objectLockMode?: 'GOVERNANCE' | 'COMPLIANCE';
+  objectLockRetainUntil?: Date;
+  objectLockLegalHoldStatus?: 'ON' | 'OFF';
+  /**
+   * Proof that the adapter explicitly checked the provider's lock state for this
+   * version. Header omission alone is not proof: S3 can omit Object Lock fields
+   * when the caller lacks the dedicated read permissions.
+   */
+  objectLockMetadataVerified: true;
+};
+
+export type StoredObjectDeleteMarkerInventoryEntry = {
+  versionId: string;
+  isLatest: boolean;
+  lastModified?: Date;
+};
+
+export type ExactObjectVersionInventory = {
+  bucket: string;
+  objectKey: string;
+  /** Bucket-level state obtained from the provider, never inferred from missing object headers. */
+  objectLockConfiguration: 'DISABLED' | 'ENABLED';
+  versions: StoredObjectVersionInventoryEntry[];
+  deleteMarkers: StoredObjectDeleteMarkerInventoryEntry[];
+  pagesScanned: number;
+  /** Literal proof that the adapter reached the provider's final page. */
+  complete: true;
+};
+
 export type StoredObject = {
   bytes: Buffer;
   mimeType?: string;
@@ -85,6 +129,7 @@ export interface AttachmentStoragePort {
   createDownloadUrl(input: CreateDownloadUrlInput): Promise<SignedDownloadUrl>;
   putObject(input: PutObjectInput): Promise<PutObjectResult>;
   deleteObject(input: DeleteObjectInput): Promise<void>;
+  getExactObjectVersionInventory(input: GetExactObjectVersionInventoryInput): Promise<ExactObjectVersionInventory>;
   getObjectMetadata(input: GetObjectMetadataInput): Promise<StoredObjectMetadata>;
   getObject(input: GetObjectInput): Promise<StoredObject>;
 }

@@ -115,6 +115,70 @@ describe('ExecuteWorkflowActionUseCase SEND_NOTIFICATION recipient resolution', 
     assert.equal(created.webDeepLink, '/companies/co_1/reimbursements?tab=approvals&focus=rb_1');
   });
 
+  /**
+   * Audit H-18: the pending-approval alert reached the person who filed the claim, inviting them to
+   * a button that answers self_approval_denied. The filer is excluded through the payload, and the
+   * payload only carries requesterUserId while the policy forbids self-approval.
+   */
+  describe('pending-approval alert never invites the filer (audit H-18)', () => {
+    const pendingApproval = () => WORKFLOW_TEMPLATE_CATALOG.find((t) => t.key === 'reimbursement_pending_approval')!;
+    const runNotify = (payload: Record<string, unknown>) => {
+      const [notifyAction] = pendingApproval().defaultActionJson;
+      return make().execute({ ...actionRun(notifyAction!.configJson), actionKey: notifyAction!.actionKey }, {
+        companyId: 'co_1', ruleName: 'Reimbursement pending approval', sourceModule: 'reimbursements',
+        sourceType: 'reimbursement_request', sourceId: 'rb_1',
+        payload: { requestId: 'rb_1', requestNo: 'RB-1', amount: '250', currency: 'THB', ...payload },
+        siblingActions: pendingApproval().defaultActionJson,
+      } as any);
+    };
+
+    it('drops the filer while still alerting the other approvers', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      repo.findUserIdsByRoles = mock.fn(async () => ['u_manager', 'u_owner']);
+
+      await runNotify({ requesterUserId: 'u_owner' });
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_manager']);
+    });
+
+    // The owner-only company: the sole approver is the filer. Retrying that to exhaustion would
+    // dead-letter an action on every claim and make a working configuration look broken.
+    it('skips silently when the filer was the only recipient, instead of failing', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      repo.findUserIdsByRoles = mock.fn(async () => ['u_owner']);
+
+      await runNotify({ requesterUserId: 'u_owner' });
+
+      assert.equal(notify.execute.mock.callCount(), 0, 'nobody is notified');
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'SUCCEEDED', 'a skip is a completed action, not a failure');
+      assert.deepEqual(finalUpdate.resultJson, { skipped: true, reason: 'all_recipients_excluded' });
+    });
+
+    // Nothing resolving AT ALL still means the roles name people who do not exist — a later
+    // membership change fixes it, so that case keeps retrying.
+    it('still fails when no recipient resolved in the first place', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      repo.findUserIdsByRoles = mock.fn(async () => []);
+      await runNotify({ requesterUserId: 'u_owner' });
+
+      assert.equal(notify.execute.mock.callCount(), 0);
+      const finalUpdate = (repo.updateActionRun.mock.calls.at(-1) as any).arguments[1];
+      assert.equal(finalUpdate.status, 'FAILED_RETRYABLE');
+    });
+
+    // A company that allows self-approval never puts requesterUserId in the payload, so the filer
+    // keeps their alert — one rule, expressed once, where the policy is known.
+    it('keeps notifying the filer when the payload carries no requester to exclude', async () => {
+      repo.findUserIdsByPermissions = mock.fn(async () => []);
+      repo.findUserIdsByRoles = mock.fn(async () => ['u_owner']);
+
+      await runNotify({});
+
+      assert.deepEqual((notify.execute.mock.calls[0] as any).arguments[0].recipientUserIds, ['u_owner']);
+    });
+  });
+
   // F16: `body: title` made every LINE push repeat itself. bodyTemplate is read from the action's
   // OWN config (no sibling fallback), so the pending-approval alert can borrow the task's title and
   // still say something new in the body.

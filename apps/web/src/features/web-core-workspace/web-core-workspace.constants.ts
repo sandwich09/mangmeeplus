@@ -1,5 +1,21 @@
 import type { WorkspaceModule, NavGroup } from './web-core-workspace.model';
 
+/**
+ * Accounting screens are not open to users in this launch (owner decision 2026-08-09; audit CR-2,
+ * CR-3). This is PRESENTATION ONLY: the `double_entry_ledger` entitlement stays ON so background
+ * posting, account codes and tax mapping keep working server-side, and no entitlement migration is
+ * needed for companies already onboarded. Hiding here rather than in the entitlement is the whole
+ * point — turning the feature off would stop the posting we still want.
+ *
+ * Covers both the sidebar row and direct-URL access (`filterModulesByPermissions` and
+ * `canAccessWorkspacePath`). Set to false / empty the set to reopen the screens; the routes,
+ * permissions and APIs are untouched.
+ */
+export const ACCOUNTING_UI_HIDDEN: boolean = true;
+
+/** Workspace modules hidden by {@link ACCOUNTING_UI_HIDDEN}: สมุดรายวัน and รอบบัญชี. */
+export const ACCOUNTING_UI_HIDDEN_MODULE_KEYS: ReadonlySet<string> = new Set(['journal', 'closing']);
+
 export const WORKSPACE_MODULES: WorkspaceModule[] = [
   {
     key: 'dashboard',
@@ -105,6 +121,9 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
       'procurement.purchase_request.read',
       'procurement.purchase_order.read',
       'procurement.goods_receipt.read',
+      'procurement.purchase_request.read_related',
+      'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
     ],
     status: 'ready',
     deepLinkTargets: ['supplier', 'purchaseOrder', 'purchaseRequest', 'goodsReceipt'],
@@ -147,6 +166,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     // so `reimbursement.read` must not leak the expenses menu when expenses is off.
     requiredAnyPermissions: [
       'expense.read',
+      'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
       'expense.create',
@@ -175,7 +195,10 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     iconKey: 'DollarLineIcon',
     navGroup: 'finance',
     // Only sales_documents-owned permissions belong here; ledger access must not leak this menu.
-    requiredAnyPermissions: ['accounting.document.read', 'accounting.invoice.read'],
+    requiredAnyPermissions: [
+      'accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
+      'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read',
+    ],
     status: 'planned',
     statusReasonKey: 'module.status.planned',
     deepLinkTargets: ['invoice'],
@@ -186,7 +209,10 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/sales-documents`,
     iconKey: 'DocsIcon',
     navGroup: 'operate',
-    requiredAnyPermissions: ['accounting.document.read'],
+    requiredAnyPermissions: [
+      'accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
+      'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read',
+    ],
     status: 'planned',
     deepLinkTargets: ['invoice'],
   },
@@ -211,6 +237,8 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     requiredAnyPermissions: [
       'procurement.vendor_bill.read',
       'procurement.supplier_payment.read',
+      'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
       'procurement.ap.report',
     ],
     status: 'ready',
@@ -222,7 +250,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/reimbursements`,
     iconKey: 'DollarLineIcon',
     navGroup: 'finance',
-    requiredAnyPermissions: ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
+    requiredAnyPermissions: ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.finance_review'],
     status: 'ready',
     deepLinkTargets: ['reimbursement'],
   },

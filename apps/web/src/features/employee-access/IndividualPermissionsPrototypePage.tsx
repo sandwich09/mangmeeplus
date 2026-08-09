@@ -27,6 +27,7 @@ import { LoadingState } from '@/common/components/state';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
 import {
   employeeShortName,
@@ -789,7 +790,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
               <p className="font-semibold text-gray-500">ชื่อผู้ใช้: <span className="font-mono font-extrabold text-gray-900">{handoff.username}</span></p>
               <p className="font-semibold text-gray-500">รหัสผ่าน: <span className="font-mono font-extrabold text-gray-900">{handoff.temporaryPassword}</span></p>
               {handoff.expiresAt && (
-                <p className="font-semibold text-gray-500">ใช้ได้ถึง: <span className="font-extrabold text-gray-900">{new Date(handoff.expiresAt).toLocaleString('th-TH')}</span></p>
+                <p className="font-semibold text-gray-500">ใช้ได้ถึง: <span className="font-extrabold text-gray-900">{formatThaiDateTime(handoff.expiresAt)}</span></p>
               )}
             </div>
             {/* `lineNotified` is absent on older API builds — treat that as "not delivered". */}

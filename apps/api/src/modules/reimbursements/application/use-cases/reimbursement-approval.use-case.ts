@@ -9,6 +9,7 @@ import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
 import { effectivePolicy } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
+  SELF_APPROVAL_EXEMPT_ROLES,
   matchesApproverRole,
   validateRejectionReason,
   canTransition,
@@ -20,23 +21,40 @@ function currentApprovalStep(request: ReimbursementRequestRecord): Reimbursement
   return request.approvalSteps?.find((step) => step.id === request.currentApprovalStepId);
 }
 
+/**
+ * Audit H-20: a step naming a specific approver was approvable by that person and nobody else. With
+ * no reassign route, disabling or removing that member froze every request waiting on them and hid
+ * it from every queue — the queue filters on this same predicate — leaving cancellation, which
+ * burns the document number, as the only way out.
+ *
+ * `assigneeCanAct` false means the named approver can no longer act for this company, and the step
+ * falls back to the role it was ALSO recorded with (steps store `approverRoleSnapshot` even in
+ * CUSTOM_USER mode). That is the routing the company would have had without naming a person, so
+ * the fallback widens to exactly the role holders and OWNER — never to everyone.
+ *
+ * Defaults to true so every existing caller keeps exact-match behaviour until it opts in by
+ * looking the assignee up; a silent widening is not something a default should decide.
+ */
 function isEligibleApprover(
   step: ReimbursementApprovalStepRecord | undefined,
   userId: string,
   roles: string[],
+  assigneeCanAct = true,
 ): boolean {
   if (!step || step.status !== 'PENDING') return false;
-  return step.approverUserId ? step.approverUserId === userId : matchesApproverRole(step.approverRoleSnapshot, roles);
+  if (step.approverUserId && assigneeCanAct) return step.approverUserId === userId;
+  return matchesApproverRole(step.approverRoleSnapshot, roles);
 }
 
 function canResumeApprovedDecision(
   step: ReimbursementApprovalStepRecord | undefined,
   userId: string,
   roles: string[],
+  assigneeStillCanAct = true,
 ): boolean {
   return Boolean(step
     && ((step.status === 'APPROVED' && step.decisionByUserId === userId)
-      || isEligibleApprover(step, userId, roles)));
+      || isEligibleApprover(step, userId, roles, assigneeStillCanAct)));
 }
 
 async function appendOutboxWithinTx(tx: any, input: {
@@ -61,6 +79,16 @@ async function appendOutboxWithinTx(tx: any, input: {
   });
 }
 
+/** Whether the person this step names can still act; true for a role-routed step (audit H-20). */
+async function assigneeCanAct(
+  repo: PrismaReimbursementRepository,
+  companyId: string,
+  step: ReimbursementApprovalStepRecord | undefined,
+): Promise<boolean> {
+  if (!step?.approverUserId) return true;
+  return (await repo.findActiveApproverUserIds(companyId, [step.approverUserId])).has(step.approverUserId);
+}
+
 @Injectable()
 export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
@@ -68,10 +96,31 @@ export class ListApprovalQueueUseCase {
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
     if (!ctx.permissions.includes('reimbursement.approve')) throw new ForbiddenException('Missing permission: reimbursement.approve');
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    const rows = await this.repo.listRequests({ companyId: ctx.companyId, status: 'PENDING_APPROVAL' });
+    const rows = await this.repo.listRequests({
+      companyId: ctx.companyId,
+      status: 'PENDING_APPROVAL',
+      scopes: ctx.scopes ?? {},
+    });
+    // One lookup for the page rather than one per row: a queue of 200 claims routed to five people
+    // asks about five ids, not two hundred.
+    const activeApprovers = await this.repo.findActiveApproverUserIds(
+      ctx.companyId,
+      rows.map((request) => currentApprovalStep(request)?.approverUserId).filter((id): id is string => !!id),
+    );
     const now = new Date();
-    return rows.filter((request) => isBranchInScope(ctx.scopes ?? {}, request.branchId)
-      && isEligibleApprover(currentApprovalStep(request), ctx.userId, ctx.roles)).map((r) => {
+    return rows.filter((request) => {
+      const step = currentApprovalStep(request);
+      const assignee = step?.approverUserId;
+      return isBranchInScope(ctx.scopes ?? {}, request.branchId)
+        && isEligibleApprover(step, ctx.userId, ctx.roles, !assignee || activeApprovers.has(assignee))
+        // Audit H-18: the queue used to list the viewer's own claims, so the approve button was
+        // offered on a request that answers `self_approval_denied` — and the pending-approval
+        // notification pushed a deep link straight to it. Same predicate and same company-level
+        // policy the approve gate uses, so the two can never disagree about what is offered and
+        // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
+        // is filtered.
+        && !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles);
+    }).map((r) => {
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
       return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
     });
@@ -94,7 +143,7 @@ export class ApproveReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
 
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
@@ -103,7 +152,9 @@ export class ApproveReimbursementUseCase {
     }
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     const step = currentApprovalStep(req);
-    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles)) throw new ForbiddenException('not_eligible_approver');
+    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, await assigneeCanAct(this.repo, ctx.companyId, step))) {
+      throw new ForbiddenException('not_eligible_approver');
+    }
 
     const now = new Date();
     const decision = await this.repo.beginApprovalDecisionAtomic({
@@ -144,6 +195,20 @@ export class ApproveReimbursementUseCase {
             currency: req.currency,
             comment,
             projectionPending: !policy.financeReviewRequired,
+            // The exemption buys convenience, not anonymity. Recorded in the SAME transaction as
+            // the decision, so the trail cannot exist without the approval or the approval without
+            // the trail — a post-commit audit write can be lost exactly when it matters most.
+            // `via` distinguishes the company having opened the policy from a role standing in for
+            // it, which is the question support has to answer when a customer disputes a claim.
+            ...(req.requesterUserId === ctx.userId
+              ? {
+                selfApproval: {
+                  approvedOwnRequest: true,
+                  via: policy.allowSelfApproval ? 'company_policy' : 'role_exemption',
+                  actorRoles: ctx.roles.filter((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role)),
+                },
+              }
+              : {}),
           },
         }, tx);
         const eventType = policy.financeReviewRequired
@@ -252,12 +317,14 @@ export class RejectReimbursementUseCase {
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
 
     const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval)) {
+    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       throw new ForbiddenException('self_approval_denied');
     }
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     const step = currentApprovalStep(req);
-    if (!isEligibleApprover(step, ctx.userId, ctx.roles)) throw new ForbiddenException('not_eligible_approver');
+    if (!isEligibleApprover(step, ctx.userId, ctx.roles, await assigneeCanAct(this.repo, ctx.companyId, step))) {
+      throw new ForbiddenException('not_eligible_approver');
+    }
     if (!canTransition(req.status, 'REJECTED')) throw new UnprocessableEntityException('invalid_status_transition');
 
     const now = new Date();

@@ -1,6 +1,11 @@
 import { test as base, expect } from '@playwright/test';
 import { test as authedTest } from './harness/fixtures';
-import { COMPANY_ID, SEED_USERS, expectNoClientError } from './harness/auth';
+import {
+  COMPANY_ID,
+  SEED_USERS,
+  ensureBrowserLegalAcceptance,
+  expectNoClientError,
+} from './harness/auth';
 
 base.describe('LOGIN — auth & session', () => {
   base('LOGIN-01 @smoke redirects workspace visitors to login', async ({ page }) => {
@@ -15,6 +20,9 @@ base.describe('LOGIN — auth & session', () => {
     await page.locator('#login-identifier').fill(SEED_USERS.owner.username);
     await page.locator('#login-password').fill(SEED_USERS.owner.password);
     await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
+    await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/)/);
+    await ensureBrowserLegalAcceptance(page.context(), COMPANY_ID);
+    await page.goto(`/companies/${COMPANY_ID}/dashboard`);
     await expect(page).toHaveURL(/\/companies\/[^/]+\/dashboard/);
     await expectNoClientError(page);
   });

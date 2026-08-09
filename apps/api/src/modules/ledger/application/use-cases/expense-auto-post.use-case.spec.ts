@@ -9,7 +9,7 @@ import {
 } from './expense-auto-post.use-case';
 
 describe('DrainExpenseAutoPostUseCase', () => {
-  it('queries only clean post-activation accrual candidates', () => {
+  it('queries clean post-activation accruals and waits for accrual before each payment', () => {
     const query = expenseAutoPostCandidateSql('co-1', new Date('2026-07-29T00:00:00.000Z'), 20);
     const sql = Array.isArray(query.sql) ? query.sql.join(' ') : String(query.sql);
     assert.match(sql, /"confirmedAt"\s*>=/);
@@ -17,11 +17,16 @@ describe('DrainExpenseAutoPostUseCase', () => {
     assert.match(sql, /NOT IN \('NEEDS_REVIEW', 'NOT_TAX_EVIDENCE'\)/);
     assert.match(sql, /"AttachmentLink"/);
     assert.match(sql, /NOT EXISTS[\s\S]*'expense\.record'/);
+    assert.match(sql, /"ExpensePayment"/);
+    assert.match(sql, /payment\."createdAt"\s*>=/);
+    assert.match(sql, /accrual\."status"::text = 'POSTED'/);
+    assert.match(sql, /journal\."sourceType" = 'expense\.payment'/);
   });
 
-  it('posts each candidate as expense.record with least privilege and keeps failures retryable', async () => {
+  it('posts accrual and payment candidates with least privilege and marks the failing source only', async () => {
     const generated: Array<{ ctx: any; source: any }> = [];
-    const errors: any[] = [];
+    const expenseErrors: any[] = [];
+    const paymentErrors: any[] = [];
     const prisma = {
       client: {
         company: { findMany: async () => [{
@@ -32,31 +37,38 @@ describe('DrainExpenseAutoPostUseCase', () => {
             { featureKey: 'expenses', enabled: true, updatedAt: new Date('2026-07-27T00:00:00.000Z') },
           ],
         }] },
-        $queryRaw: async () => [{ id: 'expense-ok' }, { id: 'expense-bad' }],
+        $queryRaw: async () => [
+          { sourceType: 'expense.record', sourceId: 'expense-ok' },
+          { sourceType: 'expense.payment', sourceId: 'payment-bad' },
+        ],
       },
     } as any;
     const generator = {
       execute: async (ctx: any, source: any) => {
         generated.push({ ctx, source });
-        if (source.sourceId === 'expense-bad') {
+        if (source.sourceId === 'payment-bad') {
           throw new BadRequestException({ code: 'period_closed', message: 'sensitive details omitted' });
         }
       },
     } as any;
-    const repo = { updatePostingStatus: async (...args: any[]) => { errors.push(args); } } as any;
+    const repo = {
+      updatePostingStatus: async (...args: any[]) => { expenseErrors.push(args); },
+      updatePaymentPostingStatus: async (...args: any[]) => { paymentErrors.push(args); },
+    } as any;
 
     const result = await new DrainExpenseAutoPostUseCase(prisma, generator, repo).execute(500);
 
     assert.deepEqual(result, { companies: 1, candidates: 2, posted: 1, failed: 1 });
     assert.deepEqual(generated.map((call) => call.source), [
       { companyId: 'co-1', sourceType: 'expense.record', sourceId: 'expense-ok' },
-      { companyId: 'co-1', sourceType: 'expense.record', sourceId: 'expense-bad' },
+      { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'payment-bad' },
     ]);
     assert.deepEqual(generated[0]?.ctx.permissions, [...EXPENSE_AUTO_POST_WORKER_PERMISSIONS]);
     assert.deepEqual(generated[0]?.ctx.roles, []);
-    assert.equal(errors[0]?.[2].postingStatus, 'posting_error');
-    assert.match(errors[0]?.[2].postingError, /period_closed/);
-    assert.doesNotMatch(errors[0]?.[2].postingError, /sensitive/);
+    assert.equal(expenseErrors.length, 0);
+    assert.equal(paymentErrors[0]?.[2].postingStatus, 'posting_error');
+    assert.match(paymentErrors[0]?.[2].postingError, /period_closed/);
+    assert.doesNotMatch(paymentErrors[0]?.[2].postingError, /sensitive/);
   });
 
   it('stops when the `expenses` family is frozen, even with both auto-post rows still ON', async () => {

@@ -156,6 +156,7 @@ Use these keys for Accounting Documents MVP:
 accounting.counterparty.read
 accounting.counterparty.manage
 accounting.document.read
+accounting.document.read_related
 accounting.document.create
 accounting.document.update
 accounting.document.issue
@@ -203,6 +204,7 @@ accounting.document.export
 Default grants:
 
 ```text
+ALL company roles: accounting.document.read_related; this is view-only, sales_documents-entitlement-gated, and returns only tenant/branch-scoped related records
 OWNER: all accounting document permissions
 ADMIN: accounting.counterparty.read, accounting.document.read, accounting.quotation.read, accounting.invoice.read, accounting.billing_note.read, accounting.receipt.read, accounting.tax_invoice.read, accounting.credit_note.read, accounting.debit_note.read, accounting.payment.read
 SALES: accounting.counterparty.read, accounting.quotation.read, accounting.quotation.create, accounting.quotation.update, accounting.quotation.submit_approval, accounting.quotation.issue after approval, accounting.invoice.read where own/assigned, accounting.billing_note.read where own/assigned, accounting.receipt.read where own/assigned, accounting.payment.read where own/assigned
@@ -219,6 +221,7 @@ Use these keys for Expense and Receipt Upload:
 
 ```text
 expense.read
+expense.read_related
 expense.read_own
 expense.evidence.read
 expense.create
@@ -260,6 +263,8 @@ MARKETING: expense.read_own, expense.receipt.line_upload
 `expense.delete` hard-deletes DRAFT expenses only. OWNER, ADMIN, and FINANCE hold it by default and may delete any company draft; otherwise, a draft's creator holding `expense.update` may delete their own draft.
 
 `expense.evidence.read` is the dedicated read boundary for the หลักฐานทางบัญชี screen and `GET /expenses/shared-evidence`. It is granted to every protected role bundle that already has `expense.read`, so introducing the narrower guard does not remove existing access. Disabling the `expenses.evidence` child entitlement strips `expense.evidence.read` and `expense.export` while leaving the other expense sub-menus intact.
+
+`expense.read_related` is universal but view-only and is stripped when the `expenses.list` route is off. It returns only tenant/branch-scoped expenses where the caller is persisted as creator/updater/reviewer/confirmer/rejector/voider, a payment actor, a substitute-receipt preparer/payer/approver/issuer, or an actor on the source reimbursement. It never grants update, review, confirm, payment, reject, void, OCR, or signature authority; those actions still require their exact permission, actor rule, and document state. `expense.read_own` remains the narrower creator/self-service compatibility path.
 
 `expense.ai.verify` is normally granted to service/internal actors, not broad human roles.
 
@@ -483,6 +488,7 @@ Use these keys for Reimbursement Approval:
 
 ```text
 reimbursement.read
+reimbursement.read_related
 reimbursement.read_own
 reimbursement.create
 reimbursement.update_own_draft
@@ -502,6 +508,7 @@ reimbursement.export
 Default grants:
 
 ```text
+ALL company roles: reimbursement.read_related; view-only and reimbursement-entitlement-gated
 OWNER: all reimbursement permissions
 ADMIN: reimbursement.read, reimbursement.read_own, reimbursement.approve, reimbursement.reject, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (team decision 2026-07-28: approvers are OWNER/ADMIN/MANAGER; paying stays FINANCE-only)
 MANAGER: reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
@@ -513,6 +520,13 @@ SALES: reimbursement.read_own, reimbursement.create, reimbursement.update_own_dr
 INVENTORY: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own when company policy grants employee reimbursement
 MARKETING: no reimbursement permissions by default unless company policy grants employee reimbursement
 ```
+
+`reimbursement.read_related` returns only records in the caller's tenant and branch scope where the caller is persisted as
+requester/creator/updater/submitter/current approver, approval-step assignee or decider, finance reviewer, cancellation actor,
+payment/void actor, claim-form signer, signed-copy linker, or an actor on a linked/generated expense. Every linked-expense hop
+repeats branch scope. This permission never grants draft update, submit, cancel, approve/reject, finance review, payment, void,
+evidence upload, signing or export; each mutation still requires its exact permission, exact actor rule and current state.
+`reimbursement.read_own` remains the narrower requester-only compatibility path.
 
 Sensitive reimbursement permissions:
 
@@ -526,6 +540,29 @@ reimbursement.duplicate.resolve
 reimbursement.policy.manage
 reimbursement.export
 ```
+
+### Procurement related-document visibility
+
+The following LOW-risk permissions are universal to company roles but remain gated by their exact procurement submenu:
+
+```text
+procurement.purchase_request.read_related
+procurement.purchase_order.read_related
+procurement.goods_receipt.read_related
+procurement.vendor_bill.read_related
+procurement.supplier_payment.read_related
+```
+
+Each key returns only tenant- and branch-scoped documents connected through the persisted purchase-to-pay graph:
+PR → PO → goods receipt → vendor bill → supplier-payment allocation/payment. Direct actors include requester,
+creator/updater, submit/approve/reject/issue/cancel/close/post/void actors, receiver, evidence reviewer, matcher/override
+actor and payment/allocation actor. Successful immutable audit/approval history preserves earlier actors after mutable
+header fields change. Traversal is cycle-safe, reapplies branch scope at every hop, and never treats sharing a supplier
+as a relationship.
+
+These keys do not expose supplier master data, supplier bank accounts, AP aging/statement reports, WHT handoffs or
+posting sources. They never grant create, edit, submit, approve/reject, issue, receive/post, match/override, pay, void,
+export or policy authority; each mutation continues to require its exact permission/actor rule and current state.
 
 ## 5.7 CRM and Sales Permission Keys
 

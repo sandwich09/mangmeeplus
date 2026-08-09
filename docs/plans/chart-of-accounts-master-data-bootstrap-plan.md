@@ -262,10 +262,40 @@ No new `ChartOfAccount` columns were required for the original bootstrap scope �
 
 ### Posting rules
 
-- [ ] Create reviewed company posting rules only for mappings approved in Phase 0.
+- [x] Create reviewed company posting rules only for mappings approved in Phase 0.
+      **Landed 2026-08-09 as source-specific account bindings, not `PostingRule` rows** — spec §9.2 allows
+      either, and the four mappings the owner approved are all per-document, which a flat
+      `(documentType, ruleKey) → {debit, credit}` rule cannot express: the expense debit varies by
+      category, WHT by payee statutory form, cash by payment method. Binding lives on
+      `ExpenseCategory.ledgerAccountCode` (migration `20260809130000_expense_category_ledger_account`).
 - [x] Leave unreviewed category/bank/WHT mappings incomplete and visible.
-- [ ] Resolve account IDs from the newly created company rows.
-- [ ] Do not copy another company's account IDs.
+- [x] Resolve account IDs from the newly created company rows.
+      Bindings are held as codes and resolved through the existing `findAccountByCode(companyId, …)`
+      path at journal-creation time, which is company-scoped by construction.
+- [x] Do not copy another company's account IDs.
+      `loadExpenseAccountBindings` filters `expenseCategory` by `companyId`, so a category belonging
+      to another tenant resolves to nothing and the posting reports `expense_account_unmapped`.
+
+Owner mapping decisions 2026-08-09 (the "Phase 0 approval" for these four):
+
+| บทบาท | ตัดสิน | สถานะ |
+|---|---|---|
+| บัญชีเดบิตค่าใช้จ่าย | ผูกรายหมวด `ExpenseCategory` | ✅ ลงแล้ว |
+| เจ้าหนี้พนักงาน (ใบเบิก) | `2131-09` ค่าใช้จ่ายค้างจ่าย-อื่น ๆ | ✅ ค่าคงที่ `REVIEWED_PAYABLE_CODES` |
+| ภาษีหัก ณ ที่จ่าย | แยกตามประเภทผู้รับเงิน (`2132-03` ภ.ง.ด.3 / `2132-04` ภ.ง.ด.53) | ⬜ ยังไม่ทำ — เอกสารที่มี WHT คืน `wht_account_unmapped` |
+| เงินสด/ธนาคารตอนจ่าย | resolve จากวิธีจ่ายจริง | ⬜ ยังไม่ทำ — `expense.payment` / `reimbursement.payment` ยังคืน `posting_rule_missing` |
+
+- [ ] WHT payable by payee entity kind — needs the payee's `entityKind` carried into the posting source.
+- [ ] Cash/bank from the settlement's payment method / bank account.
+- [x] Writer for `ExpenseCategory.ledgerAccountCode` under the existing `ledger.posting-rule.manage`
+      permission (the accounting UI is closed this launch, so an API/operator path is what is needed).
+      **Landed 2026-08-09**: `GET|PUT /companies/:companyId/posting/expense-account-bindings[/:categoryId]`
+      → `expense-account-binding.use-case.ts`. Guarded by `ledger.posting-rule.read|manage` rather than
+      `expense.category.manage`, so renaming a category and deciding where its money books stay separate
+      duties. Both permissions were already carried by `pack.ledger.view` / `pack.ledger.manage`, so the
+      route is reachable without touching the access matrix. Write validates the code against the
+      company's own chart (ACTIVE + `isPosting` + not `isControlled`, company rows only — a shared
+      system account is never a valid tenant mapping) and audits `from`/`to` at HIGH risk.
 
 ### Tax Code
 

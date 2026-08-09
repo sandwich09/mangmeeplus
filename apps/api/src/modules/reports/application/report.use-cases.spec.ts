@@ -14,6 +14,7 @@ import {
   UpdateReportViewUseCase,
   ListReportViewsUseCase,
 } from './report.use-cases';
+import type { EnqueueObjectVersionCleanupInput } from '../../data-model-core/application/services/object-version-cleanup.service';
 import { findReportDefinition } from '../domain/report-catalog';
 import { ReportController } from '../presentation/http/report.controller';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../../common/security/permissions.decorator';
@@ -386,7 +387,10 @@ describe('reports OFF new-root fence', () => {
       () => new CreateReportViewUseCase(repo, adapters, audit, disabled).execute(ctx, 'company-1', { datasetCode: 'ar.aging', name: 'old' }),
       () => new UpdateReportViewUseCase(repo, { isAvailable: () => true } as any, audit, disabled).execute(ctx, 'company-1', 'view-1', { name: 'changed' }),
       () => new ArchiveReportViewUseCase(repo, audit, disabled).execute(ctx, 'company-1', 'view-1'),
-      () => new CreateReportExportUseCase(repo, {} as any, audit, { execute: mock.fn() } as any, disabled, storage)
+      () => new CreateReportExportUseCase(
+        repo, {} as any, audit, { execute: mock.fn() } as any, disabled, storage,
+        { enqueue: mock.fn(async () => true) } as any,
+      )
         .execute(ctx, 'company-1', { datasetCode: 'ar.aging', format: 'CSV' }),
       () => new ReportDrilldownUseCase(repo, disabled).execute(ctx, 'company-1', {
         datasetCode: 'ar.aging',
@@ -452,7 +456,7 @@ describe('reports OFF new-root fence', () => {
     assert.equal(viewRepo.createView.mock.callCount(), 0);
   });
 
-  it('deletes uploaded bytes when OFF→ON invalidates the export before its final row', async () => {
+  it('durably queues exact-version cleanup when OFF→ON invalidates the export before its final row', async () => {
     const state = { enabled: true, epoch: 1, lastSeq: 1 };
     const repo = {
       createRun: mock.fn(async () => ({ id: 'must-not-exist' })),
@@ -467,8 +471,8 @@ describe('reports OFF new-root fence', () => {
           storageProvider: 'test', byteSize: input.bytes.byteLength, checksumSha256: sha256(input.bytes.toString('utf8')),
         };
       }),
-      deleteObject: mock.fn(async () => undefined),
     };
+    const cleanup = { enqueue: mock.fn(async (_input: EnqueueObjectVersionCleanupInput) => true) };
     const runQuery = {
       executeForExport: async () => ({
         runId: 'run-1', dataset: findReportDefinition('ar.aging')!, status: 'READY', computedAt: now,
@@ -485,6 +489,7 @@ describe('reports OFF new-root fence', () => {
       { execute: mock.fn() } as any,
       mutableEntitlement(state) as any,
       storage as any,
+      cleanup as any,
     );
 
     await assert.rejects(
@@ -493,7 +498,14 @@ describe('reports OFF new-root fence', () => {
     );
     assert.equal(repo.createExport.mock.callCount(), 0);
     assert.equal(repo.createRun.mock.callCount(), 0);
-    assert.equal(storage.deleteObject.mock.callCount(), 1);
+    assert.equal(cleanup.enqueue.mock.callCount(), 1);
+    assert.deepEqual(cleanup.enqueue.mock.calls[0]!.arguments[0], {
+      source: 'REPORT_EXPORT',
+      companyId: 'company-1',
+      bucket: 'reports',
+      objectPath: 'report-export/company-1/run-1/file.csv',
+      expectedVersion: 'v1',
+    });
   });
 });
 
@@ -551,6 +563,7 @@ describe('immutable report export artifact', () => {
       { execute: async () => undefined } as any,
       entitlement(true) as any,
       storage as any,
+      { enqueue: async () => true } as any,
     );
 
     await create.execute(ctx, 'company-1', { datasetCode: 'ar.aging', format: 'CSV' });
@@ -738,6 +751,7 @@ describe('bounded complete CSV export', () => {
       { execute: async () => undefined } as any,
       entitlement(true) as any,
       storage as any,
+      { enqueue: async () => true } as any,
     );
 
     for (const format of ['XLSX', 'PDF', undefined, null]) {
@@ -751,26 +765,27 @@ describe('bounded complete CSV export', () => {
     assert.equal(storage.putObject.mock.callCount(), 0);
   });
 
-  it('deletes an object whose stored checksum or size does not match the exact CSV bytes', async () => {
+  it('queues an object version whose stored checksum or size does not match the exact CSV bytes', async () => {
     const repo = { createRun: mock.fn(), createExport: mock.fn() };
     const storage = {
       putObject: mock.fn(async () => ({
         bucket: 'reports', objectKey: 'mismatch.csv', objectVersionId: 'v1', storageProvider: 'test',
         byteSize: 999, checksumSha256: '0'.repeat(64),
       })),
-      deleteObject: mock.fn(async () => undefined),
     };
+    const cleanup = { enqueue: mock.fn(async (_input: EnqueueObjectVersionCleanupInput) => true) };
     const runQuery = { executeForExport: async () => ({ ...pageResult(1, 1, 1), pendingRun: pendingRun('run-mismatch') }) };
     const useCase = new CreateReportExportUseCase(
       repo as any, runQuery as any, { log: async () => undefined } as any, { execute: async () => undefined } as any,
-      entitlement(true) as any, storage as any,
+      entitlement(true) as any, storage as any, cleanup as any,
     );
 
     await assert.rejects(
       () => useCase.execute(ctx, 'company-1', { datasetCode: 'ar.aging', format: 'CSV' }),
       (error: any) => error.getStatus() === 409 && error.getResponse().code === 'report_export_integrity_failed',
     );
-    assert.equal(storage.deleteObject.mock.callCount(), 1);
+    assert.equal(cleanup.enqueue.mock.callCount(), 1);
+    assert.equal(cleanup.enqueue.mock.calls[0]!.arguments[0].expectedVersion, 'v1');
     assert.equal(repo.createRun.mock.callCount(), 0);
     assert.equal(repo.createExport.mock.callCount(), 0);
   });
@@ -809,7 +824,7 @@ describe('bounded complete CSV export', () => {
     const useCase = new CreateReportExportUseCase(
       repo as any, runQuery as any,
       { log: async () => undefined } as any, { execute: async () => undefined } as any,
-      entitlement(true) as any, storage as any,
+      entitlement(true) as any, storage as any, { enqueue: async () => true } as any,
     );
     return { useCase, repo, runQuery, storage, created: () => created, uploaded: () => uploaded };
   }

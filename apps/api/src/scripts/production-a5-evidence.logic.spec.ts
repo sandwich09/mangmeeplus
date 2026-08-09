@@ -400,7 +400,7 @@ function postMigrationPayload(
   });
 }
 
-const ACTUAL_40_CLASSES: Record<string, ProductionA5MigrationOperationClass> = Object.fromEntries([
+const ACTUAL_42_CLASSES: Record<string, ProductionA5MigrationOperationClass> = Object.fromEntries([
   ...[
     '20260712090000_crm_campaign_broadcast', '20260712103000_company_business_policy',
     '20260712130000_employee_profile_email', '20260726120000_crm_booking_deposit_amounts',
@@ -410,6 +410,7 @@ const ACTUAL_40_CLASSES: Record<string, ProductionA5MigrationOperationClass> = O
     '20260729183000_attachment_perceptual_hash', '20260802150000_attempt_fence_hardening',
     '20260803100000_launch_command_results', '20260803150000_normalizer_cohort',
     '20260804100000_wht_certificate_handoff', '20260804120000_feature_launch_observation_bucket',
+    '20260809110000_legal_document_acceptance', '20260809120000_data_rights_case_orchestration',
   ].map((name) => [name, 'ADDITIVE']),
   ...[
     '20260712120000_company_retention_consent_policy', '20260728120000_m03_crm_ai_outbound_policy',
@@ -432,35 +433,72 @@ const ACTUAL_40_CLASSES: Record<string, ProductionA5MigrationOperationClass> = O
   ].map((name) => [name, 'BLOCKING_CONTRACT']),
 ] as Array<[string, ProductionA5MigrationOperationClass]>);
 
-function actual40Files(): ProductionA5MigrationFile[] {
-  return Object.keys(ACTUAL_40_CLASSES).sort().map((name) => {
+function actual42Files(): ProductionA5MigrationFile[] {
+  return Object.keys(ACTUAL_42_CLASSES).sort().map((name) => {
     const sqlBytes = readFileSync(join(__dirname, '../../prisma/migrations', name, 'migration.sql'), 'utf8');
     return migrationFile(name, sqlBytes);
   });
 }
 
 describe('production A5 H2 evidence contract', () => {
-  it('derives exact reviewed risk/hash catalogs and parses all 40 audited migration bytes', () => {
-    const files = actual40Files();
-    const reviewed = parseProductionA5ReviewedManifest(rawManifest(files, ACTUAL_40_CLASSES), files);
-    assert.equal(reviewed.reviewedMigrationManifest.length, 40);
+  it('derives exact reviewed risk/hash catalogs and parses all 42 audited migration bytes', () => {
+    const files = actual42Files();
+    const reviewed = parseProductionA5ReviewedManifest(rawManifest(files, ACTUAL_42_CLASSES), files);
+    assert.equal(reviewed.reviewedMigrationManifest.length, 42);
     assert.deepEqual(productionA5MigrationRiskSummary(reviewed), {
-      candidateCount: 40, additiveCount: 16, backwardCompatibleNonadditiveCount: 12,
+      candidateCount: 42, additiveCount: 18, backwardCompatibleNonadditiveCount: 12,
       dataBackfillCount: 6, blockingContractCount: 6, destructiveCustomerDataLossCount: 0,
       manualCustomerInputCount: 0, unreviewedCount: 0,
     });
   });
 
-  it('does not mistake FK ON UPDATE for DML, but rejects an INSERT seed outside DATA_BACKFILL', () => {
-    const files = actual40Files();
-    parseProductionA5ReviewedManifest(rawManifest(files, ACTUAL_40_CLASSES), files);
+  it('does not mistake FK/append-only trigger events for DML, but still rejects real mutations', () => {
+    const files = actual42Files();
+    parseProductionA5ReviewedManifest(rawManifest(files, ACTUAL_42_CLASSES), files);
     const targetIndex = files.findIndex((file) => file.name === '20260712090000_crm_campaign_broadcast');
     const target = files[targetIndex]!;
     const seeded = migrationFile(target.name, `${target.sqlBytes}\nINSERT INTO "Seed" ("id") VALUES ('x');\n`);
     const changed = [...files];
     changed[targetIndex] = seeded;
     assert.throws(
-      () => parseProductionA5ReviewedManifest(rawManifest(changed, ACTUAL_40_CLASSES), changed),
+      () => parseProductionA5ReviewedManifest(rawManifest(changed, ACTUAL_42_CLASSES), changed),
+      /data_mutation_class_mismatch/,
+    );
+
+    const legalIndex = files.findIndex((file) => file.name === '20260809110000_legal_document_acceptance');
+    const legal = files[legalIndex]!;
+    const truncated = migrationFile(
+      legal.name,
+      `${legal.sqlBytes}\nTRUNCATE TABLE "LegalDocumentActionRecord";\n`,
+    );
+    const destructive = [...files];
+    destructive[legalIndex] = truncated;
+    assert.throws(
+      () => parseProductionA5ReviewedManifest(rawManifest(destructive, ACTUAL_42_CLASSES), destructive),
+      /destructive_data_loss_operation/,
+    );
+
+    for (const statement of [
+      `DO $$ BEGIN EXECUTE 'TRUNCATE TABLE "Customer"'; END $$;`,
+      `DO $$ BEGIN EXECUTE 'DELETE FROM "Customer"'; END $$;`,
+    ]) {
+      const dynamicDestructive = [...files];
+      dynamicDestructive[legalIndex] = migrationFile(legal.name, `${legal.sqlBytes}\n${statement}\n`);
+      assert.throws(
+        () => parseProductionA5ReviewedManifest(
+          rawManifest(dynamicDestructive, ACTUAL_42_CLASSES), dynamicDestructive,
+        ),
+        /destructive_data_loss_operation/,
+      );
+    }
+
+    const dynamicInsert = [...files];
+    dynamicInsert[legalIndex] = migrationFile(
+      legal.name,
+      `${legal.sqlBytes}\nDO $$ BEGIN EXECUTE 'INSERT INTO "Customer" ("id") VALUES (1)'; END $$;\n`,
+    );
+    assert.throws(
+      () => parseProductionA5ReviewedManifest(rawManifest(dynamicInsert, ACTUAL_42_CLASSES), dynamicInsert),
       /data_mutation_class_mismatch/,
     );
   });

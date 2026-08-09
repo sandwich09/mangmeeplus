@@ -32,21 +32,31 @@ export async function POST() {
 
   // Resolve the seeded owner's company for the landing path.
   let companyId: string | null = null;
+  let legalAcceptanceRequired = true;
   try {
     const meRes = await fetch(`${internalApiV1Base()}/auth/me`, {
       headers: { Authorization: `Bearer ${data.accessToken}` },
       cache: 'no-store',
     });
     if (meRes.ok) {
-      const me = (await meRes.json()) as { companyId?: string | null };
+      const me = (await meRes.json()) as {
+        companyId?: string | null;
+        legalAcceptanceRequired?: boolean;
+      };
       companyId = me.companyId ?? null;
+      legalAcceptanceRequired = me.legalAcceptanceRequired ?? true;
     }
   } catch {
     // fall through: land on '/' when the company cannot be resolved
   }
 
   const homePath = resolveHomePath(null, companyId);
-  const res = NextResponse.json({ redirectPath: homePath });
+  const res = NextResponse.json({
+    passwordChangeRequired: false,
+    legalAcceptanceRequired,
+    companyId,
+    redirectPath: homePath,
+  });
   setAuthCookies(
     res,
     { accessToken: data.accessToken, refreshToken: data.refreshToken, expiresIn: data.expiresIn ?? 900 },

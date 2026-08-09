@@ -5,6 +5,7 @@ import { PrismaAttachmentRepository } from '../../../data-model-core/infrastruct
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { isExpenseDeletableState } from '@watchdog-bms/contracts';
+import { branchScopeWhere, isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 
 type DeleteExpenseOutcome =
   | { kind: 'DELETED' }
@@ -174,6 +175,7 @@ export class DeleteExpenseUseCase {
           where: { id: expenseId, companyId: ctx.companyId },
           select: {
             id: true,
+            branchId: true,
             status: true,
             expenseNumber: true,
             vendorNameSnapshot: true,
@@ -183,6 +185,7 @@ export class DeleteExpenseUseCase {
             paymentStatus: true,
             captureSource: true,
             createdByUserId: true,
+            updatedAt: true,
             _count: { select: { lines: true } },
           },
         });
@@ -192,6 +195,18 @@ export class DeleteExpenseUseCase {
           deniedEntry(reason, metadataJson),
           tx,
         );
+
+        if (!isBranchInScope(ctx.scopes ?? {}, expense.branchId)) {
+          await deny('BRANCH_OUT_OF_SCOPE', { branchId: expense.branchId });
+          return { kind: 'FORBIDDEN' };
+        }
+
+        const canDelete = ctx.permissions.includes('expense.delete')
+          || (expense.createdByUserId === ctx.userId && ctx.permissions.includes('expense.update'));
+        if (!canDelete) {
+          await deny('MISSING_PERMISSION');
+          return { kind: 'FORBIDDEN' };
+        }
 
         if (!isExpenseDeletableState({
           status: expense.status,
@@ -204,13 +219,6 @@ export class DeleteExpenseUseCase {
             paymentStatus: expense.paymentStatus,
           });
           return { kind: 'WRONG_STATUS' };
-        }
-
-        const canDelete = ctx.permissions.includes('expense.delete')
-          || (expense.createdByUserId === ctx.userId && ctx.permissions.includes('expense.update'));
-        if (!canDelete) {
-          await deny('MISSING_PERMISSION');
-          return { kind: 'FORBIDDEN' };
         }
 
         const retained = await tx.expenseSubstituteReceiptEvidence.findFirst({
@@ -282,7 +290,20 @@ export class DeleteExpenseUseCase {
             duplicateRecheckedExpenseIds: recheckedExpenseIds,
           },
         }, tx);
-        await tx.expenseRecord.delete({ where: { id: expenseId } });
+        const deleted = await tx.expenseRecord.deleteMany({
+          where: {
+            id: expenseId,
+            companyId: ctx.companyId,
+            updatedAt: expense.updatedAt,
+            ...branchScopeWhere(ctx.scopes ?? {}),
+          },
+        });
+        if (deleted.count !== 1) {
+          throw new ConflictException({
+            code: 'EXPENSE_CHANGED_DURING_DELETE',
+            message: 'Expense changed while it was being deleted. Reload and try again.',
+          });
+        }
         return { kind: 'DELETED' };
       });
     } catch (error) {

@@ -95,6 +95,52 @@ describe('filterPermissionsByEntitlement', () => {
     assert.deepEqual(result, ['expense.read', 'crm.customer.read']);
   });
 
+  it('keeps universal related-record view gated by sales documents', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['accounting.document.read_related'], entitledWithChildren('expenses')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['accounting.document.read_related'], entitledWithChildren('sales_documents')),
+      ['accounting.document.read_related'],
+    );
+  });
+
+  it('keeps expense related-view authority only while expenses are enabled', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], entitledWithChildren('sales_documents')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], entitledWithChildren('expenses')),
+      ['expense.read_related'],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['expense.read_related'], new Set(['expenses'])),
+      [],
+      'an explicitly disabled expenses.list child must remove the related-view route too',
+    );
+  });
+
+  it('keeps procurement related-view authority only while procurement is enabled', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['procurement.purchase_order.read_related'], entitledWithChildren('expenses')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['procurement.purchase_order.read_related'], entitledWithChildren('procurement')),
+      ['procurement.purchase_order.read_related'],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(
+        ['procurement.purchase_request.read_related', 'procurement.purchase_order.read_related'],
+        new Set(['procurement', 'procurement.purchase_requests']),
+      ),
+      ['procurement.purchase_request.read_related'],
+      'disabling one procurement child must not leak that document family through another child',
+    );
+  });
+
   it('does not retain a child permission when only the child entitlement is enabled', () => {
     assert.deepEqual(
       filterPermissionsByEntitlement(['expense.evidence.read'], new Set(['expenses.evidence'])),
@@ -279,7 +325,7 @@ describe('filterPermissionsByEntitlement', () => {
   });
 
   it('gates reimbursement (การเบิกจ่าย) behind its own entitlement, overriding its ungated pack', () => {
-    const perms = ['reimbursement.read', 'reimbursement.create'];
+    const perms = ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.create'];
     assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['expenses', 'procurement'])), []);
     assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['reimbursement'])), perms);
   });

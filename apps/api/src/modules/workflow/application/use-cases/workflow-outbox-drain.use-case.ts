@@ -4,6 +4,7 @@ import { LaunchShadowProbe } from '../../../feature-launch/application/launch-sh
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { IngestWorkflowEventUseCase } from './workflow-event-ingest.use-case';
 import type { CoreOutboxPayload, WorkflowEventEnvelope } from '@watchdog-bms/contracts';
+import { OBJECT_VERSION_CLEANUP_EVENT_TYPE } from '../../../data-model-core/application/services/object-version-cleanup.service';
 
 const WORKER_ID = 'workflow-outbox-drain';
 const OUTBOX_DEAD_EVENT = 'outbox.dead_rows';
@@ -70,7 +71,11 @@ export class DrainWorkflowOutboxUseCase {
       this.logger.warn({ event: OUTBOX_DEAD_EVENT, riskLevel: 'HIGH', dead, reclaimed, reclaimedDead }, OUTBOX_DEAD_EVENT);
     }
 
-    const events = await this.outbox.claimBatch({ batchSize, claimedBy: WORKER_ID });
+    const events = await this.outbox.claimBatch({
+      batchSize,
+      claimedBy: WORKER_ID,
+      excludeEventTypes: [OBJECT_VERSION_CLEANUP_EVENT_TYPE],
+    });
     const sweep = this.shadow.startSweep('outbox.drain');
     let published = 0;
     let failed = 0;

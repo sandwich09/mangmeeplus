@@ -123,21 +123,111 @@ function harness() {
   return { useCase, calls };
 }
 
+/**
+ * Audit CR-2: the same governed company, with its expense categories mapped to reviewed accounts.
+ * Before the fix no company could reach this state at all — nothing wrote a PostingRule and the
+ * gate threw `posting_rule_missing` for every source.
+ */
+function postingHarness() {
+  const created: any[] = [];
+  const expense = {
+    id: 'expense-1', companyId: 'co-1', branchId: null, status: 'CONFIRMED', expenseNumber: 'EXP-1',
+    expenseDate: new Date('2026-07-29T00:00:00.000Z'), currency: 'THB', vendorCounterpartyId: null,
+    sourceReimbursementRequestId: null, expenseCategoryId: null,
+    grandTotalAmount: '1000', vatAmount: '0', whtAmount: '0', paidAmount: '0',
+    inputVatClaimStatus: 'NON_CLAIMABLE', taxEvidenceStatus: 'SUPPORTING_ONLY',
+    lines: [
+      { id: 'line-1', lineNumber: 1, taxableAmount: '700', vatAmount: '0', whtAmount: '0', expenseCategoryId: 'cat-fuel' },
+      { id: 'line-2', lineNumber: 2, taxableAmount: '300', vatAmount: '0', whtAmount: '0', expenseCategoryId: 'cat-phone' },
+    ],
+  };
+  const useCase = new GenerateJournalFromSourceUseCase(
+    {
+      findGeneratedJournal: async () => null,
+      findPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
+      findActivePostingRule: async () => null,
+      findAccountByCode: async (_companyId: string, code: string) => ({ id: `acc:${code}` }),
+      createJournalEntry: async (entry: any) => { created.push(entry); return { ...entry, id: 'jv-1', lines: entry.lines, createdAt: new Date(), entryDate: entry.entryDate, status: 'POSTED' }; },
+      postJournalEntry: async () => undefined,
+    } as any,
+    { log: async () => undefined } as any,
+    { execute: async () => ({ id: 'reservation-1', documentNumber: 'JV-1' }) } as any,
+    { execute: async () => undefined } as any,
+    { append: async () => undefined } as any,
+    {} as any,
+    { findByIdWithRelations: async () => expense, updatePostingStatus: async () => undefined } as any,
+    {} as any,
+    {} as any,
+    {
+      client: {
+        company: {
+          findUnique: async () => ({
+            baseCurrency: 'THB', chartOfAccountsTemplateKey: 'TH_SME_COA_V1', chartOfAccountsTemplateVersion: 1,
+            chartOfAccountsTemplateChecksum: 'checksum', chartOfAccountsTemplateAppliedAt: new Date(),
+          }),
+        },
+        expenseCategory: {
+          findMany: async () => [
+            { id: 'cat-fuel', ledgerAccountCode: '5320-01' },
+            { id: 'cat-phone', ledgerAccountCode: '5330-01' },
+          ],
+        },
+      },
+    } as any,
+  );
+  return { useCase, created };
+}
+
+describe('template-company posting with reviewed category bindings', () => {
+  it('posts a governed company to its reviewed per-category accounts', async () => {
+    const { useCase, created } = postingHarness();
+
+    await useCase.execute(ctx, { sourceType: 'expense.record', sourceId: 'expense-1' });
+
+    assert.equal(created.length, 1, 'a journal is created');
+    const lines = created[0].lines as Array<{ accountId: string; debitAmount?: string; creditAmount?: string }>;
+    // Each category reaches its own reviewed account, and none of them is the legacy 5310-01
+    // (เงินเดือน) that every expense used to land on.
+    assert.deepEqual(lines.map((line) => line.accountId).sort(), ['acc:2120-01', 'acc:5320-01', 'acc:5330-01']);
+    assert.equal(lines.some((line) => line.accountId.includes('5310-01')), false);
+    const debit = lines.reduce((total, line) => total + Number(line.debitAmount ?? 0), 0);
+    const credit = lines.reduce((total, line) => total + Number(line.creditAmount ?? 0), 0);
+    assert.equal(debit, 1000);
+    assert.equal(credit, 1000);
+  });
+
+  it('refuses rather than guesses when one category is still unmapped', async () => {
+    const { useCase, created } = postingHarness();
+    (useCase as any).prisma.client.expenseCategory.findMany = async () => [{ id: 'cat-fuel', ledgerAccountCode: '5320-01' }];
+
+    await assert.rejects(
+      () => useCase.execute(ctx, { sourceType: 'expense.record', sourceId: 'expense-1' }),
+      (error: any) => error.getResponse?.().code === 'expense_account_unmapped:cat-phone',
+    );
+    assert.equal(created.length, 0);
+  });
+});
+
 describe('template-company posting fallback gate', () => {
   it('fails closed even when provenance is only partially stamped', () => {
     assert.equal(requiresReviewedPostingRules({ chartOfAccountsTemplateKey: 'TH_SME_COA_V1' }), true);
     assert.equal(requiresReviewedPostingRules({}), false);
   });
 
+  // Audit CR-2: expense accrual now resolves reviewed per-category bindings instead of throwing a
+  // blanket `posting_rule_missing`, so its refusal carries a more specific code. What this gate
+  // protects is unchanged and is what the assertions below check: a governed company never reaches
+  // a legacy `DEFAULT_ACCOUNT_CODES` account, never consumes a journal number, and lands on
+  // `posting_error` carrying the reason.
   for (const source of [
-    { sourceType: 'accounting.document', sourceId: 'invoice-1', forbiddenLegacyCode: '1210-00' },
-    { sourceType: 'expense.record', sourceId: 'expense-1', forbiddenLegacyCode: '5310-01' },
+    { sourceType: 'accounting.document', sourceId: 'invoice-1', forbiddenLegacyCode: '1210-00', expectedCode: 'posting_rule_missing' },
+    { sourceType: 'expense.record', sourceId: 'expense-1', forbiddenLegacyCode: '5310-01', expectedCode: 'expense_allocation_base_zero' },
   ]) {
     it(`rejects ${source.sourceType} before legacy code ${source.forbiddenLegacyCode} or a journal number is used`, async () => {
       const { useCase, calls } = harness();
       await assert.rejects(
         () => useCase.execute(ctx, source),
-        (error: any) => error.getResponse?.().code === 'posting_rule_missing',
+        (error: any) => error.getResponse?.().code === source.expectedCode,
       );
       assert.equal(calls.reserved, 0);
       assert.equal(calls.created, 0);
@@ -145,7 +235,7 @@ describe('template-company posting fallback gate', () => {
       assert.equal(calls.accountCodes.includes(source.forbiddenLegacyCode), false);
       const statuses = source.sourceType === 'expense.record' ? calls.expenseStatuses : calls.documentStatuses;
       assert.deepEqual(statuses.map((status) => status.postingStatus), ['pending', 'posting_error']);
-      assert.equal(statuses.at(-1)?.postingError, 'posting_rule_missing');
+      assert.equal(statuses.at(-1)?.postingError, source.expectedCode);
     });
   }
 });

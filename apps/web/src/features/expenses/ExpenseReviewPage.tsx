@@ -365,7 +365,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
-  const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged;
+  // Audit H-11: isZeroAmount only ever rendered a warning below and was missing from this gate, so
+  // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
+  // reviewer is told before the round trip, and the button no longer disagrees with the rule.
+  const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   const storedClassification = aiMap?.['classification'] && typeof aiMap['classification'] === 'object'
     ? aiMap['classification'] as Record<string, unknown>
     : null;
@@ -481,7 +484,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                   </>
                 )}
               </>
@@ -491,14 +494,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId), 'ยืนยันและลงบัญชีเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : hasDuplicates ? t('expenses.resolve_duplicate_first', locale) : needsReceiptOrSubstitute ? t('expenses.confirm_needs_receipt', locale) : ocrTotalUnacknowledged ? t('expenses.price_mismatch_blocks_confirm', locale) : isZeroAmount ? t('expenses.zero_amount_warning', locale) : !substituteReady ? 'ต้องให้ผู้จ่ายลงนามและผู้อนุมัติออกใบรับรองฉบับสมบูรณ์ก่อนยืนยันรายจ่าย' : undefined}>{t('expenses.confirm_and_post', locale)}</button>}
           </>
         )}
         {isConfirmed && (
           <>
             {canReview && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate_short', locale)}</button>}
             {canGenerateJournal && detail.pendingPostingSourceType && (
-              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, expenseId), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading}>
+              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId}>
                 {detail.postingStatus === 'posting_error'
                   ? 'แก้ไขแล้ว ลองลงบัญชีอีกครั้ง'
                   : detail.pendingPostingSourceType === 'expense.payment'
@@ -650,6 +653,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
               const forbidden = findForbiddenChars(ocrTotalReason);
               if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
               await acknowledgeOcrTotal(companyId, detail.id, {
+                expectedUpdatedAt: detail.updatedAt,
                 acknowledged: true,
                 acknowledgedTotalAmount: detail.grandTotalAmount,
                 reason: ocrTotalReason.trim(),
@@ -759,13 +763,25 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
-        {isConfirmed && caps.canRecordPayment && (
+        {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <input className={inputClass} type="number" min="0" step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
+            <input className={inputClass} type="number" min="0.01" max={detail.outstandingAmount} step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
             <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </ThemedSelect>
             <button className={btnClass} onClick={() => doAction(() => recordExpensePayment(companyId, expenseId, { paidAmount, paymentMethod }), 'บันทึกการจ่ายเรียบร้อยแล้ว')} disabled={actionLoading || !paidAmount}>{t('expenses.record_payment', locale)}</button>
+          </div>
+        )}
+        {(detail.payments?.length ?? 0) > 0 && (
+          <div className="space-y-2 border-t border-gray-100 pt-3">
+            <p className="text-xs font-semibold text-gray-600">ประวัติการจ่าย</p>
+            {detail.payments?.map((payment) => (
+              <div key={payment.id} className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+                <span>{dateShort(payment.paidAt)} · {PAYMENT_METHOD_LABELS[payment.paymentMethod ?? 'OTHER']}</span>
+                <span className="tabular-nums font-semibold text-gray-800">{baht(payment.amount)}</span>
+                <span>{payment.status === 'VOIDED' ? 'ยกเลิกแล้ว' : payment.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : payment.postingStatus === 'posting_error' ? 'ลงบัญชีไม่สำเร็จ' : 'รอลงบัญชี'}</span>
+              </div>
+            ))}
           </div>
         )}
         {detail.status === 'VOIDED' && <p className="text-sm text-gray-400">{t('expenses.document_voided', locale)}{detail.voidReason ? ` — ${detail.voidReason}` : ''}</p>}

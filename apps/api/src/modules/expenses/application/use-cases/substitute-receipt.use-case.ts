@@ -5,10 +5,16 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
+import { ObjectVersionCleanupService } from '../../../data-model-core/application/services/object-version-cleanup.service';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
-import { expenseDecimalToString, PrismaExpenseRepository, toSubstituteEvidenceSummary } from '../../infrastructure/prisma-expense.repository';
+import {
+  expenseDecimalToString,
+  PrismaExpenseRepository,
+  SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+  toSubstituteEvidenceSummary,
+} from '../../infrastructure/prisma-expense.repository';
 import {
   buildSubstituteCertificationText,
   canonicalSnapshotHash,
@@ -252,8 +258,9 @@ export class ListCompanySubstituteReceiptsUseCase {
   async execute(ctx: RequestContext, filter: SubstituteReceiptListFilter): Promise<SubstituteReceiptListResult> {
     assertWeb(ctx);
     const canSeeAll = ctx.permissions.includes('expense.review') || ctx.permissions.includes('expense.confirm');
-    if (!canSeeAll && !ctx.permissions.includes('expense.read_own')) {
-      throw new ForbiddenException('Missing permission: expense.review, expense.confirm, or expense.read_own');
+    const canSeeRelated = ctx.permissions.includes('expense.read_related');
+    if (!canSeeAll && !canSeeRelated && !ctx.permissions.includes('expense.read_own')) {
+      throw new ForbiddenException('Missing permission to read substitute receipts');
     }
     if (filter.status && !SUBSTITUTE_RECEIPT_STATUSES.has(filter.status)) {
       throw new BadRequestException('Invalid substitute receipt status.');
@@ -265,11 +272,11 @@ export class ListCompanySubstituteReceiptsUseCase {
     const pageSize = Number.isFinite(filter.pageSize)
       ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!)))
       : 50;
-    const onlyPayerUserId = canSeeAll ? null : ctx.userId;
+    const onlyPayerUserId = canSeeAll || canSeeRelated ? null : ctx.userId;
     const { rows, total } = await this.repo.listCompanySubstituteReceipts(
       ctx.companyId,
       { ...filter, page, pageSize },
-      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId },
+      { branchIds: ctx.scopes?.branchIds, onlyPayerUserId, relatedUserId: !canSeeAll && canSeeRelated ? ctx.userId : null },
     );
     return {
       items: rows.map((row) => ({
@@ -459,7 +466,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     await this.getExpense.execute(ctx, expenseId);
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    if (evidence.status !== 'ISSUED' || !evidence.artifactAttachmentId) {
+    if (!['ISSUED', 'SUPERSEDED'].includes(evidence.status) || !evidence.artifactAttachmentId) {
       throw new ConflictException('The substitute-receipt certificate has not been issued yet.');
     }
     const attachment = await this.repo.findSubstituteArtifactAttachment(
@@ -474,7 +481,10 @@ export class DownloadSubstituteReceiptPdfUseCase {
       ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
     });
     // The immutable, checksummed SVG remains authoritative; this PDF is a derived printout generated on demand.
-    const data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber);
+    const stateStamp = evidence.status === 'SUPERSEDED'
+      ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
+      : undefined;
+    const data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
     void this.audit.log({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -484,9 +494,16 @@ export class DownloadSubstituteReceiptPdfUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { expenseId, artifactAttachmentId: evidence.artifactAttachmentId },
+      metadataJson: {
+        expenseId,
+        artifactAttachmentId: evidence.artifactAttachmentId,
+        evidenceStatus: evidence.status,
+        supersedeReason: evidence.supersedeReason,
+        derivedStamp: stateStamp ?? null,
+      },
     });
-    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}.pdf` };
+    const stateSuffix = stateStamp ? `-${stateStamp}` : '';
+    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}${stateSuffix}.pdf` };
   }
 }
 
@@ -531,6 +548,7 @@ export class CertifySubstituteReceiptUseCase {
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
     private readonly notify: CreateOrUpdateNotificationEventUseCase,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: CertifySubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -604,11 +622,13 @@ export class CertifySubstituteReceiptUseCase {
       }
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'SUBSTITUTE_RECEIPT_CERTIFIED',
+      });
       throw new ConflictException((error as Error).message);
     }
   }
@@ -621,6 +641,7 @@ export class ApproveSubstituteReceiptUseCase {
     private readonly repo: PrismaExpenseRepository,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
+    private readonly objectVersionCleanup: ObjectVersionCleanupService,
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, evidenceId: string, input: ApproveSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -716,11 +737,13 @@ export class ApproveSubstituteReceiptUseCase {
       });
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {
-      await this.storage.deleteObject({
+      await this.objectVersionCleanup.enqueue({
+        companyId: ctx.companyId,
         bucket: stored.bucket,
-        objectKey: stored.objectKey,
-        objectVersionId: stored.objectVersionId,
-      }).catch(() => undefined);
+        objectPath: stored.objectKey,
+        expectedVersion: stored.objectVersionId,
+        source: 'SUBSTITUTE_RECEIPT_ISSUED',
+      });
       throw new ConflictException((error as Error).message);
     }
   }
@@ -732,11 +755,25 @@ export class ListSubstituteReceiptHistoryUseCase {
 
   async execute(ctx: RequestContext, expenseId: string): Promise<SubstituteReceiptEvidenceSummary[]> {
     assertWeb(ctx);
-    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     const expense = await this.repo.findById(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
-    return this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
+    // Loaded before the decision because the payer is part of what authorizes the read. Nothing is
+    // returned unless one of the three clauses below passes, and the allowed path costs the same
+    // two queries it always did.
+    const history = await this.repo.listSubstituteEvidenceHistory(ctx.companyId, expenseId);
+    const canReview = ctx.permissions.includes('expense.review');
+    // `read_own` means "created it OR paid it" here, the same as in GetExpenseUseCase and in the
+    // hub list. Reading it as "created it" alone locks out the one person the certificate is
+    // waiting on: the payer is deliberately not the reviewer, and is usually not the creator
+    // either — that separation is the control this feature exists to produce. Any version counts,
+    // matching expenseRelatedToUserWhere, so the read_own and read_related paths agree.
+    const canReadOwn = ctx.permissions.includes('expense.read_own')
+      && (expense.createdByUserId === ctx.userId || history.some((item) => item.payerUserId === ctx.userId));
+    const canReadRelated = ctx.permissions.includes('expense.read_related')
+      && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
+    if (!canReview && !canReadOwn && !canReadRelated) throw new ForbiddenException('Cannot read this substitute-receipt history.');
+    return history;
   }
 }
 

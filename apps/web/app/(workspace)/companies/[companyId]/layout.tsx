@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
 import CompanyAccessUnavailable from '@/features/auth/CompanyAccessUnavailable';
+import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 
 export default async function CompanyWorkspaceLayout({
   children,
@@ -25,6 +26,13 @@ export default async function CompanyWorkspaceLayout({
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
   if (sessionResult.status === 'forbidden') return <CompanyAccessUnavailable />;
+  const returnTo = `/companies/${companyId}/dashboard`;
+  if (sessionResult.session.mustChangePassword) {
+    redirect(`/change-password?next=${encodeURIComponent(returnTo)}`);
+  }
+  if (sessionResult.session.legalAcceptanceRequired !== false) {
+    redirect(legalAcceptancePath(returnTo, companyId));
+  }
 
   return (
     <WorkspaceLayoutClient companyId={companyId} session={sessionResult.session}>

@@ -264,7 +264,7 @@ export function CompanyDashboardPage({
           <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-gray-900">{t('dashboard.home.greeting', locale)} {name}</h1>
           <p className="mt-1 text-base text-gray-500">
             {t('dashboard.home.business_overview', locale)} · {t('dashboard.home.all_branches', locale)}
-            {snapshot && ` · ${t('dashboard.home.updated_at', locale)} ${locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+            {snapshot && ` · ${t('dashboard.home.updated_at', locale)} ${locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })}`}
           </p>
         </div>
         <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">

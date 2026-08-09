@@ -4,6 +4,14 @@ Status: **DRAFT — technical sections complete, legal sections and approval OUT
 Technical owner: Platform/AI Security
 Approval required before the M-05 top-level checkbox can close.
 
+> **Supersession notice (2026-08-09).** This file contains historical technical and
+> approval narrative that has not been revalidated as current production evidence. Use
+> [`dpo-necessity-assessment.md`](./dpo-necessity-assessment.md) for the section 41
+> assessment and [`processor-cross-border-register.md`](./processor-cross-border-register.md)
+> for vendor, AI training/retention, subprocessor, and sections 28–29 evidence. Any claim
+> here about a live deployment, vendor role, or approval remains **[OBTAIN]** unless the
+> underlying signed/live artifact is filed with a durable ID and hash.
+
 > **How to read this document.** Sections marked **[VERIFIED]** are asserted from the
 > code and configuration in this repository and can be re-checked at the cited paths.
 > Sections marked **[DECIDE]** are legal determinations that no engineer can make —
@@ -79,9 +87,11 @@ Worth stating plainly, because it narrows the assessment in §4:
 - **Sent to the model** for P1/P4: the message content of the turn plus permission-scoped
   ERP results. For an SME ERP this can include customer names, phone numbers, LINE user
   ids, order and booking details.
-- **Sent to the processors** for P2/P3: the receipt or bank-statement image itself —
+- **Sent to the external services** for P2/P3: the receipt or bank-statement image itself —
   which typically carries names, amounts, tax ids, and bank account numbers.
-- Anthropic (via Bedrock) and Typhoon are **processors**, not controllers, for this data.
+- The repository proves the AWS Bedrock and Typhoon recipient paths, not their legal
+  roles. Processor/controller status is **[DECIDE]** from the executed agreement and real
+  purpose; the required evidence is tracked in `processor-cross-border-register.md`.
 
 ### 2.3 Retention and erasure
 
@@ -205,8 +215,10 @@ reactive path must stand on a non-consent basis — see 3.4.
 
 ### 3.5 Draft notice copy (Thai) — for legal review, not final
 
-**[GAP]** No privacy notice page exists in the web app today. These are drafts to review
-and host before either notice can be cited as satisfied.
+**[SUPERSEDED GAP]** A public privacy page now exists in the web app. The copy below is a
+historical AI-specific draft and must not replace the current legal artifact. Publication
+does not close the vendor-contract, transfer, retention, DPO, or operational evidence
+items in the two superseding registers linked at the top of this file.
 
 LINE OA first-contact / greeting addition:
 
@@ -420,7 +432,7 @@ approver row and date row are filled in by that person.
 | Scope | Use of `global.` Bedrock inference profiles for purposes P1–P4 above, in AWS account `311414082667`, requests issued from `ap-southeast-1` |
 | Approved model(s) | **`global.anthropic.claude-sonnet-4-6` — sole approved model.** Owner decision 2026-07-28: Haiku 4.5 is withdrawn from use rather than sent back for a supplementary resolution, so the approved set matches the 23 July resolution exactly and no second approval is needed. `deploy.sh` (`2af5d258`) already pins both the chat and document roles to Sonnet 4.6, so the next production deploy is what actually removes it.<br>**Residual, stated rather than erased:** withdrawing Haiku 4.5 fixes the position going forward; it does not change the fact that it ran on a global profile on the live task until that deploy. The window is time-boxed and ends at the next production deploy. Two honest consequences: the deploy is now the act that closes this, so it should not be left indefinitely; and the pre-23-July period had no approval of any kind, which is the condition this whole control was introduced to end — not something this resolution back-fills.<br>*Adding another `global.` model later requires a new version of this record, not a silent allowlist edit.* |
 | Approver (name, role) | ราฟีดา สมุทร — คณะกรรมการผู้ถือหุ้น. Recorded **as relayed by the engineering lane on 2026-07-28**, not from the approver's own written confirmation, which is still outstanding (see Linked evidence). Until that arrives this row records *who is said to have approved*, which is not the same as an approval.<br>**Confirmed 2026-07-28: the approval is a resolution of that body (มติของคณะกรรมการ)**, not a personal decision, and **ราฟีดา's authority to sign derives from that same resolution** — she signs for the body, not in a personal capacity. The evidence below must therefore be the resolution/minutes, and the minutes are also what evidences the signing authority; one document carries both. |
-| Is an appointed DPO required? | **[DECIDE]** — s.41 has three limbs; the facts map as follows.<br>**(a) public authority** — No. Private SME SaaS.<br>**(b) core activity = regular monitoring of personal data on a large scale** — *the open one.* Monitoring is continuous and is a core activity, so this turns entirely on "large scale", for which Thai law sets no numeric threshold. §4.1's per-company rate limits do **not** settle it: the platform aggregates many tenants, so platform-wide totals are what count, not per-tenant ones. Answer with real numbers — tenant count, end-customer count, monthly message volume.<br>**(c) core activity = processing s.26 data** — Likely No. §4.1 confirms no s.26 field exists in the schema; incidental customer-volunteered data is not a *core activity*. Revisit if health-adjacent tenants (clinic, wellness, spa) become a target segment, since `CrmBooking.serviceName` alone can then be health data.<br>**Also settle later:** whether the platform is controller or processor for tenant end-customer data. s.41 binds both, but the "core activity" is read against the right party's business, and this register currently reasons as controller throughout.<br>**Owner decision 2026-07-28 — deferred on purpose.** Limb (b) and the controller/processor question are **not** being answered now; the current tenant base is accepted as below the threshold without measuring it. This is a deliberate deferral, not a finding, and it is only safe while the tenant mix stays as it is — hence the tripwire in §6. Re-open both the moment that assumption moves. |
+| Is an appointed DPO required? | **[DECIDE — superseded by `dpo-necessity-assessment.md`]** The 2023 PDPC section 41(2) notification contains a numeric rule: processing involving at least **100,000 data subjects is deemed large scale**. Below 100,000 is not a safe harbour; number/proportion, volume/type/nature, duration/permanence, geography, industry practice, risks, and effects still require assessment. Count people, not tenants, messages, or database rows, and address individuals visible only in free text/files. The public-authority, core-activity, regular/systematic-monitoring, large-scale, section 26, and controller/processor questions all remain unresolved until the signed evidence worksheet is complete. The former unmeasured assumption in this row must not be used as a “DPO not required” finding. |
 | Date approved | **2026-07-23** (BE 2569-07-23) — the committee meeting date, confirmed 2026-07-28. This is a real resolution date, not a backdate, so it stands.<br>**Consequence, and it is a real one:** on 23 July this register named only `global.anthropic.claude-sonnet-4-6`. The §2.1 finding that production *also* runs `global.anthropic.claude-haiku-4-5-20251001-v1:0` as the chat model was made on 28 July. The committee cannot have considered a model that was not in front of it, so **this resolution covers Sonnet 4.6 only.** See the Approved-model(s) row for what that leaves open. |
 | Version | 1 |
 | Conditions | *(proposed)* 1. Applies only to the two models listed above. 2. Requests issued from `ap-southeast-1` only. 3. `AI_PROMPT_LOGGING_ENABLED` stays `false`. 4. Withdraw if AWS Bedrock service terms change on training/retention of customer inputs. 5. Re-assess if an APAC profile of equivalent capability becomes invocable — none is today (§4.1, verified 2026-07-28), so this is a review trigger rather than a live condition. — **[DECIDE]** confirm or amend |

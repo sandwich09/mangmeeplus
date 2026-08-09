@@ -3,7 +3,7 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
-import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from '../../domain/logic/expense-totals.logic';
+import { calcLineTotals, calcDocumentTotals } from '../../domain/logic/expense-totals.logic';
 import { validateExpenseDraftAmounts } from '../../domain/logic/expense-draft-amount-validation.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
@@ -125,12 +125,16 @@ export class GetExpenseUseCase {
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecordWithRelations> {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    if (!canRead && !canReadOwn) throw new ForbiddenException('Missing permission: expense.read');
+    const canReadRelated = hasPerm(ctx, 'expense.read_related');
+    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
-    // ABAC: read_own limits to own records
-    if (!canRead && r.createdByUserId !== ctx.userId && r.substituteReceiptEvidence?.payerUserId !== ctx.userId) {
+    const canReadThisRelated = !canRead && canReadRelated
+      && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
+    const canReadThisOwn = canReadOwn
+      && (r.createdByUserId === ctx.userId || r.substituteReceiptEvidence?.payerUserId === ctx.userId);
+    if (!canRead && !canReadThisOwn && !canReadThisRelated) {
       throw new ForbiddenException('Access denied');
     }
     return r;
@@ -144,11 +148,14 @@ export class ListExpensesUseCase {
   async execute(ctx: RequestContext, filter: Omit<ListExpensesFilter, 'companyId'>): Promise<PaginatedExpenses> {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
-    if (!canRead && !canReadOwn) throw new ForbiddenException('Missing permission: expense.read');
+    const canReadRelated = hasPerm(ctx, 'expense.read_related');
+    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
     if (filter.branchId) assertBranchInScope(ctx, filter.branchId);
-    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId };
-    if (!canRead && canReadOwn) resolved.createdByUserId = ctx.userId;
-    return this.repo.listExpenses(resolved, ctx.scopes);
+    const page = Number.isFinite(filter.page) ? Math.max(1, Math.floor(filter.page!)) : 1;
+    const pageSize = Number.isFinite(filter.pageSize) ? Math.min(200, Math.max(1, Math.floor(filter.pageSize!))) : 20;
+    const resolved: ListExpensesFilter = { ...filter, companyId: ctx.companyId, page, pageSize };
+    if (!canRead && canReadOwn && !canReadRelated) resolved.createdByUserId = ctx.userId;
+    return this.repo.listExpenses(resolved, ctx.scopes, !canRead && canReadRelated ? ctx.userId : undefined);
   }
 }
 
@@ -168,7 +175,7 @@ export class UpdateExpenseDraftUseCase {
     ctx: RequestContext,
     expenseId: string,
     input: UpdateExpenseDraftInput,
-    options: { db?: any; suppressGenericAudit?: boolean } = {},
+    options: { db?: any; suppressGenericAudit?: boolean; requireExpectedUpdatedAt?: boolean } = {},
   ): Promise<ExpenseRecord> {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -188,8 +195,19 @@ export class UpdateExpenseDraftUseCase {
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
       throw new BadRequestException(`Cannot update expense in status ${r.status}`);
     }
+    if (options.requireExpectedUpdatedAt && !input.expectedUpdatedAt) {
+      throw new BadRequestException({
+        code: 'EXPENSE_UPDATE_VERSION_REQUIRED',
+        message: 'expectedUpdatedAt is required. Reload the expense before saving.',
+      });
+    }
+    const expectedUpdatedAt = input.expectedUpdatedAt ? new Date(input.expectedUpdatedAt) : undefined;
+    if (expectedUpdatedAt && Number.isNaN(expectedUpdatedAt.getTime())) {
+      throw new BadRequestException({ code: 'EXPENSE_UPDATE_VERSION_INVALID', message: 'expectedUpdatedAt must be a valid timestamp.' });
+    }
 
     const lines = input.lines;
+    let resolvedLines: ExpenseLineInput[] | undefined;
     const nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
     const nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
     const disallowsTaxCode = isReceiptOrSupportingOnly(nextSourceDocumentType, nextTaxEvidenceStatus);
@@ -219,11 +237,10 @@ export class UpdateExpenseDraftUseCase {
           ...taxSelection(l),
         };
       });
-      const resolved = await this.transactionTax.resolveLines(ctx, {
+      resolvedLines = await this.transactionTax.resolveLines(ctx, {
         expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
         expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
       }, prepared, 'DRAFT', options.db);
-      await this.repo.upsertLines(ctx.companyId, expenseId, resolved, options.db);
     }
 
     const reviewedAt = canReview ? new Date() : undefined;
@@ -342,6 +359,7 @@ export class UpdateExpenseDraftUseCase {
 
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+      ...(expectedUpdatedAt && { expectedUpdatedAt }),
       ...(input.branchId !== undefined && { branchId: input.branchId }),
       ...(input.expenseDate && { expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)) }),
       ...(input.vatMode && { vatMode: input.vatMode }),
@@ -374,7 +392,9 @@ export class UpdateExpenseDraftUseCase {
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
       ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
-    }, undefined, options.db);
+    }, resolvedLines
+      ? (tx) => this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines!, tx)
+      : undefined, options.db);
     if (options.suppressGenericAudit) return updated;
     void this.audit.log({
       companyId: ctx.companyId,
@@ -782,9 +802,9 @@ export class VoidExpenseUseCase {
     // (expense.payment). The transaction re-verifies each posting state and fails
     // closed if it changed in between.
     const periodKey = civilPeriodKey(todayCivilDate());
-    const [accrualJournalId, paymentJournalId] = await Promise.all([
+    const [accrualJournalId, paymentJournals] = await Promise.all([
       this.repo.findPostedGeneratedJournalId(ctx.companyId, expenseId),
-      this.repo.findPostedGeneratedJournalId(ctx.companyId, expenseId, 'expense.payment'),
+      this.repo.findPostedExpensePaymentJournals(ctx.companyId, expenseId),
     ]);
     // Date.now() is deliberate: reserveNumber returns a matching-key row
     // regardless of its status, so a deterministic key would hand a retried void
@@ -796,23 +816,36 @@ export class VoidExpenseUseCase {
           reservedByUserId: ctx.userId,
         })
       : null;
-    const paymentReserved = paymentJournalId
-      ? await this.reserveNumber.execute({
+    const paymentReservations: Array<{ paymentId: string; reservation: Awaited<ReturnType<ReserveDocumentNumberUseCase['execute']>> }> = [];
+    for (const payment of paymentJournals) {
+      paymentReservations.push({
+        paymentId: payment.paymentId,
+        reservation: await this.reserveNumber.execute({
           companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey,
-          idempotencyKey: `void-reversal:expense.payment:${expenseId}:${Date.now()}`,
+          idempotencyKey: `void-reversal:expense.payment:${payment.paymentId}:${Date.now()}`,
           reservedByUserId: ctx.userId,
-        })
-      : null;
+        }),
+      });
+    }
 
-    let result: { expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null };
+    let result: { expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> };
     try {
-      result = await this.repo.voidExpenseTrueReversal(ctx.companyId, expenseId, ctx.userId, reason, reserved?.documentNumber, paymentReserved?.documentNumber);
+      result = await this.repo.voidExpenseTrueReversal(
+        ctx.companyId,
+        expenseId,
+        ctx.userId,
+        reason,
+        reserved?.documentNumber,
+        paymentReservations.map(({ paymentId, reservation }) => ({ paymentId, reversalEntryNumber: reservation.documentNumber })),
+      );
     } catch (err) {
       // The reservations are still RESERVED here (commit happens only after a
       // successful reversal), so they must be cancelled — voidNumber accepts
       // COMMITTED numbers only and would mask the real error.
       if (reserved) await this.cancelNumber.execute({ id: reserved.id, companyId: ctx.companyId }, ctx.userId);
-      if (paymentReserved) await this.cancelNumber.execute({ id: paymentReserved.id, companyId: ctx.companyId }, ctx.userId);
+      for (const { reservation } of paymentReservations) {
+        await this.cancelNumber.execute({ id: reservation.id, companyId: ctx.companyId }, ctx.userId);
+      }
       throw err;
     }
     // Commit each reserved number to its reversal; release any that produced no
@@ -824,16 +857,17 @@ export class VoidExpenseUseCase {
         await this.cancelNumber.execute({ id: reserved.id, companyId: ctx.companyId }, ctx.userId);
       }
     }
-    if (paymentReserved) {
-      if (result.paymentReversalEntryId) {
-        await this.commitNumber.execute({ id: paymentReserved.id, companyId: ctx.companyId, ownerType: 'journal_entry', ownerId: result.paymentReversalEntryId }, ctx.userId);
+    for (const { paymentId, reservation } of paymentReservations) {
+      const reversed = result.paymentReversalEntryIds.find((candidate) => candidate.paymentId === paymentId);
+      if (reversed) {
+        await this.commitNumber.execute({ id: reservation.id, companyId: ctx.companyId, ownerType: 'journal_entry', ownerId: reversed.reversalEntryId }, ctx.userId);
       } else {
-        await this.cancelNumber.execute({ id: paymentReserved.id, companyId: ctx.companyId }, ctx.userId);
+        await this.cancelNumber.execute({ id: reservation.id, companyId: ctx.companyId }, ctx.userId);
       }
     }
 
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.void', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryId: result.paymentReversalEntryId, grandTotalAmount: r.grandTotalAmount, ...(authority && { authority: 'REIMBURSEMENT_CANCELLATION', reimbursementRequestId: authority.reimbursementRequestId, reimbursementLineId: authority.reimbursementLineId }) } });
-    void this.outbox.append('expense.voided', 'expense_record', expenseId, { companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId, requestId: ctx.requestId ?? buildIdempotencyKey(expenseId, 'voided'), occurredAt: new Date().toISOString(), data: { expenseId, voidReason: reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryId: result.paymentReversalEntryId } });
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.void', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryIds: result.paymentReversalEntryIds, grandTotalAmount: r.grandTotalAmount, ...(authority && { authority: 'REIMBURSEMENT_CANCELLATION', reimbursementRequestId: authority.reimbursementRequestId, reimbursementLineId: authority.reimbursementLineId }) } });
+    void this.outbox.append('expense.voided', 'expense_record', expenseId, { companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId, requestId: ctx.requestId ?? buildIdempotencyKey(expenseId, 'voided'), occurredAt: new Date().toISOString(), data: { expenseId, voidReason: reason, reversalEntryId: result.reversalEntryId, paymentReversalEntryIds: result.paymentReversalEntryIds } });
     return result.expense;
   }
 }
@@ -874,28 +908,18 @@ export class RecordExpensePaymentUseCase {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
-    if (r.status !== 'CONFIRMED') throw new BadRequestException(`Can only record payment for CONFIRMED expenses (current: ${r.status})`);
-    const paid = Number(input.paidAmount);
-    const net = Number(r.netPayableAmount);
-    if (!Number.isFinite(paid) || paid < 0 || paid > net) throw new BadRequestException('Paid amount must be between 0 and net payable amount.');
-
-    const { outstandingAmount } = calcPaymentAmounts(r.netPayableAmount, input.paidAmount);
-    const paymentStatus = derivePaymentStatus(r.netPayableAmount, input.paidAmount);
-    const updated = await this.repo.updateExpense({
-      id: expenseId,
+    const result = await this.repo.recordPaymentAtomic({
       companyId: ctx.companyId,
-      updatedByUserId: ctx.userId,
-      paidAmount: input.paidAmount,
-      outstandingAmount,
-      paymentStatus,
-      paymentMethod: input.paymentMethod as any,
-      paidAt: input.paidAt ? new Date(input.paidAt) : paymentStatus === 'UNPAID' ? undefined : new Date(),
+      expenseId,
+      actorUserId: ctx.userId,
+      amount: input.paidAmount,
+      paymentMethod: input.paymentMethod,
+      paidAt: input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date(),
       bankAccountRef: input.bankAccountRef,
-      postingStatus: 'pending',
     });
 
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { paidAmount: input.paidAmount, paymentStatus } });
-    void this.outbox.append('expense.payment_recorded', 'expense_record', expenseId, { companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId, requestId: ctx.requestId ?? buildIdempotencyKey(expenseId, 'paid'), occurredAt: new Date().toISOString(), data: { expenseId, paidAmount: input.paidAmount, paymentStatus } });
-    return updated;
+    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.payment.record', targetType: 'expense_payment', targetId: result.payment.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, paidAmount: input.paidAmount, cumulativePaidAmount: result.expense.paidAmount, paymentStatus: result.expense.paymentStatus } });
+    void this.outbox.append('expense.payment_recorded', 'expense_payment', result.payment.id, { companyId: ctx.companyId, aggregateType: 'expense_payment', aggregateId: result.payment.id, requestId: ctx.requestId ?? `expense:paid:${result.payment.id}`, occurredAt: new Date().toISOString(), data: { expenseId, paymentId: result.payment.id, paidAmount: input.paidAmount, cumulativePaidAmount: result.expense.paidAmount, paymentStatus: result.expense.paymentStatus } });
+    return result.expense;
   }
 }

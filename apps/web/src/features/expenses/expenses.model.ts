@@ -7,6 +7,7 @@ import type {
   AccountantPackageResult, EvidenceManifestEntry, CreateExpenseDraftInput, UpdateExpenseDraftInput,
   SubstituteReceiptEvidenceSummary, TransactionTaxComponentPreview, TransactionTaxSnapshot,
   BuyerEntityKind,
+  ExpensePaymentSummary,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -16,6 +17,7 @@ import {
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
 
 export type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType, AiVerificationStatus, DuplicateStatus,
@@ -24,6 +26,7 @@ export type {
   SignatureAssetSummary, SignatureAssetStatus, SharedEvidenceView, SharedEvidenceRow,
   AccountantPackageResult, EvidenceManifestEntry,
   SubstituteReceiptEvidenceSummary,
+  ExpensePaymentSummary,
 };
 
 export {
@@ -288,7 +291,9 @@ export type ExpenseDetail = ExpenseSummary & {
   journalEntryId: string | null;
   journalEntryNumber: string | null;
   pendingPostingSourceType: ExpensePostingSourceType | null;
+  pendingPostingSourceId: string | null;
   postingError: string | null;
+  payments: ExpensePaymentSummary[];
   lines: Array<{
     id: string;
     lineNumber: number;
@@ -873,7 +878,7 @@ export type ExpenseCapabilities = {
 export function expenseCapabilities(permissions: string[]): ExpenseCapabilities {
   const has = (key: string) => permissions.includes(key);
   return {
-    canViewList: has('expense.read') || has('expense.read_own'),
+    canViewList: has('expense.read') || has('expense.read_related') || has('expense.read_own'),
     canReview: has('expense.review'),
     canConfirm: has('expense.confirm'),
     canCreate: has('expense.create'),
@@ -891,9 +896,13 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
     canViewSharedEvidence: has('expense.evidence.read'),
     // POST /accountant-package requires both expense.export AND expense.read.
     canExportPackage: has('expense.export') && has('expense.read'),
-    canReadLedger: has('ledger.journal.read'),
+    // Both stay false while the accounting screens are closed (owner decision 2026-08-09): the
+    // "ลงบัญชี"/backfill buttons and the "ดู JV" link are the only ledger affordances outside the
+    // ledger workspace itself. The permissions and the API are untouched — posting keeps happening
+    // server-side, the user just has no button for it. See ACCOUNTING_UI_HIDDEN.
+    canReadLedger: !ACCOUNTING_UI_HIDDEN && has('ledger.journal.read'),
     // POST /posting/generate is guarded by both controller permissions.
-    canPostLedger: has('journal.entry.create') && has('journal.entry.post'),
+    canPostLedger: !ACCOUNTING_UI_HIDDEN && has('journal.entry.create') && has('journal.entry.post'),
   };
 }
 
@@ -981,6 +990,11 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
     return locale === 'th'
       ? `ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: ${label}`
       : `This expense cannot be deleted because it has linked data: ${label}.`;
+  }
+  if (code === 'EXPENSE_CHANGED_DURING_DELETE') {
+    return locale === 'th'
+      ? 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง'
+      : 'The expense changed during deletion. Reload and try again.';
   }
   if (error instanceof Error) return error.message;
   return locale === 'th' ? 'เกิดข้อผิดพลาด' : 'An error occurred.';

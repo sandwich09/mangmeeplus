@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
+import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { DEFAULT_ENABLED_FEATURE_KEYS } from '../../../system-partner-management/domain/feature-registry';
@@ -36,6 +37,10 @@ import {
   bootstrapCompanyTaxConfiguration,
   type TaxConfigBootstrapSummary,
 } from '../../../tax/application/services/tax-config-bootstrap.service.js';
+import {
+  bootstrapCompanyExpenseCategories,
+  type ExpenseCategoryBootstrapSummary,
+} from '../../../expenses/application/services/expense-category-bootstrap.service.js';
 
 export type CreateCompanyOnboardingCommand = {
   companyName: string;
@@ -46,6 +51,12 @@ export type CreateCompanyOnboardingCommand = {
    */
   vatRegistration?: { status: VatFactStatus; effectiveFrom: CivilDate };
   businessCategory: CompanyBusinessCategory; // required: the PDPA tripwire's only input
+  /**
+   * The company's 13-digit tax id, if the admin has it at handover. OPTIONAL for the same reason
+   * vatRegistration is: an admin who does not know leaves it out and the owner captures it later
+   * through the identity screen. Stored as the INITIAL_CAPTURE revision, never as a bare column.
+   */
+  taxId?: string;
   ownerDisplayName: string;
   ownerUsername: string;
   attachExistingOwner?: boolean; // true = ownerUsername must be an existing ACTIVE user; no new user/password
@@ -71,6 +82,7 @@ export type CreateCompanyOnboardingResult = {
   ownerLineLink?: EmployeeLineLinkPackage; // single-use QR bound to the owner user only; absent when owner LINE is already linked
   chartOfAccounts: ChartTemplateBootstrapSummary;
   taxConfiguration: TaxConfigBootstrapSummary;
+  expenseCategories: ExpenseCategoryBootstrapSummary;
 };
 
 // ponytail: 9 bytes → 12 base64 chars, safe chars only
@@ -89,6 +101,12 @@ export class CreateCompanyOnboardingUseCase {
 
   async execute(cmd: CreateCompanyOnboardingCommand): Promise<CreateCompanyOnboardingResult> {
     const attach = cmd.attachExistingOwner === true;
+    // Same normalisation and rule as CompanyIdentityUseCase.patch — one definition of what a valid
+    // tax id is, so a number accepted here can never be one the identity screen would reject.
+    const taxId = cmd.taxId === undefined ? undefined : normalizeTaxId(cmd.taxId);
+    if (taxId !== undefined && !/^\d{13}$/.test(taxId)) {
+      throw new UnprocessableEntityException('taxId must be 13 digits');
+    }
     // Pre-transaction uniqueness checks (best-effort; conflict catch inside tx covers races)
     const [existingUser, existingCompany] = await Promise.all([
       this.prisma.client.user.findUnique({ where: { username: cmd.ownerUsername }, select: { id: true, status: true } }),
@@ -125,9 +143,38 @@ export class CreateCompanyOnboardingUseCase {
     const lineLinkToken = issueLineLink ? generateLineLinkToken(OWNER_LINE_LINK_TOKEN_TTL_MS) : undefined;
 
     const result = await this.prisma.client.$transaction(async (tx) => {
+      // Audit H-31: the admin knows the company's tax id at handover, and until now there was
+      // nowhere to put it — company.legal_identity.manage lives inside the company, so the number
+      // could not be captured until the owner first logged in. Writing it here goes through the
+      // SAME invariants CompanyIdentityUseCase.patch maintains, because a bare column write would
+      // leave legalIdentityVersion at 0 with no revision behind it: the identity screen's
+      // optimistic concurrency and its history would then both be describing a value nobody wrote.
       const company = await tx.company.create({
-        data: { name: cmd.companyName, businessCategory: cmd.businessCategory },
+        data: {
+          name: cmd.companyName,
+          businessCategory: cmd.businessCategory,
+          ...(taxId ? { taxId, legalIdentityVersion: 1 } : {}),
+        },
       });
+      if (taxId) {
+        await tx.companyLegalIdentityRevision.create({
+          data: {
+            companyId: company.id,
+            legalIdentityVersion: 1,
+            snapshotJson: { taxId, registeredName: null, addressJson: null },
+            changeKind: 'INITIAL_CAPTURE',
+            note: 'Captured during system-admin onboarding',
+            actorUserId: cmd.requestingAdminUserId,
+          },
+        });
+        // The documented legacy mirror patch() also writes; skipping it would leave the tax
+        // profile disagreeing with the company row from the very first day.
+        await tx.companyTaxProfile.upsert({
+          where: { companyId: company.id },
+          create: { companyId: company.id, taxId, updatedByUserId: cmd.requestingAdminUserId },
+          update: { taxId, updatedByUserId: cmd.requestingAdminUserId },
+        });
+      }
 
       const owner = attach
         ? (await tx.user.findUniqueOrThrow({ where: { id: existingUser!.id } }))
@@ -225,6 +272,13 @@ export class CreateCompanyOnboardingUseCase {
         createdByUserId: owner.id,
       });
 
+      // An empty category catalogue is not a blank slate, it is three broken journeys: ใบรับรอง
+      // แทนใบเสร็จ refuses to issue, AI/OCR has nothing to classify into, and every confirmed
+      // expense parks at postingStatus `pending` to fail the eventual backfill with
+      // `expense_account_unmapped:no_category`. Seeded after the chart above because each category
+      // binds to an account in it.
+      const expenseCategories = await bootstrapCompanyExpenseCategories(tx, { companyId: company.id });
+
       // Seed the standard feature package: an explicit row for EVERY canonical entitlement key —
       // parents and submenus alike — so the new company is deny-by-default (the permission
       // resolver strips disabled features' permissions) and never reads as the legacy fail-open
@@ -310,11 +364,13 @@ export class CreateCompanyOnboardingUseCase {
             taxCodeCount: taxConfiguration.definitionCount,
             taxAccountRuleCount: taxConfiguration.accountRuleCount,
             taxReportRuleCount: taxConfiguration.reportRuleCount,
+            expenseCategoryTemplateKey: expenseCategories.templateKey,
+            expenseCategoryCount: expenseCategories.categoryCount,
           },
         },
       });
 
-      return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration };
+      return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
     }, { maxWait: 5_000, timeout: 15_000 });
 
     // M-05 register §6 tenant tripwire. The register defers the s.41 limb (b) "large scale"
@@ -354,6 +410,7 @@ export class CreateCompanyOnboardingUseCase {
       lineLinkUrl: cmd.lineLinkUrl,
       chartOfAccounts: result.chartOfAccounts,
       taxConfiguration: result.taxConfiguration,
+      expenseCategories: result.expenseCategories,
       ...(lineLinkToken && {
         ownerLineLink: buildLineLinkPackage(cmd.apiBaseUrl, lineLinkToken.rawToken, lineLinkToken.expiresAt, this.config.lineLiffId),
       }),

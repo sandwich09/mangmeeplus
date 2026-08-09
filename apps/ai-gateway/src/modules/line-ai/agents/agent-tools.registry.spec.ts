@@ -44,6 +44,17 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
     }
   });
 
+  it('accounting tools admit relation-scoped reads but never permissionless calls', () => {
+    for (const name of [
+      'accounting.get_summary', 'accounting.list_recent_documents',
+      'accounting.get_document_detail', 'accounting.get_receivable_summary',
+    ]) {
+      const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === name)!;
+      assert.equal(hasToolPermissions(tool, ['accounting.document.read_related']), true, name);
+      assert.equal(hasToolPermissions(tool, []), false, name);
+    }
+  });
+
   it('tranche-A registry inputs and subjects match the API adapters', () => {
     const expected: Record<string, { subjects: string[]; required?: string[] }> = {
       'inventory.get_product_detail': { subjects: ['product'], required: ['productId'] },
@@ -165,7 +176,7 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
     const expected: Record<string, { subjects: string[]; permissions: string[]; required?: string[]; optional?: string[] }> = {
       'procurement.get_summary': { subjects: ['procurement'], permissions: ['procurement.purchase_order.read'], optional: ['fromDate', 'toDate', 'branchId'] },
       'procurement.search_suppliers': { subjects: ['supplier'], permissions: ['procurement.supplier.read'], optional: ['search', 'status', 'supplierType', 'page', 'limit'] },
-      'procurement.get_purchase_order_detail': { subjects: ['procurement'], permissions: ['procurement.purchase_order.read'], required: ['purchaseOrderId'] },
+      'procurement.get_purchase_order_detail': { subjects: ['procurement'], permissions: [], required: ['purchaseOrderId'] },
       'ledger.get_period_status': { subjects: ['ledger'], permissions: ['ledger.period.read'], required: ['periodKey'] },
       'ledger.get_report_summary': { subjects: ['ledger'], permissions: ['ledger.report.read', 'ledger.period.read'], required: ['periodKey'], optional: ['reportType'] },
     };
@@ -182,6 +193,8 @@ describe('LINE_TOOL_REGISTRY – drift guard', () => {
       }
     }
     const ledgerReport = LINE_TOOL_REGISTRY.find((tool) => tool.name === 'ledger.get_report_summary')!;
+    const purchaseOrderDetail = LINE_TOOL_REGISTRY.find((tool) => tool.name === 'procurement.get_purchase_order_detail')!;
+    assert.deepEqual(purchaseOrderDetail.anyOfPermissions, ['procurement.purchase_order.read', 'procurement.purchase_order.read_related']);
     assert.equal(hasToolPermissions(ledgerReport, ['ledger.report.read']), false);
     assert.equal(hasToolPermissions(ledgerReport, ['ledger.period.read']), false);
     assert.equal(hasToolPermissions(ledgerReport, ['ledger.report.read', 'ledger.period.read']), true);

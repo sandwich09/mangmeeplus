@@ -8,6 +8,7 @@ type ApiAuthSession = {
   refreshToken?: string;
   expiresIn?: number;
   passwordChangeRequired?: boolean;
+  legalAcceptanceRequired?: boolean;
   companyId?: string | null;
   redirectPath?: string;
   code?: string;
@@ -50,6 +51,9 @@ export async function POST(request: NextRequest) {
   const homePath = resolveHomePath(data.redirectPath, data.companyId);
   const res = NextResponse.json({
     passwordChangeRequired: data.passwordChangeRequired ?? false,
+    // Mixed-version rollout must fail closed: an older API that omits the field has not proved
+    // that this membership accepted the current legal release.
+    legalAcceptanceRequired: data.legalAcceptanceRequired ?? true,
     companyId: data.companyId ?? null,
     redirectPath: homePath,
   });

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -23,6 +23,35 @@ const shadowProbe = {
     flush: async () => { shadowFlushes.push(surface); return {}; },
   }),
 } as any;
+const acceptedLegal = { isRequired: async () => false } as any;
+
+describe('readResponseBodyLimited', () => {
+  it('combines a chunked response within the hard byte cap', async () => {
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(Uint8Array.from([3]));
+        controller.close();
+      },
+    }));
+
+    assert.deepEqual(await readResponseBodyLimited(response, 3), Buffer.from([1, 2, 3]));
+  });
+
+  it('cancels a chunked response as soon as its running total exceeds the cap', async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(Uint8Array.from([3, 4]));
+      },
+      cancel() { cancelled = true; },
+    }));
+
+    assert.equal(await readResponseBodyLimited(response, 3), null);
+    assert.equal(cancelled, true);
+  });
+});
 
 const ROUTED_EXPENSE_DOCUMENT = {
   status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.98,
@@ -46,12 +75,13 @@ function makePrisma(opts: {
 	  aiAssistantOptOutAt?: Date | null;
 	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string } }> }>;
 	  lineCompanyContext?: { companyId: string } | null;
+	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
 	  recentTurns?: any[];
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
 	  branches?: Array<{ name: string }>;
 	  branchFindManyFn?: (args: any) => Promise<Array<{ name: string }>>;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
+	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn } = opts;
   const identityQueries: any[] = [];
   const createdLogs: unknown[] = [];
   const updates: unknown[] = [];
@@ -77,6 +107,7 @@ function makePrisma(opts: {
       }),
       lineWebhookEventLog: {
         findUnique: async () => null,
+        findFirst: async () => previousEventLog,
         create: async (args: unknown) => { createdLogs.push(args); return args; },
         updateMany: async (args: unknown) => { updates.push(args); return { count: 1 }; },
       },
@@ -152,12 +183,14 @@ function makeUseCase(
       malwareScanFn?: (bytes: Buffer) => Promise<void>;
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
+      legalAcceptanceRequired?: boolean;
 	  } = {},
 	) {
   const replies: string[] = [];
   const sentMessages: any[] = [];
   const pushes: Array<{ to: string; text: string; message: any }> = [];
   const auditEvents: any[] = [];
+	  const legalChecks: Array<{ userId: string; companyId: string; membershipId: string }> = [];
 	  const { permissions = ['dashboard.read'], roles = ['STAFF'], branchIds, aiGatewayFn, intakeRouteFn, sendReplyFn, sendPushFn } = opts;
 	  let aiGatewayCalled = false;
 	  const aiGatewayRequests: any[] = [];
@@ -197,12 +230,16 @@ function makeUseCase(
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     { assertClean: opts.malwareScanFn ?? CLEAN_SCANNER.assertClean } as any,
+    { isRequired: async (input: { userId: string; companyId: string; membershipId: string }) => {
+      legalChecks.push(input);
+      return opts.legalAcceptanceRequired ?? false;
+    } } as any,
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
   );
 
-	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, getAiGatewayCalled: () => aiGatewayCalled };
+	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
 	}
 
 const BASE_EVENT = {
@@ -268,6 +305,58 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates[0] as any).data.status, 'forbidden');
   });
 
+  it('preflights legal acceptance with the server-resolved company and membership only', async () => {
+    const { prisma, identityQueries } = makePrisma();
+    const { useCase, legalChecks } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    const result = await useCase.preflightLegalAcceptance({
+      lineUserId: 'line-user-secret',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.deepEqual(result, { status: 'required', companyId: 'company-1' });
+    assert.deepEqual(legalChecks, [{ userId: 'user-1', companyId: 'company-1', membershipId: 'mem-1' }]);
+    assert.equal(identityQueries.length, 1);
+    assert.equal(identityQueries[0].providerChannelId, 'msg-channel-1');
+  });
+
+  it('preflight does not invent a company for an unlinked or unresolved multi-company user', async () => {
+    const unlinked = makePrisma({ identityUserId: null });
+    const unlinkedUseCase = makeUseCase(unlinked.prisma, { legalAcceptanceRequired: true });
+    assert.deepEqual(
+      await unlinkedUseCase.useCase.preflightLegalAcceptance({ lineUserId: 'unknown', messagingChannelId: 'msg-channel-1' }),
+      { status: 'continue' },
+    );
+    assert.equal(unlinkedUseCase.legalChecks.length, 0);
+
+    const multi = makePrisma({
+      memberships: [{ companyId: 'company-1' }, { companyId: 'company-2' }],
+      lineCompanyContext: null,
+    });
+    const multiUseCase = makeUseCase(multi.prisma, { legalAcceptanceRequired: true });
+    assert.deepEqual(
+      await multiUseCase.useCase.preflightLegalAcceptance({ lineUserId: 'line-user-secret', messagingChannelId: 'msg-channel-1' }),
+      { status: 'continue' },
+    );
+    assert.equal(multiUseCase.legalChecks.length, 0);
+  });
+
+  it('preflight honors the explicitly selected company for a multi-company owner', async () => {
+    const { prisma } = makePrisma({
+      memberships: [{ companyId: 'company-1' }, { companyId: 'company-2' }],
+      lineCompanyContext: { companyId: 'company-2' },
+    });
+    const { useCase, legalChecks } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    const result = await useCase.preflightLegalAcceptance({
+      lineUserId: 'line-user-secret',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.deepEqual(result, { status: 'required', companyId: 'company-2' });
+    assert.equal(legalChecks[0]?.companyId, 'company-2');
+  });
+
   // PDPA objection route (M-05 register §3.1): an opted-out user's turn must stop before
   // any model/gateway involvement, on both the text and the media entry paths.
   it('refuses text turns for an opted-out user before any gateway involvement', async () => {
@@ -300,6 +389,49 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(intakeRequests.length, 0);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
     assert.equal((updates.at(-1) as any).data.status, 'ai_opt_out');
+  });
+
+  it('refuses employee text before model routing while legal acceptance is pending', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      legalAcceptanceRequired: true,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-legal-text' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(intakeRequests.length, 0);
+    assert.match(replies[0] ?? '', /ยอมรับข้อกำหนดการใช้งาน/);
+    assert.equal((updates.at(-1) as any).data.status, 'legal_acceptance_required');
+  });
+
+  it('refuses employee media before download, OCR, routing, or storage while acceptance is pending', async () => {
+    const { prisma, updates } = makePrisma();
+    const { useCase, replies, intakeRequests, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload'],
+      legalAcceptanceRequired: true,
+    });
+    let mediaDownloads = 0;
+    (useCase as any).downloadLineMedia = async () => {
+      mediaDownloads += 1;
+      throw new Error('must not download before legal acceptance');
+    };
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-legal-media',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-legal-media',
+      lineMessageId: 'line-msg-legal-media',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    assert.equal(mediaDownloads, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(intakeRequests.length, 0);
+    assert.match(replies[0] ?? '', /รับทราบนโยบายความเป็นส่วนตัว/);
+    assert.equal((updates.at(-1) as any).data.status, 'legal_acceptance_required');
   });
 
   it('denies linked users without line.ai.query and does not call AI Gateway', async () => {
@@ -792,6 +924,51 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.companyId, 'co-2');
   });
 
+  it('switches company from a bare number only while the immediately previous turn is a pending picker', async () => {
+    const { prisma, upserts } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' } },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
+      previousEventLog: {
+        webhookEventId: 'evt-company-list',
+        status: 'company_context_listed',
+        createdAt: new Date(),
+      },
+    });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-bare-number', messageText: '๒' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((upserts[0] as any).update.companyId, 'co-2');
+    assert.match(replies[0] ?? '', /เปลี่ยนบริษัทเป็น บริษัทสอง/);
+  });
+
+  it('keeps a bare number as ordinary AI conversation when no company picker is pending', async () => {
+    const { prisma, upserts } = makePrisma({
+      memberships: [
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' } },
+      ],
+      lineCompanyContext: { companyId: 'co-1' },
+    });
+    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-bare-number', replyText: 'รับทราบว่าเป็นข้อ 2', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 5,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-number-without-picker', messageText: '2' });
+
+    assert.equal(getAiGatewayCalled(), true);
+    assert.equal(upserts.length, 0);
+  });
+
   it('blocks non-owner multi-company LINE context selection', async () => {
     const { prisma } = makePrisma({
       memberships: [
@@ -971,6 +1148,7 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       { apply: async () => ({ candidatesCreated: 0 }) } as any,
       CLEAN_SCANNER,
+    acceptedLegal,
     shadowProbe,
       { execute: async () => { throw new Error('expense table missing'); } } as any,
       { execute: async () => undefined } as any,
@@ -1032,6 +1210,7 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       { apply: async () => ({ candidatesCreated: 0 }) } as any,
       CLEAN_SCANNER,
+    acceptedLegal,
     shadowProbe,
       {
         execute: async (_ctx: any, input: any) => {
@@ -1161,6 +1340,7 @@ describe('ProcessLineWebhookUseCase', () => {
         updateExpense: async (input: any) => input,
       } as any),
       CLEAN_SCANNER,
+    acceptedLegal,
     shadowProbe,
       { execute: async () => ({ expenseId: 'expense-ocr-1', attachmentId: 'att-ocr-1', uploadUrl: 'https://storage.example.com/upload', uploadMethod: 'PUT' }) } as any,
       { execute: async () => ({ id: 'expense-ocr-1' }) } as any,
@@ -1355,6 +1535,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     CLEAN_SCANNER,
+    acceptedLegal,
     shadowProbe,
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,

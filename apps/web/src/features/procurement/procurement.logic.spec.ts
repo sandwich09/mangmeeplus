@@ -21,6 +21,14 @@ describe('visibleProcurementTabs', () => {
     assert.deepEqual(visibleProcurementTabs(['procurement.purchase_order.issue']), []);
     assert.deepEqual(visibleProcurementTabs([]), []);
   });
+
+  it('shows only related document panels without exposing supplier master', () => {
+    assert.deepEqual(visibleProcurementTabs([
+      'procurement.purchase_request.read_related',
+      'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
+    ]), ['pr', 'po', 'gr']);
+  });
 });
 
 describe('parseProcurementTab', () => {

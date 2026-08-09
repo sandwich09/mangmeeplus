@@ -1,6 +1,13 @@
-import { formatThaiTaxId, money, thaiBahtText, wrapText, xml } from './substitute-receipt.logic';
+import { fitToWidth, formatThaiTaxId, money, thaiBahtText, wrapText, xml } from './substitute-receipt.logic';
 
 export const PAYMENT_VOUCHER_TITLE = 'ใบสำคัญรับเงิน';
+
+/**
+ * This voucher prints one size larger than the substitute receipt whose text helpers it
+ * reuses. Without saying so, every value was measured at 15px and laid out at 18px, and a
+ * long payee address ran ~120px past the ruled line and off the sheet.
+ */
+const BODY_FONT_SIZE = 18;
 
 const FULL_THAI_DATE = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
   day: 'numeric',
@@ -82,13 +89,16 @@ function ruledField(
   lineEnd: number,
 ): RuledField {
   const text = value?.trim() ?? '';
-  const lines = text ? wrapText(text, lineEnd - lineStart - 10) : [''];
+  // The first line starts after the label; continuation lines run the full rule, so the
+  // narrower first-line budget is the safe one to wrap every line to.
+  const width = lineEnd - lineStart - 10;
+  const lines = text ? wrapText(text, width, BODY_FONT_SIZE) : [''];
   const lineHeight = 39;
   const markup = `<g data-field="${name}">
       <text x="58" y="${y - 5}">${xml(label)}</text>
       ${lines.map((line, index) => {
     const baseline = y + (index * lineHeight);
-    return `${line ? `<text x="${lineStart + 5}" y="${baseline - 5}">${xml(line)}</text>` : ''}
+    return `${line ? `<text x="${lineStart + 5}" y="${baseline - 5}"${fitToWidth(line, width, BODY_FONT_SIZE)}>${xml(line)}</text>` : ''}
       <line x1="${index === 0 ? lineStart : 58}" y1="${baseline}" x2="${lineEnd}" y2="${baseline}" stroke="#222" stroke-width="1"/>`;
   }).join('\n      ')}
     </g>`;

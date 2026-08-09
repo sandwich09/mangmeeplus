@@ -488,3 +488,29 @@ Owner: "ปิด gap ทั้งหมด... สิทธิ์ส่วนม
 - Owner raised the memory cap to 16 turns (LINE_AI_CONTEXT_MAX_TURNS in contracts; cap tests derive from the constant) and lifted the deploy hold.
 - Prod rollout commit 6a28d81b (fb3af472 + e9f33568 + 16-turn bump): api-web SUCCESSFUL 15:03, ai-gateway SUCCESSFUL 15:05; sole active configs ecs-api-web-6a28d81b / ecs-6a28d81b; LINE_AI_AGENT_RUNTIME=strands-local; web root 200. Migration 20260705150000_item10b_intake_turn_intents applied on boot (rollout success implies clean boot).
 - Live now: company.get_employee_detail (named contact lookups, audited), askUser clarifying questions, model clarifyQuestion on intake CLARIFY, conversation memory incl. intake turns (16-turn/15-min window), context-aware number grounding, read-only boundary guard tests.
+
+## 2026-08-10 Pending company selection accepts a bare number
+
+Status: IMPLEMENTED LOCALLY.
+
+Scope:
+- Exact `เปลี่ยนบริษัท` now opens the deterministic owner company picker alongside `/companies` and `/company`.
+- Picker cards display their stable membership-order number. If the immediately previous webhook outcome asked for or re-displayed that picker and is within the existing 15-minute context window, a bare Arabic or Thai number selects that company.
+- The existing `handleCompanyCommand` path still re-lists active memberships, enforces OWNER policy, and writes `LineCompanyContext`; the model never authorizes or guesses company selection.
+- Without pending picker state, a bare number remains an ordinary AI turn. General follow-up intelligence continues to use the existing permission-filtered 16-turn/15-minute `conversationContext` through intake router and AI Gateway.
+
+Artifacts:
+- `apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.logic.ts`
+- `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts`
+- `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts`
+- Focused specs beside those files.
+- `docs/specs/line-ai-read-only-assistant-spec.md`
+- `docs/specs/line-ai-channel-auth-spec.md`
+
+Verification:
+- `../../node_modules/.bin/tsx --test src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts` from `apps/api`: PASS, 106/106.
+- `../../node_modules/.bin/tsx --test src/modules/line-ai/agents/intent-router.agent.spec.ts src/modules/line-ai/agents/orchestrator-model-loop.agent.spec.ts src/modules/line-ai/agents/response-composer.agent.spec.ts` from `apps/ai-gateway`: PASS, 60/60 (conversation context reaches routing, tool choice, and grounded response composition).
+- `corepack pnpm --filter @watchdog-bms/api typecheck`: BLOCKED by pre-existing unrelated dirty-worktree errors in `substitute-receipt.use-case.spec.ts` and `report.use-cases.spec.ts`; no LINE AI type errors were reported.
+
+Next:
+- Real LINE smoke: send `เปลี่ยนบริษัท`, reply `2` (and `๒`), then ask a normal follow-up question. Confirm the selected company changes only for the pending reply and conversation context still resolves the follow-up.

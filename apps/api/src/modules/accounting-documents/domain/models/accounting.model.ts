@@ -236,6 +236,23 @@ export type CreateDocumentInput = {
   createdByUserId: string;
 };
 
+export type UpdateDocumentInput = {
+  companyId: string;
+  documentId: string;
+  expectedUpdatedAt: Date;
+  updatedByUserId: string;
+  branchId?: string | null;
+  documentDate?: string;
+  dueDate?: string | null;
+  counterpartyId?: string | null;
+  currency?: string;
+  vatMode?: AccountingVatMode;
+  outputTaxCode?: AccountingOutputTaxCode | null;
+  note?: string | null;
+  internalMemo?: string | null;
+  lines?: CreateDocumentLineInput[];
+};
+
 export type CreatePaymentInput = {
   companyId: string;
   branchId?: string;
@@ -258,6 +275,8 @@ export type CreatePaymentInput = {
 export type ListDocumentsFilter = {
   companyId: string;
   documentType?: AccountingDocumentType;
+  documentTypes?: AccountingDocumentType[];
+  relatedUserId?: string;
   status?: AccountingDocumentStatus;
   paymentStatus?: AccountingPaymentStatus;
   postingStatus?: AccountingPostingStatus;

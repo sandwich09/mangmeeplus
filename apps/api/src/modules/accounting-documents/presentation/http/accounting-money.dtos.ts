@@ -60,6 +60,22 @@ export class CreateAccountingDocumentDto implements Omit<CreateDocumentInput, 'c
   lines!: AccountingDocumentLineDto[];
 }
 
+export class UpdateAccountingDocumentDto {
+  @IsDateString({ strict: true }) @Matches(/T/) expectedUpdatedAt!: string;
+  @IsString() @IsOptional() @MaxLength(64) branchId?: string | null;
+  @IsDateString({ strict: true }) @IsOptional() documentDate?: string;
+  @IsDateString({ strict: true }) @IsOptional() dueDate?: string | null;
+  @IsString() @IsOptional() @MaxLength(64) counterpartyId?: string | null;
+  @IsIn(['THB']) @IsOptional() currency?: string;
+  @IsIn(VAT_MODES) @IsOptional() vatMode?: AccountingVatMode;
+  @IsIn(OUTPUT_TAX_CODES) @IsOptional() outputTaxCode?: AccountingOutputTaxCode | null;
+  @IsString() @IsOptional() @MaxLength(1_000) note?: string | null;
+  @IsString() @IsOptional() @MaxLength(1_000) internalMemo?: string | null;
+  @IsArray() @ArrayMaxSize(200) @IsOptional()
+  @ValidateNested({ each: true }) @Type(() => AccountingDocumentLineDto)
+  lines?: AccountingDocumentLineDto[];
+}
+
 export class CreateAccountingPaymentDto implements Omit<CreatePaymentInput, 'companyId' | 'createdByUserId'> {
   @IsString() @IsOptional() @MaxLength(64) branchId?: string;
   @IsIn(PAYMENT_DIRECTIONS) direction!: AccountingPaymentDirection;

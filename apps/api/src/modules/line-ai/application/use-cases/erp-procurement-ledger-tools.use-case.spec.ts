@@ -96,6 +96,11 @@ describe('LINE ERP procurement and ledger tools', () => {
     assert.equal((result.data as any).grandTotalAmount, '107.00');
     assert.equal((result.data as any).lineCount, 25);
     assert.equal((result.data as any).lines.length, 20);
+    const relatedResult = await tool.execute({
+      ...baseCtx,
+      permissions: ['procurement.purchase_order.read_related'],
+    }, { purchaseOrderId: 'po1' });
+    assert.equal((relatedResult.data as any).id, 'po1');
     const crossBranch = new ProcurementGetPurchaseOrderDetailTool({ execute: async () => ({ ...record, branchId: 'b2' }) } as any);
     assert.equal((await crossBranch.execute(baseCtx, { purchaseOrderId: 'po1' })).errorCode, 'BRANCH_SCOPE_DENIED');
   });

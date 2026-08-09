@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
-import { CreateAccountingDocumentDto, CreateAccountingPaymentDto } from './accounting-money.dtos';
+import { CreateAccountingDocumentDto, CreateAccountingPaymentDto, UpdateAccountingDocumentDto } from './accounting-money.dtos';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -27,6 +27,7 @@ describe('H-05 accounting money HTTP DTOs', () => {
   it('accepts valid payment and document payloads', async () => {
     assert.equal((await pipe.transform(validPayment, { type: 'body', metatype: CreateAccountingPaymentDto })).amount, '100.00');
     assert.equal((await pipe.transform(validDocument, { type: 'body', metatype: CreateAccountingDocumentDto })).lines.length, 1);
+    assert.equal((await pipe.transform({ expectedUpdatedAt: '2026-08-09T10:00:00.000Z', note: 'แก้ไข' }, { type: 'body', metatype: UpdateAccountingDocumentDto })).note, 'แก้ไข');
   });
 
   it('rejects negative, zero, non-finite, exponent, precision, and bound overflow money at the boundary', async () => {
@@ -46,5 +47,9 @@ describe('H-05 accounting money HTTP DTOs', () => {
     await rejects(CreateAccountingDocumentDto, { ...validDocument, currency: 'USD' });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, lines: [{ ...validDocument.lines[0], quantity: '0' }] });
     await rejects(CreateAccountingDocumentDto, { ...validDocument, lines: [{ ...validDocument.lines[0], vatAmount: '999.00' }] });
+    await rejects(UpdateAccountingDocumentDto, { note: 'missing version' });
+    await rejects(UpdateAccountingDocumentDto, { expectedUpdatedAt: 'not-a-date', note: 'bad version' });
+    await rejects(UpdateAccountingDocumentDto, { expectedUpdatedAt: '2026-08-09', note: 'version needs an instant' });
+    await rejects(UpdateAccountingDocumentDto, { expectedUpdatedAt: '2026-08-09T10:00:00.000Z', lines: [{ ...validDocument.lines[0], quantity: '0' }] });
   });
 });

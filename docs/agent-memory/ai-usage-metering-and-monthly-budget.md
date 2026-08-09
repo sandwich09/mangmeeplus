@@ -24,8 +24,10 @@ Decisions:
   unknown model prices fail toward the max configured price, never 0.
 - `CompanyAiConfiguration.modelId` becomes nullable (null = inherit) — canonical resolution
   of the open risk flagged in `per-company-ai-budget-override-spec.md` §9.
-- Enforcement is check-before-act with overshoot bounded to in-flight actions; fail-closed
-  (`AI_BUDGET_UNAVAILABLE` ≠ `AI_MONTHLY_BUDGET_EXCEEDED`).
+- Superseded by owner decision 2026-08-10: enforcement now serializes admission per
+  company/Bangkok-month with a crash-safe Redis lease held through metering. Concurrent work gets
+  `AI_BUDGET_BUSY`; overshoot is bounded to the one admitted action. Store/read loss remains
+  fail-closed (`AI_BUDGET_UNAVAILABLE` ≠ `AI_MONTHLY_BUDGET_EXCEEDED`).
 - Discovered during discovery: `ai-gateway-draft.provider.ts` calls
   `/internal/ai/draft-generate` with **no rate limit at all** — it becomes the 5th metered
   seam and gains the budget check.

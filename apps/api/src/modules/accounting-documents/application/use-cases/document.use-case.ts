@@ -15,7 +15,7 @@ import {
   deriveCompatibleOutputTaxCode,
   validateOutputTaxDocument,
 } from '../../domain/logic/accounting-status.logic';
-import type { DocumentRecord, CreateDocumentInput, ListDocumentsFilter, PaginatedDocuments } from '../../domain/models/accounting.model';
+import type { DocumentRecord, CreateDocumentInput, UpdateDocumentInput, ListDocumentsFilter, PaginatedDocuments } from '../../domain/models/accounting.model';
 import type { RequestContext, AccountingDocumentType } from '@watchdog-bms/contracts';
 import type { ResolveTransactionTaxPreviewDto, TransactionTaxComponentPreview, TransactionTaxContext, TransactionTaxSnapshot } from '@watchdog-bms/contracts';
 import { LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
@@ -25,11 +25,17 @@ import { createHash } from 'node:crypto';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 
 function docPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): string {
   const typeKey = documentType.toLowerCase();
   return `accounting.${typeKey}.${action}`;
+}
+
+const DOCUMENT_TYPES: AccountingDocumentType[] = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT', 'TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'];
+
+function hasDocumentPermission(ctx: RequestContext, documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): boolean {
+  return ctx.permissions.includes(`accounting.document.${action}`) || ctx.permissions.includes(docPermission(documentType, action));
 }
 
 @Injectable()
@@ -42,7 +48,7 @@ export class CreateDocumentUseCase {
 
   async execute(ctx: RequestContext, input: Omit<CreateDocumentInput, 'companyId' | 'createdByUserId'>): Promise<DocumentRecord> {
     const perm = docPermission(input.documentType, 'create');
-    if (!ctx.permissions.includes(perm) && !ctx.permissions.includes('accounting.document.create')) {
+    if (!hasDocumentPermission(ctx, input.documentType, 'create')) {
       throw new ForbiddenException(`Missing permission: ${perm}`);
     }
     if (!isBranchInScope(ctx.scopes, input.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
@@ -118,13 +124,162 @@ export class CreateDocumentUseCase {
 }
 
 @Injectable()
+export class UpdateDocumentUseCase {
+  constructor(
+    private readonly repo: PrismaAccountingRepository,
+    private readonly audit: AuditService,
+    private readonly transactionTax: TransactionTaxConfigUseCase,
+  ) {}
+
+  async execute(ctx: RequestContext, input: Omit<UpdateDocumentInput, 'companyId' | 'updatedByUserId'>): Promise<DocumentRecord> {
+    const current = await this.repo.findDocumentById(ctx.companyId, input.documentId, ctx.scopes.branchIds);
+    if (!current) throw new NotFoundException(`Document ${input.documentId} not found`);
+
+    const permission = docPermission(current.documentType, 'update');
+    if (!hasDocumentPermission(ctx, current.documentType, 'update')) {
+      throw new ForbiddenException(`Missing permission: ${permission}`);
+    }
+    if (!isDraftEditable(current.status)) {
+      throw new UnprocessableEntityException(`Only DRAFT documents can be edited; document is ${current.status}`);
+    }
+    if (Number.isNaN(input.expectedUpdatedAt.getTime())) {
+      throw new UnprocessableEntityException('expectedUpdatedAt must be a valid timestamp');
+    }
+
+    const branchId = input.branchId === undefined ? current.branchId : input.branchId ?? undefined;
+    if (!isBranchInScope(ctx.scopes, branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (branchId && !(await this.repo.findActiveBranch(ctx.companyId, branchId))) {
+      throw new NotFoundException('Branch was not found in the current company.');
+    }
+
+    const lines = input.lines ?? (current.lines ?? []).map((line) => ({
+      lineNumber: line.lineNumber,
+      productId: line.productId,
+      skuSnapshot: line.skuSnapshot,
+      description: line.description,
+      unitName: line.unitName,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+      discountAmount: line.discountAmount,
+      vatRate: line.vatRate,
+      whtRate: line.whtRate,
+      taxCategory: line.taxCategory,
+      revenueCategory: line.revenueCategory,
+      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
+      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
+      transactionContext: line.taxSnapshot?.taxContext ?? undefined,
+    }));
+    if (new Set(lines.map((line) => line.lineNumber)).size !== lines.length) {
+      throw new UnprocessableEntityException('Accounting document line numbers must be unique');
+    }
+    const outputTaxCode = input.outputTaxCode !== undefined
+      ? input.outputTaxCode ?? undefined
+      : input.lines ? deriveCompatibleOutputTaxCode(lines) : current.outputTaxCode;
+    const replacement: CreateDocumentInput = {
+      companyId: ctx.companyId,
+      branchId,
+      documentType: current.documentType,
+      documentDate: input.documentDate ?? coerceCivilDate(current.documentDate),
+      dueDate: input.dueDate !== undefined ? input.dueDate ?? undefined : current.dueDate ? coerceCivilDate(current.dueDate) : undefined,
+      counterpartyId: input.counterpartyId !== undefined ? input.counterpartyId ?? undefined : current.counterpartyId,
+      sourceDocumentId: current.sourceDocumentId,
+      sourceDocumentType: current.sourceDocumentType,
+      convertedFromDocumentId: current.convertedFromDocumentId,
+      currency: input.currency ?? current.currency,
+      vatMode: input.vatMode ?? current.vatMode,
+      outputTaxCode,
+      note: input.note !== undefined ? input.note ?? undefined : current.note,
+      internalMemo: input.internalMemo !== undefined ? input.internalMemo ?? undefined : current.internalMemo,
+      lines,
+      createdByUserId: current.createdByUserId,
+    };
+
+    const moneyError = validateAccountingDocumentMoneyInput(replacement);
+    if (moneyError) throw new UnprocessableEntityException(moneyError);
+    const source = (replacement.sourceDocumentId
+      ? await this.repo.findDocumentById(ctx.companyId, replacement.sourceDocumentId, ctx.scopes.branchIds)
+      : undefined) ?? undefined;
+    const taxError = validateOutputTaxDocument(replacement, source);
+    if (taxError) throw new UnprocessableEntityException(taxError);
+    const taxNeutral = ['QUOTATION', 'INVOICE', 'BILLING_NOTE', 'RECEIPT'].includes(replacement.documentType);
+
+    const updated = await this.repo.updateDraftDocument(
+      input.documentId,
+      input.expectedUpdatedAt,
+      replacement,
+      ctx.userId,
+      async (db, draft) => {
+        if (replacement.documentType === 'CREDIT_NOTE' || replacement.documentType === 'DEBIT_NOTE') {
+          if (!source) throw new UnprocessableEntityException(`${replacement.documentType} requires an original TAX_INVOICE`);
+          const sign = replacement.documentType === 'CREDIT_NOTE' ? -1 : 1;
+          const context: TransactionTaxContext = sign === -1 ? 'RETURN_OR_CREDIT' : 'DEBIT_ADJUSTMENT';
+          const inherited = (draft.lines ?? []).map((line) => {
+            const original = source.lines?.find((candidate) => candidate.lineNumber === line.lineNumber);
+            if (!original?.taxSnapshot || !original.taxComponents?.length) {
+              throw new UnprocessableEntityException(`Original line ${line.lineNumber} has no immutable Tax Code snapshot`);
+            }
+            return {
+              lineId: line.id,
+              snapshot: original.taxSnapshot,
+              components: original.taxComponents.map((component) => signedComponent(component, sign, context, {
+                taxBaseAmount: line.lineSubtotalAmount,
+                taxAmount: line.vatAmount,
+                grossAmount: line.lineTotalAmount,
+              })),
+            };
+          });
+          await this.repo.saveInheritedLineTaxSnapshots(ctx.companyId, draft.id, inherited, db);
+          return;
+        }
+        if (taxNeutral) return;
+
+        const resolved = [];
+        for (const line of draft.lines ?? []) {
+          const selected = replacement.lines.find((candidate) => candidate.lineNumber === line.lineNumber);
+          if (!selected?.taxCodeDefinitionId && !selected?.externalTaxCode) continue;
+          resolved.push({
+            lineId: line.id,
+            preview: await this.transactionTax.resolveSourceTax(ctx, {
+              branchId: replacement.branchId,
+              sourceType: 'accounting.document', sourceId: draft.id, sourceLineId: line.id,
+              transactionContext: selected.transactionContext ?? 'DOMESTIC_SALE',
+              documentDate: replacement.documentDate, currency: replacement.currency ?? 'THB',
+              taxCodeDefinitionId: selected.taxCodeDefinitionId, externalTaxCode: selected.externalTaxCode,
+              netAmount: line.lineSubtotalAmount, grossAmount: line.lineTotalAmount,
+              enteredTaxAmount: line.vatAmount, evidenceRefs: selected.evidenceRefs,
+            }, 'DRAFT', db, 'OUTPUT', 'accounting'),
+          });
+        }
+        if (resolved.length) await this.repo.saveLineTaxSnapshots(ctx.companyId, draft.id, resolved, db);
+      },
+    );
+    await this.audit.log({
+      companyId: ctx.companyId,
+      actorUserId: ctx.userId,
+      action: 'accounting.document.update',
+      targetType: 'accounting_document',
+      targetId: updated.id,
+      requestId: ctx.requestId,
+      result: 'SUCCESS',
+      riskLevel: 'MEDIUM',
+      metadataJson: { documentType: updated.documentType, priorUpdatedAt: input.expectedUpdatedAt.toISOString() },
+    });
+    return updated;
+  }
+}
+
+@Injectable()
 export class GetDocumentUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
   async execute(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
-    if (!ctx.permissions.includes('accounting.document.read')) throw new ForbiddenException('Missing permission: accounting.document.read');
     const result = await this.repo.findDocumentById(ctx.companyId, documentId, ctx.scopes.branchIds);
     if (!result) throw new NotFoundException(`Document ${documentId} not found`);
+    const related = ctx.permissions.includes('accounting.document.read_related')
+      && await this.repo.isDocumentRelatedToUser(ctx.companyId, result.id, ctx.userId, ctx.scopes.branchIds);
+    if (!hasDocumentPermission(ctx, result.documentType, 'read') && !related) {
+      throw new ForbiddenException(`Missing permission: ${docPermission(result.documentType, 'read')}`);
+    }
     return result;
   }
 }
@@ -134,8 +289,19 @@ export class ListDocumentsUseCase {
   constructor(private readonly repo: PrismaAccountingRepository) {}
 
   async execute(ctx: RequestContext, filter: Omit<ListDocumentsFilter, 'companyId'>): Promise<PaginatedDocuments> {
-    if (!ctx.permissions.includes('accounting.document.read')) throw new ForbiddenException('Missing permission: accounting.document.read');
-    return this.repo.listDocuments({ ...filter, companyId: ctx.companyId }, ctx.scopes.branchIds);
+    const readableTypes = DOCUMENT_TYPES.filter((documentType) => hasDocumentPermission(ctx, documentType, 'read'));
+    const canReadRelated = ctx.permissions.includes('accounting.document.read_related');
+    const canReadAll = ctx.permissions.includes('accounting.document.read');
+    if (!readableTypes.length && !canReadRelated) throw new ForbiddenException('Missing accounting document read permission');
+    if (filter.documentType && !readableTypes.includes(filter.documentType) && !canReadRelated) {
+      throw new ForbiddenException(`Missing permission: ${docPermission(filter.documentType, 'read')}`);
+    }
+    return this.repo.listDocuments({
+      ...filter,
+      companyId: ctx.companyId,
+      ...(!canReadAll ? { documentTypes: readableTypes } : {}),
+      ...(canReadRelated && !canReadAll ? { relatedUserId: ctx.userId } : {}),
+    }, ctx.scopes.branchIds);
   }
 }
 
@@ -152,11 +318,10 @@ export class IssueDocumentUseCase {
   ) {}
 
   async execute(ctx: RequestContext, documentId: string): Promise<DocumentRecord> {
-    const perm = 'accounting.document.issue';
-    if (!ctx.permissions.includes(perm)) throw new ForbiddenException(`Missing permission: ${perm}`);
-
     const doc = await this.repo.findDocumentById(ctx.companyId, documentId, ctx.scopes.branchIds);
     if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+    const perm = docPermission(doc.documentType, 'issue');
+    if (!hasDocumentPermission(ctx, doc.documentType, 'issue')) throw new ForbiddenException(`Missing permission: ${perm}`);
 
     const transitionError = validateStatusTransition(doc.status, 'ISSUED', doc.documentType);
     if (transitionError) throw new UnprocessableEntityException(transitionError);
@@ -178,8 +343,7 @@ export class IssueDocumentUseCase {
     }
     // Reserve document number
     const seqKey = documentSequenceKey(doc.documentType);
-    const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate());
     const reserved = await this.reserveNumber.execute({
       companyId: ctx.companyId,
       branchId: doc.branchId,
@@ -292,7 +456,7 @@ export class IssueDocumentUseCase {
         requestId: ctx.requestId,
         result: 'SUCCESS',
         riskLevel: 'CRITICAL',
-        metadataJson: { sourceType: 'accounting.document', documentType: doc.documentType, status: 'FINAL', periodKey: doc.documentDate.toISOString().slice(0, 7), checksum, lines: taxFacts },
+        metadataJson: { sourceType: 'accounting.document', documentType: doc.documentType, status: 'FINAL', periodKey: civilPeriodKey(coerceCivilDate(doc.documentDate)), checksum, lines: taxFacts },
       });
       await this.outbox.append('tax.document_tax.finalized', 'accounting_document', documentId, {
         companyId: ctx.companyId,
@@ -301,7 +465,7 @@ export class IssueDocumentUseCase {
         aggregateType: 'accounting_document',
         aggregateId: documentId,
         occurredAt: new Date().toISOString(),
-        data: { sourceType: 'accounting.document', documentType: doc.documentType, periodKey: doc.documentDate.toISOString().slice(0, 7), checksum },
+        data: { sourceType: 'accounting.document', documentType: doc.documentType, periodKey: civilPeriodKey(coerceCivilDate(doc.documentDate)), checksum },
       });
     }
 
@@ -321,10 +485,10 @@ export class VoidDocumentUseCase {
   ) {}
 
   async execute(ctx: RequestContext, documentId: string, reason: string): Promise<DocumentRecord> {
-    if (!ctx.permissions.includes('accounting.document.void')) throw new ForbiddenException('Missing permission: accounting.document.void');
-
     const doc = await this.repo.findDocumentById(ctx.companyId, documentId, ctx.scopes.branchIds);
     if (!doc) throw new NotFoundException(`Document ${documentId} not found`);
+    const perm = docPermission(doc.documentType, 'void');
+    if (!hasDocumentPermission(ctx, doc.documentType, 'void')) throw new ForbiddenException(`Missing permission: ${perm}`);
 
     const voidError = validateVoid(doc.status, reason);
     if (voidError) throw new UnprocessableEntityException(voidError);
@@ -486,13 +650,19 @@ export class ConvertDocumentUseCase {
   constructor(private readonly repo: PrismaAccountingRepository, private readonly audit: AuditService, private readonly outbox: OutboxAppendService) {}
 
   async execute(ctx: RequestContext, sourceDocumentId: string, targetType: AccountingDocumentType): Promise<DocumentRecord> {
-    if (!ctx.permissions.includes('accounting.document.create')) throw new ForbiddenException('Missing permission: accounting.document.create');
-
     const source = await this.repo.findDocumentById(ctx.companyId, sourceDocumentId, ctx.scopes.branchIds);
     if (!source) throw new NotFoundException(`Source document ${sourceDocumentId} not found`);
-    if (source.status !== 'ISSUED') throw new UnprocessableEntityException('Only issued documents can be converted');
+    const related = ctx.permissions.includes('accounting.document.read_related')
+      && await this.repo.isDocumentRelatedToUser(ctx.companyId, source.id, ctx.userId, ctx.scopes.branchIds);
+    if (!hasDocumentPermission(ctx, source.documentType, 'read') && !related) {
+      throw new ForbiddenException(`Missing permission: ${docPermission(source.documentType, 'read')}`);
+    }
+    if (source.status !== 'ISSUED' && source.status !== 'CLOSED') throw new UnprocessableEntityException('Only issued documents can be converted');
     if (source.documentType !== 'QUOTATION') throw new UnprocessableEntityException('Only quotations can be converted');
     if (targetType !== 'INVOICE' && targetType !== 'BILLING_NOTE') throw new UnprocessableEntityException('Quotations can only convert to INVOICE or BILLING_NOTE');
+    if (!hasDocumentPermission(ctx, targetType, 'create')) {
+      throw new ForbiddenException(`Missing permission: ${docPermission(targetType, 'create')}`);
+    }
 
     const lines = (source.lines ?? []).map((l) => ({
       lineNumber: l.lineNumber,
@@ -509,31 +679,32 @@ export class ConvertDocumentUseCase {
       revenueCategory: l.revenueCategory,
     }));
 
-    const converted = await this.repo.createDocument({
+    const result = await this.repo.convertQuotation(source.id, source.updatedAt, {
       companyId: ctx.companyId,
       branchId: source.branchId,
       documentType: targetType,
       documentDate: source.documentDate.toISOString().split('T')[0],
       dueDate: source.dueDate?.toISOString().split('T')[0],
       counterpartyId: source.counterpartyId,
+      convertedFromDocumentId: source.id,
       currency: source.currency,
       vatMode: source.vatMode,
       outputTaxCode: undefined,
       note: source.note,
       createdByUserId: ctx.userId,
       lines,
-    });
+    }, ctx.userId);
+    const converted = result.document;
 
-    // Mark source document with conversion link
-    await this.repo.updateDocumentStatus(ctx.companyId, sourceDocumentId, 'CLOSED', ctx.userId);
+    if (result.didConvert) {
+      void this.outbox.append('accounting.document.converted', 'accounting_document', sourceDocumentId, {
+        companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
+        aggregateType: 'accounting_document', aggregateId: sourceDocumentId, occurredAt: new Date().toISOString(),
+        data: { sourceDocumentId, targetDocumentId: converted.id, targetType },
+      });
 
-    void this.outbox.append('accounting.document.converted', 'accounting_document', sourceDocumentId, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'accounting_document', aggregateId: sourceDocumentId, occurredAt: new Date().toISOString(),
-      data: { sourceDocumentId, targetDocumentId: converted.id, targetType },
-    });
-
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.document.convert', targetType: 'accounting_document', targetId: sourceDocumentId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { targetType, targetDocumentId: converted.id } });
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'accounting.document.convert', targetType: 'accounting_document', targetId: sourceDocumentId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { targetType, targetDocumentId: converted.id } });
+    }
 
     return converted;
   }

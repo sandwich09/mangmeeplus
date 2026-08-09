@@ -80,7 +80,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     iconKey: 'DocsIcon',
     parentFeatureKey: 'sales_documents',
     entitlementKeys: ['sales_documents'],
-    gatePermissions: ['accounting.document.read'],
+    gatePermissions: ['accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read'],
     status: 'planned',
   },
   {
@@ -127,6 +127,9 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
       'procurement.purchase_request.read',
       'procurement.purchase_order.read',
       'procurement.goods_receipt.read',
+      'procurement.purchase_request.read_related',
+      'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
     ],
     status: 'ready',
   },
@@ -166,6 +169,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     entitlementKeys: ['expenses'],
     gatePermissions: [
       'expense.read',
+      'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
       'expense.create',
@@ -187,6 +191,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     entitlementKeys: ['reimbursement'],
     gatePermissions: [
       'reimbursement.read',
+      'reimbursement.read_related',
       'reimbursement.read_own',
       'reimbursement.approve',
       'reimbursement.finance_review',
@@ -210,7 +215,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     iconKey: 'DollarLineIcon',
     parentFeatureKey: 'sales_documents',
     entitlementKeys: ['sales_documents'],
-    gatePermissions: ['accounting.document.read', 'accounting.invoice.read'],
+    gatePermissions: ['accounting.document.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read', 'accounting.debit_note.read'],
     status: 'planned',
   },
   {
@@ -243,6 +248,8 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     gatePermissions: [
       'procurement.vendor_bill.read',
       'procurement.supplier_payment.read',
+      'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
       'procurement.ap.report',
     ],
     status: 'ready',

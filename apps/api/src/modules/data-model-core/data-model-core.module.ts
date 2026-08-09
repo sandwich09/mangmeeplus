@@ -4,6 +4,7 @@ import { LoggerModule } from '../../common/logger/logger.module';
 import { PrismaBranchRepository } from './infrastructure/repositories/prisma-branch.repository';
 import { PrismaOutboxRepository } from './infrastructure/repositories/prisma-outbox.repository';
 import { OutboxAppendService } from './application/services/outbox-append.service';
+import { ObjectVersionCleanupService } from './application/services/object-version-cleanup.service';
 import { PrismaAttachmentRepository } from './infrastructure/repositories/prisma-attachment.repository';
 import { PrismaDocumentSequenceRepository } from './infrastructure/repositories/prisma-document-sequence.repository';
 import { LocalStorageAdapter } from './infrastructure/storage/local-storage.adapter';
@@ -32,18 +33,28 @@ import { CompanyVatRegistrationUseCase } from './application/use-cases/company-v
 import { AttachmentController } from './presentation/http/attachment.controller';
 import { DocumentSequenceController } from './presentation/http/document-sequence.controller';
 import { LocalStorageController } from './presentation/http/local-storage.controller';
+import { ObjectVersionCleanupInternalController } from './presentation/http/object-version-cleanup-internal.controller';
 import { AttachmentMalwareScanner } from './infrastructure/attachment-malware-scanner';
 
 @Module({
   // LoggerModule supplies LOGGER_TOKEN for the outbox.append.failed event (L-10).
   imports: [AuditModule, LoggerModule],
-  controllers: [BranchController, CompanyIdentityController, CompanyVatRegistrationController, AttachmentController, DocumentSequenceController, LocalStorageController],
+  controllers: [
+    BranchController,
+    CompanyIdentityController,
+    CompanyVatRegistrationController,
+    AttachmentController,
+    DocumentSequenceController,
+    LocalStorageController,
+    ObjectVersionCleanupInternalController,
+  ],
   providers: [
     CompanyIdentityUseCase,
     CompanyVatRegistrationUseCase,
     PrismaBranchRepository,
     PrismaOutboxRepository,
     OutboxAppendService,
+    ObjectVersionCleanupService,
     PrismaAttachmentRepository,
     PrismaDocumentSequenceRepository,
     LocalStorageAdapter,
@@ -82,6 +93,7 @@ import { AttachmentMalwareScanner } from './infrastructure/attachment-malware-sc
     PrismaAttachmentRepository,
     PrismaDocumentSequenceRepository,
     OutboxAppendService,
+    ObjectVersionCleanupService,
     PrismaOutboxRepository,
     // Read by the expenses capture policy, so both sides answer from the same interval accessor.
     CompanyVatRegistrationUseCase,

@@ -128,12 +128,28 @@ export function canUploadSignedCopy(detail: any, userId: string, permissions: re
     || permissions.includes('reimbursement.payment.record');
 }
 
+/** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
+export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
+  const isRequester = detail?.requesterUserId === userId;
+  const status = String(detail?.status ?? '');
+  return {
+    canEditDraft: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.update_own_draft'),
+    canSubmit: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
+    canCancel: isRequester
+      && permissions.includes('reimbursement.cancel_own')
+      && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
+  };
+}
+
 /** Stable API error codes → Thai. Unknown codes are shown as-is (see `errorMessage`). */
 export const ERROR_CODE_LABELS: Record<string, string> = {
   missing_receipt: 'ต้องแนบใบเสร็จให้ครบทุกรายการ หรือระบุเหตุผลที่ไม่มีใบเสร็จ',
   missing_receipt_reason_required: 'มีรายการที่ไม่ได้แนบใบเสร็จ ต้องระบุ "เหตุผลที่ไม่มีใบเสร็จ" ในคำขอก่อนส่งอนุมัติ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
-  self_approval_denied: 'ไม่สามารถอนุมัติคำขอของตนเองได้',
+  // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
+  // self-approval had no reason to look for the switch. Quotes the toggle's own label verbatim —
+  // a message that paraphrases a control is a message you cannot search the settings page with.
+  self_approval_denied: 'ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน — เปิดได้ที่ ตั้งค่าเบิกจ่าย › "อนุญาตให้อนุมัติคำขอตนเอง"',
   stale_approval_snapshot: 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ',
   expense_already_claimed: 'ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',
   attachment_already_claimed: 'ใบเสร็จนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',

@@ -40,6 +40,29 @@ describe('payment voucher', () => {
     assert.doesNotMatch(svg, /null|undefined/);
   });
 
+  it('wraps a long payee address instead of running past the ruled line', () => {
+    // This sheet prints at 18px but reuses the substitute receipt's 15px-calibrated text
+    // helpers, so an unwrapped address used to run ~120px past its rule and off the page.
+    const address = 'เลขที่ 199/45 อาคารเอ็มไพร์ทาวเวอร์ ชั้น 32 ถนนสาทรใต้ แขวงยานนาวา เขตสาทร กรุงเทพมหานคร 10120';
+    const svg = renderPaymentVoucherSvg({
+      companyName: 'บริษัท ทดสอบ จำกัด',
+      paymentDate: '2026-08-06T00:00:00.000Z',
+      payeeName: 'สมหญิง ใจดี',
+      payeeAddress: address,
+      payeeTaxId: '1234567890123',
+      expenseDescription: 'ค่าบริการบำรุงรักษาระบบปรับอากาศและระบบระบายอากาศประจำไตรมาสที่ 3 ปีงบประมาณ 2569',
+      amount: '65.25',
+    }).toString('utf8');
+
+    const group = /<g data-field="payee-address">([\s\S]*?)<\/g>/.exec(svg)?.[1] ?? '';
+    const printed = [...group.matchAll(/<text [^>]*>([^<]*)<\/text>/g)].map((match) => match[1]!);
+    assert.ok(printed.length > 2, `the address should wrap onto its own ruled lines, got ${JSON.stringify(printed)}`);
+    // The label is printed first; the rest is the wrapped value. Each wrapped line is trimmed,
+    // so compare with whitespace removed — no character of the address may be lost.
+    const strip = (value: string) => value.replace(/\s+/g, '');
+    assert.equal(strip(printed.slice(1).join('')), strip(address));
+  });
+
   it('carries enough rendered ink to pass the existing PDF guard', async () => {
     const svg = renderPaymentVoucherSvg({
       companyName: 'บริษัท ทดสอบ จำกัด',

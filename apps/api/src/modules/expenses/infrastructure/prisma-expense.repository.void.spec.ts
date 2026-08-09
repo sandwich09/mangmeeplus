@@ -1,7 +1,10 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
-import { PrismaExpenseRepository } from './prisma-expense.repository';
+import {
+  PrismaExpenseRepository,
+  SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+} from './prisma-expense.repository';
 
 // H-04 (expenses) closure evidence: void must be a true reversal — the status
 // claim, payable zeroing, and reversing journal are one transaction, repeated
@@ -12,6 +15,7 @@ type Row = Record<string, any>;
 
 function matches(row: Row, where: Row): boolean {
   return Object.entries(where).every(([key, cond]) => {
+    if (cond instanceof Date && row[key] instanceof Date) return row[key].getTime() === cond.getTime();
     if (cond && typeof cond === 'object' && !Array.isArray(cond) && !(cond instanceof Date)) {
       if ('not' in cond) return row[key] !== cond.not;
       if ('in' in cond) return (cond.in as any[]).includes(row[key]);
@@ -26,14 +30,18 @@ function matches(row: Row, where: Row): boolean {
 // same store; rollback semantics are covered by the live-DB verification run.
 function fakeClient(seed: {
   expenses?: Row[]; expenseLines?: Row[];
+  expensePayments?: Row[];
   journalEntries?: Row[]; journalLines?: Row[]; periods?: Row[]; taxPeriods?: Row[];
   substituteEvidence?: Row[];
+  documentNumbers?: Row[];
 }) {
   const s = {
     expenses: seed.expenses ?? [], expenseLines: seed.expenseLines ?? [],
+    expensePayments: seed.expensePayments ?? [],
     journalEntries: seed.journalEntries ?? [], journalLines: seed.journalLines ?? [],
     periods: seed.periods ?? [], taxPeriods: seed.taxPeriods ?? [],
     substituteEvidence: seed.substituteEvidence ?? [],
+    documentNumbers: seed.documentNumbers ?? [],
   };
   let idSeq = 0;
   const table = (rows: Row[]) => ({
@@ -87,10 +95,12 @@ function fakeClient(seed: {
   return {
     state: s,
     expenseRecord,
+    expensePayment: table(s.expensePayments),
     accountingPeriod: table(s.periods),
     taxPeriod: table(s.taxPeriods),
     journalEntry,
     expenseSubstituteReceiptEvidence: table(s.substituteEvidence),
+    documentNumber: table(s.documentNumbers),
   };
 }
 
@@ -188,6 +198,27 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     assert.ok(Object.values(postedNet).every((v) => Math.abs(v) < 0.0001), `net must be zero: ${JSON.stringify(postedNet)}`);
   });
 
+  it('retires the issued substitute certificate and its running number with the expense', async () => {
+    client.state.substituteEvidence.push({
+      id: 'evidence_1', companyId: CO, expenseId: 'exp_1', status: 'ISSUED',
+      documentNumber: 'SRC-202607-00001', artifactAttachmentId: 'artifact_1',
+    });
+    client.state.documentNumbers.push({
+      id: 'number_1', companyId: CO, ownerType: 'expense_substitute_receipt', ownerId: 'evidence_1',
+      documentNumber: 'SRC-202607-00001', status: 'COMMITTED',
+    });
+
+    await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1');
+
+    const evidence = client.state.substituteEvidence[0];
+    assert.equal(evidence.status, 'SUPERSEDED');
+    assert.equal(evidence.supersedeReason, SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON);
+    assert.ok(evidence.supersededAt instanceof Date);
+    const number = client.state.documentNumbers[0];
+    assert.equal(number.status, 'VOIDED');
+    assert.equal(number.voidedAt.getTime(), evidence.supersededAt.getTime());
+  });
+
   it('reverses both the accrual and the settlement journals when the paid expense was fully posted', async () => {
     // GAP-07: a paid, fully-posted expense carries an accrual (expense.record) and
     // a settlement (expense.payment) journal; the void reverses both atomically.
@@ -222,6 +253,32 @@ describe('voidExpenseTrueReversal (H-04)', () => {
       postedNet[l.accountId] = (postedNet[l.accountId] ?? 0) + Number(l.debitAmount) - Number(l.creditAmount);
     }
     assert.ok(Object.values(postedNet).every((v) => Math.abs(v) < 0.0001), `net must be zero: ${JSON.stringify(postedNet)}`);
+  });
+
+  it('reverses every partial-payment journal and voids the append-only payment history', async () => {
+    client.state.expensePayments.push(
+      { id: 'pay_1', companyId: CO, expenseId: 'exp_1', status: 'RECORDED', postingStatus: 'posted', paidAt: NOW, createdAt: NOW },
+      { id: 'pay_2', companyId: CO, expenseId: 'exp_1', status: 'RECORDED', postingStatus: 'posted', paidAt: NOW, createdAt: new Date(NOW.getTime() + 1) },
+    );
+    for (const [id, amount] of [['pay_1', '20.0000'], ['pay_2', '30.0000']] as const) {
+      client.state.journalEntries.push({
+        id: `je_${id}`, companyId: CO, periodId: 'p_1', entryNumber: `JV-${id}`, entryType: 'GENERATED',
+        sourceType: 'expense.payment', sourceId: id, status: 'POSTED', entryDate: NOW,
+      });
+      client.state.journalLines.push(
+        { id: `jl_${id}_1`, journalEntryId: `je_${id}`, companyId: CO, accountId: 'acc_payable', lineNumber: 1, description: 'จ่ายชำระเจ้าหนี้', debitAmount: amount, creditAmount: '0.0000', currency: 'THB', taxCode: null, branchId: null },
+        { id: `jl_${id}_2`, journalEntryId: `je_${id}`, companyId: CO, accountId: 'acc_cash', lineNumber: 2, description: 'จ่ายเงิน', debitAmount: '0.0000', creditAmount: amount, currency: 'THB', taxCode: null, branchId: null },
+      );
+    }
+
+    const result = await repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'บันทึกผิดรายการ', 'JV-REV-1', [
+      { paymentId: 'pay_1', reversalEntryNumber: 'JV-REV-2' },
+      { paymentId: 'pay_2', reversalEntryNumber: 'JV-REV-3' },
+    ]);
+
+    assert.deepEqual(result.paymentReversalEntryIds.map((entry) => entry.paymentId), ['pay_1', 'pay_2']);
+    assert.equal(client.state.journalEntries.filter((entry: any) => entry.entryType === 'REVERSAL').length, 3);
+    assert.ok(client.state.expensePayments.every((payment: any) => payment.status === 'VOIDED' && payment.postingStatus === 'reversed'));
   });
 
   it('reverses only the accrual leg when the settlement was never posted', async () => {
@@ -325,8 +382,7 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     assert.equal(client.state.journalEntries.length, 0);
     const expense = client.state.expenses[0];
     assert.equal(expense.status, 'VOIDED');
-    // postingStatus stays truthful when nothing was ever posted.
-    assert.equal(expense.postingStatus, 'pending');
+    assert.equal(expense.postingStatus, 'not_required');
   });
 });
 
@@ -364,5 +420,43 @@ describe('updateExpense payee taxpayer class', () => {
       () => repo.updateExpense({ id: 'exp_1', companyId: CO, vendorNameSnapshot: 'ร้านใหม่' } as any),
       ConflictException,
     );
+  });
+});
+
+describe('updateExpense optimistic concurrency', () => {
+  it('updates only the version the reviewer loaded and runs dependent writes in the same transaction', async () => {
+    const seed = { expenses: [{ id: 'exp_1', companyId: CO, status: 'DRAFT', updatedAt: NOW, note: 'old' }] };
+    const client = makeClient(seed);
+    const repo = new PrismaExpenseRepository({ client } as any);
+    let callbackClient: unknown;
+
+    await repo.updateExpense({
+      id: 'exp_1', companyId: CO, updatedByUserId: 'u1', expectedUpdatedAt: new Date(NOW), note: 'new',
+    } as any, async (tx) => { callbackClient = tx; });
+
+    assert.equal(client.state.expenses[0].note, 'new');
+    assert.equal(callbackClient, client);
+  });
+
+  it('returns a stable conflict and skips dependent writes when the loaded version is stale', async () => {
+    const seed = { expenses: [{ id: 'exp_1', companyId: CO, status: 'DRAFT', updatedAt: NOW, note: 'current' }] };
+    const client = makeClient(seed);
+    const repo = new PrismaExpenseRepository({ client } as any);
+    let callbackCalled = false;
+
+    await assert.rejects(
+      () => repo.updateExpense({
+        id: 'exp_1', companyId: CO, updatedByUserId: 'u1',
+        expectedUpdatedAt: new Date('2026-07-17T00:00:00.000Z'), note: 'stale overwrite',
+      } as any, async () => { callbackCalled = true; }),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException);
+        assert.equal((error.getResponse() as any).code, 'EXPENSE_UPDATE_CONFLICT');
+        return true;
+      },
+    );
+
+    assert.equal(client.state.expenses[0].note, 'current');
+    assert.equal(callbackCalled, false);
   });
 });

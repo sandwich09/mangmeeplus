@@ -5,7 +5,12 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/common/components/button';
 import { sanitizeNextPath } from '@/common/auth/middleware.logic';
-import { RECOVERY_PARAM, recoveryReturnUrl, shouldAttemptSessionRecovery } from '@/common/auth/session-gate.logic';
+import {
+  legalAcceptancePath,
+  RECOVERY_PARAM,
+  recoveryReturnUrl,
+  shouldAttemptSessionRecovery,
+} from '@/common/auth/session-gate.logic';
 import { trimmed } from '@/common/forms/trim';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useLocale } from '@/common/i18n/use-locale';
@@ -171,12 +176,18 @@ function LoginForm() {
       const result = await loginWithPassword(trimmed(identifier), trimmed(password), remember);
 
       if (result.passwordChangeRequired) {
-        rememberPendingRedirect(result);
+        rememberPendingRedirect({
+          ...result,
+          redirectPath: result.legalAcceptanceRequired !== false
+            ? legalAcceptancePath(nextPath ?? result.redirectPath, result.companyId)
+            : (nextPath ?? result.redirectPath),
+        });
         window.location.assign('/change-password');
         return;
       }
 
-      window.location.assign(nextPath ?? result.redirectPath ?? '/');
+      const target = nextPath ?? result.redirectPath ?? '/';
+      window.location.assign(result.legalAcceptanceRequired !== false ? legalAcceptancePath(target, result.companyId) : target);
     } catch (nextError) {
       setError(
         localizedErrorMessage(nextError, locale, {
@@ -198,7 +209,8 @@ function LoginForm() {
     setError(null);
     try {
       const result = await loginAsDevOwner();
-      window.location.assign(nextPath ?? result.redirectPath ?? '/');
+      const target = nextPath ?? result.redirectPath ?? '/';
+      window.location.assign(result.legalAcceptanceRequired !== false ? legalAcceptancePath(target, result.companyId) : target);
     } catch (nextError) {
       setError(localizedErrorMessage(nextError, locale, { fallback: 'auth.login.error.failed' }));
       setLoading(false);
@@ -361,10 +373,14 @@ function LoginForm() {
             </button>
           ) : null}
 
-          {/* PDPA notice (M-05 register): the notice must be reachable from the app's front door. */}
-          <p className="mt-6 text-center text-xs text-gray-400">
-            <Link href="/privacy" className="underline hover:text-gray-600">นโยบายความเป็นส่วนตัว</Link>
-          </p>
+          {/* Public legal notices must remain reachable before authentication. */}
+          <nav aria-label="เอกสารทางกฎหมาย" className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-gray-400">
+            <Link href="/privacy" className="underline hover:text-gray-600">ประกาศความเป็นส่วนตัว</Link>
+            <span aria-hidden>·</span>
+            <Link href="/terms" className="underline hover:text-gray-600">ข้อกำหนดการใช้งาน</Link>
+            <span aria-hidden>·</span>
+            <Link href="/data-deletion" className="underline hover:text-gray-600">การลบข้อมูล</Link>
+          </nav>
         </div>
       </div>
 

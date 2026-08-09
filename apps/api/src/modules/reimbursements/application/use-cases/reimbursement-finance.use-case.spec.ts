@@ -126,6 +126,22 @@ describe('RecordReimbursementPaymentUseCase (MVP full-payment)', () => {
     assert.ok(detail);
   });
 
+  it('reserves the payment number in the Bangkok month of the payment instant', async () => {
+    const req = financeReviewedRequest();
+    let reservedPeriod: string | undefined;
+    const capturingReserve = { execute: async (input: any) => {
+      reservedPeriod = input.periodKey;
+      return { id: 'seq-1', documentNumber: 'RBPAY-202609-000001' };
+    } } as any;
+    const uc = new RecordReimbursementPaymentUseCase(fakeRepo(req), noopAudit, noopOutbox, capturingReserve, commit);
+
+    await uc.execute(ctx(perms), 'rb-1', {
+      paidAmount: '500.0000', paymentMethod: 'CASH', paidAt: '2026-08-31T19:00:00.000Z',
+    });
+
+    assert.equal(reservedPeriod, '2026-09');
+  });
+
   it('stores a source ref carrying the real payment id for item 13', async () => {
     const req = financeReviewedRequest();
     const repo = fakeRepo(req);

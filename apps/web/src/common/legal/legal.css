@@ -1,0 +1,1332 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Legal / PDPA document typography — /privacy, /terms, /data-deletion.
+
+   These pages are read, not operated, so they are set as a document rather than a
+   dashboard: one continuous sheet divided by hairlines, a column sized to be the
+   measure, and Thai leading loose enough for upper/lower vowel and tone marks.
+   Every colour resolves to a design token; nothing new is invented here.
+
+   All selectors are `doc-` prefixed because this file is imported globally.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.doc {
+  /* A green-biased neutral, a step deeper than --color-page-bg, so the white sheet
+     reads as a sheet instead of dissolving into the background. */
+  --doc-ground: #eef2ec;
+  --doc-sheet: #ffffff;
+  --doc-ink: var(--color-gray-900);
+  --doc-body: var(--color-gray-700);
+  --doc-soft: var(--color-gray-500);
+  --doc-faint: var(--color-gray-400);
+  --doc-rule: var(--color-gray-200);
+  --doc-rule-soft: var(--color-gray-100);
+  --doc-accent: var(--color-brand-700);
+  --doc-accent-deep: var(--color-brand-900);
+  --doc-accent-wash: var(--color-brand-25);
+  --doc-gold: var(--color-gold-500);
+
+  /* Type scale. Body sits at 17px: Thai diacritics lose definition below 16px, and
+     14px body text was a large part of why these pages felt like a form. */
+  --doc-text-xs: 0.75rem;
+  --doc-text-sm: 0.8125rem;
+  --doc-text-base: 0.9375rem;
+  --doc-text-body: 1.0625rem;
+  --doc-text-lg: 1.25rem;
+  --doc-text-xl: 1.5rem;
+  --doc-text-2xl: 2rem;
+  --doc-text-3xl: 2.5rem;
+
+  --doc-leading-body: 1.9;
+
+  min-height: 100dvh;
+  background: var(--doc-ground);
+  color: var(--doc-body);
+  font-size: var(--doc-text-body);
+}
+
+/* Latin-only runs — numerals, eyebrows, the wordmark. Outfit already leads the brand
+   stack; naming it explicitly keeps these from inheriting a Thai-first override. */
+.doc-display {
+  font-family: 'Outfit', var(--font-family-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Masthead ──────────────────────────────────────────────────────────────────
+   Deliberately slim and quiet: the title plate below is the page's opening
+   statement, so the chrome above it should not compete. */
+.doc-mast {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--doc-rule);
+  background: rgb(255 255 255 / 88%);
+  backdrop-filter: blur(14px);
+}
+
+.doc-mast-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 0.875rem 1.25rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-mast-inner {
+    padding-inline: 2rem;
+  }
+}
+
+.doc-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.625rem;
+  color: var(--doc-ink);
+  text-decoration: none;
+}
+
+.doc-wordmark-glyph {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: var(--doc-accent-deep);
+}
+
+.doc-wordmark-text {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Document switcher — an underline rail, not a pill group. Pills read as filter
+   controls; these are three sibling documents, so they get tabs. */
+.doc-switch {
+  display: flex;
+  max-width: 100%;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.doc-switch::-webkit-scrollbar {
+  display: none;
+}
+
+.doc-switch-item {
+  white-space: nowrap;
+  /* The indicator is the element's own bottom border rather than a pseudo-element
+     offset to the masthead's edge — that coupling put the rule outside the bar. */
+  border-bottom: 2px solid transparent;
+  padding: 0.375rem 0.125rem 0.3125rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.doc-switch-item + .doc-switch-item {
+  margin-left: 1.375rem;
+}
+
+.doc-switch-item:hover {
+  border-bottom-color: var(--doc-rule);
+  color: var(--doc-ink);
+}
+
+.doc-switch-item[aria-current='page'] {
+  border-bottom-color: var(--doc-accent);
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+}
+
+.doc-switch-label-short {
+  display: none;
+}
+
+/* Keep all three document names readable on a phone. At the base size the active
+   third tab began off-screen, so a reader could not tell which page was open. */
+@media (max-width: 39.999rem) {
+  .doc-switch-label-long {
+    display: none;
+  }
+
+  .doc-switch-label-short {
+    display: inline;
+  }
+
+  .doc-switch-item + .doc-switch-item {
+    margin-left: 0.5rem;
+  }
+}
+
+/* Reading progress — a hairline on the masthead's own bottom edge. A long legal
+   document is committing to read; showing how much is left is a real affordance. */
+.doc-progress {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: -1px;
+  height: 2px;
+  width: var(--doc-progress, 0%);
+  background: linear-gradient(90deg, var(--doc-accent) 0%, var(--color-brand-400) 100%);
+  transition: width 0.12s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-progress {
+    transition: none;
+  }
+}
+
+/* ── Shell ───────────────────────────────────────────────────────────────────── */
+.doc-main {
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-main {
+    padding: 2.25rem 2rem 5rem;
+  }
+}
+
+.doc-columns {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+@media (min-width: 64rem) {
+  .doc-columns {
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: 2.5rem;
+    margin-top: 2.25rem;
+  }
+}
+
+/* ── Title plate ───────────────────────────────────────────────────────────────
+   Set as a title page, not a hero: eyebrow, title, standfirst, then a colophon row
+   of the document's own legal metadata. The old version's blurred colour blobs are
+   gone; the surface is a flat brand ground dithered by the shared grain overlay so
+   it does not band. */
+.doc-plate {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: var(--doc-accent-deep);
+  color: #fff;
+  padding: 2.25rem 1.5rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-plate {
+    border-radius: 1.5rem;
+    padding: 3.25rem 3rem 2.75rem;
+  }
+}
+
+/* A single hairline of gold across the top edge — the one warm note on the page,
+   and the same accent the wordmark's "มี" carries. */
+.doc-plate::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--doc-gold) 0%, var(--color-gold-300) 38%, transparent 88%);
+}
+
+.doc-plate-body {
+  position: relative;
+  max-width: 44rem;
+}
+
+.doc-eyebrow {
+  margin: 0;
+  color: var(--color-brand-200);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.doc-title {
+  margin: 0.875rem 0 0;
+  color: #fff;
+  font-size: var(--doc-text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.22;
+  text-wrap: balance;
+}
+
+@media (min-width: 40rem) {
+  .doc-title {
+    font-size: var(--doc-text-3xl);
+  }
+}
+
+.doc-standfirst {
+  margin: 1rem 0 0;
+  max-width: 38rem;
+  color: rgb(255 255 255 / 76%);
+  font-size: var(--doc-text-base);
+  line-height: 1.85;
+}
+
+@media (min-width: 40rem) {
+  .doc-standfirst {
+    font-size: var(--doc-text-body);
+  }
+}
+
+/* Colophon — the document's identity, set as a data row with hairline separators.
+   Labels are keys, values are facts; this is the one place tabular figures matter. */
+.doc-colophon {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2rem;
+  margin-top: 2rem;
+  border-top: 1px solid rgb(255 255 255 / 16%);
+  padding-top: 1.25rem;
+}
+
+.doc-colophon-item {
+  min-width: 0;
+}
+
+.doc-colophon-label {
+  margin: 0;
+  color: rgb(255 255 255 / 55%);
+  font-size: var(--doc-text-xs);
+  font-weight: 500;
+}
+
+.doc-colophon-value {
+  margin: 0.3125rem 0 0;
+  color: #fff;
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Rail ────────────────────────────────────────────────────────────────────── */
+.doc-rail {
+  align-self: start;
+}
+
+@media (min-width: 64rem) {
+  .doc-rail {
+    position: sticky;
+    top: 5.5rem;
+    max-height: calc(100dvh - 7.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
+
+.doc-rail-label {
+  margin: 0 0 0.75rem;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+}
+
+.doc-toc {
+  display: flex;
+  flex-direction: column;
+  /* The rail's own hairline runs the full height; the active marker sits on it. */
+  border-left: 1px solid var(--doc-rule);
+}
+
+.doc-toc-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.375rem minmax(0, 1fr);
+  gap: 0.625rem;
+  padding: 0.4375rem 0.5rem 0.4375rem 0.875rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.5;
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+
+.doc-toc-item::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -1px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.16s ease;
+}
+
+.doc-toc-num {
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.75;
+  transition: color 0.16s ease;
+}
+
+.doc-toc-item:hover {
+  color: var(--doc-ink);
+}
+
+.doc-toc-item:hover .doc-toc-num {
+  color: var(--doc-accent);
+}
+
+.doc-toc-item[data-active='true'] {
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+}
+
+.doc-toc-item[data-active='true']::before {
+  background: var(--doc-accent);
+}
+
+.doc-toc-item[data-active='true'] .doc-toc-num {
+  color: var(--doc-accent);
+}
+
+/* Contact block — a colophon under a hairline, not another tinted card. */
+.doc-rail-contact {
+  margin-top: 1.75rem;
+  border-top: 1px solid var(--doc-rule);
+  padding-top: 1rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+  line-height: 1.7;
+}
+
+.doc-rail-mail {
+  color: var(--doc-accent);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+}
+
+.doc-rail-mail:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+.doc-rail-contact-title {
+  margin: 0 0 0.375rem;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+}
+
+/* On narrow screens the full vertical contents list pushed the document several
+   viewports below its title. Preserve every anchor in one compact, scrollable rail. */
+@media (max-width: 63.999rem) {
+  .doc-rail {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .doc-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .doc-toc {
+    width: max-content;
+    min-width: 100%;
+    flex-direction: row;
+    border-bottom: 1px solid var(--doc-rule);
+    border-left: 0;
+  }
+
+  .doc-toc-item {
+    grid-template-columns: auto auto;
+    gap: 0.5rem;
+    padding: 0.4375rem 0.75rem 0.5625rem;
+    font-size: var(--doc-text-sm);
+    white-space: nowrap;
+  }
+
+  .doc-toc-item:first-child {
+    padding-left: 0;
+  }
+
+  .doc-toc-item::before {
+    inset: auto 0 -1px;
+    height: 2px;
+    width: auto;
+  }
+
+  .doc-toc-num {
+    line-height: inherit;
+  }
+
+  .doc-rail-contact {
+    display: none;
+  }
+}
+
+/* ── The sheet ─────────────────────────────────────────────────────────────────
+   One surface for the whole document. Sections are separated by full-bleed rules
+   rather than each floating in its own card — that stack of nested rounded boxes
+   was what made a legal notice read like an admin console. */
+.doc-sheet {
+  min-width: 0;
+  border: 1px solid var(--doc-rule);
+  border-radius: 1.25rem;
+  background: var(--doc-sheet);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 12px 32px -18px rgb(16 24 40 / 18%);
+}
+
+.doc-section {
+  /* Clears the sticky masthead when an anchor is followed. */
+  scroll-margin-top: 5.5rem;
+  padding: 2rem 1.375rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-section {
+    padding: 2.75rem 3rem;
+  }
+}
+
+.doc-section + .doc-section {
+  border-top: 1px solid var(--doc-rule);
+}
+
+.doc-section-head {
+  margin-bottom: 1.5rem;
+}
+
+.doc-h2 {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-lg);
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+@media (min-width: 40rem) {
+  .doc-h2 {
+    font-size: var(--doc-text-xl);
+  }
+}
+
+/* Anchor handle — hangs in the left margin on hover/focus. Legal sections get cited
+   by URL, so make the permalink reachable without it decorating every heading. */
+.doc-anchor {
+  margin-left: 0.5rem;
+  color: var(--doc-rule);
+  font-weight: 500;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, color 0.16s ease;
+}
+
+.doc-section-head:hover .doc-anchor,
+.doc-anchor:focus-visible {
+  color: var(--doc-accent);
+  opacity: 1;
+}
+
+.doc-lead {
+  margin: 0.75rem 0 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+/* ── Running text ────────────────────────────────────────────────────────────── */
+.doc-prose {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  color: var(--doc-body);
+  line-height: var(--doc-leading-body);
+}
+
+.doc-prose > p {
+  margin: 0;
+}
+
+.doc-prose strong {
+  color: var(--doc-ink);
+  font-weight: 600;
+}
+
+.doc-prose a {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color 0.16s ease, color 0.16s ease;
+}
+
+.doc-prose a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+/* A sub-heading inside a section. One step below .doc-h2 and set in ink, so the
+   old "everything is extrabold" flatness resolves into an actual hierarchy. */
+.doc-h3 {
+  margin: 0.5rem 0 -0.375rem;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.doc-footnote {
+  margin: 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  line-height: 1.75;
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────────
+   Hand-set markers with a proper hanging indent: the browser default puts Thai
+   wrapped lines under the marker, which breaks the left edge of a long clause. */
+.doc-list,
+.doc-olist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: doc-item;
+}
+
+.doc-list > li,
+.doc-olist > li {
+  position: relative;
+  padding-left: 1.75rem;
+}
+
+.doc-list > li + li,
+.doc-olist > li + li {
+  margin-top: 0.75rem;
+}
+
+.doc-list > li::before {
+  content: '';
+  position: absolute;
+  left: 0.1875rem;
+  /* Centres the mark on the first line's optical middle at 1.9 leading. */
+  top: calc(var(--doc-leading-body) * 0.5em - 0.1875rem);
+  height: 0.375rem;
+  width: 0.375rem;
+  border-radius: 1px;
+  background: var(--color-brand-300);
+  transform: rotate(45deg);
+}
+
+.doc-olist > li::before {
+  counter-increment: doc-item;
+  content: counter(doc-item);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--doc-accent);
+  font-family: 'Outfit', var(--font-family-sans);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--doc-leading-body);
+}
+
+/* Nested list inside a callout keeps the same markers at a tighter rhythm. */
+.doc-note .doc-list > li + li {
+  margin-top: 0.5rem;
+}
+
+/* ── Definition pairs (was: grid of tinted cards) ──────────────────────────────
+   Two columns of hairline-topped key/value pairs. Reads as a specification table,
+   which is what this content actually is — a tinted rounded box said nothing. */
+.doc-defs {
+  display: grid;
+  gap: 0 2.5rem;
+  margin: 0;
+}
+
+@media (min-width: 48rem) {
+  .doc-defs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.doc-def {
+  border-top: 1px solid var(--doc-rule);
+  padding: 1rem 0 1.125rem;
+}
+
+.doc-def-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.doc-def-body {
+  margin: 0.4375rem 0 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-def-body a {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+}
+
+.doc-def-body strong {
+  color: var(--doc-body);
+  font-weight: 600;
+}
+
+/* ── Callouts ──────────────────────────────────────────────────────────────────
+   A left rule carries the tone; the ground stays nearly white. Three saturated
+   tinted blocks per section was the loudest part of the old page. */
+.doc-note {
+  border-left: 3px solid var(--doc-note-rule);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: var(--doc-note-bg);
+  padding: 1rem 1.25rem 1.0625rem;
+}
+
+.doc-note-brand {
+  --doc-note-rule: var(--color-brand-500);
+  --doc-note-bg: var(--doc-accent-wash);
+}
+
+.doc-note-warning {
+  --doc-note-rule: var(--color-warning-500);
+  --doc-note-bg: var(--color-warning-50);
+}
+
+.doc-note-neutral {
+  --doc-note-rule: var(--color-gray-300);
+  --doc-note-bg: var(--color-gray-50);
+}
+
+.doc-note-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+/* Deliberately NOT a flex column: callout bodies are usually one sentence with a
+   link inside it, and flex would promote that inline link to its own row — breaking
+   the sentence into three stacked fragments. */
+.doc-note-body {
+  margin-top: 0.4375rem;
+  color: var(--doc-body);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-note-body > p {
+  margin: 0;
+}
+
+.doc-note-body > * + * {
+  margin-top: 0.75rem;
+}
+
+.doc-note-body a {
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ── Table ─────────────────────────────────────────────────────────────────────
+   Hairline rules only, no fills; row headers carry the weight. */
+.doc-table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.doc-table {
+  width: 100%;
+  min-width: 38rem;
+  border-collapse: collapse;
+  font-size: var(--doc-text-base);
+  text-align: left;
+}
+
+.doc-table thead th {
+  border-bottom: 1px solid var(--color-gray-300);
+  padding: 0 0.875rem 0.625rem;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.doc-table thead th:first-child,
+.doc-table tbody th {
+  padding-left: 0;
+}
+
+.doc-table tbody th {
+  width: 12rem;
+  color: var(--doc-ink);
+  font-weight: 600;
+  vertical-align: top;
+}
+
+.doc-table tbody td {
+  padding: 0.9375rem 0.875rem;
+  color: var(--doc-soft);
+  line-height: 1.75;
+  vertical-align: top;
+}
+
+.doc-table tbody th {
+  padding: 0.9375rem 0.875rem 0.9375rem 0;
+  line-height: 1.6;
+}
+
+.doc-table tbody tr + tr > * {
+  border-top: 1px solid var(--doc-rule-soft);
+}
+
+/* ── Source links ─────────────────────────────────────────────────────────────
+   Statute citations. The trailing ↗ is the only glyph that earns its place here:
+   these all open externally, and a legal reference should say so. */
+.doc-source {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+}
+
+.doc-source:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+.doc-source::after {
+  content: '↗';
+  margin-left: 0.1875rem;
+  color: var(--doc-faint);
+  font-size: 0.8em;
+  text-decoration: none;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────────── */
+.doc-foot {
+  border-top: 1px solid var(--doc-rule);
+  background: rgb(255 255 255 / 60%);
+}
+
+.doc-foot-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 1.75rem 1.25rem 2.25rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+@media (min-width: 40rem) {
+  .doc-foot-inner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-inline: 2rem;
+  }
+}
+
+.doc-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 1.25rem;
+}
+
+.doc-foot-links a {
+  color: var(--doc-soft);
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+
+.doc-foot-links a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ── Focus ─────────────────────────────────────────────────────────────────────
+   One visible focus treatment for every interactive element on these pages. */
+.doc a:focus-visible,
+.doc button:focus-visible {
+  outline: 2px solid var(--doc-accent);
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}
+
+.doc-plate a:focus-visible {
+  outline-color: var(--color-brand-200);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Acceptance gate (/legal-acceptance)
+
+   The same document language as the notices it points at — the person standing here
+   is being asked to sign, so the screen should read as the signature page of those
+   documents rather than as an unrelated onboarding step. It reuses the .doc token
+   block, so its wrapper carries the `doc` class too.
+   ───────────────────────────────────────────────────────────────────────────── */
+.doc-accept-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-inline: auto;
+  max-width: 46rem;
+  padding: 1.75rem 1.25rem 3rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-main {
+    padding: 2.5rem 2rem 4rem;
+  }
+}
+
+.doc-accept-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.doc-accept-brand-name {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.doc-accept-brand-sub {
+  margin: 0.0625rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  letter-spacing: 0.04em;
+}
+
+.doc-accept-sheet {
+  overflow: hidden;
+  border: 1px solid var(--doc-rule);
+  border-radius: 1.25rem;
+  background: var(--doc-sheet);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 12px 32px -18px rgb(16 24 40 / 18%);
+}
+
+.doc-accept-plate {
+  position: relative;
+  background: var(--doc-accent-deep);
+  color: #fff;
+  padding: 1.75rem 1.375rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-plate {
+    padding: 2.25rem 2.5rem 2rem;
+  }
+}
+
+.doc-accept-plate::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--doc-gold) 0%, var(--color-gold-300) 38%, transparent 88%);
+}
+
+.doc-accept-plate .doc-title {
+  font-size: var(--doc-text-xl);
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-plate .doc-title {
+    font-size: var(--doc-text-2xl);
+  }
+}
+
+/* Which company you are signing for — the one fact that changes what this means. */
+.doc-accept-for {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1.5rem 0 0;
+  border-top: 1px solid rgb(255 255 255 / 16%);
+  padding-top: 1rem;
+}
+
+.doc-accept-for-label {
+  color: rgb(255 255 255 / 55%);
+  font-size: var(--doc-text-xs);
+  font-weight: 500;
+}
+
+.doc-accept-for-value {
+  color: #fff;
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+}
+
+.doc-accept-body {
+  padding: 1.5rem 1.375rem 1.75rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-body {
+    padding: 1.75rem 2.5rem 2rem;
+  }
+}
+
+.doc-accept-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+}
+
+.doc-accept-legend-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+}
+
+.doc-accept-legend-note {
+  margin: 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+.doc-accept-required {
+  color: var(--color-error-700);
+  font-weight: 600;
+}
+
+.doc-accept-error {
+  margin: 1rem 0 0;
+  border-left: 3px solid var(--color-error-500);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: var(--color-error-50);
+  padding: 0.75rem 1rem;
+  color: var(--color-error-700);
+  font-size: var(--doc-text-base);
+  line-height: 1.7;
+}
+
+/* Three required confirmations in a fixed order — genuinely a sequence, so the
+   numerals carry information rather than decorate. */
+.doc-accept-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-accept-item {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.875rem;
+  border-top: 1px solid var(--doc-rule);
+  padding: 1.25rem 0;
+}
+
+.doc-accept-num {
+  color: var(--doc-accent);
+  font-family: 'Outfit', var(--font-family-sans);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.doc-accept-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.375rem 1rem;
+}
+
+.doc-accept-item-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.doc-accept-item-meta {
+  margin: 0.1875rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-accept-open {
+  color: var(--doc-accent);
+  font-size: var(--doc-text-base);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+  white-space: nowrap;
+}
+
+.doc-accept-open:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+/* The statement being agreed to. No fill — a tinted box here made the sentence you
+   are legally bound by look like a UI hint. */
+.doc-accept-check {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  margin-top: 0.875rem;
+  cursor: pointer;
+  color: var(--doc-body);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-accept-check input {
+  margin-top: 0.3125rem;
+  height: 1.125rem;
+  width: 1.125rem;
+  flex-shrink: 0;
+  accent-color: var(--doc-accent);
+  cursor: pointer;
+}
+
+.doc-accept-check:hover {
+  color: var(--doc-ink);
+}
+
+.doc-accept-note {
+  margin: 0.75rem 0 0;
+  border-left: 3px solid var(--color-gray-300);
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: var(--color-gray-50);
+  padding: 0.625rem 0.875rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+  line-height: 1.7;
+}
+
+.doc-accept-note strong {
+  color: var(--doc-body);
+  font-weight: 600;
+}
+
+.doc-accept-actions {
+  border-top: 1px solid var(--doc-rule);
+  padding-top: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.doc-accept-hint {
+  margin: 0.875rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  text-align: center;
+}
+
+.doc-accept-status {
+  display: flex;
+  min-height: 12rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  text-align: center;
+}
+
+.doc-accept-spinner {
+  height: 1.75rem;
+  width: 1.75rem;
+  border: 2.5px solid var(--color-brand-100);
+  border-top-color: var(--doc-accent);
+  border-radius: 50%;
+  animation: doc-spin 0.75s linear infinite;
+}
+
+@keyframes doc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-accept-spinner {
+    animation-duration: 2s;
+  }
+}
+
+.doc-accept-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-foot {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+.doc-accept-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.375rem 1.25rem;
+}
+
+.doc-accept-foot-links a {
+  color: var(--doc-soft);
+  text-decoration: none;
+}
+
+.doc-accept-foot-links a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.doc-accept-signout {
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  padding: 0.5rem 0.75rem;
+  color: var(--doc-soft);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-accept-signout:hover:not(:disabled) {
+  background: #fff;
+  color: var(--doc-ink);
+}
+
+.doc-accept-signout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────────────
+   People file and sign these. Printing should yield the document itself: no
+   navigation, no reading progress, no rail, and sections that do not split across
+   a page break mid-clause. */
+@media print {
+  .doc {
+    background: #fff;
+  }
+
+  .doc-mast,
+  .doc-rail,
+  .doc-foot,
+  .doc-anchor {
+    display: none;
+  }
+
+  .doc-main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .doc-columns {
+    display: block;
+    margin-top: 1rem;
+  }
+
+  .doc-plate {
+    border: 1px solid var(--doc-rule);
+    border-radius: 0;
+    background: #fff;
+    color: var(--doc-ink);
+    padding: 1.5rem;
+  }
+
+  .doc-plate::before {
+    display: none;
+  }
+
+  .doc-eyebrow,
+  .doc-colophon-label {
+    color: var(--doc-soft);
+  }
+
+  .doc-title,
+  .doc-colophon-value {
+    color: var(--doc-ink);
+  }
+
+  .doc-standfirst {
+    color: var(--doc-body);
+  }
+
+  .doc-colophon {
+    border-top-color: var(--doc-rule);
+  }
+
+  .doc-sheet {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .doc-section {
+    break-inside: avoid;
+    padding: 1.25rem 0;
+  }
+
+  .doc-note {
+    break-inside: avoid;
+  }
+}

@@ -67,7 +67,7 @@ This spec covers:
 | `HOST` | yes | `0.0.0.0` in container | Direct local run can use `127.0.0.1`. |
 | `PORT` | yes | `3001` | Service port. |
 | `PUBLIC_BASE_URL` | deployed env | `https://api.example.com` | External callbacks/links. |
-| `TRUST_PROXY` | deployed env | `true` | Required behind load balancer/proxy. |
+| ~~`TRUST_PROXY`~~ | no | — | **Not wired (2026-08-10).** Setting it does nothing. `trustedClientIp` derives proxy trust from the TCP peer being the private tier, then walks `X-Forwarded-For` right-to-left past our own and Cloudflare's hops. See `apps/api/src/common/security/trusted-client-ip.ts`. |
 
 ## 6. HTTP Security Variables
 
@@ -153,7 +153,7 @@ Raw secret values are acceptable only when injected by runtime secret manager an
 | `S3_PUBLIC_ENDPOINT` | self-hosted only | `http://127.0.0.1:19000` | Browser-reachable endpoint for presigned upload/download URLs; unset preserves existing SDK behavior. |
 | `S3_FORCE_PATH_STYLE` | local only | `true` | MinIO compatibility. |
 | `UPLOAD_MAX_BYTES` | yes | `10485760` | Upload limit. |
-| `UPLOAD_PENDING_MAX_BYTES_PER_COMPANY` | yes | `104857600` | Maximum pending/quarantined bytes retained in the 24-hour cleanup window per tenant. |
+| `UPLOAD_PENDING_MAX_BYTES_PER_COMPANY` | yes | `104857600` | Maximum pending/quarantined bytes per tenant. The current `pending/` version expires after 1 day and the noncurrent byte version after 1 further day; this is not a promise of physical deletion within 24 hours. |
 | `ALLOWED_UPLOAD_MIME_TYPES` | yes | `application/pdf,image/png,image/jpeg` | Comma-separated. |
 | `SIGNED_URL_TTL_SECONDS` | yes | `300` | Upload-intent lifetime, hard-capped at 300 seconds. |
 

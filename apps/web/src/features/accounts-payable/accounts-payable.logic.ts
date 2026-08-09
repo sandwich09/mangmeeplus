@@ -7,8 +7,8 @@ export type AccountsPayableTab = (typeof ACCOUNTS_PAYABLE_TABS)[number];
  * report permission and must not inherit either transaction-list permission.
  */
 const ACCOUNTS_PAYABLE_TAB_PERMISSIONS: Record<AccountsPayableTab, readonly string[]> = {
-  bills: ['procurement.vendor_bill.read'],
-  payments: ['procurement.supplier_payment.read'],
+  bills: ['procurement.vendor_bill.read', 'procurement.vendor_bill.read_related'],
+  payments: ['procurement.supplier_payment.read', 'procurement.supplier_payment.read_related'],
   // Deliberately NOT a `thai_tax` permission: a company that never bought Tax still withholds tax
   // and still owes its payee a 50 ทวิ, so this panel must stay reachable for it.
   wht: ['wht.certificate.read'],

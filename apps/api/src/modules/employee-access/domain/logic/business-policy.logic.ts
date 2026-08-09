@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ConsentUnsubscribePolicy, DataRetentionPolicy, DiscountPolicy, PoApprovalPolicy } from '@watchdog-bms/contracts';
+import { withMandatoryMarketingUnsubscribeKeywords } from '@watchdog-bms/contracts';
 
 export function validateDiscountPolicy(policy: DiscountPolicy): DiscountPolicy {
   const values = [policy.defaultPct, policy.maxPct, policy.vipPct, policy.regularPct];
@@ -37,7 +38,10 @@ export function validateDataRetentionPolicy(policy: DataRetentionPolicy): DataRe
 }
 
 export function validateConsentUnsubscribePolicy(policy: ConsentUnsubscribePolicy): ConsentUnsubscribePolicy {
-  const unsubscribeKeywords = [...new Set(policy.unsubscribeKeywords.map((keyword) => keyword.trim()).filter(Boolean))];
+  if (!Array.isArray(policy.unsubscribeKeywords) || policy.unsubscribeKeywords.some((keyword) => typeof keyword !== 'string')) {
+    throw new BadRequestException('unsubscribeKeywords must be an array of strings');
+  }
+  const unsubscribeKeywords = withMandatoryMarketingUnsubscribeKeywords(policy.unsubscribeKeywords);
   if (!unsubscribeKeywords.length || unsubscribeKeywords.length > 20 || unsubscribeKeywords.some((keyword) => keyword.length > 50)) {
     throw new BadRequestException('unsubscribeKeywords must contain 1 to 20 values of at most 50 characters');
   }

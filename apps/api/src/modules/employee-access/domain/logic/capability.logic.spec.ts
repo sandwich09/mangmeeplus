@@ -70,7 +70,13 @@ describe('capability-pack registry integrity', () => {
 
     it('anchors every key that is not universal, so a backfill cannot hit read-only roles', () => {
       const universal = COMPANY_ROLE_BACKFILLS.filter((backfill) => backfill.anchor === null);
-      assert.deepEqual(universal.map((backfill) => backfill.key), ['account.password.change', 'dashboard.read']);
+      assert.deepEqual(universal.map((backfill) => backfill.key), [
+        'account.password.change', 'dashboard.read', 'accounting.document.read_related', 'expense.read_related',
+        'reimbursement.read_related',
+        'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+        'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
+        'procurement.supplier_payment.read_related',
+      ]);
     });
   });
 

@@ -14,7 +14,8 @@ import { ReimbursementEvidenceService } from '../services/reimbursement-evidence
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
-import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
+import { resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
+import { assertReimbursementBranchInScope } from './reimbursement-branch-scope';
 import type {
   ReimbursementDuplicateCandidateWriteData,
   ReimbursementLineRecord,
@@ -97,6 +98,12 @@ export class CreateReimbursementDraftUseCase {
 
   async execute(ctx: RequestContext, input: CreateReimbursementRequestInput): Promise<ReimbursementRequestSummary> {
     if (!ctx.permissions.includes('reimbursement.create')) throw new ForbiddenException('Missing permission: reimbursement.create');
+    // Same two steps as CreateExpenseDraftUseCase, and both matter. The assertion stops a
+    // branch-restricted employee planting a claim in a branch they cannot see; resolveCreateBranchId
+    // stops the opposite failure, where omitting branchId tagged the claim company-central and
+    // `branchScopeWhere` then showed it to every branch's approval and finance queue.
+    assertReimbursementBranchInScope(ctx, input.branchId);
+    const branchId = resolveCreateBranchId(ctx.scopes ?? {}, input.branchId);
 
     const errors = validateRequestFields(input);
     if (errors.length > 0) throw new BadRequestException(errors.join(','));
@@ -115,7 +122,7 @@ export class CreateReimbursementDraftUseCase {
 
     const created = await this.repo.createRequest({
       companyId: ctx.companyId,
-      branchId: input.branchId,
+      branchId: branchId ?? undefined,
       requesterUserId: ctx.userId,
       requesterDisplayNameSnapshot: displayName,
       title: input.title,
@@ -157,6 +164,9 @@ export class UpdateReimbursementDraftUseCase {
     const isOwner = req.requesterUserId === ctx.userId;
     const canUpdate = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft')) || ctx.permissions.includes('reimbursement.finance_review');
     if (!canUpdate) throw new ForbiddenException('Cannot update this reimbursement');
+    // The owner path is self-limiting, but finance_review reaches any claim by id — including the
+    // lines, which are the amount.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     if (req.status !== 'DRAFT') throw new UnprocessableEntityException('Only draft requests can be edited');
 
     const data: Record<string, unknown> = { updatedByUserId: ctx.userId };
@@ -199,7 +209,7 @@ export class GetReimbursementDetailUseCase {
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    assertCanReadRequest(ctx, req.requesterUserId);
+    await assertCanReadRequest(ctx, req, this.repo);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
   }
 }
@@ -211,14 +221,30 @@ export class ListReimbursementsUseCase {
   async execute(ctx: RequestContext, filter: ListReimbursementsFilter): Promise<{ items: ReimbursementRequestSummary[]; total: number; page: number; pageSize: number }> {
     const canReadAll = ctx.permissions.includes('reimbursement.read');
     const canReadOwn = ctx.permissions.includes('reimbursement.read_own');
-    if (!canReadAll && !canReadOwn) throw new ForbiddenException('Missing permission to read reimbursements');
+    const canReadRelated = ctx.permissions.includes('reimbursement.read_related');
+    if (!canReadAll && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read reimbursements');
 
-    // Non-privileged users are always scoped to their own requests.
-    const requesterUserId = !canReadAll || filter.scope === 'own' ? ctx.userId : filter.requesterUserId;
+    let requesterUserId: string | undefined;
+    let relatedUserId: string | undefined;
+    if (filter.scope === 'own') {
+      requesterUserId = ctx.userId;
+    } else if (filter.scope === 'related') {
+      if (!canReadRelated) throw new ForbiddenException('Missing permission: reimbursement.read_related');
+      relatedUserId = ctx.userId;
+    } else if (canReadAll) {
+      requesterUserId = filter.requesterUserId;
+    } else if (canReadRelated) {
+      relatedUserId = ctx.userId;
+      requesterUserId = filter.requesterUserId;
+    } else {
+      requesterUserId = ctx.userId;
+    }
 
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
       requesterUserId,
+      relatedUserId,
+      scopes: ctx.scopes ?? {},
       status: filter.status,
       paymentStatus: filter.paymentStatus,
     });
@@ -251,6 +277,9 @@ export class SubmitReimbursementUseCase {
     if (req.requesterUserId !== ctx.userId && !ctx.permissions.includes('reimbursement.finance_review')) {
       throw new ForbiddenException('Only the requester can submit this request');
     }
+    // Same finance_review reach as the draft edit above: submitting starts the approval chain and
+    // is what puts the claim in front of another branch's approvers.
+    assertReimbursementBranchInScope(ctx, req.branchId);
     if (!canTransition(req.status, 'PENDING_APPROVAL')) throw new UnprocessableEntityException(`Cannot submit from status ${req.status}`);
 
     const lines = req.lines ?? [];
@@ -381,7 +410,14 @@ export class SubmitReimbursementUseCase {
       aggregateType: 'reimbursement_request', aggregateId: id, occurredAt: now.toISOString(),
       // requestId must be present: the reimbursement_pending_approval workflow template's
       // default condition matches on it (same fix as billId in vendor_bill.submitted).
-      data: { requestId: id, status: 'PENDING_APPROVAL', requestNo, amount: req.amount, currency: req.currency, approverRole: policy.defaultApproverRole },
+      // requesterUserId is here for the notification's excludeRecipientPayloadKeys (audit H-18):
+      // the person who filed the claim must not be invited to approve it while the policy forbids
+      // self-approval, which is the same rule the approval queue filters on.
+      data: {
+        requestId: id, status: 'PENDING_APPROVAL', requestNo, amount: req.amount, currency: req.currency,
+        approverRole: policy.defaultApproverRole,
+        ...(policy.allowSelfApproval ? {} : { requesterUserId: req.requesterUserId }),
+      },
     });
     void this.outbox.append('reimbursement.approval_assigned', 'reimbursement_request', id, {
       companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
@@ -460,7 +496,7 @@ export class CancelReimbursementUseCase {
     const canCancel = (isOwner && ctx.permissions.includes('reimbursement.cancel_own')) || ctx.permissions.includes('reimbursement.finance_review');
     if (!canCancel) throw new ForbiddenException('Cannot cancel this reimbursement');
     if (!canTransition(req.status, 'CANCELLED')) throw new UnprocessableEntityException(`Cannot cancel from status ${req.status}`);
-    if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    assertReimbursementBranchInScope(ctx, req.branchId);
 
     const cancellationReason = reason?.trim() || 'ยกเลิกคำขอเบิกค่าใช้จ่าย';
     const startedAt = new Date();
@@ -564,9 +600,16 @@ export class CancelReimbursementUseCase {
   }
 }
 
-export function assertCanReadRequest(ctx: RequestContext, requesterUserId: string): void {
+export async function assertCanReadRequest(
+  ctx: RequestContext,
+  request: Pick<ReimbursementRequestRecord, 'id' | 'branchId' | 'requesterUserId'>,
+  repo: PrismaReimbursementRepository,
+): Promise<void> {
+  assertReimbursementBranchInScope(ctx, request.branchId);
   if (ctx.permissions.includes('reimbursement.read')) return;
-  if (ctx.permissions.includes('reimbursement.read_own') && requesterUserId === ctx.userId) return;
+  if (ctx.permissions.includes('reimbursement.read_own') && request.requesterUserId === ctx.userId) return;
+  if (ctx.permissions.includes('reimbursement.read_related')
+    && await repo.isUserRelatedToRequest(ctx.companyId, request.id, ctx.userId, ctx.scopes ?? {})) return;
   throw new ForbiddenException('Cannot read this reimbursement');
 }
 

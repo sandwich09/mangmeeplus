@@ -126,7 +126,8 @@ Item 08 does not implement full ledger UI, chart of accounts, journal posting, t
 - Minimal accounting counterparty/customer master needed for documents before CRM item 15.
 - API accounting module using hexagonal folder structure.
 - Quotation, invoice, billing note, receipt, tax invoice, payment, and payment allocation use cases.
-- Document conversion: quotation to invoice or billing note without duplicate keying.
+- Document conversion: quotation to exactly one invoice or billing note with atomic source-close + target-create,
+  source-version CAS, and idempotent same-target retry.
 - Draft, quotation approval, issue/finalize, void/correction, credit note, debit note, payment status, tax status, and posting status.
 - Ledger-ready source document query/contract for item 10.
 - Bounded outbox event payloads for accounting document lifecycle.
@@ -285,11 +286,12 @@ Implement web-owned accounting document workflows behind permission-checked API 
 
 - [ ] Add accounting API module using existing hexagonal layout.
 - [ ] Implement counterparty create/update/list/get use cases.
-- [ ] Implement document create/update/list/get use cases for quotation, invoice, billing note, receipt, and tax invoice.
+- [x] Implement document create/update/list/get use cases for quotation, invoice, billing note, receipt, and tax invoice.
 - [ ] Implement quotation submit/approve/reject use cases. Sales can submit and issue only after approval; Manager/Finance approve.
-- [ ] Implement quotation conversion to invoice or billing note.
+- [x] Implement quotation conversion to invoice or billing note atomically under the document lifecycle lock; retry returns
+  the existing same-type target and conflicting/duplicate targets fail closed.
 - [ ] Implement issue/finalize use cases with document sequence reservation/commit.
-- [ ] Implement void/cancel use cases with reason, permission, status checks, and audit.
+- [x] Implement void/cancel use cases with reason, permission, status checks, and audit.
 - [ ] Implement payment create/update/list/get and allocation to invoice.
 - [ ] Implement overpayment handling that stores unapplied customer credit instead of rejecting by default.
 - [ ] Implement receipt issue from payment or invoice payment flow.
@@ -339,14 +341,14 @@ Give finance/sales users usable web document workflows within the shared workspa
 - [ ] Add accounting feature folder with API client, model, logic, constants, components, and CSS modules following web guideline.
 - [ ] Add document list with filters for type, status, date range, counterparty, payment status, and posting status.
 - [ ] Add document detail page showing lines, totals, lifecycle, payment status, tax invoice status, posting status, audit summary link where available, and future ledger link placeholder.
-- [ ] Add create/edit forms for quotation and invoice/billing note.
+- [x] Add create/edit forms for quotation and invoice/billing note.
 - [ ] Add quotation submit/approval/rejection UI with role-aware actions.
 - [ ] Add issue/finalize action with confirmation and validation errors.
 - [ ] Add convert quotation action.
 - [ ] Add payment recording and allocation UI.
 - [ ] Add receipt/tax invoice issue flow where source state allows it.
 - [ ] Add credit note and debit note full UI for eligible issued documents.
-- [ ] Add void action with reason input and high-risk copy.
+- [x] Add void action with reason input and high-risk copy.
 - [ ] Add loading, empty, error, forbidden, and locked states.
 - [ ] Keep UI dense and finance-friendly. Do not build marketing landing pages.
 - [ ] Add UI logic/unit tests where current setup supports them.
@@ -467,8 +469,8 @@ If web implementation needs runtime verification, start the dev server and verif
 - [ ] Draft documents do not reserve official issued numbers unless existing sequence design requires reservation.
 - [ ] Issued document numbers are unique per company and document type.
 - [ ] Document sequence reservation and issue happen transactionally where repository support exists.
-- [ ] Drafts are editable; issued money/tax fields are locked.
-- [ ] Issued/tax documents cannot be hard-deleted through user routes.
+- [x] Drafts are editable; issued money/tax fields are locked.
+- [x] Issued/tax documents cannot be hard-deleted through user routes.
 - [ ] Corrections use void, full credit note, full debit note, or reversal-ready event.
 - [ ] Counterparty snapshot is stored on issued documents.
 - [ ] Line totals and document totals are decimal-safe.

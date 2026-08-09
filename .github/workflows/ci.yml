@@ -280,6 +280,10 @@ jobs:
       # Every spec above builds its subject with `new`, so none of them asks Nest to wire
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot
+      - name: Test legal release evidence gates
+        run: |
+          bash infra/security/provision-legal-release-evidence.spec.sh
+          bash infra/security/validate-legal-release-readiness.spec.sh
       - run: bash infra/docker/production-image-security.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'

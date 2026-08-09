@@ -125,13 +125,21 @@ query, not only by a log line that has since rotated.
 `monthKey = YYYY-MM` of `now + 7h` (Thailand has no DST; fixed offset arithmetic, no
 dependency). A budget month matches the operator's calendar, not UTC.
 
-### 6.6 Check-before-act with bounded overshoot
+### 6.6 Serialized admission with one-action bounded overshoot
 
-Token counts are known only after a call completes, and one user action fans out into several
-model calls. The check is therefore "is the company already at/over budget?" **before the
-action starts**; an action already in flight is never aborted mid-way. Worst-case overshoot is
-one action per concurrent request stream (~฿0.3–3), the same semantics every commercial AI
-platform uses.
+Token counts are known only after a call completes, and one user action can fan out into several
+model calls. Before the live spend read, the API therefore acquires a Redis lease keyed by
+`companyId + Bangkok month`; it holds that lease through the provider action **and the usage-ledger
+write**. A concurrent action is refused with `AI_BUDGET_BUSY` plus a bounded retry window instead
+of passing the same stale spend check. Redis loss fails closed with `AI_BUDGET_UNAVAILABLE`; the
+180-second TTL only recovers a crashed lease owner.
+
+The Bangkok `monthKey` is pinned once at admission and reused by the lease key, live spend read and
+ledger write. An action crossing local midnight therefore cannot lock one month and charge another.
+
+An admitted action is never aborted merely because its final cost crosses the cap. Exact cost is
+not known beforehand, so worst-case overshoot is one admitted action — no longer N concurrent
+request streams.
 
 ### 6.7 Fail closed, in both directions
 
@@ -192,6 +200,10 @@ Additive optional `usage?: AiUsageEntry[]` on every internal AI response:
 - Both providers (`bedrock.provider.ts`, `openai.provider.ts`) call `appendUsage` at the
   existing `logUsage` point with the same numbers; the `ai.usage` console line is unchanged in
   shape except it **gains `companyId`** when the collector context carries one.
+- Bedrock timeout aborts the SDK request with `abortSignal`. Because an aborted Converse response
+  carries no usage, that failed entry is priced conservatively at the current approved-model input
+  context ceiling (200k) plus the requested maximum output tokens, rather than recording 0. If a
+  response carried real usage but parsing later failed, those real counts are retained.
 - An interceptor on the three internal AI controllers (`line-ai-internal`,
   `crm-customer-ai-internal`, `ai-draft-internal`) opens the context per request, seeding
   `companyId` from the body (`body.companyId ?? body.userContext?.companyId`), and attaches
@@ -307,6 +319,10 @@ cross-module by the receipt and statement clients):
   action** riding next to the existing Redis round trip, ahead of a multi-second model call;
   the override-spec's no-DB-per-call rule is about its config resolver, and the config half
   here is cached accordingly.
+- `runWithCompanyAiBudgetAdmission(...)` — acquires the crash-safe Redis lease, performs the live
+  check only after admission, runs the cost-bearing action and keeps ownership through
+  `recordCompanyAiUsage`. It pins one month key across all three operations. Production never
+  degrades to a process-local lease; local/test mode may.
 - `recordCompanyAiUsage(prisma, config, { companyId, sourceRoute, requestId }, entries)` —
   in one transaction: `createMany` the events and upsert-increment the monthly aggregate. The
   upsert returns the post-increment row; `pre = post − delta` detects threshold crossings
@@ -322,6 +338,8 @@ refuses in its existing exhaustion shape: HTTP sites throw 429 with code
 `AI_MONTHLY_BUDGET_EXCEEDED`; the receipt client returns `{status:'failed'}`; the draft
 provider returns `{ok:false, error:{code:'AI_MONTHLY_BUDGET_EXCEEDED', retryable:false}}`.
 Meter-unavailable refusals use `AI_BUDGET_UNAVAILABLE` so outage ≠ exhaustion.
+Concurrent admission refusals use `AI_BUDGET_BUSY`; HTTP seams include `retryAfterSeconds`, while
+the draft job keeps it retryable and performs no model call.
 
 ### 7.6 Events
 
@@ -412,7 +430,9 @@ accepts baht decimals under the same two-decimal rule.
    `modelId` records at the highest configured price and warns.
 5. A company at/over its effective budget is refused at all five seams in each seam's existing
    exhaustion shape with `AI_MONTHLY_BUDGET_EXCEEDED`; under budget, behaviour is unchanged.
-6. An action in flight is never aborted mid-way; overshoot is bounded to in-flight actions.
+6. Only one cost-bearing action per company/month may pass the live spend check at a time; a
+   concurrent action gets `AI_BUDGET_BUSY`. The admitted action is not aborted mid-way and maximum
+   budget overshoot is bounded to that one action.
 7. Budget resolution: override else platform default; zero/over-ceiling writes rejected with
    422 and nothing persisted; every change writes a CRITICAL audit row atomically with the
    update.
@@ -453,7 +473,7 @@ accepts baht decimals under the same two-decimal rule.
 - **FX drift** (`AI_THB_PER_USD` is static config) → accepted; §19d posture means rows are
   auditable and the rate is an operator lever, not a market feed.
 - **Undercount on crash** between the gateway call and `recordCompanyAiUsage` → accepted;
-  bounded to in-flight actions, and CloudWatch `ai.usage` lines remain the reconciliation
+  bounded to the one admitted action, and CloudWatch `ai.usage` lines remain the reconciliation
   source.
 - **CRM fail-closed on model drift** (a configured model later removed from
   `APPROVED_AI_MODEL_IDS`) silences customer auto-replies → the write path already rejects

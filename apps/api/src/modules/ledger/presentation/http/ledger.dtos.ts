@@ -79,6 +79,18 @@ export class GenerateJournalFromSourceDto {
   @IsString() @IsOptional() @MaxLength(120) sourceEventType?: string;
 }
 
+// PUT /posting/expense-account-bindings/:categoryId (audit CR-2). `null` is a meaningful value —
+// it clears the binding — so the field is required-but-nullable rather than optional: an omitted
+// key would otherwise be indistinguishable from an explicit clear.
+export class SetExpenseAccountBindingDto {
+  @ValidateIf((_object, value) => value !== null)
+  @IsString() @IsNotEmpty() @MaxLength(20)
+  // Same code shape the chart template and posting engine use (e.g. 5320-01). Bounding it here
+  // keeps a free-text body out of the account lookup.
+  @Matches(/^[0-9]{4}-[0-9]{2}$/, { message: 'ledgerAccountCode must look like 5320-01' })
+  ledgerAccountCode!: string | null;
+}
+
 export class CreateManualJournalDto implements CreateManualJournalInput {
   @IsDateString({ strict: true }) entryDate!: string;
   @IsString() @IsOptional() @MaxLength(500) memo?: string;

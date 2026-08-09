@@ -311,6 +311,7 @@ export default function SystemOnboardingNewPage() {
   const [businessCategory, setBusinessCategory] = useState<'' | CompanyBusinessCategory>('');
   // '' = ยังไม่ทราบ. An admin who does not know leaves it blank and the company stays UNKNOWN —
   // every reader then behaves exactly as it does today. Never guessed from anything else.
+  const [taxId, setTaxId] = useState('');
   const [vatStatus, setVatStatus] = useState<'' | 'REGISTERED' | 'NOT_REGISTERED'>('');
   const [vatEffectiveFrom, setVatEffectiveFrom] = useState(todayCivilDate());
   const [ownerDisplayName, setOwnerDisplayName] = useState('');
@@ -324,8 +325,17 @@ export default function SystemOnboardingNewPage() {
   const [forbidden, setForbidden] = useState(false);
   const [result, setResult] = useState<HandoffResult | null>(null);
 
+  // Dashes and spaces are how a Thai tax id is printed, so they are accepted and stripped rather
+  // than rejected. Blank stays valid: the field is optional.
+  const taxIdDigits = taxId.replace(/\D/g, '');
+  const taxIdInvalid = taxIdDigits.length > 0 && taxIdDigits.length !== 13;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (taxIdInvalid) {
+      setError('เลขประจำตัวผู้เสียภาษีต้องเป็นตัวเลข 13 หลัก');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -335,6 +345,10 @@ export default function SystemOnboardingNewPage() {
         body: JSON.stringify({
           companyName,
           businessCategory,
+          // Omitted when blank, like the VAT answer: the owner captures it later on the identity
+          // screen. Sent as digits so a number typed as 0-1234-56789-01-2 is the same value the
+          // identity screen would store.
+          ...(taxIdDigits ? { taxId: taxIdDigits } : {}),
           // Omitted when the admin does not know — the company then stays UNKNOWN, which is not
           // the same as "not registered" and must not be sent as one.
           ...(vatStatus ? {
@@ -427,6 +441,19 @@ export default function SystemOnboardingNewPage() {
                 </ThemedSelect>
                 <p className="mt-1 text-xs text-gray-500">
                   Pick what the customer actually does. Health-adjacent categories (clinic, spa/wellness, pharmacy) trigger a PDPA review — picking the wrong one skips it.
+                </p>
+              </div>
+              <div>
+                <label className={labelClass} htmlFor="taxId">เลขประจำตัวผู้เสียภาษี / Tax ID</label>
+                <input id="taxId" className={inputClass} inputMode="numeric" value={taxId}
+                  placeholder="0-1234-56789-01-2"
+                  aria-invalid={taxIdInvalid || undefined}
+                  onChange={(e) => setTaxId(e.target.value)} />
+                {taxIdInvalid && (
+                  <p className="mt-1 text-xs text-rose-600">ต้องเป็นตัวเลข 13 หลัก (กรอกแล้ว {taxIdDigits.length} หลัก)</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  Needed before the company can issue tax documents in its own name — the payer block on a 50 ทวิ stays blank without it. Leave empty if you do not have it; the owner can capture it later in company settings.
                 </p>
               </div>
               <div>

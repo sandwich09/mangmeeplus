@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, HttpCode } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Param, Body, Query, HttpCode } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
@@ -23,12 +23,17 @@ import {
   CreateChartOfAccountDto,
   CreateManualJournalDto,
   GenerateJournalFromSourceDto,
+  SetExpenseAccountBindingDto,
   UpdateChartOfAccountDto,
 } from './ledger.dtos';
 import {
   PreviewExpenseBackfillUseCase,
   RunExpenseBackfillUseCase,
 } from '../../application/use-cases/expense-backfill.use-case';
+import {
+  ListExpenseAccountBindingsUseCase,
+  SetExpenseAccountBindingUseCase,
+} from '../../application/use-cases/expense-account-binding.use-case';
 import { ChartTemplateService } from '../../application/services/chart-template.service.js';
 
 @ApiTags('ledger')
@@ -48,6 +53,8 @@ export class LedgerController {
     private readonly generateJournal: GenerateJournalFromSourceUseCase,
     private readonly previewExpenseBackfill: PreviewExpenseBackfillUseCase,
     private readonly runExpenseBackfill: RunExpenseBackfillUseCase,
+    private readonly listExpenseAccountBindings: ListExpenseAccountBindingsUseCase,
+    private readonly setExpenseAccountBinding: SetExpenseAccountBindingUseCase,
     private readonly listPeriods: ListPeriodsUseCase,
     private readonly ensurePeriod: EnsurePeriodUseCase,
     private readonly runCloseChecks: RunPeriodCloseChecksUseCase,
@@ -171,6 +178,26 @@ export class LedgerController {
   @ApiOperation({ summary: 'Generate journal from source document' })
   async generateJournalHandler(@ReqCtx() ctx: RequestContext, @Body() body: GenerateJournalFromSourceDto) {
     return this.generateJournal.execute(ctx, body);
+  }
+
+  // Audit CR-2: the reviewed account behind each expense category. Guarded by `ledger.posting-rule.*`
+  // rather than `expense.category.manage` — see the use case for why.
+  @Get('posting/expense-account-bindings')
+  @RequirePermissions('ledger.posting-rule.read')
+  @ApiOperation({ summary: 'List expense categories and their reviewed ledger accounts' })
+  async listExpenseAccountBindingsHandler(@ReqCtx() ctx: RequestContext) {
+    return this.listExpenseAccountBindings.execute(ctx);
+  }
+
+  @Put('posting/expense-account-bindings/:categoryId')
+  @RequirePermissions('ledger.posting-rule.manage')
+  @ApiOperation({ summary: 'Set or clear the reviewed ledger account of an expense category' })
+  async setExpenseAccountBindingHandler(
+    @ReqCtx() ctx: RequestContext,
+    @Param('categoryId') categoryId: string,
+    @Body() body: SetExpenseAccountBindingDto,
+  ) {
+    return this.setExpenseAccountBinding.execute(ctx, categoryId, body);
   }
 
   @Get('posting/expense-backfill-preview')

@@ -13,6 +13,10 @@ import type {
   CrmMessageTemplateRecord,
 } from '../domain/models/crm-inbox.model';
 import type { ConsentUnsubscribePolicy, CrmConsentStatus, CrmConversationStatus } from '@watchdog-bms/contracts';
+import {
+  MANDATORY_MARKETING_UNSUBSCRIBE_KEYWORDS,
+  withMandatoryMarketingUnsubscribeKeywords,
+} from '@watchdog-bms/contracts';
 import { pdpaLineIdentifierLookupCandidates, pseudonymizePdpaLineIdentifier } from '../domain/logic/crm-inbox.logic';
 import { redactPersonalData } from '../domain/logic/pdpa-audit-redaction.logic';
 import { AuditAction } from '../../audit/domain/models/audit-action';
@@ -21,7 +25,7 @@ import { AUTONOMY_JOB_MAX_ATTEMPTS } from '../domain/crm-inbox.constants';
 const CONSENT_DEFAULTS: ConsentUnsubscribePolicy = {
   marketingRequiresExplicitConsent: true,
   transactionalMessagesRemainEnabledAfterMarketingOptOut: true,
-  unsubscribeKeywords: ['ยกเลิกข่าวสาร', 'หยุดโปร', 'STOP'],
+  unsubscribeKeywords: [...MANDATORY_MARKETING_UNSUBSCRIBE_KEYWORDS],
   unsubscribeConfirmationText: 'ยกเลิกข่าวสารและโปรโมชันเรียบร้อยแล้ว การยกเลิกนี้ไม่กระทบข้อความเกี่ยวกับการจองหรือบริการที่คุณใช้',
 };
 
@@ -100,7 +104,11 @@ export class PrismaCrmInboxRepository {
 
   async getConsentPolicy(companyId: string): Promise<ConsentUnsubscribePolicy> {
     const row = await this.db.companyBusinessPolicy.findUnique({ where: { companyId }, select: { consentPolicyJson: true } });
-    return { ...CONSENT_DEFAULTS, ...(row?.consentPolicyJson as Partial<ConsentUnsubscribePolicy> | undefined) };
+    const policy = { ...CONSENT_DEFAULTS, ...(row?.consentPolicyJson as Partial<ConsentUnsubscribePolicy> | undefined) };
+    return {
+      ...policy,
+      unsubscribeKeywords: withMandatoryMarketingUnsubscribeKeywords(policy.unsubscribeKeywords),
+    };
   }
 
   /** Atomic transition makes webhook races/redeliveries emit at most one confirmation. */

@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Param, Body, Query } from '@nestjs/common';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission, RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { assertRouteCompany } from '../../../data-model-core/presentation/http/assert-route-company';
@@ -17,7 +17,7 @@ export class GoodsReceiptController {
   ) {}
 
   @Get()
-  @RequirePermissions('procurement.goods_receipt.read')
+  @RequireAnyPermission('procurement.goods_receipt.read', 'procurement.goods_receipt.read_related')
   async list(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query() q: any) {
     assertRouteCompany(ctx, companyId);
     return this.listGRs.execute(ctx, { status: q['status'], purchaseOrderId: q['purchaseOrderId'], supplierId: q['supplierId'], branchId: q['branchId'], page: q['page'] ? Number(q['page']) : undefined, pageSize: q['pageSize'] ? Number(q['pageSize']) : undefined });
@@ -31,7 +31,7 @@ export class GoodsReceiptController {
   }
 
   @Get(':id')
-  @RequirePermissions('procurement.goods_receipt.read')
+  @RequireAnyPermission('procurement.goods_receipt.read', 'procurement.goods_receipt.read_related')
   async get(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('id') id: string) {
     assertRouteCompany(ctx, companyId);
     return this.getGR.execute(ctx, id);

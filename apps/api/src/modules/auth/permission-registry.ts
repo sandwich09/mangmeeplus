@@ -86,6 +86,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // the legal tax identity, VAT facts and branch codes of ANY tenant company — a wider authority
   // than system.company_onboarding.create, which only brings a new company into existence.
   { key: 'system.identity_reconciliation.resolve',  description: 'Generate and resolve company tax identity reconciliation items', riskLevel: 'CRITICAL' },
+  { key: 'system.data_rights.manage',               description: 'Orchestrate restricted user/company data-rights and offboarding cases', riskLevel: 'CRITICAL' },
   // Item 05 inventory permissions
   { key: 'inventory.product.read',         description: 'Read inventory products',            riskLevel: 'LOW' },
   { key: 'inventory.product.manage',       description: 'Create/update/archive products',     riskLevel: 'MEDIUM' },
@@ -101,6 +102,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'accounting.counterparty.read',        description: 'Read accounting counterparties',         riskLevel: 'LOW' },
   { key: 'accounting.counterparty.manage',      description: 'Create/update accounting counterparties', riskLevel: 'MEDIUM' },
   { key: 'accounting.document.read',            description: 'Read accounting documents',              riskLevel: 'LOW' },
+  { key: 'accounting.document.read_related',    description: 'Read related accounting document chains', riskLevel: 'LOW' },
   { key: 'accounting.document.create',          description: 'Create accounting documents',            riskLevel: 'MEDIUM' },
   { key: 'accounting.document.update',          description: 'Update draft accounting documents',      riskLevel: 'MEDIUM' },
   { key: 'accounting.document.issue',           description: 'Issue accounting documents',             riskLevel: 'HIGH' },
@@ -150,6 +152,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'accounting.payment.void',             description: 'Void payment records',                   riskLevel: 'CRITICAL' },
   // Item 09 expense permissions
   { key: 'expense.read',                        description: 'Read all company expenses',              riskLevel: 'LOW' },
+  { key: 'expense.read_related',                description: 'Read expenses related to the current user', riskLevel: 'LOW' },
   { key: 'expense.evidence.read',               description: 'Read shared accounting evidence',       riskLevel: 'LOW' },
   { key: 'expense.read_own',                    description: 'Read own expense drafts',               riskLevel: 'LOW' },
   { key: 'expense.create',                      description: 'Create manual expense drafts',          riskLevel: 'MEDIUM' },
@@ -236,6 +239,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'procurement.supplier.manage',            description: 'Create/update supplier profiles',              riskLevel: 'MEDIUM' },
   { key: 'procurement.supplier.bank.read',         description: 'Read sensitive supplier bank details',         riskLevel: 'HIGH' },
   { key: 'procurement.supplier.bank.manage',       description: 'Create/update supplier bank details',          riskLevel: 'HIGH' },
+  { key: 'procurement.purchase_request.read_related', description: 'Read related purchase-request chains',           riskLevel: 'LOW' },
+  { key: 'procurement.purchase_order.read_related',   description: 'Read related purchase-order chains',             riskLevel: 'LOW' },
+  { key: 'procurement.goods_receipt.read_related',    description: 'Read related goods-receipt chains',              riskLevel: 'LOW' },
+  { key: 'procurement.vendor_bill.read_related',      description: 'Read related vendor-bill chains',                riskLevel: 'LOW' },
+  { key: 'procurement.supplier_payment.read_related', description: 'Read related supplier-payment chains',           riskLevel: 'LOW' },
   { key: 'procurement.purchase_request.read',      description: 'Read purchase requests',                       riskLevel: 'LOW' },
   { key: 'procurement.purchase_request.create',    description: 'Create/update purchase requests',              riskLevel: 'MEDIUM' },
   { key: 'procurement.purchase_request.approve',   description: 'Approve/reject purchase requests',             riskLevel: 'HIGH' },
@@ -267,6 +275,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'procurement.ap.report',                  description: 'Read accounts payable aging/reports',          riskLevel: 'LOW' },
   // Item 14 reimbursement
   { key: 'reimbursement.read',             description: 'Read all company reimbursement requests',      riskLevel: 'LOW' },
+  { key: 'reimbursement.read_related',     description: 'Read reimbursement requests related to the current user', riskLevel: 'LOW' },
   { key: 'reimbursement.read_own',         description: 'Read own reimbursement requests',              riskLevel: 'LOW' },
   { key: 'reimbursement.create',           description: 'Create reimbursement requests',                riskLevel: 'MEDIUM' },
   { key: 'reimbursement.update_own_draft', description: 'Update own reimbursement drafts',              riskLevel: 'MEDIUM' },
@@ -457,6 +466,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'system.launch_gate.manage',
     // Step 0 identity reconciliation — platform-side repair of Company↔CompanyTaxProfile drift.
     'system.identity_reconciliation.resolve',
+    // Cross-tenant privacy/offboarding case control plane; no tenant role may receive it.
+    'system.data_rights.manage',
   ],
   COMPANY_VIEW: [
     'account.session.read',
@@ -474,7 +485,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'crm.report.read',
     'expense.read',
     'expense.evidence.read',
-    'expense.read_own',
+    'expense.read_related', 'expense.read_own',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'reimbursement.read',
     'ledger.journal.read',
     'accounting.document.read',
@@ -488,6 +502,11 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ADMIN: [
     'account.session.read',
     'account.password.change',
+    'accounting.document.read_related',
+    'expense.read_related',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'account.identity.link',
     'account.identity.unlink',
     'company.setup.read',
@@ -591,7 +610,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.approve', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.review', 'expense.duplicate.resolve',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.review', 'expense.duplicate.resolve',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     // Item 10
     'ledger.report.read', 'ledger.period.read',
     // Item 11 – Manager sees tax summary
@@ -639,10 +661,13 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'accounting.counterparty.read', 'accounting.quotation.read', 'accounting.quotation.create',
+    'accounting.counterparty.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.quotation.create',
     'accounting.quotation.update', 'accounting.quotation.submit_approval', 'accounting.quotation.issue',
     'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.payment.read',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 15 CRM – Sales owns own/assigned records (scope enforced server-side)
     'crm.customer.read', 'crm.customer.create', 'crm.customer.update',
@@ -669,12 +694,16 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   INVENTORY: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read', 'inventory.location.read', 'inventory.movement.read',
     'inventory.movement.create', 'inventory.movement.adjust', 'inventory.stock_count.create',
     'inventory.report.read', 'inventory.label.manage',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 12 procurement – Inventory receives goods against issued purchase orders
     'procurement.purchase_order.read', 'procurement.goods_receipt.read', 'procurement.goods_receipt.create',
@@ -714,7 +743,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Step 0 §10: Finance reads the VAT registration status it depends on but does not answer it.
     'company.vat_registration.read',
     // Item 09 – Finance has full expense access except owner-level signature approval
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve', 'expense.ocr.request', 'expense.ai.verify',
     'expense.category.manage', 'expense.signature.manage', 'expense.export',
@@ -771,7 +803,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.export',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.export',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     // Item 10 – Accountant has full ledger access
     'ledger.account.read', 'ledger.account.manage',
     'ledger.journal.read', 'journal.entry.create', 'journal.entry.post', 'journal.entry.reverse',
@@ -817,10 +852,14 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   MARKETING: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.receipt.line_upload',
+    'expense.read_related', 'expense.read_own', 'expense.receipt.line_upload',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     // Item 15 CRM – Marketing reads permitted customer/segment context
     'crm.customer.read', 'crm.report.read', 'crm.ai.read',
     // Item 16 Workflow Automation – Marketing works own workflow tasks
@@ -832,9 +871,13 @@ export const ROLE_GRANTS: Record<string, string[]> = {
   ],
   STAFF: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+    'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 16 Workflow Automation – Staff works own workflow tasks
     'workflow.task.read', 'workflow.task.work',
@@ -852,7 +895,10 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.export',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.export',
+    'reimbursement.read_related',
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     // Item 10 – Auditor can read all ledger data and export
     'ledger.account.read', 'ledger.journal.read', 'ledger.posting-rule.read',
     'ledger.report.read', 'ledger.period.read', 'ledger.export',

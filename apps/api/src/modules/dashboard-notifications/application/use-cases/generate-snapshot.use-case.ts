@@ -54,6 +54,13 @@ export class GenerateSnapshotUseCase {
       if (
         existing && cached
         && computeFreshness(existing.generatedAt, now) === 'fresh'
+        // `findLatest` returns the newest snapshot for this period KIND, not for this period, and
+        // freshness is an age in minutes — so across a rollover both were satisfied by yesterday's
+        // row. A "today" snapshot generated at 23:50 kept being served until 00:05, showing
+        // yesterday's totals under today's heading. The period the caller asked for has to match
+        // the period the cache holds.
+        && existing.periodStart.getTime() === periodStart.getTime()
+        && existing.periodEnd.getTime() === periodEnd.getTime()
         && sameModuleSet(cached, activeProviders.map((provider) => provider.moduleKey))
       ) {
         return this.toDto(existing, this.visibleWidgets(cached, ctx.permissions));

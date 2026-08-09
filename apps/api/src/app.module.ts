@@ -29,9 +29,10 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
 import { AiDraftModule } from './modules/ai-draft/ai-draft.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { FeatureLaunchModule } from './modules/feature-launch/feature-launch.module';
+import { DataRightsModule } from './modules/data-rights/data-rights.module';
 
 @Module({
-  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule],
+  imports: [ConfigModule, LoggerModule, SecurityModule, DatabaseModule, HealthModule, AuthModule, AuditModule, DataModelCoreModule, InventoryModule, DashboardNotificationsModule, LineAiModule, AccountingDocumentsModule, ExpensesModule, LedgerModule, SystemOnboardingModule, SystemIdentityReconciliationModule, SystemPartnerManagementModule, TaxModule, ProcurementModule, BankingModule, ReimbursementsModule, CrmModule, CrmInboxModule, EmployeeAccessModule, WorkflowModule, AiDraftModule, ReportsModule, FeatureLaunchModule, DataRightsModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

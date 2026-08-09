@@ -10,7 +10,7 @@ import type { BankStatementAiExtractRequest, BankStatementAiExtractResponse } fr
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { assertCompanyAiBudget, recordCompanyAiUsage } from '../../line-ai/application/company-ai-usage-meter';
+import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 
 const EXTRACT_TIMEOUT_MS = 60_000;
 
@@ -29,13 +29,24 @@ export class StatementAiExtractClient {
       const decision = await this.rateLimits.consume('ai-ocr-company', request.companyId, this.config.aiOcrMaxPerCompany, this.config.aiRateLimitWindowSeconds);
       if (!decision.allowed) return { status: 'failed', errorCode: 'AI_OCR_RATE_LIMITED' };
     }
-    // Monthly cap after the per-window limiter, still ahead of the gateway call (spec §6.6).
-    if (this.prisma) {
-      const budget = await assertCompanyAiBudget(this.prisma, this.config, request.companyId);
-      if (!budget.allowed) {
-        return { status: 'failed', errorCode: budget.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' };
-      }
-    }
+    if (!this.prisma) return this.extractAdmitted(request);
+    const admission = await runWithCompanyAiBudgetAdmission(
+      this.prisma,
+      this.config,
+      this.rateLimits,
+      request.companyId,
+      (monthKey) => this.extractAdmitted(request, monthKey),
+    );
+    if (admission.allowed) return admission.value;
+    return {
+      status: 'failed',
+      errorCode: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED'
+        : admission.reason === 'busy' ? 'AI_BUDGET_BUSY'
+        : 'AI_BUDGET_UNAVAILABLE',
+    };
+  }
+
+  private async extractAdmitted(request: BankStatementAiExtractRequest, budgetMonthKey?: string): Promise<BankStatementAiExtractResponse> {
     const secret = this.config.aiGatewayInternalSecret;
     if (!secret) return { status: 'not_configured', errorCode: 'AI_GATEWAY_SECRET_MISSING' };
 
@@ -70,7 +81,7 @@ export class StatementAiExtractClient {
         await recordCompanyAiUsage(
           this.prisma,
           this.config,
-          { companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId },
+          { companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey },
           result.usage,
         );
       } catch (err) {

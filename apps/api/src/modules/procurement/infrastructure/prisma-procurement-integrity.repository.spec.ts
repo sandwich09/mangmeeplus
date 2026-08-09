@@ -44,6 +44,29 @@ const domesticPreview = () => ({
 }) as any;
 
 describe('PrismaProcurementRepository AP transaction integrity', () => {
+  it('claims an approved purchase request atomically when creating its purchase order', async () => {
+    let isolationLevel: string | undefined;
+    let created = false;
+    const client: any = {
+      $transaction: async (fn: (tx: any) => unknown, options: any) => {
+        isolationLevel = options?.isolationLevel;
+        return fn(client);
+      },
+      purchaseOrder: { create: async () => { created = true; return { id: 'po-1' }; } },
+      purchaseRequest: {
+        findFirst: async () => ({ branchId: 'branch-1', supplierId: 'supplier-1', currency: 'THB', lines: [{ id: 'pr-line-1' }] }),
+        updateMany: async () => ({ count: 0 }),
+      },
+    };
+    await assert.rejects(() => new PrismaProcurementRepository({ client } as any).createPurchaseOrder('company-1', {
+      supplierId: 'supplier-1', branchId: 'branch-1', orderDate: new Date('2026-08-10'), sourcePurchaseRequestId: 'pr-1',
+      subtotalAmount: '100', discountAmount: '0', taxableAmount: '100', vatAmount: '0', grandTotalAmount: '100', outstandingAmount: '100',
+      lines: [{ lineNumber: 1, description: 'service', orderedQuantity: '1', unitPrice: '100', discountAmount: '0', vatMode: 'NO_VAT', vatAmount: '0', lineSubtotalAmount: '100', lineTotalAmount: '100', sourcePurchaseRequestLineId: 'pr-line-1' }],
+    }, 'buyer-1'), /purchase_request_conversion_conflict/);
+    assert.equal(created, true);
+    assert.equal(isolationLevel, 'Serializable');
+  });
+
   it('rechecks vendor bill supplier and PO references inside the create transaction', async () => {
     let created = false;
     const client: any = {

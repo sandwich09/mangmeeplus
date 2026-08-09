@@ -25,4 +25,27 @@ describe('trustedClientIp', () => {
   it('falls back to the socket remote address', () => {
     assert.equal(trustedClientIp(request(undefined, '192.0.2.9')), '192.0.2.9');
   });
+
+  // H-3: prod chain is browser -> CF Worker -> ECS gateway -> proxy, so the rightmost hop is
+  // Cloudflare's egress IP. Keying on it puts every visitor behind one colo in one bucket.
+  it('skips the Cloudflare egress hop and keys on the visitor', () => {
+    assert.equal(trustedClientIp(request('spoofed, 203.0.113.55, 172.71.14.9')), '203.0.113.55');
+    assert.equal(trustedClientIp(request('203.0.113.55, 2a06:98c0::1')), '203.0.113.55');
+  });
+
+  it('skips a private hop appended after Cloudflare', () => {
+    assert.equal(trustedClientIp(request('203.0.113.55, 104.16.0.1, 10.0.0.7')), '203.0.113.55');
+  });
+
+  it('never returns a client-asserted address that merely looks like Cloudflare', () => {
+    // Direct-to-origin: the gateway appends the real peer, so the CF-range hop stays ignored.
+    assert.equal(trustedClientIp(request('172.71.14.9, 203.0.113.55')), '203.0.113.55');
+    // Degenerate all-Cloudflare chain must fall back to the peer, not to asserted input.
+    assert.equal(trustedClientIp(request('172.71.14.9')), '10.0.0.5');
+  });
+
+  it('treats addresses just outside the Cloudflare ranges as visitors', () => {
+    assert.equal(trustedClientIp(request('2a06:98c8::1')), '2a06:98c8::1');
+    assert.equal(trustedClientIp(request('104.28.0.1')), '104.28.0.1');
+  });
 });

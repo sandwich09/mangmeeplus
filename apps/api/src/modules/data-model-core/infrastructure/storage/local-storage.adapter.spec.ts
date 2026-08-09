@@ -75,4 +75,26 @@ describe('LocalStorageAdapter', () => {
     await storage.deleteObject({ bucket: stored.bucket, objectKey });
     assert.deepEqual(await storage.getObjectMetadata({ bucket: stored.bucket, objectKey }), { byteSize: 0, exists: false });
   });
+
+  it('returns a complete exact inventory without mutating local bytes', async () => {
+    const storage = new LocalStorageAdapter();
+    const objectKey = `co-1/${randomUUID()}_inventory.pdf`;
+    const stored = await storage.putObject({ objectKey, mimeType: 'application/pdf', bytes: Buffer.from('artifact') });
+
+    assert.deepEqual(await storage.getExactObjectVersionInventory({ bucket: stored.bucket, objectKey }), {
+      bucket: 'local-attachments',
+      objectKey,
+      objectLockConfiguration: 'DISABLED',
+      versions: [{
+        versionId: stored.objectVersionId,
+        isLatest: true,
+        byteSize: 8,
+        objectLockMetadataVerified: true,
+      }],
+      deleteMarkers: [],
+      pagesScanned: 1,
+      complete: true,
+    });
+    assert.deepEqual(await storage.getObject({ bucket: stored.bucket, objectKey }), { bytes: Buffer.from('artifact') });
+  });
 });

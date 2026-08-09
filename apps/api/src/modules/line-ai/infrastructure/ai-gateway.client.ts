@@ -19,7 +19,7 @@ import {
 import { ActorDelegationService } from './actor-delegation.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { assertCompanyAiBudget, recordCompanyAiUsage } from '../application/company-ai-usage-meter';
+import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../application/company-ai-usage-meter';
 
 const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
@@ -37,7 +37,7 @@ export class AiGatewayClient {
   ) {}
 
   async requestLineTurn(request: LineAiTurnRequest): Promise<LineAiTurnResponse> {
-    await this.assertBudget('llm', request.userContext.companyId);
+    await this.assertRateLimit('llm', request.userContext.companyId);
     const { internalUserId: userId, companyId, membershipId, permissions } = request.userContext;
     const actorDelegations = Object.fromEntries(
       (permissions.includes('ai.tool.invoke') ? LINE_TOOL_REGISTRY : [])
@@ -54,36 +54,50 @@ export class AiGatewayClient {
             })),
         ]),
     );
-    return this.postInternal<LineAiTurnResponse>(
-      '/internal/ai/line-turn',
-      { ...request, actorDelegations },
-      request.requestId,
-      LINE_TURN_TIMEOUT_MS,
+    return this.runBudgeted(
+      request.userContext.companyId,
+      (monthKey) => this.postInternal<LineAiTurnResponse>(
+        '/internal/ai/line-turn',
+        { ...request, actorDelegations },
+        request.requestId,
+        LINE_TURN_TIMEOUT_MS,
+        monthKey,
+      ),
     );
   }
 
   async requestReceiptOcr(request: ReceiptOcrRequest): Promise<ReceiptOcrResponse> {
-    await this.assertBudget('ocr', (request as any).companyId ?? (request as any).userContext?.companyId);
-    return this.postInternal<ReceiptOcrResponse>(
-      '/internal/ai/receipt-ocr',
-      request,
-      request.requestId,
-      RECEIPT_OCR_TIMEOUT_MS,
+    const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
+    await this.assertRateLimit('ocr', companyId);
+    return this.runBudgeted(
+      companyId,
+      (monthKey) => this.postInternal<ReceiptOcrResponse>(
+        '/internal/ai/receipt-ocr',
+        request,
+        request.requestId,
+        RECEIPT_OCR_TIMEOUT_MS,
+        monthKey,
+      ),
     );
   }
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
   async requestLineIntakeRoute(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan> {
-    await this.assertBudget('llm', (request as any).companyId ?? (request as any).userContext?.companyId);
-    return this.postInternal<LineIntakeRoutePlan>(
-      '/internal/ai/line-intake-route',
-      request,
-      request.requestId,
-      LINE_INTAKE_TIMEOUT_MS,
+    const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
+    await this.assertRateLimit('llm', companyId);
+    return this.runBudgeted(
+      companyId,
+      (monthKey) => this.postInternal<LineIntakeRoutePlan>(
+        '/internal/ai/line-intake-route',
+        request,
+        request.requestId,
+        LINE_INTAKE_TIMEOUT_MS,
+        monthKey,
+      ),
     );
   }
 
-  private async assertBudget(kind: 'llm' | 'ocr', companyId: string | undefined): Promise<void> {
+  private async assertRateLimit(kind: 'llm' | 'ocr', companyId: string | undefined): Promise<void> {
     if (this.rateLimits) {
       if (!companyId) throw new Error('AI_RATE_LIMIT_COMPANY_REQUIRED');
       const max = kind === 'ocr' ? this.config.aiOcrMaxPerCompany : this.config.aiLlmMaxPerCompany;
@@ -93,15 +107,16 @@ export class AiGatewayClient {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-    // Monthly cap after the per-window limiter, still ahead of the gateway call (spec §6.6).
-    // No retryAfterSeconds: a monthly cap has no meaningful retry window, unlike the per-minute
-    // bucket above — the caller waits for the next Bangkok month or a budget raise.
-    if (!this.prisma || !companyId) return;
-    const budget = await assertCompanyAiBudget(this.prisma, this.config, companyId);
-    if (!budget.allowed) throw new HttpException(
-      { code: budget.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' },
-      HttpStatus.TOO_MANY_REQUESTS,
-    );
+  }
+
+  private async runBudgeted<T>(companyId: string | undefined, action: (monthKey?: string) => Promise<T>): Promise<T> {
+    if (!this.prisma || !companyId) return action();
+    const admission = await runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, action);
+    if (admission.allowed) return admission.value;
+    const body = admission.reason === 'busy'
+      ? { code: 'AI_BUDGET_BUSY', retryAfterSeconds: admission.retryAfterSeconds }
+      : { code: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' };
+    throw new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
   }
 
   private async postInternal<T>(
@@ -109,6 +124,7 @@ export class AiGatewayClient {
     request: unknown,
     requestId: string,
     timeoutMs: number,
+    budgetMonthKey?: string,
   ): Promise<T> {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
@@ -149,6 +165,7 @@ export class AiGatewayClient {
       (request as any)?.companyId ?? (request as any)?.userContext?.companyId,
       requestId,
       (result as { usage?: AiUsageEntry[] })?.usage,
+      budgetMonthKey,
     );
     return result;
   }
@@ -159,10 +176,11 @@ export class AiGatewayClient {
     companyId: string | undefined,
     requestId: string,
     usage: AiUsageEntry[] | undefined,
+    monthKey?: string,
   ): Promise<void> {
     if (!this.prisma || !companyId) return;
     try {
-      await recordCompanyAiUsage(this.prisma, this.config, { companyId, sourceRoute, requestId }, usage);
+      await recordCompanyAiUsage(this.prisma, this.config, { companyId, sourceRoute, requestId, monthKey }, usage);
     } catch (err) {
       this.logger.warn({ msg: 'ai.usage.record_failed', sourceRoute, requestId, error: (err as Error).message });
     }

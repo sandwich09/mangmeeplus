@@ -1,5 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { ForbiddenException } from '@nestjs/common';
+import { PATH_METADATA } from '@nestjs/common/constants';
 import { AUDIT_PERSIST_FAILED_EVENT, AuditService } from './application/audit.service';
 import { AuditAction } from './domain/models/audit-action';
 import { AuditController } from './presentation/audit.controller';
@@ -360,9 +362,13 @@ describe('AuditController role/category filters', () => {
     },
   } as any);
 
+  it('uses a company-explicit route instead of relying on an optional tenant header', () => {
+    assert.equal(Reflect.getMetadata(PATH_METADATA, AuditController), 'companies/:companyId/audit');
+  });
+
   it('allows OWNER full company audit visibility', async () => {
     const calls: unknown[] = [];
-    await makeController(calls).getLogs(makeRequest(['OWNER']));
+    await makeController(calls).getLogs(makeRequest(['OWNER']), 'co-1');
 
     const params = calls[0] as any;
     assert.equal(params.actorUserId, undefined);
@@ -371,7 +377,7 @@ describe('AuditController role/category filters', () => {
 
   it('limits ADMIN to admin/security categories', async () => {
     const calls: unknown[] = [];
-    await makeController(calls).getLogs(makeRequest(['ADMIN']));
+    await makeController(calls).getLogs(makeRequest(['ADMIN']), 'co-1');
 
     const params = calls[0] as any;
     assert.equal(params.actorUserId, undefined);
@@ -380,10 +386,20 @@ describe('AuditController role/category filters', () => {
 
   it('limits ACCOUNTANT to accounting/tax/finance categories', async () => {
     const calls: unknown[] = [];
-    await makeController(calls).getLogs(makeRequest(['ACCOUNTANT']));
+    await makeController(calls).getLogs(makeRequest(['ACCOUNTANT']), 'co-1');
 
     const params = calls[0] as any;
     assert.equal(params.actorUserId, undefined);
     assert.deepEqual(params.categories, ['accounting', 'tax', 'finance']);
+  });
+
+  it('rejects a route company that differs from the resolved request context', async () => {
+    const calls: unknown[] = [];
+
+    await assert.rejects(
+      () => makeController(calls).getLogs(makeRequest(['OWNER']), 'co-2'),
+      (error: unknown) => error instanceof ForbiddenException,
+    );
+    assert.equal(calls.length, 0);
   });
 });

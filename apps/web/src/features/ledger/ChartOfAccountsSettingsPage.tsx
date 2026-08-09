@@ -6,6 +6,7 @@ import type { ChartTemplateApplyMode, LedgerAccountClass } from '@watchdog-bms/c
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
   applyChartTemplate,
   getChartReadiness,
@@ -88,7 +89,7 @@ function GapRow({ label, value }: { label: string; value: string | number }) {
 }
 
 function formatAppliedAt(value: string | null): string {
-  return value ? new Date(value).toLocaleString('th-TH') : '-';
+  return formatThaiDateTime(value, '-');
 }
 
 export function ChartOfAccountsSettingsPage({

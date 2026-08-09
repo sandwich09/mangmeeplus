@@ -5,7 +5,7 @@
  * ai-draft worker's dispatch-to-HTTP pattern; the API owns all Redis stream semantics.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
 
@@ -33,6 +33,7 @@ export function startLineAiLedgerWorker(redisUrl: string, intervalMs = 60_000): 
       workerLog('error', { event: 'line_ai_ledger_schedule_failed', error: (err as Error).message });
     },
   );
+  attachDeadLetterQueue(worker, LINE_AI_LEDGER_QUEUE, redisUrl);
   return worker;
 }
 

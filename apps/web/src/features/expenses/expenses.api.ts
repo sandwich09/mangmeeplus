@@ -106,7 +106,7 @@ export async function createExpenseDraft(
 export async function updateExpenseDraft(
   companyId: string,
   expenseId: string,
-  body: UpdateExpenseDraftInput,
+  body: UpdateExpenseDraftInput & { expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
@@ -114,7 +114,7 @@ export async function updateExpenseDraft(
 export async function updateExpenseReviewFields(
   companyId: string,
   expenseId: string,
-  body: UpdateExpenseDraftInput,
+  body: UpdateExpenseDraftInput & { expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/review-fields`, { method: 'PATCH', body: JSON.stringify(body) });
 }
@@ -122,7 +122,7 @@ export async function updateExpenseReviewFields(
 export async function overrideNonExpenseClassification(
   companyId: string,
   expenseId: string,
-  body: { sourceDocumentType: SourceDocumentType; acknowledged: true; reason: string },
+  body: { sourceDocumentType: SourceDocumentType; acknowledged: true; reason: string; expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/non-expense-classification-override`, {
     method: 'POST',
@@ -133,7 +133,7 @@ export async function overrideNonExpenseClassification(
 export async function acknowledgeOcrTotal(
   companyId: string,
   expenseId: string,
-  body: { acknowledged: true; acknowledgedTotalAmount: string; reason: string },
+  body: { acknowledged: true; acknowledgedTotalAmount: string; reason: string; expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/ocr-total-acknowledgement`, {
     method: 'POST',

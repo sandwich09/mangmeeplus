@@ -2,14 +2,16 @@
  * Per-company AI spend meter and monthly budget gate (metering spec §7.5).
  *
  * Plain functions in the `company-ai-model-policy.ts` style so the receipt, statement,
- * CRM and draft lanes can all import it cross-module. `assertCompanyAiBudget` returns a
- * decision rather than throwing, because each seam refuses in its own existing exhaustion
- * shape (HTTP 429, `{status:'failed'}`, or a provider-error result).
+ * CRM and draft lanes can all import it cross-module. The budget helpers return decisions
+ * rather than throwing, because each seam refuses in its own existing exhaustion shape
+ * (HTTP 429, `{status:'failed'}`, or a provider-error result).
  */
+import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import type { AiUsageEntry } from '@watchdog-bms/contracts';
 import type { AppConfigService } from '../../../common/config/app-config.service';
 import type { PrismaService } from '../../../common/database/prisma.service';
+import type { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
 import { resolveThbPerUsd } from './ai-fx-rate';
 import { computeCostSatang } from './ai-model-pricing';
@@ -20,6 +22,8 @@ export type CompanyAiUsageMeta = {
   companyId: string;
   sourceRoute: string;
   requestId?: string;
+  /** Pinned when budget admission starts so lock, spend read and ledger write cannot straddle months. */
+  monthKey?: string;
 };
 
 /** Month-to-date spend either side of this recording, so phase 4 can detect a threshold
@@ -47,6 +51,7 @@ export function previousBangkokMonthKey(now: Date = new Date()): string {
 export type CompanyAiBudgetDecision =
   | { allowed: true }
   | { allowed: false; reason: 'exceeded'; spendSatang: number; budgetSatang: number; override: boolean }
+  | { allowed: false; reason: 'busy'; retryAfterSeconds: number }
   | { allowed: false; reason: 'unavailable' };
 
 type EffectiveBudget = { budgetSatang: number; override: boolean };
@@ -58,6 +63,10 @@ type EffectiveBudget = { budgetSatang: number; override: boolean };
  */
 const BUDGET_CACHE_TTL_MS = 60_000;
 const budgetCache = new Map<string, EffectiveBudget & { platform?: PlatformAiBudgetSettings; expiresAt: number }>();
+const localBudgetAdmissions = new Map<string, { token: string; expiresAt: number }>();
+const BUDGET_ADMISSION_SCOPE = 'ai-monthly-budget';
+/** Longer than the longest outer AI Gateway timeout (120s); TTL only recovers a crashed owner. */
+const BUDGET_ADMISSION_TTL_SECONDS = 180;
 
 /** The platform row rides in the same cache under a key no company id can collide with. */
 const PLATFORM_CACHE_KEY = '__platform__';
@@ -67,6 +76,7 @@ const PLATFORM_CONFIG_ID = 'platform';
 /** Test seam: the TTL is wall-clock, so specs need a deterministic way back to a cold cache. */
 export function __resetCompanyAiBudgetCache(): void {
   budgetCache.clear();
+  localBudgetAdmissions.clear();
 }
 
 /** Platform-wide defaults, DB row first and the env values as the fallback (spec §7.4). */
@@ -155,9 +165,9 @@ async function resolveEffectiveBudget(
 }
 
 /**
- * Check-before-act (spec §6.6): is the company already at or over its effective monthly budget?
- * Runs ahead of the gateway call, never mid-action — an action already in flight is not aborted,
- * so overshoot is bounded to concurrent request streams.
+ * Live spend check (spec §6.6): is the company already at or over its effective monthly budget?
+ * Cost-bearing callers invoke this only after `runWithCompanyAiBudgetAdmission` owns the
+ * company/month lease; direct exports remain useful to admin and event tests.
  *
  * Never throws. Any read failure returns `unavailable` (spec §6.7): an unreadable meter must
  * refuse with a distinct code, never become an unmetered pass.
@@ -166,6 +176,7 @@ export async function assertCompanyAiBudget(
   prisma: PrismaService,
   config: AppConfigService,
   companyId: string,
+  monthKey: string = bangkokMonthKey(),
 ): Promise<CompanyAiBudgetDecision> {
   let budget: EffectiveBudget;
   let spendSatang: number;
@@ -173,7 +184,7 @@ export async function assertCompanyAiBudget(
     budget = await resolveEffectiveBudget(prisma, config, companyId);
     // Live point read on the unique aggregate: spend is the one value that must not be stale.
     const row = await (prisma.client as any).companyAiMonthlyUsage.findUnique({
-      where: { companyId_monthKey: { companyId, monthKey: bangkokMonthKey() } },
+      where: { companyId_monthKey: { companyId, monthKey } },
       select: { costSatang: true },
     });
     spendSatang = row?.costSatang ?? 0; // no aggregate row yet = nothing spent this month
@@ -192,6 +203,67 @@ export async function assertCompanyAiBudget(
     return { allowed: false, reason: 'exceeded', spendSatang, budgetSatang: budget.budgetSatang, override: budget.override };
   }
   return { allowed: true };
+}
+
+/**
+ * Serializes cost-bearing actions per company/month across API instances, re-checks the live
+ * aggregate only after admission, and holds the lease until `action` has recorded its usage.
+ * Therefore concurrent callers cannot all pass the same stale check; at most the one admitted
+ * action can cross the cap because its exact provider cost is only known after it finishes.
+ */
+export async function runWithCompanyAiBudgetAdmission<T>(
+  prisma: PrismaService,
+  config: AppConfigService,
+  rateLimits: RedisRateLimitService | undefined,
+  companyId: string,
+  action: (monthKey: string) => Promise<T>,
+): Promise<({ allowed: true; value: T } | Exclude<CompanyAiBudgetDecision, { allowed: true }>)> {
+  const monthKey = bangkokMonthKey();
+  const leaseKey = `${companyId}:${monthKey}`;
+  let token: string;
+  let shared = false;
+
+  if (rateLimits && typeof (rateLimits as any).tryAcquireLease === 'function') {
+    try {
+      const lease = await rateLimits.tryAcquireLease(BUDGET_ADMISSION_SCOPE, leaseKey, BUDGET_ADMISSION_TTL_SECONDS);
+      if (!lease.acquired) return { allowed: false, reason: 'busy', retryAfterSeconds: lease.retryAfterSeconds };
+      token = lease.token;
+      shared = true;
+    } catch (err) {
+      logger.warn({ msg: 'ai.budget.admission_failed', companyId, error: (err as Error).message });
+      return { allowed: false, reason: 'unavailable' };
+    }
+  } else {
+    // Production must never silently fall back to a per-process lock if DI/store wiring is lost.
+    if (config.isProduction) {
+      logger.warn({ msg: 'ai.budget.admission_missing', companyId });
+      return { allowed: false, reason: 'unavailable' };
+    }
+    const now = Date.now();
+    const current = localBudgetAdmissions.get(leaseKey);
+    if (current && current.expiresAt > now) {
+      return { allowed: false, reason: 'busy', retryAfterSeconds: Math.max(1, Math.ceil((current.expiresAt - now) / 1_000)) };
+    }
+    token = randomUUID();
+    localBudgetAdmissions.set(leaseKey, { token, expiresAt: now + BUDGET_ADMISSION_TTL_SECONDS * 1_000 });
+  }
+
+  try {
+    const budget = await assertCompanyAiBudget(prisma, config, companyId, monthKey);
+    if (!budget.allowed) return budget;
+    return { allowed: true, value: await action(monthKey) };
+  } finally {
+    if (shared) {
+      try {
+        await rateLimits!.releaseLease(BUDGET_ADMISSION_SCOPE, leaseKey, token!);
+      } catch (err) {
+        // The TTL is the final safety net; never turn a completed business action into a failure.
+        logger.warn({ msg: 'ai.budget.admission_release_failed', companyId, error: (err as Error).message });
+      }
+    } else if (localBudgetAdmissions.get(leaseKey)?.token === token!) {
+      localBudgetAdmissions.delete(leaseKey);
+    }
+  }
 }
 
 /**
@@ -220,7 +292,7 @@ export async function recordCompanyAiUsage(
     return undefined;
   }
 
-  const monthKey = bangkokMonthKey();
+  const monthKey = meta.monthKey ?? bangkokMonthKey();
   // One resolution per recording, not per row: every row of this recording is priced at the same
   // rate and stamps it — plus where that rate came from, so a fallback leaves a mark on the row
   // and not only in a log line that rotates (spec §6.4 + addendum).

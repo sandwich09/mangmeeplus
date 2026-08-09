@@ -5,7 +5,7 @@
  * Period-scoped tools default to the current month (owner decision 2026-07-03).
  */
 import { Injectable } from '@nestjs/common';
-import type { ToolResult, SourceRef } from '@watchdog-bms/contracts';
+import { ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS, type ToolResult, type SourceRef } from '@watchdog-bms/contracts';
 import type { ErpReadToolPort, ErpToolContext } from '../../domain/ports/erp-read-tool.port';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { ListDocumentsUseCase } from '../../../accounting-documents/application/use-cases/document.use-case';
@@ -14,6 +14,7 @@ import { branchScopeWhere } from '../../../data-model-core/domain/logic/branch.l
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { resolvePeriodInput } from './erp-tools.use-case';
 import { civilDayRangeToUtc } from '@watchdog-bms/contracts';
+import { expenseRelatedToUserWhere } from '../../../expenses/infrastructure/prisma-expense.repository';
 
 function now(): string { return new Date().toISOString(); }
 
@@ -45,7 +46,7 @@ export class AccountingGetSummaryTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('accounting.document.read')) {
+    if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
@@ -86,7 +87,7 @@ export class AccountingListRecentDocumentsTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string; documentType?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('accounting.document.read')) {
+    if (!ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS.some((permission) => ctx.permissions.includes(permission))) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
@@ -295,7 +296,8 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
   async execute(ctx: ErpToolContext, input?: { fromDate?: string; toDate?: string }): Promise<ToolResult> {
     const asOf = now();
     const canReadAll = ctx.permissions.includes('expense.read') || ctx.permissions.includes('expense.review');
-    if (!canReadAll && !ctx.permissions.includes('expense.read_own')) {
+    const canReadRelated = ctx.permissions.includes('expense.read_related');
+    if (!canReadAll && !canReadRelated && !ctx.permissions.includes('expense.read_own')) {
       return { toolName: this.toolName, status: 'forbidden', sourceRefs: [], asOf };
     }
     const period = resolvePeriodInput(input);
@@ -303,10 +305,13 @@ export class ExpenseGetBreakdownTool implements ErpReadToolPort {
       companyId: ctx.companyId,
       status: { notIn: ['REJECTED', 'VOIDED'] as never[] },
       expenseDate: civilDayRangeToUtc(period.fromDate, period.toDate),
-      // Branch ABAC (10D): restricted scopes see their branches plus company-central rows.
-      ...branchScopeWhere({ branchIds: ctx.branchIds }),
-      // read_own limitation mirrors ListExpensesUseCase
-      ...(!canReadAll && { createdByUserId: ctx.userId }),
+      AND: [
+        // Branch ABAC (10D): restricted scopes see their branches plus company-central rows.
+        branchScopeWhere({ branchIds: ctx.branchIds }),
+        ...(!canReadAll
+          ? [canReadRelated ? expenseRelatedToUserWhere(ctx.userId) : { createdByUserId: ctx.userId }]
+          : []),
+      ],
     };
 
     const [byCategory, byBranch] = await Promise.all([

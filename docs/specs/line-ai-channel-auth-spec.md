@@ -62,7 +62,7 @@ Shared OA chat behavior:
 - Re-linking the same LINE account from a different OWNER-owned company must update `LineCompanyContext` to the selected company instead of relying on old LINE chat state.
 - Re-linking must be idempotent for the same WatchDog user and LINE user. It should refresh selected company context, not fail with a blocking conflict.
 - A normal non-owner employee must not end up with multiple active company contexts. If multiple active memberships exist for a non-owner, deny and audit policy violation.
-- OWNER users can manage shared-OA company context from LINE with exact control commands: `/companies` lists active OWNER companies and `/company <number-or-companyId>` switches context after server-side membership verification. These commands are not AI classifier keywords.
+- OWNER users can manage shared-OA company context from LINE with control-plane commands: `/companies`, `/company`, or exact `เปลี่ยนบริษัท` lists active OWNER companies and `/company <number-or-companyId>` switches context after server-side membership verification. The immediately following reply may use the displayed bare number within 15 minutes; the server maps it from pending picker state and performs the same membership/OWNER recheck. These commands are not AI classifier keywords.
 
 ### Ask AI About System Data
 

@@ -10,10 +10,13 @@ import { PrismaProcurementRepository } from '../../../procurement/infrastructure
 import { PrismaReimbursementRepository } from '../../../reimbursements/infrastructure/prisma-reimbursement.repository';
 import { validateJournalBalance, buildReversalLines } from '../../domain/logic/journal-balance.logic';
 import {
+  BOUND_EXPENSE_ACCRUAL_EVENTS,
+  buildBoundExpenseAccrualLines,
   buildDefaultPostingLines,
   buildTransactionTaxPostingLines,
   derivePeriodKey,
   requiresReviewedPostingRules,
+  type ExpenseAccountBindings,
 } from '../../domain/logic/posting-engine.logic';
 import { buildAccountingPaymentPostingSource, buildDocumentPostingInput } from '../../../accounting-documents/application/use-cases/posting-source.use-case';
 import { buildVendorBillPostingSource, buildVendorBillPp36PostingSource } from '../../../procurement/application/use-cases/vendor-bill.use-case';
@@ -25,7 +28,7 @@ import type { JournalEntryRecord } from '../../domain/models/ledger.model';
 import { LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
 import { Decimal } from 'decimal.js';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { civilDateToUtcDate, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDateToUtcDate, civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 
 
 function requirePerm(ctx: RequestContext, perm: string) {
@@ -68,6 +71,25 @@ function hasCallerOwnedManualMetadata(line: {
     .some((value) => value !== null && value !== undefined);
 }
 
+/**
+ * Reviewed payable accounts for `TH_SME_COA_V1` (owner decision 2026-08-09, audit CR-2). The
+ * template has no dedicated เจ้าหนี้พนักงาน, so employee reimbursement accrues to the generic
+ * accrued-expense account rather than being merged into trade AP.
+ */
+const REVIEWED_PAYABLE_CODES = { accountsPayableCode: '2120-01', employeePayableCode: '2131-09' } as const;
+
+/** Human-readable Thai message per stable binding-gap code. */
+function postingBindingMessage(code: string): string {
+  if (code.startsWith('expense_account_unmapped')) {
+    return 'ยังไม่ได้กำหนดบัญชีแยกประเภทให้หมวดค่าใช้จ่ายนี้ กรุณากำหนดบัญชีของหมวดก่อน';
+  }
+  if (code === 'wht_account_unmapped') {
+    return 'ยังไม่รองรับการลงบัญชีเอกสารที่มีภาษีหัก ณ ที่จ่าย เพราะบัญชีภาษีหัก ณ ที่จ่ายแยกตามแบบยื่น (ภ.ง.ด.3/53)';
+  }
+  if (code === 'expense_allocation_base_zero') return 'ยอดตามรายการเป็นศูนย์ จึงปันส่วนค่าใช้จ่ายเข้าบัญชีไม่ได้';
+  return 'บริษัทที่ใช้ผังบัญชีมาตรฐานต้องกำหนดและอนุมัติกฎการลงบัญชีก่อนบันทึกอัตโนมัติ';
+}
+
 function normalizeExpenseVatForLedger(source: LedgerSourcePostingInput, evidence: any): LedgerSourcePostingInput {
   const claimable = evidence.inputVatClaimStatus === 'CLAIMABLE' && evidence.taxEvidenceStatus === 'USABLE_FOR_TAX';
   return {
@@ -82,7 +104,7 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
     return input.sourceType === 'expense.record' ? normalizeExpenseVatForLedger(input, input) : input;
   }
   if (input.sourceType === 'accounting_document' || input.documentId) {
-    const date = input.documentDate ?? input.sourceDate;
+    const date = coerceCivilDate(input.documentDate ?? input.sourceDate);
     const documentType = input.documentType as string | undefined;
     const event = input.sourceEventType === 'voided'
       ? 'accounting.document.voided'
@@ -126,7 +148,7 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
     } as LedgerSourcePostingInput & { legacyOutputTaxCode?: string });
   }
   if (input.sourceType === 'expense.record' || input.expenseNumber !== undefined) {
-    const date = input.expenseDate ?? input.sourceDate;
+    const date = coerceCivilDate(input.expenseDate ?? input.sourceDate);
     return normalizeExpenseVatForLedger({
       companyId: input.companyId,
       branchId: input.branchId ?? undefined,
@@ -157,6 +179,9 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
         vatAmount: line.vatAmount,
         whtAmount: line.whtAmount,
         categoryKey: line.accountHintKey ?? line.taxCategory,
+        // Falls back to the record-level category so a single-category expense whose lines carry no
+        // category of their own still resolves a reviewed account instead of reporting no_category.
+        expenseCategoryId: line.expenseCategoryId ?? input.expenseCategoryId ?? undefined,
         taxSnapshot: line.taxSnapshot,
         taxComponents: line.taxComponents,
       })),
@@ -228,18 +253,19 @@ export class CreateManualJournalUseCase {
     const bal = validateJournalBalance(lines);
     if (!bal.isBalanced) throw new BadRequestException({ message: 'Journal unbalanced', errors: bal.errors, totalDebit: bal.totalDebit, totalCredit: bal.totalCredit });
 
-    const periodKey = input.entryDate.slice(0, 7); // YYYY-MM
+    const entryCivilDate = coerceCivilDate(input.entryDate);
+    const periodKey = civilPeriodKey(entryCivilDate);
     let period = await this.repo.findPeriod(ctx.companyId, periodKey);
     if (!period) {
-      const d = new Date(input.entryDate);
-      const start = new Date(d.getFullYear(), d.getMonth(), 1);
-      const end   = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const [y, m] = periodKey.split('-').map(Number) as [number, number];
+      const start = new Date(Date.UTC(y, m - 1, 1));
+      const end   = new Date(Date.UTC(y, m, 0));
       period = await this.repo.upsertPeriod(ctx.companyId, periodKey, start, end);
     }
     if (period.status === 'CLOSED') throw new BadRequestException({ code: 'period_closed', periodKey, message: 'งวดบัญชีถูกปิดแล้ว' });
 
     const reserved = await this.reserve.execute({ companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `manual:${ctx.userId}:${Date.now()}`, reservedByUserId: ctx.userId });
-    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'MANUAL', entryDate: new Date(input.entryDate), memo: input.memo, createdByUserId: ctx.userId, lines });
+    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'MANUAL', entryDate: civilDateToUtcDate(entryCivilDate), memo: input.memo, createdByUserId: ctx.userId, lines });
     await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
 
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'ledger.journal.create', targetType: 'journal_entry', targetId: entry.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { entryNumber: entry.entryNumber, totalDebit: bal.totalDebit } });
@@ -352,10 +378,10 @@ export class GenerateJournalFromSourceUseCase {
       await this.accountingRepo.updatePaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null });
     } else if (source.sourceType === 'procurement.supplier_payment') {
       await this.procurementRepo.updateSupplierPaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null });
-    } else if (source.sourceType === 'expense.record' || source.sourceType === 'expense.payment') {
-      // GAP-07: the settlement leg flips the same expense posting flag the accrual
-      // uses — pending (set by RecordExpensePayment) → posted / posting_error.
+    } else if (source.sourceType === 'expense.record') {
       await this.expenseRepo.updatePostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null, postingError: error ?? null });
+    } else if (source.sourceType === 'expense.payment') {
+      await this.expenseRepo.updatePaymentPostingStatus(ctx.companyId, source.sourceId, { postingStatus: status, journalEntryId: entry?.id ?? null, postingError: error ?? null });
     } else if (source.sourceType === 'reimbursement.payment') {
       // GAP-02: settlement payment is a real posting source now — flip it to
       // 'posted' on success like every other generate source. It carries no
@@ -389,31 +415,26 @@ export class GenerateJournalFromSourceUseCase {
         idempotencyKey: `expense:${expense.status}:${expense.id}` } as any);
     }
     if (raw.sourceType === 'expense.payment') {
-      // GAP-07: settlement of a plain (non-claim) expense — Dr 2120-01 trade AP /
-      // Cr 1110-01 cash. Expenses carry no payment rows, so paidAmount on the
-      // record is the single full settlement: one journal per expense id.
-      const expense = await this.expenseRepo.findByIdWithRelations(ctx.companyId, raw.sourceId);
-      if (!expense) throw new NotFoundException('Expense source not found');
+      const payment = await this.expenseRepo.findPaymentById(ctx.companyId, raw.sourceId);
+      if (!payment) throw new NotFoundException('Expense payment source not found');
+      const expense = payment.expense;
       if (expense.status !== 'CONFIRMED') throw new BadRequestException({ code: 'expense_not_confirmed', message: 'Only a confirmed expense can post its settlement' });
-      // Claim-born expenses settle through reimbursement.payment (Dr 2130-01), not here.
-      if ((expense as any).sourceReimbursementRequestId != null) throw new BadRequestException({ code: 'claim_expense_settles_via_reimbursement', message: 'A claim-born expense settles through reimbursement.payment, not expense.payment' });
-      // Full settlement only — partial-payment posting is a documented limitation.
-      if (expense.paymentStatus !== 'PAID') throw new BadRequestException({ code: 'expense_payment_not_settled', message: 'Only a fully paid expense can post its settlement; partial payments are not yet supported' });
-      const paidAt = (expense as any).paidAt as Date | null;
-      const sourceDate = (paidAt ?? expense.expenseDate).toISOString();
+      if (expense.sourceReimbursementRequestId != null) throw new BadRequestException({ code: 'claim_expense_settles_via_reimbursement', message: 'A claim-born expense settles through reimbursement.payment, not expense.payment' });
+      if (payment.status !== 'RECORDED') throw new BadRequestException({ code: 'expense_payment_not_recorded', message: 'Only a recorded expense payment can post its settlement' });
+      const sourceDate = coerceCivilDate(payment.paidAt);
       return {
         companyId: expense.companyId,
         branchId: expense.branchId ?? undefined,
         sourceType: 'expense.payment',
-        sourceId: expense.id,
+        sourceId: payment.id,
         sourceEventType: 'expense.payment',
-        idempotencyKey: `expense.payment:${expense.status}:${expense.id}`,
+        idempotencyKey: `expense.payment:${payment.id}`,
         documentNumber: expense.expenseNumber ?? undefined,
         sourceDate,
         periodKey: derivePeriodKey(sourceDate),
         currency: expense.currency,
         counterpartyId: expense.vendorCounterpartyId ?? undefined,
-        totalAmount: expense.paidAmount,
+        totalAmount: payment.amount,
         lines: [],
       } as LedgerSourcePostingInput;
     }
@@ -423,7 +444,7 @@ export class GenerateJournalFromSourceUseCase {
       if (!payment) throw new NotFoundException('Reimbursement payment source not found');
       if (payment.status !== 'RECORDED') throw new BadRequestException({ code: 'reimbursement_payment_not_recorded', message: 'Only a recorded reimbursement payment can be posted' });
       const settlement = await this.reimbursementRepo.assertSettlementPostingReady(ctx.companyId, payment.id);
-      const sourceDate = payment.paidAt.toISOString();
+      const sourceDate = coerceCivilDate(payment.paidAt);
       return {
         companyId: payment.companyId,
         branchId: settlement.branchId,
@@ -469,6 +490,27 @@ export class GenerateJournalFromSourceUseCase {
       return buildSupplierPaymentPp36PostingSource(payment);
     }
     throw new BadRequestException({ code: 'unsupported_posting_source', message: 'Journal generation accepts only a recognized server-owned source. Use the manual-journal flow for manual entries.' });
+  }
+
+  /**
+   * Reviewed account bindings for this company's expense categories. Only the categories the source
+   * actually references are loaded, so an unrelated unmapped category never blocks a posting.
+   */
+  private async loadExpenseAccountBindings(
+    companyId: string,
+    source: LedgerSourcePostingInput,
+  ): Promise<ExpenseAccountBindings> {
+    const categoryIds = [...new Set(source.lines.map((line) => line.expenseCategoryId).filter(Boolean))] as string[];
+    const rows = categoryIds.length
+      ? await this.prisma.client.expenseCategory.findMany({
+        where: { id: { in: categoryIds }, companyId, ledgerAccountCode: { not: null } },
+        select: { id: true, ledgerAccountCode: true },
+      })
+      : [];
+    return {
+      ...REVIEWED_PAYABLE_CODES,
+      expenseByCategoryId: new Map(rows.map((row) => [row.id, row.ledgerAccountCode!])),
+    };
   }
 
   async execute(ctx: RequestContext, rawSource: PostingSourceRef): Promise<JournalEntrySummary> {
@@ -524,32 +566,44 @@ export class GenerateJournalFromSourceUseCase {
       source.sourceEventType,
       reviewedRulesRequired,
     );
+    // Audit CR-2: a governed company has no PostingRule and must not fall back to
+    // DEFAULT_ACCOUNT_CODES — those predate TH_SME_COA_V1 and would book every expense to เงินเดือน.
+    // Expense accrual instead resolves the reviewed per-category bindings; every other event type
+    // still has no reviewed mapping and keeps failing closed with the actionable code.
+    let boundLines: LedgerJournalLineInput[] | null = null;
     if (!rule && reviewedRulesRequired) {
-      await this.markSource(ctx, source, 'posting_error', undefined, 'posting_rule_missing');
-      await this.audit.log({
-        companyId: ctx.companyId,
-        actorUserId: ctx.userId,
-        action: 'ledger.journal.generate',
-        targetType: 'journal_entry',
-        targetId: source.sourceId,
-        requestId: ctx.requestId,
-        result: 'FAILED',
-        riskLevel: 'HIGH',
-        metadataJson: {
+      const bindable = (BOUND_EXPENSE_ACCRUAL_EVENTS as readonly string[]).includes(source.sourceEventType);
+      const bound = bindable
+        ? buildBoundExpenseAccrualLines(source, await this.loadExpenseAccountBindings(ctx.companyId, source))
+        : { error: 'posting_rule_missing' as const };
+      if ('error' in bound) {
+        await this.markSource(ctx, source, 'posting_error', undefined, bound.error);
+        await this.audit.log({
+          companyId: ctx.companyId,
+          actorUserId: ctx.userId,
+          action: 'ledger.journal.generate',
+          targetType: 'journal_entry',
+          targetId: source.sourceId,
+          requestId: ctx.requestId,
+          result: 'FAILED',
+          riskLevel: 'HIGH',
+          metadataJson: {
+            sourceType: source.sourceType,
+            sourceId: source.sourceId,
+            error: bound.error,
+            chartTemplateKey: company.chartOfAccountsTemplateKey,
+          },
+        });
+        throw new BadRequestException({
+          code: bound.error,
           sourceType: source.sourceType,
-          sourceId: source.sourceId,
-          error: 'posting_rule_missing',
-          chartTemplateKey: company.chartOfAccountsTemplateKey,
-        },
-      });
-      throw new BadRequestException({
-        code: 'posting_rule_missing',
-        sourceType: source.sourceType,
-        eventType: source.sourceEventType,
-        message: 'บริษัทที่ใช้ผังบัญชีมาตรฐานต้องกำหนดและอนุมัติกฎการลงบัญชีก่อนบันทึกอัตโนมัติ',
-      });
+          eventType: source.sourceEventType,
+          message: postingBindingMessage(bound.error),
+        });
+      }
+      boundLines = bound.lines;
     }
-    let baseLines = rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' });
+    let baseLines = boundLines ?? (rule ? null : buildDefaultPostingLines({ ...source, taxTotal: '0' }));
     if (rule) {
       const { resolvePostingLinesFromRule } = await import('../../domain/logic/posting-engine.logic.js');
       baseLines = resolvePostingLinesFromRule(source, rule.mappingJson);
@@ -609,7 +663,7 @@ export class GenerateJournalFromSourceUseCase {
     }
 
     const reserved = await this.reserve.execute({ companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId });
-    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: new Date(source.sourceDate), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines });
+    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines });
     await this.repo.postJournalEntry(entry.id, ctx.userId);
     await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
     await this.markSource(ctx, source, 'posted', entry);

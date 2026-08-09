@@ -1,6 +1,10 @@
 import type { LedgerSourcePostingInput, LedgerJournalLineInput } from '@watchdog-bms/contracts';
 import type { TransactionTaxComponentPreview } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
 import { Decimal } from 'decimal.js';
+import { resolveExpenseDebits, type ExpenseAccountBindings } from './expense-account-binding.logic';
+
+export type { ExpenseAccountBindings };
 
 function decimal(value: Decimal.Value | undefined | null): Decimal {
   try { return new Decimal(value ?? 0); } catch { return new Decimal(0); }
@@ -231,6 +235,57 @@ export function buildDefaultPostingLines(source: LedgerSourcePostingInput): Ledg
   }
 }
 
+/** Event types whose posting a reviewed expense binding can express. */
+export const BOUND_EXPENSE_ACCRUAL_EVENTS = ['expense.confirmed', 'expense.posted', 'expense.claim.confirmed'] as const;
+
+/**
+ * Expense accrual for a company on a governed chart template (audit CR-2, bootstrap spec §9.2).
+ *
+ * The expense debit is split across the REVIEWED account of each line's category instead of the
+ * single hard-coded `5310-01` (which is เงินเดือน in `TH_SME_COA_V1`), and the payable comes from the
+ * company's bindings rather than `DEFAULT_ACCOUNT_CODES`.
+ *
+ * Amounts are GROSS on both sides, like {@link resolvePostingLinesFromRule} and unlike
+ * {@link buildDefaultPostingLines}: input VAT is carved back out of the debit side by
+ * {@link buildTransactionTaxPostingLines}, which sources the VAT account from the company's reviewed
+ * tax account determination. Emitting a VAT line here as well would book it twice.
+ *
+ * Withholding is not expressible yet: the template splits WHT payable by statutory form
+ * (`2132-03` ภ.ง.ด.3 for individuals, `2132-04` ภ.ง.ด.53 for juristic payees), so the account
+ * depends on the payee and cannot be a single bound code. Such an expense is reported rather than
+ * posted to a guessed form.
+ */
+export function buildBoundExpenseAccrualLines(
+  source: LedgerSourcePostingInput,
+  bindings: ExpenseAccountBindings,
+): { lines: LedgerJournalLineInput[] } | { error: string } {
+  const gross = decimal(source.totalAmount);
+  if (decimal(source.whtTotal).gt(0)) return { error: 'wht_account_unmapped' };
+
+  const resolved = resolveExpenseDebits({
+    totalToAllocate: gross,
+    lines: source.lines.map((line) => ({ expenseCategoryId: line.expenseCategoryId, netAmount: line.netAmount })),
+    bindings,
+  });
+  if (!resolved.ok) return { error: resolved.error };
+
+  const ref = { currency: source.currency, sourceType: source.sourceType, sourceId: source.sourceId, branchId: source.branchId };
+  const isClaim = source.sourceEventType === 'expense.claim.confirmed';
+  return {
+    lines: [
+      ...resolved.debits.map((debit) => ({
+        accountId: debit.accountCode, debitAmount: debit.amount, description: 'ค่าใช้จ่าย', ...ref,
+      })),
+      {
+        accountId: isClaim ? bindings.employeePayableCode : bindings.accountsPayableCode,
+        creditAmount: d4(gross),
+        description: isClaim ? 'เจ้าหนี้พนักงาน' : 'เจ้าหนี้การค้า',
+        ...ref,
+      },
+    ],
+  };
+}
+
 export type TransactionTaxPostingResult = { lines?: LedgerJournalLineInput[]; error?: string; handled: boolean };
 
 /** Builds tax lines only from immutable server snapshots; never from caller-supplied account ids. */
@@ -328,10 +383,7 @@ function taxComponentDescription(component: TransactionTaxComponentPreview): str
   return `Tax ${component.componentKey}${component.snapshot.externalTaxCode ? ` (${component.snapshot.externalTaxCode})` : ''}`;
 }
 
-/** Derive a monthly period key from a date string. */
-export function derivePeriodKey(dateStr: string): string {
-  const d = new Date(dateStr);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+/** Derive a monthly period key from a civil date or an instant in the Thai company timezone. */
+export function derivePeriodKey(value: string | Date): string {
+  return civilPeriodKey(coerceCivilDate(value));
 }

@@ -6,7 +6,8 @@ import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../common/pipes/validation
 import { AuthRateLimitService } from '../application/auth-rate-limit.service';
 import { LineLoginVerifierAdapter } from '../infrastructure/line-login-verifier.adapter';
 import { SetAiAssistantPreferenceUseCase } from '../application/use-cases/set-ai-assistant-preference.use-case';
-import { AuthController, EmployeeLineLinkDto, LineExchangeDto, LineLinkDto, PasswordResetRequestDto } from './auth.controller';
+import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION } from '@watchdog-bms/contracts';
+import { AcceptLegalDocumentsDto, AuthController, EmployeeLineLinkDto, LineExchangeDto, LineLinkDto, PasswordResetRequestDto } from './auth.controller';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -14,7 +15,7 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
   const stub = {} as any;
   return new AuthController(
     { lineLiffId: '1234567890-test', isLocal: false, ...config } as any,
-    stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub,
   );
 }
@@ -58,7 +59,7 @@ describe('AuthController password reset request', () => {
     } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit,
+      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub,
     );
 
     const body = await controller.requestPasswordResetNotice({ username: 'first' }, {
@@ -92,7 +93,7 @@ describe('AuthController password reset request', () => {
     const notifyPasswordResetRequest = { execute: async () => ({ message: 'generic' }) } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit,
+      stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub,
     );
     const req = { headers: {}, socket: { remoteAddress: '198.51.100.9' } } as any;
 
@@ -102,6 +103,47 @@ describe('AuthController password reset request', () => {
       () => controller.requestPasswordResetNotice({ username: 'ALICE' }, req),
       HttpException,
       'the third case permutation must draw on the same exhausted bucket',
+    );
+  });
+});
+
+describe('legal acceptance DTO boundary', () => {
+  const valid = {
+    termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
+    privacyVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
+    statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
+    termsAccepted: true,
+    privacyAcknowledged: true,
+    capacityConfirmed: true,
+    locale: 'th',
+    displayChallenge: 'a'.repeat(64),
+  };
+
+  it('accepts only explicit true confirmations', async () => {
+    await pipe.transform(valid, { type: 'body', metatype: AcceptLegalDocumentsDto });
+    for (const body of [
+      { ...valid, termsAccepted: false },
+      { ...valid, privacyAcknowledged: 'true' },
+      { ...valid, capacityConfirmed: undefined },
+      { ...valid, displayChallenge: 'not-a-sha256' },
+    ]) {
+      await assert.rejects(
+        () => pipe.transform(body, { type: 'body', metatype: AcceptLegalDocumentsDto }),
+        BadRequestException,
+      );
+    }
+  });
+
+  it('rejects unsupported locales and client-supplied actor context', async () => {
+    for (const locale of ['en', 'ja']) {
+      await assert.rejects(
+        () => pipe.transform({ ...valid, locale }, { type: 'body', metatype: AcceptLegalDocumentsDto }),
+        BadRequestException,
+      );
+    }
+    await assert.rejects(
+      () => pipe.transform({ ...valid, companyId: 'other-company' }, { type: 'body', metatype: AcceptLegalDocumentsDto }),
+      BadRequestException,
     );
   });
 });
@@ -142,7 +184,7 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     const pref = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
     const controller = new AuthController(
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, pref, stub, stub, stub, stub,
+      stub, stub, stub, stub, pref, stub, stub, stub, stub, stub,
     );
 
     await controller.setAiAssistantPreference({ enabled: false } as any, {
@@ -150,6 +192,29 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     } as any);
 
     assert.deepEqual(calls[0], ['session-user', false, 'req-9']);
+  });
+});
+
+describe('AuthController password change session binding', () => {
+  it('passes the authenticated session id so only other sessions are revoked', async () => {
+    const calls: unknown[][] = [];
+    const stub = {} as any;
+    const changePassword = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
+    const controller = new AuthController(
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+    const payload = Buffer.from(JSON.stringify({ sid: 'session-current' })).toString('base64url');
+
+    await controller.changeCurrentPassword(
+      { currentPassword: 'old-password', newPassword: 'new-password' } as any,
+      {
+        headers: { authorization: `Bearer x.${payload}.y` },
+        context: { userId: 'user-1' },
+      } as any,
+    );
+
+    assert.deepEqual(calls[0], ['user-1', 'old-password', 'new-password', 'session-current']);
   });
 });
 
@@ -164,9 +229,12 @@ describe('AuthController me()', () => {
         userCredential: { findUnique: async () => (mustChangePassword === null ? null : { mustChangePassword }) },
       },
     } as any;
+    const legalAcceptance = {
+      getStatus: async () => ({ required: true }),
+    } as any;
     return new AuthController(
       stub, prisma, stub, stub, stub, stub, stub, stub, stub, stub,
-      stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance,
     );
   }
 
@@ -182,7 +250,9 @@ describe('AuthController me()', () => {
   });
 
   it('reports a normal session as free to navigate', async () => {
-    assert.equal((await makeMeController(false).me(context)).mustChangePassword, false);
+    const result = await makeMeController(false).me(context);
+    assert.equal(result.mustChangePassword, false);
+    assert.equal(result.legalAcceptanceRequired, true);
   });
 
   // LINE-only users have no credential row; absent must never read as blocked.

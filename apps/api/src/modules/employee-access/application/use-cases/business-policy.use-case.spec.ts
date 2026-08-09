@@ -32,9 +32,9 @@ describe('BusinessPolicyUseCase', () => {
       saveConsent: async (_c: string, p: unknown) => (consent = p),
     } as any);
     await useCase.saveRetention('c1', { chatMediaDays: 180, finalCampaignCreativeDays: 730, unusedAiCandidateDays: 30, pendingSlipDays: 90, accountingSlipYears: 7, duplicateOrRejectedSlipDays: 90 });
-    await useCase.saveConsent('c1', { marketingRequiresExplicitConsent: true, transactionalMessagesRemainEnabledAfterMarketingOptOut: true, unsubscribeKeywords: [' STOP ', 'STOP', 'ยกเลิกข่าวสาร'], unsubscribeConfirmationText: ' ยกเลิกแล้ว ' });
+    await useCase.saveConsent('c1', { marketingRequiresExplicitConsent: true, transactionalMessagesRemainEnabledAfterMarketingOptOut: true, unsubscribeKeywords: [' STOP ', 'stop', 'คำสั่งเพิ่ม'], unsubscribeConfirmationText: ' ยกเลิกแล้ว ' });
     assert.equal(retention.chatMediaDays, 180);
-    assert.deepEqual(consent.unsubscribeKeywords, ['STOP', 'ยกเลิกข่าวสาร']);
+    assert.deepEqual(consent.unsubscribeKeywords, ['ยกเลิกข่าวสาร', 'หยุดโปร', 'STOP', 'คำสั่งเพิ่ม']);
     assert.equal(consent.unsubscribeConfirmationText, 'ยกเลิกแล้ว');
     assert.throws(() => useCase.saveRetention('c1', { ...retention, accountingSlipYears: 6 }));
   });

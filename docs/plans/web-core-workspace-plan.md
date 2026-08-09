@@ -408,6 +408,7 @@ Create shared web client behavior and normalized UI state for auth/permission/AP
 - [ ] Add request pending-state helper/hook or typed API wrapper so all API waits can drive `CoverLoader`.
 - [ ] Add request id handling if backend contract exists.
 - [ ] Add selected company hint handling if backend contract exists.
+- [ ] Revalidate the active access context on a bounded visible-page interval, focus return, and stable permission/feature denial; refresh navigation only when roles, permissions, entitlement-filtered permissions, or branch scope changed.
 - [ ] Add `PermissionState` helpers for allowed, readonly, forbidden, signed-out.
 - [ ] Add field error mapper for form patterns.
 - [ ] Document no-silent-wait rule: every feature API call must expose pending state to a cover loader.
@@ -417,6 +418,7 @@ Create shared web client behavior and normalized UI state for auth/permission/AP
 
 - `401` maps to signed-out/session-expired state.
 - `403` maps to forbidden state.
+- Permission/feature `403` triggers access-context revalidation but never retries the denied request.
 - `404` maps to not-found state.
 - Validation response maps to field errors.
 - Unknown response maps to generic error with request id when present.

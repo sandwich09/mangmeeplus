@@ -80,7 +80,7 @@ describe('AccountingGetSummaryTool', () => {
   ];
   const listDocuments = { execute: async () => ({ data: docs, total: 3, page: 1, pageSize: 200 }) } as any;
 
-  it('fails closed without accounting.document.read', async () => {
+  it('fails closed without any accounting document view path', async () => {
     const result = await new AccountingGetSummaryTool(listDocuments).execute({ ...baseCtx, permissions: [] });
     assert.equal(result.status, 'forbidden');
   });
@@ -92,6 +92,20 @@ describe('AccountingGetSummaryTool', () => {
     assert.equal(data.byType.TAX_INVOICE.count, 2);
     assert.equal(data.byType.TAX_INVOICE.totalAmount, 150);
     assert.equal(data.period.defaultedToCurrentMonth, true);
+  });
+
+  it('accepts related-record view and leaves relation filtering to the source use case', async () => {
+    let forwarded: any;
+    const source = { execute: async (sourceCtx: any) => {
+      forwarded = sourceCtx;
+      return { data: docs.slice(0, 1), total: 1, page: 1, pageSize: 200 };
+    } } as any;
+    const result = await new AccountingGetSummaryTool(source).execute({
+      ...baseCtx,
+      permissions: ['accounting.document.read_related'],
+    });
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(forwarded.permissions, ['accounting.document.read_related']);
   });
 });
 
@@ -254,13 +268,19 @@ describe('ExpenseGetBreakdownTool', () => {
   it('applies the caller branch scope to the query (10D ABAC)', async () => {
     const captured: { where?: any } = {};
     await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read'], branchIds: ['b1'] });
-    assert.deepEqual(captured.where.OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
+    assert.deepEqual(captured.where.AND[0].OR, [{ branchId: { in: ['b1'] } }, { branchId: null }]);
   });
 
   it('limits read_own callers to their own records', async () => {
     const captured: { where?: any } = {};
     await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_own'] });
-    assert.equal(captured.where.createdByUserId, 'u1');
+    assert.equal(captured.where.AND[1].createdByUserId, 'u1');
+  });
+
+  it('limits read_related callers to the persisted actor relation', async () => {
+    const captured: { where?: any } = {};
+    await new ExpenseGetBreakdownTool(makePrisma(captured)).execute({ ...baseCtx, permissions: ['expense.read_related'] });
+    assert.ok(captured.where.AND[1].OR.some((clause: any) => clause.payments?.some));
   });
 });
 

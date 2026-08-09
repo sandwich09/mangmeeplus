@@ -655,3 +655,16 @@ Expose safe read summaries, run verification, and update checklist only after im
 ## Open Questions
 
 - Should supplier payments reuse item 08 `AccountingPayment` table directly or only through an AP facade?
+
+## 2026-08-10 related-view and branch-isolation hardening
+
+- Implemented five submenu-gated related-read permissions for PR, PO, goods receipt, vendor bill and supplier payment.
+- Related actor seeds use persisted header actors, approval/audit history, match overrides and payment allocations; graph
+  traversal reaches closure in both directions without using supplier identity as a shortcut.
+- List/detail reads and mutation preloads now enforce tenant plus branch scope. PR/PO/receipt creation resolves a scoped
+  branch; receipt creation additionally verifies PO status, supplier, branch and line ownership before persistence.
+- PR-to-PO conversion now validates approved/unconverted state, tenant/branch, supplier, currency and complete source-line
+  ownership; PO create plus the PR `CONVERTED` claim commit atomically at serializable isolation.
+- Web/navigation exposes only the related document tabs; supplier master, bank details, aging, WHT and mutation controls
+  retain exact permissions. LINE/AI PO detail repeats the same source use case; procurement summary remains broad-read only.
+- Verification evidence is recorded in `docs/agent-memory/production-readiness-medium-remediation.md`.

@@ -12,11 +12,18 @@
  *   - bearer token    : POST {api}/auth/password/login
  *
  * The QA accounts are seeded by `apps/api/prisma/seed.ts` (`QA_ROLE_ACCOUNTS`) with
- * `mustChangePassword: false`, so a login lands straight on the workspace with no
- * change-password interstitial.
+ * `mustChangePassword: false`, so there is no change-password interstitial. The helpers complete
+ * the current versioned clickwrap after login so ordinary role/permission tests can continue to
+ * focus on their business assertions; the dedicated legal suite signs in without these helpers.
  */
 import { expect, type APIRequestContext, type BrowserContext } from '@playwright/test';
-import { API_BASE_URL, WEB_BASE_URL } from './auth';
+import {
+  API_BASE_URL,
+  COMPANY_ID,
+  WEB_BASE_URL,
+  ensureBearerLegalAcceptance,
+  ensureBrowserLegalAcceptance,
+} from './auth';
 
 export type RoleKey =
   | 'OWNER'
@@ -57,11 +64,15 @@ export async function loginAs(context: BrowserContext, role: RoleKey): Promise<v
     `login as ${role} (${account.username}) failed (${res.status()}): ${await res.text()}\n` +
       `Re-seed the DB — QA credentials are repaired on every seed run.`,
   ).toBe(true);
-  const body = (await res.json()) as { passwordChangeRequired?: boolean };
+  const body = (await res.json()) as {
+    passwordChangeRequired?: boolean;
+    companyId?: string | null;
+  };
   expect(
     body.passwordChangeRequired ?? false,
     `${role} was asked to change password; seed sets mustChangePassword=false — DB is stale`,
   ).toBe(false);
+  await ensureBrowserLegalAcceptance(context, body.companyId ?? COMPANY_ID);
 }
 
 /** Bearer access token for `role`, for direct API assertions. */
@@ -73,6 +84,7 @@ export async function getRoleToken(request: APIRequestContext, role: RoleKey): P
   expect(res.ok(), `password login as ${role} failed (${res.status()}): ${await res.text()}`).toBe(true);
   const body = (await res.json()) as { accessToken?: string };
   expect(body.accessToken, `accessToken present for ${role}`).toBeTruthy();
+  await ensureBearerLegalAcceptance(request, body.accessToken!, COMPANY_ID);
   return body.accessToken!;
 }
 

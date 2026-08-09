@@ -1,10 +1,12 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
-  ExpenseRecord, ExpenseRecordWithRelations, CreateExpenseRecordInput,
+  ExpenseRecord, ExpenseRecordWithRelations, ExpensePaymentRecord, CreateExpenseRecordInput,
   UpdateExpenseRecordInput, ExpenseLineInput, PaginatedExpenses, SignatureAssetRecord, SubstituteReceiptEvidenceRecord,
   SubstituteReceiptPolicyRecord,
 } from '../domain/models/expense.model';
@@ -13,7 +15,7 @@ import type {
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
 } from '@watchdog-bms/contracts';
-import { civilDayRangeToUtc, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 
@@ -22,6 +24,9 @@ type SubstituteReceiptPolicyWithApprovalMode = SubstituteReceiptPolicyRecord & {
 
 const AUTO_STALE_DUPLICATE_REASON = 'system:stale_after_rescan';
 const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
+const SUBSTITUTE_RECEIPT_DOCUMENT_TYPE = 'expense.substitute_receipt';
+const SUBSTITUTE_RECEIPT_OWNER_TYPE = 'expense_substitute_receipt';
+export const SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON = 'EXPENSE_VOIDED';
 
 
 type ExpenseTaxFinalizer = (input: {
@@ -33,11 +38,57 @@ export function expenseDecimalToString(value: { toString(): string } | null | un
   return value?.toString() ?? '0';
 }
 
+/** View-only ABAC for people persisted as actors on an expense or its source claim. */
+export function expenseRelatedToUserWhere(userId: string): Prisma.ExpenseRecordWhereInput {
+  return {
+    OR: [
+      { createdByUserId: userId },
+      { updatedByUserId: userId },
+      { reviewedByUserId: userId },
+      { confirmedByUserId: userId },
+      { rejectedByUserId: userId },
+      { voidedByUserId: userId },
+      { substituteReceiptGeneratedByUserId: userId },
+      { payments: { some: { OR: [{ createdByUserId: userId }, { voidedByUserId: userId }] } } },
+      {
+        substituteReceiptEvidences: {
+          some: {
+            OR: [
+              { preparedByUserId: userId },
+              { payerUserId: userId },
+              { approverUserId: userId },
+              { issuedByUserId: userId },
+            ],
+          },
+        },
+      },
+      {
+        sourceReimbursementRequest: {
+          is: {
+            OR: [
+              { requesterUserId: userId },
+              { createdByUserId: userId },
+              { submittedByUserId: userId },
+              { currentApproverUserId: userId },
+              { financeReviewedByUserId: userId },
+              { cancellationPendingByUserId: userId },
+              { approvalSteps: { some: { OR: [{ approverUserId: userId }, { decisionByUserId: userId }] } } },
+              { payments: { some: { OR: [{ paidByUserId: userId }, { voidedByUserId: userId }] } } },
+              { claimSignatures: { some: { signedByUserId: userId } } },
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
+
 function mapExpense(r: any): ExpenseRecord {
   return {
     ...r,
     journalEntryNumber: r.journalEntryNumber ?? null,
     pendingPostingSourceType: r.pendingPostingSourceType ?? null,
+    pendingPostingSourceId: r.pendingPostingSourceId ?? null,
     subtotalAmount: r.subtotalAmount?.toString() ?? '0',
     discountAmount: r.discountAmount?.toString() ?? '0',
     taxableAmount: r.taxableAmount?.toString() ?? '0',
@@ -50,6 +101,20 @@ function mapExpense(r: any): ExpenseRecord {
     vendorSnapshotJson: r.vendorSnapshotJson ?? null,
     aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
     aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
+  };
+}
+
+function mapPayment(row: any): ExpensePaymentRecord {
+  return {
+    ...row,
+    amount: row.amount.toString(),
+    journalEntryId: row.journalEntryId ?? null,
+    journalEntryNumber: row.journalEntryNumber ?? null,
+    postingError: row.postingError ?? null,
+    paymentMethod: row.paymentMethod ?? null,
+    bankAccountRef: row.bankAccountRef ?? null,
+    voidedByUserId: row.voidedByUserId ?? null,
+    voidedAt: row.voidedAt ?? null,
   };
 }
 
@@ -202,7 +267,100 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
 
 @Injectable()
 export class PrismaExpenseRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  // `documentNumbers` is annotated, not merely defaulted: Nest reads design:paramtypes to inject
+  // the provider DataModelCoreModule exports, and an unannotated parameter emits nothing there,
+  // so the API fails to boot. The default only keeps the class directly constructible from the
+  // repository specs; under Nest the injected instance always wins.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly documentNumbers: PrismaDocumentSequenceRepository = new PrismaDocumentSequenceRepository(prisma),
+  ) {}
+
+  async recordPaymentAtomic(input: {
+    companyId: string;
+    expenseId: string;
+    actorUserId: string;
+    amount: string;
+    paymentMethod?: string;
+    paidAt: Date;
+    bankAccountRef?: string;
+  }): Promise<{ expense: ExpenseRecord; payment: ExpensePaymentRecord }> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:expense-record-lifecycle`}))`;
+      const current = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+      if (!current) throw new NotFoundException(`Expense ${input.expenseId} not found`);
+      if (current.status !== 'CONFIRMED') {
+        throw new BadRequestException(`Can only record payment for CONFIRMED expenses (current: ${current.status})`);
+      }
+      if (current.sourceReimbursementRequestId != null) {
+        throw new BadRequestException({
+          code: 'claim_expense_settles_via_reimbursement',
+          message: 'A claim-born expense settles through reimbursement payment.',
+        });
+      }
+      let amount: Decimal;
+      try {
+        amount = new Decimal(input.amount);
+      } catch {
+        throw new BadRequestException({
+          code: 'expense_payment_exceeds_outstanding',
+          message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+        });
+      }
+      const paidBefore = new Decimal(current.paidAmount.toString());
+      const payable = new Decimal(current.netPayableAmount.toString());
+      const paidAfter = paidBefore.plus(amount);
+      if (!amount.isFinite() || amount.lte(0) || paidAfter.gt(payable)) {
+        throw new BadRequestException({
+          code: 'expense_payment_exceeds_outstanding',
+          message: 'Payment amount must be positive and cannot exceed the outstanding amount.',
+        });
+      }
+      const outstanding = Decimal.max(payable.minus(paidAfter), 0);
+      const paymentStatus = outstanding.eq(0) ? 'PAID' : 'PARTIALLY_PAID';
+      const payment = await tx.expensePayment.create({
+        data: {
+          companyId: input.companyId,
+          expenseId: input.expenseId,
+          amount: amount.toFixed(4),
+          currency: current.currency,
+          paymentMethod: input.paymentMethod ?? null,
+          paidAt: input.paidAt,
+          bankAccountRef: input.bankAccountRef ?? null,
+          status: 'RECORDED',
+          postingStatus: 'pending',
+          createdByUserId: input.actorUserId,
+        },
+      });
+      const changed = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId, status: 'CONFIRMED', updatedAt: current.updatedAt },
+        data: {
+          paidAmount: paidAfter.toFixed(4),
+          outstandingAmount: outstanding.toFixed(4),
+          paymentStatus,
+          paymentMethod: input.paymentMethod ?? null,
+          paidAt: input.paidAt,
+          bankAccountRef: input.bankAccountRef ?? null,
+          updatedByUserId: input.actorUserId,
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException({ code: 'expense_payment_changed', message: 'Expense changed while recording payment.' });
+      }
+      return {
+        expense: mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } })),
+        payment: mapPayment(payment),
+      };
+    }, { isolationLevel: 'Serializable' });
+  }
+
+  async findPaymentById(companyId: string, paymentId: string): Promise<(ExpensePaymentRecord & { expense: ExpenseRecord }) | null> {
+    const row = await this.prisma.client.expensePayment.findFirst({
+      where: { id: paymentId, companyId },
+      include: { expense: true },
+    });
+    return row ? { ...mapPayment(row), expense: mapExpense(row.expense) } : null;
+  }
 
   async createExpense(input: CreateExpenseRecordInput): Promise<ExpenseRecord> {
     const r = await this.prisma.client.expenseRecord.create({
@@ -327,6 +485,7 @@ export class PrismaExpenseRepository {
       where: { id, companyId },
       include: {
         lines: { orderBy: { lineNumber: 'asc' } },
+        payments: { orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] },
         // The category's suggested Tax Code rides on the row already being joined — the line
         // picker needs it, and a second query for one string would be waste.
         expenseCategory: { select: { defaultInputTaxCode: true } },
@@ -347,22 +506,39 @@ export class PrismaExpenseRepository {
     });
     if (!r) return null;
     const base = mapExpense(r);
+    const paymentRows = (r as any).payments ?? [];
+    const paymentIds = paymentRows.map((payment: any) => payment.id);
     const categoryDefaultInputTaxCode = r.expenseCategory?.defaultInputTaxCode ?? null;
     const journals = await db.journalEntry.findMany({
       where: {
         companyId,
         OR: [
           ...(base.journalEntryId ? [{ id: base.journalEntryId }] : []),
-          { sourceId: id, sourceType: { in: ['expense.record', 'expense.payment'] }, entryType: 'GENERATED' as any },
+          { sourceId: id, sourceType: 'expense.record', entryType: 'GENERATED' as any },
+          ...(paymentIds.length ? [{ sourceId: { in: paymentIds }, sourceType: 'expense.payment', entryType: 'GENERATED' as any }] : []),
         ],
       },
-      select: { id: true, sourceType: true, entryNumber: true },
+      select: { id: true, sourceId: true, sourceType: true, entryNumber: true },
     });
-    const journal = (base.journalEntryId ? journals.find((entry) => entry.id === base.journalEntryId) : null)
-      ?? journals.find((entry) => entry.sourceType === 'expense.payment')
-      ?? journals.find((entry) => entry.sourceType === 'expense.record')
+    const journal = (base.journalEntryId ? journals.find((entry) => entry.id === base.journalEntryId && entry.sourceType === 'expense.record') : null)
+      ?? journals.find((entry) => entry.sourceType === 'expense.record' && entry.sourceId === id)
       ?? null;
-    const generatedSourceTypes = new Set(journals.map((entry) => entry.sourceType).filter((sourceType): sourceType is string => !!sourceType));
+    const pendingPayment = paymentRows.find((payment: any) => payment.status === 'RECORDED'
+      && (payment.postingStatus === 'pending' || payment.postingStatus === 'posting_error'));
+    const pendingSource = nextExpensePostingSource({
+      expenseId: id,
+      sourceReimbursementRequestId: base.sourceReimbursementRequestId,
+      accrualPosted: Boolean(journal),
+      pendingPaymentId: pendingPayment?.id,
+    });
+    const payments = paymentRows.map((payment: any) => {
+      const paymentJournal = journals.find((entry) => entry.sourceType === 'expense.payment' && entry.sourceId === payment.id);
+      return mapPayment({
+        ...payment,
+        journalEntryId: paymentJournal?.id ?? payment.journalEntryId,
+        journalEntryNumber: paymentJournal?.entryNumber ?? null,
+      });
+    });
     // fetch attachment links for this expense
     const links: Array<{ attachmentId: string; purpose: string; attachment: { originalFileName: string; mimeType: string; byteSize: bigint | number; checksumSha256: string | null; perceptualHash: string | null; status: string; createdAt: Date } }> = await db.attachmentLink.findMany({
       where: { companyId, targetType: 'expense.record', targetId: id, attachment: { companyId } },
@@ -408,16 +584,32 @@ export class PrismaExpenseRepository {
       duplicateOfExpenseId: visibleDuplicateOfExpenseId,
       journalEntryId: journal?.id ?? null,
       journalEntryNumber: journal?.entryNumber ?? null,
-      pendingPostingSourceType: nextExpensePostingSource({
-        paymentStatus: base.paymentStatus,
-        sourceReimbursementRequestId: base.sourceReimbursementRequestId,
-        generatedSourceTypes,
-      }),
+      pendingPostingSourceType: pendingSource?.sourceType ?? null,
+      pendingPostingSourceId: pendingSource?.sourceId ?? null,
       lines: (r as any).lines.map(mapLine),
       attachments,
       duplicateCandidates,
       substituteReceiptEvidence: substituteRow ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substituteRow)) : null,
+      payments,
     };
+  }
+
+  async isUserRelatedToExpense(
+    companyId: string,
+    expenseId: string,
+    userId: string,
+    scopes: { branchIds?: string[] } = {},
+  ): Promise<boolean> {
+    const row = await this.prisma.client.expenseRecord.findFirst({
+      where: {
+        companyId,
+        id: expenseId,
+        ...branchScopeWhere(scopes),
+        AND: [expenseRelatedToUserWhere(userId)],
+      },
+      select: { id: true },
+    });
+    return Boolean(row);
   }
 
   async findByLineMessageId(companyId: string, lineMessageId: string): Promise<ExpenseRecord | null> {
@@ -425,13 +617,17 @@ export class PrismaExpenseRepository {
     return r ? mapExpense(r) : null;
   }
 
-  async listExpenses(filter: ListExpensesFilter, scopes?: { branchIds?: string[] }): Promise<PaginatedExpenses> {
+  async listExpenses(
+    filter: ListExpensesFilter,
+    scopes?: { branchIds?: string[] },
+    relatedUserId?: string,
+  ): Promise<PaginatedExpenses> {
     const { companyId, page = 1, pageSize = 20, ...rest } = filter;
     const skip = (page - 1) * pageSize;
     // 10D branch ABAC: restricted scope sees its branches plus company-central (null) rows.
     // Explicit branchId filter (already scope-asserted by the use-case) is narrower and wins.
     const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
-    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}) };
+    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
     const [data, total] = await Promise.all([
       this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy: { expenseDate: 'desc' } }),
       this.prisma.client.expenseRecord.count({ where }),
@@ -442,7 +638,7 @@ export class PrismaExpenseRepository {
   async listCompanySubstituteReceipts(
     companyId: string,
     filter: SubstituteReceiptListFilter,
-    scope: { branchIds?: string[]; onlyPayerUserId: string | null },
+    scope: { branchIds?: string[]; onlyPayerUserId: string | null; relatedUserId?: string | null },
   ) {
     const page = filter.page ?? 1;
     const pageSize = filter.pageSize ?? 50;
@@ -456,19 +652,35 @@ export class PrismaExpenseRepository {
         lt: new Date(Date.UTC(year!, month!, 1)),
       };
     }
-    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = {
-      companyId,
-      ...(scope.branchIds?.length ? { branchId: { in: scope.branchIds } } : {}),
-      ...(scope.onlyPayerUserId
-        ? { payerUserId: scope.onlyPayerUserId }
-        : filter.payerUserId ? { payerUserId: filter.payerUserId } : {}),
-      ...(filter.status ? { status: filter.status } : {}),
-      ...(monthRange ? {
+    const predicates: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput[] = [];
+    const branchWhere = branchScopeWhere({ branchIds: scope.branchIds });
+    if (Object.keys(branchWhere).length > 0) predicates.push(branchWhere);
+    if (scope.relatedUserId) {
+      predicates.push({
+        OR: [
+          { preparedByUserId: scope.relatedUserId },
+          { payerUserId: scope.relatedUserId },
+          { approverUserId: scope.relatedUserId },
+          { issuedByUserId: scope.relatedUserId },
+          { expense: { is: expenseRelatedToUserWhere(scope.relatedUserId) } },
+        ],
+      });
+    }
+    if (monthRange) {
+      predicates.push({
         OR: [
           { paymentDate: monthRange },
           { paymentDate: null, expense: { expenseDate: monthRange } },
         ],
-      } : {}),
+      });
+    }
+    const where: Prisma.ExpenseSubstituteReceiptEvidenceWhereInput = {
+      companyId,
+      ...(scope.onlyPayerUserId
+        ? { payerUserId: scope.onlyPayerUserId }
+        : filter.payerUserId ? { payerUserId: filter.payerUserId } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(predicates.length > 0 ? { AND: predicates } : {}),
     };
     const [rows, total] = await this.prisma.client.$transaction([
       this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
@@ -525,7 +737,7 @@ export class PrismaExpenseRepository {
    * from it rolls the update back.
    */
   async updateExpense(input: UpdateExpenseRecordInput, withinTx?: (tx: any) => Promise<void>, db?: any): Promise<ExpenseRecord> {
-    const { id, companyId, ...rest } = input;
+    const { id, companyId, expectedUpdatedAt, ...rest } = input;
     // H-04: VOIDED is intentionally rejected here — voids must go through
     // voidExpenseTrueReversal so the GL reversal and status change stay atomic.
     if (rest.status === 'VOIDED') {
@@ -572,8 +784,19 @@ export class PrismaExpenseRepository {
           throw new ConflictException({ code: 'substitute_evidence_doc_type_locked', message: 'The original source document type is locked while substitute evidence is active.' });
         }
       }
-      const updated = await tx.expenseRecord.updateMany({ where: { id, companyId }, data });
-      if (updated.count !== 1) throw new Error(`Expense ${id} not found in company ${companyId}`);
+      const updated = await tx.expenseRecord.updateMany({
+        where: { id, companyId, ...(expectedUpdatedAt && { updatedAt: expectedUpdatedAt }) },
+        data,
+      });
+      if (updated.count !== 1) {
+        if (expectedUpdatedAt) {
+          throw new ConflictException({
+            code: 'EXPENSE_UPDATE_CONFLICT',
+            message: 'Expense was changed by another user. Reload and review before saving again.',
+          });
+        }
+        throw new Error(`Expense ${id} not found in company ${companyId}`);
+      }
       const record = mapExpense(await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId } }));
       await withinTx?.(tx);
       return record;
@@ -912,14 +1135,22 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, expenseId: input.expenseId }, orderBy: { version: 'desc' }, select: { version: true },
       });
       const version = (latest?.version ?? 0) + 1;
-      const documentNumber = `SRC-${expense.expenseNumber ?? expense.id}-V${version}`;
-      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.create({
+      const preparedAt = new Date();
+      const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
+        companyId: input.companyId,
+        branchId: input.branchId ?? undefined,
+        documentType: SUBSTITUTE_RECEIPT_DOCUMENT_TYPE,
+        periodKey: civilPeriodKey(civilDate(preparedAt)),
+        idempotencyKey: `${input.expenseId}:${input.idempotencyKey}`,
+        reservedByUserId: input.preparedByUserId,
+      });
+      const evidence = await tx.expenseSubstituteReceiptEvidence.create({
         data: {
           companyId: input.companyId,
           expenseId: input.expenseId,
           branchId: input.branchId,
           version,
-          documentNumber,
+          documentNumber: reserved.documentNumber,
           idempotencyKey: input.idempotencyKey,
           originalSourceDocumentType: input.originalSourceDocumentType,
           reasonCode: input.reasonCode,
@@ -931,7 +1162,7 @@ export class PrismaExpenseRepository {
           paymentMethod: input.paymentMethod,
           note: input.note,
           preparedByUserId: input.preparedByUserId,
-          preparedAt: new Date(),
+          preparedAt,
           expenseUpdatedAtAtPreparation: safeExpense.updatedAt,
           payerUserId: input.payerUserId,
           payerName: input.payerName,
@@ -939,7 +1170,14 @@ export class PrismaExpenseRepository {
           payeeAddress: input.payeeAddress,
           payeeTaxId: input.payeeTaxId,
         },
-      }));
+      });
+      await this.documentNumbers.commitNumberInTransaction(tx, {
+        id: reserved.id,
+        companyId: input.companyId,
+        ownerType: SUBSTITUTE_RECEIPT_OWNER_TYPE,
+        ownerId: evidence.id,
+      });
+      return mapSubstituteEvidence(evidence);
     });
   }
 
@@ -1088,15 +1326,42 @@ export class PrismaExpenseRepository {
         },
       });
       if (changed.count !== 1) throw new Error('Substitute evidence changed while approving.');
-      await tx.expenseRecord.updateMany({ where: { id: input.expenseId, companyId: input.companyId }, data: {
+      if (!evidence.paymentDate || !evidence.paymentMethod) {
+        throw new Error('Certified substitute evidence is missing payment date or method.');
+      }
+      const paidBefore = new Decimal(expense.paidAmount.toString());
+      const payable = new Decimal(expense.netPayableAmount.toString());
+      if (paidBefore.lt(0) || paidBefore.gt(payable)) {
+        throw new Error('Expense payment totals are inconsistent. Reload before approval.');
+      }
+      const paymentAmount = payable.minus(paidBefore);
+      if (paymentAmount.gt(0)) {
+        await tx.expensePayment.create({ data: {
+          companyId: input.companyId,
+          expenseId: input.expenseId,
+          amount: paymentAmount.toFixed(4),
+          currency: expense.currency,
+          paymentMethod: evidence.paymentMethod,
+          paidAt: evidence.paymentDate,
+          status: 'RECORDED',
+          postingStatus: 'pending',
+          createdByUserId: input.approverUserId,
+        } });
+      }
+      const expenseChanged = await tx.expenseRecord.updateMany({ where: {
+        id: input.expenseId,
+        companyId: input.companyId,
+        updatedAt: input.expectedExpenseUpdatedAt,
+      }, data: {
         missingReceiptReason: evidence.missingReceiptReason,
         taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
         taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
-        paidAmount: expense.netPayableAmount, outstandingAmount: 0, paymentStatus: 'PAID',
+        paidAmount: payable.toFixed(4), outstandingAmount: '0.0000', paymentStatus: 'PAID',
         paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate,
         substituteReceiptGeneratedAt: now, substituteReceiptGeneratedByUserId: input.approverUserId,
         reviewedByUserId: input.approverUserId, reviewedAt: now, updatedByUserId: input.approverUserId,
       } });
+      if (expenseChanged.count !== 1) throw new Error('Expense details changed while approving substitute evidence.');
       return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
     });
   }
@@ -1110,6 +1375,21 @@ export class PrismaExpenseRepository {
       where: { id, companyId },
       data: {
         postingStatus: data.postingStatus as any,
+        journalEntryId: data.journalEntryId,
+        postingError: data.postingError,
+      },
+    });
+  }
+
+  async updatePaymentPostingStatus(
+    companyId: string,
+    paymentId: string,
+    data: { postingStatus: 'pending' | 'posted' | 'posting_error' | 'reversed'; journalEntryId?: string | null; postingError?: string | null },
+  ): Promise<void> {
+    await this.prisma.client.expensePayment.updateMany({
+      where: { id: paymentId, companyId, status: 'RECORDED' },
+      data: {
+        postingStatus: data.postingStatus,
         journalEntryId: data.journalEntryId,
         postingError: data.postingError,
       },
@@ -1133,12 +1413,40 @@ export class PrismaExpenseRepository {
     return row?.id ?? null;
   }
 
+  async findPostedExpensePaymentJournals(
+    companyId: string,
+    expenseId: string,
+  ): Promise<Array<{ paymentId: string; journalId: string }>> {
+    const payments = await this.prisma.client.expensePayment.findMany({
+      where: { companyId, expenseId, status: 'RECORDED' },
+      select: { id: true },
+      orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!payments.length) return [];
+    const journals = await this.prisma.client.journalEntry.findMany({
+      where: {
+        companyId,
+        sourceType: 'expense.payment',
+        sourceId: { in: payments.map((payment) => payment.id) },
+        entryType: 'GENERATED',
+        status: 'POSTED',
+      },
+      select: { id: true, sourceId: true },
+    });
+    const byPayment = new Map(journals.map((journal) => [journal.sourceId, journal.id]));
+    return payments.flatMap((payment) => {
+      const journalId = byPayment.get(payment.id);
+      return journalId ? [{ paymentId: payment.id, journalId }] : [];
+    });
+  }
+
   // H-04: reverse the GENERATED journal of a voided expense inside the same
   // transaction. Fail closed: an unresolved posting state, a closed accounting
   // period, or a locked filed-form tax period blocks the whole void.
   private async reverseExpenseJournalInTx(tx: any, opts: {
     companyId: string;
     expenseId: string;
+    sourceId?: string;
     // GAP-07: 'expense.record' reverses the accrual leg, 'expense.payment' the
     // settlement leg; each has its own GENERATED journal keyed on the expense id.
     sourceType?: 'expense.record' | 'expense.payment';
@@ -1148,10 +1456,11 @@ export class PrismaExpenseRepository {
     lockedTaxFormTypes: string[];
   }): Promise<{ reversalEntryId: string | null; reversed: boolean }> {
     const sourceType = opts.sourceType ?? 'expense.record';
+    const sourceId = opts.sourceId ?? opts.expenseId;
     // A REVERSAL row for this source is the authoritative "already reversed"
     // signal (one per source by unique constraint) — original.status is not,
     // because reports count POSTED entries only.
-    const sourceWhere = { companyId: opts.companyId, sourceType, sourceId: opts.expenseId };
+    const sourceWhere = { companyId: opts.companyId, sourceType, sourceId };
     const existingReversal = await tx.journalEntry.findFirst({
       where: { ...sourceWhere, entryType: 'REVERSAL' },
       select: { id: true },
@@ -1197,7 +1506,7 @@ export class PrismaExpenseRepository {
     const reversal = await tx.journalEntry.create({
       data: {
         companyId: opts.companyId, periodId: original.periodId, entryNumber: opts.reversalEntryNumber,
-        entryType: 'REVERSAL', sourceType, sourceId: opts.expenseId,
+        entryType: 'REVERSAL', sourceType, sourceId,
         reversalOfJournalEntryId: original.id, status: 'POSTED', entryDate: now, postedAt: now,
         postedByUserId: opts.actorUserId, memo: opts.memo, createdByUserId: opts.actorUserId,
         lines: {
@@ -1227,18 +1536,48 @@ export class PrismaExpenseRepository {
     actorUserId: string,
     reason: string,
     reversalEntryNumber?: string,
-    paymentReversalEntryNumber?: string,
-  ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null }> {
+    paymentReversals: Array<{ paymentId: string; reversalEntryNumber: string }> | string = [],
+  ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
+      const voidedAt = new Date();
       const claimed = await tx.expenseRecord.updateMany({
         where: { id: expenseId, companyId, status: 'CONFIRMED' },
         data: {
-          status: 'VOIDED', voidedByUserId: actorUserId, voidedAt: new Date(), voidReason: reason,
+          status: 'VOIDED', voidedByUserId: actorUserId, voidedAt, voidReason: reason,
           updatedByUserId: actorUserId, paidAmount: '0.00', outstandingAmount: '0.00', paymentStatus: 'VOIDED',
         },
       });
       if (claimed.count !== 1) throw new ConflictException({ code: 'expense_changed', message: 'Expense changed before void. Reload and retry.' });
       const expense = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId }, include: { lines: true } });
+
+      // Keep the immutable issued artifact for audit, but retire both its evidence state and
+      // running number in the same transaction as the expense reversal. Downloads derive a
+      // visibly VOID-stamped PDF from the original SVG; the checksummed source is never rewritten.
+      const issuedEvidence = await tx.expenseSubstituteReceiptEvidence.findMany({
+        where: { companyId, expenseId, status: 'ISSUED' },
+        select: { id: true },
+      });
+      if (issuedEvidence.length > 0) {
+        const evidenceIds = issuedEvidence.map((item: { id: string }) => item.id);
+        await tx.expenseSubstituteReceiptEvidence.updateMany({
+          where: { companyId, expenseId, id: { in: evidenceIds }, status: 'ISSUED' },
+          data: {
+            status: 'SUPERSEDED',
+            supersededAt: voidedAt,
+            supersedeReason: SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON,
+          },
+        });
+        await tx.documentNumber.updateMany({
+          where: {
+            companyId,
+            ownerType: SUBSTITUTE_RECEIPT_OWNER_TYPE,
+            ownerId: { in: evidenceIds },
+            status: 'COMMITTED',
+          },
+          data: { status: 'VOIDED', voidedAt },
+        });
+      }
 
       // Filed-form contributions on the tax-line snapshots decide the
       // tax-period lock — the same seam the confirmation gate uses. The
@@ -1259,19 +1598,46 @@ export class PrismaExpenseRepository {
         memo: `[VOID] ${expense.expenseNumber ?? expenseId}`,
         lockedTaxFormTypes: [...formTypes],
       });
-      // GAP-07: the settlement journal (Dr 2120-01 / Cr 1110-01) carries no VAT and
-      // contributes to no tax filing, so it takes no tax-period lock — only the
-      // accounting-period-open guard inside the helper applies to it.
-      const paymentReversal = await this.reverseExpenseJournalInTx(tx, {
-        companyId, expenseId, sourceType: 'expense.payment', reversalEntryNumber: paymentReversalEntryNumber, actorUserId,
-        memo: `[VOID] ${expense.expenseNumber ?? expenseId}`,
-        lockedTaxFormTypes: [],
-      });
-      if (reversal.reversed || paymentReversal.reversed) {
-        await tx.expenseRecord.update({ where: { id: expenseId }, data: { postingStatus: 'reversed', postingError: null } });
+      const requestedPaymentReversals = typeof paymentReversals === 'string'
+        ? [{ paymentId: expenseId, reversalEntryNumber: paymentReversals }]
+        : paymentReversals;
+      const payments = typeof paymentReversals === 'string'
+        ? [{ id: expenseId }]
+        : tx.expensePayment
+          ? await tx.expensePayment.findMany({ where: { companyId, expenseId, status: 'RECORDED' }, orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] })
+          : [];
+      const paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> = [];
+      for (const payment of payments) {
+        const reservedNumber = requestedPaymentReversals.find((candidate) => candidate.paymentId === payment.id)?.reversalEntryNumber;
+        const paymentReversal = await this.reverseExpenseJournalInTx(tx, {
+          companyId, expenseId, sourceId: payment.id, sourceType: 'expense.payment', reversalEntryNumber: reservedNumber, actorUserId,
+          memo: `[VOID] ${expense.expenseNumber ?? expenseId} payment ${payment.id}`,
+          lockedTaxFormTypes: [],
+        });
+        if (paymentReversal.reversalEntryId) {
+          paymentReversalEntryIds.push({ paymentId: payment.id, reversalEntryId: paymentReversal.reversalEntryId });
+        }
+        if (typeof paymentReversals !== 'string') {
+          await tx.expensePayment.update({
+            where: { id: payment.id },
+            data: {
+              status: 'VOIDED', voidedByUserId: actorUserId, voidedAt: new Date(),
+              postingStatus: paymentReversal.reversed ? 'reversed' : 'not_required', postingError: null,
+            },
+          });
+        }
       }
+      await tx.expenseRecord.update({
+        where: { id: expenseId },
+        data: { postingStatus: reversal.reversed ? 'reversed' : 'not_required', postingError: null },
+      });
       const row = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId } });
-      return { expense: mapExpense(row), reversalEntryId: reversal.reversalEntryId, paymentReversalEntryId: paymentReversal.reversalEntryId };
+      return {
+        expense: mapExpense(row),
+        reversalEntryId: reversal.reversalEntryId,
+        paymentReversalEntryId: paymentReversalEntryIds[0]?.reversalEntryId ?? null,
+        paymentReversalEntryIds,
+      };
     }, { isolationLevel: 'Serializable' });
   }
 
@@ -1367,6 +1733,7 @@ export class PrismaExpenseRepository {
           status: row.status, resolvedAt: row.resolvedAt?.toISOString() ?? null, resolutionReason: row.resolutionReason ?? null,
         })),
         substituteReceiptEvidence: substitute ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substitute)) : null,
+        payments: [],
       };
       if (expenseTaxSourceChecksum(currentRecord) !== input.expectedSourceChecksum) throw new ConflictException('expense_confirmation_source_checksum_changed');
 
@@ -1400,7 +1767,7 @@ export class PrismaExpenseRepository {
         }
       }
 
-      const periodKey = current.expenseDate.toISOString().slice(0, 7);
+      const periodKey = civilPeriodKey(coerceCivilDate(current.expenseDate));
       const accountingPeriod = await tx.accountingPeriod.findUnique({
         where: { companyId_periodKey: { companyId: input.companyId, periodKey } }, select: { status: true },
       });
@@ -1514,34 +1881,23 @@ export class PrismaExpenseRepository {
       expenseDate: { gte: fromDate, lt: exclusiveEndOfDay(toDate) },
       status: 'CONFIRMED' as any,
     };
-    const [pending, errors, paidExpenses] = await Promise.all([
+    const [pending, errors, pendingPayments, paymentErrors] = await Promise.all([
       this.prisma.client.expenseRecord.count({ where: { ...where, postingStatus: 'pending' as any } }),
       this.prisma.client.expenseRecord.count({ where: { ...where, postingStatus: 'posting_error' as any } }),
-      // GAP-07: a fully-paid plain expense whose settlement leg (expense.payment)
-      // has no journal yet is a close blocker. The ledger journal table is the
-      // source of truth (the postingStatus flag can lag/corrupt), so we check for
-      // the journal directly. Exclude rows already in the 'pending' bucket so an
-      // expense is counted at most once.
-      this.prisma.client.expenseRecord.findMany({
+      this.prisma.client.expensePayment.count({
         where: {
-          ...where,
-          paymentStatus: 'PAID' as any,
-          sourceReimbursementRequestId: null,
-          postingStatus: { not: 'pending' as any },
+          companyId, status: 'RECORDED', postingStatus: 'pending', paidAt: { gte: fromDate, lt: exclusiveEndOfDay(toDate) },
+          expense: { is: { status: 'CONFIRMED', sourceReimbursementRequestId: null } },
         },
-        select: { id: true },
+      }),
+      this.prisma.client.expensePayment.count({
+        where: {
+          companyId, status: 'RECORDED', postingStatus: 'posting_error', paidAt: { gte: fromDate, lt: exclusiveEndOfDay(toDate) },
+          expense: { is: { status: 'CONFIRMED', sourceReimbursementRequestId: null } },
+        },
       }),
     ]);
-    let settlementBlockers = 0;
-    if (paidExpenses.length) {
-      const settled = await this.prisma.client.journalEntry.findMany({
-        where: { companyId, sourceType: 'expense.payment', sourceId: { in: paidExpenses.map((e) => e.id) } },
-        select: { sourceId: true },
-      });
-      const settledIds = new Set(settled.map((s) => s.sourceId));
-      settlementBlockers = paidExpenses.filter((e) => !settledIds.has(e.id)).length;
-    }
-    return { pending: pending + settlementBlockers, errors };
+    return { pending: pending + pendingPayments, errors: errors + paymentErrors };
   }
 
   async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
@@ -2033,16 +2389,29 @@ export class PrismaExpenseRepository {
       fromDate = new Date(Date.UTC(y!, m! - 1, 1));
       toDate = new Date(Date.UTC(y!, m!, 1));
     }
+    const postingWhere = filter.postingStatus === 'pending' || filter.postingStatus === 'posting_error'
+      ? {
+        OR: [
+          { postingStatus: filter.postingStatus },
+          { payments: { some: { status: 'RECORDED', postingStatus: filter.postingStatus } } },
+        ],
+      }
+      : filter.postingStatus === 'posted'
+        ? {
+          postingStatus: 'posted',
+          payments: { none: { status: 'RECORDED', postingStatus: { in: ['pending', 'posting_error'] } } },
+        }
+        : filter.postingStatus ? { postingStatus: filter.postingStatus } : null;
+    const constrained = [scopes ? branchScopeWhere(scopes) : null, postingWhere].filter(Boolean);
     return {
       companyId,
-      ...(scopes ? branchScopeWhere(scopes) : {}),
+      ...(constrained.length ? { AND: constrained } : {}),
       ...(filter.branchId && { branchId: filter.branchId }),
       ...(filter.status && { status: filter.status }),
       ...(filter.sourceDocumentType && { sourceDocumentType: filter.sourceDocumentType }),
       ...(filter.taxEvidenceStatus && { taxEvidenceStatus: filter.taxEvidenceStatus }),
       ...(filter.expenseCategoryId && { expenseCategoryId: filter.expenseCategoryId }),
       ...(filter.paymentStatus && { paymentStatus: filter.paymentStatus }),
-      ...(filter.postingStatus && { postingStatus: filter.postingStatus }),
       ...(filter.createdByUserId && { createdByUserId: filter.createdByUserId }),
       ...(fromDate || toDate ? { [dateField]: { ...(fromDate && { gte: fromDate }), ...(toDate && { lt: toDate }) } } : {}),
     };
@@ -2076,27 +2445,40 @@ export class PrismaExpenseRepository {
       where: { companyId, targetType: 'expense.record', targetId: { in: ids }, attachment: { companyId, status: 'ACTIVE' } },
       include: { attachment: true },
     }) : [];
+    const payments = ids.length > 0 ? await this.prisma.client.expensePayment.findMany({
+      where: { companyId, expenseId: { in: ids }, status: 'RECORDED' },
+      orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, expenseId: true, postingStatus: true, postingError: true },
+    }) : [];
+    const paymentIds = payments.map((payment) => payment.id);
     const journals = ids.length > 0 ? await this.prisma.client.journalEntry.findMany({
       where: {
         companyId,
         OR: [
           ...(journalIds.length > 0 ? [{ id: { in: journalIds } }] : []),
-          { sourceId: { in: ids }, sourceType: { in: ['expense.record', 'expense.payment'] }, entryType: 'GENERATED' as any },
+          { sourceId: { in: ids }, sourceType: 'expense.record', entryType: 'GENERATED' as any },
+          ...(paymentIds.length > 0 ? [{ sourceId: { in: paymentIds }, sourceType: 'expense.payment', entryType: 'GENERATED' as any }] : []),
         ],
       },
       select: { id: true, sourceId: true, sourceType: true, entryNumber: true },
     }) : [];
     const journalNumberById = new Map(journals.map((journal) => [journal.id, journal.entryNumber]));
-    const generatedSourceTypesByExpense = new Map<string, Set<string>>();
     const generatedJournalByExpense = new Map<string, typeof journals[number]>();
     for (const journal of journals) {
       if (!journal.sourceId || !journal.sourceType) continue;
-      const sourceTypes = generatedSourceTypesByExpense.get(journal.sourceId) ?? new Set<string>();
-      sourceTypes.add(journal.sourceType);
-      generatedSourceTypesByExpense.set(journal.sourceId, sourceTypes);
-      const current = generatedJournalByExpense.get(journal.sourceId);
-      if (!current || journal.sourceType === 'expense.payment') {
+      if (journal.sourceType === 'expense.record') {
         generatedJournalByExpense.set(journal.sourceId, journal);
+      }
+    }
+    const pendingPaymentByExpense = new Map<string, { id: string; postingStatus: 'pending' | 'posting_error'; postingError: string | null }>();
+    for (const payment of payments) {
+      if (!pendingPaymentByExpense.has(payment.expenseId)
+        && (payment.postingStatus === 'pending' || payment.postingStatus === 'posting_error')) {
+        pendingPaymentByExpense.set(payment.expenseId, {
+          id: payment.id,
+          postingStatus: payment.postingStatus,
+          postingError: payment.postingError,
+        });
       }
     }
     const byExpense = new Map<string, any[]>();
@@ -2121,16 +2503,30 @@ export class PrismaExpenseRepository {
         const journalEntryId = r.journalEntryId && journalNumberById.has(r.journalEntryId)
           ? r.journalEntryId
           : fallbackJournal?.id ?? null;
+        const pendingPayment = pendingPaymentByExpense.get(r.id);
+        const pendingSource = nextExpensePostingSource({
+          expenseId: r.id,
+          sourceReimbursementRequestId: r.sourceReimbursementRequestId,
+          accrualPosted: Boolean(fallbackJournal),
+          pendingPaymentId: pendingPayment?.id,
+        });
+        const effectivePostingStatus = pendingSource?.sourceType === 'expense.payment'
+          ? pendingPayment!.postingStatus
+          : pendingSource?.sourceType === 'expense.record'
+            ? r.postingStatus
+            : fallbackJournal ? 'posted' : r.postingStatus;
+        const effectivePostingError = pendingSource?.sourceType === 'expense.payment'
+          ? pendingPayment!.postingError
+          : pendingSource?.sourceType === 'expense.record' ? r.postingError : null;
         return {
           ...mapExpense(r),
           categoryName: (r as any).expenseCategory?.name ?? null,
           journalEntryId,
           journalEntryNumber: journalEntryId ? journalNumberById.get(journalEntryId) ?? null : null,
-          pendingPostingSourceType: nextExpensePostingSource({
-            paymentStatus: r.paymentStatus,
-            sourceReimbursementRequestId: r.sourceReimbursementRequestId,
-            generatedSourceTypes: generatedSourceTypesByExpense.get(r.id) ?? new Set(),
-          }),
+          pendingPostingSourceType: pendingSource?.sourceType ?? null,
+          pendingPostingSourceId: pendingSource?.sourceId ?? null,
+          postingStatus: effectivePostingStatus,
+          postingError: effectivePostingError,
           attachments: byExpense.get(r.id) ?? [],
         };
       }),
@@ -2159,7 +2555,7 @@ export class PrismaExpenseRepository {
     for (const row of rows as Array<Record<string, any>>) {
       const date = row[dateField] as Date | null;
       if (!date) continue;
-      const key = date.toISOString().slice(0, 7);
+      const key = civilPeriodKey(dateField === 'expenseDate' ? coerceCivilDate(date) : civilDate(date));
       const bucket = buckets.get(key) ?? { count: 0, evidenceCount: 0, total: 0 };
       bucket.count += 1;
       if (evidencedIds.has(row['id'] as string)) bucket.evidenceCount += 1;

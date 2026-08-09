@@ -1,5 +1,10 @@
 import { test, expect } from './harness/fixtures';
-import { COMPANY_ID, SEED_USERS, expectNoClientError } from './harness/auth';
+import {
+  COMPANY_ID,
+  SEED_USERS,
+  ensureBrowserLegalAcceptance,
+  expectNoClientError,
+} from './harness/auth';
 import { expectMainReady, gotoCompany } from './harness/e2e-utils';
 
 const readyRoutes = [
@@ -26,7 +31,9 @@ async function login(page: any, username: string, password: string, next = `/com
   await page.locator('#login-identifier').fill(username);
   await page.locator('#login-password').fill(password);
   await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
-    await page.waitForURL(/\/companies\//);
+  await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/)/);
+  await ensureBrowserLegalAcceptance(page.context(), COMPANY_ID);
+  await page.goto(next);
 }
 
 test.describe('XC — cross-cutting', () => {
@@ -75,6 +82,9 @@ test.describe('XC — cross-cutting', () => {
     await page.locator('#login-identifier').fill(SEED_USERS.owner.username);
     await page.locator('#login-password').fill(SEED_USERS.owner.password);
     await page.getByRole('button', { name: /^(เข้าสู่ระบบ|Sign in)$/i }).click();
+    await page.waitForURL(/\/(?:legal-acceptance(?:[/?]|$)|companies\/)/);
+    await ensureBrowserLegalAcceptance(page.context(), COMPANY_ID);
+    await page.goto(target);
     await expect(page).toHaveURL(new RegExp(target));
     await expectNoClientError(page);
   });

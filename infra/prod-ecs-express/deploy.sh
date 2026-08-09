@@ -275,6 +275,7 @@ if [ "$DEPLOY_ENV" = "production" ]; then
   RELEASE_TASK_POLICY_NAME="watchdog-bms-release-task-ecs-read"
   API_POLICY_NAME="watchdog-bms-prod-api-runtime"
   AI_POLICY_NAME="watchdog-bms-ai-gateway-runtime"
+  WORKERS_CLEANUP_POLICY_NAME="watchdog-bms-prod-workers-object-version-cleanup"
   API_SERVICE_NAME="watchdog-bms-api-web-pub"
   # -v2 is the live service. The original watchdog-bms-ai-gateway was deleted on 2026-07-03 after
   # its control-plane state broke, and its SSM ARN was repointed here - but this constant was left
@@ -296,6 +297,7 @@ else
   RELEASE_TASK_POLICY_NAME="watchdog-bms-uat-release-task-ecs-read"
   API_POLICY_NAME="watchdog-bms-uat-api-runtime"
   AI_POLICY_NAME="watchdog-bms-uat-ai-gateway-runtime"
+  WORKERS_CLEANUP_POLICY_NAME="watchdog-bms-uat-workers-object-version-cleanup"
   API_SERVICE_NAME="watchdog-bms-uat-api-web"
   AI_SERVICE_NAME="watchdog-bms-uat-ai-gateway"
   WORKERS_SERVICE_NAME="watchdog-bms-uat-workers"
@@ -327,6 +329,13 @@ get_param() {
 
 STORED_S3_BUCKET="$(get_param "${PARAM_PREFIX}/s3-bucket")"
 S3_BUCKET="${STORED_S3_BUCKET:-${RESOURCE_PREFIX}-${ACCOUNT_ID}}"
+if [[ ! "$S3_BUCKET" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; then
+  echo "ERROR: S3 bucket name is invalid" >&2
+  exit 2
+fi
+WORKERS_CLEANUP_POLICY_FILE="/tmp/watchdog-bms-workers-object-version-cleanup-policy.json"
+sed "s/<S3_BUCKET>/${S3_BUCKET}/g" \
+  infra/security/object-version-cleanup-worker-policy.template.json > "$WORKERS_CLEANUP_POLICY_FILE"
 if [ "$DEPLOY_ENV" = "uat" ] && [ "$S3_BUCKET" != "watchdog-bms-uat-${ACCOUNT_ID}" ]; then
   echo "ERROR: UAT S3 bucket must be watchdog-bms-uat-${ACCOUNT_ID}" >&2
   exit 2
@@ -469,7 +478,7 @@ ensure_ecs_roles() {
         exit 1
       fi
     done
-    local release_policy
+    local release_policy workers_cleanup_policy
     if ! release_policy="$(aws_cmd iam get-role-policy \
       --role-name "$RELEASE_TASK_ROLE" --policy-name "$RELEASE_TASK_POLICY_NAME" \
       --query PolicyDocument --output json --region "$REGION")"; then
@@ -490,6 +499,18 @@ ensure_ecs_roles() {
           and ((.Action | if type == "array" then sort else [.] end) == ["ssm:GetParameter","ssm:PutParameter"]))
     ' <<< "$release_policy" >/dev/null; then
       echo "ERROR: ${RELEASE_TASK_ROLE} must allow only exact ECS recovery reads and the environment service-cache SSM path; refresh its control-plane policy" >&2
+      exit 1
+    fi
+    if ! workers_cleanup_policy="$(aws_cmd iam get-role-policy \
+      --role-name "$WORKERS_TASK_ROLE" --policy-name "$WORKERS_CLEANUP_POLICY_NAME" \
+      --query PolicyDocument --output json --region "$REGION")"; then
+      echo "ERROR: cannot verify inline policy ${WORKERS_CLEANUP_POLICY_NAME} on ${WORKERS_TASK_ROLE}; run the environment control-plane setup first" >&2
+      exit 1
+    fi
+    printf '%s' "$workers_cleanup_policy" | jq -S . > /tmp/watchdog-bms-workers-cleanup-policy-actual.json
+    jq -S . "$WORKERS_CLEANUP_POLICY_FILE" > /tmp/watchdog-bms-workers-cleanup-policy-expected.json
+    if ! cmp -s /tmp/watchdog-bms-workers-cleanup-policy-actual.json /tmp/watchdog-bms-workers-cleanup-policy-expected.json; then
+      echo "ERROR: ${WORKERS_TASK_ROLE}/${WORKERS_CLEANUP_POLICY_NAME} is not the exact least-privilege object-version cleanup policy" >&2
       exit 1
     fi
     return
@@ -544,7 +565,8 @@ EOF
   "Statement": [
     { "Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": "arn:aws:secretsmanager:${REGION}:${ACCOUNT_ID}:secret:${SECRET_PREFIX}/*" },
     { "Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": "arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter${PARAM_PREFIX}/*" },
-    { "Effect": "Allow", "Action": ["s3:GetObject","s3:GetObjectVersion","s3:PutObject","s3:DeleteObject","s3:DeleteObjectVersion"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*" }
+    { "Effect": "Allow", "Action": ["s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration"], "Resource": "arn:aws:s3:::${S3_BUCKET}" },
+    { "Effect": "Allow", "Action": ["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"], "Resource": "arn:aws:s3:::${S3_BUCKET}/*" }
   ]
 }
 EOF
@@ -584,9 +606,13 @@ EOF
     --policy-name "$AI_POLICY_NAME" \
     --policy-document file:///tmp/watchdog-bms-ecs-ai-task-policy.json
 
-  # Workers call the API over HTTP only; secrets are injected via the execution
-  # role, so the task role needs no policies of its own.
+  # Workers otherwise call the API over HTTP. This dedicated task policy grants only exact-version
+  # deletion under the three failed-write prefixes; the API task role deliberately lacks it.
   ensure_role "$WORKERS_TASK_ROLE" '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+  aws_cmd iam put-role-policy \
+    --role-name "$WORKERS_TASK_ROLE" \
+    --policy-name "$WORKERS_CLEANUP_POLICY_NAME" \
+    --policy-document "file://${WORKERS_CLEANUP_POLICY_FILE}"
 }
 
 ensure_cluster() {
@@ -1600,6 +1626,7 @@ workers_container_json() {
         {name:"PUBLIC_BASE_URL", value:$publicWebUrl},
         {name:"INTERNAL_API_URL", value:$internalApiUrl},
         {name:"S3_BUCKET", value:$s3Bucket},
+        {name:"S3_REGION", value:$region},
         {name:"AWS_REGION", value:$region},
         {name:"QUEUE_ENABLED", value:"true"},
         {name:"LOG_FORMAT", value:"json"}

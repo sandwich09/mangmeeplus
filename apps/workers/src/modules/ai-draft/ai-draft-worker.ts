@@ -6,7 +6,7 @@
  * worker dispatch-to-HTTP pattern.
  */
 import { Worker, type Job } from 'bullmq';
-import { createQueue } from '../../common/queue.js';
+import { attachDeadLetterQueue, createQueue } from '../../common/queue.js';
 import { workerLog } from '../../common/log.js';
 import { scheduleWithRetry } from '../../common/retry-schedule.js';
 
@@ -36,6 +36,7 @@ export function startAiDraftWorker(redisUrl: string): Worker {
       workerLog('error', { event: 'ai_draft_schedule_failed', error: (err as Error).message });
     },
   );
+  attachDeadLetterQueue(worker, AI_DRAFT_QUEUE, redisUrl);
   return worker;
 }
 

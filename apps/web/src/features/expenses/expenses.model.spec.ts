@@ -412,6 +412,7 @@ describe('expenseCapabilities', () => {
 
   it('maps each backend permission to its capability', () => {
     assert.equal(expenseCapabilities(['expense.read']).canViewList, true);
+    assert.equal(expenseCapabilities(['expense.read_related']).canViewList, true);
     assert.equal(expenseCapabilities(['expense.read_own']).canViewList, true);
     assert.equal(expenseCapabilities(['expense.review']).canReview, true);
     assert.equal(expenseCapabilities(['expense.confirm']).canConfirm, true);
@@ -429,14 +430,23 @@ describe('expenseCapabilities', () => {
     // Evidence moved off expense.read onto its own key, so expense.read alone no longer grants it.
     assert.equal(expenseCapabilities(['expense.evidence.read']).canViewSharedEvidence, true);
     assert.equal(expenseCapabilities(['expense.read']).canViewSharedEvidence, false);
-    assert.equal(expenseCapabilities(['ledger.journal.read']).canReadLedger, true);
   });
 
   it('gates list and evidence tabs with their own view permissions', () => {
     assert.equal(canAccessExpenseTab('list', expenseCapabilities([])), false);
     assert.equal(canAccessExpenseTab('list', expenseCapabilities(['expense.read_own'])), true);
+    assert.equal(canAccessExpenseTab('list', expenseCapabilities(['expense.read_related'])), true);
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.read'])), false);
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.evidence.read'])), true);
+  });
+
+  it('keeps related-view authority read-only', () => {
+    const caps = expenseCapabilities(['expense.read_related']);
+    assert.equal(caps.canViewList, true);
+    assert.equal(caps.canUpdate, false);
+    assert.equal(caps.canConfirm, false);
+    assert.equal(caps.canRecordPayment, false);
+    assert.equal(caps.canVoid, false);
   });
 
   it('allows OCR request via expense.ocr.request or expense.review', () => {
@@ -451,10 +461,16 @@ describe('expenseCapabilities', () => {
     assert.equal(expenseCapabilities(['expense.export', 'expense.read']).canExportPackage, true);
   });
 
-  it('requires both create and post permissions for source posting', () => {
-    assert.equal(expenseCapabilities(['journal.entry.create']).canPostLedger, false);
-    assert.equal(expenseCapabilities(['journal.entry.post']).canPostLedger, false);
-    assert.equal(expenseCapabilities(['journal.entry.create', 'journal.entry.post']).canPostLedger, true);
+  // Owner decision 2026-08-09: the accounting screens are closed this launch while the ledger keeps
+  // posting server-side, so the ledger affordances inside the expense workspace — the
+  // "ลงบัญชี"/backfill buttons and the "ดู JV" link — are off regardless of permissions. The
+  // permissions and POST /posting/generate are untouched; only the buttons are gone.
+  it('withholds the ledger affordances while the accounting screens are closed', () => {
+    const everyLedgerPermission = ['ledger.journal.read', 'journal.entry.create', 'journal.entry.post'];
+    assert.equal(expenseCapabilities(everyLedgerPermission).canPostLedger, false);
+    assert.equal(expenseCapabilities(everyLedgerPermission).canReadLedger, false);
+    // Non-ledger capabilities in the same object are unaffected by the hide.
+    assert.equal(expenseCapabilities([...everyLedgerPermission, 'expense.read']).canViewList, true);
   });
 
   it('review permission alone does not grant finance actions', () => {
@@ -598,6 +614,12 @@ describe('expenseDeleteErrorMessage', () => {
     assert.equal(expenseDeleteErrorMessage(new Error('Retention locked.'), 'th'), 'Retention locked.');
     assert.equal(expenseDeleteErrorMessage(null, 'th'), 'เกิดข้อผิดพลาด');
     assert.equal(expenseDeleteErrorMessage(null, 'en'), 'An error occurred.');
+  });
+
+  it('asks the user to reload after a concurrent delete conflict', () => {
+    const error = { details: { code: 'EXPENSE_CHANGED_DURING_DELETE' } };
+    assert.equal(expenseDeleteErrorMessage(error, 'th'), 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง');
+    assert.equal(expenseDeleteErrorMessage(error, 'en'), 'The expense changed during deletion. Reload and try again.');
   });
 });
 

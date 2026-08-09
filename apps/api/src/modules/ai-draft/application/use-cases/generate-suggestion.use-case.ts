@@ -2,7 +2,8 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { RequestContext, AiDraftGenerationResult, AiRiskLevel, AiSuggestionAgent } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
-import { assertCompanyAiBudget, recordCompanyAiUsage } from '../../../line-ai/application/company-ai-usage-meter';
+import { RedisRateLimitService } from '../../../../common/security/redis-rate-limit.service';
+import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
 import { PrismaAiDraftRepository } from '../../infrastructure/prisma-ai-draft.repository';
 import type { PersistCandidateActionInput } from '../../infrastructure/prisma-ai-draft.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -42,6 +43,7 @@ export class GenerateSuggestionUseCase {
     // attributed here — the one seam holding both the companyId and the usage-bearing result.
     @Optional() private readonly prisma?: PrismaService,
     @Optional() private readonly config?: AppConfigService,
+    @Optional() private readonly rateLimits?: RedisRateLimitService,
   ) {}
 
   async execute(companyId: string, requestId: string): Promise<GenerateResult> {
@@ -90,18 +92,8 @@ export class GenerateSuggestionUseCase {
         return { requestId, status: 'PROVIDER_UNAVAILABLE' };
       }
 
-      // Monthly cap immediately ahead of the model call (spec §6.6). This lane has no
-      // per-window limiter, so it is the only spend gate the draft provider gets.
-      const budget = this.prisma && this.config
-        ? await assertCompanyAiBudget(this.prisma, this.config, companyId)
-        : ({ allowed: true } as const);
-
-      // The model authors the suggestion from the grounded evidence — unless the budget refused,
-      // in which case the refusal is shaped as a provider error and flows through the same
-      // handling below. `retryable: false` and a code outside the providerDown list, so an
-      // exhausted budget lands FAILED: it is a spend decision, not an outage to retry.
-      const result: AiDraftGenerationResult = budget.allowed
-        ? await this.provider.generate({
+      const generateAndMeter = async (budgetMonthKey?: string): Promise<AiDraftGenerationResult> => {
+        const generated = await this.provider.generate({
           templateKey: request.templateKey,
           language: request.language,
           agent: evidence.agent,
@@ -110,29 +102,39 @@ export class GenerateSuggestionUseCase {
           facts: evidence.facts,
           citations: evidence.citations.map((c) => ({ label: c.label, valuePreview: c.valuePreview })),
           wantsChecklist: evidence.wantsChecklist,
-        })
+        });
+        // Keep the admission lease through the ledger write so the next action reads this cost.
+        if (this.prisma && this.config) {
+          try {
+            await recordCompanyAiUsage(
+              this.prisma,
+              this.config,
+              { companyId, sourceRoute: 'draft-generate', requestId: request.id, monthKey: budgetMonthKey },
+              generated.usage,
+            );
+          } catch (err) {
+            this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.id, error: (err as Error).message });
+          }
+        }
+        return generated;
+      };
+
+      const admission = this.prisma && this.config
+        ? await runWithCompanyAiBudgetAdmission(this.prisma, this.config, this.rateLimits, companyId, generateAndMeter)
+        : ({ allowed: true, value: await generateAndMeter() } as const);
+
+      // A real exhaustion is terminal. Admission contention is transient and stays in the
+      // provider-unavailable retry lane; no model ran and no spend occurred for the refused job.
+      const result: AiDraftGenerationResult = admission.allowed
+        ? admission.value
         : {
           ok: false,
-          error: budget.reason === 'exceeded'
+          error: admission.reason === 'exceeded'
             ? { code: 'AI_MONTHLY_BUDGET_EXCEEDED', message: 'Monthly AI budget exhausted for this company.', retryable: false }
-            : { code: 'AI_BUDGET_UNAVAILABLE', message: 'AI budget meter is unavailable.', retryable: false },
+            : admission.reason === 'busy'
+              ? { code: 'AI_BUDGET_BUSY', message: 'Another AI action is being metered for this company.', retryable: true }
+              : { code: 'AI_BUDGET_UNAVAILABLE', message: 'AI budget meter is unavailable.', retryable: false },
         };
-
-      // Meter before branching on ok: a failed generation still burned tokens. A budget refusal
-      // burned none, so it is not metered — recording it would only warn `ai.usage.absent`.
-      // Failure here must never fail the draft (spec §6.7).
-      if (this.prisma && this.config && budget.allowed) {
-        try {
-          await recordCompanyAiUsage(
-            this.prisma,
-            this.config,
-            { companyId, sourceRoute: 'draft-generate', requestId: request.id },
-            result.usage,
-          );
-        } catch (err) {
-          this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.id, error: (err as Error).message });
-        }
-      }
 
       if (!result.ok) {
         // Provider disabled/unreachable/transient -> provider-unavailable (retryable);

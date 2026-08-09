@@ -174,15 +174,16 @@ describe('PrismaDocumentSequenceRepository', () => {
       resetPolicy: 'MONTHLY',
       periodKey: '2026-06',
     };
-    let findCount = 0;
     let created: any;
     const upsert = mock.fn(async (args: any) => {
       created = { id: 'seq-next', createdAt: now, updatedAt: now, ...args.create };
       return created;
     });
+    // Answers on the query rather than the call order: the allocator now also reads the company's
+    // stored config to decide whether the counter may be split per branch (CR-7).
     const { repo } = makeRepo({
       documentSequence: {
-        findFirst: mock.fn(async () => findCount++ === 0 ? null : previous),
+        findFirst: mock.fn(async (args: any) => args?.where?.periodKey === '2026-07' ? null : previous),
         upsert,
         update: mock.fn(async () => ({ ...created, nextNumber: 2 })),
       },

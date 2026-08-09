@@ -6,20 +6,43 @@ const A4_WIDTH = 595.28;
 const A4_HEIGHT = 841.89;
 const MARGIN = 36;
 const DENSITY = 200;
+/**
+ * Floor for the adaptive density below. A certificate long enough to blow the pixel budget at
+ * 200 DPI is rasterized coarser rather than refused — but only down to here, so a genuinely
+ * absurd vector still trips the raster guard instead of quietly printing unreadably.
+ */
+const MIN_DENSITY = 150;
 const MIN_DARK_PIXEL_RATIO = 0.002;
 const CONTENT_WIDTH = A4_WIDTH - (MARGIN * 2);
 const CONTENT_HEIGHT = A4_HEIGHT - (MARGIN * 2);
 
-/** A four-page certificate is already exceptional for this workflow. Keeping the decoded RGB
- * raster below ~96 MB prevents an authenticated oversized expense from exhausting an API worker. */
+/**
+ * A certificate this long is already exceptional for this workflow. Keeping the decoded RGB
+ * raster below ~96 MB prevents an authenticated oversized expense from exhausting an API worker.
+ * `maxPages` leaves a page of slack above the worst input the renderability limits allow (5 pages)
+ * — it used to be exactly that worst case, so any change to the layout broke the promise that
+ * anything inside those limits renders at all.
+ */
 export const SUBSTITUTE_RECEIPT_PDF_LIMITS = Object.freeze({
-  maxPages: 4,
+  maxPages: 6,
   maxRasterPixels: 32_000_000,
   maxRasterDimension: 50_000,
   maxSvgBytes: 8 * 1024 * 1024,
 });
 
 export type RasterSlice = { top: number; height: number };
+
+/**
+ * Highest density whose raster still fits the pixel budget, never above DENSITY nor below
+ * MIN_DENSITY. `width`/`height` are the SVG's own units (its raster size at 72 DPI), and pixels
+ * scale with the square of the density.
+ */
+export function rasterDensity(width: number, height: number): number {
+  const area = width * height;
+  if (!(area > 0)) return DENSITY;
+  const fitted = Math.floor(72 * Math.sqrt(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels / area));
+  return Math.min(DENSITY, Math.max(MIN_DENSITY, fitted));
+}
 
 function pixelLuminance(data: Buffer, offset: number, channels: number): number {
   if (channels < 3) return data[offset] ?? 255;
@@ -151,11 +174,21 @@ function printableDocumentNumber(value: string | undefined): string | null {
 
 /** `documentNumber` is passed in rather than parsed back out of the SVG: the caller already holds the
  * evidence row, and scraping rendered text would break silently the next time the layout changes. */
-export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: string): Promise<Buffer> {
+export async function renderSubstituteReceiptPdf(
+  svg: Buffer,
+  documentNumber?: string,
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
   }
-  const raster = sharp(svg, { density: DENSITY, limitInputPixels: false });
+  // Probe the vector's own size first (72 DPI = its SVG units) so the production density can be
+  // fitted to the pixel budget instead of allocating past it and throwing.
+  const intrinsic = await sharp(svg, { density: 72, limitInputPixels: false }).metadata();
+  const raster = sharp(svg, {
+    density: rasterDensity(intrinsic.width ?? 0, intrinsic.height ?? 0),
+    limitInputPixels: false,
+  });
   const metadata = await raster.metadata();
   const metadataWidth = metadata.width ?? 0;
   const metadataHeight = metadata.height ?? 0;
@@ -206,6 +239,18 @@ export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: s
       width,
       height,
     });
+    if (options.stateStamp) {
+      const stateSize = options.stateStamp === 'VOID' ? 96 : 54;
+      const stateWidth = stampFont.widthOfTextAtSize(options.stateStamp, stateSize);
+      page.drawText(options.stateStamp, {
+        x: (A4_WIDTH - stateWidth) / 2,
+        y: A4_HEIGHT / 2,
+        size: stateSize,
+        font: stampFont,
+        color: rgb(0.78, 0.03, 0.03),
+        opacity: 0.32,
+      });
+    }
     const pageLabel = `Page ${index + 1}/${slices.length}`;
     page.drawText(identity, { x: MARGIN, y: 17, size: stampSize, font: stampFont, color: rgb(0.35, 0.35, 0.35) });
     page.drawText(pageLabel, {
@@ -217,6 +262,6 @@ export async function renderSubstituteReceiptPdf(svg: Buffer, documentNumber?: s
     });
   }
   pdf.setTitle(safeDocumentNumber ?? `SHA256-${sourceDigest.slice(0, 16)}`);
-  pdf.setSubject(`Source SHA256: ${sourceDigest}`);
+  pdf.setSubject(`Source SHA256: ${sourceDigest}${options.stateStamp ? ` | State: ${options.stateStamp}` : ''}`);
   return Buffer.from(await pdf.save());
 }

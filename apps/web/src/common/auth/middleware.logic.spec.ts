@@ -13,9 +13,11 @@ describe('middleware.logic', () => {
     assert.equal(isProtectedPagePath('/companies/c1/dashboard'), true);
     assert.equal(isProtectedPagePath('/system'), true);
     assert.equal(isProtectedPagePath('/system/partners'), true);
+    assert.equal(isProtectedPagePath('/legal-acceptance'), true);
     assert.equal(isProtectedPagePath('/login'), false);
     assert.equal(isProtectedPagePath('/'), false);
     assert.equal(isProtectedPagePath('/systematic'), false);
+    assert.equal(isProtectedPagePath('/legal-acceptance-preview'), false);
   });
 
   it('accepts same-origin Origin headers and rejects cross-origin ones', () => {
@@ -76,6 +78,10 @@ describe('middleware.logic', () => {
     assert.equal(sanitizeNextPath('https://evil.example/x'), null);
     assert.equal(sanitizeNextPath('//evil.example'), null);
     assert.equal(sanitizeNextPath('/\\evil.example'), null);
+    assert.equal(sanitizeNextPath('/\tevil.example'), null);
+    assert.equal(sanitizeNextPath('/\n/evil.example'), null);
+    assert.equal(sanitizeNextPath('/\r/evil.example'), null);
+    assert.equal(sanitizeNextPath('/safe\\evil.example'), null);
     assert.equal(sanitizeNextPath(''), null);
     assert.equal(sanitizeNextPath(null), null);
   });

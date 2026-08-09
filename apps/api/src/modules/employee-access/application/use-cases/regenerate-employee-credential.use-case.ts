@@ -10,6 +10,7 @@ import {
 } from '../../domain/logic/employee-access.logic';
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
+import { revokeActiveSessions } from '../../../auth/domain/logic/session-revocation.logic';
 
 export type RegenerateEmployeeCredentialCommand = {
   companyId: string;
@@ -58,6 +59,8 @@ export class RegenerateEmployeeCredentialUseCase {
         },
       });
 
+      const revokedSessionCount = await revokeActiveSessions(tx.authSession, { userId: profile.userId });
+
       await tx.auditLog.create({
         data: {
           companyId: cmd.companyId,
@@ -68,7 +71,7 @@ export class RegenerateEmployeeCredentialUseCase {
           requestId: cmd.requestId,
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
-          metadataJson: { userId: profile.userId },
+          metadataJson: { userId: profile.userId, revokedSessionCount },
         },
       });
     });

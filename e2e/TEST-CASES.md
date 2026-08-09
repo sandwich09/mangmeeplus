@@ -107,7 +107,7 @@ Use a **fresh, unauthenticated** context here (plain `@playwright/test` `test` o
 | RPT-05 | P1 | Reload page | Saved view + `READY` export persist |
 | RPT-06 | P1 | `api.get('/companies/:id/reports/exports')` | 200; some item `status==='READY'` |
 | RPT-07 | P1 | `api.get('/companies/:id/notifications?triggerKey=report_ready')` | Contains a `report_ready` notification |
-| RPT-08 | P1 | `api.get('/audit/logs?targetType=report_export_request')` | Contains action `report.export.request` (audit trail intact) |
+| RPT-08 | P1 | `api.get('/companies/:id/audit/logs?targetType=report_export_request')` | Contains action `report.export.request` (audit trail intact) |
 
 ---
 

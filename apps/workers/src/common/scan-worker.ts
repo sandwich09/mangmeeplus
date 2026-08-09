@@ -1,6 +1,6 @@
 import { Worker, type Job } from 'bullmq';
 import { workerLog } from './log.js';
-import { createQueue, QUEUE_JOB_RETENTION } from './queue.js';
+import { attachDeadLetterQueue, createQueue, defaultJobOptions } from './queue.js';
 
 export function startScanWorker<T>(opts: {
   queueName: string;
@@ -22,6 +22,7 @@ export function startScanWorker<T>(opts: {
   worker.on('failed', (job, err) => {
     workerLog('error', { event: opts.failEvent, jobId: job?.id, error: err?.message });
   });
+  attachDeadLetterQueue(worker, opts.queueName, opts.redisUrl);
 
   void scheduleScan(opts).catch((err) => {
     workerLog('error', { event: `${opts.failEvent}_schedule_failed`, error: err?.message });
@@ -47,7 +48,7 @@ async function scheduleScan(opts: {
       {
         name: opts.kind,
         data: { kind: opts.kind },
-        opts: { ...QUEUE_JOB_RETENTION },
+        opts: { ...defaultJobOptions() },
       },
     );
   } finally {

@@ -8,13 +8,14 @@ function makeDrain(opts: { events?: any[]; dead?: number; wouldBlock?: boolean; 
   const shadowRecords: any[] = [];
   const logs: any[] = [];
   const completions: any[] = [];
+  const claims: any[] = [];
 
   // P0-4: a completion returns whether this worker still held its claim lease.
   const held = () => !opts.leaseLost;
   const outbox = {
     reclaimStalledProcessing: async () => { calls.push('reclaim'); return { reclaimed: 2, dead: 1 }; },
     countDead: async () => opts.dead ?? 0,
-    claimBatch: async () => { calls.push('claim'); return opts.events ?? []; },
+    claimBatch: async (input: any) => { calls.push('claim'); claims.push(input); return opts.events ?? []; },
     markPublished: async (input: any) => { calls.push(`published:${input.id}`); completions.push(input); return held(); },
     markFailed: async (input: any) => { calls.push(`failed:${input.id}`); completions.push(input); return held(); },
   } as any;
@@ -37,7 +38,7 @@ function makeDrain(opts: { events?: any[]; dead?: number; wouldBlock?: boolean; 
   } as any;
 
   const logger = { warn: (payload: any) => logs.push(payload), info: () => {}, error: () => {} } as any;
-  return { drain: new DrainWorkflowOutboxUseCase(outbox, ingest, shadow, logger), calls, shadowRecords, logs, completions };
+  return { drain: new DrainWorkflowOutboxUseCase(outbox, ingest, shadow, logger), calls, claims, shadowRecords, logs, completions };
 }
 
 const event = (overrides: any = {}) => ({
@@ -75,6 +76,12 @@ describe('DrainWorkflowOutboxUseCase', () => {
     const result = await drain.execute();
     assert.equal(calls.indexOf('reclaim') < calls.indexOf('claim'), true);
     assert.equal(result.reclaimed, 2);
+  });
+
+  it('never claims exact-version cleanup work owned by the S3 cleanup worker', async () => {
+    const { drain, claims } = makeDrain();
+    await drain.execute();
+    assert.deepEqual(claims[0].excludeEventTypes, ['storage.object_version_cleanup.requested']);
   });
 
   it('logs DEAD rows each sweep at HIGH risk (no handler exists yet)', async () => {

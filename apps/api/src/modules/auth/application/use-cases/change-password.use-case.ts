@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
+import { revokeActiveSessions } from '../../domain/logic/session-revocation.logic';
 
 // Stable code so the web client can name the actual problem instead of a generic 400.
 export const PASSWORD_REUSE = {
@@ -12,7 +13,7 @@ export const PASSWORD_REUSE = {
 export class ChangePasswordUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  async execute(userId: string, currentPassword: string, newPassword: string, currentTokenId: string): Promise<void> {
     const credential = await this.prisma.client.userCredential.findUnique({ where: { userId } });
     if (!credential || credential.status === 'DISABLED' || !verifyPassword(currentPassword, credential.passwordHash)) {
       throw new UnauthorizedException('Current password is incorrect.');
@@ -29,16 +30,19 @@ export class ChangePasswordUseCase {
       throw new BadRequestException(PASSWORD_REUSE);
     }
 
-    await this.prisma.client.userCredential.update({
-      where: { userId },
-      data: {
-        passwordHash: hashPassword(newPassword),
-        status: 'ACTIVE',
-        mustChangePassword: false,
-        expiresAt: null,
-        // User-chosen password: drop the revealable system-generated copy.
-        tempPasswordEncrypted: null,
-      },
+    await this.prisma.client.$transaction(async (tx) => {
+      await tx.userCredential.update({
+        where: { userId },
+        data: {
+          passwordHash: hashPassword(newPassword),
+          status: 'ACTIVE',
+          mustChangePassword: false,
+          expiresAt: null,
+          // User-chosen password: drop the revealable system-generated copy.
+          tempPasswordEncrypted: null,
+        },
+      });
+      await revokeActiveSessions(tx.authSession, { userId, exceptTokenId: currentTokenId });
     });
   }
 }

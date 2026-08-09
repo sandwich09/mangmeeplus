@@ -62,8 +62,8 @@ test.describe('RPT — reports & BI', () => {
     expect(body.items.some((item) => item.triggerKey === 'report_ready')).toBe(true);
   });
 
-  test('RPT-08 @p1 audit trail records report export request', async ({ api }) => {
-    const audit = await json<AuditPage>(await api.get('audit/logs?targetType=report_export_request&pageSize=10'));
+  test('RPT-08 @p1 audit trail records report export request', async ({ api, companyId }) => {
+    const audit = await json<AuditPage>(await api.get(`companies/${companyId}/audit/logs?targetType=report_export_request&pageSize=10`));
     expect(audit.data.some((item) => item.action === 'report.export.request')).toBe(true);
   });
 });

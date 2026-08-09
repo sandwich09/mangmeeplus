@@ -48,3 +48,17 @@ Effective requirement per action = decorator ∩ use-case check. Key ones for UI
 
 - New unit tests for `expenseCapabilities` + tab visibility; full web test/typecheck/build green (baseline 343).
 - Manual matrix check per capability pack (view/self/review/finance) recorded in memory doc.
+
+## 2026-08-10 amendment: related actors
+
+- [x] Add feature-gated, view-only `expense.read_related` to the universal core pack and custom-role backfill.
+- [x] Resolve relation from persisted expense, payment, substitute-receipt and source-reimbursement actors under tenant/branch scope.
+- [x] Apply the same ABAC to list, detail, substitute-receipt hub/history, web navigation and LINE/AI read tools.
+- [x] Keep every mutation behind its existing action permission, actor check and lifecycle state; the OCR route now declares its real action permissions instead of a read permission.
+- [x] Add indexes for every actor path used by the related-view query.
+
+Verification: focused API permission/feature/ABAC/LINE tests 138/138, AI Gateway 81/81, and focused web tests
+passed. Contracts build and web/AI Gateway typechecks passed; API typecheck reports no amendment errors and
+only the established 14 unrelated test errors plus one error in an untracked concurrent payer-access spec.
+Prisma validate/generate passed and the complete 127-migration
+chain applied to a clean PostgreSQL database.

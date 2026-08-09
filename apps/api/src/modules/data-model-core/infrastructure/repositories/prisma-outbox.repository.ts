@@ -76,6 +76,14 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
     // F0.E §7.2 item 2: the database supports far more, but per-item *processing* time — not claim
     // time — sets the emergency-CLOSE drain wait, and that is unmeasured until the UAT rerun.
     const batchSize = Math.max(1, Math.min(Math.trunc(input.batchSize) || 1, MAX_OUTBOX_CLAIM_BATCH));
+    if (input.eventTypes?.length && input.excludeEventTypes?.length) {
+      throw new Error('Outbox claim cannot include and exclude event types at the same time.');
+    }
+    const eventTypeFilter = input.eventTypes?.length
+      ? Prisma.sql`AND "eventType" IN (${Prisma.join(input.eventTypes)})`
+      : input.excludeEventTypes?.length
+        ? Prisma.sql`AND "eventType" NOT IN (${Prisma.join(input.excludeEventTypes)})`
+        : Prisma.empty;
     const rows = await this.prisma.client.$queryRaw<any[]>(Prisma.sql`
       UPDATE "OutboxEvent" o
       SET status = 'PROCESSING', "lockedAt" = now(), "lockedBy" = ${input.claimedBy},
@@ -83,6 +91,7 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
       WHERE o.id IN (
         SELECT id FROM "OutboxEvent"
         WHERE status IN ('PENDING', 'FAILED') AND "availableAt" <= now()
+        ${eventTypeFilter}
         ORDER BY "availableAt" ASC
         LIMIT ${batchSize}
         FOR UPDATE SKIP LOCKED
@@ -138,7 +147,12 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
    */
   async markPublished(input: MarkOutboxPublishedInput): Promise<boolean> {
     const cas = await this.prisma.client.outboxEvent.updateMany({
-      where: { id: input.id, status: 'PROCESSING', claimToken: input.claimToken ?? null },
+      where: {
+        id: input.id,
+        status: 'PROCESSING',
+        claimToken: input.claimToken ?? null,
+        ...(input.expectedEventType ? { eventType: input.expectedEventType } : {}),
+      },
       data: { status: 'PUBLISHED', publishedAt: new Date(), lockedAt: null, lockedBy: null, claimToken: null },
     });
     return cas.count === 1;
@@ -147,9 +161,9 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
   async markFailed(input: MarkOutboxFailedInput): Promise<boolean> {
     const row = await this.prisma.client.outboxEvent.findUnique({
       where: { id: input.id },
-      select: { attempts: true },
+      select: { attempts: true, eventType: true },
     });
-    if (!row) return false;
+    if (!row || (input.expectedEventType && row.eventType !== input.expectedEventType)) return false;
     const nextAttempts = row.attempts + 1;
     const isDead = nextAttempts >= MAX_OUTBOX_ATTEMPTS;
     const backoffMs = Math.min(Math.pow(2, nextAttempts) * 1000, 300_000);
@@ -157,7 +171,12 @@ export class PrismaOutboxRepository implements OutboxRepositoryPort {
 
     // The DEAD branch is the park: same fence, so a stale worker cannot park a live row either.
     const cas = await this.prisma.client.outboxEvent.updateMany({
-      where: { id: input.id, status: 'PROCESSING', claimToken: input.claimToken ?? null },
+      where: {
+        id: input.id,
+        status: 'PROCESSING',
+        claimToken: input.claimToken ?? null,
+        ...(input.expectedEventType ? { eventType: input.expectedEventType } : {}),
+      },
       data: {
         status: isDead ? 'DEAD' : 'FAILED',
         attempts: nextAttempts,

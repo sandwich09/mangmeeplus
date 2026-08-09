@@ -22,6 +22,8 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 //                      behind its own menu entitlement.
 //  - dashboard./notification. : these read permissions also live in the ungated core pack, so the
 //                      prefix rules make the existing dashboard_notifications entitlement effective.
+//  - *.read_related : view-only relation ABAC is universal in core, but source documents still
+//                      belong to their parent feature entitlement.
 //  - crm.channel.    : LINE OA is sold independently from CRM. Listed BEFORE the crm. rule because
 //                      the first matching prefix wins.
 //  - crm.ai.         : CRM AI assist/read is AI functionality that happens to live under the crm
@@ -37,6 +39,13 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 // (Module-scoped report keys like `ledger.report.read` don't start with `report.`, so they keep
 // their own module's feature gate.)
 const PREFIX_FEATURE_RULES: ReadonlyArray<{ prefix: string; featureKeys: readonly string[] }> = [
+  { prefix: 'accounting.document.read_related', featureKeys: ['sales_documents'] },
+  { prefix: 'expense.read_related', featureKeys: ['expenses.list'] },
+  { prefix: 'procurement.purchase_request.read_related', featureKeys: ['procurement.purchase_requests'] },
+  { prefix: 'procurement.purchase_order.read_related', featureKeys: ['procurement.purchase_orders'] },
+  { prefix: 'procurement.goods_receipt.read_related', featureKeys: ['procurement.goods_receipts'] },
+  { prefix: 'procurement.vendor_bill.read_related', featureKeys: ['procurement.vendor_bills'] },
+  { prefix: 'procurement.supplier_payment.read_related', featureKeys: ['procurement.supplier_payments'] },
   { prefix: 'inventory.product.', featureKeys: ['product_catalog'] },
   { prefix: 'report.', featureKeys: ['reports'] },
   { prefix: 'reimbursement.', featureKeys: ['reimbursement'] },
