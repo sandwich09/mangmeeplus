@@ -1,4 +1,4 @@
-import { Inject, Injectable, InternalServerErrorException, Optional } from '@nestjs/common';
+import { Inject, Injectable, InternalServerErrorException, Optional, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -27,7 +27,13 @@ export class IssueTokenUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
   ) {}
 
-  async execute(userId: string, authProvider: 'watchdog' | 'line' | 'dev' = 'dev'): Promise<AuthTokensResult> {
+  async execute(userId: string, authProvider: 'watchdog', credentialUpdatedAt: Date): Promise<AuthTokensResult>;
+  async execute(userId: string, authProvider?: 'line' | 'dev'): Promise<AuthTokensResult>;
+  async execute(
+    userId: string,
+    authProvider: 'watchdog' | 'line' | 'dev' = 'dev',
+    credentialUpdatedAt?: Date,
+  ): Promise<AuthTokensResult> {
     // ponytail: prefer watchdog secret (prod); fall back to dev secret (local)
     const secret = this.config.authJwtSecret;
     if (!secret) {
@@ -64,9 +70,25 @@ export class IssueTokenUseCase {
     );
 
     const expiresAt = new Date(Date.now() + REFRESH_EXPIRES_IN * 1000);
-    await this.prisma.client.authSession.create({
-      data: { userId, tokenId, familyId, expiresAt, status: 'ACTIVE' },
-    });
+    const sessionData = { userId, tokenId, familyId, expiresAt, status: 'ACTIVE' as const };
+    if (authProvider === 'watchdog' && credentialUpdatedAt) {
+      await this.prisma.client.$transaction(async (tx) => {
+        // Lock the credential snapshot verified by PasswordLoginUseCase until the session row
+        // exists. A concurrent password change then either runs first (this rejects the stale
+        // login) or runs second (and revokes the newly-created session).
+        await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${userId} FOR UPDATE`;
+        const currentCredential = await tx.userCredential.findUnique({
+          where: { userId },
+          select: { updatedAt: true },
+        });
+        if (!currentCredential || currentCredential.updatedAt.getTime() !== credentialUpdatedAt.getTime()) {
+          throw new UnauthorizedException('Invalid username or password.');
+        }
+        await tx.authSession.create({ data: sessionData });
+      });
+    } else {
+      await this.prisma.client.authSession.create({ data: sessionData });
+    }
 
     // L-10: awaited. Post-commit AuditService.log never throws, so a login cannot 500 here.
     // tokenId is reused as the requestId correlation for auth events.

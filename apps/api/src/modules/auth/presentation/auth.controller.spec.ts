@@ -195,6 +195,29 @@ describe('AI assistant preference (PDPA opt-out)', () => {
   });
 });
 
+describe('AuthController password change session binding', () => {
+  it('passes the authenticated session id so only other sessions are revoked', async () => {
+    const calls: unknown[][] = [];
+    const stub = {} as any;
+    const changePassword = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
+    const controller = new AuthController(
+      stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+      changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub,
+    );
+    const payload = Buffer.from(JSON.stringify({ sid: 'session-current' })).toString('base64url');
+
+    await controller.changeCurrentPassword(
+      { currentPassword: 'old-password', newPassword: 'new-password' } as any,
+      {
+        headers: { authorization: `Bearer x.${payload}.y` },
+        context: { userId: 'user-1' },
+      } as any,
+    );
+
+    assert.deepEqual(calls[0], ['user-1', 'old-password', 'new-password', 'session-current']);
+  });
+});
+
 // AuthGuard exempts /v1/auth/* from the temporary-password block, so GET /auth/me answers a blocked
 // session too — and is therefore the only place it can learn that every other route is closed to it.
 describe('AuthController me()', () => {

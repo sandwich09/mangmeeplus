@@ -75,7 +75,7 @@ export class PasswordLoginUseCase {
       membershipId: membership.id,
     });
 
-    const tokens = await this.issueToken.execute(user.id, 'watchdog');
+    const tokens = await this.issueToken.execute(user.id, 'watchdog', credential.updatedAt);
     return {
       ...tokens,
       passwordChangeRequired: credential.mustChangePassword,

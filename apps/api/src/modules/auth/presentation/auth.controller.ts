@@ -457,7 +457,9 @@ export class AuthController {
     @Body() dto: ChangePasswordDto,
     @Req() req: Request & { context: RequestContext },
   ): Promise<void> {
-    await this.changePassword.execute(req.context.userId, dto.currentPassword, dto.newPassword);
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    await this.changePassword.execute(req.context.userId, dto.currentPassword, dto.newPassword, tokenId);
   }
 
   @Get('account/security')

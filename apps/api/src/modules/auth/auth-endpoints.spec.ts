@@ -59,15 +59,80 @@ describe('IssueTokenUseCase', () => {
 
     await assert.rejects(() => useCase.execute('user-123'));
   });
+
+  it('locks and rechecks the verified password credential before creating a watchdog session', async () => {
+    const credentialUpdatedAt = new Date('2026-08-09T08:00:00.000Z');
+    const order: string[] = [];
+    const tx = {
+      $queryRaw: async (strings: TemplateStringsArray) => {
+        assert.match(strings.join('?'), /UserCredential.*FOR UPDATE/);
+        order.push('lock');
+        return [{ id: 'credential-1' }];
+      },
+      userCredential: {
+        findUnique: async () => {
+          order.push('recheck');
+          return { updatedAt: credentialUpdatedAt };
+        },
+      },
+      authSession: {
+        create: async () => {
+          order.push('session');
+          return {};
+        },
+      },
+    };
+    const prisma = {
+      client: {
+        $transaction: async (fn: (db: typeof tx) => Promise<void>) => fn(tx),
+        authSession: { create: async () => { throw new Error('must create inside transaction'); } },
+      },
+    } as any;
+    const config = { authJwtSecret: 'test-secret' } as any;
+
+    await new IssueTokenUseCase(makeJwtService('test-secret'), prisma, config)
+      .execute('user-123', 'watchdog', credentialUpdatedAt);
+
+    assert.deepEqual(order, ['lock', 'recheck', 'session']);
+  });
+
+  it('rejects a password login whose credential changed before its session was created', async () => {
+    let sessionCreated = false;
+    const tx = {
+      $queryRaw: async () => [],
+      userCredential: {
+        findUnique: async () => ({ updatedAt: new Date('2026-08-09T08:00:01.000Z') }),
+      },
+      authSession: {
+        create: async () => { sessionCreated = true; return {}; },
+      },
+    };
+    const prisma = {
+      client: {
+        $transaction: async (fn: (db: typeof tx) => Promise<void>) => fn(tx),
+        authSession: { create: async () => ({}) },
+      },
+    } as any;
+    const config = { authJwtSecret: 'test-secret' } as any;
+    const useCase = new IssueTokenUseCase(makeJwtService('test-secret'), prisma, config);
+
+    await assert.rejects(
+      () => useCase.execute('user-123', 'watchdog', new Date('2026-08-09T08:00:00.000Z')),
+      (error: unknown) => error instanceof UnauthorizedException,
+    );
+    assert.equal(sessionCreated, false);
+  });
 });
 
 // ---- Password credentials ----
 
 describe('PasswordLoginUseCase', () => {
   it('issues watchdog tokens for an active username/password credential', async () => {
-    const issueToken = { execute: async (userId: string, provider: string) => {
+    const credentialUpdatedAt = new Date('2026-08-09T07:00:00.000Z');
+    const issueToken = { execute: async (userId: string, provider: string, version: Date) => {
       assert.equal(userId, 'user-1');
       assert.equal(provider, 'watchdog');
+      assert.equal(version, credentialUpdatedAt);
       return { accessToken: 'access', refreshToken: 'refresh', expiresIn: 900 };
     } } as any;
     const prisma = {
@@ -81,6 +146,7 @@ describe('PasswordLoginUseCase', () => {
               passwordHash: hashPassword('watchdogbms11'),
               mustChangePassword: false,
               expiresAt: null,
+              updatedAt: credentialUpdatedAt,
             },
           }),
         },
@@ -253,22 +319,32 @@ describe('PasswordLoginUseCase', () => {
 describe('ChangePasswordUseCase', () => {
   it('replaces the hash and clears temporary-password constraints', async () => {
     let updateArgs: any;
+    let revokeArgs: any;
     const oldHash = hashPassword('watchdogbms11');
     const prisma = {
       client: {
         userCredential: {
           findUnique: async () => ({ status: 'TEMPORARY', passwordHash: oldHash, expiresAt: null }),
-          update: async (args: unknown) => { updateArgs = args; return {}; },
         },
+        $transaction: async (fn: any) => fn({
+          userCredential: { update: async (args: unknown) => { updateArgs = args; return {}; } },
+          authSession: { updateMany: async (args: unknown) => { revokeArgs = args; return { count: 2 }; } },
+        }),
       },
     } as any;
 
-    await new ChangePasswordUseCase(prisma).execute('user-1', 'watchdogbms11', 'new-watchdog-password');
+    await new ChangePasswordUseCase(prisma).execute('user-1', 'watchdogbms11', 'new-watchdog-password', 'session-current');
 
     assert.equal(updateArgs.where.userId, 'user-1');
     assert.equal(verifyPassword('new-watchdog-password', updateArgs.data.passwordHash), true);
     assert.equal(updateArgs.data.mustChangePassword, false);
     assert.equal(updateArgs.data.expiresAt, null);
+    assert.deepEqual(revokeArgs.where, {
+      userId: 'user-1',
+      status: 'ACTIVE',
+      tokenId: { not: 'session-current' },
+    });
+    assert.equal(revokeArgs.data.status, 'REVOKED');
   });
 
   // An employee's temporary password is their date of birth as DDMMYYYY — 8 characters, so the
@@ -286,7 +362,7 @@ describe('ChangePasswordUseCase', () => {
     } as any;
 
     await assert.rejects(
-      () => new ChangePasswordUseCase(prisma).execute('user-1', '01011990', '01011990'),
+      () => new ChangePasswordUseCase(prisma).execute('user-1', '01011990', '01011990', 'session-current'),
       (error: any) => error.getStatus() === 400 && error.getResponse().code === 'password_reuse',
     );
     assert.equal(updated, false);
