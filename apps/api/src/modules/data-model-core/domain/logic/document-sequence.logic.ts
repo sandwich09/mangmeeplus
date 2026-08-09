@@ -1,3 +1,5 @@
+import { civilDate, civilPeriodKey } from '@watchdog-bms/contracts';
+
 const VALID_PLACEHOLDERS = new Set(['{YYYY}', '{YY}', '{MM}', '{BRANCH}', '{DOC}', '{SEQ}']);
 const PLACEHOLDER_PATTERN = /\{[^}]+\}/g;
 
@@ -75,11 +77,10 @@ export function formatDocumentNumber(template: string, ctx: FormatContext): stri
 }
 
 export function buildPeriodKey(policy: 'NONE' | 'MONTHLY' | 'YEARLY', date: Date): string {
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1;
+  const civil = civilDate(date);
   switch (policy) {
     case 'NONE':    return 'ALL';
-    case 'YEARLY':  return String(year);
-    case 'MONTHLY': return `${year}-${String(month).padStart(2, '0')}`;
+    case 'YEARLY':  return civil.slice(0, 4);
+    case 'MONTHLY': return civilPeriodKey(civil);
   }
 }

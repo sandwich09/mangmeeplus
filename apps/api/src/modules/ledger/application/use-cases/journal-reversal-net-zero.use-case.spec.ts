@@ -190,4 +190,17 @@ describe('EnsurePeriodUseCase bounds', () => {
     assert.equal(captured.start?.toISOString(), '2026-05-01T00:00:00.000Z');
     assert.equal(captured.end?.toISOString(), '2026-05-31T00:00:00.000Z');
   });
+
+  it('rejects a malformed or out-of-range month instead of rolling it into another period', async () => {
+    const repo = { upsertPeriod: mock.fn(async () => ({})) } as any;
+    const useCase = new EnsurePeriodUseCase(repo);
+
+    for (const invalid of ['2026-00', '2026-13', '2026-1', 'not-a-period']) {
+      await assert.rejects(
+        () => useCase.execute({ ...ctx, permissions: ['ledger.period.read'] } as any, invalid),
+        BadRequestException,
+      );
+    }
+    assert.equal(repo.upsertPeriod.mock.callCount(), 0);
+  });
 });

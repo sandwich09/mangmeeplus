@@ -8,7 +8,7 @@ import { ReserveDocumentNumberUseCase } from '../../../data-model-core/applicati
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { canTransitionVB, matchLine, buildTaxReviewIssues, d, decStr, round2, vendorBillTaxSourceChecksum, PROCUREMENT_APPROVAL_POLICY_DEFAULTS, canSelfApprove } from '../../domain/logic/procurement.logic';
-import { LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUENCE_KEYS, todayCivilDate } from '@watchdog-bms/contracts';
 import type { VendorBillRecord } from '../../domain/models/procurement.model';
 import type { ResolveTransactionTaxPreviewDto, TaxEvidenceReviewStatus, TransactionTaxContext } from '@watchdog-bms/contracts';
 import { TransactionTaxConfigUseCase } from '../../../tax/application/use-cases/transaction-tax-config.use-case';
@@ -395,7 +395,7 @@ export class SubmitVendorBillUseCase {
     bill = await assertVendorBillTaxEvidenceReady(this.repo, bill, ctx.userId);
 
     const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate(undefined, now));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.VENDOR_BILL, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `submit:${id}` });
 
     // H-07: record the submitter BEFORE the status change. A stray SUBMITTED
@@ -560,7 +560,7 @@ export class ApproveVendorBillUseCase {
         configurationChecksum: preview.configurationChecksum,
       }));
       const checksum = createHash('sha256').update(JSON.stringify(taxFacts)).digest('hex');
-      const periodKey = bill.billDate.toISOString().slice(0, 7);
+      const periodKey = civilPeriodKey(coerceCivilDate(bill.billDate));
       await this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'tax.document_tax.finalize', targetType: 'vendor_bill', targetId: id,
         requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
@@ -618,7 +618,7 @@ export function buildVendorBillPostingSource(bill: VendorBillRecord) {
     sourceType: pp36 ? 'procurement.vendor_bill.commercial' : 'procurement.vendor_bill', sourceId: bill.id,
     sourceEventType: bill.status === 'VOIDED' ? 'procurement.vendor_bill.voided' : 'procurement.vendor_bill.approved',
     idempotencyKey: `vendor-bill:${bill.status}:${bill.id}`, documentNumber: bill.vendorBillNumber,
-    sourceDate: bill.billDate.toISOString(), periodKey: bill.billDate.toISOString().slice(0, 7), currency: bill.currency,
+    sourceDate: coerceCivilDate(bill.billDate), periodKey: civilPeriodKey(coerceCivilDate(bill.billDate)), currency: bill.currency,
     counterpartyId: bill.supplierId, totalAmount: bill.grandTotalAmount, taxTotal: bill.vatAmount,
     whtTotal: bill.whtAmount, paidAmount: bill.paidAmount,
     lines: (bill.lines ?? []).map((line) => ({ sourceLineId: line.id, description: line.description, quantity: line.quantity,
@@ -648,7 +648,7 @@ export function buildVendorBillPp36PostingSource(bill: VendorBillRecord) {
     companyId: bill.companyId, branchId: bill.branchId, sourceType: 'procurement.vendor_bill', sourceId: bill.id,
     sourceEventType: 'procurement.vendor_bill.pp36_payment',
     idempotencyKey: `vendor-bill:pp36:${bill.status}:${bill.id}:${sourceDate}`,
-    documentNumber: bill.vendorBillNumber, sourceDate, periodKey: sourceDate.slice(0, 7), currency: 'THB',
+    documentNumber: bill.vendorBillNumber, sourceDate, periodKey: civilPeriodKey(sourceDate), currency: 'THB',
     counterpartyId: bill.supplierId, totalAmount: '0', taxTotal: '0', whtTotal: '0', paidAmount: bill.paidAmount, lines,
   };
 }

@@ -28,7 +28,7 @@ import type { JournalEntryRecord } from '../../domain/models/ledger.model';
 import { LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
 import { Decimal } from 'decimal.js';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { civilDateToUtcDate, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilDateToUtcDate, civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 
 
 function requirePerm(ctx: RequestContext, perm: string) {
@@ -104,7 +104,7 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
     return input.sourceType === 'expense.record' ? normalizeExpenseVatForLedger(input, input) : input;
   }
   if (input.sourceType === 'accounting_document' || input.documentId) {
-    const date = input.documentDate ?? input.sourceDate;
+    const date = coerceCivilDate(input.documentDate ?? input.sourceDate);
     const documentType = input.documentType as string | undefined;
     const event = input.sourceEventType === 'voided'
       ? 'accounting.document.voided'
@@ -148,7 +148,7 @@ export function asLedgerSource(input: LedgerSourcePostingInput | any): LedgerSou
     } as LedgerSourcePostingInput & { legacyOutputTaxCode?: string });
   }
   if (input.sourceType === 'expense.record' || input.expenseNumber !== undefined) {
-    const date = input.expenseDate ?? input.sourceDate;
+    const date = coerceCivilDate(input.expenseDate ?? input.sourceDate);
     return normalizeExpenseVatForLedger({
       companyId: input.companyId,
       branchId: input.branchId ?? undefined,
@@ -253,18 +253,19 @@ export class CreateManualJournalUseCase {
     const bal = validateJournalBalance(lines);
     if (!bal.isBalanced) throw new BadRequestException({ message: 'Journal unbalanced', errors: bal.errors, totalDebit: bal.totalDebit, totalCredit: bal.totalCredit });
 
-    const periodKey = input.entryDate.slice(0, 7); // YYYY-MM
+    const entryCivilDate = coerceCivilDate(input.entryDate);
+    const periodKey = civilPeriodKey(entryCivilDate);
     let period = await this.repo.findPeriod(ctx.companyId, periodKey);
     if (!period) {
-      const d = new Date(input.entryDate);
-      const start = new Date(d.getFullYear(), d.getMonth(), 1);
-      const end   = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const [y, m] = periodKey.split('-').map(Number) as [number, number];
+      const start = new Date(Date.UTC(y, m - 1, 1));
+      const end   = new Date(Date.UTC(y, m, 0));
       period = await this.repo.upsertPeriod(ctx.companyId, periodKey, start, end);
     }
     if (period.status === 'CLOSED') throw new BadRequestException({ code: 'period_closed', periodKey, message: 'งวดบัญชีถูกปิดแล้ว' });
 
     const reserved = await this.reserve.execute({ companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `manual:${ctx.userId}:${Date.now()}`, reservedByUserId: ctx.userId });
-    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'MANUAL', entryDate: new Date(input.entryDate), memo: input.memo, createdByUserId: ctx.userId, lines });
+    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'MANUAL', entryDate: civilDateToUtcDate(entryCivilDate), memo: input.memo, createdByUserId: ctx.userId, lines });
     await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
 
     await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'ledger.journal.create', targetType: 'journal_entry', targetId: entry.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { entryNumber: entry.entryNumber, totalDebit: bal.totalDebit } });
@@ -425,7 +426,7 @@ export class GenerateJournalFromSourceUseCase {
       // Full settlement only — partial-payment posting is a documented limitation.
       if (expense.paymentStatus !== 'PAID') throw new BadRequestException({ code: 'expense_payment_not_settled', message: 'Only a fully paid expense can post its settlement; partial payments are not yet supported' });
       const paidAt = (expense as any).paidAt as Date | null;
-      const sourceDate = (paidAt ?? expense.expenseDate).toISOString();
+      const sourceDate = coerceCivilDate(paidAt ?? expense.expenseDate);
       return {
         companyId: expense.companyId,
         branchId: expense.branchId ?? undefined,
@@ -448,7 +449,7 @@ export class GenerateJournalFromSourceUseCase {
       if (!payment) throw new NotFoundException('Reimbursement payment source not found');
       if (payment.status !== 'RECORDED') throw new BadRequestException({ code: 'reimbursement_payment_not_recorded', message: 'Only a recorded reimbursement payment can be posted' });
       const settlement = await this.reimbursementRepo.assertSettlementPostingReady(ctx.companyId, payment.id);
-      const sourceDate = payment.paidAt.toISOString();
+      const sourceDate = coerceCivilDate(payment.paidAt);
       return {
         companyId: payment.companyId,
         branchId: settlement.branchId,
@@ -667,7 +668,7 @@ export class GenerateJournalFromSourceUseCase {
     }
 
     const reserved = await this.reserve.execute({ companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey, idempotencyKey: `gen:${source.sourceType}:${source.sourceId}`, reservedByUserId: ctx.userId });
-    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: new Date(source.sourceDate), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines });
+    const entry = await this.repo.createJournalEntry({ companyId: ctx.companyId, periodId: period.id, entryNumber: reserved.documentNumber, entryType: 'GENERATED', sourceType: source.sourceType, sourceId: source.sourceId, entryDate: civilDateToUtcDate(coerceCivilDate(source.sourceDate)), memo: source.documentNumber ?? source.sourceId, createdByUserId: ctx.userId, lines: resolvedLines });
     await this.repo.postJournalEntry(entry.id, ctx.userId);
     await this.commit.execute({ id: reserved.id, companyId: ctx.companyId });
     await this.markSource(ctx, source, 'posted', entry);

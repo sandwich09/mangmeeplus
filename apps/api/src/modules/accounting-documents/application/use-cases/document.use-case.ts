@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
 import { validateAccountingDocumentMoneyInput } from '../../domain/logic/accounting-money-validation.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, todayCivilDate } from '@watchdog-bms/contracts';
 
 function docPermission(documentType: AccountingDocumentType, action: 'read' | 'create' | 'update' | 'issue' | 'void'): string {
   const typeKey = documentType.toLowerCase();
@@ -178,8 +178,7 @@ export class IssueDocumentUseCase {
     }
     // Reserve document number
     const seqKey = documentSequenceKey(doc.documentType);
-    const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate());
     const reserved = await this.reserveNumber.execute({
       companyId: ctx.companyId,
       branchId: doc.branchId,
@@ -292,7 +291,7 @@ export class IssueDocumentUseCase {
         requestId: ctx.requestId,
         result: 'SUCCESS',
         riskLevel: 'CRITICAL',
-        metadataJson: { sourceType: 'accounting.document', documentType: doc.documentType, status: 'FINAL', periodKey: doc.documentDate.toISOString().slice(0, 7), checksum, lines: taxFacts },
+        metadataJson: { sourceType: 'accounting.document', documentType: doc.documentType, status: 'FINAL', periodKey: civilPeriodKey(coerceCivilDate(doc.documentDate)), checksum, lines: taxFacts },
       });
       await this.outbox.append('tax.document_tax.finalized', 'accounting_document', documentId, {
         companyId: ctx.companyId,
@@ -301,7 +300,7 @@ export class IssueDocumentUseCase {
         aggregateType: 'accounting_document',
         aggregateId: documentId,
         occurredAt: new Date().toISOString(),
-        data: { sourceType: 'accounting.document', documentType: doc.documentType, periodKey: doc.documentDate.toISOString().slice(0, 7), checksum },
+        data: { sourceType: 'accounting.document', documentType: doc.documentType, periodKey: civilPeriodKey(coerceCivilDate(doc.documentDate)), checksum },
       });
     }
 

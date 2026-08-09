@@ -6,7 +6,7 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { canTransitionPR } from '../../domain/logic/procurement.logic';
-import { PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { civilPeriodKey, PROCUREMENT_SEQUENCE_KEYS, todayCivilDate } from '@watchdog-bms/contracts';
 import type { PurchaseRequestRecord } from '../../domain/models/procurement.model';
 
 @Injectable()
@@ -69,7 +69,7 @@ export class SubmitPurchaseRequestUseCase {
     if (!canTransitionPR(pr.status, 'PENDING_APPROVAL')) throw new BadRequestException(`Cannot submit from status ${pr.status}`);
 
     const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate(undefined, now));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.PURCHASE_REQUEST, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `submit:${id}` });
 
     const updated = await this.repo.updatePurchaseRequestStatus(ctx.companyId, id, 'PENDING_APPROVAL', { requestNumber: reserved.documentNumber, submittedAt: now, updatedByUserId: ctx.userId });

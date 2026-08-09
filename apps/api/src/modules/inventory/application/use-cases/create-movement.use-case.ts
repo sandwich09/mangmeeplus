@@ -15,6 +15,7 @@ import {
   wouldGoNegative,
 } from '../../domain/logic/stock-movement.logic';
 import type { StockMovement, StockMovementType } from '../../domain/models/inventory.model';
+import { buildPeriodKey } from '../../../data-model-core/domain/logic/document-sequence.logic';
 
 export type CreateMovementCommand = {
   productId: string;
@@ -144,7 +145,7 @@ export class CreateMovementUseCase {
       return await this.reserveDocumentNumber.execute({
         companyId: ctx.companyId,
         documentType: 'inventory.movement',
-        periodKey: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+        periodKey: buildPeriodKey('MONTHLY', now),
         idempotencyKey: `${ctx.requestId}:${key}`,
         reservedByUserId: ctx.userId,
       });

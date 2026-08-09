@@ -15,7 +15,7 @@ import { round2, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../domain/l
 // A pure function, not a provider: the handoff prefill and the ภ.ง.ด. event must report the same
 // income base, and procurement already depends on tax for the handoff use case.
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
-import { civilDayRangeToUtc, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 
 function decimal(v: unknown): string {
   return v != null ? String(v) : '0';
@@ -735,7 +735,7 @@ export class PrismaProcurementRepository {
         .flatMap((component) => component.reportContributions.map((contribution) => contribution.formType)))
         .filter((formType) => ['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(formType)))];
       if (formTypes.length) {
-        const periodKey = current.billDate.toISOString().slice(0, 7);
+        const periodKey = civilPeriodKey(coerceCivilDate(current.billDate));
         const periods = await tx.taxPeriod.findMany({ where: { companyId: input.companyId, periodKey, formType: { in: formTypes } }, select: { formType: true, status: true } });
         const locked = periods.find((period: any) => ['FILED', 'PAID', 'CLOSED'].includes(String(period.status)));
         if (locked) throw new ConflictException(`vendor_bill_approval_tax_period_locked:${locked.formType}:${periodKey}`);
@@ -1112,7 +1112,7 @@ export class PrismaProcurementRepository {
         } });
       }
       if (taxRecognitions.length) {
-        const periodKey = data.paymentDate.toISOString().slice(0, 7);
+        const periodKey = civilPeriodKey(civilDate(data.paymentDate));
         const taxPeriod = await tx.taxPeriod.upsert({
           where: { companyId_formType_periodKey: { companyId, formType: 'PP36', periodKey } },
           create: { companyId, taxType: 'VAT', formType: 'PP36', periodKey, status: 'OPEN' }, update: {},

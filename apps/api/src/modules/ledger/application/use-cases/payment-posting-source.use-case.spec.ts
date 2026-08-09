@@ -6,6 +6,26 @@ import { GenerateJournalFromSourceUseCase } from './journal.use-case.js';
 import { buildDefaultPostingLines, DEFAULT_ACCOUNT_CODES } from '../../domain/logic/posting-engine.logic.js';
 
 describe('canonical payment posting sources', () => {
+  it('assigns payments after Bangkok midnight to the new civil day and month', () => {
+    const instant = new Date('2026-08-31T19:00:00.000Z'); // 02:00 on 1 Sep in Bangkok
+    const accounting = buildAccountingPaymentPostingSource({
+      id: 'payment-bkk', companyId: 'company-1', direction: 'RECEIVED', status: 'RECORDED',
+      method: 'BANK_TRANSFER', amount: '1.0000', allocatedAmount: '1.0000', unappliedAmount: '0', currency: 'THB',
+      paidAt: instant, postingStatus: 'pending', createdByUserId: 'user-1', createdAt: instant, updatedAt: instant,
+    } as any);
+    const supplier = buildSupplierPaymentPostingSource({
+      id: 'supplier-payment-bkk', companyId: 'company-1', status: 'RECORDED', supplierId: 'supplier-1',
+      paymentDate: instant, method: 'BANK_TRANSFER', currency: 'THB', grossAmount: '1.0000', whtAmount: '0',
+      netPaidAmount: '1.0000', allocatedAmount: '1.0000', unappliedAmount: '0', postingStatus: 'pending', taxSyncStatus: 'pending',
+      createdByUserId: 'user-1', createdAt: instant, updatedAt: instant, allocations: [],
+    } as any);
+
+    assert.deepEqual(
+      [accounting.sourceDate, accounting.periodKey, supplier.sourceDate, supplier.periodKey],
+      ['2026-09-01', '2026-09', '2026-09-01', '2026-09'],
+    );
+  });
+
   it('posts an accounting receipt from server-owned date, amount, direction and branch', () => {
     const source = buildAccountingPaymentPostingSource({
       id: 'payment-1', companyId: 'company-1', branchId: 'branch-1', direction: 'RECEIVED', status: 'RECORDED',

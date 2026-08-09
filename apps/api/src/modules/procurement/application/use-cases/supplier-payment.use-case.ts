@@ -5,7 +5,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
-import { LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
 import { d, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../../domain/logic/procurement.logic';
 import type { SupplierPaymentRecord } from '../../domain/models/procurement.model';
 import { WhtCertificateHandoffUseCase } from '../../../tax/application/use-cases/wht-certificate-handoff.use-case';
@@ -202,7 +202,7 @@ export class CreateSupplierPaymentUseCase {
     }
 
     const now = new Date();
-    const periodKey = paymentDate.toISOString().slice(0, 7);
+    const periodKey = civilPeriodKey(civilDate(paymentDate));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.PAYMENT, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `pay:${ctx.companyId}:${idempotencyKey}` });
 
     // A payment that withheld tax owes the payee a 50 ทวิ. Ask the control plane whether the system
@@ -233,7 +233,7 @@ export class GetSupplierPaymentUseCase {
 
 export function buildSupplierPaymentPostingSource(payment: SupplierPaymentRecord): LedgerSourcePostingInput {
   if (payment.status !== 'RECORDED') throw new BadRequestException(`Cannot post supplier payment with status ${payment.status}`);
-  const sourceDate = payment.paymentDate.toISOString();
+  const sourceDate = civilDate(payment.paymentDate);
   const lines = (payment.allocations ?? []).map((allocation) => ({
     sourceLineId: allocation.id,
     description: `ชำระ Vendor Bill ${allocation.vendorBillId}`,
@@ -248,7 +248,7 @@ export function buildSupplierPaymentPostingSource(payment: SupplierPaymentRecord
     idempotencyKey: `supplier-payment:${payment.id}:recorded`,
     documentNumber: payment.paymentNumber,
     sourceDate,
-    periodKey: sourceDate.slice(0, 7),
+    periodKey: civilPeriodKey(sourceDate),
     currency: payment.currency,
     counterpartyId: payment.supplierId,
     // The debt cleared, not the cash paid: AP must be debited by the full amount the bills were
@@ -269,13 +269,13 @@ export function buildSupplierPaymentPp36PostingSource(payment: SupplierPaymentRe
   if (!recognitions.length) throw new BadRequestException({ code: 'pp36_payment_recognition_missing', message: 'Supplier payment has no active immutable PP36 recognition snapshots.' });
   const taxCurrencies = new Set(recognitions.map(({ recognition }) => recognition.preview.snapshot.taxCurrency));
   if (taxCurrencies.size !== 1) throw new BadRequestException({ code: 'mixed_currency_tax_snapshot', message: 'PP36 recognition snapshots must use one functional currency.' });
-  const sourceDate = payment.paymentDate.toISOString();
+  const sourceDate = civilDate(payment.paymentDate);
   return {
     companyId: payment.companyId, branchId: payment.branchId,
     sourceType: 'procurement.supplier_payment.pp36', sourceId: payment.id,
     sourceEventType: 'procurement.supplier_payment.pp36_payment',
     idempotencyKey: `supplier-payment:pp36:${payment.id}`,
-    documentNumber: payment.paymentNumber, sourceDate, periodKey: sourceDate.slice(0, 7),
+    documentNumber: payment.paymentNumber, sourceDate, periodKey: civilPeriodKey(sourceDate),
     currency: [...taxCurrencies][0]!, counterpartyId: payment.supplierId,
     totalAmount: '0', taxTotal: '0', whtTotal: '0', paidAmount: payment.netPaidAmount,
     lines: recognitions.map(({ allocation, recognition }) => ({

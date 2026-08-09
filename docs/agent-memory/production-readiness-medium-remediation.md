@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-03 committed; M8-04 implemented and verified, preparing its atomic commit.
+Status: IN PROGRESS — M8-01..M8-04 committed; M8-05 implemented and verified, preparing its atomic commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -39,6 +39,14 @@ Verification:
 - M8-04 focused web tests: 26/26 pass; contracts build and web `tsc --noEmit` pass. Visible workspaces revalidate access
   every 60 seconds, on focus/visibility return and immediately after stable permission/feature denial. Fingerprints include
   roles, effective permissions and branch scopes; fetches are single-flight and denied mutations are never retried.
+- M8-04 commit: `5e53f11 fix(web): refresh stale access context`.
+- M8-05 focused API tests: 124/124 pass. Journal source dates, persisted `@db.Date` values, document numbers, tax periods
+  and closed-period guards now share the Bangkok civil-date boundary. A `2026-08-31T19:00:00Z` settlement posts on
+  `2026-09-01` in `2026-09`; malformed/out-of-range monthly keys fail instead of rolling silently.
+- M8-05 related gaps fixed in the same root-cause change: accounting/procurement/inventory sequence numbers and tax form
+  periods also used host-local or UTC month calculations and could disagree with their journal. API `tsc --noEmit` still
+  reports only the established 14 errors in substitute-receipt/report specs and no M8-05 file error.
 Next:
-- Commit M8-04 code/tests/specs plus this memory only; keep the shared untracked consolidated audit out of the atomic commit.
-- M8-05: reconcile Bangkok civil-date/period-key and settlement persistence paths.
+- Commit M8-05 code/tests plus this memory only; keep the shared untracked consolidated audit and concurrent CR-2 work out
+  of the atomic commit.
+- M8-06: make every web Thai-date formatter render in the normative company timezone.

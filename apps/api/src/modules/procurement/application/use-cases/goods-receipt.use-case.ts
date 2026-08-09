@@ -6,7 +6,7 @@ import { OutboxAppendService } from '../../../data-model-core/application/servic
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
 import { CommitDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/commit-document-number.use-case';
 import { CreateMovementUseCase } from '../../../inventory/application/use-cases/create-movement.use-case';
-import { PROCUREMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
+import { civilPeriodKey, PROCUREMENT_SEQUENCE_KEYS, todayCivilDate } from '@watchdog-bms/contracts';
 import type { GoodsReceiptRecord } from '../../domain/models/procurement.model';
 
 @Injectable()
@@ -71,7 +71,7 @@ export class PostGoodsReceiptUseCase {
     await this.createMovement.assertStockTargets(ctx, stockLines.map((line) => ({ productId: line.productId!, locationId: line.inventoryLocationId! })));
 
     const now = new Date();
-    const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const periodKey = civilPeriodKey(todayCivilDate(undefined, now));
     const reserved = await this.reserveNumber.execute({ companyId: ctx.companyId, documentType: PROCUREMENT_SEQUENCE_KEYS.GOODS_RECEIPT, periodKey, reservedByUserId: ctx.userId, idempotencyKey: `post:${id}` });
 
     // One movement number per receipt line, keyed by line id. Keying on

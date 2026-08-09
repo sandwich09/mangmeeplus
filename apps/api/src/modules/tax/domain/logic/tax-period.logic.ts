@@ -1,12 +1,11 @@
 import type { TaxFormType, TaxPeriodStatus } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
 
 // ─── Period key helpers ───────────────────────────────────────────────────────
 
 /** Returns 'YYYY-MM' for monthly forms. */
 export function monthlyPeriodKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+  return civilPeriodKey(coerceCivilDate(date));
 }
 
 /** Returns 'YYYY' for annual CIT (PND50). */
@@ -20,6 +19,9 @@ export function halfYearPeriodKey(year: number, half: 1 | 2): string {
 }
 
 export function formPeriodKey(formType: TaxFormType, date: Date): string {
+  const civil = coerceCivilDate(date);
+  const year = Number(civil.slice(0, 4));
+  const month = Number(civil.slice(5, 7));
   switch (formType) {
     case 'PP30':
     case 'PP36':
@@ -28,10 +30,10 @@ export function formPeriodKey(formType: TaxFormType, date: Date): string {
     case 'CUSTOMS_SUPPORT':
       return monthlyPeriodKey(date);
     case 'PND50':
-      return annualPeriodKey(date.getFullYear());
+      return annualPeriodKey(year);
     case 'PND51': {
-      const half = date.getMonth() < 6 ? 1 : 2;
-      return halfYearPeriodKey(date.getFullYear(), half as 1 | 2);
+      const half = month <= 6 ? 1 : 2;
+      return halfYearPeriodKey(year, half as 1 | 2);
     }
   }
 }

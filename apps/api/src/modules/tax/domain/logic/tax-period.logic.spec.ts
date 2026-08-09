@@ -18,6 +18,9 @@ describe('monthlyPeriodKey', () => {
   it('returns YYYY-MM for December', () => {
     assert.equal(monthlyPeriodKey(new Date(2026, 11, 1)), '2026-12');
   });
+  it('uses the Bangkok civil month at the UTC boundary', () => {
+    assert.equal(monthlyPeriodKey(new Date('2026-08-31T19:00:00.000Z')), '2026-09');
+  });
 });
 
 describe('annualPeriodKey', () => {
@@ -56,6 +59,9 @@ describe('formPeriodKey', () => {
   });
   it('returns H2 for PND51 in second half', () => {
     assert.equal(formPeriodKey('PND51', new Date(2026, 8, 1)), '2026-H2');
+  });
+  it('uses the Bangkok half-year at the UTC boundary', () => {
+    assert.equal(formPeriodKey('PND51', new Date('2026-06-30T19:00:00.000Z')), '2026-H2');
   });
 });
 

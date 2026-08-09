@@ -1,5 +1,6 @@
 import type { LedgerSourcePostingInput, LedgerJournalLineInput } from '@watchdog-bms/contracts';
 import type { TransactionTaxComponentPreview } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
 import { Decimal } from 'decimal.js';
 import { resolveExpenseDebits, type ExpenseAccountBindings } from './expense-account-binding.logic';
 
@@ -382,10 +383,7 @@ function taxComponentDescription(component: TransactionTaxComponentPreview): str
   return `Tax ${component.componentKey}${component.snapshot.externalTaxCode ? ` (${component.snapshot.externalTaxCode})` : ''}`;
 }
 
-/** Derive a monthly period key from a date string. */
-export function derivePeriodKey(dateStr: string): string {
-  const d = new Date(dateStr);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+/** Derive a monthly period key from a civil date or an instant in the Thai company timezone. */
+export function derivePeriodKey(value: string | Date): string {
+  return civilPeriodKey(coerceCivilDate(value));
 }

@@ -92,6 +92,28 @@ describe('CreateManualJournalUseCase H-03 invariants', () => {
       { accountId: 'credit', branchId: undefined, description: undefined, debitAmount: undefined, creditAmount: '100', currency: undefined },
     ]);
   });
+
+  it('uses the Bangkok civil day consistently for period creation and @db.Date persistence', async () => {
+    let upserted: any;
+    let persisted: any;
+    const useCase = new CreateManualJournalUseCase(repo({
+      findPeriod: async () => null,
+      upsertPeriod: async (_companyId: string, periodKey: string, start: Date, end: Date) => {
+        upserted = { periodKey, start, end };
+        return { id: 'period-1', companyId: 'company-1', periodKey, status: 'OPEN' };
+      },
+      createJournalEntry: async (value: any) => { persisted = value; return entry(value.lines); },
+    }), audit, reserve, commit);
+
+    await useCase.execute(ctx(), { ...input(balancedLines()), entryDate: '2026-08-31T19:00:00.000Z' });
+
+    assert.deepEqual(upserted, {
+      periodKey: '2026-09',
+      start: new Date('2026-09-01T00:00:00.000Z'),
+      end: new Date('2026-09-30T00:00:00.000Z'),
+    });
+    assert.equal(persisted.entryDate.toISOString(), '2026-09-01T00:00:00.000Z');
+  });
 });
 
 describe('PostJournalUseCase H-03 invariants', () => {

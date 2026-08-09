@@ -13,7 +13,7 @@ import type {
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, SharedEvidenceFilter, SignatureSubmitChannel,
   SubstituteReceiptApprovalMode, SubstituteReceiptListFilter,
 } from '@watchdog-bms/contracts';
-import { civilDayRangeToUtc, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 
@@ -1400,7 +1400,7 @@ export class PrismaExpenseRepository {
         }
       }
 
-      const periodKey = current.expenseDate.toISOString().slice(0, 7);
+      const periodKey = civilPeriodKey(coerceCivilDate(current.expenseDate));
       const accountingPeriod = await tx.accountingPeriod.findUnique({
         where: { companyId_periodKey: { companyId: input.companyId, periodKey } }, select: { status: true },
       });
@@ -2159,7 +2159,7 @@ export class PrismaExpenseRepository {
     for (const row of rows as Array<Record<string, any>>) {
       const date = row[dateField] as Date | null;
       if (!date) continue;
-      const key = date.toISOString().slice(0, 7);
+      const key = civilPeriodKey(dateField === 'expenseDate' ? coerceCivilDate(date) : civilDate(date));
       const bucket = buckets.get(key) ?? { count: 0, evidenceCount: 0, total: 0 };
       bucket.count += 1;
       if (evidencedIds.has(row['id'] as string)) bucket.evidenceCount += 1;

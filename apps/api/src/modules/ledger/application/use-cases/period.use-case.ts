@@ -67,6 +67,7 @@ export class EnsurePeriodUseCase {
 
   async execute(ctx: RequestContext, periodKey: string): Promise<AccountingPeriodSummary> {
     requirePerm(ctx, 'ledger.period.read');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodKey)) throw new BadRequestException('Invalid monthly period key.');
     const [y, m] = periodKey.split('-').map(Number) as [number, number];
     // UTC, not local: AccountingPeriod.startDate/endDate are @db.Date, and local-midnight
     // construction from a non-UTC host stores the previous day (civil-date.ts trap 1).

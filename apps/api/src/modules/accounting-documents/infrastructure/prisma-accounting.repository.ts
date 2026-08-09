@@ -27,7 +27,7 @@ import { initialPostingStatus, validateCumulativeCreditNote, validateOutputTaxDo
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type { AccountingDocumentType, AccountingDocumentStatus, AccountingQuotationApprovalStatus, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { branchScopeWhere } from '../../data-model-core/domain/logic/branch.logic';
-import { exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 
 export type AccountingDocumentTaxFinalizer = (input: {
   db: any;
@@ -318,7 +318,7 @@ export class PrismaAccountingRepository {
       const taxRelevant = ['TAX_INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(documentType);
       let taxPreviews: ResolveTransactionTaxPreviewDto[] = [];
       if (taxRelevant) {
-        const periodKey = current.documentDate.toISOString().slice(0, 7);
+        const periodKey = civilPeriodKey(coerceCivilDate(current.documentDate));
         const [accountingPeriod, lockedTaxPeriod] = await Promise.all([
           tx.accountingPeriod.findUnique({ where: { companyId_periodKey: { companyId, periodKey } }, select: { status: true } }),
           tx.taxPeriod.findFirst({ where: { companyId, formType: 'PP30', periodKey, status: { in: ['FILED', 'PAID', 'CLOSED'] } }, select: { status: true } }),

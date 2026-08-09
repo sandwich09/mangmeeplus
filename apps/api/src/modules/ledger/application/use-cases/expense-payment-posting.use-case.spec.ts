@@ -33,9 +33,13 @@ function paidExpense(overrides: Record<string, unknown> = {}) {
 function generateFakes(expense: Record<string, unknown>) {
   const created: any[] = [];
   const flips: Array<{ id: string; postingStatus: string }> = [];
+  const periodKeys: string[] = [];
   const ledgerRepo = {
     findGeneratedJournal: async () => null,
-    findPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
+    findPeriod: async (_companyId: string, periodKey: string) => {
+      periodKeys.push(periodKey);
+      return { id: 'period-1', status: 'OPEN' };
+    },
     upsertPeriod: async () => ({ id: 'period-1', status: 'OPEN' }),
     findActivePostingRule: async () => null,
     findAccountByCode: async (_c: string, code: string) => ({ id: code, status: 'ACTIVE', isPosting: true, companyId: 'co-1', isSystem: false }),
@@ -64,7 +68,7 @@ function generateFakes(expense: Record<string, unknown>) {
   const commit = { execute: async () => undefined } as any;
   const prisma = { client: { company: { findUnique: async () => ({ baseCurrency: 'THB' }) } } } as any;
   const uc = new GenerateJournalFromSourceUseCase(ledgerRepo, noopAudit, reserve, commit, noopOutbox, {} as any, expenseRepo, {} as any, {} as any, prisma);
-  return { uc, created, flips, expenseRepo };
+  return { uc, created, flips, periodKeys, expenseRepo };
 }
 
 describe('GenerateJournalFromSourceUseCase — expense.payment canonical source', () => {
@@ -87,6 +91,15 @@ describe('GenerateJournalFromSourceUseCase — expense.payment canonical source'
     }));
     await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
     assert.equal(created[0].entryDate.toISOString(), '2026-07-20T00:00:00.000Z');
+  });
+
+  it('posts an early-Bangkok settlement into the next civil day and month', async () => {
+    const { uc, created, periodKeys } = generateFakes(paidExpense({
+      paidAt: new Date('2026-08-31T19:00:00.000Z'),
+    }));
+    await uc.execute(ctx(['journal.entry.post']), { companyId: 'co-1', sourceType: 'expense.payment', sourceId: 'exp-1' } as any);
+    assert.deepEqual(periodKeys, ['2026-09']);
+    assert.equal(created[0].entryDate.toISOString(), '2026-09-01T00:00:00.000Z');
   });
 
   it('falls back to the expense date when no paid date is stored', async () => {

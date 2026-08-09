@@ -8,7 +8,7 @@ import type {
   ReimbursementFinanceQueueItem,
   ReimbursementRequestDetail,
 } from '@watchdog-bms/contracts';
-import { REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, REIMBURSEMENT_SEQUENCE_KEYS, LEDGER_SEQUENCE_KEY, todayCivilDate } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -379,7 +379,7 @@ export class RecordReimbursementPaymentUseCase {
     paidAt: Date,
     paymentAttemptKey: string,
   ): Promise<{ paymentNo: string; reservedId?: string; status?: string; ownerType?: string; ownerId?: string }> {
-    const periodKey = paidAt.toISOString().slice(0, 7);
+    const periodKey = civilPeriodKey(civilDate(paidAt));
     try {
       const reserved = await this.reserveNumber.execute({
         companyId: ctx.companyId,
@@ -463,7 +463,7 @@ export class VoidReimbursementPaymentUseCase {
     const reserved = postedJournalId
       ? await this.reserveNumber.execute({
           companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY,
-          periodKey: now.toISOString().slice(0, 7),
+          periodKey: civilPeriodKey(todayCivilDate()),
           // Date.now() is deliberate: reserveNumber returns a matching-key row
           // regardless of its status, so a deterministic key would hand a
           // retried void the CANCELLED reservation from the failed attempt.

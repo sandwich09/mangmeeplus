@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException 
 import Decimal from 'decimal.js';
 import { PrismaAccountingRepository } from '../../infrastructure/prisma-accounting.repository';
 import type { RequestContext, AccountingSourcePostingInput, AccountingSourcePostingLine, LedgerSourcePostingInput } from '@watchdog-bms/contracts';
+import { civilDate, civilPeriodKey, coerceCivilDate } from '@watchdog-bms/contracts';
 import type { DocumentRecord, PaymentRecord } from '../../domain/models/accounting.model';
 
 /**
@@ -63,7 +64,7 @@ export function buildDocumentPostingInput(doc: DocumentRecord): AccountingSource
     documentType: doc.documentType,
     documentId: doc.id,
     documentNumber: doc.documentNumber,
-    documentDate: doc.documentDate.toISOString().split('T')[0],
+    documentDate: coerceCivilDate(doc.documentDate),
     counterpartyId: doc.counterpartyId,
     counterpartySnapshot: doc.counterpartySnapshotJson,
     currency: doc.currency,
@@ -87,7 +88,7 @@ export function buildDocumentPostingInput(doc: DocumentRecord): AccountingSource
 
 export function buildAccountingPaymentPostingSource(payment: PaymentRecord): LedgerSourcePostingInput {
   if (payment.status !== 'RECORDED') throw new BadRequestException(`Cannot post accounting payment with status ${payment.status}`);
-  const sourceDate = payment.paidAt.toISOString();
+  const sourceDate = civilDate(payment.paidAt);
   return {
     companyId: payment.companyId,
     branchId: payment.branchId,
@@ -97,7 +98,7 @@ export function buildAccountingPaymentPostingSource(payment: PaymentRecord): Led
     idempotencyKey: `accounting-payment:${payment.id}:recorded`,
     documentNumber: payment.paymentNumber,
     sourceDate,
-    periodKey: sourceDate.slice(0, 7),
+    periodKey: civilPeriodKey(sourceDate),
     currency: payment.currency,
     counterpartyId: payment.counterpartyId,
     // Receivable settled, not cash banked: tax the customer withheld cleared the same debt and has
