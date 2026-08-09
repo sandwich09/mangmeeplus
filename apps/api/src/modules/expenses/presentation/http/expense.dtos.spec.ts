@@ -85,7 +85,7 @@ describe('expense body DTOs (audit H-23)', () => {
     // from what the domain accepts.
     it('rejects a date that is not a calendar day', async () => {
       const base = { originalFileName: 'a.jpg', mimeType: 'image/jpeg', byteSize: 10 };
-      for (const expenseDate of ['09/08/2026', '2026-8-9', '2026-08-09T00:00:00Z']) {
+      for (const expenseDate of ['09/08/2026', '2026-8-9', '2026-08-09T00:00:00Z', '2569-08-09', '9999-12-31']) {
         await assert.rejects(() => run(ReceiptUploadIntentDto, { ...base, expenseDate }), BadRequestException, expenseDate);
       }
     });
@@ -117,10 +117,13 @@ describe('expense body DTOs (audit H-23)', () => {
     });
 
     it('refuses a payment date that is not a calendar day', async () => {
-      await assert.rejects(
-        () => run(RecordExpensePaymentDto, { paidAmount: '10.00', paidAt: 'yesterday' }),
-        BadRequestException,
-      );
+      for (const paidAt of ['yesterday', '2569-08-09', '9999-12-31']) {
+        await assert.rejects(
+          () => run(RecordExpensePaymentDto, { paidAmount: '10.00', paidAt }),
+          BadRequestException,
+          paidAt,
+        );
+      }
     });
   });
 

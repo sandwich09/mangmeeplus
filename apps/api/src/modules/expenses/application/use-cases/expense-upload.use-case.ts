@@ -46,6 +46,7 @@ export class InitReceiptUploadUseCase {
     }
     if (!isBranchInScope(ctx.scopes ?? {}, cmd.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
     const branchId = resolveCreateBranchId(ctx.scopes ?? {}, cmd.branchId);
+    const expenseDate = civilDateToUtcDate(coerceCivilDate(cmd.expenseDate));
 
     // Create the attachment upload intent via shared data-model-core
     const intent = await this.createIntent.execute(ctx, {
@@ -65,10 +66,9 @@ export class InitReceiptUploadUseCase {
       companyId: ctx.companyId,
       branchId: branchId ?? undefined,
       captureSource: cmd.captureSource ?? 'WEB_UPLOAD',
-      // Date-only, whatever the caller sent. expenseDate is a calendar date; a caller passing an
-      // instant (the LINE path did) put a time into the column, and the list's day filter then
-      // could not see the row at all.
-      expenseDate: civilDateToUtcDate(coerceCivilDate(cmd.expenseDate)),
+      // Date-only after shared validation/coercion. An instant from the LINE path must never put a
+      // time into the column, or the list's day filter cannot see the row.
+      expenseDate,
       currency: 'THB',
       vatMode: 'NO_VAT',
       inputVatClaimStatus: mode === 'SIMPLE' ? 'NON_CLAIMABLE' : 'NEEDS_REVIEW',

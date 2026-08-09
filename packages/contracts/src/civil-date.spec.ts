@@ -16,10 +16,10 @@ import {
 
 describe('civil-date', () => {
   it('accepts only real calendar days in YYYY-MM-DD', () => {
-    for (const good of ['2026-08-04', '2024-02-29', '1999-12-31']) {
+    for (const good of ['2026-08-04', '2024-02-29', '1999-12-31', '2100-12-31']) {
       assert.equal(isCivilDate(good), true, good);
     }
-    for (const bad of ['2026-02-30', '2026-8-4', '2026-13-01', '2026-08-04T00:00:00Z', '', ' 2026-08-04', null, 20260804]) {
+    for (const bad of ['2026-02-30', '2026-8-4', '2026-13-01', '2026-08-04T00:00:00Z', '2101-01-01', '2569-03-15', '9999-12-31', '', ' 2026-08-04', null, 20260804]) {
       assert.equal(isCivilDate(bad as unknown), false, JSON.stringify(bad));
     }
   });
@@ -122,6 +122,13 @@ describe('coerceCivilDate', () => {
   it('throws on input that is neither a civil date nor a parseable instant', () => {
     assert.throws(() => coerceCivilDate('nope'), TypeError);
     assert.throws(() => coerceCivilDate(new Date('nope')), TypeError);
+  });
+
+  it('does not parse rejected date-only values again as instants', () => {
+    for (const value of ['2026-02-30', '2026-8-4', '2101-01-01', '2569-03-15', '9999-12-31']) {
+      assert.throws(() => coerceCivilDate(value), TypeError, value);
+    }
+    assert.throws(() => coerceCivilDate('2569-03-15T00:00:00.000Z'), TypeError);
   });
 });
 

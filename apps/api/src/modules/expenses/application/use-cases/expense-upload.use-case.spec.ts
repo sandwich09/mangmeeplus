@@ -76,6 +76,22 @@ describe('receipt upload use cases', () => {
     assert.equal(created[0].inputVatClaimStatus, 'NON_CLAIMABLE');
   });
 
+  it('rejects Buddhist-era dates before creating an upload intent or expense', async () => {
+    const writes: string[] = [];
+    const uc = new InitReceiptUploadUseCase(
+      { createExpense: async () => { writes.push('expense'); return { id: 'expense-1' }; } } as any,
+      { execute: async () => { writes.push('intent'); return {}; } } as any,
+      { log: async () => undefined } as any,
+      { execute: async () => ({ mode: 'FULL' }) } as any,
+    );
+
+    await assert.rejects(() => uc.execute(ctx, {
+      originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
+      expenseDate: '2569-03-15', captureSource: 'LINE_UPLOAD',
+    }), /invalid civil date/);
+    assert.deepEqual(writes, []);
+  });
+
   it('resolves the scoped branch consistently for the upload intent and expense', async () => {
     const created: any[] = [];
     const intents: any[] = [];

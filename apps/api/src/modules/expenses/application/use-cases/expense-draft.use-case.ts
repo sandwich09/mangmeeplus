@@ -912,7 +912,7 @@ export class RecordExpensePaymentUseCase {
       actorUserId: ctx.userId,
       amount: input.paidAmount,
       paymentMethod: input.paymentMethod,
-      paidAt: input.paidAt ? new Date(`${input.paidAt}T00:00:00.000Z`) : new Date(),
+      paidAt: input.paidAt ? civilDateToUtcDate(coerceCivilDate(input.paidAt)) : new Date(),
       bankAccountRef: input.bankAccountRef,
     });
 

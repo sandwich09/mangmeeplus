@@ -20,9 +20,10 @@ export const DEFAULT_COMPANY_TIME_ZONE = 'Asia/Bangkok';
 
 /**
  * Exported so HTTP DTOs validate a calendar day against the SAME definition the domain uses
- * (audit H-23). A boundary that copies this pattern is a boundary that can drift from it.
+ * (audit H-23). The supported Gregorian range ends at 2100; contemporary Buddhist-era input
+ * must be converted before it crosses the wire instead of being stored as a far-future CE date.
  */
-export const CIVIL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const CIVIL_DATE_PATTERN = /^(?:[01]\d{3}|20\d{2}|2100)-\d{2}-\d{2}$/;
 
 /**
  * A value that should have been a calendar day was not one. Subclasses TypeError so existing
@@ -85,7 +86,9 @@ export function civilDate(instant: Date, timeZone: string = DEFAULT_COMPANY_TIME
   if (Number.isNaN(instant.getTime())) throw new TypeError('invalid Date');
   const parts = formatterFor(timeZone).formatToParts(instant);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
+  const value = `${part('year')}-${part('month')}-${part('day')}`;
+  if (!isCivilDate(value)) throw new InvalidCivilDateError(value);
+  return value;
 }
 
 /** "Today" for monotonic (§4.3(2)) and horizon (§5.3(5)) rules — the company's day, not UTC's. */
@@ -152,7 +155,10 @@ export function coerceCivilDate(
   value: string | Date,
   timeZone: string = DEFAULT_COMPANY_TIME_ZONE,
 ): CivilDate {
-  if (typeof value === 'string' && isCivilDate(value)) return value;
+  if (typeof value === 'string' && !value.includes('T')) {
+    if (!isCivilDate(value)) throw new InvalidCivilDateError(value);
+    return value;
+  }
   const instant = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(instant.getTime())) throw new InvalidCivilDateError(value);
   return civilDate(instant, timeZone);
