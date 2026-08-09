@@ -11,6 +11,13 @@ import type {
   UpsertTaxCodeDefinitionInput,
   UpsertTaxReportMappingRuleInput,
 } from '@watchdog-bms/contracts';
+import {
+  CreateTaxProfileFromTemplateDto,
+  GenerateTaxReconciliationDto,
+  ResolveTransactionTaxPreviewDto,
+  ReviewTaxReconciliationDto,
+  VerifyTradeTaxEvidenceDto,
+} from './transaction-tax.dtos';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { ReqCtx } from '../../../auth/presentation/request-context.decorator';
 import { assertRouteCompany } from '../../../data-model-core/presentation/http/assert-route-company';
@@ -63,7 +70,7 @@ export class TransactionTaxController {
     @ReqCtx() ctx: RequestContext,
     @Param('companyId') companyId: string,
     @Param('templateKey') templateKey: string,
-    @Body() body: { effectiveFrom?: string },
+    @Body() body: CreateTaxProfileFromTemplateDto,
   ) {
     assertRouteCompany(ctx, companyId);
     return this.useCase.createProfileFromTemplate(ctx, templateKey, body.effectiveFrom);
@@ -155,7 +162,7 @@ export class TransactionTaxController {
   @Post('resolve-preview')
   @HttpCode(200)
   @RequirePermissions('company.branch.read')
-  resolvePreview(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: { input: TransactionTaxLineInput; profileId?: string; direction?: TransactionTaxDirection; sourceModule?: string }) {
+  resolvePreview(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: ResolveTransactionTaxPreviewDto) {
     assertRouteCompany(ctx, companyId);
     return this.useCase.resolvePreview(ctx, body.input, body.profileId, body.direction, body.sourceModule);
   }
@@ -237,14 +244,14 @@ export class TransactionTaxController {
   @Post('trade-evidence/:evidenceId/verify')
   @HttpCode(200)
   @RequirePermissions('tax.config.manage')
-  verifyEvidence(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('evidenceId') evidenceId: string, @Body() body: { status?: 'VERIFIED' | 'REJECTED' }) {
+  verifyEvidence(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('evidenceId') evidenceId: string, @Body() body: VerifyTradeTaxEvidenceDto) {
     assertRouteCompany(ctx, companyId);
     return this.useCase.verifyEvidence(ctx, evidenceId, body.status ?? 'VERIFIED');
   }
 
   @Post('reconciliations')
   @RequirePermissions('tax.report.recompute')
-  generateReconciliation(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: { formType: TaxReportForm; periodKey: string; branchId?: string }) {
+  generateReconciliation(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Body() body: GenerateTaxReconciliationDto) {
     assertRouteCompany(ctx, companyId);
     return this.reconciliation.generate(ctx, body);
   }
@@ -274,7 +281,7 @@ export class TransactionTaxController {
   @Post('reconciliations/:runId/review')
   @HttpCode(200)
   @RequirePermissions('tax.review_issue.resolve')
-  async reviewReconciliation(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('runId') runId: string, @Body() body: { note?: string }) {
+  async reviewReconciliation(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Param('runId') runId: string, @Body() body: ReviewTaxReconciliationDto) {
     assertRouteCompany(ctx, companyId);
     await this.assertTaxReviewerRole(ctx);
     return this.reconciliation.review(ctx, runId, body.note);
