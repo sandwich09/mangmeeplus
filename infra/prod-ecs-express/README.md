@@ -14,7 +14,7 @@ Targets:
 - `ai-gateway` deploys AI Gateway.
 - `all` deploys API/Web, deploys AI Gateway, then redeploys API/Web with the new AI Gateway URL.
 
-Live services (2026-07-03): `watchdog-bms-api-web-pub` and `watchdog-bms-ai-gateway-v2`. Two dead predecessors were deleted on 2026-07-03 via a temporary scoped `ecs:DeleteExpressGatewayService` grant: `watchdog-bms-api-web` (immutable-subnet first attempt) and `watchdog-bms-ai-gateway` (control-plane state broke — every deployment ended `ROLLBACK_FAILED: No rollback candidate` and later updates never launched target-revision tasks; replaced by `-v2`). The deploy script follows the service ARNs stored in SSM, so it updates the live services automatically.
+Live services (2026-07-03): `watchdog-bms-api-web-pub` and `watchdog-bms-ai-gateway-v2`. Two dead predecessors were deleted on 2026-07-03 via a temporary scoped `ecs:DeleteExpressGatewayService` grant: `watchdog-bms-api-web` (immutable-subnet first attempt) and `watchdog-bms-ai-gateway` (control-plane state broke — every deployment ended `ROLLBACK_FAILED: No rollback candidate` and later updates never launched target-revision tasks; replaced by `-v2`). The deploy script follows the service ARNs stored in SSM, so it updates the live services automatically. `AI_SERVICE_NAME` in `deploy.sh` must be kept equal to the service that ARN points at: the name is not only used to locate the service, it also validates the service-revision ARN that ECS returns. It was left on the deleted `watchdog-bms-ai-gateway` until 2026-08-09, and the first production ai-gateway deploy failed with "incomplete active configuration" because the returned revision named `-v2`.
 
 Before running:
 
