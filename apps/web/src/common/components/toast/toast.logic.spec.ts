@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addToast, removeToast, toastDuration } from './toast.logic';
+import { addToast, removeToast, toastDuration, visibleToasts } from './toast.logic';
+import type { ToastItem } from './toast.model';
 
 test('adds toasts with stable ids from the injected clock', () => {
   const first = addToast([], { tone: 'success', message: 'Saved' }, 100);
@@ -24,6 +25,17 @@ test('caps the queue at three and drops the oldest toast', () => {
   items = addToast(items, { tone: 'error', message: 'Four' }, 4);
 
   assert.deepEqual(items.map((item) => item.id), [2, 3, 4]);
+});
+
+test('shows newest toasts first without mutating the input array', () => {
+  const items: ToastItem[] = [
+    { id: 1, tone: 'success', message: 'One' },
+    { id: 2, tone: 'warning', message: 'Two' },
+    { id: 3, tone: 'error', message: 'Three' },
+  ];
+
+  assert.deepEqual(visibleToasts(items).map((item) => item.id), [3, 2, 1]);
+  assert.deepEqual(items.map((item) => item.id), [1, 2, 3]);
 });
 
 test('removes only the requested toast without changing remaining ids', () => {

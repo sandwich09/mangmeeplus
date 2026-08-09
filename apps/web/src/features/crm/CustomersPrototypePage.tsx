@@ -18,6 +18,7 @@ import type {
   PreviewCrmCustomerMergeResult,
 } from '@watchdog-bms/contracts';
 import { MangmeeBranchChip } from '@/common/components/mangmee';
+import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -195,7 +196,7 @@ function AccountingCustomerRow({ customer }: { customer: CrmAccountingCustomerSu
     <td className="px-5 py-3 text-xs text-gray-400">ซ่อนตามสิทธิ์</td>
     <td className="px-5 py-3 text-xs text-gray-400">—</td>
     <td className="px-5 py-3"><div className="text-xs text-gray-500">อัปเดต {shortDate(customer.updatedAt)}</div>{customer.taxId && <div className="mt-1 text-xs text-gray-400">Tax ID {customer.taxId}</div>}</td>
-    <td className="px-5 py-3 text-right"><span className="text-xs font-semibold text-gray-400">อ่านอย่างเดียว</span></td>
+    <td className="px-5 py-3 text-right" />
   </tr>;
 }
 
@@ -247,11 +248,12 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   return <label className="block text-sm font-semibold text-gray-700"><span className="mb-1.5 block">{label}</span>{children}{error && <span className="mt-1 block text-xs font-medium text-red-600">{error}</span>}</label>;
 }
 
-function CustomerFormDialog({ companyId, state, setState, employees, canUpdate, canAssign, canAi, saving, error, onClose, onSubmit }: {
+function CustomerFormDialog({ companyId, state, setState, employees, employeesLoading, canUpdate, canAssign, canAi, saving, error, onClose, onSubmit }: {
   companyId: string;
   state: CustomerFormState;
   setState: React.Dispatch<React.SetStateAction<CustomerFormState | null>>;
   employees: EmployeeSummary[];
+  employeesLoading: boolean;
   canUpdate: boolean;
   canAssign: boolean;
   canAi: boolean;
@@ -296,7 +298,7 @@ function CustomerFormDialog({ companyId, state, setState, employees, canUpdate, 
             <div className="font-bold text-violet-900">✨ ให้ AI ช่วยกรอกแบบร่าง</div>
             <p className="mt-1 text-xs text-violet-700">AI เติมฟอร์มเท่านั้น ไม่บันทึก ไม่เชื่อม LINE และไม่รวมลูกค้าอัตโนมัติ</p>
             <textarea className={`${inputClass} mt-3 min-h-20`} value={aiText} onChange={(event) => setAiText(event.target.value)} placeholder="เช่น ลูกค้าชื่อสมชาย โทร 081-234-5678 สนใจบริการรายเดือน" maxLength={2000} />
-            <div className="mt-2 flex items-center gap-3"><button type="button" className={secondaryButton} disabled={aiLoading || aiText.trim().length < 2} onClick={() => void extract()}>{aiLoading ? 'กำลังวิเคราะห์…' : 'สร้างแบบร่าง'}</button>{aiNote && <span className="text-xs text-violet-700">{aiNote}</span>}</div>
+            <div className="mt-2 flex items-center gap-3"><button type="button" className={secondaryButton} disabled={aiLoading || aiText.trim().length < 2} onClick={() => void extract()}>{aiLoading ? 'กำลังวิเคราะห์...' : 'สร้างแบบร่าง'}</button>{aiNote && <span className="text-xs text-violet-700">{aiNote}</span>}</div>
           </div>
         )}
 
@@ -306,11 +308,11 @@ function CustomerFormDialog({ companyId, state, setState, employees, canUpdate, 
           <Field label="เบอร์โทร" error={errors.primaryPhone}><input className={inputClass} disabled={!editable} inputMode="tel" value={state.draft.primaryPhone} onChange={(event) => updateDraft({ primaryPhone: event.target.value })} placeholder="เช่น 081-234-5678" maxLength={40} /></Field>
           <Field label="ระดับลูกค้า"><ThemedSelect className={inputClass} disabled={!editable} value={state.draft.tier} onChange={(event) => updateDraft({ tier: event.target.value as CrmCustomerTier })}>{TIER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</ThemedSelect></Field>
           {state.mode === 'create' ? <Field label="ช่องทางต้นทาง"><ThemedSelect className={inputClass} value={state.draft.originSource} onChange={(event) => updateDraft({ originSource: event.target.value as CrmCustomerOriginSource })}>{SOURCE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</ThemedSelect></Field> : <Field label="ช่องทางต้นทาง"><input className={inputClass} disabled value={sourceLabel(state.draft.originSource)} /></Field>}
-          {canAssign && employees.length > 0 && <Field label="ผู้ดูแล"><ThemedSelect className={inputClass} value={state.draft.ownerUserId} onChange={(event) => updateDraft({ ownerUserId: event.target.value })}>{state.mode === 'create' && <option value="">ใช้ผู้สร้างเป็นผู้ดูแล</option>}{state.draft.ownerUserId && !employees.some((employee) => employee.userId === state.draft.ownerUserId) && <option value={state.draft.ownerUserId}>ผู้ดูแลปัจจุบัน</option>}{employees.filter((employee) => employee.status === 'ACTIVE').map((employee) => <option key={employee.userId} value={employee.userId}>{employeeShortName(employee)}</option>)}</ThemedSelect></Field>}
+          {canAssign && (employeesLoading || employees.length > 0) && <Field label="ผู้ดูแล"><ThemedSelect className={inputClass} value={state.draft.ownerUserId} disabled={employeesLoading} onChange={(event) => updateDraft({ ownerUserId: event.target.value })}>{employeesLoading ? <option value="">กำลังโหลด...</option> : <>{state.mode === 'create' && <option value="">ใช้ผู้สร้างเป็นผู้ดูแล</option>}{state.draft.ownerUserId && !employees.some((employee) => employee.userId === state.draft.ownerUserId) && <option value={state.draft.ownerUserId}>ผู้ดูแลปัจจุบัน</option>}{employees.filter((employee) => employee.status === 'ACTIVE').map((employee) => <option key={employee.userId} value={employee.userId}>{employeeShortName(employee)}</option>)}</>}</ThemedSelect></Field>}
           <div className="sm:col-span-2"><Field label="บันทึก"><textarea className={`${inputClass} min-h-24`} disabled={!editable} value={state.draft.notes} onChange={(event) => updateDraft({ notes: event.target.value })} maxLength={5000} /></Field></div>
         </div>
       </div>
-      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose} disabled={saving}>ยกเลิก</button><button type="button" className={primaryButton} onClick={submit} disabled={saving || (!editable && !canAssign)}>{saving ? 'กำลังบันทึก…' : 'บันทึก'}</button></footer>
+      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose} disabled={saving}>ยกเลิก</button><button type="button" className={primaryButton} onClick={submit} disabled={saving || employeesLoading || (!editable && !canAssign)}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button></footer>
     </DialogShell>
   );
 }
@@ -321,7 +323,7 @@ function DuplicateDialog({ prompt, saving, onUseExisting, onContinue, onClose }:
   return (
     <DialogShell title="พบลูกค้าที่อาจเป็นคนเดียวกัน" description="ตรวจสอบก่อนสร้างหรือแก้ไข ระบบจะไม่รวมข้อมูลให้อัตโนมัติ" onClose={onClose}>
       <div className="space-y-3 p-6">{prompt.matches.map((match) => <div key={match.customer.id} className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4"><div><div className="font-bold text-gray-900">{match.customer.displayName}</div><div className="mt-1 text-xs text-gray-600">{match.matchType === 'PHONE' ? 'เบอร์โทรตรงกัน' : 'ชื่อตรงกัน'} · {displayValue(match.customer.primaryPhone)}</div></div><button type="button" className={secondaryButton} onClick={() => onUseExisting(match.customer.id)}>ใช้ข้อมูลนี้</button></div>)}</div>
-      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>กลับไปตรวจสอบ</button><button type="button" className={primaryButton} disabled={saving} onClick={onContinue}>{saving ? 'กำลังบันทึก…' : 'ยืนยันทำต่อ'}</button></footer>
+      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>กลับไปตรวจสอบ</button><button type="button" className={primaryButton} disabled={saving} onClick={onContinue}>{saving ? 'กำลังบันทึก...' : 'ยืนยันทำต่อ'}</button></footer>
     </DialogShell>
   );
 }
@@ -332,7 +334,7 @@ function ArchiveDialog({ customer, saving, error, onClose, onConfirm }: { custom
   return (
     <DialogShell title="เก็บลูกค้าเข้าคลัง" description={`ข้อมูลและประวัติของ ${customer.displayName} จะยังอยู่ ไม่ถูกลบ`} onClose={onClose}>
       <div className="space-y-4 p-6">{error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}<Field label="เหตุผล *"><textarea className={`${inputClass} min-h-24`} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} /></Field><label className="flex items-start gap-2 text-sm text-gray-600"><input type="checkbox" checked={override} onChange={(event) => setOverride(event.target.checked)} className="mt-1" /><span>ยืนยันเก็บแม้ยังมีดีลหรืองานติดตามที่เปิดอยู่</span></label></div>
-      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>ยกเลิก</button><button type="button" className={dangerButton} disabled={saving || !reason.trim()} onClick={() => onConfirm(reason.trim(), override)}>{saving ? 'กำลังเก็บ…' : 'ยืนยันเก็บเข้าคลัง'}</button></footer>
+      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>ยกเลิก</button><button type="button" className={dangerButton} disabled={saving || !reason.trim()} onClick={() => onConfirm(reason.trim(), override)}>{saving ? 'กำลังเก็บ...' : 'ยืนยันเก็บเข้าคลัง'}</button></footer>
     </DialogShell>
   );
 }
@@ -398,10 +400,10 @@ function MergeDialog({ companyId, primary, onClose, onDone }: { companyId: strin
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4"><div className="text-xs font-semibold text-gray-500">ข้อมูลรองที่เลือก</div><div className="mt-1 font-bold text-gray-900">{secondary.displayName} · {displayValue(secondary.primaryPhone)}</div><button type="button" className="mt-2 text-sm font-semibold text-brand-600" onClick={() => { setSecondary(null); setPreview(null); }}>เลือกใหม่</button></div>
           <Field label="เหตุผล *"><textarea className={`${inputClass} min-h-20`} value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} placeholder="เช่น ยืนยันกับลูกค้าแล้วว่าเป็นบุคคลเดียวกัน" maxLength={500} /></Field>
           {secondary.lineIdentities.length > 0 && <div><div className="mb-2 text-sm font-bold text-gray-700">ย้ายเฉพาะบัญชี LINE</div><p className="mb-2 text-xs text-gray-500">ใช้เมื่อข้อมูลลูกค้าถูกต้องอยู่แล้ว แต่บัญชี LINE เชื่อมอยู่กับรายการซ้ำ</p><div className="space-y-2">{secondary.lineIdentities.map((identity) => <div key={identity.id} className="flex items-center justify-between gap-3 rounded-xl border border-green-200 bg-green-50 p-3"><div className="text-sm"><strong>{identity.displayName ?? 'ลูกค้า LINE'}</strong><div className="text-xs text-gray-500">{identity.maskedProviderUserId} · {lineIdentityStatusLabel(identity.status)}</div></div><button type="button" className={secondaryButton} disabled={busy || !reason.trim()} onClick={() => void linkIdentity(identity)}>ย้าย LINE มาที่ข้อมูลหลัก</button></div>)}</div></div>}
-          {!preview ? <button type="button" className={primaryButton} disabled={busy || !reason.trim()} onClick={() => void loadPreview()}>{busy ? 'กำลังตรวจสอบ…' : 'ตรวจสอบผลกระทบ'}</button> : <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="font-bold text-amber-900">ผลกระทบ</div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{(Object.entries(preview.impact) as [keyof PreviewCrmCustomerMergeResult['impact'], number][]).map(([key, count]) => <div key={key} className="rounded-lg bg-white px-3 py-2 text-sm"><span className="text-gray-500">{impactLabel(key)}</span><strong className="ml-2">{count}</strong></div>)}</div>{preview.conflicts.length > 0 && <ul className="mt-3 list-disc pl-5 text-sm text-red-700">{preview.conflicts.map((conflict) => <li key={conflict}>{mergeConflictLabel(conflict)}</li>)}</ul>}</div>}
+          {!preview ? <button type="button" className={primaryButton} disabled={busy || !reason.trim()} onClick={() => void loadPreview()}>{busy ? 'กำลังตรวจสอบ...' : 'ตรวจสอบผลกระทบ'}</button> : <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><div className="font-bold text-amber-900">ผลกระทบ</div><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{(Object.entries(preview.impact) as [keyof PreviewCrmCustomerMergeResult['impact'], number][]).map(([key, count]) => <div key={key} className="rounded-lg bg-white px-3 py-2 text-sm"><span className="text-gray-500">{impactLabel(key)}</span><strong className="ml-2">{count}</strong></div>)}</div>{preview.conflicts.length > 0 && <ul className="mt-3 list-disc pl-5 text-sm text-red-700">{preview.conflicts.map((conflict) => <li key={conflict}>{mergeConflictLabel(conflict)}</li>)}</ul>}</div>}
         </>}
       </div>
-      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>ยกเลิก</button>{preview && <button type="button" className={dangerButton} disabled={busy || !preview.canMerge} onClick={() => void merge()}>{busy ? 'กำลังรวม…' : 'ยืนยันรวมข้อมูล'}</button>}</footer>
+      <footer className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4"><button type="button" className={secondaryButton} onClick={onClose}>ยกเลิก</button>{preview && <button type="button" className={dangerButton} disabled={busy || !preview.canMerge} onClick={() => void merge()}>{busy ? 'กำลังรวม...' : 'ยืนยันรวมข้อมูล'}</button>}</footer>
     </DialogShell>
   );
 }
@@ -433,7 +435,7 @@ function CustomerProfileModal({ companyId, summary, detail, bookings, conversati
     <DialogShell title={summary.name} description={`${CUSTOMER_TYPE_LABEL[customer.customerType]} · ${CUSTOMER_STATUS_META[customer.status].label}`} onClose={onClose} width="max-w-2xl">
       <div className="space-y-5 p-6">
         <div className="flex items-center gap-4"><div className="flex h-14 w-14 items-center justify-center rounded-full text-xl font-bold text-white" style={{ background: summary.color }}>{summary.initial}</div><div><div className="text-sm text-gray-500">รหัสลูกค้า</div><div className="max-w-[26rem] truncate font-mono text-sm text-gray-800">{customer.code ?? customer.id}</div></div></div>
-        {loading && <div className="rounded-xl bg-gray-50 p-5 text-center text-sm font-semibold text-gray-400">กำลังโหลดข้อมูลลูกค้า…</div>}
+        {loading && <LoadingState label="กำลังโหลด..." />}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}<button type="button" className="ml-3 font-bold underline" onClick={onRetry}>ลองใหม่</button></div>}
         {detail && <>
           <dl className="grid gap-3 rounded-xl border border-gray-100 bg-gray-50 p-4 sm:grid-cols-2">{[
@@ -462,7 +464,9 @@ export function CustomersPrototypePage({ companyId, permissions, roles }: { comp
   const canPiiSearch = roles.some((role) => ['OWNER', 'ADMIN', 'SALES', 'MANAGER', 'AUDITOR_READONLY', 'FINANCE', 'ACCOUNTANT', 'SYSTEM_ADMIN'].includes(role));
   const [customers, setCustomers] = useState<CrmProjectedCustomerSummary[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(canRead);
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
+  const [employeesLoading, setEmployeesLoading] = useState(canAssign);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
@@ -503,8 +507,16 @@ export function CustomersPrototypePage({ companyId, permissions, roles }: { comp
   }, [canRead, companyId, debouncedSearch, page, statusFilter, tierFilter]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (!canRead) return; void listBranches(companyId).then(setBranches).catch(() => setBranches([])); }, [canRead, companyId]);
-  useEffect(() => { if (!canAssign) return; void listEmployees(companyId).then(setEmployees).catch(() => setEmployees([])); }, [canAssign, companyId]);
+  useEffect(() => {
+    if (!canRead) return;
+    setBranchesLoading(true);
+    void listBranches(companyId).then(setBranches).catch(() => setBranches([])).finally(() => setBranchesLoading(false));
+  }, [canRead, companyId]);
+  useEffect(() => {
+    if (!canAssign) return;
+    setEmployeesLoading(true);
+    void listEmployees(companyId).then(setEmployees).catch(() => setEmployees([])).finally(() => setEmployeesLoading(false));
+  }, [canAssign, companyId]);
   useEffect(() => {
     const timer = window.setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
     return () => window.clearTimeout(timer);
@@ -607,16 +619,17 @@ export function CustomersPrototypePage({ companyId, permissions, roles }: { comp
       {error && <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"><span>{error}</span><button type="button" className="underline" onClick={() => void load()}>ลองใหม่</button></div>}
       <div className="rounded-2xl border border-gray-200 bg-white p-4"><div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_180px_180px_auto]"><input className={inputClass} value={search} disabled={!canPiiSearch} onChange={(event) => setSearch(event.target.value)} placeholder={canPiiSearch ? 'ค้นหาชื่อหรือเบอร์โทร' : 'ปิดการค้นหา PII ตามสิทธิ์'} /><ThemedSelect className={inputClass} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CustomerStatusFilter)}>{CUSTOMER_STATUS_FILTERS.map((filter) => <option key={filter.id} value={filter.id}>{filter.label}</option>)}</ThemedSelect><ThemedSelect className={inputClass} value={tierFilter} onChange={(event) => setTierFilter(event.target.value as 'all' | CrmCustomerTier)}><option value="all">ทุกระดับ</option>{TIER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</ThemedSelect><div className="flex items-center justify-end whitespace-nowrap text-sm font-semibold text-gray-500">ทั้งหมด {total.toLocaleString('th-TH')} ราย</div></div></div>
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white"><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead className="bg-gray-50 text-left text-xs font-bold text-gray-500"><tr><th className="px-5 py-3">ลูกค้า</th><th className="px-5 py-3">ต้นทาง</th><th className="px-5 py-3">เบอร์โทร</th><th className="px-5 py-3">LINE</th><th className="px-5 py-3">ระดับ</th><th className="px-5 py-3">ยอดสะสม / ล่าสุด</th><th className="px-5 py-3" /></tr></thead><tbody className="divide-y divide-gray-100">
-        {loading && <tr><td colSpan={7} className="px-5 py-12 text-center font-semibold text-gray-400">กำลังโหลดข้อมูลลูกค้า…</td></tr>}
+        {loading && <tr><td colSpan={7} className="px-5 py-12 text-center font-semibold text-gray-400">กำลังโหลดข้อมูลลูกค้า...</td></tr>}
         {!loading && customers.length === 0 && <tr><td colSpan={7} className="px-5 py-12 text-center"><div className="font-semibold text-gray-500">ไม่พบลูกค้า</div>{canCreate && !debouncedSearch && <button type="button" className={`${primaryButton} mt-3`} onClick={openCreate}>เพิ่มลูกค้าคนแรก</button>}</td></tr>}
-        {!loading && directory.map((customer) => <tr key={customer.id} className="hover:bg-brand-25"><td className="px-5 py-3"><button type="button" className="flex items-center gap-3 text-left" onClick={() => setProfileId(customer.id)}><span className="flex h-10 w-10 items-center justify-center rounded-full font-bold text-white" style={{ background: customer.color }}>{customer.initial}</span><span><strong className="block text-gray-900">{customer.name}</strong><span className="text-xs text-gray-400">{customer.branchName}</span></span></button></td><td className="px-5 py-3"><span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{sourceLabel(customer.raw.originSource)}</span>{customer.raw.createdByType === 'AI_ASSISTED' && <span className="ml-1 rounded-full bg-violet-50 px-2 py-1 text-xs font-bold text-violet-700">AI assist</span>}</td><td className="px-5 py-3 text-gray-600">{customer.phone}</td><td className="px-5 py-3">{customer.raw.lineIdentityCount === 0 ? <span className="text-xs text-gray-400">ยังไม่เชื่อม</span> : <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${customer.raw.lineIdentityStatus === 'ACTIVE' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>{customer.raw.lineIdentityStatus === 'ACTIVE' ? 'เชื่อมแล้ว' : customer.raw.lineIdentityStatus === 'UNFOLLOWED' ? 'เลิกติดตาม' : 'บล็อก'}{customer.raw.hasVerifiedLineIdentity ? ' · ยืนยัน' : ''}</span>}</td><td className="px-5 py-3"><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-700">{TIER_OPTIONS.find((item) => item.value === customer.tier)?.label}</span></td><td className="px-5 py-3"><div className="font-bold text-brand-600">฿{customer.ltv}</div><div className="text-xs text-gray-500">{customer.lastVisit}</div></td><td className="px-5 py-3 text-right"><button type="button" className={secondaryButton} onClick={() => setProfileId(customer.id)}>จัดการ</button></td></tr>)}
+        {!loading && branchesLoading && directory.length > 0 && <tr><td colSpan={7} className="px-5 py-12 text-center font-semibold text-gray-400">กำลังโหลด...</td></tr>}
+        {!loading && !branchesLoading && directory.map((customer) => <tr key={customer.id} className="hover:bg-brand-25"><td className="px-5 py-3"><button type="button" className="flex items-center gap-3 text-left" onClick={() => setProfileId(customer.id)}><span className="flex h-10 w-10 items-center justify-center rounded-full font-bold text-white" style={{ background: customer.color }}>{customer.initial}</span><span><strong className="block text-gray-900">{customer.name}</strong><span className="text-xs text-gray-400">{customer.branchName}</span></span></button></td><td className="px-5 py-3"><span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">{sourceLabel(customer.raw.originSource)}</span>{customer.raw.createdByType === 'AI_ASSISTED' && <span className="ml-1 rounded-full bg-violet-50 px-2 py-1 text-xs font-bold text-violet-700">AI assist</span>}</td><td className="px-5 py-3 text-gray-600">{customer.phone}</td><td className="px-5 py-3">{customer.raw.lineIdentityCount === 0 ? <span className="text-xs text-gray-400">ยังไม่เชื่อม</span> : <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${customer.raw.lineIdentityStatus === 'ACTIVE' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>{customer.raw.lineIdentityStatus === 'ACTIVE' ? 'เชื่อมแล้ว' : customer.raw.lineIdentityStatus === 'UNFOLLOWED' ? 'เลิกติดตาม' : 'บล็อก'}{customer.raw.hasVerifiedLineIdentity ? ' · ยืนยัน' : ''}</span>}</td><td className="px-5 py-3"><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-700">{TIER_OPTIONS.find((item) => item.value === customer.tier)?.label}</span></td><td className="px-5 py-3"><div className="font-bold text-brand-600">฿{customer.ltv}</div><div className="text-xs text-gray-500">{customer.lastVisit}</div></td><td className="px-5 py-3 text-right"><button type="button" className={secondaryButton} onClick={() => setProfileId(customer.id)}>จัดการ</button></td></tr>)}
         {!loading && accountingCustomers.map((customer) => <AccountingCustomerRow key={`accounting:${customer.id}`} customer={customer} />)}
         {!loading && marketingCustomers.map((customer) => <MarketingCustomerRow key={`marketing:${customer.customerRef}`} customer={customer} />)}
       </tbody></table></div>
       <div className="flex items-center justify-between border-t border-gray-100 px-5 py-3 text-sm text-gray-500"><span>หน้า {page} จาก {Math.max(1, Math.ceil(total / CUSTOMER_PAGE_SIZE))}</span><div className="flex gap-2"><button type="button" className={secondaryButton} disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}>ก่อนหน้า</button><button type="button" className={secondaryButton} disabled={page * CUSTOMER_PAGE_SIZE >= total || loading} onClick={() => setPage((current) => current + 1)}>ถัดไป</button></div></div></div>
 
       {profileSummary && <CustomerProfileModal companyId={companyId} summary={profileSummary} detail={activeProfileDetail} bookings={profileBookings} conversationId={profileConversationId} loading={profileLoading} error={profileError} ownerName={activeProfileDetail?.ownerUserId ? employeeNames.get(activeProfileDetail.ownerUserId) : undefined} permissions={permissions} canAssignAvailable={canAssign && employees.length > 0} canMergeCustomers={canMergeCustomers} onClose={() => setProfileId(null)} onRetry={() => void loadProfile(profileSummary.id)} onEdit={openEdit} onArchive={() => { setArchiveError(null); setArchiveOpen(true); }} onMerge={() => setMergeOpen(true)} />}
-      {formState && <CustomerFormDialog companyId={companyId} state={formState} setState={setFormState} employees={employees} canUpdate={canUpdate} canAssign={canAssign && employees.length > 0} canAi={canAi} saving={saving} error={formError} onClose={() => setFormState(null)} onSubmit={() => void saveCustomer()} />}
+      {formState && <CustomerFormDialog companyId={companyId} state={formState} setState={setFormState} employees={employees} employeesLoading={employeesLoading} canUpdate={canUpdate} canAssign={canAssign && (employeesLoading || employees.length > 0)} canAi={canAi} saving={saving} error={formError} onClose={() => setFormState(null)} onSubmit={() => void saveCustomer()} />}
       {duplicatePrompt && <DuplicateDialog prompt={duplicatePrompt} saving={saving} onUseExisting={(id) => { setDuplicatePrompt(null); setFormState(null); setProfileId(id); }} onContinue={() => void saveCustomer(true)} onClose={() => setDuplicatePrompt(null)} />}
       {archiveOpen && activeProfileDetail && <ArchiveDialog customer={activeProfileDetail} saving={saving} error={archiveError} onClose={() => setArchiveOpen(false)} onConfirm={(reason, override) => void archive(reason, override)} />}
       {mergeOpen && activeProfileDetail && <MergeDialog companyId={companyId} primary={activeProfileDetail} onClose={() => setMergeOpen(false)} onDone={() => { setMergeOpen(false); void load(); void loadProfile(activeProfileDetail.id); }} />}

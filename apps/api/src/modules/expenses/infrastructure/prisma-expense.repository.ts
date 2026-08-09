@@ -335,6 +335,13 @@ export class PrismaExpenseRepository {
             status: { not: 'DISMISSED' as any },
             candidateExpense: { companyId, ...branchScopeWhere(scopes) },
           },
+          // The reviewer decides "same document or not" from the warning card, so the card
+          // needs the other side's identity. The relation is already joined by the filter above.
+          include: {
+            candidateExpense: {
+              select: { expenseNumber: true, vendorNameSnapshot: true, expenseDate: true, grandTotalAmount: true },
+            },
+          },
         },
       },
     });
@@ -375,6 +382,10 @@ export class PrismaExpenseRepository {
     const duplicateCandidates: DuplicateCandidateSummary[] = (r as any).duplicateCandidates.map((d: any) => ({
       id: d.id,
       candidateExpenseId: d.candidateExpenseId,
+      candidateExpenseNumber: d.candidateExpense?.expenseNumber ?? null,
+      candidateVendorName: d.candidateExpense?.vendorNameSnapshot || null,
+      candidateExpenseDate: d.candidateExpense?.expenseDate?.toISOString() ?? null,
+      candidateGrandTotalAmount: d.candidateExpense ? String(d.candidateExpense.grandTotalAmount) : null,
       reasonCodesJson: (d.reasonCodesJson as string[]) ?? [],
       score: d.score,
       status: d.status,
@@ -1347,8 +1358,12 @@ export class PrismaExpenseRepository {
           status: l.attachment.status,
           createdAt: l.attachment.createdAt.toISOString(),
         })),
+        // Candidate identity stays null here on purpose: this record only feeds the confirm
+        // checksum guard (which ignores duplicateCandidates) and never reaches a screen, so
+        // joining the other expense would buy nothing on the hot confirm path.
         duplicateCandidates: current.duplicateCandidates.map((row: any) => ({
           id: row.id, candidateExpenseId: row.candidateExpenseId, reasonCodesJson: row.reasonCodesJson ?? [], score: row.score,
+          candidateExpenseNumber: null, candidateVendorName: null, candidateExpenseDate: null, candidateGrandTotalAmount: null,
           status: row.status, resolvedAt: row.resolvedAt?.toISOString() ?? null, resolutionReason: row.resolutionReason ?? null,
         })),
         substituteReceiptEvidence: substitute ? toSubstituteEvidenceSummary(mapSubstituteEvidence(substitute)) : null,

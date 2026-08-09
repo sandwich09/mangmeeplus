@@ -27,6 +27,7 @@ import {
   cx,
   type MangmeeTone,
 } from '@/common/components/mangmee';
+import { LoadingState } from '@/common/components/state';
 import {
   createRole,
   disableRole,
@@ -133,7 +134,7 @@ function PermissionCell({ granted, supported }: { granted: boolean; supported: b
   return <span className="inline-flex h-7 w-7 rounded-lg border border-gray-200 bg-white" aria-label="ไม่ได้เปิดสิทธิ์" />;
 }
 
-export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [] }: { companyId: string; viewerPermissions?: string[] }) {
+export function PermissionMatrixPrototypePage({ companyId }: { companyId: string }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -146,6 +147,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
   const [error, setError] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'create' | 'edit'>('view');
+  const [disabling, setDisabling] = useState(false);
 
   const reload = useCallback(async () => {
     setError(null);
@@ -186,12 +188,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
     [catalog],
   );
   const smartRolesReady = packModules.length > 0 || templates.length > 0;
-  // Mirror the API guard (RoleController create/update require access.role.manage) instead of
-  // inferring it from `catalog.length`. The catalog is fetched with allSettled and needs its own
-  // access.permission.read, so a viewer who may edit roles but cannot read the raw permission
-  // catalogue used to get every control silently disabled with no reason shown.
-  const canEditRoles = viewerPermissions.includes('access.role.manage');
-
   const selectedRole = useMemo(
     () => roles.find((r) => r.id === selectedRoleId) ?? roles[0] ?? null,
     [roles, selectedRoleId],
@@ -208,20 +204,23 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
   const { confirm, confirmDialog } = useConfirm();
 
   const handleDisable = async (roleId: string) => {
-    if (!(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
+    if (disabling || !(await confirm('ปิดใช้งานบทบาทนี้ใช่หรือไม่?'))) return;
+    setDisabling(true);
     try {
       await disableRole(companyId, roleId);
       toast.success('ปิดใช้งานบทบาทเรียบร้อยแล้ว');
-      void reload();
+      await reload();
     } catch (e) {
       setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' }));
+    } finally {
+      setDisabling(false);
     }
   };
 
   if (loading) {
     return (
       <div className="mangmee-page">
-        <MangmeeCard className="p-6 text-sm text-gray-400">กำลังโหลด…</MangmeeCard>
+        <LoadingState label="กำลังโหลด..." />
       </div>
     );
   }
@@ -245,14 +244,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
-      {/* Without this, a viewer who cannot manage roles just finds every button greyed out and
-          no reason given — the failure the report described as "ตั้งสิทธิ์ไม่ได้". */}
-      {!loading && !canEditRoles && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-          อ่านอย่างเดียว: บัญชีของคุณไม่มีสิทธิ์ <span className="font-mono text-xs">access.role.manage</span> จึงแก้ไขบทบาทและสิทธิ์ไม่ได้ — ให้เจ้าของกิจการมอบบทบาทที่มีสิทธิ์นี้ให้ก่อน
-        </div>
-      )}
-
       <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
         <MangmeeCard className="p-4">
           <div className="flex flex-wrap items-center justify-between px-2">
@@ -260,7 +251,6 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
             <button
               type="button"
               className="inline-flex h-8 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
-              disabled={!canEditRoles}
               onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
             >
               <PlusIcon className="h-3.5 w-3.5" />
@@ -296,7 +286,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
           </div>
         </MangmeeCard>
 
-        {mode === 'create' && canEditRoles ? (
+        {mode === 'create' ? (
           <RoleBuilder
             companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
             onCancel={() => setMode('view')}
@@ -307,7 +297,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
               void reload();
             }}
           />
-        ) : mode === 'edit' && selectedRole && canEditRoles && roleEditable ? (
+        ) : mode === 'edit' && selectedRole && roleEditable ? (
           <div className="space-y-3">
             {selectedRole.isSystem && roleEditable && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
@@ -337,14 +327,14 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions = [
               </div>
               {roleEditable ? (
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <button type="button" className={`${ghostClass} h-9 px-3`} disabled={!canEditRoles} onClick={() => setMode('edit')}>
+                  <button type="button" className={`${ghostClass} h-9 px-3`} onClick={() => setMode('edit')}>
                     <PencilIcon className="h-4 w-4" />
                     แก้ไข
                   </button>
                   {!selectedRole.isSystem && (
-                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={!canEditRoles} onClick={() => void handleDisable(selectedRole.id)}>
+                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={disabling} onClick={() => void handleDisable(selectedRole.id)}>
                       <TrashIcon className="h-4 w-4" />
-                      ปิดใช้งาน
+                      {disabling ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
                     </button>
                   )}
                   <span className="inline-flex h-9 items-center rounded-full bg-brand-50 px-4 text-sm font-extrabold text-brand-700">

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import { createHash } from 'node:crypto';
 import {
@@ -64,7 +65,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
       getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
-      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source' }],
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', originalFileName: 'bill.jpg' }],
       createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared(); },
     } as any;
     const useCase = new PrepareSubstituteReceiptUseCase(repo, audit, {
@@ -103,7 +104,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
       getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
-      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source' }],
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', originalFileName: 'bill.jpg' }],
       createPreparedSubstituteEvidence: async () => prepared(),
     } as any;
     await new PrepareSubstituteReceiptUseCase(repo, audit, {
@@ -144,6 +145,95 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     await assert.rejects(() => make(expense({ grandTotalAmount: '0' })).execute(ctx('finance-1'), 'exp-1', input), /positive reviewed total/);
   });
 
+  it('rejects certificate layouts beyond the shared line bounds before preparation', async () => {
+    const make = (row: any) => new PrepareSubstituteReceiptUseCase({ findByIdWithRelations: async () => row } as any, audit, notification);
+    const input = {
+      reasonCode: 'OTHER' as const, missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
+      supportingAttachmentIds: ['att-source'], idempotencyKey: 'idem-layout', expectedExpenseUpdatedAt: now.toISOString(),
+    };
+    const codeIs = (expected: string) => (error: unknown) => {
+      assert.equal((error as { getResponse(): { code?: string } }).getResponse().code, expected);
+      return true;
+    };
+
+    await assert.rejects(
+      () => make(expense({ lines: Array.from({ length: 9 }, () => expense().lines[0]) }))
+        .execute(ctx('finance-1'), 'exp-1', input),
+      codeIs('substitute_receipt_too_many_lines'),
+    );
+    await assert.rejects(
+      () => make(expense({ lines: [{ ...expense().lines[0], description: 'ก'.repeat(201) }] }))
+        .execute(ctx('finance-1'), 'exp-1', input),
+      codeIs('substitute_receipt_line_description_too_long'),
+    );
+  });
+
+  it('rejects too many or overlong linked evidence names before persisting a prepared version', async () => {
+    const baseRepo = {
+      findByIdWithRelations: async () => expense(),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({
+        approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
+      }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+    };
+    const input = {
+      reasonCode: 'OTHER' as const, missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
+      paymentMethod: 'CASH' as const, idempotencyKey: 'idem-evidence', expectedExpenseUpdatedAt: now.toISOString(),
+    };
+    const codeIs = (expected: string) => (error: unknown) => {
+      assert.equal((error as { getResponse(): { code?: string } }).getResponse().code, expected);
+      return true;
+    };
+
+    await assert.rejects(
+      () => new PrepareSubstituteReceiptUseCase(baseRepo as any, audit, notification).execute(ctx('finance-1'), 'exp-1', {
+        ...input,
+        supportingAttachmentIds: Array.from({ length: 9 }, (_, index) => `att-${index}`),
+      }),
+      codeIs('substitute_receipt_too_many_evidence'),
+    );
+    await assert.rejects(
+      () => new PrepareSubstituteReceiptUseCase({
+        ...baseRepo,
+        findSubstituteEvidenceAttachments: async () => [{
+          id: 'att-source', purpose: 'expense.receipt.supporting', originalFileName: `${'ก'.repeat(252)}.pdf`, mimeType: 'application/pdf',
+        }],
+      } as any, audit, notification).execute(ctx('finance-1'), 'exp-1', {
+        ...input, supportingAttachmentIds: ['att-source'],
+      }),
+      codeIs('substitute_receipt_evidence_filename_too_long'),
+    );
+  });
+
+  it('accepts the exact shared line and evidence boundary', async () => {
+    const limits = SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS;
+    let persisted = false;
+    const repo = {
+      findByIdWithRelations: async () => expense({
+        lines: Array.from({ length: limits.maxExpenseLines }, () => ({
+          ...expense().lines[0], description: 'ก'.repeat(limits.maxLineDescriptionLength),
+        })),
+      }),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({
+        approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
+      }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findSubstituteEvidenceAttachments: async (_companyId: string, _expenseId: string, ids: string[]) => ids.map((id) => ({
+        id, purpose: 'expense.receipt.supporting', originalFileName: `${'ก'.repeat(limits.maxEvidenceFileNameLength - 4)}.pdf`, mimeType: 'application/pdf',
+      })),
+      createPreparedSubstituteEvidence: async () => { persisted = true; return prepared(); },
+    } as any;
+
+    await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx('finance-1'), 'exp-1', {
+      reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
+      supportingAttachmentIds: Array.from({ length: limits.maxEvidenceAttachments }, (_, index) => `att-${index}`),
+      paymentMethod: 'CASH', idempotencyKey: 'idem-boundary', expectedExpenseUpdatedAt: now.toISOString(),
+    });
+    assert.equal(persisted, true);
+  });
+
   it('prepares without a policy row and retains the strict cash-evidence default', async () => {
     let captured: any;
     const baseRepo = {
@@ -152,6 +242,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
       findSubstituteEvidenceAttachments: async (_companyId: string, _expenseId: string, ids: string[]) => ids.map((id) => ({
         id,
+        originalFileName: `${id}.jpg`,
         purpose: id === 'att-payment' ? 'expense.payment.evidence' : 'expense.receipt.primary',
         mimeType: 'image/jpeg',
       })),
@@ -219,6 +310,54 @@ describe('substitute receipt signing lifecycle', () => {
     assert.deepEqual(notifications.map((item) => item.recipientUserIds), [['approver-1']]);
     assert.equal(notifications[0].triggerKey, 'expense.substitute_receipt_signature_pending');
     assert.equal(notifications[0].sourceId, 'sub-1');
+  });
+
+  it('blocks an unsafe legacy certified snapshot before issuing or writing an artifact', async () => {
+    const snapshot: SubstituteReceiptSnapshot = {
+      documentNumber: 'SRC-LEGACY-UNSAFE-V1', version: 1,
+      company: { name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null },
+      expense: {
+        id: 'exp-1', expenseNumber: 'EXP-1', expenseDate: now.toISOString(), paymentDate: now.toISOString(),
+        currency: 'THB', grandTotalAmount: '65.00', paymentMethod: 'CASH', paymentReference: null, category: 'cat-1',
+        businessPurpose: 'ซื้อวัตถุดิบ',
+        lines: Array.from({ length: 9 }, (_, index) => ({ description: `รายการ ${index + 1}`, quantity: '1', amount: '7.22' })),
+      },
+      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
+      payer: { userId: 'payer-1', name: 'สมชาย', position: 'พนักงาน', certifiedAt: now.toISOString() },
+      certificationText: buildSubstituteCertificationText('สมชาย', 'พนักงาน'), evidence: [], note: null,
+    };
+    const evidence = prepared({
+      status: 'PAYER_CERTIFIED', snapshotJson: snapshot, snapshotChecksumSha256: canonicalSnapshotHash(snapshot),
+      payerPosition: 'พนักงาน', payerSignatureAttachmentId: 'sig-payer', payerSignatureChecksumSha256: 'payer-checksum',
+      certifiedArtifactAttachmentId: 'certified-artifact', certifiedArtifactChecksumSha256: 'certified-checksum', certifiedAt: now,
+    });
+    let storageWrites = 0;
+    const repo = {
+      findSubstituteEvidence: async () => evidence,
+      findByIdWithRelations: async () => expense(),
+      getSubstituteReceiptPolicy: async () => ({
+        approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
+      }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findActiveMemberIdentity: async () => ({ userId: 'approver-1', displayName: 'ผู้จัดการ' }),
+    } as any;
+    const storage = { putObject: async () => { storageWrites += 1; throw new Error('must not write'); } } as any;
+    const useCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit);
+
+    await assert.rejects(
+      () => useCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', evidence.id, {
+        approverPosition: 'ผู้จัดการ', approvalAcknowledged: true, certifiedArtifactChecksumSha256: 'certified-checksum',
+        signatureAttachmentId: 'sig-approver', expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { getResponse(): { code?: string } }).getResponse().code,
+          'substitute_receipt_too_many_lines',
+        );
+        return true;
+      },
+    );
+    assert.equal(storageWrites, 0);
   });
 
   it('does not notify anyone after a solo owner certifies', async () => {

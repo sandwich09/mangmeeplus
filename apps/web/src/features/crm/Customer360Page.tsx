@@ -15,6 +15,7 @@ import { listConversations } from '@/features/crm-inbox/crm-inbox.api';
 import { CONVERSATION_STATUS_META } from '@/features/crm-inbox/crm-inbox.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useConfirm } from '@/common/components/modal';
+import { LoadingState } from '@/common/components/state';
 
 function err(e: unknown) { return apiErrorMessage(e); }
 function localeName(locale: SupportedLocale) { return locale === 'th' ? 'th-TH' : 'en-US'; }
@@ -105,7 +106,7 @@ export function Customer360Page({ companyId, customerId, permissions = [] }: { c
     return () => { alive = false; };
   }, [companyId, customerId]);
 
-  if (loading) return <div className="p-6 text-sm text-gray-400">{t('customers.loading_customer', locale)}</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error || !summary) {
     return (
       <div className="space-y-4 p-6">
@@ -347,7 +348,7 @@ function ConversationsTab({ companyId, customerId, redacted }: { companyId: stri
   }, [companyId, customerId, redacted]);
 
   if (redacted.includes('conversations')) return <LockedCard text={t('customers.no_inbox_permission', locale)} />;
-  if (loading) return <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <div className="rounded bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>;
   if (rows.length === 0) return <Empty text={t('customers.no_conversations', locale)} />;
   return (
@@ -390,7 +391,7 @@ function DealsTab({ companyId, customerId, redacted }: { companyId: string; cust
   }, [companyId, customerId, redacted]);
 
   if (redacted.includes('deals')) return <LockedCard text={t('customers.no_deals_permission', locale)} />;
-  if (loading) return <div className="text-sm text-gray-400">{t('customers.loading', locale)}</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error) return <div className="rounded bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>;
   if (rows.length === 0) return <Empty text={t('customers.no_customer_deals', locale)} />;
   return (
@@ -506,7 +507,7 @@ function AppointmentsTab({ companyId, customerId }: { companyId: string; custome
   }, [companyId, customerId]);
 
   if (error) return <div className="rounded bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>;
-  if (!items) return <div className="p-4 text-sm text-gray-400">{t('customers.loading_appointments', locale)}</div>;
+  if (!items) return <LoadingState label="กำลังโหลด..." />;
   if (items.length === 0) return <Empty text={t('customers.no_appointments', locale)} />;
 
   const statusMeta: Record<string, { label: string; cls: string }> = {

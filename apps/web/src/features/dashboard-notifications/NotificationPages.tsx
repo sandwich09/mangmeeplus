@@ -22,6 +22,7 @@ import {
   visibleNotificationChildLinks,
 } from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
+import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
 function ErrorBanner({ message }: { message: string }) {
   return <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{message}</div>;
@@ -32,34 +33,56 @@ function ErrorBanner({ message }: { message: string }) {
 export function NotificationCenterPage({ companyId, permissions }: { companyId: string; permissions: readonly string[] }) {
   const toast = useToast();
   const router = useRouter();
+  const canRead = canSeeRoute('/notifications', permissions);
   const childLinks = visibleNotificationChildLinks(permissions);
   const [items, setItems] = useState<NotificationItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(canRead);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'unread'>('unread');
+  const [busyRow, setBusyRow] = useState<{ id: string; action: 'read' | 'dismiss' } | null>(null);
+  const [markAllBusy, setMarkAllBusy] = useState(false);
 
   function reload() {
+    if (!canRead) return;
     setLoading(true);
     listNotifications(companyId, { read: filter === 'unread' ? false : undefined, pageSize: 50 })
       .then((res) => { setItems(res.items); setLoading(false); })
       .catch((err: unknown) => { setError(err instanceof Error ? err.message : 'โหลดล้มเหลว'); setLoading(false); });
   }
 
-  useEffect(() => { reload(); }, [companyId, filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { reload(); }, [canRead, companyId, filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleMarkRead(id: string) {
-    await markRead(companyId, id).catch(() => null);
-    setItems((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    if (busyRow || markAllBusy) return;
+    setBusyRow({ id, action: 'read' });
+    try {
+      await markRead(companyId, id).catch(() => null);
+      setItems((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
+    } finally {
+      setBusyRow(null);
+    }
   }
 
   async function handleDismiss(id: string) {
-    await dismissNotification(companyId, id).catch(() => null);
-    setItems((prev) => prev.filter((n) => n.id !== id));
+    if (busyRow || markAllBusy) return;
+    setBusyRow({ id, action: 'dismiss' });
+    try {
+      await dismissNotification(companyId, id).catch(() => null);
+      setItems((prev) => prev.filter((n) => n.id !== id));
+    } finally {
+      setBusyRow(null);
+    }
   }
 
   async function handleMarkAllRead() {
-    await markAllRead(companyId).then(() => toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว')).catch(() => null);
-    setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+    if (busyRow || markAllBusy) return;
+    setMarkAllBusy(true);
+    try {
+      await markAllRead(companyId).then(() => toast.success('ทำเครื่องหมายว่าอ่านทั้งหมดเรียบร้อยแล้ว')).catch(() => null);
+      setItems((prev) => prev.map((n) => ({ ...n, read: true })));
+    } finally {
+      setMarkAllBusy(false);
+    }
   }
 
   // Only same-origin app paths are followed: deepLinkHref is server-built but an absolute
@@ -76,6 +99,8 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
     router.push(href);
   }
 
+  if (!canRead) return <ForbiddenState />;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
@@ -83,9 +108,10 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
         <div className="flex gap-2">
           <button
             onClick={handleMarkAllRead}
+            disabled={markAllBusy || busyRow !== null}
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
-            อ่านทั้งหมด
+            {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
           </button>
           {childLinks.includes('preferences') && (
             <Link
@@ -144,9 +170,13 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
             </div>
             <div className="flex gap-2 shrink-0">
               {!item.read && (
-                <button onClick={() => handleMarkRead(item.id)} className="text-xs text-brand-700 hover:underline">อ่านแล้ว</button>
+                <button disabled={markAllBusy || busyRow !== null} onClick={() => handleMarkRead(item.id)} className="text-xs text-brand-700 hover:underline disabled:opacity-40">
+                  {busyRow?.id === item.id && busyRow.action === 'read' ? 'กำลังทำเครื่องหมาย...' : 'อ่านแล้ว'}
+                </button>
               )}
-              <button onClick={() => handleDismiss(item.id)} className="text-xs text-gray-400 hover:text-gray-600">ปิด</button>
+              <button disabled={markAllBusy || busyRow !== null} onClick={() => handleDismiss(item.id)} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40">
+                {busyRow?.id === item.id && busyRow.action === 'dismiss' ? 'กำลังปิด...' : 'ปิด'}
+              </button>
             </div>
           </div>
         ))}
@@ -230,6 +260,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
               เริ่มเวลาเงียบ
               <input
                 value={pref.quietHoursStart ?? ''}
+                disabled={saving}
                 onChange={(event) => updateQuietHours('quietHoursStart', event.target.value)}
                 onBlur={() => save(pref)}
                 placeholder="22:00"
@@ -240,6 +271,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
               สิ้นสุดเวลาเงียบ
               <input
                 value={pref.quietHoursEnd ?? ''}
+                disabled={saving}
                 onChange={(event) => updateQuietHours('quietHoursEnd', event.target.value)}
                 onBlur={() => save(pref)}
                 placeholder="07:00"
@@ -262,6 +294,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
   const [rules, setRules] = useState<NotificationRule[]>([]);
   const [loading, setLoading] = useState(canManage);
   const [error, setError] = useState<string | null>(null);
+  const [busyRuleId, setBusyRuleId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!canManage) return;
@@ -271,11 +304,17 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
   }, [canManage, companyId]);
 
   async function toggleRule(rule: NotificationRule) {
+    if (busyRuleId) return;
+    setBusyRuleId(rule.id);
     const newStatus = rule.status === 'enabled' ? 'disabled' : 'enabled';
-    const updated = await updateRule(companyId, rule.id, { status: newStatus }).catch(() => null);
-    if (updated) {
-      setRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, status: newStatus } : r));
-      toast.success(newStatus === 'enabled' ? 'เปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว' : 'ปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว');
+    try {
+      const updated = await updateRule(companyId, rule.id, { status: newStatus }).catch(() => null);
+      if (updated) {
+        setRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, status: newStatus } : r));
+        toast.success(newStatus === 'enabled' ? 'เปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว' : 'ปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว');
+      }
+    } finally {
+      setBusyRuleId(null);
     }
   }
 
@@ -297,9 +336,10 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
             {rule.status !== 'system' && (
               <button
                 onClick={() => toggleRule(rule)}
-                className={`rounded-full px-3 py-1 text-xs font-medium ${rule.status === 'enabled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
+                disabled={busyRuleId !== null}
+                className={`rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40 ${rule.status === 'enabled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
               >
-                {rule.status === 'enabled' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+                {busyRuleId === rule.id ? (rule.status === 'enabled' ? 'กำลังปิด...' : 'กำลังเปิด...') : rule.status === 'enabled' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
               </button>
             )}
           </div>

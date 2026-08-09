@@ -9,6 +9,8 @@ import type {
   UpdateSubstituteReceiptPolicyInput,
 } from '@watchdog-bms/contracts';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { LoadingState } from '@/common/components/state';
+import { useToast } from '@/common/components/toast';
 import { getSubstituteReceiptPolicy, updateSubstituteReceiptPolicy } from './expenses.api';
 import { ErrorBanner } from './ExpensesUi';
 import { validApproverSelection, validateSubstituteReceiptPolicy } from './substitute-receipt-policy.model';
@@ -20,6 +22,7 @@ function message(error: unknown): string {
 }
 
 export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string }) {
+  const toast = useToast();
   const [settings, setSettings] = useState<SubstituteReceiptPolicySettings | null>(null);
   const [approvalMode, setApprovalMode] = useState<SubstituteReceiptApprovalMode>('OWNER_SELF');
   const [approverUserIds, setApproverUserIds] = useState<string[]>([]);
@@ -75,6 +78,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
     try {
       applySettings(await updateSubstituteReceiptPolicy(companyId, input));
       setSaved(true);
+      toast.success('บันทึกการตั้งค่าใบรับรองแทนใบเสร็จแล้ว');
     } catch (saveError) {
       setError(message(saveError));
     } finally {
@@ -90,7 +94,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
       meta={settings && <MangmeeBadge tone={settings.configured ? 'brand' : 'amber'}>{settings.configured ? 'ตั้งค่าแล้ว' : 'ยังไม่ตั้งค่า'}</MangmeeBadge>}
     >
       {loading ? (
-        <MangmeeCard className="p-6 text-sm text-gray-500">กำลังโหลดการตั้งค่า...</MangmeeCard>
+        <LoadingState label="กำลังโหลด..." />
       ) : (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
           <div className="grid content-start gap-5">

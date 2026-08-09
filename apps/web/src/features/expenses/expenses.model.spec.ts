@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  postingErrorText,
   buildExpenseDraftReviewPayload,
   formatTaxId,
   taxIdDigits,
@@ -172,7 +173,7 @@ describe('expenses.model', () => {
 
   it('gives a manually typed service charge its own line, like the OCR path', () => {
     const bill = {
-      description: ' ค่าอาหาร ', quantity: '1', unitPrice: '1000', discountAmount: '0',
+      items: [{ description: ' ค่าอาหาร ', quantity: '1', unitPrice: '1000', discountAmount: '0' }],
       serviceChargeDescription: 'ค่าบริการ (Service charge)',
       vatRate: '0.07', taxCodeDefinitionId: 'tax-def-1', externalTaxCode: 'V7',
     };
@@ -191,6 +192,25 @@ describe('expenses.model', () => {
     assert.equal(buildManualExpenseLines({ ...bill, serviceChargeAmount: '' }).length, 1);
     assert.equal(buildManualExpenseLines({ ...bill, serviceChargeAmount: '0' }).length, 1);
     assert.equal(buildManualExpenseLines(bill).length, 1);
+  });
+
+  it('numbers multiple hand-keyed items sequentially and appends the charge after them', () => {
+    const lines = buildManualExpenseLines({
+      items: [
+        { description: 'ค่าอาหาร', quantity: '2', unitPrice: '250', discountAmount: '0' },
+        { description: 'ค่าเครื่องดื่ม', quantity: '4', unitPrice: '80' },
+      ],
+      serviceChargeAmount: '50',
+      serviceChargeDescription: 'ค่าบริการ (Service charge)',
+      vatRate: '0.07',
+    });
+    assert.deepEqual(lines.map((line) => [line.lineNumber, line.description, line.quantity, line.unitPrice, line.discountAmount]), [
+      [1, 'ค่าอาหาร', '2', '250', '0'],
+      [2, 'ค่าเครื่องดื่ม', '4', '80', '0'],
+      [3, 'ค่าบริการ (Service charge)', '1', '50', '0'],
+    ]);
+    // One bill, one tax treatment: every line carries the document VAT rate.
+    assert.ok(lines.every((line) => line.vatRate === '0.07' && line.transactionContext === 'DOMESTIC_PURCHASE'));
   });
 
   it('builds the review PATCH without client-computed totals', () => {
@@ -633,5 +653,28 @@ describe('expenseAiSuggestion / applyExpenseAiSuggestion', () => {
     assert.equal(filled.vendorNameSnapshot, 'ร้านที่ผู้ตรวจพิมพ์เอง');
     assert.equal(filled.vendorDocumentNumber, '260705-02-17420');
     assert.deepEqual(filled.lines, typed.lines);
+  });
+});
+
+describe('postingErrorText', () => {
+  it('translates the ledger code the API stores', () => {
+    assert.equal(
+      postingErrorText('posting_rule_missing'),
+      'ยังไม่ได้กำหนดกฎการลงบัญชีสำหรับเอกสารประเภทนี้ กรุณาตั้งค่ากฎการลงบัญชีก่อน',
+    );
+  });
+
+  it('keeps the account id that codes carry after the colon', () => {
+    assert.equal(postingErrorText('account_not_found:5100'), 'ไม่พบรหัสบัญชีที่กฎการลงบัญชีอ้างถึง กรุณาตรวจผังบัญชี (5100)');
+  });
+
+  it('passes through the Thai sentence the auto-post worker writes', () => {
+    const written = 'ลงบัญชีอัตโนมัติไม่สำเร็จ (AUTO_POST_FAILED)';
+    assert.equal(postingErrorText(written), written);
+  });
+
+  it('returns null when nothing is stored', () => {
+    assert.equal(postingErrorText(null), null);
+    assert.equal(postingErrorText(''), null);
   });
 });

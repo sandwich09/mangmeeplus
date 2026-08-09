@@ -1,21 +1,22 @@
 'use client';
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
-import { Modal } from '@/common/components/modal';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { useToast } from '@/common/components/toast';
 import { findForbiddenChars, REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
 import { downloadDocumentAsPdf } from '@/common/files/download-document-pdf';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
-  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate, getAttachmentDownloadUrl, getExpense,
+  acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate, fetchAttachmentPreviewBlob, getExpense,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
   requestExpenseExtraction, runDuplicateCheck, uploadExpenseEvidenceFile, voidExpense,
 } from './expenses.api';
@@ -27,7 +28,7 @@ import {
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
   hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled,
-  vatModeRequiresRate,
+  postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
 import type { ExpenseDetail, ExpenseReviewStepKey } from './expenses.model';
 import type { BusinessDocumentClassification } from '@watchdog-bms/contracts';
@@ -52,6 +53,7 @@ const APP_HEADER_REM = 4.25; // 68px
 const STEPPER_REM = 4.5; // 72px
 const VIEWER_TOP_REM = APP_HEADER_REM + STEPPER_REM;
 const VIEWER_BOTTOM_GAP_REM = 6; // clearance for the sticky action bar
+type ExpensePreviewSource = DocumentPreviewSource & { hideOpenNewTab?: boolean; onViewed?: () => void };
 
 export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, isOwner }: { companyId: string; expenseId: string; userId: string; permissions: string[]; isOwner: boolean }) {
   const router = useRouter();
@@ -80,10 +82,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   const [paidAmount, setPaidAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('BANK_TRANSFER');
   const [receiptUploading, setReceiptUploading] = useState(false);
-  const [preview, setPreview] = useState<{ name: string; mimeType: string; url: string; hideOpenNewTab?: boolean } | null>(null);
+  const [preview, setPreview] = useState<ExpensePreviewSource | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewSaving, setPreviewSaving] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
   // guided stepper (editable drafts only): freely clickable step; initial value computed once per opened expense
   const [step, setStep] = useState<ExpenseReviewStepKey>('data');
   // Details-step edits are saved by navigation (ถัดไป/ย้อนกลับ/chips), not an in-section save button.
@@ -106,6 +110,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   // inline viewer (left pane): signed URLs cached per attachment, fetched lazily (they expire in 15 min)
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerUrls, setViewerUrls] = useState<Record<string, string>>({});
+  const viewerUrlsRef = useRef<Record<string, string>>({});
   const [viewerError, setViewerError] = useState<string | null>(null);
   const viewerRetriedRef = useRef<Record<string, number>>({});
   const auditRef = useRef<HTMLDivElement>(null);
@@ -113,6 +118,79 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   const vendorRef = useRef<HTMLDivElement>(null);
   const documentsRef = useRef<HTMLDivElement>(null);
   const paymentRef = useRef<HTMLDivElement>(null);
+
+  const releasePreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+
+  const commitPreview = useCallback((requestId: number, source: ExpensePreviewSource) => {
+    if (requestId !== previewRequestRef.current) {
+      if (source.url.startsWith('blob:')) URL.revokeObjectURL(source.url);
+      return false;
+    }
+    releasePreviewUrl();
+    if (source.url.startsWith('blob:')) previewUrlRef.current = source.url;
+    setPreviewError(null);
+    setPreview({
+      ...source,
+      ...(source.onViewed ? {
+        onViewed: () => {
+          if (requestId !== previewRequestRef.current) return;
+          source.onViewed?.();
+        },
+      } : {}),
+    });
+    return true;
+  }, [releasePreviewUrl]);
+
+  const showPreview = useCallback((source: ExpensePreviewSource) => {
+    const requestId = ++previewRequestRef.current;
+    setPreviewLoading(false);
+    commitPreview(requestId, source);
+  }, [commitPreview]);
+
+  const closePreview = useCallback(() => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+    setPreview(null);
+    setPreviewLoading(false);
+  }, [releasePreviewUrl]);
+
+  useEffect(() => {
+    previewRequestRef.current += 1;
+    releasePreviewUrl();
+    setPreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+    return () => {
+      previewRequestRef.current += 1;
+      releasePreviewUrl();
+    };
+  }, [companyId, expenseId, detail?.substituteReceiptEvidence?.id, detail?.substituteReceiptEvidence?.updatedAt, releasePreviewUrl]);
+
+  const cacheViewerUrl = useCallback((attachmentId: string, url: string) => {
+    const previous = viewerUrlsRef.current[attachmentId];
+    if (previous && previous !== url) URL.revokeObjectURL(previous);
+    viewerUrlsRef.current = { ...viewerUrlsRef.current, [attachmentId]: url };
+    setViewerUrls(viewerUrlsRef.current);
+  }, []);
+
+  const dropViewerUrl = useCallback((attachmentId: string) => {
+    const current = viewerUrlsRef.current[attachmentId];
+    if (current) URL.revokeObjectURL(current);
+    const next = { ...viewerUrlsRef.current };
+    delete next[attachmentId];
+    viewerUrlsRef.current = next;
+    setViewerUrls(next);
+  }, []);
+
+  const clearViewerUrls = useCallback(() => {
+    Object.values(viewerUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    viewerUrlsRef.current = {};
+    setViewerUrls({});
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -138,11 +216,18 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
 
   // Signed URL is fetched on click, not on panel open: it expires in 15 min.
   const openPreview = async (attachment: ExpenseDetail['attachments'][number]) => {
+    const requestId = ++previewRequestRef.current;
     setPreviewLoading(true); setError(null);
     try {
-      const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachment.id, { disposition: 'inline' });
-      setPreview({ name: attachment.originalFileName, mimeType: attachment.mimeType, url: downloadUrl });
-    } catch (e) { setError(err(e)); } finally { setPreviewLoading(false); }
+      const blob = await fetchAttachmentPreviewBlob(companyId, attachment.id, attachment.mimeType);
+      if (requestId !== previewRequestRef.current) return;
+      const url = URL.createObjectURL(blob);
+      commitPreview(requestId, { name: attachment.originalFileName, mimeType: attachment.mimeType, url });
+    } catch (e) {
+      if (requestId === previewRequestRef.current) setError(err(e));
+    } finally {
+      if (requestId === previewRequestRef.current) setPreviewLoading(false);
+    }
   };
 
   const doAction = async (fn: () => Promise<unknown>, successMessage?: string) => {
@@ -193,7 +278,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     finally { setExtractionLoading(false); }
   };
 
-  useEffect(() => { setViewerIndex(0); }, [expenseId]);
+  useEffect(() => {
+    setViewerIndex(0);
+    clearViewerUrls();
+  }, [clearViewerUrls, expenseId]);
+  useEffect(() => () => {
+    Object.values(viewerUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    viewerUrlsRef.current = {};
+  }, []);
 
   const attachments = detail?.attachments ?? [];
   const safeViewerIndex = Math.min(viewerIndex, Math.max(0, attachments.length - 1));
@@ -205,11 +297,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     if (!activeAttachmentId || viewerUrls[activeAttachmentId]) return;
     let cancelled = false;
     setViewerError(null);
-    getAttachmentDownloadUrl(companyId, activeAttachmentId, { disposition: 'inline' })
-      .then(({ downloadUrl }) => { if (!cancelled) setViewerUrls((current) => ({ ...current, [activeAttachmentId]: downloadUrl })); })
+    fetchAttachmentPreviewBlob(companyId, activeAttachmentId, activeAttachment!.mimeType)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        if (cancelled) URL.revokeObjectURL(url);
+        else cacheViewerUrl(activeAttachmentId, url);
+      })
       .catch((e) => { if (!cancelled) setViewerError(err(e)); });
     return () => { cancelled = true; };
-  }, [companyId, activeAttachmentId, viewerUrls]);
+  }, [activeAttachment, activeAttachmentId, cacheViewerUrl, companyId, viewerUrls]);
 
   // Signed URLs expire after 15 min: on a load error drop the cached URL so the effect refetches.
   // Rate-limited per attachment (not once-only) so a second expiry in a long session still recovers,
@@ -219,13 +315,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     const lastRetry = viewerRetriedRef.current[activeAttachmentId] ?? 0;
     if (Date.now() - lastRetry < 20000) return;
     viewerRetriedRef.current[activeAttachmentId] = Date.now();
-    setViewerUrls((current) => { const next = { ...current }; delete next[activeAttachmentId]; return next; });
+    dropViewerUrl(activeAttachmentId);
   };
   // iframes never fire onError on HTTP errors, so PDFs need a manual reload path.
   const reloadViewerUrl = () => {
     if (!activeAttachmentId) return;
     viewerRetriedRef.current[activeAttachmentId] = Date.now();
-    setViewerUrls((current) => { const next = { ...current }; delete next[activeAttachmentId]; return next; });
+    dropViewerUrl(activeAttachmentId);
   };
 
   // A real anchor, not a button: it navigates to another URL, so cmd/middle-click must open a tab
@@ -439,7 +535,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
             {detail.postingStatus === 'posted'
               ? `ผ่านรายการแล้ว${detail.journalEntryNumber ? ` · ${detail.journalEntryNumber}` : ''}`
               : detail.postingStatus === 'posting_error'
-                ? (detail.postingError || 'ลงบัญชีไม่สำเร็จ กรุณาแก้ไขเงื่อนไขแล้วลองอีกครั้ง')
+                ? (postingErrorText(detail.postingError) || 'ลงบัญชีไม่สำเร็จ กรุณาแก้ไขเงื่อนไขแล้วลองอีกครั้ง')
                 : detail.postingStatus === 'not_required'
                   ? 'เอกสารนี้ไม่ต้องลงสมุดรายวัน'
                   : detail.postingStatus === 'reversed'
@@ -527,7 +623,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     </div>
   );
   const documentReviewCard = (
-    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} isOwner={isOwner} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={setPreview} />
+    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} isOwner={isOwner} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} />
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
   // Finance either edits the amount or records why the stored figure stands. Accepting is bound to
@@ -609,6 +705,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
   );
   const openDuplicateCandidates = detail.duplicateCandidates.filter((candidate) => candidate.status === 'OPEN');
   const confirmedDuplicateCandidates = detail.duplicateCandidates.filter((candidate) => candidate.status === 'CONFIRMED_DUPLICATE');
+  // "Is this the same document?" is answerable from the number, payee, date and amount —
+  // never from an id. Older rows (or ones outside the branch scope) still fall back to the id.
+  const duplicateCandidateLabel = (candidate: ExpenseDetail['duplicateCandidates'][number]) => [
+    candidate.candidateExpenseNumber || candidate.candidateExpenseId.slice(-8),
+    candidate.candidateVendorName,
+    candidate.candidateExpenseDate ? dateShort(candidate.candidateExpenseDate) : null,
+    candidate.candidateGrandTotalAmount ? baht(candidate.candidateGrandTotalAmount) : null,
+  ].filter(Boolean).join(' · ');
+  // t() echoes the key when a code has no label yet, so an unmapped reason drops out silently
+  // instead of printing `expenses.duplicate_reason_*` at the reviewer.
+  const duplicateReasonText = (candidate: ExpenseDetail['duplicateCandidates'][number]) => candidate.reasonCodesJson
+    .map((code) => t(`expenses.duplicate_reason_${code}` as DictionaryKey, locale))
+    .filter((label) => !label.startsWith('expenses.duplicate_reason_'))
+    .join(' · ');
   const duplicatesCard = hasDuplicates && (
     <MangmeeCard className="space-y-2 border-warning-100 bg-warning-50 p-4">
       <h3 className="text-sm font-semibold text-warning-700">⚠ {t('expenses.duplicate_warning_title', locale)}</h3>
@@ -620,17 +730,23 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
       )}
       {confirmedDuplicateCandidates.map((candidate) => (
         <div key={candidate.id} className="flex flex-col items-start gap-1.5 rounded-lg bg-white px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${candidate.candidateExpenseId}`} target="_blank">
-            {t('expenses.item_label', locale)} · {candidate.candidateExpenseId.slice(-8)} ({t('expenses.score_label', locale)} {candidate.score})
-          </Link>
+          <span className="flex flex-col gap-0.5">
+            <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${candidate.candidateExpenseId}`} target="_blank">
+              {duplicateCandidateLabel(candidate)} ({t('expenses.score_label', locale)} {candidate.score})
+            </Link>
+            {duplicateReasonText(candidate) && <span className="text-gray-500">{duplicateReasonText(candidate)}</span>}
+          </span>
           <span className="font-semibold text-error-700">{t('expenses.confirm_duplicate', locale)}</span>
         </div>
       ))}
       {openDuplicateCandidates.map((d, index) => (
         <div key={d.id} className="flex flex-col items-start gap-1.5 rounded-lg bg-white px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-          <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${d.candidateExpenseId}`} target="_blank">
-            {t('expenses.item_label', locale)} {index + 1} · {d.candidateExpenseId.slice(-8)} ({t('expenses.score_label', locale)} {d.score})
-          </Link>
+          <span className="flex flex-col gap-0.5">
+            <Link className="tabular-nums font-medium text-brand-700 underline" href={`/companies/${companyId}/expenses/${d.candidateExpenseId}`} target="_blank">
+              {t('expenses.item_label', locale)} {index + 1} · {duplicateCandidateLabel(d)} ({t('expenses.score_label', locale)} {d.score})
+            </Link>
+            {duplicateReasonText(d) && <span className="text-gray-500">{duplicateReasonText(d)}</span>}
+          </span>
           {caps.canResolveDuplicates && <span className="flex gap-3">
             <button className="py-1 sm:py-0 font-semibold text-success-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'confirm' }); }} disabled={actionLoading}>{t('expenses.confirm_duplicate', locale)}</button>
             <button className="py-1 sm:py-0 font-semibold text-warning-700 underline" onClick={() => { setReason(''); setShowReject(false); setShowVoid(false); setDuplicateResolution({ candidateId: d.id, action: 'dismiss' }); }} disabled={actionLoading}>{t('expenses.not_duplicate', locale)}</button>
@@ -686,33 +802,17 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
 
         <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
           {guided ? (
-            <div className="flex w-full items-start">
-              {steps.map((entry, index) => {
-                const active = step === entry.key;
-                return (
-                  <Fragment key={entry.key}>
-                    {index > 0 && <div aria-hidden className={cx('mt-4 h-0.5 flex-1',
-                      steps[index - 1].state === 'done' ? 'bg-brand-300' : 'bg-gray-200')} />}
-                    <button type="button" disabled={stepSaving} onClick={() => void goToStep(entry.key, true)}
-                      aria-current={active ? 'step' : undefined}
-                      className="group flex w-16 flex-col items-center gap-1 sm:w-24">
-                      <span className={cx('flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold transition',
-                        active && 'ring-4 ring-brand-100',
-                        entry.state === 'done' ? 'bg-brand-500 text-white'
-                          : entry.state === 'attention' ? 'bg-warning-50 text-warning-700 border border-warning-500'
-                            : active ? 'bg-brand-500 text-white'
-                              : 'border-2 border-gray-300 bg-white text-gray-400 group-hover:border-brand-300')}>
-                        {entry.state === 'done' ? '✓' : entry.state === 'attention' ? '⚠' : index + 1}
-                      </span>
-                      <span className={cx('text-center text-[11px] leading-tight sm:text-xs',
-                        active ? 'font-bold text-brand-700' : 'font-medium text-gray-500')}>
-                        {t(STEP_LABEL_KEYS[entry.key], locale)}
-                      </span>
-                    </button>
-                  </Fragment>
-                );
-              })}
-            </div>
+            <ThemedSteps steps={steps.map((entry) => ({
+              key: entry.key,
+              label: t(STEP_LABEL_KEYS[entry.key], locale),
+              // The step being worked on reads as current even when flagged — the
+              // warning look returns once the user moves on without fixing it.
+              state: step === entry.key ? 'current'
+                : entry.state === 'done' ? 'done'
+                  : entry.state === 'attention' ? 'attention' : 'upcoming',
+              onSelect: () => void goToStep(entry.key, true),
+              disabled: stepSaving,
+            }))} />
           ) : navChips.map((chip) => (
             <button key={chip.key} type="button" onClick={() => chip.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition hover:border-brand-200 hover:text-brand-700">
@@ -764,7 +864,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
                   <div className="min-h-0 flex-1 overflow-auto p-3">
                     {viewerError ? <ErrorBanner message={viewerError} />
                       : !activeViewerUrl ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</p>
-                        : activeAttachment?.mimeType.startsWith('image/') ? <img src={activeViewerUrl} alt={activeAttachment.originalFileName} crossOrigin="anonymous" onError={retryViewerUrl} className="mx-auto max-w-full rounded-lg bg-white" />
+                        : activeAttachment?.mimeType.startsWith('image/') ? <img src={activeViewerUrl} alt={activeAttachment.originalFileName} onError={retryViewerUrl} className="mx-auto max-w-full rounded-lg bg-white" />
                           : activeAttachment?.mimeType === 'application/pdf' ? <iframe src={activeViewerUrl} title={activeAttachment.originalFileName} onError={retryViewerUrl} className="h-full w-full rounded-lg border border-gray-200 bg-white" />
                             : (
                               <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
@@ -923,14 +1023,17 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
       </MangmeePage>
 
       {/* full-screen preview remains transient while the expense review itself is a page */}
-      {preview && (
-        <Modal
-          open
+      {preview && <DocumentPreviewModal
+          source={preview}
           printSurface
-          title={preview.name}
-          size="lg"
           closeLabel={t('expenses.close', locale)}
-          onClose={() => setPreview(null)}
+          loadingLabel={t('expenses.loading', locale)}
+          errorLabel={t('expenses.substitute_wizard.document_not_ready', locale)}
+          retryLabel={t('expenses.substitute_wizard.retry', locale)}
+          openNewTabLabel={t('expenses.open_new_tab', locale)}
+          onClose={closePreview}
+          onViewed={preview.onViewed}
+          hideOpenNewTab={preview.hideOpenNewTab}
           footer={preview.mimeType.startsWith('image/') ? (
             <>
               {previewError && <p className="mr-auto text-xs font-semibold text-error-700">{previewError}</p>}
@@ -948,13 +1051,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
               </button>
             </>
           ) : undefined}
-        >
-          {preview.mimeType.startsWith('image/')
-            ? <img src={preview.url} alt={preview.name} crossOrigin="anonymous" className="mx-auto max-h-[70vh] w-auto rounded-lg" />
-            : <iframe src={preview.url} title={preview.name} className="h-[70vh] w-full rounded-lg border border-gray-200" />}
-          {!preview.hideOpenNewTab && <a href={preview.url} target="_blank" rel="noreferrer" className="modal-print-hide mt-3 inline-block text-sm font-semibold text-brand-600 hover:underline">{t('expenses.open_new_tab', locale)}</a>}
-        </Modal>
-      )}
+        />}
     </>
   );
 }

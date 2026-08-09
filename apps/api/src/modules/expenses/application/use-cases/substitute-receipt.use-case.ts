@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuditService } from '../../../audit/application/audit.service';
 import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
@@ -82,6 +83,47 @@ function parseExpectedDate(value: string, field: string): Date {
   return parsed;
 }
 
+function renderabilityError(code: string, message: string): BadRequestException {
+  return new BadRequestException({ code, message });
+}
+
+function assertSubstituteReceiptLinesRenderable(lines: ReadonlyArray<{ description: string }>): void {
+  if (lines.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines) {
+    throw renderabilityError(
+      'substitute_receipt_too_many_lines',
+      `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.`,
+    );
+  }
+  if (lines.some((line) => line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength)) {
+    throw renderabilityError(
+      'substitute_receipt_line_description_too_long',
+      `Each substitute-receipt expense description must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} characters.`,
+    );
+  }
+}
+
+function assertSubstituteReceiptEvidenceRenderable(
+  evidence: ReadonlyArray<{ originalFileName: string }>,
+): void {
+  if (evidence.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments) {
+    throw renderabilityError(
+      'substitute_receipt_too_many_evidence',
+      `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} linked evidence files.`,
+    );
+  }
+  if (evidence.some((item) => item.originalFileName.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength)) {
+    throw renderabilityError(
+      'substitute_receipt_evidence_filename_too_long',
+      `Each linked evidence file name must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceFileNameLength} characters.`,
+    );
+  }
+}
+
+function assertSubstituteReceiptSnapshotRenderable(snapshot: SubstituteReceiptSnapshot): void {
+  assertSubstituteReceiptLinesRenderable(snapshot.expense.lines);
+  assertSubstituteReceiptEvidenceRenderable(snapshot.evidence);
+}
+
 function validateEligibility(expense: ExpenseRecordWithRelations, reasonCode?: string): void {
   if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
     throw new BadRequestException(`Cannot prepare substitute evidence in status ${expense.status}.`);
@@ -108,6 +150,7 @@ function validateEligibility(expense: ExpenseRecordWithRelations, reasonCode?: s
   if (!expense.lines.length || expense.lines.some((line) => !line.description.trim())) {
     throw new BadRequestException('Reviewed expense item details are required.');
   }
+  assertSubstituteReceiptLinesRenderable(expense.lines);
   if (!expense.expenseCategoryId && !expense.accountHintKey && expense.lines.some((line) => !line.expenseCategoryId && !line.accountHintKey)) {
     throw new BadRequestException('A reviewed expense category or account hint is required.');
   }
@@ -130,6 +173,7 @@ async function buildSnapshot(
   const linkedIds = [...new Set([...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds])];
   const refs = await repo.findSubstituteEvidenceAttachments(companyId, expense.id, linkedIds);
   if (refs.length !== linkedIds.length) throw new ConflictException('Linked source/payment evidence changed. Finance must prepare a new version.');
+  assertSubstituteReceiptEvidenceRenderable(refs);
   const company = await repo.getSubstituteCompanyContext(companyId, expense.branchId);
   return {
     documentNumber: evidence.documentNumber,
@@ -308,9 +352,16 @@ export class PrepareSubstituteReceiptUseCase {
       throw new BadRequestException('The same file cannot serve as both source/supporting evidence and payment evidence.');
     }
     const allIds = [...new Set([...paymentIds, ...supportingIds])];
+    if (allIds.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments) {
+      throw renderabilityError(
+        'substitute_receipt_too_many_evidence',
+        `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} linked evidence files.`,
+      );
+    }
     if (!supportingIds.length) throw new BadRequestException('At least one original or supporting evidence attachment is required.');
     const attachments = await this.repo.findSubstituteEvidenceAttachments(ctx.companyId, expenseId, allIds);
     if (attachments.length !== allIds.length) throw new BadRequestException('Every evidence attachment must be ACTIVE and linked to this expense.');
+    assertSubstituteReceiptEvidenceRenderable(attachments);
     const paymentEvidence = attachments.filter((attachment) => paymentIds.includes(attachment.id));
     if (paymentEvidence.some((attachment) => attachment.purpose !== 'expense.payment.evidence'
       || (!attachment.mimeType.startsWith('image/') && attachment.mimeType !== 'application/pdf'))) {
@@ -619,13 +670,14 @@ export class ApproveSubstituteReceiptUseCase {
     const approver = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
     if (!approver) throw new ForbiddenException('Approver is not an active company member in this branch.');
     const expectedEvidenceUpdatedAt = parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt');
+    const snapshot = evidence.snapshotJson as unknown as SubstituteReceiptSnapshot;
+    if (canonicalSnapshotHash(snapshot) !== evidence.snapshotChecksumSha256) throw new ConflictException('Certified snapshot checksum is invalid.');
+    assertSubstituteReceiptSnapshotRenderable(snapshot);
     const approverSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'approver');
     const payerSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, evidence.payerSignatureAttachmentId, evidence.payerUserId, evidence.id, 'payer');
     if (payerSignature.checksumSha256 !== evidence.payerSignatureChecksumSha256) {
       throw new ConflictException('The payer signature changed after certification.');
     }
-    const snapshot = evidence.snapshotJson as unknown as SubstituteReceiptSnapshot;
-    if (canonicalSnapshotHash(snapshot) !== evidence.snapshotChecksumSha256) throw new ConflictException('Certified snapshot checksum is invalid.');
     const approvedAt = new Date();
     const approverDetails = { userId: ctx.userId, name: approver.displayName, position: approverPosition, approvedAt: approvedAt.toISOString() };
     const bytes = renderSubstituteReceiptSvg(snapshot, payerSignature.dataUrl, approverDetails, approverSignature.dataUrl);

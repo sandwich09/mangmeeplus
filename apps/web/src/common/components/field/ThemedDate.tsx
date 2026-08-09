@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { cx } from '@/common/components/mangmee';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -32,6 +32,8 @@ type Mode = 'date' | 'month';
 
 export type ThemedDateProps = {
   value?: string;
+  /** Uncontrolled initial value (like a native input's defaultValue). */
+  defaultValue?: string;
   onChange?: (event: { target: { value: string } }) => void;
   mode?: Mode;
   disabled?: boolean;
@@ -41,7 +43,13 @@ export type ThemedDateProps = {
   max?: string;
   id?: string;
   'aria-label'?: string;
-  /** Accepted for drop-in parity with native inputs; the button UI cannot enforce it. */
+  'aria-describedby'?: string;
+  'aria-invalid'?: boolean;
+  /** Exposes the visible picker control for validation focus management. */
+  triggerRef?: Ref<HTMLButtonElement>;
+  /** Renders an sr-only form input so FormData forms read the value by name. */
+  name?: string;
+  /** Enforced via the sr-only input when `name` is set; otherwise informational. */
   required?: boolean;
 };
 
@@ -68,22 +76,24 @@ function todayParts() {
   return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
 }
 
-export function ThemedDate({ value, onChange, mode = 'date', disabled = false, className, placeholder, min, max, id, 'aria-label': ariaLabel }: ThemedDateProps) {
+export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disabled = false, className, placeholder, min, max, id, 'aria-label': ariaLabel, 'aria-describedby': ariaDescribedBy, 'aria-invalid': ariaInvalid, triggerRef, name, required }: ThemedDateProps) {
   const locale = useWorkspaceLocale();
   const monthsAbbr = MONTHS_ABBR[locale] ?? MONTHS_ABBR.th;
   const monthsFull = MONTHS_FULL[locale] ?? MONTHS_FULL.th;
   const dow = DOW[locale] ?? DOW.th;
   const labels = LABELS[locale] ?? LABELS.th;
   const [open, setOpen] = useState(false);
+  const [inner, setInner] = useState(defaultValue ?? '');
+  const current = value !== undefined ? value : inner;
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const parts = parseParts(value, mode);
+  const parts = parseParts(current, mode);
   const [view, setView] = useState(() => parts ?? todayParts());
 
   useEffect(() => {
-    if (parts) setView((current) => (current.year === parts.year && current.month === parts.month ? current : parts));
+    if (parts) setView((v) => (v.year === parts.year && v.month === parts.month ? v : parts));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [current]);
 
   // The calendar is portaled out of `rootRef`, so it has to be named as "inside".
   useCloseOnOutsideClick(rootRef, useCallback(() => setOpen(false), []), panelRef);
@@ -97,6 +107,7 @@ export function ThemedDate({ value, onChange, mode = 'date', disabled = false, c
   }, [parts, mode, placeholder, monthsAbbr, labels, locale]);
 
   function emit(next: string) {
+    setInner(next);
     onChange?.({ target: { value: next } });
     setOpen(false);
   }
@@ -127,10 +138,33 @@ export function ThemedDate({ value, onChange, mode = 'date', disabled = false, c
 
   return (
     <div ref={rootRef} className={cx('relative min-w-0', className?.includes('w-auto') ? 'inline-block' : '')}>
+      {name && (
+        // sr-only (not hidden) so FormData picks the value up by name AND native
+        // `required` validation still fires; the browser focuses it on invalid
+        // submit, which opens the calendar.
+        <input
+          type="text"
+          name={name}
+          value={current}
+          required={required}
+          readOnly
+          tabIndex={-1}
+          aria-hidden="true"
+          className="sr-only"
+          onFocus={() => !disabled && setOpen(true)}
+        />
+      )}
       <button
+        ref={triggerRef}
         type="button"
         id={id}
+        role="combobox"
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
+        aria-required={required || undefined}
+        aria-invalid={ariaInvalid || undefined}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={cx(

@@ -4,10 +4,41 @@ import {
   GENERIC_UPLOAD_ERROR_MESSAGE,
   UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE,
 } from '@/common/files/upload-file.logic';
-import { confirmDuplicate, dismissDuplicate, normalizeApiBase, resolveUploadUrl, uploadReceiptFile } from './expenses.api';
+import {
+  confirmDuplicate,
+  dismissDuplicate,
+  downloadSubstituteReceiptPdf,
+  fetchAttachmentPreviewBlob,
+  fetchSubstituteReceiptPdfBlob,
+  normalizeApiBase,
+  resolveUploadUrl,
+  uploadReceiptFile,
+} from './expenses.api';
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+const originalDocument = globalThis.document;
+const originalCreateObjectUrl = URL.createObjectURL;
+const originalRevokeObjectUrl = URL.revokeObjectURL;
+const originalSetTimeout = globalThis.setTimeout;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  URL.createObjectURL = originalCreateObjectUrl;
+  URL.revokeObjectURL = originalRevokeObjectUrl;
+  globalThis.setTimeout = originalSetTimeout;
+  if (originalDocument === undefined) delete (globalThis as { document?: Document }).document;
+  else globalThis.document = originalDocument;
+});
+
+function mockAttachmentPreviewResponse(fileResponse: Response): Array<{ input: string; init?: RequestInit }> {
+  const requests: Array<{ input: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ input: String(input), ...(init ? { init } : {}) });
+    return requests.length === 1
+      ? new Response(JSON.stringify({ downloadUrl: 'https://storage.example.test/signed', expiresAt: '2026-08-08T10:00:00Z' }), { headers: { 'content-type': 'application/json' } })
+      : fileResponse;
+  }) as typeof fetch;
+  return requests;
+}
 
 describe('expenses.api URL helpers', () => {
   it('normalizes API base URL that already includes v1', () => {
@@ -58,6 +89,124 @@ describe('expenses.api URL helpers', () => {
       uploadReceiptFile('https://storage.example.test/upload', 'PUT', file),
       { message: UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE },
     );
+  });
+
+  it('fetches an attachment preview through the inline signed URL without browser credentials', async () => {
+    const requests = mockAttachmentPreviewResponse(new Response(Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
+    ]), {
+      headers: { 'content-type': 'image/png; charset=binary' },
+    }));
+
+    const blob = await fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png');
+
+    assert.equal(blob.size, 9);
+    assert.equal(blob.type, 'image/png;charset=binary');
+    assert.equal(requests[0]?.input, '/api/v1/companies/co-1/attachments/att-1/download-url?disposition=inline');
+    assert.equal(requests[1]?.input, 'https://storage.example.test/signed');
+    assert.equal(requests[1]?.init?.mode, 'cors');
+    assert.equal(requests[1]?.init?.credentials, 'omit');
+  });
+
+  it('uses the allowlisted storage response MIME when attachment metadata has no MIME type', async () => {
+    mockAttachmentPreviewResponse(new Response(Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d]), {
+      headers: { 'content-type': 'application/pdf' },
+    }));
+
+    const blob = await fetchAttachmentPreviewBlob('co-1', 'att-without-metadata');
+
+    assert.equal(blob.size, 5);
+    assert.equal(blob.type, 'application/pdf');
+  });
+
+  it('rejects empty, unsupported, mismatched, and failed attachment preview responses', async () => {
+    mockAttachmentPreviewResponse(new Response(null, { status: 404 }));
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /HTTP 404/);
+
+    mockAttachmentPreviewResponse(new Response(new Uint8Array(), { headers: { 'content-type': 'image/png' } }));
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /ไม่มีข้อมูล/);
+
+    mockAttachmentPreviewResponse(new Response(Uint8Array.from([1]), { headers: { 'content-type': 'application/pdf' } }));
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /ไม่ตรง/);
+
+    const unsupportedRequests = mockAttachmentPreviewResponse(new Response(Uint8Array.from([1]), { headers: { 'content-type': 'text/html' } }));
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'text/html'), /ไม่รองรับ/);
+    assert.equal(unsupportedRequests.length, 0);
+
+    mockAttachmentPreviewResponse(new Response(Uint8Array.from([1]), { headers: { 'content-type': 'text/html' } }));
+    await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1'), /ไม่รองรับ/);
+  });
+
+  it('rejects preview responses whose bytes do not match their allowlisted MIME type', async () => {
+    for (const mimeType of ['application/pdf', 'image/png', 'image/jpeg', 'image/svg+xml']) {
+      mockAttachmentPreviewResponse(new Response(new TextEncoder().encode('<!doctype html><html>not a document</html>'), {
+        headers: { 'content-type': mimeType },
+      }));
+
+      await assert.rejects(fetchAttachmentPreviewBlob('co-1', `corrupt-${mimeType}`), /เนื้อหาไฟล์/);
+    }
+  });
+
+  it('accepts matching JPEG and system-generated XML/SVG signatures', async () => {
+    for (const [mimeType, bytes] of [
+      ['image/jpeg', Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])],
+      ['image/svg+xml', new TextEncoder().encode('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>')],
+    ] as const) {
+      mockAttachmentPreviewResponse(new Response(bytes, { headers: { 'content-type': mimeType } }));
+
+      const blob = await fetchAttachmentPreviewBlob('co-1', `valid-${mimeType}`);
+
+      assert.equal(blob.type, mimeType);
+      assert.equal(blob.size, bytes.byteLength);
+    }
+  });
+
+  it('fetches and validates the issued substitute receipt PDF through the authenticated API', async () => {
+    let requested = '';
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requested = String(input);
+      return new Response(Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d]), { headers: { 'content-type': 'application/pdf' } });
+    }) as typeof fetch;
+
+    const blob = await fetchSubstituteReceiptPdfBlob('co-1', 'exp-1', 'evidence-1');
+
+    assert.equal(requested, '/api/v1/companies/co-1/expenses/exp-1/substitute-receipt/evidence-1/artifact.pdf');
+    assert.equal(blob.type, 'application/pdf');
+    assert.equal(blob.size, 5);
+  });
+
+  it('appends the download anchor and delays object URL revocation for Safari', async () => {
+    const calls: string[] = [];
+    const link = {
+      href: '', download: '', style: { display: '' },
+      click: () => { calls.push('click'); },
+      remove: () => { calls.push('remove'); },
+    };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      writable: true,
+      value: {
+        createElement: () => link,
+        body: { appendChild: () => { calls.push('append'); } },
+      },
+    });
+    URL.createObjectURL = () => { calls.push('create'); return 'blob:download'; };
+    URL.revokeObjectURL = (url) => { calls.push(`revoke:${url}`); };
+    globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
+      calls.push(`delay:${delay}`);
+      if (typeof callback === 'function') callback();
+      return 1;
+    }) as typeof setTimeout;
+    globalThis.fetch = (async () => new Response(Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d]), {
+      headers: { 'content-type': 'application/pdf' },
+    })) as typeof fetch;
+
+    await downloadSubstituteReceiptPdf('co-1', 'exp-1', 'evidence-1', 'SRC-1');
+
+    assert.equal(link.href, 'blob:download');
+    assert.equal(link.download, 'SRC-1.pdf');
+    assert.equal(link.style.display, 'none');
+    assert.deepEqual(calls, ['create', 'append', 'click', 'remove', 'delay:1000', 'revoke:blob:download']);
   });
 
   it('sends the reviewer reason to both duplicate-resolution actions', async () => {

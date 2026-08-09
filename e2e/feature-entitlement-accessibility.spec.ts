@@ -26,8 +26,8 @@ async function createWhtHandoff(api: any, companyId: string) {
       currency: 'THB',
       vatMode: 'NO_VAT',
       supplierDocumentNumber: unique('E2E-WHT-BILL'),
-      whtCategoryCode: 'SERVICE',
-      whtRate: '3',
+      // Withholding happens at PAYMENT time (like wht-settlement.spec.ts) — a bill that
+      // already withheld would make the payment's WHT a rejected double withholding.
       lines: [{
         lineNumber: 1,
         lineType: 'SERVICE',
@@ -39,9 +39,7 @@ async function createWhtHandoff(api: any, companyId: string) {
         vatMode: 'NO_VAT',
         vatAmount: '0.00',
         inputVatClaimStatus: 'NON_CLAIMABLE',
-        whtCategoryCode: 'SERVICE',
-        whtRate: '3',
-        whtAmount: '3.00',
+        whtAmount: '0.00',
         lineSubtotalAmount: '100.00',
         lineTotalAmount: '100.00',
       }],
@@ -49,6 +47,9 @@ async function createWhtHandoff(api: any, companyId: string) {
   }));
   await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills/${bill.id}/submit`, { data: {} }));
   await json<VendorBill>(await api.post(`companies/${companyId}/accounts-payable/vendor-bills/${bill.id}/approve`, { data: {} }));
+  // Withholding requires an ACTIVE income category (an accountant must verify it) — same
+  // activation step wht-settlement.spec.ts performs against the seeded catalog.
+  await json(await api.patch(`companies/${companyId}/tax/wht-categories/WHT_SERVICE_5`, { data: { status: 'ACTIVE' } }));
   const payment = await json<SupplierPayment>(await api.post(`companies/${companyId}/accounts-payable/payments`, {
     data: {
       idempotencyKey: unique('e2e-wht-payment'),
@@ -58,8 +59,13 @@ async function createWhtHandoff(api: any, companyId: string) {
       currency: 'THB',
       grossAmount: '100.00',
       whtAmount: '3.00',
+      // Required since the supplier-payment integrity pass: a payment that withholds tax
+      // must name an ACTIVE WHT income category (see supplier-payment.use-case.ts).
+      whtCategoryCode: 'WHT_SERVICE_5',
+      whtRate: '3',
       netPaidAmount: '97.00',
-      allocations: [{ vendorBillId: bill.id, amount: '97.00', whtAmount: '3.00' }],
+      // Allocation covers the full debt; the withheld 3.00 is the part that never leaves the bank.
+      allocations: [{ vendorBillId: bill.id, amount: '100.00', whtAmount: '3.00' }],
     },
   }));
   const handoffs = await json<WhtHandoff[]>(await api.get(`companies/${companyId}/wht/payment-handoffs`));
@@ -98,7 +104,10 @@ test.describe('ENT-A11Y — feature fallback accessibility', () => {
     const submit = authedPage.getByRole('button', { name: 'แนบเอกสาร' });
     await number.fill('CERT-E2E-001');
     await evidence.fill('evidence://e2e/001');
-    await issuedDate.fill(new Date().toISOString().slice(0, 10));
+    // The issued-date field is a ThemedDate (button + portaled calendar), not a fillable
+    // input — open it and pick today via the calendar's own footer shortcut.
+    await issuedDate.click();
+    await authedPage.getByRole('button', { name: 'วันนี้', exact: true }).click();
     await note.fill('ทดสอบการใช้งานด้วยแป้นพิมพ์');
     await note.focus();
     await authedPage.keyboard.press('Tab');

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { TaxAccountDeterminationRuleDto, TaxAccountRole, TaxCodeDefinitionDto, TaxReportMappingRuleDto, TransactionTaxRegime } from '@watchdog-bms/contracts';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { listLedgerAccounts, type LedgerAccount } from '@/features/ledger/ledger.api';
 import {
@@ -103,7 +104,7 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
     <MangmeePage title="Tax Account Determination" description="แยก SAP Tax Code ออกจากผังบัญชี แล้วกำหนดบัญชีและช่องรายงานตามบทบาท/บริบท/ช่วงวันที่">
       {error && <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {loading && <MangmeeCard className="mb-4 p-4 text-sm text-gray-500">กำลังโหลดผังบัญชีและกฎภาษี...</MangmeeCard>}
-      <div className="mb-5 grid gap-5 xl:grid-cols-2">
+      {capability.canManageAccountRules && <div className="mb-5 grid gap-5 xl:grid-cols-2">
         <MangmeeCard className="p-4">
           <h2 className="mb-3 font-bold">เพิ่มกฎลงบัญชี</h2>
           <form action={saveAccount} className="grid gap-3 sm:grid-cols-2">
@@ -115,11 +116,10 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
             <ThemedSelect name="transactionContext" defaultValue="" disabled={componentRegime !== 'DEFINITION'}><option value="">ทุกบริบท</option>{selected?.transactionContexts.map((context) => <option key={context} value={context}>{TAX_CONTEXT_LABELS[context]}</option>)}</ThemedSelect>
             <input name="sourceModule" placeholder="โมดูล เช่น accounting" className={field} />
             <input required name="priority" type="number" defaultValue="100" className={field} />
-            <input required name="effectiveFrom" type="date" className={field} />
-            <input name="effectiveTo" type="date" className={field} />
-            <button disabled={!capability.canManageAccountRules || busy || !selected || !accounts.length} className={button}>บันทึกกฎบัญชี</button>
+            <ThemedDate required name="effectiveFrom" className={field} />
+            <ThemedDate name="effectiveTo" className={field} />
+            <button disabled={busy || !selected || !accounts.length} className={button}>บันทึกกฎบัญชี</button>
           </form>
-          {!capability.canManageAccountRules && <p className="mt-3 text-xs text-amber-700">อ่านอย่างเดียว: ต้องมี tax.config.read และ ledger.posting-rule.manage</p>}
           {importGoodsDefinition && <p className="mt-3 text-xs text-gray-500">Import Goods ต้องมี paired debit/credit rules แยกสำหรับ Import VAT, ศุลกากร, สรรพสามิต และภาษีนำเข้าอื่น; component rules ไม่สร้าง Tax Code เพิ่ม</p>}
         </MangmeeCard>
         <MangmeeCard className="p-4">
@@ -130,12 +130,12 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
             <input required name="boxKey" placeholder="Box key เช่น BOX_5_OUTPUT_TAX" className={field} />
             <ThemedSelect name="amountSource" defaultValue="TAX_AMOUNT"><option value="TAX_BASE">Tax base</option><option value="TAX_AMOUNT">Tax amount</option><option value="GROSS">Gross</option><option value="DUTY">Duty</option><option value="OTHER">Other</option></ThemedSelect>
             <ThemedSelect name="signRule" defaultValue="NORMAL"><option value="NORMAL">Normal</option><option value="INVERT">Invert</option></ThemedSelect>
-            <input required name="effectiveFrom" type="date" className={field} />
-            <input name="effectiveTo" type="date" className={field} />
-            <button disabled={!capability.canManageConfig || busy || !selected} className={button}>บันทึกกฎรายงาน</button>
+            <ThemedDate required name="effectiveFrom" className={field} />
+            <ThemedDate name="effectiveTo" className={field} />
+            <button disabled={busy || !selected} className={button}>บันทึกกฎรายงาน</button>
           </form>
         </MangmeeCard>
-      </div>
+      </div>}
       <MangmeeCard className="mb-5 p-4">
         <h2 className="mb-3 font-bold">Preview การ resolve</h2>
         {selected ? <TransactionTaxLineSelector companyId={companyId} sourceType="tax.configuration" sourceId="preview" sourceLineId="preview-line" transactionContext={selected.transactionContexts[0] ?? 'MANUAL_TAX_ADJUSTMENT'} direction={selected.direction} documentDate={todayCivilDate()} netAmount="1000" grossAmount="1070" value={previewDefinitionId} onChange={setPreviewDefinitionId} /> : <p className="text-sm text-gray-500">ยังไม่มี Tax Code สำหรับ preview</p>}

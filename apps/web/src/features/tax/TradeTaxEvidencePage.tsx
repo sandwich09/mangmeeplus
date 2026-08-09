@@ -1,17 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TradeTaxEvidenceDto, TransactionTaxContext } from '@watchdog-bms/contracts';
+import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { ForbiddenState } from '@/common/components/state';
+import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
-import { createTradeTaxEvidence, getTradeTaxEvidenceAttachmentDownloadUrl, listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment, verifyTradeTaxEvidence } from './transaction-tax.api';
+import { fetchAttachmentPreviewBlob } from '@/features/expenses/expenses.api';
+import { createTradeTaxEvidence, listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment, verifyTradeTaxEvidence } from './transaction-tax.api';
 import { TAX_CONTEXT_LABELS, transactionTaxCapabilities, transactionTaxErrorMessage } from './transaction-tax.model';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { useToast } from '@/common/components/toast';
+import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
 const evidenceContexts = ['IMPORT_GOODS', 'IMPORT_SERVICE', 'EXPORT_GOODS', 'EXPORT_SERVICE'] as const satisfies readonly TransactionTaxContext[];
 type EvidenceContext = (typeof evidenceContexts)[number];
+type AttachmentPreviewTarget = { attachmentId: string; name: string };
 const field = 'mangmee-input w-full';
 const sourceDefaults: Record<EvidenceContext, string> = {
   IMPORT_GOODS: 'procurement.vendor_bill', IMPORT_SERVICE: 'procurement.vendor_bill',
@@ -21,6 +28,7 @@ const sourceDefaults: Record<EvidenceContext, string> = {
 export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: string; permissions: string[] }) {
   const toast = useToast();
   const capability = transactionTaxCapabilities(permissions);
+  const canReadEvidence = canSeeRoute('/tax/evidence', permissions);
   const canInspectEvidence = permissions.includes('attachment.read');
   const branch = useBranchFilter();
   const [items, setItems] = useState<TradeTaxEvidenceDto[]>([]);
@@ -29,8 +37,32 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
   const [sourceId, setSourceId] = useState('');
   const [sourceLineId, setSourceLineId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [verifying, setVerifying] = useState<{ id: string; status: 'VERIFIED' | 'REJECTED' } | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<AttachmentPreviewTarget | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<DocumentPreviewSource | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const previewRequestRef = useRef(0);
+  const previewUrlRef = useRef<string | null>(null);
+
+  const releaseAttachmentPreviewUrl = useCallback(() => {
+    const url = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+  }, []);
+  useEffect(() => () => {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+  }, [releaseAttachmentPreviewUrl]);
+  useEffect(() => {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+    setAttachmentPreview(null);
+    setPreviewTarget(null);
+    setPreviewLoadingId(null);
+    setError('');
+  }, [companyId, releaseAttachmentPreviewUrl]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -45,11 +77,12 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
   }, []);
 
   const load = useCallback(async () => {
+    if (!canReadEvidence) return;
     setLoading(true); setError('');
     try { setItems(await listTradeTaxEvidence(companyId, { branchId: branch?.branchId || undefined })); }
     catch (cause) { setError(transactionTaxErrorMessage(cause)); }
     finally { setLoading(false); }
-  }, [branch?.branchId, companyId]);
+  }, [branch?.branchId, canReadEvidence, companyId]);
   useEffect(() => { void load(); }, [load]);
 
   async function submit(form: FormData) {
@@ -83,30 +116,57 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
   }
 
-  async function openAttachment(attachmentId: string) {
-    const preview = window.open('about:blank', '_blank');
-    if (preview) preview.opener = null;
+  async function loadAttachmentPreview(target: AttachmentPreviewTarget, requestId = ++previewRequestRef.current) {
+    const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId);
+    if (requestId !== previewRequestRef.current) return;
+    const url = URL.createObjectURL(blob);
+    releaseAttachmentPreviewUrl();
+    previewUrlRef.current = url;
+    setPreviewTarget(target);
+    setAttachmentPreview({ name: target.name, mimeType: blob.type, url });
+  }
+
+  async function openAttachment(target: AttachmentPreviewTarget) {
+    const requestId = ++previewRequestRef.current;
+    setPreviewLoadingId(target.attachmentId);
+    setError('');
     try {
-      const { downloadUrl } = await getTradeTaxEvidenceAttachmentDownloadUrl(companyId, attachmentId);
-      if (preview) preview.location.replace(downloadUrl);
-      else window.location.assign(downloadUrl);
-    } catch (cause) { preview?.close(); setError(transactionTaxErrorMessage(cause)); }
+      await loadAttachmentPreview(target, requestId);
+    } catch (cause) {
+      if (requestId === previewRequestRef.current) setError(transactionTaxErrorMessage(cause));
+    } finally {
+      if (requestId === previewRequestRef.current) {
+        setPreviewLoadingId((current) => current === target.attachmentId ? null : current);
+      }
+    }
+  }
+
+  function closeAttachmentPreview() {
+    previewRequestRef.current += 1;
+    releaseAttachmentPreviewUrl();
+    setAttachmentPreview(null);
+    setPreviewTarget(null);
   }
 
   async function verify(id: string, status: 'VERIFIED' | 'REJECTED') {
+    setVerifying({ id, status });
     setError('');
     try {
       await verifyTradeTaxEvidence(companyId, id, status);
       await load();
       toast.success(status === 'VERIFIED' ? 'ยืนยันหลักฐานเรียบร้อยแล้ว' : 'ปฏิเสธหลักฐานเรียบร้อยแล้ว');
     } catch (cause) { setError(transactionTaxErrorMessage(cause)); }
+    finally { setVerifying(null); }
   }
 
+  if (!canReadEvidence) return <ForbiddenState />;
+
   return (
+    <>
     <MangmeePage title="หลักฐานภาษีการค้าระหว่างประเทศ" description="เก็บหลักฐานนำเข้าสินค้า บริการต่างประเทศ/ภ.พ.36 และส่งออก โดยผูกกับ source document และสาขา">
       {error && <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
-        <MangmeeCard className="p-4">
+      <div className={capability.canPrepareEvidence ? 'grid gap-5 xl:grid-cols-[420px_1fr]' : ''}>
+        {capability.canPrepareEvidence && <MangmeeCard className="p-4">
           <h2 className="mb-3 font-bold">เพิ่มหลักฐาน</h2>
           <form action={submit} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
             <ThemedSelect value={context} onChange={(event) => { const next = event.target.value as EvidenceContext; setContext(next); setSourceType(sourceDefaults[next]); }}>{evidenceContexts.map((item) => <option key={item} value={item}>{TAX_CONTEXT_LABELS[item]}</option>)}</ThemedSelect>
@@ -116,7 +176,7 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
             <ThemedSelect name="evidenceType" defaultValue="CUSTOMS_ENTRY"><option value="CUSTOMS_ENTRY">ใบขนสินค้า</option><option value="PP36_RECEIPT">ใบเสร็จ ภ.พ.36 จากสรรพากร</option><option value="EXPORT_DECLARATION">ใบขนส่งออก</option><option value="FOREIGN_USE_EVIDENCE">หลักฐานใช้บริการในต่างประเทศ</option><option value="SHIPPING_EVIDENCE">หลักฐานขนส่ง</option><option value="PAYMENT_EVIDENCE">หลักฐานชำระเงิน</option><option value="OTHER">อื่น ๆ</option></ThemedSelect>
             {context === 'IMPORT_GOODS' && <p className="text-xs text-amber-700 sm:col-span-2 xl:col-span-1">หลักฐานนำเข้าสินค้าต้องผูกกับบรรทัดเดียว เพื่อไม่ให้ยอดศุลกากรหรือ VAT นำเข้าถูกนับซ้ำ</p>}
             <input required name="referenceNumber" placeholder="เลขที่อ้างอิง" className={field} />
-            <input required name="evidenceDate" type="date" className={field} />
+            <ThemedDate required name="evidenceDate" className={field} />
             <input name="countryCode" placeholder="ประเทศ เช่น US" maxLength={2} className={field} />
             <input required name="currency" defaultValue="THB" className={field} />
             <input name="exchangeRate" type="number" step="0.000001" placeholder="อัตราแลกเปลี่ยน" className={field} />
@@ -126,19 +186,28 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
             <input name="exciseAmount" type="number" step="0.01" defaultValue="0" placeholder="ภาษีสรรพสามิต" className={field} />
             <input name="otherTaxAmount" type="number" step="0.01" defaultValue="0" placeholder="ภาษีอื่น" className={field} />
             <input name="importVatAmount" type="number" step="0.01" defaultValue="0" placeholder="VAT นำเข้า/ภ.พ.36" className={field} />
-            <label className="text-xs font-bold text-gray-600">ไฟล์หลักฐาน<input required name="attachment" type="file" accept={ATTACHMENT_UPLOAD_ACCEPT} className="mt-1 block w-full text-sm" /></label>
-            <button disabled={!capability.canPrepareEvidence || busy} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>
+            <div className="text-xs font-bold text-gray-600">ไฟล์หลักฐาน<ThemedFile required name="attachment" accept={ATTACHMENT_UPLOAD_ACCEPT} className="mt-1" /></div>
+            <button disabled={busy} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>
           </form>
-          {!capability.canPrepareEvidence && <p className="mt-3 text-xs text-amber-700">อ่านอย่างเดียว: ต้องมีสิทธิ์เตรียมหลักฐานภาษีและสิทธิ์แก้เอกสารต้นทาง</p>}
-        </MangmeeCard>
+        </MangmeeCard>}
         <MangmeeCard className="overflow-hidden">
           <div className="border-b border-gray-100 p-4"><h2 className="font-bold">หลักฐานในขอบเขต ({items.length})</h2></div>
           {loading ? <div className="p-8 text-center text-sm text-gray-500">กำลังโหลด...</div> : !items.length ? <div className="p-8 text-center text-sm text-gray-500">ยังไม่มีหลักฐานการค้าระหว่างประเทศ</div> : (
-            <div className="divide-y divide-gray-100">{items.map((item) => <article key={item.id} className="p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>{TAX_CONTEXT_LABELS[item.transactionContext]} · {item.referenceNumber}</strong><div className="mt-1 text-xs text-gray-500">{item.sourceType} / {item.sourceId} · {item.evidenceDate} · {item.currency}</div><div className="mt-1 text-xs text-gray-500">Customs {item.customsValue} · Duty {item.dutyAmount} · Excise {item.exciseAmount} · Import VAT {item.importVatAmount}</div><div className="mt-2 flex flex-wrap gap-2">{item.attachmentIds.map((attachmentId, index) => <button key={attachmentId} type="button" disabled={!canInspectEvidence} className="rounded border border-brand-200 px-2 py-1 text-xs font-bold text-brand-700 disabled:opacity-50" onClick={() => void openAttachment(attachmentId)}>เปิดหลักฐาน {index + 1}</button>)}</div></div><div className="flex items-center gap-2"><span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold">{item.status}</span>{capability.canVerifyEvidence && item.status !== 'VERIFIED' && <><button disabled={!canInspectEvidence} title={!canInspectEvidence ? 'ต้องมีสิทธิ์อ่านไฟล์แนบก่อนยืนยัน' : undefined} className="text-xs font-bold text-emerald-700 disabled:opacity-50" onClick={() => void verify(item.id, 'VERIFIED')}>ยืนยัน</button><button className="text-xs font-bold text-red-700" onClick={() => void verify(item.id, 'REJECTED')}>ปฏิเสธ</button></>}</div></div></article>)}</div>
+            <div className="divide-y divide-gray-100">{items.map((item) => <article key={item.id} className="p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>{TAX_CONTEXT_LABELS[item.transactionContext]} · {item.referenceNumber}</strong><div className="mt-1 text-xs text-gray-500">{item.sourceType} / {item.sourceId} · {item.evidenceDate} · {item.currency}</div><div className="mt-1 text-xs text-gray-500">Customs {item.customsValue} · Duty {item.dutyAmount} · Excise {item.exciseAmount} · Import VAT {item.importVatAmount}</div>{canInspectEvidence && <div className="mt-2 flex flex-wrap gap-2">{item.attachmentIds.map((attachmentId, index) => <button key={attachmentId} type="button" disabled={previewLoadingId === attachmentId} className="rounded border border-brand-200 px-2 py-1 text-xs font-bold text-brand-700 disabled:cursor-wait disabled:opacity-50" onClick={() => void openAttachment({ attachmentId, name: `หลักฐาน ${index + 1} · ${item.referenceNumber}` })}>{previewLoadingId === attachmentId ? 'กำลังเปิด...' : `เปิดหลักฐาน ${index + 1}`}</button>)}</div>}</div><div className="flex items-center gap-2"><span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold">{item.status}</span>{capability.canVerifyEvidence && item.status !== 'VERIFIED' && <>{canInspectEvidence && <button disabled={verifying?.id === item.id} className="text-xs font-bold text-emerald-700 disabled:opacity-50" onClick={() => void verify(item.id, 'VERIFIED')}>{verifying?.id === item.id && verifying.status === 'VERIFIED' ? 'กำลังยืนยัน...' : 'ยืนยัน'}</button>}<button disabled={verifying?.id === item.id} className="text-xs font-bold text-red-700 disabled:opacity-50" onClick={() => void verify(item.id, 'REJECTED')}>{verifying?.id === item.id && verifying.status === 'REJECTED' ? 'กำลังปฏิเสธ...' : 'ปฏิเสธ'}</button></>}</div></div></article>)}</div>
           )}
-          {capability.canVerifyEvidence && !canInspectEvidence && <p className="border-t border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">ต้องมีสิทธิ์ attachment.read เพื่อเปิดไฟล์ก่อนยืนยันหลักฐาน</p>}
         </MangmeeCard>
       </div>
     </MangmeePage>
+    {attachmentPreview && <DocumentPreviewModal
+      source={attachmentPreview}
+      closeLabel="ปิด"
+      loadingLabel="กำลังเปิดเอกสาร..."
+      errorLabel="แสดงไฟล์หลักฐานไม่สำเร็จ กรุณาลองใหม่"
+      retryLabel="ลองอีกครั้ง"
+      openNewTabLabel="เปิดในแท็บใหม่"
+      onClose={closeAttachmentPreview}
+      onRetry={previewTarget ? () => loadAttachmentPreview(previewTarget) : undefined}
+    />}
+    </>
   );
 }

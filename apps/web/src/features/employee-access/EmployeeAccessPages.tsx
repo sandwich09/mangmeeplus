@@ -18,6 +18,8 @@ import {
   listCapabilityPacks, listRoleTemplates, previewRole,
   getEffectiveAccessMatrix, getMembershipEffectiveAccess,
 } from './employee-access.api';
+import { useToast } from '@/common/components/toast';
+import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
@@ -323,7 +325,7 @@ function EmployeesView({ companyId }: { companyId: string }) {
 
   useEffect(() => { void reload(); }, [reload]);
 
-  if (loading) return <div className={`${panelClass} p-6 text-sm text-gray-400`}>กำลังโหลด…</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
 
   return (
     <div className="space-y-5">
@@ -543,7 +545,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
         <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
         <button type="submit" className={btnClass} disabled={saving}>
           <PlusIcon className="h-4 w-4" />
-          {saving ? 'กำลังบันทึก…' : 'สร้างพนักงาน'}
+          {saving ? 'กำลังบันทึก...' : 'สร้างพนักงาน'}
         </button>
       </div>
       </div>
@@ -556,6 +558,7 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
   onChanged: () => void; onHandoff: (h: any) => void; onLinePackage: (p: any) => void;
 }) {
   const locale = useWorkspaceLocale();
+  const toast = useToast();
   const [displayName, setDisplayName] = useState(employee.displayName);
   const [phoneNumber, setPhoneNumber] = useState(employee.phoneNumber);
   const [roleIds, setRoleIds] = useState<string[]>(employee.roles.map((r: any) => r.id));
@@ -571,9 +574,10 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
     listCompanyBranches(companyId).then(setBranches).catch(() => { /* no branch.read → hide section */ });
   }, [companyId]);
 
-  const run = async (key: string, fn: () => Promise<void>) => {
+  // `done` is omitted for actions that already show their result in a panel (credential handoff, LINE QR).
+  const run = async (key: string, fn: () => Promise<void>, done?: string) => {
     setBusy(key); setError(null);
-    try { await fn(); } catch (e) { setError(localizedErrorMessage(e, locale, { 409: 'error.conflict', fallback: 'error.save_failed' })); }
+    try { await fn(); if (done) toast.success(done); } catch (e) { setError(localizedErrorMessage(e, locale, { 409: 'error.conflict', fallback: 'error.save_failed' })); }
     finally { setBusy(null); }
   };
 
@@ -673,33 +677,33 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
         </div>
       )}
       <div className={`${panelClass} flex flex-col gap-2 p-4 sm:flex-row sm:flex-wrap sm:items-center`}>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('save', saveEmployee)}>
+        <button className={ghostClass} disabled={busy !== null} onClick={() => run('save', saveEmployee, 'บันทึกข้อมูลพนักงานแล้ว')}>
           <CheckCircleIcon className="h-4 w-4" />
-          {busy === 'save' ? 'กำลังบันทึก…' : 'บันทึกการเปลี่ยนแปลง'}
+          {busy === 'save' ? 'กำลังบันทึก...' : 'บันทึกการเปลี่ยนแปลง'}
         </button>
         <button className={ghostClass} disabled={busy !== null} onClick={() => run('cred', async () => { onHandoff(await regenerateEmployeeCredential(companyId, employee.id)); })}>
           <LockIcon className="h-4 w-4" />
-          {busy === 'cred' ? 'กำลังสร้าง…' : 'สร้างรหัสผ่านชั่วคราวใหม่'}
+          {busy === 'cred' ? 'กำลังสร้าง...' : 'สร้างรหัสผ่านชั่วคราวใหม่'}
         </button>
         <button className={ghostClass} disabled={busy !== null} onClick={() => run('qr', async () => { onLinePackage(await issueEmployeeLineLinkToken(companyId, employee.id)); })}>
           <CopyIcon className="h-4 w-4" />
-          {busy === 'qr' ? 'กำลังสร้าง…' : 'สร้าง QR เชื่อม LINE'}
+          {busy === 'qr' ? 'กำลังสร้าง...' : 'สร้าง QR เชื่อม LINE'}
         </button>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); })}>
+        <button className={ghostClass} disabled={busy !== null} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); }, 'ยกเลิกลิงก์ LINE ที่รอดำเนินการแล้ว')}>
           ยกเลิกลิงก์ LINE ที่รอดำเนินการ
         </button>
         {employee.status !== 'ACTIVE' && employee.status !== 'DRAFT' && (
-          <button className={ghostClass} disabled={busy !== null} onClick={() => run('enable', async () => { await setEmployeeStatus(companyId, employee.id, 'ACTIVE'); onChanged(); })}>
+          <button className={ghostClass} disabled={busy !== null} onClick={() => run('enable', async () => { await setEmployeeStatus(companyId, employee.id, 'ACTIVE'); onChanged(); }, 'เปิดใช้งานพนักงานอีกครั้งแล้ว')}>
             เปิดใช้งานอีกครั้ง
           </button>
         )}
         {employee.status === 'ACTIVE' && (
-          <button className={ghostClass} disabled={busy !== null} onClick={() => run('suspend', async () => { await setEmployeeStatus(companyId, employee.id, 'SUSPENDED'); onChanged(); })}>
+          <button className={ghostClass} disabled={busy !== null} onClick={() => run('suspend', async () => { await setEmployeeStatus(companyId, employee.id, 'SUSPENDED'); onChanged(); }, 'ระงับพนักงานชั่วคราวแล้ว')}>
             ระงับชั่วคราว
           </button>
         )}
         {employee.status !== 'DISABLED' && (
-          <button className={dangerClass} disabled={busy !== null} onClick={() => run('disable', async () => { await setEmployeeStatus(companyId, employee.id, 'DISABLED'); onChanged(); })}>
+          <button className={dangerClass} disabled={busy !== null} onClick={() => run('disable', async () => { await setEmployeeStatus(companyId, employee.id, 'DISABLED'); onChanged(); }, 'ปิดการใช้งานพนักงานแล้ว')}>
             <TrashIcon className="h-4 w-4" />
             ปิดการใช้งาน
           </button>
@@ -712,6 +716,8 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
 // ── Roles ────────────────────────────────────────────────────────────────────
 function RolesView({ companyId }: { companyId: string }) {
   const locale = useWorkspaceLocale();
+  const toast = useToast();
+  const [disablingRoleId, setDisablingRoleId] = useState<string | null>(null);
   const [roles, setRoles] = useState<any[]>([]);
   const [catalog, setCatalog] = useState<any[]>([]);
   const [packModules, setPackModules] = useState<Array<{ module: string; packs: CapabilityPackView[] }>>([]);
@@ -782,7 +788,7 @@ function RolesView({ companyId }: { companyId: string }) {
   const smartRolesReady = packModules.length > 0 || templates.length > 0;
   const canEditRoles = catalog.length > 0;
 
-  if (loading) return <div className={`${panelClass} p-6 text-sm text-gray-400`}>กำลังโหลด…</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
 
   return (
     <div className="space-y-5">
@@ -808,7 +814,7 @@ function RolesView({ companyId }: { companyId: string }) {
         <RoleBuilder
           companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
           onCancel={() => setShowCreate(false)}
-          onSubmit={async (body) => { await createRole(companyId, body); setShowCreate(false); void reload(); }}
+          onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างบทบาทแล้ว'); setShowCreate(false); void reload(); }}
         />
       )}
 
@@ -832,9 +838,9 @@ function RolesView({ companyId }: { companyId: string }) {
                     <button className={ghostClass} disabled={!canEditRoles} onClick={() => setEditingRoleId(editingRoleId === role.id ? null : role.id)}>
                       {editingRoleId === role.id ? 'ย่อ' : 'แก้ไข'}
                     </button>
-                    <button className={dangerClass} disabled={!canEditRoles} onClick={async () => { try { await disableRole(companyId, role.id); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } }}>
+                    <button className={dangerClass} disabled={!canEditRoles || disablingRoleId !== null} onClick={async () => { setDisablingRoleId(role.id); try { await disableRole(companyId, role.id); toast.success('ปิดใช้งานบทบาทแล้ว'); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } finally { setDisablingRoleId(null); } }}>
                       <TrashIcon className="h-4 w-4" />
-                      ปิดใช้งาน
+                      {disablingRoleId === role.id ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
                     </button>
                   </div>
                 )}
@@ -859,7 +865,7 @@ function RolesView({ companyId }: { companyId: string }) {
                   companyId={companyId} grouped={grouped} packModules={packModules} allPacks={allPacks} templates={templates} smartRolesReady={smartRolesReady}
                   initial={role}
                   onCancel={() => setEditingRoleId(null)}
-                  onSubmit={async (body) => { await updateRole(companyId, role.id, body); setEditingRoleId(null); void reload(); }}
+                  onSubmit={async (body) => { await updateRole(companyId, role.id, body); toast.success('บันทึกบทบาทแล้ว'); setEditingRoleId(null); void reload(); }}
                 />
               )}
             </div>
@@ -1079,7 +1085,7 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
         <div className="space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
           <div className="flex flex-wrap items-center justify-between">
             <div className="text-sm font-bold text-gray-800">ตัวอย่างสิทธิ์จริง</div>
-            {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ…</span>}
+            {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ...</span>}
           </div>
           {!smartRolesReady && <p className="text-xs text-gray-500">smart roles ใช้งานไม่ได้ในขณะนี้ จึงยังไม่มี live preview จาก capability packs</p>}
           {!preview && !previewing && smartRolesReady && <p className="text-xs text-gray-400">เลือกความสามารถเพื่อดูตัวอย่าง</p>}
@@ -1117,7 +1123,7 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={btnClass} disabled={saving}>{saving ? 'กำลังบันทึก…' : 'บันทึก'}</button>
+        <button type="submit" className={btnClass} disabled={saving}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
       </div>
       </div>
     </form>
@@ -1139,7 +1145,7 @@ function MatrixView({ companyId }: { companyId: string }) {
       .finally(() => setLoading(false));
   }, [companyId]);
 
-  if (loading) return <div className={`${panelClass} p-6 text-sm text-gray-400`}>กำลังโหลด…</div>;
+  if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (error != null) return <ErrorBanner message={localizedErrorMessage(error, locale, { 403: 'error.forbidden', fallback: 'error.load_failed' })} />;
   if (rows.length === 0) return <Empty text="ยังไม่มีพนักงานที่ใช้งานอยู่" />;
   const highRiskTotal = rows.reduce((sum, row) => sum + row.highRiskCount, 0);
@@ -1220,7 +1226,7 @@ function MatrixRow({ companyId, row, open, onToggle }: {
         <tr>
           <td colSpan={5} className="bg-brand-25/50 px-4 py-4">
             {error != null && <ErrorBanner message={localizedErrorMessage(error, locale, { fallback: 'error.load_failed' })} />}
-            {detail == null && error == null && <div className="text-xs text-gray-400">กำลังโหลด…</div>}
+            {detail == null && error == null && <div className="text-xs text-gray-400">กำลังโหลด...</div>}
             {detail && (
               <div className={`${panelClass} space-y-3 p-4`}>
                 <div className="text-sm font-bold text-gray-800">ทำอะไรได้บ้าง ({detail.capabilities.length} ความสามารถ · {detail.permissionCount} สิทธิ์)</div>

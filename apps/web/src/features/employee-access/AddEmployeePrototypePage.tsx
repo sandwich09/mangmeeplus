@@ -6,6 +6,8 @@ import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-clic
 import { useRouter } from 'next/navigation';
 import { hasPrivilegedGrant, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
+import { LoadingState } from '@/common/components/state/LoadingState';
 import { MangmeeBranchChip, MangmeeCard, cx } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
 import { listBranches as listCompanyBranches, type Branch } from '../branch-settings/branches.api';
@@ -231,6 +233,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   const toast = useToast();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [step, setStep] = useState<AddStep>(1);
@@ -265,7 +268,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   const employeeActive = draftActivated || editingEmployee?.status === 'ACTIVE';
 
   useEffect(() => {
-    (async () => {
+    setLoading(true);
+    void (async () => {
       const [rolesResult, branchesResult, employeeResult] = await Promise.allSettled([
         listRoles(companyId),
         listCompanyBranches(companyId),
@@ -318,7 +322,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
       } else if (employeeResult.status === 'rejected') {
         setLoadError(localizedErrorMessage(employeeResult.reason, locale, { fallback: 'error.load_failed' }));
       }
-    })();
+    })().finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, editEmployeeId, viewerPermissions]);
 
@@ -572,9 +576,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   const nextLabel = step < 3
     ? 'ถัดไป ›'
     : step === 3
-      ? (saving ? 'กำลังบันทึก…' : editingEmployee?.status === 'ACTIVE' ? 'บันทึกการแก้ไข' : 'บันทึกแบบร่าง')
-      : (saving ? 'กำลังเปิดใช้งาน…' : employeeActive ? 'ไปหน้าภาพรวมสิทธิ์' : 'เสร็จสิ้น');
-  const progressWidth = `${(step / 4) * 100}%`;
+      ? (saving ? 'กำลังบันทึก...' : editingEmployee?.status === 'ACTIVE' ? 'บันทึกการแก้ไข' : 'บันทึกแบบร่าง')
+      : (saving ? 'กำลังเปิดใช้งาน...' : employeeActive ? 'ไปหน้าภาพรวมสิทธิ์' : 'เสร็จสิ้น');
 
   return (
     <div className="mangmee-page">
@@ -622,33 +625,18 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
           <div className="text-[19px] font-extrabold text-gray-900">{isEditing ? 'แก้ไขข้อมูลพนักงาน' : 'เพิ่มพนักงานใหม่'}</div>
           <div className="mt-1 text-[15px] font-medium text-gray-500">{isEditing ? 'แก้ไขข้อมูลทีละขั้น · พนักงาน Draft จะยังใช้งานไม่ได้จนกด “เสร็จสิ้น”' : 'สร้างบัญชีผู้ใช้ทีละขั้น · ระบบเก็บเป็นแบบร่างจนกด “เสร็จสิ้น”'}</div>
 
-          <div className="mt-[22px] flex items-center gap-0 overflow-x-auto pb-1">
-            {STEP_DEFS.map((definition, index) => {
-              const done = definition.n < step;
-              const current = definition.n === step;
-              return (
-                <div key={definition.n} className="contents">
-                  <button type="button" onClick={() => void goToStep(definition.n)} className="flex shrink-0 cursor-pointer items-center gap-2 sm:gap-[9px]">
-                    <span className={cx('flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base font-extrabold sm:h-[38px] sm:w-[38px] sm:text-[19px]', current ? 'bg-brand-500 text-white' : done ? 'bg-brand-100 text-brand-600' : 'bg-gray-100 text-gray-400')}>
-                      {done ? '✓' : definition.n}
-                    </span>
-                    {/* Labels crowd small screens — show only the current step's label on mobile. */}
-                    <span className={cx('whitespace-nowrap text-[15px] font-extrabold xl:text-lg', current ? 'inline' : 'hidden xl:inline', current ? 'text-brand-600' : done ? 'text-gray-600' : 'text-gray-400')}>
-                      {definition.label}
-                    </span>
-                  </button>
-                  {index < STEP_DEFS.length - 1 && (
-                    <span className={cx('mx-1.5 h-0.5 min-w-[16px] flex-1 rounded-full sm:mx-2.5 xl:min-w-[60px]', definition.n < step ? 'bg-brand-300' : 'bg-gray-200')} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="mb-[22px] mt-1 h-[5px] overflow-hidden rounded-md bg-gray-100">
-            <div className="h-full rounded-md bg-linear-to-r from-brand-500 to-brand-700 transition-all" style={{ width: progressWidth }} />
-          </div>
+          <ThemedSteps
+            className="mb-[22px] mt-[22px]"
+            aria-label="ขั้นตอนการเพิ่มพนักงาน"
+            steps={STEP_DEFS.map((definition) => ({
+              key: String(definition.n),
+              label: definition.label,
+              state: definition.n === step ? 'current' : definition.n < step ? 'done' : 'upcoming',
+              onSelect: () => void goToStep(definition.n),
+            }))}
+          />
 
-          {step === 1 && (
+          {step === 1 && (loading ? <LoadingState label="กำลังโหลด..." /> : (
             <div className="grid gap-4">
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[200px_1fr_1fr]">
                 <div>
@@ -680,7 +668,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
                 />
               </div>
             </div>
-          )}
+          ))}
 
           {step === 2 && (
             <div>

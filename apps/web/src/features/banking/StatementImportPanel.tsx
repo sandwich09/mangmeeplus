@@ -4,6 +4,7 @@ import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
 import { uploadErrorMessage } from '@/common/files/upload-file.logic';
 
 import { useState, useEffect, useCallback } from 'react';
+import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import {
   listBankAccounts, listStatementImports,
@@ -15,6 +16,7 @@ import {
   MAX_STATEMENT_BINARY_BYTES, MAX_STATEMENT_TEXT_BYTES, STATEMENT_UPLOAD_ACCEPT,
 } from './banking.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { LoadingState } from '@/common/components/state/LoadingState';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 
@@ -35,6 +37,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
   const toast = useToast();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
   const [bankAccountId, setBankAccountId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,21 +50,33 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
   const [commitResult, setCommitResult] = useState<any | null>(null);
 
   const [imports, setImports] = useState<any[]>([]);
+  const [importsLoading, setImportsLoading] = useState(true);
 
   useEffect(() => {
-    listBankAccounts(companyId)
-      .then((r) => {
+    setAccountsLoading(true);
+    setImportsLoading(true);
+    void (async () => {
+      let hasAccounts = false;
+      try {
+        const r = await listBankAccounts(companyId);
         const list = r.data ?? r ?? [];
+        hasAccounts = list.length > 0;
         setAccounts(list);
         if (list.length > 0) setBankAccountId((prev) => prev || list[0].id);
-      })
-      .catch((e) => setError(err(e)));
+      } catch (e) { setError(err(e)); }
+      finally {
+        setAccountsLoading(false);
+        if (!hasAccounts) setImportsLoading(false);
+      }
+    })();
   }, [companyId]);
 
   const loadImports = useCallback(async () => {
     if (!bankAccountId) return;
+    setImportsLoading(true);
     try { const r = await listStatementImports(companyId, bankAccountId); setImports(r.data ?? r ?? []); }
     catch (e) { setError(err(e)); }
+    finally { setImportsLoading(false); }
   }, [companyId, bankAccountId]);
 
   useEffect(() => { loadImports(); }, [loadImports]);
@@ -154,8 +169,8 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
       <div className="grid grid-cols-2 gap-3 max-w-2xl">
         <div>
           <label className="block text-xs text-gray-600 mb-1">บัญชีธนาคาร</label>
-          <ThemedSelect className={inputClass} value={bankAccountId} onChange={(e) => { setBankAccountId(e.target.value); resetInput(); }}>
-            {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.displayName} ({a.bankName})</option>)}
+          <ThemedSelect className={inputClass} value={bankAccountId} disabled={accountsLoading} onChange={(e) => { setBankAccountId(e.target.value); resetInput(); }}>
+            {accountsLoading ? <option value="">กำลังโหลด...</option> : accounts.map((a: any) => <option key={a.id} value={a.id}>{a.displayName} ({a.bankName})</option>)}
           </ThemedSelect>
         </div>
       </div>
@@ -168,11 +183,10 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
           แนะนำไฟล์ CSV จากธนาคาร (K BIZ, SCB Business Anywhere ฯลฯ) เพราะตัวเลขตรงจากธนาคาร —
           หรือคัดลอกตารางจาก Excel มาวางในช่องด้านล่าง ถ้ามีแค่ PDF/รูปถ่าย statement ระบบจะอ่านให้แล้วต้องตรวจทานก่อนยืนยัน
         </p>
-        <input
-          type="file"
+        <ThemedFile
           accept={STATEMENT_UPLOAD_ACCEPT}
-          onChange={(e) => handleFile(e.target.files?.[0])}
-          className="block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:bg-brand-50 file:text-brand-700"
+          file={fileName ?? null}
+          onChange={(file) => { if (file) void handleFile(file); else setFileName(undefined); }}
         />
         {busy && !preview && <div className="text-sm text-gray-500">กำลังอ่านไฟล์...</div>}
         <textarea
@@ -274,7 +288,8 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {imports.length === 0 ? <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">ยังไม่มีการนำเข้า</td></tr> : imports.map((im: any) => (
+              {importsLoading ? <tr><td colSpan={5}><LoadingState label="กำลังโหลด..." /></td></tr>
+                : imports.length === 0 ? <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">ยังไม่มีการนำเข้า</td></tr> : imports.map((im: any) => (
                 <tr key={im.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">{im.originalFileName ?? <span className="text-gray-400 font-mono text-xs">{im.id.slice(0, 8)}</span>}</td>
                   <td className="px-4 py-3">{im.lineCount}{im.duplicateLineCount > 0 ? <span className="text-yellow-700 text-xs"> (ซ้ำ {im.duplicateLineCount})</span> : null}</td>

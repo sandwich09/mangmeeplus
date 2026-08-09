@@ -4,6 +4,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
 import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from '../../domain/logic/expense-totals.logic';
+import { validateExpenseDraftAmounts } from '../../domain/logic/expense-draft-amount-validation.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
   validateStatusTransition,
@@ -64,6 +65,8 @@ export class CreateExpenseDraftUseCase {
 
     // Compute totals from lines
     const lines = input.lines ?? [];
+    const amountError = validateExpenseDraftAmounts({ vatMode: input.vatMode, lines });
+    if (amountError) throw new BadRequestException(amountError);
     const computedLines = lines.map((l) => calcLineTotals({ ...l, discountAmount: l.discountAmount, vatMode: input.vatMode }));
     const totals = calcDocumentTotals({ lines: computedLines });
 
@@ -200,6 +203,8 @@ export class UpdateExpenseDraftUseCase {
     if (lines) {
       // Spec §19c: VAT mode describes the document arithmetic; claimability is the separate axis below.
       const vatMode = input.vatMode ?? r.vatMode;
+      const amountError = validateExpenseDraftAmounts({ vatMode, lines });
+      if (amountError) throw new BadRequestException(amountError);
       const computed = lines.map((l) => calcLineTotals({ ...l, discountAmount: l.discountAmount, vatMode }));
       totals = calcDocumentTotals({ lines: computed });
       const prepared = lines.map((l, i) => {
