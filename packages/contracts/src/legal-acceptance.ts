@@ -1,37 +1,37 @@
 export const CURRENT_LEGAL_DOCUMENTS = {
   terms: {
     type: 'TERMS_OF_USE',
-    version: '2026-08-09.2',
-    displayVersionTh: '9 สิงหาคม 2569 ฉบับที่ 2',
-    displayVersionEn: '9 August 2026, revision 2',
-    effectiveDate: '2026-08-09',
-    href: '/legal/releases/2026-08-09.2/terms-th.html',
+    version: 'v1',
+    displayVersionTh: 'เวอร์ชัน 1 (v1)',
+    displayVersionEn: 'Version 1 (v1)',
+    effectiveDate: '2026-08-10',
+    href: '/legal/releases/v1/terms-th.html',
     latestHref: '/terms',
     titleTh: 'ข้อกำหนดการใช้งาน MangmeePlus',
     titleEn: 'MangmeePlus Terms of Use',
     // SHA-256 of the exact UTF-8 bytes served from `href`. The release file is append-only:
     // changing it requires a new version, URL and hash rather than overwriting this artifact.
-    artifactSha256: 'da84cc20a91335a89111f87de878ac0a5f5bd78e633e99af3631687a6fcf9df7',
+    artifactSha256: 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: 'da84cc20a91335a89111f87de878ac0a5f5bd78e633e99af3631687a6fcf9df7',
+    releaseFingerprintSha256: 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
   },
   privacy: {
     type: 'PRIVACY_NOTICE',
-    version: '2026-08-09.2',
-    displayVersionTh: '9 สิงหาคม 2569 ฉบับที่ 2',
-    displayVersionEn: '9 August 2026, revision 2',
-    effectiveDate: '2026-08-09',
-    href: '/legal/releases/2026-08-09.2/privacy-th.html',
+    version: 'v1',
+    displayVersionTh: 'เวอร์ชัน 1 (v1)',
+    displayVersionEn: 'Version 1 (v1)',
+    effectiveDate: '2026-08-10',
+    href: '/legal/releases/v1/privacy-th.html',
     latestHref: '/privacy',
-    titleTh: 'นโยบายความเป็นส่วนตัว MangmeePlus',
+    titleTh: 'ประกาศความเป็นส่วนตัว MangmeePlus',
     titleEn: 'MangmeePlus Privacy Notice',
-    artifactSha256: 'd75b98533b16068b7503aaf548b061f0b2071a9984f1fc62ae15661e8c439929',
+    artifactSha256: '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: 'd75b98533b16068b7503aaf548b061f0b2071a9984f1fc62ae15661e8c439929',
+    releaseFingerprintSha256: '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
   },
 } as const;
 
-export const LEGAL_ACCEPTANCE_STATEMENT_VERSION = '2026-08-09.2';
+export const LEGAL_ACCEPTANCE_STATEMENT_VERSION = 'v1';
 
 export type LegalAcceptanceLocale = 'th' | 'en';
 export type LegalAcceptanceCapacity =
@@ -119,8 +119,8 @@ export function legalAcceptanceStatements(
       ? 'ฉันยืนยันว่าได้รับมอบหมายให้ใช้บัญชีผู้ดูแลระบบตามขอบเขตหน้าที่ของฉัน'
       : `ฉันยืนยันว่าได้รับอนุญาตจาก ${companyName} ให้ใช้บริการตามบทบาทและสิทธิที่กิจการกำหนด`;
   return {
-    terms: `ฉันยอมรับข้อกำหนดการใช้งาน MangmeePlus ฉบับ ${termsVersion}`,
-    privacy: `ฉันยืนยันว่าได้รับและมีโอกาสอ่านนโยบายความเป็นส่วนตัว MangmeePlus ฉบับ ${privacyVersion} แล้ว`,
+    terms: `ฉันยอมรับข้อกำหนดการใช้งาน MangmeePlus ${termsVersion}`,
+    privacy: `ฉันยืนยันว่าได้รับและมีโอกาสอ่านประกาศความเป็นส่วนตัว MangmeePlus ${privacyVersion} แล้ว`,
     capacity: capacityStatement,
   };
 }

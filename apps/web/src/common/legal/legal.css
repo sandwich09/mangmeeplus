@@ -147,6 +147,26 @@
   font-weight: 600;
 }
 
+.doc-switch-label-short {
+  display: none;
+}
+
+/* Keep all three document names readable on a phone. At the base size the active
+   third tab began off-screen, so a reader could not tell which page was open. */
+@media (max-width: 39.999rem) {
+  .doc-switch-label-long {
+    display: none;
+  }
+
+  .doc-switch-label-short {
+    display: inline;
+  }
+
+  .doc-switch-item + .doc-switch-item {
+    margin-left: 0.5rem;
+  }
+}
+
 /* Reading progress — a hairline on the masthead's own bottom edge. A long legal
    document is committing to read; showing how much is left is a real affordance. */
 .doc-progress {
@@ -411,6 +431,54 @@
   color: var(--doc-ink);
   font-size: var(--doc-text-xs);
   font-weight: 600;
+}
+
+/* On narrow screens the full vertical contents list pushed the document several
+   viewports below its title. Preserve every anchor in one compact, scrollable rail. */
+@media (max-width: 63.999rem) {
+  .doc-rail {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .doc-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .doc-toc {
+    width: max-content;
+    min-width: 100%;
+    flex-direction: row;
+    border-bottom: 1px solid var(--doc-rule);
+    border-left: 0;
+  }
+
+  .doc-toc-item {
+    grid-template-columns: auto auto;
+    gap: 0.5rem;
+    padding: 0.4375rem 0.75rem 0.5625rem;
+    font-size: var(--doc-text-sm);
+    white-space: nowrap;
+  }
+
+  .doc-toc-item:first-child {
+    padding-left: 0;
+  }
+
+  .doc-toc-item::before {
+    inset: auto 0 -1px;
+    height: 2px;
+    width: auto;
+  }
+
+  .doc-toc-num {
+    line-height: inherit;
+  }
+
+  .doc-rail-contact {
+    display: none;
+  }
 }
 
 /* ── The sheet ─────────────────────────────────────────────────────────────────

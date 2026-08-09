@@ -105,7 +105,7 @@ export class AcceptLegalDocumentsDto implements AcceptLegalDocumentsInput {
   @Equals(true) termsAccepted!: true;
   @Equals(true) privacyAcknowledged!: true;
   @Equals(true) capacityConfirmed!: true;
-  // The public 2026-08-09.2 artifacts are Thai-only. English must ship as its own
+  // The current immutable artifacts are Thai-only. English must ship as its own
   // versioned/fingerprinted release before this boundary may accept `en`.
   @Equals('th') locale!: 'th';
   @IsString() @Length(64, 64) @MaxLength(64) @Matches(/^[a-f0-9]{64}$/) displayChallenge!: string;

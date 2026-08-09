@@ -24,8 +24,6 @@ const ACTOR = {
   requestId: 'request-1',
   userAgent: 'test-browser',
 };
-const COMPANY_CONTEXT = { companyId: ACTOR.companyId, companyName: 'บริษัท ทดสอบ จำกัด' };
-
 const INPUT: AcceptLegalDocumentsInput = {
   termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
   privacyVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
@@ -117,8 +115,8 @@ describe('LegalAcceptanceService', () => {
     assert.match(status.statements.en.terms, /I accept/);
     assert.match(status.displayChallenges.th, /^[a-f0-9]{64}$/);
     assert.notEqual(status.displayChallenges.th, status.displayChallenges.en);
-    assert.equal(status.terms.href, '/legal/releases/2026-08-09.2/terms-th.html');
-    assert.equal(status.privacy.href, '/legal/releases/2026-08-09.2/privacy-th.html');
+    assert.equal(status.terms.href, '/legal/releases/v1/terms-th.html');
+    assert.equal(status.privacy.href, '/legal/releases/v1/privacy-th.html');
     assert.match(status.terms.artifactSha256, /^[a-f0-9]{64}$/);
     assert.match(status.privacy.artifactSha256, /^[a-f0-9]{64}$/);
   });
@@ -205,7 +203,7 @@ describe('LegalAcceptanceService', () => {
     assert.equal(result.termsVersion, CURRENT_LEGAL_DOCUMENTS.terms.version);
   });
 
-  it('labels a later capacity/release clickwrap as MATERIAL_UPDATE using membership history', async () => {
+  it('labels a later document release as MATERIAL_UPDATE using user history', async () => {
     const creates: any[] = [];
     let countWhere: any;
     const tx = {
@@ -230,7 +228,7 @@ describe('LegalAcceptanceService', () => {
 
     await service.accept(ACTOR, INPUT);
 
-    assert.deepEqual(countWhere, { membershipId: ACTOR.membershipId });
+    assert.deepEqual(countWhere, { acceptedByUserId: ACTOR.userId });
     assert.equal(creates[0].surface, 'MATERIAL_UPDATE');
     assert.equal(creates[1].surface, 'MATERIAL_UPDATE');
   });
@@ -343,15 +341,15 @@ describe('LegalAcceptanceService', () => {
     assert.equal(auditCalls, 0);
   });
 
-  it('requires new evidence after an invited member becomes an owner', async () => {
-    const invitedScope = legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT);
+  it('keeps current evidence after an invited member becomes an owner', async () => {
+    const userScope = legalReleaseScopeRef(ACTOR.userId);
     const rows = acceptedRows(new Date('2026-08-09T12:00:00.000Z'), 'INVITED_MEMBER');
     let currentRoles = ['STAFF'];
     const prisma = {
       client: {
         companyMembership: { findFirst: async () => membership(currentRoles) },
         legalDocumentActionRecord: {
-          findMany: async (args: any) => args.where.scopeRef === invitedScope ? rows : [],
+          findMany: async (args: any) => args.where.scopeRef === userScope ? rows : [],
         },
       },
     } as any;
@@ -359,30 +357,33 @@ describe('LegalAcceptanceService', () => {
 
     assert.equal(await service.isRequired(ACTOR), false);
     currentRoles = ['OWNER'];
-    assert.equal(await service.isRequired(ACTOR), true);
+    assert.equal(await service.isRequired(ACTOR), false);
   });
 
-  it('keeps evidence current when roles change but the legal capacity statement does not', async () => {
-    const invitedScope = legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT);
+  it('keeps current evidence when the same user enters another company', async () => {
+    const userScope = legalReleaseScopeRef(ACTOR.userId);
     const rows = acceptedRows(new Date('2026-08-09T12:00:00.000Z'), 'INVITED_MEMBER');
-    let currentRoles = ['STAFF'];
+    const otherActor = { ...ACTOR, companyId: 'company-2', membershipId: 'membership-2' };
     const prisma = {
       client: {
-        companyMembership: { findFirst: async () => membership(currentRoles) },
+        companyMembership: { findFirst: async () => ({
+          id: otherActor.membershipId,
+          companyId: otherActor.companyId,
+          company: { name: 'บริษัทที่สอง จำกัด' },
+          roles: [{ role: { key: 'MANAGER' } }],
+        }) },
         legalDocumentActionRecord: {
-          findMany: async (args: any) => args.where.scopeRef === invitedScope ? rows : [],
+          findMany: async (args: any) => args.where.scopeRef === userScope ? rows : [],
         },
       },
     } as any;
     const service = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
 
-    assert.equal(await service.isRequired(ACTOR), false);
-    currentRoles = ['MANAGER'];
-    assert.equal(await service.isRequired(ACTOR), false);
+    assert.equal(await service.isRequired(otherActor), false);
   });
 
-  it('changes release scope for statement, artifact URL, document, or hash changes without overwriting history', () => {
-    const base = legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT);
+  it('changes user scope for statement, artifact URL, document, or hash changes without overwriting history', () => {
+    const base = legalReleaseScopeRef(ACTOR.userId);
     const release = {
       statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
       termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
@@ -393,21 +394,18 @@ describe('LegalAcceptanceService', () => {
       privacyFingerprint: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
       statementTemplateFingerprint: legalStatementTemplateFingerprint(),
     };
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT, {
+    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
       ...release, statementVersion: 'future-statement',
     }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT, {
+    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
       ...release, termsVersion: 'future-terms',
     }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT, {
+    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
       ...release, termsArtifactUrl: '/legal/releases/future/terms-th.html',
     }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', COMPANY_CONTEXT, {
+    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
       ...release, privacyFingerprint: 'f'.repeat(64),
     }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.membershipId, 'INVITED_MEMBER', {
-      ...COMPANY_CONTEXT,
-      companyName: 'บริษัท เปลี่ยนชื่อ จำกัด',
-    }));
+    assert.notEqual(base, legalReleaseScopeRef('another-user'));
   });
 });

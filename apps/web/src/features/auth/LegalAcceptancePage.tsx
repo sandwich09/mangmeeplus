@@ -49,11 +49,11 @@ type Copy = {
 const COPY: Record<LegalAcceptanceLocale, Copy> = {
   th: {
     title: 'ก่อนเริ่มใช้งาน MangmeePlus',
-    intro: 'โปรดอ่านเอกสารฉบับเต็มและยืนยันทั้ง 3 รายการด้านล่าง ระบบจะบันทึกฉบับเอกสาร วันเวลา บัญชี และกิจการที่คุณยืนยันไว้เป็นหลักฐาน',
-    company: 'กำลังยืนยันสำหรับ',
+    intro: 'โปรดอ่านเอกสารฉบับเต็มและยืนยันทั้ง 3 รายการด้านล่าง การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ และระบบจะถามอีกครั้งเฉพาะเมื่อเอกสารออกฉบับใหม่',
+    company: 'กิจการอ้างอิงสำหรับหลักฐานครั้งแรก',
     requiredLegend: '* ข้อมูลจำเป็น',
     termsHeading: 'ข้อกำหนดการใช้งาน',
-    privacyHeading: 'นโยบายความเป็นส่วนตัว',
+    privacyHeading: 'ประกาศความเป็นส่วนตัว',
     capacityHeading: {
       AUTHORIZED_REPRESENTATIVE: 'อำนาจในการยืนยันแทนกิจการ',
       INVITED_MEMBER: 'สิทธิการใช้งานที่กิจการมอบหมาย',
@@ -70,15 +70,15 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     saveError: 'ยังบันทึกการยืนยันไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง',
     staleError: 'ข้อมูลกิจการ บทบาท หรือฉบับเอกสารเปลี่ยนระหว่างที่คุณอ่าน กรุณาตรวจสอบข้อความล่าสุดและยืนยันใหม่',
     logoutError: 'ไม่สามารถออกจากระบบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง',
-    privacyLink: 'นโยบายความเป็นส่วนตัว',
+    privacyLink: 'ประกาศความเป็นส่วนตัว',
     termsLink: 'ข้อกำหนดการใช้งาน',
     deletionLink: 'การลบข้อมูล',
     footer: 'คุณสามารถเปิดอ่านเอกสารฉบับเต็มในแท็บใหม่ได้ก่อนยืนยัน',
   },
   en: {
     title: 'Before you start using MangmeePlus',
-    intro: 'Please read the full documents and confirm all three required items below. We record the document versions, date and time, account, and company as evidence of your confirmation.',
-    company: 'Confirming for',
+    intro: 'Please read the full documents and confirm all three required items below. This confirmation applies to your account across companies, and we ask again only when a new document release is issued.',
+    company: 'Initial company evidence context',
     requiredLegend: '* Required',
     termsHeading: 'Terms of Use',
     privacyHeading: 'Privacy Notice',
@@ -208,7 +208,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
             <p className="doc-accept-brand-name">
               มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span> MangmeePlus
             </p>
-            <p className="doc-accept-brand-sub doc-display">Business &amp; Accounting Assistant</p>
+            <p className="doc-accept-brand-sub doc-display">Secure business workspace</p>
           </div>
         </header>
 

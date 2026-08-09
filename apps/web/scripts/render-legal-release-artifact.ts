@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const RELEASE_VERSION = '2026-08-09.2';
+const RELEASE_VERSION = 'v1';
 const FIXED_COPYRIGHT_YEAR = '2026';
 
 /**
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     .replace(/© \d{4}/g, `© ${FIXED_COPYRIGHT_YEAR}`);
   const title = document === 'terms'
     ? 'ข้อกำหนดการใช้งาน MangmeePlus'
-    : 'นโยบายความเป็นส่วนตัว MangmeePlus';
+    : 'ประกาศความเป็นส่วนตัว MangmeePlus';
 
   const html = `<!doctype html>
 <html lang="th">
@@ -84,7 +84,7 @@ ${buildStylesheet()}
   </style>
 </head>
 <body>
-  <p class="release-banner">เอกสารฉบับคงที่สำหรับการยอมรับทางอิเล็กทรอนิกส์ · เวอร์ชัน <strong>${RELEASE_VERSION}</strong> · มีผลวันที่ 9 สิงหาคม 2569</p>
+  <p class="release-banner">เอกสารฉบับคงที่สำหรับการยอมรับทางอิเล็กทรอนิกส์ · เวอร์ชัน <strong>${RELEASE_VERSION}</strong> · มีผลวันที่ 10 สิงหาคม 2569</p>
   ${renderedPage}
 </body>
 </html>

@@ -1,0 +1,1507 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,follow">
+  <meta name="mangmeeplus-legal-version" content="v1">
+  <title>ประกาศความเป็นส่วนตัว MangmeePlus · ฉบับ v1</title>
+  <style>
+/* Generated from packages/design-tokens/tokens.json. */
+/* Do not edit by hand. */
+
+:root {
+  --font-family-sans: 'Outfit', 'IBM Plex Sans Thai', Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-page-bg: #f6f8f5;
+  --color-surface: #ffffff;
+  --color-border: #e3ebe5;
+  --color-text-primary: #1a2e22;
+  --color-text-secondary: #475467;
+  --color-success-surface: #e9f6ef;
+  --color-success-text: #2f6f51;
+  --color-info-surface: #eef3fb;
+  --color-info-text: #315a8c;
+  --color-neutral-surface: #edf1ed;
+  --color-gray-25: #fcfcfd;
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f2f4f7;
+  --color-gray-200: #e4e7ec;
+  --color-gray-300: #d0d5dd;
+  --color-gray-400: #98a2b3;
+  --color-gray-500: #667085;
+  --color-gray-600: #475467;
+  --color-gray-700: #344054;
+  --color-gray-800: #1d2939;
+  --color-gray-900: #101828;
+  --color-brand-25: #f0fdf4;
+  --color-brand-50: #ecfdf3;
+  --color-brand-100: #dcfce7;
+  --color-brand-200: #bbf7d0;
+  --color-brand-300: #86efac;
+  --color-brand-400: #4ade80;
+  --color-brand-500: #22c55e;
+  --color-brand-600: #16a34a;
+  --color-brand-700: #15803d;
+  --color-brand-800: #166534;
+  --color-brand-900: #14532d;
+  --color-gold-100: #fef3c7;
+  --color-gold-300: #fcd34d;
+  --color-gold-400: #fbbf24;
+  --color-gold-500: #f59e0b;
+  --color-gold-600: #d97706;
+  --color-success-50: #ecfdf3;
+  --color-success-500: #12b76a;
+  --color-success-600: #039855;
+  --color-success-700: #027a48;
+  --color-warning-50: #fffaeb;
+  --color-warning-100: #fef0c7;
+  --color-warning-500: #f79009;
+  --color-warning-600: #dc6803;
+  --color-warning-700: #b54708;
+  --color-error-50: #fef3f2;
+  --color-error-500: #f04438;
+  --color-error-700: #b42318;
+  --color-blue-light-50: #f0f9ff;
+  --color-blue-light-500: #0ba5ec;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --shadow-focus: 0 0 0 3px rgb(34 197 94 / 20%);
+  --shadow-theme-sm: 0 1px 3px rgb(16 24 40 / 10%), 0 1px 2px rgb(16 24 40 / 6%);
+  --shadow-theme-md: 0 4px 8px -2px rgb(16 24 40 / 10%), 0 2px 4px -2px rgb(16 24 40 / 6%);
+  --z-index-modal: 1000;
+}
+
+/* Self-hosted brand faces — the families named by packages/design-tokens/tokens.json.
+   Files live in apps/web/public/fonts and ship with the app, so builds stay offline and
+   deterministic (the reason the old stack avoided next/font/google) AND every visitor
+   sees the same typography. The previous stack listed only faces we never shipped, so
+   each machine fell back to whatever Thai font it happened to have — macOS resolved it
+   to Thonburi, which is why the product read like a government form.
+
+   Both families are SIL Open Font License 1.1:
+     IBM Plex Sans Thai — https://github.com/IBM/plex
+     Outfit            — https://github.com/Outfitio/Outfit-Fonts
+   Subsets taken from the Google Fonts CSS API (Outfit: latin + latin-ext variable axis;
+   IBM Plex Sans Thai: thai subset only — Latin is served by Outfit, which sits first in
+   the stack). Re-download with the same unicode-range blocks if you add a weight. */
+
+/* ── Outfit — Latin, variable 400–700 ─────────────────────────────────────────── */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/outfit-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/outfit-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ── IBM Plex Sans Thai — Thai script ─────────────────────────────────────────────
+   One @font-face per weight: the family has no variable build on Google Fonts. The
+   unicode-range keeps these files out of the download for Latin-only views. */
+@font-face {
+  font-family: 'IBM Plex Sans Thai';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/plex-thai-400.woff2') format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans Thai';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/plex-thai-500.woff2') format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans Thai';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/plex-thai-600.woff2') format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans Thai';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/plex-thai-700.woff2') format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Legal / PDPA document typography — /privacy, /terms, /data-deletion.
+
+   These pages are read, not operated, so they are set as a document rather than a
+   dashboard: one continuous sheet divided by hairlines, a column sized to be the
+   measure, and Thai leading loose enough for upper/lower vowel and tone marks.
+   Every colour resolves to a design token; nothing new is invented here.
+
+   All selectors are `doc-` prefixed because this file is imported globally.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.doc {
+  /* A green-biased neutral, a step deeper than --color-page-bg, so the white sheet
+     reads as a sheet instead of dissolving into the background. */
+  --doc-ground: #eef2ec;
+  --doc-sheet: #ffffff;
+  --doc-ink: var(--color-gray-900);
+  --doc-body: var(--color-gray-700);
+  --doc-soft: var(--color-gray-500);
+  --doc-faint: var(--color-gray-400);
+  --doc-rule: var(--color-gray-200);
+  --doc-rule-soft: var(--color-gray-100);
+  --doc-accent: var(--color-brand-700);
+  --doc-accent-deep: var(--color-brand-900);
+  --doc-accent-wash: var(--color-brand-25);
+  --doc-gold: var(--color-gold-500);
+
+  /* Type scale. Body sits at 17px: Thai diacritics lose definition below 16px, and
+     14px body text was a large part of why these pages felt like a form. */
+  --doc-text-xs: 0.75rem;
+  --doc-text-sm: 0.8125rem;
+  --doc-text-base: 0.9375rem;
+  --doc-text-body: 1.0625rem;
+  --doc-text-lg: 1.25rem;
+  --doc-text-xl: 1.5rem;
+  --doc-text-2xl: 2rem;
+  --doc-text-3xl: 2.5rem;
+
+  --doc-leading-body: 1.9;
+
+  min-height: 100dvh;
+  background: var(--doc-ground);
+  color: var(--doc-body);
+  font-size: var(--doc-text-body);
+}
+
+/* Latin-only runs — numerals, eyebrows, the wordmark. Outfit already leads the brand
+   stack; naming it explicitly keeps these from inheriting a Thai-first override. */
+.doc-display {
+  font-family: 'Outfit', var(--font-family-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Masthead ──────────────────────────────────────────────────────────────────
+   Deliberately slim and quiet: the title plate below is the page's opening
+   statement, so the chrome above it should not compete. */
+.doc-mast {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  border-bottom: 1px solid var(--doc-rule);
+  background: rgb(255 255 255 / 88%);
+  backdrop-filter: blur(14px);
+}
+
+.doc-mast-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 0.875rem 1.25rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-mast-inner {
+    padding-inline: 2rem;
+  }
+}
+
+.doc-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: 0.625rem;
+  color: var(--doc-ink);
+  text-decoration: none;
+}
+
+.doc-wordmark-glyph {
+  display: inline-flex;
+  height: 2rem;
+  width: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background: var(--doc-accent-deep);
+}
+
+.doc-wordmark-text {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Document switcher — an underline rail, not a pill group. Pills read as filter
+   controls; these are three sibling documents, so they get tabs. */
+.doc-switch {
+  display: flex;
+  max-width: 100%;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.doc-switch::-webkit-scrollbar {
+  display: none;
+}
+
+.doc-switch-item {
+  white-space: nowrap;
+  /* The indicator is the element's own bottom border rather than a pseudo-element
+     offset to the masthead's edge — that coupling put the rule outside the bar. */
+  border-bottom: 2px solid transparent;
+  padding: 0.375rem 0.125rem 0.3125rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.doc-switch-item + .doc-switch-item {
+  margin-left: 1.375rem;
+}
+
+.doc-switch-item:hover {
+  border-bottom-color: var(--doc-rule);
+  color: var(--doc-ink);
+}
+
+.doc-switch-item[aria-current='page'] {
+  border-bottom-color: var(--doc-accent);
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+}
+
+.doc-switch-label-short {
+  display: none;
+}
+
+/* Keep all three document names readable on a phone. At the base size the active
+   third tab began off-screen, so a reader could not tell which page was open. */
+@media (max-width: 39.999rem) {
+  .doc-switch-label-long {
+    display: none;
+  }
+
+  .doc-switch-label-short {
+    display: inline;
+  }
+
+  .doc-switch-item + .doc-switch-item {
+    margin-left: 0.5rem;
+  }
+}
+
+/* Reading progress — a hairline on the masthead's own bottom edge. A long legal
+   document is committing to read; showing how much is left is a real affordance. */
+.doc-progress {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: -1px;
+  height: 2px;
+  width: var(--doc-progress, 0%);
+  background: linear-gradient(90deg, var(--doc-accent) 0%, var(--color-brand-400) 100%);
+  transition: width 0.12s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-progress {
+    transition: none;
+  }
+}
+
+/* ── Shell ───────────────────────────────────────────────────────────────────── */
+.doc-main {
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-main {
+    padding: 2.25rem 2rem 5rem;
+  }
+}
+
+.doc-columns {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+@media (min-width: 64rem) {
+  .doc-columns {
+    grid-template-columns: 14rem minmax(0, 1fr);
+    gap: 2.5rem;
+    margin-top: 2.25rem;
+  }
+}
+
+/* ── Title plate ───────────────────────────────────────────────────────────────
+   Set as a title page, not a hero: eyebrow, title, standfirst, then a colophon row
+   of the document's own legal metadata. The old version's blurred colour blobs are
+   gone; the surface is a flat brand ground dithered by the shared grain overlay so
+   it does not band. */
+.doc-plate {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: var(--doc-accent-deep);
+  color: #fff;
+  padding: 2.25rem 1.5rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-plate {
+    border-radius: 1.5rem;
+    padding: 3.25rem 3rem 2.75rem;
+  }
+}
+
+/* A single hairline of gold across the top edge — the one warm note on the page,
+   and the same accent the wordmark's "มี" carries. */
+.doc-plate::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--doc-gold) 0%, var(--color-gold-300) 38%, transparent 88%);
+}
+
+.doc-plate-body {
+  position: relative;
+  max-width: 44rem;
+}
+
+.doc-eyebrow {
+  margin: 0;
+  color: var(--color-brand-200);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.doc-title {
+  margin: 0.875rem 0 0;
+  color: #fff;
+  font-size: var(--doc-text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.22;
+  text-wrap: balance;
+}
+
+@media (min-width: 40rem) {
+  .doc-title {
+    font-size: var(--doc-text-3xl);
+  }
+}
+
+.doc-standfirst {
+  margin: 1rem 0 0;
+  max-width: 38rem;
+  color: rgb(255 255 255 / 76%);
+  font-size: var(--doc-text-base);
+  line-height: 1.85;
+}
+
+@media (min-width: 40rem) {
+  .doc-standfirst {
+    font-size: var(--doc-text-body);
+  }
+}
+
+/* Colophon — the document's identity, set as a data row with hairline separators.
+   Labels are keys, values are facts; this is the one place tabular figures matter. */
+.doc-colophon {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2rem;
+  margin-top: 2rem;
+  border-top: 1px solid rgb(255 255 255 / 16%);
+  padding-top: 1.25rem;
+}
+
+.doc-colophon-item {
+  min-width: 0;
+}
+
+.doc-colophon-label {
+  margin: 0;
+  color: rgb(255 255 255 / 55%);
+  font-size: var(--doc-text-xs);
+  font-weight: 500;
+}
+
+.doc-colophon-value {
+  margin: 0.3125rem 0 0;
+  color: #fff;
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Rail ────────────────────────────────────────────────────────────────────── */
+.doc-rail {
+  align-self: start;
+}
+
+@media (min-width: 64rem) {
+  .doc-rail {
+    position: sticky;
+    top: 5.5rem;
+    max-height: calc(100dvh - 7.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+}
+
+.doc-rail-label {
+  margin: 0 0 0.75rem;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+}
+
+.doc-toc {
+  display: flex;
+  flex-direction: column;
+  /* The rail's own hairline runs the full height; the active marker sits on it. */
+  border-left: 1px solid var(--doc-rule);
+}
+
+.doc-toc-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.375rem minmax(0, 1fr);
+  gap: 0.625rem;
+  padding: 0.4375rem 0.5rem 0.4375rem 0.875rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.5;
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+
+.doc-toc-item::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: -1px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.16s ease;
+}
+
+.doc-toc-num {
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.75;
+  transition: color 0.16s ease;
+}
+
+.doc-toc-item:hover {
+  color: var(--doc-ink);
+}
+
+.doc-toc-item:hover .doc-toc-num {
+  color: var(--doc-accent);
+}
+
+.doc-toc-item[data-active='true'] {
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+}
+
+.doc-toc-item[data-active='true']::before {
+  background: var(--doc-accent);
+}
+
+.doc-toc-item[data-active='true'] .doc-toc-num {
+  color: var(--doc-accent);
+}
+
+/* Contact block — a colophon under a hairline, not another tinted card. */
+.doc-rail-contact {
+  margin-top: 1.75rem;
+  border-top: 1px solid var(--doc-rule);
+  padding-top: 1rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+  line-height: 1.7;
+}
+
+.doc-rail-mail {
+  color: var(--doc-accent);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+}
+
+.doc-rail-mail:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+.doc-rail-contact-title {
+  margin: 0 0 0.375rem;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+}
+
+/* On narrow screens the full vertical contents list pushed the document several
+   viewports below its title. Preserve every anchor in one compact, scrollable rail. */
+@media (max-width: 63.999rem) {
+  .doc-rail {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .doc-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .doc-toc {
+    width: max-content;
+    min-width: 100%;
+    flex-direction: row;
+    border-bottom: 1px solid var(--doc-rule);
+    border-left: 0;
+  }
+
+  .doc-toc-item {
+    grid-template-columns: auto auto;
+    gap: 0.5rem;
+    padding: 0.4375rem 0.75rem 0.5625rem;
+    font-size: var(--doc-text-sm);
+    white-space: nowrap;
+  }
+
+  .doc-toc-item:first-child {
+    padding-left: 0;
+  }
+
+  .doc-toc-item::before {
+    inset: auto 0 -1px;
+    height: 2px;
+    width: auto;
+  }
+
+  .doc-toc-num {
+    line-height: inherit;
+  }
+
+  .doc-rail-contact {
+    display: none;
+  }
+}
+
+/* ── The sheet ─────────────────────────────────────────────────────────────────
+   One surface for the whole document. Sections are separated by full-bleed rules
+   rather than each floating in its own card — that stack of nested rounded boxes
+   was what made a legal notice read like an admin console. */
+.doc-sheet {
+  min-width: 0;
+  border: 1px solid var(--doc-rule);
+  border-radius: 1.25rem;
+  background: var(--doc-sheet);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 12px 32px -18px rgb(16 24 40 / 18%);
+}
+
+.doc-section {
+  /* Clears the sticky masthead when an anchor is followed. */
+  scroll-margin-top: 5.5rem;
+  padding: 2rem 1.375rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-section {
+    padding: 2.75rem 3rem;
+  }
+}
+
+.doc-section + .doc-section {
+  border-top: 1px solid var(--doc-rule);
+}
+
+.doc-section-head {
+  margin-bottom: 1.5rem;
+}
+
+.doc-h2 {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-lg);
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+@media (min-width: 40rem) {
+  .doc-h2 {
+    font-size: var(--doc-text-xl);
+  }
+}
+
+/* Anchor handle — hangs in the left margin on hover/focus. Legal sections get cited
+   by URL, so make the permalink reachable without it decorating every heading. */
+.doc-anchor {
+  margin-left: 0.5rem;
+  color: var(--doc-rule);
+  font-weight: 500;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.16s ease, color 0.16s ease;
+}
+
+.doc-section-head:hover .doc-anchor,
+.doc-anchor:focus-visible {
+  color: var(--doc-accent);
+  opacity: 1;
+}
+
+.doc-lead {
+  margin: 0.75rem 0 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+/* ── Running text ────────────────────────────────────────────────────────────── */
+.doc-prose {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  color: var(--doc-body);
+  line-height: var(--doc-leading-body);
+}
+
+.doc-prose > p {
+  margin: 0;
+}
+
+.doc-prose strong {
+  color: var(--doc-ink);
+  font-weight: 600;
+}
+
+.doc-prose a {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color 0.16s ease, color 0.16s ease;
+}
+
+.doc-prose a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+/* A sub-heading inside a section. One step below .doc-h2 and set in ink, so the
+   old "everything is extrabold" flatness resolves into an actual hierarchy. */
+.doc-h3 {
+  margin: 0.5rem 0 -0.375rem;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.doc-footnote {
+  margin: 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  line-height: 1.75;
+}
+
+/* ── Lists ─────────────────────────────────────────────────────────────────────
+   Hand-set markers with a proper hanging indent: the browser default puts Thai
+   wrapped lines under the marker, which breaks the left edge of a long clause. */
+.doc-list,
+.doc-olist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: doc-item;
+}
+
+.doc-list > li,
+.doc-olist > li {
+  position: relative;
+  padding-left: 1.75rem;
+}
+
+.doc-list > li + li,
+.doc-olist > li + li {
+  margin-top: 0.75rem;
+}
+
+.doc-list > li::before {
+  content: '';
+  position: absolute;
+  left: 0.1875rem;
+  /* Centres the mark on the first line's optical middle at 1.9 leading. */
+  top: calc(var(--doc-leading-body) * 0.5em - 0.1875rem);
+  height: 0.375rem;
+  width: 0.375rem;
+  border-radius: 1px;
+  background: var(--color-brand-300);
+  transform: rotate(45deg);
+}
+
+.doc-olist > li::before {
+  counter-increment: doc-item;
+  content: counter(doc-item);
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--doc-accent);
+  font-family: 'Outfit', var(--font-family-sans);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--doc-leading-body);
+}
+
+/* Nested list inside a callout keeps the same markers at a tighter rhythm. */
+.doc-note .doc-list > li + li {
+  margin-top: 0.5rem;
+}
+
+/* ── Definition pairs (was: grid of tinted cards) ──────────────────────────────
+   Two columns of hairline-topped key/value pairs. Reads as a specification table,
+   which is what this content actually is — a tinted rounded box said nothing. */
+.doc-defs {
+  display: grid;
+  gap: 0 2.5rem;
+  margin: 0;
+}
+
+@media (min-width: 48rem) {
+  .doc-defs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.doc-def {
+  border-top: 1px solid var(--doc-rule);
+  padding: 1rem 0 1.125rem;
+}
+
+.doc-def-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.doc-def-body {
+  margin: 0.4375rem 0 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-def-body a {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+}
+
+.doc-def-body strong {
+  color: var(--doc-body);
+  font-weight: 600;
+}
+
+/* ── Callouts ──────────────────────────────────────────────────────────────────
+   A left rule carries the tone; the ground stays nearly white. Three saturated
+   tinted blocks per section was the loudest part of the old page. */
+.doc-note {
+  border-left: 3px solid var(--doc-note-rule);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: var(--doc-note-bg);
+  padding: 1rem 1.25rem 1.0625rem;
+}
+
+.doc-note-brand {
+  --doc-note-rule: var(--color-brand-500);
+  --doc-note-bg: var(--doc-accent-wash);
+}
+
+.doc-note-warning {
+  --doc-note-rule: var(--color-warning-500);
+  --doc-note-bg: var(--color-warning-50);
+}
+
+.doc-note-neutral {
+  --doc-note-rule: var(--color-gray-300);
+  --doc-note-bg: var(--color-gray-50);
+}
+
+.doc-note-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+/* Deliberately NOT a flex column: callout bodies are usually one sentence with a
+   link inside it, and flex would promote that inline link to its own row — breaking
+   the sentence into three stacked fragments. */
+.doc-note-body {
+  margin-top: 0.4375rem;
+  color: var(--doc-body);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-note-body > p {
+  margin: 0;
+}
+
+.doc-note-body > * + * {
+  margin-top: 0.75rem;
+}
+
+.doc-note-body a {
+  color: var(--doc-accent-deep);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ── Table ─────────────────────────────────────────────────────────────────────
+   Hairline rules only, no fills; row headers carry the weight. */
+.doc-table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.doc-table {
+  width: 100%;
+  min-width: 38rem;
+  border-collapse: collapse;
+  font-size: var(--doc-text-base);
+  text-align: left;
+}
+
+.doc-table thead th {
+  border-bottom: 1px solid var(--color-gray-300);
+  padding: 0 0.875rem 0.625rem;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.doc-table thead th:first-child,
+.doc-table tbody th {
+  padding-left: 0;
+}
+
+.doc-table tbody th {
+  width: 12rem;
+  color: var(--doc-ink);
+  font-weight: 600;
+  vertical-align: top;
+}
+
+.doc-table tbody td {
+  padding: 0.9375rem 0.875rem;
+  color: var(--doc-soft);
+  line-height: 1.75;
+  vertical-align: top;
+}
+
+.doc-table tbody th {
+  padding: 0.9375rem 0.875rem 0.9375rem 0;
+  line-height: 1.6;
+}
+
+.doc-table tbody tr + tr > * {
+  border-top: 1px solid var(--doc-rule-soft);
+}
+
+/* ── Source links ─────────────────────────────────────────────────────────────
+   Statute citations. The trailing ↗ is the only glyph that earns its place here:
+   these all open externally, and a legal reference should say so. */
+.doc-source {
+  color: var(--doc-accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+  transition: color 0.16s ease, text-decoration-color 0.16s ease;
+}
+
+.doc-source:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+.doc-source::after {
+  content: '↗';
+  margin-left: 0.1875rem;
+  color: var(--doc-faint);
+  font-size: 0.8em;
+  text-decoration: none;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────────── */
+.doc-foot {
+  border-top: 1px solid var(--doc-rule);
+  background: rgb(255 255 255 / 60%);
+}
+
+.doc-foot-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-inline: auto;
+  max-width: 68rem;
+  padding: 1.75rem 1.25rem 2.25rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+@media (min-width: 40rem) {
+  .doc-foot-inner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-inline: 2rem;
+  }
+}
+
+.doc-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 1.25rem;
+}
+
+.doc-foot-links a {
+  color: var(--doc-soft);
+  text-decoration: none;
+  transition: color 0.16s ease;
+}
+
+.doc-foot-links a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* ── Focus ─────────────────────────────────────────────────────────────────────
+   One visible focus treatment for every interactive element on these pages. */
+.doc a:focus-visible,
+.doc button:focus-visible {
+  outline: 2px solid var(--doc-accent);
+  outline-offset: 3px;
+  border-radius: 0.25rem;
+}
+
+.doc-plate a:focus-visible {
+  outline-color: var(--color-brand-200);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Acceptance gate (/legal-acceptance)
+
+   The same document language as the notices it points at — the person standing here
+   is being asked to sign, so the screen should read as the signature page of those
+   documents rather than as an unrelated onboarding step. It reuses the .doc token
+   block, so its wrapper carries the `doc` class too.
+   ───────────────────────────────────────────────────────────────────────────── */
+.doc-accept-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-inline: auto;
+  max-width: 46rem;
+  padding: 1.75rem 1.25rem 3rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-main {
+    padding: 2.5rem 2rem 4rem;
+  }
+}
+
+.doc-accept-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.doc-accept-brand-name {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.doc-accept-brand-sub {
+  margin: 0.0625rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-xs);
+  letter-spacing: 0.04em;
+}
+
+.doc-accept-sheet {
+  overflow: hidden;
+  border: 1px solid var(--doc-rule);
+  border-radius: 1.25rem;
+  background: var(--doc-sheet);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 12px 32px -18px rgb(16 24 40 / 18%);
+}
+
+.doc-accept-plate {
+  position: relative;
+  background: var(--doc-accent-deep);
+  color: #fff;
+  padding: 1.75rem 1.375rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-plate {
+    padding: 2.25rem 2.5rem 2rem;
+  }
+}
+
+.doc-accept-plate::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--doc-gold) 0%, var(--color-gold-300) 38%, transparent 88%);
+}
+
+.doc-accept-plate .doc-title {
+  font-size: var(--doc-text-xl);
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-plate .doc-title {
+    font-size: var(--doc-text-2xl);
+  }
+}
+
+/* Which company you are signing for — the one fact that changes what this means. */
+.doc-accept-for {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 1.5rem 0 0;
+  border-top: 1px solid rgb(255 255 255 / 16%);
+  padding-top: 1rem;
+}
+
+.doc-accept-for-label {
+  color: rgb(255 255 255 / 55%);
+  font-size: var(--doc-text-xs);
+  font-weight: 500;
+}
+
+.doc-accept-for-value {
+  color: #fff;
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+}
+
+.doc-accept-body {
+  padding: 1.5rem 1.375rem 1.75rem;
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-body {
+    padding: 1.75rem 2.5rem 2rem;
+  }
+}
+
+.doc-accept-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.25rem;
+}
+
+.doc-accept-legend-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+}
+
+.doc-accept-legend-note {
+  margin: 0;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+.doc-accept-required {
+  color: var(--color-error-700);
+  font-weight: 600;
+}
+
+.doc-accept-error {
+  margin: 1rem 0 0;
+  border-left: 3px solid var(--color-error-500);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: var(--color-error-50);
+  padding: 0.75rem 1rem;
+  color: var(--color-error-700);
+  font-size: var(--doc-text-base);
+  line-height: 1.7;
+}
+
+/* Three required confirmations in a fixed order — genuinely a sequence, so the
+   numerals carry information rather than decorate. */
+.doc-accept-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doc-accept-item {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: 0.875rem;
+  border-top: 1px solid var(--doc-rule);
+  padding: 1.25rem 0;
+}
+
+.doc-accept-num {
+  color: var(--doc-accent);
+  font-family: 'Outfit', var(--font-family-sans);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+}
+
+.doc-accept-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.375rem 1rem;
+}
+
+.doc-accept-item-title {
+  margin: 0;
+  color: var(--doc-ink);
+  font-size: var(--doc-text-base);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.doc-accept-item-meta {
+  margin: 0.1875rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-accept-open {
+  color: var(--doc-accent);
+  font-size: var(--doc-text-base);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand-200);
+  text-underline-offset: 0.2em;
+  white-space: nowrap;
+}
+
+.doc-accept-open:hover {
+  color: var(--doc-accent-deep);
+  text-decoration-color: currentColor;
+}
+
+/* The statement being agreed to. No fill — a tinted box here made the sentence you
+   are legally bound by look like a UI hint. */
+.doc-accept-check {
+  display: flex;
+  align-items: start;
+  gap: 0.75rem;
+  margin-top: 0.875rem;
+  cursor: pointer;
+  color: var(--doc-body);
+  font-size: var(--doc-text-base);
+  line-height: 1.8;
+}
+
+.doc-accept-check input {
+  margin-top: 0.3125rem;
+  height: 1.125rem;
+  width: 1.125rem;
+  flex-shrink: 0;
+  accent-color: var(--doc-accent);
+  cursor: pointer;
+}
+
+.doc-accept-check:hover {
+  color: var(--doc-ink);
+}
+
+.doc-accept-note {
+  margin: 0.75rem 0 0;
+  border-left: 3px solid var(--color-gray-300);
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: var(--color-gray-50);
+  padding: 0.625rem 0.875rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+  line-height: 1.7;
+}
+
+.doc-accept-note strong {
+  color: var(--doc-body);
+  font-weight: 600;
+}
+
+.doc-accept-actions {
+  border-top: 1px solid var(--doc-rule);
+  padding-top: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.doc-accept-hint {
+  margin: 0.875rem 0 0;
+  color: var(--doc-faint);
+  font-size: var(--doc-text-sm);
+  text-align: center;
+}
+
+.doc-accept-status {
+  display: flex;
+  min-height: 12rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-base);
+  text-align: center;
+}
+
+.doc-accept-spinner {
+  height: 1.75rem;
+  width: 1.75rem;
+  border: 2.5px solid var(--color-brand-100);
+  border-top-color: var(--doc-accent);
+  border-radius: 50%;
+  animation: doc-spin 0.75s linear infinite;
+}
+
+@keyframes doc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-accept-spinner {
+    animation-duration: 2s;
+  }
+}
+
+.doc-accept-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--doc-soft);
+  font-size: var(--doc-text-sm);
+}
+
+@media (min-width: 40rem) {
+  .doc-accept-foot {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+.doc-accept-foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.375rem 1.25rem;
+}
+
+.doc-accept-foot-links a {
+  color: var(--doc-soft);
+  text-decoration: none;
+}
+
+.doc-accept-foot-links a:hover {
+  color: var(--doc-accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.doc-accept-signout {
+  border: 0;
+  border-radius: 0.5rem;
+  background: none;
+  padding: 0.5rem 0.75rem;
+  color: var(--doc-soft);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-accept-signout:hover:not(:disabled) {
+  background: #fff;
+  color: var(--doc-ink);
+}
+
+.doc-accept-signout:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────────────
+   People file and sign these. Printing should yield the document itself: no
+   navigation, no reading progress, no rail, and sections that do not split across
+   a page break mid-clause. */
+@media print {
+  .doc {
+    background: #fff;
+  }
+
+  .doc-mast,
+  .doc-rail,
+  .doc-foot,
+  .doc-anchor {
+    display: none;
+  }
+
+  .doc-main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .doc-columns {
+    display: block;
+    margin-top: 1rem;
+  }
+
+  .doc-plate {
+    border: 1px solid var(--doc-rule);
+    border-radius: 0;
+    background: #fff;
+    color: var(--doc-ink);
+    padding: 1.5rem;
+  }
+
+  .doc-plate::before {
+    display: none;
+  }
+
+  .doc-eyebrow,
+  .doc-colophon-label {
+    color: var(--doc-soft);
+  }
+
+  .doc-title,
+  .doc-colophon-value {
+    color: var(--doc-ink);
+  }
+
+  .doc-standfirst {
+    color: var(--doc-body);
+  }
+
+  .doc-colophon {
+    border-top-color: var(--doc-rule);
+  }
+
+  .doc-sheet {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .doc-section {
+    break-inside: avoid;
+    padding: 1.25rem 0;
+  }
+
+  .doc-note {
+    break-inside: avoid;
+  }
+}
+
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:var(--font-family-sans);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.release-banner{margin:0;border-bottom:1px solid var(--color-gray-200);background:#fff;padding:0.6875rem 1.25rem;color:var(--color-gray-500);text-align:center;font-size:0.8125rem;font-variant-numeric:tabular-nums}
+.release-banner strong{color:var(--color-gray-900);font-weight:600}
+@media print{.release-banner{border-bottom:0;padding-left:0;text-align:left}}
+
+  </style>
+</head>
+<body>
+  <p class="release-banner">เอกสารฉบับคงที่สำหรับการยอมรับทางอิเล็กทรอนิกส์ · เวอร์ชัน <strong>v1</strong> · มีผลวันที่ 10 สิงหาคม 2569</p>
+  <div class="doc"><header class="doc-mast"><div class="doc-mast-inner"><a class="doc-wordmark" href="/login"><span class="doc-wordmark-glyph" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 23c0-6 0-9 0-12" stroke="#FCD34D" stroke-width="2.6" stroke-linecap="round"></path><path d="M24 15c-1.6-3-4.4-4-7.6-3.6 .4 3.4 3.2 4.8 6 4.6" fill="#86EFAC"></path><path d="M24 13c1.6-2.6 4.2-3.4 7-3 -.3 3-2.8 4.2-5.4 4" fill="#BBF7D0"></path><circle cx="24" cy="31" r="11" fill="#FCD34D" stroke="#FBBF24" stroke-width="1.5"></circle><path d="M24 26v10M22 28h3.2a2 2 0 0 1 0 4H22m0 0h3.6a2 2 0 0 1 0 4H22" stroke="#B45309" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"></path></svg></span><span class="doc-wordmark-text">มั่ง<span style="color:var(--doc-gold)">มี</span></span></a><nav aria-label="เอกสารทางกฎหมาย" class="doc-switch"><a aria-current="page" class="doc-switch-item" href="/privacy"><span class="doc-switch-label-long">ประกาศความเป็นส่วนตัว</span><span class="doc-switch-label-short">ความเป็นส่วนตัว</span></a><a class="doc-switch-item" href="/terms"><span class="doc-switch-label-long">ข้อกำหนดการใช้งาน</span><span class="doc-switch-label-short">ข้อกำหนด</span></a><a class="doc-switch-item" href="/data-deletion"><span class="doc-switch-label-long">การลบข้อมูล</span><span class="doc-switch-label-short">การลบข้อมูล</span></a></nav></div><div class="doc-progress" style="--doc-progress:0%" aria-hidden="true"></div></header><main class="doc-main"><header class="doc-plate"><div class="doc-plate-body"><p class="doc-eyebrow doc-display">Privacy notice · PDPA · v1</p><h1 class="doc-title">ประกาศความเป็นส่วนตัว</h1><p class="doc-standfirst">ประกาศนี้อธิบายการเก็บ ใช้ เปิดเผย เก็บรักษา และคุ้มครองข้อมูลส่วนบุคคลที่เกี่ยวข้องกับบัญชีผู้ใช้และฟังก์ชันที่เปิดให้ใช้จริงใน MangmeePlus v1</p><dl class="doc-colophon"><div class="doc-colophon-item"><dt class="doc-colophon-label doc-display">มีผลใช้บังคับ</dt><dd class="doc-colophon-value">10 สิงหาคม 2569</dd></div><div class="doc-colophon-item"><dt class="doc-colophon-label doc-display">ปรับปรุงล่าสุด</dt><dd class="doc-colophon-value">10 สิงหาคม 2569</dd></div><div class="doc-colophon-item"><dt class="doc-colophon-label doc-display">ผู้ให้บริการ</dt><dd class="doc-colophon-value">บริษัท มั่งมียั่งยืน จำกัด</dd></div></dl></div></header><div class="doc-columns"><aside class="doc-rail"><p class="doc-rail-label doc-display">เนื้อหาในหน้านี้</p><nav aria-label="สารบัญ" class="doc-toc"><a href="#summary" class="doc-toc-item" data-active="true" aria-current="location"><span class="doc-toc-num doc-display" aria-hidden="true">1</span><span>สรุปให้เข้าใจง่าย</span></a><a href="#roles" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">2</span><span>ใครรับผิดชอบข้อมูล</span></a><a href="#data" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">3</span><span>ข้อมูลที่เก็บและแหล่งที่มา</span></a><a href="#purposes" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">4</span><span>วัตถุประสงค์และฐานกฎหมาย</span></a><a href="#sharing" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">5</span><span>การเปิดเผยข้อมูล</span></a><a href="#international" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">6</span><span>การประมวลผลต่างประเทศ</span></a><a href="#cookies" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">7</span><span>คุกกี้ที่จำเป็น</span></a><a href="#retention" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">8</span><span>ระยะเวลาเก็บข้อมูล</span></a><a href="#security" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">9</span><span>ความมั่นคงปลอดภัย</span></a><a href="#rights" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">10</span><span>สิทธิและวิธีส่งคำขอ</span></a><a href="#sensitive" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">11</span><span>ข้อมูลอ่อนไหวและผู้เยาว์</span></a><a href="#changes" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">12</span><span>การเปลี่ยนแปลงและติดต่อ</span></a><a href="#sources" class="doc-toc-item" data-active="false"><span class="doc-toc-num doc-display" aria-hidden="true">13</span><span>แหล่งกฎหมายทางการ</span></a></nav><div class="doc-rail-contact"><p class="doc-rail-contact-title doc-display">ติดต่อเรื่องข้อมูลส่วนบุคคล</p><a class="doc-rail-mail" href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a><p style="margin:0.625rem 0 0">บริษัท มั่งมียั่งยืน จำกัด<br/>เลขทะเบียน 0105569135722<br/>123/219 หมู่ที่ 11 แขวงบางขุนเทียน เขตจอมทอง กรุงเทพมหานคร 10150</p></div></aside><article class="doc-sheet"><section id="summary" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">สรุปให้เข้าใจง่าย<a class="doc-anchor" href="#summary" aria-label="ลิงก์ไปยังหัวข้อ สรุปให้เข้าใจง่าย">§</a></h2></div><div class="doc-prose"><dl class="doc-defs"><div class="doc-def"><dt class="doc-def-title">เราเก็บเท่าที่จำเป็น</dt><dd class="doc-def-body">เราใช้ข้อมูลเพื่อสร้างและดูแลบัญชี ให้บริการฟังก์ชันที่เปิดใช้ รักษาความปลอดภัย ช่วยเหลือผู้ใช้ และปฏิบัติตามกฎหมาย</dd></div><div class="doc-def"><dt class="doc-def-title">กิจการควบคุมข้อมูลในพื้นที่ทำงาน</dt><dd class="doc-def-body">หากกิจการของคุณนำข้อมูลบุคคลอื่นเข้าสู่ระบบ กิจการเป็นผู้กำหนดวัตถุประสงค์และสิทธิ์เข้าถึง โดยทั่วไปเราประมวลผลข้อมูลนั้นตามคำสั่งของกิจการ</dd></div><div class="doc-def"><dt class="doc-def-title">v1 กล่าวเฉพาะสิ่งที่เปิดจริง</dt><dd class="doc-def-body">ประกาศนี้ไม่อ้างถึงความสามารถที่ยังอยู่ระหว่างพัฒนา หากเปิดฟังก์ชันใหม่ที่ใช้ข้อมูลต่างออกไป เราจะปรับประกาศก่อนหรือเมื่อเริ่มใช้ตามที่กฎหมายกำหนด</dd></div><div class="doc-def"><dt class="doc-def-title">คุณมีสิทธิเกี่ยวกับข้อมูลของตน</dt><dd class="doc-def-body">คุณอาจขอเข้าถึง แก้ไข ลบ จำกัด รับหรือโอนข้อมูล คัดค้าน หรือถอนความยินยอม ได้ตามเงื่อนไขของกฎหมาย</dd></div></dl><aside class="doc-note doc-note-brand"><p class="doc-note-title">ต้องการให้ลบข้อมูล?</p><div class="doc-note-body">อ่านขอบเขต ขั้นตอนยืนยันตัวตน และกรณีที่อาจต้องเก็บข้อมูลต่อได้ที่ <a href="/data-deletion">หน้าการลบข้อมูล</a></div></aside></div></section><section id="roles" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">ใครรับผิดชอบข้อมูลของคุณ<a class="doc-anchor" href="#roles" aria-label="ลิงก์ไปยังหัวข้อ ใครรับผิดชอบข้อมูลของคุณ">§</a></h2><p class="doc-lead">บทบาทตาม PDPA พิจารณาจากว่าใครเป็นผู้กำหนดวัตถุประสงค์และวิธีใช้ข้อมูลในแต่ละกรณี</p></div><div class="doc-prose"><dl class="doc-defs"><div class="doc-def"><dt class="doc-def-title">MangmeePlus เป็นผู้ควบคุมข้อมูล</dt><dd class="doc-def-body">สำหรับข้อมูลที่เรากำหนดวัตถุประสงค์เอง เช่น การสร้างและดูแลบัญชีผู้ใช้ การรักษาความปลอดภัย การสนับสนุน การบริหารบริการ การป้องกันการทุจริต และการปฏิบัติตามกฎหมายของเรา</dd></div><div class="doc-def"><dt class="doc-def-title">กิจการลูกค้าเป็นผู้ควบคุมข้อมูล</dt><dd class="doc-def-body">สำหรับข้อมูลที่กิจการนำเข้าหรือสร้างในพื้นที่ทำงาน กิจการเป็นผู้กำหนดเหตุผลในการใช้ข้อมูล ผู้มีสิทธิเข้าถึง ระยะเวลาเก็บ และการดำเนินการตามคำขอของเจ้าของข้อมูล</dd></div><div class="doc-def"><dt class="doc-def-title">MangmeePlus เป็นผู้ประมวลผลข้อมูล</dt><dd class="doc-def-body">เมื่อเราโฮสต์ จัดเก็บ สำรอง หรือดำเนินการกับข้อมูลในพื้นที่ทำงานเพื่อให้บริการ เราดำเนินการตามคำสั่งที่ชอบด้วยกฎหมายของกิจการและเท่าที่จำเป็น</dd></div><div class="doc-def"><dt class="doc-def-title">บทบาทอาจต่างกันในข้อมูลชุดเดียวกัน</dt><dd class="doc-def-body">เราอาจเป็นผู้ประมวลผลเนื้อหาที่กิจการบันทึก แต่เป็นผู้ควบคุมบันทึกความปลอดภัย ที่สร้างขึ้นเพื่อปกป้องระบบ โดยแยกใช้ตามวัตถุประสงค์และฐานกฎหมายของแต่ละบทบาท</dd></div></dl><aside class="doc-note doc-note-neutral"><p class="doc-note-title">ข้อมูลที่กิจการนำเข้าสู่ระบบ</p><div class="doc-note-body">หากข้อมูลของคุณอยู่ในระบบเพราะคุณเกี่ยวข้องกับกิจการลูกค้าของเรา โปรดติดต่อกิจการนั้นก่อน เราจะช่วยกิจการค้นหา แก้ไข ส่งออก จำกัด หรือลบข้อมูลตามคำสั่งที่ชอบด้วยกฎหมาย</div></aside><p>ผู้ให้บริการคือ <strong>บริษัท มั่งมียั่งยืน จำกัด</strong> เลขทะเบียนนิติบุคคล <strong>0105569135722</strong> ติดต่อเรื่องข้อมูลส่วนบุคคลได้ที่ <a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a></p></div></section><section id="data" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">ข้อมูลที่เราเก็บและแหล่งที่มา<a class="doc-anchor" href="#data" aria-label="ลิงก์ไปยังหัวข้อ ข้อมูลที่เราเก็บและแหล่งที่มา">§</a></h2><p class="doc-lead">ข้อมูลที่เกิดขึ้นจริงขึ้นอยู่กับฟังก์ชันที่เปิดให้บัญชีของคุณ สิทธิ์ของผู้ใช้ และข้อมูลที่คุณหรือกิจการเลือกบันทึก</p></div><div class="doc-prose"><dl class="doc-defs"><div class="doc-def"><dt class="doc-def-title">บัญชีผู้ใช้และการเข้าถึง</dt><dd class="doc-def-body">ชื่อ อีเมล เบอร์โทรถ้ามี รหัสผู้ใช้ สมาชิกภาพ บทบาท สิทธิ์ สถานะบัญชี รหัสผ่านที่จัดเก็บในรูปแบบป้องกันการอ่านกลับ เซสชัน อุปกรณ์ เวลาเข้าใช้งาน หมายเลข IP และเหตุการณ์ที่เกี่ยวกับความปลอดภัย</dd></div><div class="doc-def"><dt class="doc-def-title">กิจการและพื้นที่ทำงาน</dt><dd class="doc-def-body">ชื่อกิจการ ข้อมูลติดต่อ ผู้ดูแล สมาชิก โครงสร้างสิทธิ์ การตั้งค่า และข้อมูลที่จำเป็นต่อการจัดให้มีและบริหารบริการ</dd></div><div class="doc-def"><dt class="doc-def-title">เนื้อหาที่นำเข้าหรือสร้างผ่านบริการ</dt><dd class="doc-def-body">ข้อความ แบบฟอร์ม รูปภาพ ไฟล์ เอกสาร และรายการอื่นที่ผู้มีสิทธิ์บันทึกหรืออัปโหลด ผ่านฟังก์ชันที่เปิดใช้ ซึ่งอาจมีข้อมูลส่วนบุคคลของผู้ใช้หรือบุคคลอื่น</dd></div><div class="doc-def"><dt class="doc-def-title">การใช้งานและความปลอดภัย</dt><dd class="doc-def-body">หน้าที่เข้าชม การกดใช้งาน การเปลี่ยนแปลงข้อมูล บันทึกตรวจสอบ ข้อผิดพลาด ประสิทธิภาพระบบ ข้อมูลเบราว์เซอร์ และเหตุการณ์ผิดปกติเท่าที่จำเป็น</dd></div><div class="doc-def"><dt class="doc-def-title">หลักฐานทางกฎหมายและการสนับสนุน</dt><dd class="doc-def-body">ฉบับเอกสารที่แสดง ข้อความที่ยืนยัน วันเวลา บัญชีผู้ใช้ หลักฐานเซสชัน เนื้อหาที่ติดต่อฝ่ายสนับสนุน ไฟล์ที่แนบ และผลการดำเนินการตามคำขอ</dd></div></dl><h3 class="doc-h3">เราได้รับข้อมูลจากที่ใด</h3><ul class="doc-list"><li>จากคุณโดยตรง เมื่อสมัคร เข้าใช้ กรอกข้อมูล อัปโหลดไฟล์ ติดต่อเรา หรือใช้ฟังก์ชันที่เปิดให้ใช้</li><li>จากเจ้าของหรือผู้ดูแลกิจการ เมื่อเชิญคุณ กำหนดสิทธิ์ หรือบันทึกข้อมูลเพื่อดำเนินงาน</li><li>จากบุคคลหรือเอกสารที่กิจการมีสิทธินำมาใช้ในระบบ</li><li>จากเบราว์เซอร์ อุปกรณ์ และระบบรักษาความปลอดภัยโดยอัตโนมัติเมื่อคุณใช้บริการ</li></ul><aside class="doc-note doc-note-warning"><p class="doc-note-title">บันทึกเฉพาะข้อมูลที่จำเป็น</p><div class="doc-note-body">อย่านำรหัสผ่าน รหัสลับ ข้อมูลชำระเงินแบบเต็มชุด หรือข้อมูลอ่อนไหวที่ไม่จำเป็นเข้าสู่ระบบ และต้องตรวจว่าคุณมีสิทธินำข้อมูลของบุคคลอื่นมาใช้ก่อนเสมอ</div></aside></div></section><section id="purposes" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">วัตถุประสงค์และฐานกฎหมาย<a class="doc-anchor" href="#purposes" aria-label="ลิงก์ไปยังหัวข้อ วัตถุประสงค์และฐานกฎหมาย">§</a></h2><p class="doc-lead">เราใช้ฐานกฎหมายให้ตรงกับวัตถุประสงค์และบทบาทของเราในแต่ละกรณี</p></div><div class="doc-prose"><dl class="doc-defs"><div class="doc-def"><dt class="doc-def-title">สัญญาหรือการดำเนินการก่อนทำสัญญา</dt><dd class="doc-def-body">สร้างและดูแลบัญชี จัดสิทธิ์เข้าถึง ให้บริการฟังก์ชันที่เปิดใช้ ดำเนินการตามคำขอ ให้ความช่วยเหลือ และบริหารความสัมพันธ์กับกิจการ</dd></div><div class="doc-def"><dt class="doc-def-title">ประโยชน์โดยชอบด้วยกฎหมาย</dt><dd class="doc-def-body">รักษาความปลอดภัย ป้องกันการทุจริต แก้ข้อผิดพลาด รักษาความต่อเนื่อง ตรวจสอบการใช้สิทธิ์ และปรับปรุงความน่าเชื่อถือของบริการ โดยคำนึงถึงผลกระทบต่อสิทธิและความคาดหมายของคุณ</dd></div><div class="doc-def"><dt class="doc-def-title">หน้าที่ตามกฎหมาย</dt><dd class="doc-def-body">เก็บหลักฐานที่กฎหมายกำหนด ตอบคำขอของเจ้าของข้อมูล ปฏิบัติตามคำสั่งที่ชอบด้วยกฎหมาย และจัดการเหตุละเมิดข้อมูลส่วนบุคคล</dd></div><div class="doc-def"><dt class="doc-def-title">ความยินยอม</dt><dd class="doc-def-body">ใช้เฉพาะกรณีที่กฎหมายกำหนดหรือเมื่อวัตถุประสงค์นั้นควรให้คุณเลือกอย่างแท้จริง เราจะแยกคำขอให้ชัดเจนและคุณถอนความยินยอมได้ โดยไม่กระทบการใช้ที่ชอบด้วยกฎหมายก่อนถอน</dd></div><div class="doc-def"><dt class="doc-def-title">การประมวลผลตามคำสั่งกิจการ</dt><dd class="doc-def-body">สำหรับข้อมูลในพื้นที่ทำงาน เราประมวลผลเพื่อให้บริการตามสัญญาและคำสั่งของกิจการ กิจการต้องกำหนดฐานกฎหมายและแจ้งเจ้าของข้อมูลในส่วนที่กิจการรับผิดชอบ</dd></div></dl><p>หากจำเป็นต้องใช้ข้อมูลเพื่อวัตถุประสงค์ใหม่ที่ไม่สอดคล้องกับที่แจ้ง เราจะแจ้งรายละเอียดและฐานกฎหมายเพิ่มเติมก่อนใช้ หรือขอความยินยอมเมื่อกฎหมายกำหนด</p></div></section><section id="sharing" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">เราเปิดเผยข้อมูลให้ใครบ้าง<a class="doc-anchor" href="#sharing" aria-label="ลิงก์ไปยังหัวข้อ เราเปิดเผยข้อมูลให้ใครบ้าง">§</a></h2></div><div class="doc-prose"><ul class="doc-list"><li>ผู้ใช้และผู้ดูแลของกิจการตามสิทธิ์ที่กิจการกำหนด</li><li>ผู้ให้บริการโครงสร้างพื้นฐาน การจัดเก็บ ความปลอดภัย การสื่อสาร และการสนับสนุน เท่าที่จำเป็นต่อบริการ</li><li>ที่ปรึกษาวิชาชีพ ผู้ตรวจสอบ หรือคู่สัญญาที่จำเป็น โดยอยู่ภายใต้หน้าที่รักษาความลับ</li><li>หน่วยงานรัฐ ศาล หรือบุคคลที่มีอำนาจ เมื่อมีกฎหมายหรือคำสั่งที่ชอบด้วยกฎหมาย</li><li>ผู้รับโอนหรือคู่สัญญาในการปรับโครงสร้างกิจการ โดยใช้มาตรการรักษาความลับและเปิดเผยเท่าที่จำเป็น</li></ul><p>เรากำหนดขอบเขตการประมวลผล มาตรการรักษาความปลอดภัย การรักษาความลับ และการคืนหรือลบข้อมูลกับผู้ประมวลผลข้อมูลตามที่กฎหมายและลักษณะบริการกำหนด เราไม่ขายข้อมูลส่วนบุคคล</p></div></section><section id="international" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">การประมวลผลข้อมูลนอกประเทศไทย<a class="doc-anchor" href="#international" aria-label="ลิงก์ไปยังหัวข้อ การประมวลผลข้อมูลนอกประเทศไทย">§</a></h2><p class="doc-lead">โครงสร้างพื้นฐานหรือผู้ให้บริการบางรายอาจประมวลผลข้อมูลในต่างประเทศ</p></div><div class="doc-prose"><p>เมื่อมีการส่งหรือโอนข้อมูลไปต่างประเทศ เราจะดำเนินการตามข้อกำหนดของ PDPA เช่น ตรวจมาตรฐานการคุ้มครอง ใช้ข้อสัญญาหรือมาตรการคุ้มครองที่เหมาะสม จำกัดข้อมูลและสิทธิ์เข้าถึง หรืออาศัยข้อยกเว้นที่กฎหมายอนุญาต</p><p>คุณสอบถามประเภทผู้รับ ประเทศหรือภูมิภาค และมาตรการที่ใช้ในกรณีที่เกี่ยวข้องกับคุณได้ที่ <a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a> ทั้งนี้เราอาจปกปิดรายละเอียดที่กระทบความปลอดภัยหรือสิทธิของบุคคลอื่น</p></div></section><section id="cookies" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">คุกกี้และข้อมูลทางเทคนิคที่จำเป็น<a class="doc-anchor" href="#cookies" aria-label="ลิงก์ไปยังหัวข้อ คุกกี้และข้อมูลทางเทคนิคที่จำเป็น">§</a></h2></div><div class="doc-prose"><p>v1 ใช้คุกกี้หรือเทคโนโลยีลักษณะเดียวกันเท่าที่จำเป็นสำหรับการเข้าสู่ระบบ การรักษาความปลอดภัย การจดจำการตั้งค่าที่จำเป็น และการทำงานของบริการ การปิดคุกกี้เหล่านี้อาจทำให้เข้าสู่ระบบหรือใช้บางส่วนไม่ได้</p><p>หากในอนาคตเราเพิ่มเทคโนโลยีที่ไม่จำเป็น เราจะแจ้งวัตถุประสงค์ อายุการเก็บ ผู้ให้บริการ และจัดให้มีตัวเลือกก่อนใช้งานตามที่กฎหมายกำหนด</p></div></section><section id="retention" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">เราเก็บข้อมูลนานเพียงใด<a class="doc-anchor" href="#retention" aria-label="ลิงก์ไปยังหัวข้อ เราเก็บข้อมูลนานเพียงใด">§</a></h2><p class="doc-lead">เราเก็บข้อมูลไม่เกินระยะที่จำเป็นต่อวัตถุประสงค์ ฐานกฎหมาย และคำสั่งที่ชอบด้วยกฎหมายของกิจการ</p></div><div class="doc-prose"><dl class="doc-defs"><div class="doc-def"><dt class="doc-def-title">บัญชีและการให้บริการ</dt><dd class="doc-def-body">เก็บระหว่างที่บัญชีหรือความสัมพันธ์ตามสัญญายังใช้งาน และต่อเท่าที่จำเป็นต่อการปิดบริการ แก้ข้อพิพาท หรือปฏิบัติตามกฎหมาย</dd></div><div class="doc-def"><dt class="doc-def-title">ข้อมูลในพื้นที่ทำงาน</dt><dd class="doc-def-body">เก็บตามระยะบริการ คำสั่งของกิจการ และนโยบายที่กิจการกำหนด เว้นแต่เราต้องจำกัดการลบเพราะมีหน้าที่หรือสิทธิที่ชอบด้วยกฎหมาย</dd></div><div class="doc-def"><dt class="doc-def-title">บันทึกความปลอดภัยและหลักฐานคำขอ</dt><dd class="doc-def-body">เก็บตามระดับความเสี่ยง อายุสิทธิเรียกร้อง และระยะที่จำเป็นเพื่อพิสูจน์การเข้าถึง การยืนยันเอกสาร การจัดการเหตุผิดปกติ และการปฏิบัติตามกฎหมาย</dd></div><div class="doc-def"><dt class="doc-def-title">สำเนาสำรองและข้อมูลที่ไม่ระบุตัวบุคคล</dt><dd class="doc-def-body">ข้อมูลที่ลบแล้วอาจอยู่ในสำเนาสำรองจนกว่าจะถูกเขียนทับตามรอบที่ปลอดภัย ส่วนข้อมูลที่ทำให้ไม่สามารถเชื่อมกลับถึงบุคคลได้อย่างแท้จริงไม่ถือเป็นข้อมูลส่วนบุคคล</dd></div></dl><p>เมื่อหมดเหตุจำเป็น เราจะลบ ทำลาย หรือทำให้ไม่สามารถระบุตัวบุคคลได้อย่างแท้จริง หากยังต้องเก็บบางส่วน เราจะจำกัดการเข้าถึงและไม่ใช้เพื่อวัตถุประสงค์ใหม่ที่ไม่เกี่ยวข้อง</p><aside class="doc-note doc-note-neutral"><p class="doc-note-title">การใช้นามแฝงยังอาจเป็นข้อมูลส่วนบุคคล</p><div class="doc-note-body">การแทนชื่อด้วยรหัสหรือแฮชไม่ทำให้ข้อมูลพ้นจาก PDPA หากยังเชื่อมกลับถึงบุคคลได้ เราจะเรียกว่า “ไม่ระบุตัวบุคคล” เฉพาะเมื่อไม่สามารถเชื่อมกลับได้โดยวิธีที่สมเหตุสมผล</div></aside></div></section><section id="security" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">เราคุ้มครองข้อมูลอย่างไร<a class="doc-anchor" href="#security" aria-label="ลิงก์ไปยังหัวข้อ เราคุ้มครองข้อมูลอย่างไร">§</a></h2></div><div class="doc-prose"><ul class="doc-list"><li>กำหนดสิทธิ์ตามหน้าที่และแยกข้อมูลระหว่างกิจการ</li><li>ป้องกันข้อมูลระหว่างส่งและใช้มาตรการปกป้องข้อมูลที่จัดเก็บตามความเสี่ยง</li><li>บันทึกและตรวจสอบกิจกรรมสำคัญ เฝ้าระวังเหตุผิดปกติ และจำกัดการเข้าถึงของบุคลากร</li><li>ประเมินผู้ให้บริการ จัดการช่องโหว่ สำรองข้อมูล และเตรียมขั้นตอนรับมือเหตุละเมิด</li></ul><p>หากเกิดเหตุละเมิดข้อมูลส่วนบุคคล เราจะประเมินความเสี่ยง ควบคุมเหตุ บันทึกการตัดสินใจ และแจ้งหน่วยงานกำกับหรือเจ้าของข้อมูลภายในกรอบเวลาที่กฎหมายกำหนดเมื่อเข้าเงื่อนไข</p></div></section><section id="rights" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">สิทธิของคุณและวิธีส่งคำขอ<a class="doc-anchor" href="#rights" aria-label="ลิงก์ไปยังหัวข้อ สิทธิของคุณและวิธีส่งคำขอ">§</a></h2><p class="doc-lead">สิทธิบางประเภทมีเงื่อนไขหรือข้อยกเว้นตามกฎหมาย เราจะแจ้งเหตุผลหากดำเนินการตามคำขอไม่ได้ทั้งหมด</p></div><div class="doc-prose"><ul class="doc-list"><li>ขอเข้าถึงและรับสำเนาข้อมูล รวมถึงขอทราบแหล่งที่มาของข้อมูลที่ไม่ได้ให้ไว้เอง</li><li>ขอแก้ไขข้อมูลให้ถูกต้อง เป็นปัจจุบัน สมบูรณ์ และไม่ทำให้เข้าใจผิด</li><li>ขอลบ ทำลาย หรือทำให้ไม่สามารถระบุตัวบุคคลได้เมื่อเข้าเงื่อนไข</li><li>ขอให้จำกัดการใช้ข้อมูล และขอรับหรือโอนข้อมูลในรูปแบบที่กฎหมายกำหนด</li><li>คัดค้านการประมวลผลบางกรณี และถอนความยินยอมเมื่อการใช้ข้อมูลอาศัยความยินยอม</li><li>ร้องเรียนต่อสำนักงานคณะกรรมการคุ้มครองข้อมูลส่วนบุคคลหากเห็นว่าการประมวลผลไม่ชอบด้วยกฎหมาย</li></ul><h3 class="doc-h3">วิธีส่งคำขอ</h3><p>ส่งอีเมลจากที่อยู่ที่ลงทะเบียนไปยัง <a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a> ระบุสิทธิที่ต้องการใช้ ขอบเขตข้อมูล และข้อมูลติดต่อกลับ เราอาจขอหลักฐานเพิ่มเติมเท่าที่จำเป็นเพื่อยืนยันตัวตน อำนาจ และป้องกันการเปิดเผยข้อมูลผิดคน</p><p>โดยทั่วไปเราไม่เรียกเก็บค่าธรรมเนียม เว้นแต่คำขอซ้ำซ้อน เกินสมควร หรือกฎหมายอนุญาต และเราจะแจ้งผลภายในกรอบเวลาที่กฎหมายกำหนด</p></div></section><section id="sensitive" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">ข้อมูลอ่อนไหวและข้อมูลของผู้เยาว์<a class="doc-anchor" href="#sensitive" aria-label="ลิงก์ไปยังหัวข้อ ข้อมูลอ่อนไหวและข้อมูลของผู้เยาว์">§</a></h2></div><div class="doc-prose"><ul class="doc-list"><li>บริการ v1 ไม่ได้ออกแบบให้ขอข้อมูลอ่อนไหวหรือข้อมูลของผู้เยาว์เป็นการทั่วไป</li><li>อย่านำข้อมูลดังกล่าวเข้าสู่ระบบ เว้นแต่จำเป็น มีสิทธิ และมีฐานกฎหมายหรือความยินยอมโดยชัดแจ้งตามที่กฎหมายกำหนด</li><li>หากผู้เยาว์หรือผู้ที่กฎหมายกำหนดต้องได้รับความยินยอมจากผู้แทนใช้บริการ ผู้ดูแลต้องดำเนินการให้ถูกต้องก่อน</li><li>หากพบข้อมูลที่ไม่จำเป็นหรือเก็บมาโดยไม่ชอบ โปรดแจ้งเราเพื่อจำกัดการใช้และดำเนินการตามกฎหมาย</li></ul></div></section><section id="changes" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">การเปลี่ยนแปลงประกาศและช่องทางติดต่อ<a class="doc-anchor" href="#changes" aria-label="ลิงก์ไปยังหัวข้อ การเปลี่ยนแปลงประกาศและช่องทางติดต่อ">§</a></h2></div><div class="doc-prose"><p>เราระบุวันที่มีผลและวันที่ปรับปรุงบนประกาศนี้ หากมีการเปลี่ยนเนื้อหาสาระ เราจะแจ้งผ่านระบบหรือช่องทางติดต่อที่มีอยู่ และขอให้ผู้ใช้ยืนยันรับรู้ฉบับใหม่ก่อนใช้งานต่อ ผู้ใช้แต่ละคนยืนยันเพียงครั้งเดียวต่อฉบับ แม้เข้าถึงหลายกิจการหรือมีการเปลี่ยนบทบาท</p><p>การยืนยันรับทราบเป็นหลักฐานว่าเราได้ส่งคำแจ้งและคุณมีโอกาสอ่าน ไม่เปลี่ยนฐานกฎหมายของการประมวลผลและไม่เป็นการสละสิทธิของคุณ</p><aside class="doc-note doc-note-neutral"><p class="doc-note-title">ติดต่อผู้ให้บริการ</p><div class="doc-note-body"><strong>บริษัท มั่งมียั่งยืน จำกัด</strong><br/>เลขทะเบียนนิติบุคคล 0105569135722<br/>123/219 หมู่ที่ 11 แขวงบางขุนเทียน เขตจอมทอง กรุงเทพมหานคร 10150<br/><a href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a></div></aside></div></section><section id="sources" class="doc-section"><div class="doc-section-head"><h2 class="doc-h2">แหล่งกฎหมายทางการที่ใช้อ้างอิง<a class="doc-anchor" href="#sources" aria-label="ลิงก์ไปยังหัวข้อ แหล่งกฎหมายทางการที่ใช้อ้างอิง">§</a></h2></div><div class="doc-prose"><ul class="doc-list"><li><a href="https://odl.parliament.go.th/handle/20.500.13072/547319" target="_blank" rel="noreferrer" class="doc-source">พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562<span class="sr-only"> (เปิดในแท็บใหม่)</span></a></li><li><a href="https://www.mdes.go.th/law" target="_blank" rel="noreferrer" class="doc-source">กฎหมายลำดับรองและประกาศด้านการคุ้มครองข้อมูลส่วนบุคคล<span class="sr-only"> (เปิดในแท็บใหม่)</span></a></li><li><a href="https://ratchakitcha.soc.go.th/documents/14915.pdf" target="_blank" rel="noreferrer" class="doc-source">หลักเกณฑ์การคุ้มครองข้อมูลส่วนบุคคลที่ส่งหรือโอนไปต่างประเทศตามมาตรา 28<span class="sr-only"> (เปิดในแท็บใหม่)</span></a> และ <a href="https://ratchakitcha.soc.go.th/documents/14913.pdf" target="_blank" rel="noreferrer" class="doc-source">หลักเกณฑ์ตามมาตรา 29<span class="sr-only"> (เปิดในแท็บใหม่)</span></a></li><li><a href="https://www.pdpc.or.th/" target="_blank" rel="noreferrer" class="doc-source">สำนักงานคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล<span class="sr-only"> (เปิดในแท็บใหม่)</span></a></li></ul></div></section></article></div></main><footer class="doc-foot"><div class="doc-foot-inner"><p style="margin:0">© 2026 บริษัท มั่งมียั่งยืน จำกัด · MangmeePlus</p><nav aria-label="เอกสารทางกฎหมาย" class="doc-foot-links"><a href="/privacy">ประกาศความเป็นส่วนตัว</a><a href="/terms">ข้อกำหนดการใช้งาน</a><a href="/data-deletion">การลบข้อมูล</a></nav></div></footer></div>
+</body>
+</html>

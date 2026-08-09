@@ -53,7 +53,8 @@ export function LegalPageShell({
                 aria-current={item.key === active ? 'page' : undefined}
                 className="doc-switch-item"
               >
-                {item.label}
+                <span className="doc-switch-label-long">{item.label}</span>
+                <span className="doc-switch-label-short">{item.shortLabel}</span>
               </Link>
             ))}
           </nav>

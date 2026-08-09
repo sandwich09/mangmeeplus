@@ -127,14 +127,12 @@ export function legalDisplayChallenge(context: DisplayChallengeContext): string 
 }
 
 /**
- * The evidence scope changes whenever authority wording or either released artifact changes.
- * Including immutable URLs and byte hashes fails closed even if a release manager accidentally
- * changes content without incrementing its display version; prior evidence remains untouched.
+ * One acceptance scope belongs to one user and one exact released document pair. Company,
+ * membership and capacity are captured as evidence at acceptance time, but switching context does
+ * not ask the same user again. Immutable URLs and byte hashes still fail closed on any copy change.
  */
 export function legalReleaseScopeRef(
-  membershipId: string,
-  capacity: LegalAcceptanceCapacity,
-  company: { companyId: string; companyName: string },
+  userId: string,
   release: {
     statementVersion: string;
     termsVersion: string;
@@ -156,7 +154,6 @@ export function legalReleaseScopeRef(
   },
 ): string {
   const releaseHash = sha256(JSON.stringify([
-    sha256(JSON.stringify([company.companyId, company.companyName])),
     release.statementVersion,
     release.termsVersion,
     release.termsArtifactUrl,
@@ -166,7 +163,7 @@ export function legalReleaseScopeRef(
     release.privacyFingerprint,
     release.statementTemplateFingerprint,
   ]));
-  return `membership:${membershipId}:capacity:${capacity}:release:${releaseHash}`;
+  return `user:${userId}:release:${releaseHash}`;
 }
 
 function latestAcceptedAt(records: CurrentAcceptanceRecord[]): string | null {
@@ -186,16 +183,11 @@ export class LegalAcceptanceService {
     const roles = membership.roles.map((entry) => entry.role.key).sort();
     const capacity = legalAcceptanceCapacity(roles);
     const records = await this.loadCurrentRecords(
-      locator.membershipId,
-      capacity,
-      membership.companyId,
-      membership.company.name,
+      locator.userId,
     );
-    const acceptedAt = this.isCoherentCurrentPair(records, {
-      ...locator,
-      companyName: membership.company.name,
-      capacity,
-    }) ? latestAcceptedAt(records) : null;
+    const acceptedAt = this.isCoherentCurrentPair(records, locator.userId)
+      ? latestAcceptedAt(records)
+      : null;
 
     return {
       required: acceptedAt === null,
@@ -271,10 +263,7 @@ export class LegalAcceptanceService {
     const privacyStatement = `${statements.privacy}\n${statements.capacity}`;
     const acceptedAt = new Date();
     const batchId = randomUUID();
-    const acceptanceScope = legalReleaseScopeRef(membership.id, capacity, {
-      companyId: membership.companyId,
-      companyName: membership.company.name,
-    });
+    const acceptanceScope = legalReleaseScopeRef(actor.userId);
 
     try {
       return await this.prisma.client.$transaction(async (tx) => {
@@ -313,11 +302,9 @@ export class LegalAcceptanceService {
           },
         }) as CurrentAcceptanceRecord[];
 
-        if (this.isCoherentCurrentPair(existing, {
-          ...actor,
-          companyName: membership.company.name,
-          capacity,
-        })) return this.response(existing, membership.companyId);
+        if (this.isCoherentCurrentPair(existing, actor.userId)) {
+          return this.response(existing, membership.companyId);
+        }
         if (existing.length !== 0) {
           throw new ConflictException({
             code: 'legal_acceptance_incomplete',
@@ -326,9 +313,9 @@ export class LegalAcceptanceService {
         }
 
         const hasPriorAcceptance = await tx.legalDocumentActionRecord.count({
-          // Release/capacity changes deliberately create a new scope. Look across this immutable
-          // membership's history so subsequent clickwraps are labelled MATERIAL_UPDATE.
-          where: { membershipId: membership.id },
+          // Acceptance is once per user and released document pair. Company, membership and
+          // capacity remain immutable evidence snapshots but do not make the same user re-accept.
+          where: { acceptedByUserId: actor.userId },
         }) > 0;
         const surface = hasPriorAcceptance ? 'MATERIAL_UPDATE' as const : 'FIRST_ACCEPTANCE' as const;
         const common = {
@@ -416,16 +403,11 @@ export class LegalAcceptanceService {
       // transaction win; once both rows are visible the loser is a successful idempotent retry.
       if ((error as { code?: string }).code === 'P2002') {
         const current = await this.loadCurrentRecords(
-          membership.id,
-          capacity,
-          membership.companyId,
-          membership.company.name,
+          actor.userId,
         );
-        if (this.isCoherentCurrentPair(current, {
-          ...actor,
-          companyName: membership.company.name,
-          capacity,
-        })) return this.response(current, membership.companyId);
+        if (this.isCoherentCurrentPair(current, actor.userId)) {
+          return this.response(current, membership.companyId);
+        }
       }
       throw error;
     }
@@ -493,14 +475,11 @@ export class LegalAcceptanceService {
   }
 
   private async loadCurrentRecords(
-    membershipId: string,
-    capacity: LegalAcceptanceCapacity,
-    companyId: string,
-    companyName: string,
+    userId: string,
   ): Promise<CurrentAcceptanceRecord[]> {
     return this.prisma.client.legalDocumentActionRecord.findMany({
       where: {
-        scopeRef: legalReleaseScopeRef(membershipId, capacity, { companyId, companyName }),
+        scopeRef: legalReleaseScopeRef(userId),
         statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
         OR: [
           {
@@ -536,10 +515,7 @@ export class LegalAcceptanceService {
 
   private isCoherentCurrentPair(
     records: CurrentAcceptanceRecord[],
-    expected: LegalAcceptanceLocator & {
-      companyName: string;
-      capacity: LegalAcceptanceCapacity;
-    },
+    expectedUserId: string,
   ): boolean {
     if (records.length !== 2) return false;
     const terms = records.find((record) =>
@@ -554,23 +530,21 @@ export class LegalAcceptanceService {
     );
     if (!terms || !privacy || !terms.batchId || terms.batchId !== privacy.batchId) return false;
     if (terms.acceptedAt.getTime() !== privacy.acceptedAt.getTime() || terms.locale !== privacy.locale) return false;
+    if (
+      terms.companyId !== privacy.companyId
+      || terms.membershipId !== privacy.membershipId
+      || terms.actorCapacity !== privacy.actorCapacity
+      || terms.displayChallenge !== privacy.displayChallenge
+    ) return false;
 
     for (const record of records) {
       if (
-        record.acceptedByUserId !== expected.userId
-        || record.companyId !== expected.companyId
-        || record.membershipId !== expected.membershipId
-        || record.actorCapacity !== expected.capacity
+        record.acceptedByUserId !== expectedUserId
         || record.statementVersion !== LEGAL_ACCEPTANCE_STATEMENT_VERSION
         || (record.locale !== 'th' && record.locale !== 'en')
         || record.statementSha256 !== sha256(record.statementText)
       ) return false;
 
-      const statements = legalAcceptanceStatements(expected.capacity, expected.companyName, record.locale);
-      const expectedChallenge = legalDisplayChallenge({ ...expected, locale: record.locale });
-      const expectedStatement = record.documentType === 'TERMS_OF_USE'
-        ? `${statements.terms}\n${statements.capacity}`
-        : `${statements.privacy}\n${statements.capacity}`;
       const expectedFingerprint = record.documentType === 'TERMS_OF_USE'
         ? CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256
         : CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256;
@@ -578,10 +552,8 @@ export class LegalAcceptanceService {
         ? CURRENT_LEGAL_DOCUMENTS.terms.href
         : CURRENT_LEGAL_DOCUMENTS.privacy.href;
       if (
-        record.statementText !== expectedStatement
-        || record.artifactUrl !== expectedArtifactUrl
+        record.artifactUrl !== expectedArtifactUrl
         || record.releaseFingerprintSha256 !== expectedFingerprint
-        || record.displayChallenge !== expectedChallenge
       ) {
         return false;
       }

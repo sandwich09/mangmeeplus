@@ -69,14 +69,49 @@ No legal copy was rewritten; the only text changes are the three page eyebrows (
   `legal.css` plus a same-origin static preview of its markup.
 - Release generator re-run in the builder image: exits 0, emits 120 KB with the real
   stylesheet inlined and zero `[class*=]` selectors.
+- **2026-08-10 mobile follow-up:** rendered `/privacy` and `/data-deletion` at 320 px
+  and 390 px.
+  The three legal-document tabs now remain fully readable, and the long contents list
+  becomes one compact horizontal anchor rail instead of delaying the first clause by
+  several screens. The page has no document-level horizontal overflow; IBM Plex Sans
+  Thai and Outfit both report loaded. Rechecked the deletion wording against the
+  official MDES PDPA legislation index, the PDPA Act, the 2024 erasure rule, Accounting
+  Act section 14, and Revenue Code section 87/3; no substantive copy changed, so the
+  immutable 2026-08-09.2 legal release remains untouched. Web typecheck, the four
+  focused legal-content tests, and `git diff --check` pass.
+- **2026-08-10 legal/UX scope follow-up:** owner limited the first release to enabled launch
+  feature families and set clickwrap to once per user per exact legal release. Public copy now
+  removes deferred sales-document claims, customer auto-replies, CRM scoring/profiling, booking
+  automation, and direct bank/payment connections; it distinguishes pseudonymisation from
+  anonymisation and expressly requires deletion/destruction (not anonymisation) for unlawfully
+  collected data. The current acceptance scope is user + immutable Terms/Privacy release, while
+  company, membership, role and capacity remain initial evidence snapshots only. This substantive
+  pre-launch change is consolidated into `/legal/releases/v1/`; after v1 is launched, later
+  legal-content changes must create v2 and trigger a new acknowledgment.
+- **2026-08-10 owner scope clarification:** even the earlier enabled-family list was broader than
+  the intended public v1. Privacy, Terms, and Data Deletion now use a neutral boundary—only
+  functions visibly enabled for the user's account—and no longer name CRM, LINE, OTP, AI/OCR,
+  accounting/tax, filing, reports, or channel-specific opt-out behavior. The legal source module
+  also no longer imports feature-specific marketing or retention constants. Because the product
+  is still pre-launch, the existing v1 artifacts are rebuilt in place and will receive new hashes.
+- **Verification for pre-launch v1:** contracts build, API/Web typecheck, `git diff --check`, and
+  23 focused contract/API/Web legal-acceptance tests pass. Browser checks at 320 px and 1280 px
+  confirm no document-level horizontal overflow; the mobile legal tabs and horizontal contents
+  rail remain readable. Login exposes `/privacy`, `/terms`, and `/data-deletion`; Acceptance opens
+  the exact `/legal/releases/v1/terms-th.html` and `privacy-th.html` artifacts and explains the
+  once-per-user/across-companies rule. All three public pages and both artifacts contain none of
+  the deferred-claim terms in the owner-approved scan. Both immutable responses report `v1`, have
+  no script dependency, and their exact served-byte hashes are covered by the legal-content test:
+  Terms `d1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7`, Privacy
+  `7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4`.
 
 ## Next
 
-- Producing a static snapshot in the new design requires bumping `RELEASE_VERSION` in
-  `scripts/render-legal-release-artifact.ts` and cutting a new release directory. That is a
-  governance action, not a code change — `docs/security-evidence/legal-release-evidence.json`
-  is still `BLOCKED` on operator identity, rights mailbox, DPO assessment, processor
-  cross-border register, and Thai counsel approval. Left for the release owner.
+- Because this remains pre-launch, the narrowed copy is consolidated into v1. Once v1 has been
+  accepted in production, any content change requires bumping `RELEASE_VERSION`, cutting a new
+  release directory, updating hashes, and prompting again. `docs/security-evidence/legal-release-evidence.json`
+  remains `BLOCKED` on operator identity, rights mailbox, DPO assessment, processor cross-border
+  register, and Thai counsel approval.
 - Fonts are referenced as absolute `/fonts/*.woff2`. Correct for same-origin serving
   (including `/legal/releases/…`), but a snapshot opened as a standalone downloaded file
   will fall back to system faces.

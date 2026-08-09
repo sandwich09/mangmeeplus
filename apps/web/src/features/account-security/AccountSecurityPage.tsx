@@ -252,7 +252,7 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
                   </p>
                   <p className="text-xs text-gray-400">
                     การปิดมีผลเฉพาะผู้ช่วยทาง LINE ของคุณ ไม่กระทบการใช้งานเว็บแอปหรือการอัปโหลดใบเสร็จผ่านเว็บ
-                    ดูรายละเอียดการประมวลผลข้อมูลได้ใน <Link href="/privacy" className="underline">นโยบายความเป็นส่วนตัว</Link>
+                    ดูรายละเอียดการประมวลผลข้อมูลได้ใน <Link href="/privacy" className="underline">ประกาศความเป็นส่วนตัว</Link>
                   </p>
                   {aiToggleError ? <p className="text-sm text-red-600">{aiToggleError}</p> : null}
                 </div>

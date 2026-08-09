@@ -375,7 +375,7 @@ function LoginForm() {
 
           {/* Public legal notices must remain reachable before authentication. */}
           <nav aria-label="เอกสารทางกฎหมาย" className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs text-gray-400">
-            <Link href="/privacy" className="underline hover:text-gray-600">นโยบายความเป็นส่วนตัว</Link>
+            <Link href="/privacy" className="underline hover:text-gray-600">ประกาศความเป็นส่วนตัว</Link>
             <span aria-hidden>·</span>
             <Link href="/terms" className="underline hover:text-gray-600">ข้อกำหนดการใช้งาน</Link>
             <span aria-hidden>·</span>

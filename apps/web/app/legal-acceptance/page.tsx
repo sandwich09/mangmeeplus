@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'ยืนยันเอกสารการใช้บริการ | MangmeePlus',
-  description: 'อ่านและยืนยันข้อกำหนดการใช้งาน นโยบายความเป็นส่วนตัว และอำนาจการใช้งาน MangmeePlus',
+  description: 'อ่านและยืนยันข้อกำหนดการใช้งาน ประกาศความเป็นส่วนตัว และอำนาจการใช้งาน MangmeePlus',
 };
 
 export default async function LegalAcceptanceRoute({

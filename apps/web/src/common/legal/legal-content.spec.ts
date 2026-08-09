@@ -9,7 +9,6 @@ import {
   LEGAL_NAV_ITEMS,
   LEGAL_OPERATOR,
   LEGAL_SOURCES,
-  REQUIRED_MARKETING_OPT_OUT_KEYWORDS,
 } from './legal-content';
 
 test('publishes one consistent MangmeePlus legal identity and all public notices', () => {
@@ -26,27 +25,15 @@ test('publishes one consistent MangmeePlus legal identity and all public notices
   ]);
 });
 
-test('keeps public copy aligned with implemented marketing opt-out keywords', () => {
-  assert.deepEqual(REQUIRED_MARKETING_OPT_OUT_KEYWORDS, [
-    'ยกเลิกข่าวสาร',
-    'หยุดโปร',
-    'STOP',
-  ]);
-});
-
 test('links to official Thai legal materials and carries an explicit effective date', () => {
-  assert.equal(LEGAL_EFFECTIVE_DATE, '9 สิงหาคม 2569');
+  assert.equal(LEGAL_EFFECTIVE_DATE, '10 สิงหาคม 2569');
   for (const href of [
     LEGAL_SOURCES.pdpaAct,
     LEGAL_SOURCES.pdpaRules,
     LEGAL_SOURCES.pdpaErasureRule,
     LEGAL_SOURCES.crossBorderSection28,
     LEGAL_SOURCES.crossBorderSection29,
-    LEGAL_SOURCES.accountingAct,
-    LEGAL_SOURCES.revenueCodeVat,
-    LEGAL_SOURCES.electronicTransactions,
     LEGAL_SOURCES.pdpcOffice,
-    LEGAL_SOURCES.companyRegistryService,
   ]) {
     assert.match(href, /^https:\/\//);
   }
@@ -65,8 +52,47 @@ test('immutable release URLs serve the exact bytes recorded in the contract', ()
     assert.ok(html.includes('<meta name="robots" content="noindex,follow">'));
     assert.ok(html.includes(LEGAL_OPERATOR.legalName));
     assert.ok(html.includes(document === 'terms'
-      ? '12. กฎหมายที่ใช้ ข้อพิพาท การแก้ไข และการติดต่อ'
+      ? '9. กฎหมายที่ใช้ การแก้ไข และการติดต่อ'
       : 'แหล่งกฎหมายทางการที่ใช้อ้างอิง'));
     assert.ok(!html.includes('<script'), 'immutable artifacts must not depend on mutable JavaScript bundles');
   }
+});
+
+test('keeps v1 public legal copy free of deferred feature claims', () => {
+  const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const publicPages = [
+    'apps/web/app/privacy/page.tsx',
+    'apps/web/app/terms/page.tsx',
+    'apps/web/app/data-deletion/page.tsx',
+  ].map((path) => readFileSync(`${repositoryRoot}/${path}`, 'utf8')).join('\n');
+
+  for (const deferredClaim of [
+    /\bCRM\b/i,
+    /\bLINE\b/i,
+    /\bOTP\b/i,
+    /\bOCR\b/i,
+    /\bAI\b/i,
+    /ภาษี/,
+    /ใบกำกับ/,
+    /ยื่นแบบ/,
+    /ยกเลิกข่าวสาร/,
+  ]) {
+    assert.doesNotMatch(publicPages, deferredClaim);
+  }
+});
+
+test('keeps login and acceptance links aligned with the current public and immutable documents', () => {
+  const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const loginPage = readFileSync(`${repositoryRoot}/apps/web/src/features/auth/LoginPage.tsx`, 'utf8');
+  const acceptancePage = readFileSync(`${repositoryRoot}/apps/web/src/features/auth/LegalAcceptancePage.tsx`, 'utf8');
+
+  for (const href of ['/privacy', '/terms', '/data-deletion']) {
+    assert.ok(loginPage.includes(`href="${href}"`));
+    assert.ok(acceptancePage.includes(`href="${href}"`));
+  }
+  assert.match(acceptancePage, /status\.terms\.href/);
+  assert.match(acceptancePage, /status\.privacy\.href/);
+  assert.match(acceptancePage, /ใช้กับบัญชีของคุณทุกกิจการ/);
+  assert.match(acceptancePage, /เฉพาะเมื่อเอกสารออกฉบับใหม่/);
+  assert.doesNotMatch(acceptancePage, /Business &amp; Accounting Assistant/);
 });

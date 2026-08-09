@@ -13,28 +13,35 @@ Legal copy cannot by itself close an operational gap. The notices therefore do n
 
 ## 2. Settled product facts
 
+Owner update 2026-08-10: the first public legal release must describe only the functions
+actually exposed in v1. The public copy is deliberately feature-neutral: it refers to functions
+shown as enabled for the user's account and does not name CRM, LINE, OTP, AI/OCR, accounting,
+tax, marketing, filing, or specialist reports. Repository capabilities and future roadmap are not
+public v1 promises. Every authenticated web user confirms the current Terms
+and acknowledges the current Privacy Notice once per user account. Company, membership, roles and
+capacity remain immutable evidence snapshots from that first confirmation, but changing any of
+those facts does not trigger another clickwrap. A new immutable Terms or Privacy release does.
+
 - Product: MangmeePlus / มั่งมี, operated by บริษัท มั่งมียั่งยืน จำกัด, registration 0105569135722.
-- Current sign-in is username/password. LINE account linking exists; LINE login is deferred. Google/Facebook login does not exist.
-- The platform prepares quotes, invoices, receipts/tax invoices, accounting records, tax reports, and exports. It does not currently submit tax returns directly to the Revenue Department.
-- OCR/AI can read, classify, summarize, and propose drafts. A human remains responsible for reviewing facts, accounting/tax treatment, signatures, approvals, payments, and filing.
-- For service account/security/support data, MangmeePlus acts as controller. For tenant CRM/customer/employee/accounting content, the tenant is normally controller and MangmeePlus processes on the tenant's instructions.
-- There is a CRM end-customer rights workflow. There is not yet a generic account/company deletion workflow, so the public deletion page describes a verified manual request channel rather than a non-existent self-service button.
-- The public LINE marketing opt-out commands `ยกเลิกข่าวสาร`, `หยุดโปร`, and `STOP` are shared contract constants and are non-removable. A tenant may add aliases, but policy validation and legacy-policy reads restore the three public commands.
+- The notice names only account/access, company/workspace, user-submitted content, usage/security, legal-acceptance, and support data categories needed across the functions actually enabled in v1.
+- For service account/security/support data, MangmeePlus acts as controller. For content a tenant places in its workspace, the tenant is normally controller and MangmeePlus processes on the tenant's instructions.
+- There is not yet a generic account/company deletion workflow, so the public deletion page describes a verified manual request channel rather than a non-existent self-service button.
+- Feature-specific policy constants and capabilities may remain implemented elsewhere in the repository, but they are not imported into or described by the v1 public legal copy.
 - Normal attachment deletion is presently a database soft-delete; physical storage/version deletion needs an operational implementation before promising immediate destruction.
 
 ## 3. Notice structure
 
 ### Privacy Notice
 
-The notice covers the controller/processor split; data subjects and data categories; sources; purposes and lawful bases; required information and consequences; AI/OCR/profiling and human review; recipients and subprocessors; international transfers; essential cookies/storage; retention; security and breach response; sensitive/minor data; rights, identity checks, tenant-customer routing, complaints, and updates.
+The notice covers the controller/processor split; neutral data categories; sources; purposes and lawful bases; recipients and processors; international transfers; essential cookies/storage; retention criteria; security and breach response; sensitive/minor data; rights, identity checks, tenant routing, complaints, and updates. It does not enumerate deferred features.
 
 ### Terms of Use
 
-The terms cover B2B authority, accounts and permissions, truthful feature boundaries, business data and IP, AI/human review, accounting/tax responsibility, acceptable use, plans/fees, third parties, confidentiality/security, availability, termination/export/deletion, balanced liability, Thai law, disputes, changes, and contact.
+The terms cover B2B authority, once-per-release acceptance, accounts and permissions, truthful v1 boundaries, business data and IP, acceptable use, plans/fees, confidentiality/security, availability, termination/export/deletion, balanced liability, Thai law, disputes, changes, and contact.
 
 ### Data Deletion
 
-The page separates four requests: delete the user's platform account; leave one company without deleting company records; delete a whole company workspace by an owner/authorized representative; and a CRM end-customer request addressed first to the tenant controller. It explains export, identity and authority verification, deletion/anonymisation/restriction, legal retention, backups, confirmation, and complaint rights.
+The page separates deletion of a user's account from deletion of tenant-controlled workspace content and deletion of an entire workspace by an owner/authorized representative. It explains identity and authority verification, deletion/anonymisation/restriction, generic lawful retention, backups, confirmation, and complaint rights without naming deferred modules or record types.
 
 Service cancellation is expressly distinct from a valid PDPA erasure request. The unsupported 45-day paid recovery and one-year automatic deletion claims are not published.
 
@@ -51,7 +58,7 @@ The new 2026 access/copy subordinate rule published 16 July 2026 is scheduled to
 
 ## 5. Retention presentation
 
-The public notice uses category and purpose rather than pretending all data has one lifetime. Implemented/default periods may be disclosed where stable (for example AI turn data 90 days and service-policy categories), while accounting/tax content remains subject to document type, statutory trigger, legal hold, disputes, and tenant instruction. Backups are isolated and erasure is replayed after restoration where deletion cannot occur immediately.
+The public notice uses category, purpose, contract state, risk, legal obligation, claims, and tenant instruction as retention criteria rather than publishing periods from deferred modules. Backups are isolated and erasure is replayed after restoration where deletion cannot occur immediately.
 
 ## 6. Required production follow-ups
 
@@ -63,7 +70,7 @@ These are not solved by copy and must remain visible release blockers:
 4. Build a generic account/company DSAR and deletion case workflow: identity/authority checks, export, legal hold, soft/physical object deletion including versions, audit evidence, SLA monitoring, backup tombstone/replay, and completion notice.
 5. Consolidate retention configuration and jobs into one approved register. Verify live database/object/log/backup settings before publishing exact periods beyond those already enforced.
 6. Either restore a functioning self-service AI objection/opt-out route or keep the notice on the monitored manual channel. Do not advertise the currently parked Security page.
-7. The authenticated company-scoped clickwrap preserves the current Terms acceptance and Privacy acknowledgment as separate append-only actions, including immutable versioned artifact URL, exact served-byte SHA-256, exact statement, server time, user, membership, capacity, role, session, and request evidence. Keep the API/LINE gate, stale-challenge protection, mandatory unchecked controls, and artifact byte-hash checks covered by regression tests. The current Thai artifacts live under `/legal/releases/2026-08-09.2/`; prior releases stay append-only, and every future legal change must create a new versioned path and hash rather than overwrite existing files.
+7. The authenticated clickwrap preserves the current Terms acceptance and Privacy acknowledgment as separate append-only actions, including immutable versioned artifact URL, exact served-byte SHA-256, exact statement, server time, user, initial company/membership/capacity/role snapshot, session, and request evidence. Its required/not-required scope is **user + exact released document pair**, not company, membership, or role. Keep the API/LINE gate, stale-challenge protection, mandatory unchecked controls, and artifact byte-hash checks covered by regression tests. While the product remains pre-launch, the first Thai release is `/legal/releases/v1/`; after launch, any legal-content change must create `v2` (then `v3`, etc.) and a new hash rather than overwrite an accepted release.
 8. Obtain Thai privacy, technology-contract, accounting, and tax counsel sign-off on the final production facts. Re-check law and regulator guidance at release and on 14 September 2026.
 
 Legal-acceptance rollout is ordered, not a single mixed-version switch: apply the additive migration first; deploy, drain, and health-check all API and employee-LINE processing replicas with the new guard; then deploy the Web gate. An old API replica can still accept direct Bearer or LINE business traffic, while a new replica started before the table exists would fail its guard query. Production orchestration must prove 100% backend convergence before the release is treated as enforced.
@@ -75,7 +82,7 @@ Interim operator guidance is recorded in `docs/runbooks/user-company-data-rights
 - Web typecheck and focused legal-content tests.
 - Public route response for `/privacy`, `/terms`, and `/data-deletion` without authentication.
 - Thai/mobile/desktop visual inspection, keyboard navigation, link and email validation.
-- Source scan for stale WatchDog/SudoChatBot wording and unsupported Google/Facebook, instant filing, slip-authenticity, 45-day, and one-year claims in public legal surfaces.
+- Source scan for stale product names and deferred public claims including CRM, LINE, OTP, AI/OCR, accounting/tax, filing, specialist reports, and channel-specific opt-out text.
 - Contract/API regression coverage proving the three public marketing opt-out commands cannot be replaced by tenant policy.
-- Legal-acceptance regression coverage for password-first ordering, company context, unchecked mandatory controls, stale version/challenge, API and employee-LINE blocking, idempotent evidence, role/capacity changes, and safe return URLs.
+- Legal-acceptance regression coverage for password-first ordering, initial company evidence context, unchecked mandatory controls, stale version/challenge, API and employee-LINE blocking, idempotent evidence, one acceptance across company/role changes, re-acceptance on a new document release, and safe return URLs.
 - Docker Web rebuild from the final source with no data-volume reset.
