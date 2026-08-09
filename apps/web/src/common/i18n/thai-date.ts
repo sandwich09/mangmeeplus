@@ -1,16 +1,19 @@
 const THAI_DATE_FORMATTER = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+  timeZone: 'Asia/Bangkok',
   day: 'numeric',
   month: 'short',
   year: 'numeric',
 });
 
 const THAI_TIME_FORMATTER = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+  timeZone: 'Asia/Bangkok',
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
 });
 
 const THAI_MONTH_FORMATTER = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+  timeZone: 'Asia/Bangkok',
   month: 'short',
   year: 'numeric',
 });
