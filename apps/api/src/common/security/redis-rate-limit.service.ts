@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Inject, Injectable, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
 import Redis from 'ioredis';
 import { AppConfigService } from '../config/app-config.service';
@@ -10,6 +10,10 @@ export type RateLimitDecision = {
   /** True when this decision came from the in-process fallback after the shared store failed. */
   degraded?: boolean;
 };
+
+export type LeaseDecision =
+  | { acquired: true; token: string; retryAfterSeconds: number; degraded?: boolean }
+  | { acquired: false; retryAfterSeconds: number; degraded?: boolean };
 
 /**
  * What a bucket does when the shared store is unavailable in production.
@@ -26,8 +30,9 @@ export type RateLimitDecision = {
  */
 export type StoreFailurePolicy = 'fail-closed' | 'degrade-to-local';
 
-type RedisCounter = Pick<Redis, 'eval' | 'get' | 'ttl' | 'quit'>;
+type RedisCounter = Pick<Redis, 'eval' | 'get' | 'set' | 'ttl' | 'quit'>;
 type LocalBucket = { count: number; expiresAt: number };
+type LocalLease = { token: string; expiresAt: number };
 
 const CONSUME_LUA = `
 local count = redis.call('INCR', KEYS[1])
@@ -36,10 +41,18 @@ local ttl = redis.call('TTL', KEYS[1])
 return {count, ttl}
 `;
 
+const RELEASE_LEASE_LUA = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
+
 @Injectable()
 export class RedisRateLimitService implements OnModuleDestroy {
   private client?: RedisCounter;
   private readonly local = new Map<string, LocalBucket>();
+  private readonly localLeases = new Map<string, LocalLease>();
 
   // The token has to be stated explicitly: a `Pick<>` annotation emits no runtime type, so Nest
   // has nothing to resolve and the whole API fails to boot. The narrow structural type is kept
@@ -69,6 +82,41 @@ export class RedisRateLimitService implements OnModuleDestroy {
     return this.run(scope, rawKey, maxRequests, windowSeconds, false, onStoreFailure);
   }
 
+  /**
+   * Crash-safe distributed admission lease. Unlike a rate-limit counter it can be released as
+   * soon as the cost-bearing action and its ledger write finish; the TTL is only the dead-owner
+   * escape hatch. Production fails closed when Redis is unavailable.
+   */
+  async tryAcquireLease(scope: string, rawKey: string, ttlSeconds: number): Promise<LeaseDecision> {
+    const key = this.key('lease', scope, rawKey);
+    const token = randomUUID();
+    try {
+      if (!this.client && this.config.redisUrl) this.client = this.createClient();
+      if (!this.client) return this.localLeaseDecision(key, token, ttlSeconds);
+
+      const acquired = await this.client.set(key, token, 'EX', ttlSeconds, 'NX');
+      if (acquired === 'OK') return { acquired: true, token, retryAfterSeconds: ttlSeconds };
+      return { acquired: false, retryAfterSeconds: Math.max(1, await this.client.ttl(key)) };
+    } catch (error) {
+      if (this.config.isProduction) {
+        throw new ServiceUnavailableException('Admission-control store is unavailable.', { cause: error });
+      }
+      return { ...this.localLeaseDecision(key, token, ttlSeconds), degraded: true };
+    }
+  }
+
+  /** Releases only the lease owned by `token`; a stale owner can never delete its successor. */
+  async releaseLease(scope: string, rawKey: string, token: string): Promise<boolean> {
+    const key = this.key('lease', scope, rawKey);
+    const local = this.localLeases.get(key);
+    if (local?.token === token) {
+      this.localLeases.delete(key);
+      return true;
+    }
+    if (!this.client) return false;
+    return Number(await this.client.eval(RELEASE_LEASE_LUA, 1, key, token)) === 1;
+  }
+
   async onModuleDestroy(): Promise<void> {
     if (this.client) await this.client.quit();
   }
@@ -81,17 +129,9 @@ export class RedisRateLimitService implements OnModuleDestroy {
     increment: boolean,
     onStoreFailure: StoreFailurePolicy,
   ): Promise<RateLimitDecision> {
-    const key = `rate-limit:v1:${scope}:${createHash('sha256').update(rawKey.trim().toLowerCase().slice(0, 512)).digest('hex')}`;
+    const key = this.key('rate-limit', scope, rawKey);
     try {
-      if (!this.client && this.config.redisUrl) {
-        this.client = new Redis(this.config.redisUrl, {
-          lazyConnect: true,
-          enableOfflineQueue: false,
-          maxRetriesPerRequest: 1,
-          connectTimeout: 1_500,
-          commandTimeout: 1_500,
-        });
-      }
+      if (!this.client && this.config.redisUrl) this.client = this.createClient();
       if (!this.client) return this.localDecision(key, max, window, increment);
       const result = increment
         ? await this.client.eval(CONSUME_LUA, 1, key, String(window)) as [number, number]
@@ -103,6 +143,21 @@ export class RedisRateLimitService implements OnModuleDestroy {
       }
       return { ...this.localDecision(key, max, window, increment), degraded: true };
     }
+  }
+
+  private createClient(): RedisCounter {
+    return new Redis(this.config.redisUrl, {
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 1_500,
+      commandTimeout: 1_500,
+    });
+  }
+
+  private key(prefix: 'rate-limit' | 'lease', scope: string, rawKey: string): string {
+    const hash = createHash('sha256').update(rawKey.trim().toLowerCase().slice(0, 512)).digest('hex');
+    return `${prefix}:v1:${scope}:${hash}`;
   }
 
   private localDecision(key: string, max: number, windowSeconds: number, increment: boolean): RateLimitDecision {
@@ -125,5 +180,22 @@ export class RedisRateLimitService implements OnModuleDestroy {
       count: bucket.count,
       retryAfterSeconds: Math.max(1, Math.ceil((bucket.expiresAt - now) / 1_000)),
     };
+  }
+
+  private localLeaseDecision(key: string, token: string, ttlSeconds: number): LeaseDecision {
+    const now = Date.now();
+    if (this.localLeases.size > 10_000) {
+      for (const [candidate, lease] of this.localLeases) {
+        if (lease.expiresAt <= now) this.localLeases.delete(candidate);
+      }
+      const oldest = this.localLeases.keys().next().value as string | undefined;
+      if (this.localLeases.size > 10_000 && oldest) this.localLeases.delete(oldest);
+    }
+    const current = this.localLeases.get(key);
+    if (current && current.expiresAt > now) {
+      return { acquired: false, retryAfterSeconds: Math.max(1, Math.ceil((current.expiresAt - now) / 1_000)) };
+    }
+    this.localLeases.set(key, { token, expiresAt: now + ttlSeconds * 1_000 });
+    return { acquired: true, token, retryAfterSeconds: ttlSeconds };
   }
 }

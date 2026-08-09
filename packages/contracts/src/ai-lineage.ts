@@ -12,8 +12,9 @@ export type AiModelPolicy = {
 };
 
 /** One model call as the gateway measured it, reported additively on every internal AI response
- *  so the API can meter per-company spend (metering spec §7.1). Token counts are 0 on a failed
- *  call; `tag` is the call site's usageTag, 'untagged' when it passed none. */
+ *  so the API can meter per-company spend (metering spec §7.1). Failed calls keep provider usage
+ *  when available; an aborted Bedrock timeout uses conservative ceiling counts instead of zero.
+ *  `tag` is the call site's usageTag, 'untagged' when it passed none. */
 export type AiUsageEntry = {
   tag: string;
   modelId: string;

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -24,6 +24,34 @@ const shadowProbe = {
   }),
 } as any;
 const acceptedLegal = { isRequired: async () => false } as any;
+
+describe('readResponseBodyLimited', () => {
+  it('combines a chunked response within the hard byte cap', async () => {
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(Uint8Array.from([3]));
+        controller.close();
+      },
+    }));
+
+    assert.deepEqual(await readResponseBodyLimited(response, 3), Buffer.from([1, 2, 3]));
+  });
+
+  it('cancels a chunked response as soon as its running total exceeds the cap', async () => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([1, 2]));
+        controller.enqueue(Uint8Array.from([3, 4]));
+      },
+      cancel() { cancelled = true; },
+    }));
+
+    assert.equal(await readResponseBodyLimited(response, 3), null);
+    assert.equal(cancelled, true);
+  });
+});
 
 const ROUTED_EXPENSE_DOCUMENT = {
   status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.98,

@@ -5,16 +5,30 @@ import { RedisRateLimitService } from './redis-rate-limit.service';
 
 class FakeRedis {
   readonly values = new Map<string, { count: number; ttl: number }>();
+  readonly leases = new Map<string, { token: string; ttl: number }>();
 
-  async eval(_script: string, _keys: number, key: string, ttl: string): Promise<[number, number]> {
-    const row = this.values.get(key) ?? { count: 0, ttl: Number(ttl) };
+  async eval(script: string, _keys: number, key: string, value: string): Promise<[number, number] | number> {
+    if (script.includes("redis.call('DEL'")) {
+      if (this.leases.get(key)?.token !== value) return 0;
+      this.leases.delete(key);
+      return 1;
+    }
+    const row = this.values.get(key) ?? { count: 0, ttl: Number(value) };
     row.count += 1;
     this.values.set(key, row);
     return [row.count, row.ttl];
   }
 
-  async get(key: string): Promise<string | null> { return String(this.values.get(key)?.count ?? 0); }
-  async ttl(key: string): Promise<number> { return this.values.get(key)?.ttl ?? -2; }
+  async set(key: string, token: string, _ex: string, ttl: number, _nx: string): Promise<'OK' | null> {
+    if (this.leases.has(key)) return null;
+    this.leases.set(key, { token, ttl });
+    return 'OK';
+  }
+
+  async get(key: string): Promise<string | null> {
+    return this.leases.get(key)?.token ?? String(this.values.get(key)?.count ?? 0);
+  }
+  async ttl(key: string): Promise<number> { return this.leases.get(key)?.ttl ?? this.values.get(key)?.ttl ?? -2; }
   async quit(): Promise<'OK'> { return 'OK'; }
 }
 
@@ -29,6 +43,22 @@ describe('RedisRateLimitService', () => {
     assert.equal((await first.consume('ocr', 'company-1', 2, 60)).allowed, true);
     assert.equal((await second.consume('ocr', 'company-1', 2, 60)).allowed, true);
     assert.equal((await first.consume('ocr', 'company-1', 2, 60)).allowed, false);
+  });
+
+  it('admits one distributed lease owner and releases only with its token', async () => {
+    const redis = new FakeRedis();
+    const first = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as any);
+    const second = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as any);
+    (first as any).client = redis;
+    (second as any).client = redis;
+
+    const owner = await first.tryAcquireLease('ai-budget', 'company-1:2026-08', 180);
+    assert.equal(owner.acquired, true);
+    assert.equal((await second.tryAcquireLease('ai-budget', 'company-1:2026-08', 180)).acquired, false);
+    if (!owner.acquired) assert.fail('first caller must own the lease');
+    assert.equal(await second.releaseLease('ai-budget', 'company-1:2026-08', 'stale-token'), false);
+    assert.equal(await first.releaseLease('ai-budget', 'company-1:2026-08', owner.token), true);
+    assert.equal((await second.tryAcquireLease('ai-budget', 'company-1:2026-08', 180)).acquired, true);
   });
 
   it('fails closed in production when the shared store is unavailable', async () => {

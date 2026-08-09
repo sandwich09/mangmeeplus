@@ -155,6 +155,30 @@ type DownloadedLineMedia = {
   bytes: Buffer;
 };
 
+/** Reads a fetch body without ever retaining more than `maxBytes`. This is the authoritative
+ *  limit for chunked responses whose Content-Length is absent or dishonest. */
+export async function readResponseBodyLimited(response: Pick<Response, 'body'>, maxBytes: number): Promise<Buffer | null> {
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 type LineBusinessDocumentDecision =
   | { outcome: 'expense'; manualReview: boolean; classification: BusinessDocumentClassification | null }
   | { outcome: 'reference' | 'unsupported'; classification: BusinessDocumentClassification | null }
@@ -2330,7 +2354,8 @@ export class ProcessLineWebhookUseCase {
     if (!response?.ok) return null;
     const declaredSize = Number(response.headers.get('content-length') ?? 0);
     if (declaredSize > this.config.uploadMaxBytes) return null;
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = await readResponseBodyLimited(response, this.config.uploadMaxBytes);
+    if (!bytes) return null;
     const mimeType = normalizeAttachmentMimeType(response.headers.get('content-type'), bytes);
     const extension = canonicalAttachmentExtension(mimeType) ?? 'bin';
     return {

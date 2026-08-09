@@ -82,7 +82,10 @@ Same two fields on `ProviderToolsInput`. `ProviderOutput`/`ProviderToolsOutput` 
  "durationMs":4180}
 ```
 
-  - `tag` defaults to `'untagged'` when the caller passed none; `ok:false` lines carry `errorCode` instead of token fields when no usage is available (timeout races resolve without a response).
+  - `tag` defaults to `'untagged'` when the caller passed none. `ok:false` lines carry
+    `errorCode`; real response usage is retained on a later parse error. A Bedrock timeout aborts
+    the SDK request and reports `usageEstimated:true` with a conservative 200k-input + requested
+    max-output estimate because the aborted response has no exact usage.
   - No message content, prompts, or user data in the log line — counts and identifiers only.
 
 ### 4.4 OpenAI provider parity

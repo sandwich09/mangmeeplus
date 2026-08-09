@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BedrockProvider, CACHE_MIN_CHARS } from './bedrock.provider';
+import { BedrockProvider, CACHE_MIN_CHARS, TIMEOUT_INPUT_TOKEN_CEILING } from './bedrock.provider';
 import { drainUsage, runWithUsageContext } from '../../../../common/usage/usage-context';
 
 function makeProvider(timeoutMs = 10000) {
@@ -77,8 +77,16 @@ describe('BedrockProvider error mapping', () => {
 
   it('maps timeout to PROVIDER_TIMEOUT (retryable)', async () => {
     const provider = makeProvider(1); // 1ms timeout
+    let aborted = false;
     (provider as any).client = {
-      send: () => new Promise((resolve) => setTimeout(resolve, 5000)),
+      send: (_command: unknown, options: { abortSignal: AbortSignal }) => new Promise((_resolve, reject) => {
+        options.abortSignal.addEventListener('abort', () => {
+          aborted = true;
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      }),
     };
     const result = await provider.generateText({ messages: [{ role: 'user', text: 'hello' }] });
     assert.equal(result.ok, false);
@@ -86,6 +94,7 @@ describe('BedrockProvider error mapping', () => {
       assert.equal(result.error.code, 'PROVIDER_TIMEOUT');
       assert.equal(result.error.retryable, true);
     }
+    assert.equal(aborted, true, 'the timeout must cancel the underlying Bedrock SDK request');
   });
 
   it('maps AccessDeniedException to PROVIDER_ACCESS_NOT_READY', async () => {
@@ -352,6 +361,35 @@ describe('BedrockProvider prompt caching', () => {
     assert.equal(capture.lines[0]!['inputTokens'], undefined);
   });
 
+  it('meters an aborted timeout at the conservative ceiling instead of zero', async () => {
+    const provider = makeProvider(1);
+    (provider as any).client = {
+      send: (_command: unknown, options: { abortSignal: AbortSignal }) => new Promise((_resolve, reject) => {
+        options.abortSignal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      }),
+    };
+    const capture = captureUsageLines();
+    const entries = await runWithUsageContext({ companyId: 'company-1' }, async () => {
+      try {
+        await provider.generateText({ messages: [{ role: 'user', text: 'q' }], maxTokens: 17 });
+      } finally {
+        capture.restore();
+      }
+      return drainUsage();
+    });
+
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]!.ok, false);
+    assert.equal(entries[0]!.inputTokens, TIMEOUT_INPUT_TOKEN_CEILING);
+    assert.equal(entries[0]!.outputTokens, 17);
+    assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_TIMEOUT');
+    assert.equal(capture.lines[0]!['usageEstimated'], true);
+  });
+
   it('renders cacheableContext as the leading block in generateWithTools too', async () => {
     const provider = makeProvider();
     let captured: any;
@@ -416,6 +454,8 @@ describe('BedrockProvider prompt caching', () => {
     assert.equal(capture.lines.length, 1, 'a parse failure must not double-log');
     assert.equal(capture.lines[0]!['ok'], false);
     assert.equal(capture.lines[0]!['errorCode'], 'PROVIDER_UNKNOWN');
+    assert.equal(capture.lines[0]!['inputTokens'], 9, 'real provider usage survives a parse failure');
+    assert.equal(capture.lines[0]!['outputTokens'], 1);
   });
 
   it('still returns the response when logging itself throws', async () => {

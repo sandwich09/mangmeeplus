@@ -88,17 +88,18 @@ Exit: `CompanyAiMonthlyUsage` fills from real traffic; behaviour unchanged.
   `dist` yields `undefined` for new exports).
 - `assertCompanyAiBudget`: effective budget (override else default; config cached ≤60s per
   company), live aggregate point read, refuse at `spend >= budget`; fail closed with
-  `AI_BUDGET_UNAVAILABLE` on any read error. Wire ahead of all five seams' gateway calls,
-  after the existing Redis `consume()` where present; each seam refuses in its existing
-  exhaustion shape (spec §7.5).
+  `AI_BUDGET_UNAVAILABLE` on any read error. `runWithCompanyAiBudgetAdmission` first takes one
+  Redis lease per company/Bangkok-month and holds it through the gateway call and ledger write;
+  concurrent actions refuse with `AI_BUDGET_BUSY`, so they cannot all pass the same spend read.
+  Wire across all five seams after the existing Redis `consume()` where present (spec §7.5).
 - Events: add `ai.company_budget.exceeded` (HIGH) and `ai.company_budget.threshold` (HIGH —
   `SecurityEventRisk` has no MEDIUM and the deployed metric filter only matches HIGH/CRITICAL;
   see spec §7.6) to `SECURITY_EVENT` in **both** byte-identical copies (M-02 guard test must
   stay green); emit threshold from `recordCompanyAiUsage`, exceeded from the assert.
-- Tests: override vs default resolution; refusal shape per seam; fail-closed on thrown reads;
-  in-flight action not aborted (assert only ahead of the call); threshold exactly-once under
-  two concurrent recordings; `resolveCompanyAiModelPolicy` unchanged for non-null models and
-  inherits on null.
+- Tests: override vs default resolution; refusal shape per seam; fail-closed on thrown reads/store
+  loss; a second concurrent action is refused while the lease owner runs and succeeds after
+  release; admitted action not aborted; threshold exactly-once under two concurrent recordings;
+  `resolveCompanyAiModelPolicy` unchanged for non-null models and inherits on null.
 
 Exit: spend is bounded per company at the platform default; no way to set per-company values
 yet.
