@@ -1,6 +1,6 @@
 # Agent Memory: production-readiness-medium-remediation
 
-Status: IN PROGRESS — M8-01..M8-10 plus expense and reimbursement related-view complete; procurement related-view is next.
+Status: IN PROGRESS — M8-01..M8-10 plus expense/reimbursement complete; procurement related-view verified and pending commit.
 Owner: thawatchai
 Scope: Verify, reclassify, fix and individually commit every finding in section 8 (MEDIUM) of
 `docs/qa/production-readiness-audit-consolidated-2026-08-09.md`; record newly discovered bugs/gaps and fix them in the
@@ -135,6 +135,22 @@ Verification:
   126/126, AI Gateway 87/87 and contracts feature tests 12/12 passed. Contracts build, Prisma validate/generate and web/AI
   Gateway typechecks passed. API typecheck reports only the established 14 substitute-receipt/report spec errors. All 128
   migrations applied successfully to a clean temporary PostgreSQL database, which was then removed.
+- Procurement owner-policy follow-up uses five universal, exact-submenu-gated related-read permissions across the persisted
+  PR → PO → goods receipt → vendor bill → supplier payment graph. It walks links to closure in both directions, includes
+  immutable successful audit/approval actors so a later header update does not erase an earlier participant, and never
+  relates documents merely because they share a supplier. Supplier master/bank, AP reports/WHT/posting sources and every
+  mutation remain exact-permission paths.
+- New gap found and fixed while playing the use cases: procurement list/detail and many mutation preload paths ignored
+  `RequestContext.scopes.branchIds`, so a branch-restricted role could cross branches. All five lists, details and mutation
+  preloads now fail closed by branch; scoped PR/PO/receipt creation cannot create a central/cross-branch record. Receipt
+  creation also rejects a non-receivable PO, mismatched supplier/branch and lines owned by another PO.
+- A second source-integrity gap allowed a PO to point at a draft/already-converted/cross-branch PR or foreign PR lines,
+  while leaving the PR approved and permitting a concurrent duplicate conversion. Conversion now validates the complete
+  PR lineage and claims `APPROVED -> CONVERTED` in the same serializable transaction as PO creation.
+- Procurement verification: all module specs 212/212, permission/feature/access/ERP-AI tests 125/125, LINE menu 16/16,
+  focused web 100/100 and AI Gateway 76/76 pass. Contracts build and web/AI Gateway typechecks pass. Prisma validate/
+  generate pass, and all 129 migrations applied to a clean PostgreSQL database; the migration table confirmed 129
+  completed rows before the temporary database was removed. API typecheck has no procurement error and retains only the
+  established 14 substitute-receipt/report spec errors.
 Next:
-- Apply the same owner rule to procurement without mixing the concurrent branch-scope/expense worktree changes, then
-  return to the next section-8 finding.
+- Commit procurement without staging concurrent shared-worktree changes; then continue the next section-8 finding.

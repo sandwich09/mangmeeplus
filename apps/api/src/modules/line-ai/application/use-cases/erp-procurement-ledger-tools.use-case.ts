@@ -115,7 +115,9 @@ export class ProcurementGetPurchaseOrderDetailTool implements ErpReadToolPort {
 
   async execute(ctx: ErpToolContext, input?: { purchaseOrderId?: string }): Promise<ToolResult> {
     const asOf = now();
-    if (!ctx.permissions.includes('procurement.purchase_order.read')) return forbidden(this.toolName, asOf);
+    if (!ctx.permissions.some((permission) => ['procurement.purchase_order.read', 'procurement.purchase_order.read_related'].includes(permission))) {
+      return forbidden(this.toolName, asOf);
+    }
     const purchaseOrderId = typeof input?.purchaseOrderId === 'string' ? input.purchaseOrderId.trim().slice(0, 200) : '';
     if (!purchaseOrderId) {
       return { toolName: this.toolName, status: 'ok', data: { needsPurchaseOrderId: true }, sourceRefs: [ref(ctx, asOf, 'procurement', 'purchase_order_detail', 'ข้อมูลใบสั่งซื้อ', '/procurement')], asOf };

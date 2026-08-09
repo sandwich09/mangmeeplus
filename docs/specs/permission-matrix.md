@@ -541,6 +541,29 @@ reimbursement.policy.manage
 reimbursement.export
 ```
 
+### Procurement related-document visibility
+
+The following LOW-risk permissions are universal to company roles but remain gated by their exact procurement submenu:
+
+```text
+procurement.purchase_request.read_related
+procurement.purchase_order.read_related
+procurement.goods_receipt.read_related
+procurement.vendor_bill.read_related
+procurement.supplier_payment.read_related
+```
+
+Each key returns only tenant- and branch-scoped documents connected through the persisted purchase-to-pay graph:
+PR → PO → goods receipt → vendor bill → supplier-payment allocation/payment. Direct actors include requester,
+creator/updater, submit/approve/reject/issue/cancel/close/post/void actors, receiver, evidence reviewer, matcher/override
+actor and payment/allocation actor. Successful immutable audit/approval history preserves earlier actors after mutable
+header fields change. Traversal is cycle-safe, reapplies branch scope at every hop, and never treats sharing a supplier
+as a relationship.
+
+These keys do not expose supplier master data, supplier bank accounts, AP aging/statement reports, WHT handoffs or
+posting sources. They never grant create, edit, submit, approve/reject, issue, receive/post, match/override, pay, void,
+export or policy authority; each mutation continues to require its exact permission/actor rule and current state.
+
 ## 5.7 CRM and Sales Permission Keys
 
 Use these keys for CRM and Sales MVP:

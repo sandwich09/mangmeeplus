@@ -1224,12 +1224,14 @@ procurement.supplier.manage
 procurement.supplier.bank.read
 procurement.supplier.bank.manage
 procurement.purchase_request.read
+procurement.purchase_request.read_related
 procurement.purchase_request.create
 procurement.purchase_request.update
 procurement.purchase_request.submit
 procurement.purchase_request.approve
 procurement.purchase_request.cancel
 procurement.purchase_order.read
+procurement.purchase_order.read_related
 procurement.purchase_order.create
 procurement.purchase_order.update
 procurement.purchase_order.submit
@@ -1238,11 +1240,13 @@ procurement.purchase_order.issue
 procurement.purchase_order.cancel
 procurement.purchase_order.close
 procurement.goods_receipt.read
+procurement.goods_receipt.read_related
 procurement.goods_receipt.create
 procurement.goods_receipt.update
 procurement.goods_receipt.post
 procurement.goods_receipt.void
 accounts_payable.vendor_bill.read
+procurement.vendor_bill.read_related
 accounts_payable.vendor_bill.create
 accounts_payable.vendor_bill.update
 accounts_payable.vendor_bill.match
@@ -1251,6 +1255,7 @@ accounts_payable.vendor_bill.submit
 accounts_payable.vendor_bill.approve
 accounts_payable.vendor_bill.void
 accounts_payable.payment.read
+procurement.supplier_payment.read_related
 accounts_payable.payment.create
 accounts_payable.payment.void
 accounts_payable.aging.read
@@ -1273,6 +1278,20 @@ SALES, MARKETING: no procurement/AP mutation permissions by default
 ```
 
 Server-side ABAC must restrict company, branch, ownership, threshold, and sensitive bank detail access.
+
+Related-view policy (owner decision 2026-08-10): all company roles receive the five view-only `*.read_related` keys
+above, each stripped when its exact procurement submenu is disabled. A related actor may view the connected PR/PO/
+receipt/vendor-bill/payment chain under tenant and branch scope. Sharing only a supplier is not a relationship. Supplier
+master/bank, AP reports, WHT handoffs and posting-source endpoints keep their exact broad permissions. Mutation authority
+never follows relation: the API and web still require the exact action permission, actor/role rule and current state.
+
+Every procurement list/detail/mutation must apply `RequestContext.scopes.branchIds` server-side. Company-central rows
+(`branchId = null`) retain the platform-wide branch rule; a scoped creator cannot create a central record as a bypass.
+
+PR-to-PO conversion accepts only one unconverted `APPROVED` PR in tenant/branch scope. Its supplier (when specified),
+currency, branch and complete one-to-one source-line set must match the PO. PO creation and the PR transition to
+`CONVERTED` are one serializable transaction with a compare-and-set claim, so concurrent conversion cannot create two POs.
+Goods-receipt creation likewise verifies that its PO is receivable and that supplier, branch and every source line match.
 
 ## 17. Audit Actions
 

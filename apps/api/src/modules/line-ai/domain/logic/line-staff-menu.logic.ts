@@ -21,7 +21,7 @@ const QUERY_ACTIONS = [
   ['แชทค้างตอบ', 'ดูแชทค้างตอบ', ['crm.inbox.read']],
   ['ค่าใช้จ่ายเดือนนี้', 'ดูค่าใช้จ่ายเดือนนี้', ['expense.read']],
   ['รายงานการเงิน', 'ดูรายงานการเงิน', ['report.finance.read', 'ledger.read']],
-  ['ใบสั่งซื้อ (PO)', 'ดูใบสั่งซื้อ', ['procurement.purchase_order.read']],
+  ['ใบสั่งซื้อ (PO)', 'ดูใบสั่งซื้อ', ['procurement.purchase_order.read', 'procurement.purchase_order.read_related']],
 ] as const;
 
 const hasAny = (permissions: Set<string>, required: readonly string[]) => required.some((key) => permissions.has(key));

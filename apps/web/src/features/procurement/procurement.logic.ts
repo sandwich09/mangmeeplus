@@ -8,9 +8,9 @@ export type ProcurementTab = (typeof PROCUREMENT_TABS)[number];
  */
 const PROCUREMENT_TAB_PERMISSIONS: Record<ProcurementTab, readonly string[]> = {
   suppliers: ['procurement.supplier.read'],
-  pr: ['procurement.purchase_request.read'],
-  po: ['procurement.purchase_order.read'],
-  gr: ['procurement.goods_receipt.read'],
+  pr: ['procurement.purchase_request.read', 'procurement.purchase_request.read_related'],
+  po: ['procurement.purchase_order.read', 'procurement.purchase_order.read_related'],
+  gr: ['procurement.goods_receipt.read', 'procurement.goods_receipt.read_related'],
 };
 
 export function visibleProcurementTabs(permissions: readonly string[]): ProcurementTab[] {

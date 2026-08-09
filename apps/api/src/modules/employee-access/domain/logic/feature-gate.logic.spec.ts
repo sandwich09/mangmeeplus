@@ -122,6 +122,25 @@ describe('filterPermissionsByEntitlement', () => {
     );
   });
 
+  it('keeps procurement related-view authority only while procurement is enabled', () => {
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['procurement.purchase_order.read_related'], entitledWithChildren('expenses')),
+      [],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(['procurement.purchase_order.read_related'], entitledWithChildren('procurement')),
+      ['procurement.purchase_order.read_related'],
+    );
+    assert.deepEqual(
+      filterPermissionsByEntitlement(
+        ['procurement.purchase_request.read_related', 'procurement.purchase_order.read_related'],
+        new Set(['procurement', 'procurement.purchase_requests']),
+      ),
+      ['procurement.purchase_request.read_related'],
+      'disabling one procurement child must not leak that document family through another child',
+    );
+  });
+
   it('does not retain a child permission when only the child entitlement is enabled', () => {
     assert.deepEqual(
       filterPermissionsByEntitlement(['expense.evidence.read'], new Set(['expenses.evidence'])),

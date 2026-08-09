@@ -127,6 +127,9 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
       'procurement.purchase_request.read',
       'procurement.purchase_order.read',
       'procurement.goods_receipt.read',
+      'procurement.purchase_request.read_related',
+      'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
     ],
     status: 'ready',
   },
@@ -245,6 +248,8 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
     gatePermissions: [
       'procurement.vendor_bill.read',
       'procurement.supplier_payment.read',
+      'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
       'procurement.ap.report',
     ],
     status: 'ready',

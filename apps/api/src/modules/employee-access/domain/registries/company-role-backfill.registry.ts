@@ -53,6 +53,17 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'view-only access to tenant/branch-scoped reimbursement records. The reimbursement '
       + 'entitlement still strips this key, and no mutation permission is implied.',
   },
+  ...[
+    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
+    'procurement.supplier_payment.read_related',
+  ].map((key) => ({
+    key,
+    anchor: null,
+    why: 'Persisted actors retain view-only access to their tenant/branch-scoped procurement chain. '
+      + 'The exact document feature entitlement strips this key, while supplier master/bank details '
+      + 'and every mutation remain separately authorized.',
+  })),
   {
     key: 'expense.evidence.read',
     anchor: 'expense.read',

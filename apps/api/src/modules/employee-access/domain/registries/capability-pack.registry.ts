@@ -31,6 +31,8 @@ const RAW_PACKS: RawPack[] = [
       'notification.read', 'notification.preference.manage', 'dashboard.read', 'attachment.read',
       'company.branch.read', 'ai.tool.invoke', 'line.ai.query', 'accounting.document.read_related',
       'expense.read_related', 'reimbursement.read_related',
+      'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     ],
   },
   {

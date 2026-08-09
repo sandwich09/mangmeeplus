@@ -8,6 +8,7 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { canTransitionPR } from '../../domain/logic/procurement.logic';
 import { civilPeriodKey, PROCUREMENT_SEQUENCE_KEYS, todayCivilDate } from '@watchdog-bms/contracts';
 import type { PurchaseRequestRecord } from '../../domain/models/procurement.model';
+import { assertProcurementBranchScope, PROCUREMENT_RELATED_READ_PERMISSIONS, resolveProcurementCreateBranch } from './procurement-access';
 
 @Injectable()
 export class CreatePurchaseRequestUseCase {
@@ -23,7 +24,9 @@ export class CreatePurchaseRequestUseCase {
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; requestedQuantity: string; estimatedUnitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; inventoryLocationId?: string }[];
   }): Promise<PurchaseRequestRecord> {
     if (!ctx.permissions.includes('procurement.purchase_request.create')) throw new ForbiddenException();
-    const pr = await this.repo.createPurchaseRequest(ctx.companyId, dto, ctx.userId);
+    const branchId = resolveProcurementCreateBranch(ctx, dto.branchId);
+    if (branchId && !await this.repo.branchExists(ctx.companyId, branchId)) throw new BadRequestException('Branch does not exist in this company');
+    const pr = await this.repo.createPurchaseRequest(ctx.companyId, { ...dto, branchId }, ctx.userId);
     void this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'procurement.purchase_request.create', targetType: 'purchase_request', targetId: pr.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW' });
     return pr;
   }
@@ -34,9 +37,13 @@ export class GetPurchaseRequestUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, id: string): Promise<PurchaseRequestRecord> {
-    if (!ctx.permissions.includes('procurement.purchase_request.read')) throw new ForbiddenException();
+    const canReadAll = ctx.permissions.includes('procurement.purchase_request.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.PURCHASE_REQUEST);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
     const pr = await this.repo.findPurchaseRequestById(ctx.companyId, id);
     if (!pr) throw new NotFoundException('Purchase request not found');
+    assertProcurementBranchScope(ctx, pr.branchId, 'Purchase request');
+    if (!canReadAll && !await this.repo.isProcurementDocumentRelatedToUser(ctx.companyId, 'PURCHASE_REQUEST', id, ctx.userId, ctx.scopes ?? {})) throw new ForbiddenException();
     return pr;
   }
 }
@@ -46,8 +53,12 @@ export class ListPurchaseRequestsUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, filter: { status?: string; requesterUserId?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: PurchaseRequestRecord[]; total: number; page: number; pageSize: number }> {
-    if (!ctx.permissions.includes('procurement.purchase_request.read')) throw new ForbiddenException();
-    const { data, total } = await this.repo.listPurchaseRequests(ctx.companyId, filter);
+    const canReadAll = ctx.permissions.includes('procurement.purchase_request.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.PURCHASE_REQUEST);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    const { data, total } = await this.repo.listPurchaseRequests(ctx.companyId, {
+      ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
+    }, ctx.scopes ?? {});
     return { data, total, page: filter.page ?? 1, pageSize: filter.pageSize ?? 20 };
   }
 }
@@ -66,6 +77,7 @@ export class SubmitPurchaseRequestUseCase {
     if (!ctx.permissions.includes('procurement.purchase_request.create')) throw new ForbiddenException();
     const pr = await this.repo.findPurchaseRequestById(ctx.companyId, id);
     if (!pr) throw new NotFoundException('Purchase request not found');
+    assertProcurementBranchScope(ctx, pr.branchId, 'Purchase request');
     if (!canTransitionPR(pr.status, 'PENDING_APPROVAL')) throw new BadRequestException(`Cannot submit from status ${pr.status}`);
 
     const now = new Date();
@@ -90,6 +102,7 @@ export class ApprovePurchaseRequestUseCase {
     if (!ctx.permissions.includes('procurement.purchase_request.approve')) throw new ForbiddenException();
     const pr = await this.repo.findPurchaseRequestById(ctx.companyId, id);
     if (!pr) throw new NotFoundException('Purchase request not found');
+    assertProcurementBranchScope(ctx, pr.branchId, 'Purchase request');
     if (!canTransitionPR(pr.status, 'APPROVED')) throw new BadRequestException(`Cannot approve from status ${pr.status}`);
     const now = new Date();
     const updated = await this.repo.updatePurchaseRequestStatus(ctx.companyId, id, 'APPROVED', { approvedByUserId: ctx.userId, approvedAt: now, approvalNote: note, updatedByUserId: ctx.userId });
@@ -108,6 +121,7 @@ export class RejectPurchaseRequestUseCase {
     if (!ctx.permissions.includes('procurement.purchase_request.approve')) throw new ForbiddenException();
     const pr = await this.repo.findPurchaseRequestById(ctx.companyId, id);
     if (!pr) throw new NotFoundException('Purchase request not found');
+    assertProcurementBranchScope(ctx, pr.branchId, 'Purchase request');
     if (!canTransitionPR(pr.status, 'REJECTED')) throw new BadRequestException(`Cannot reject from status ${pr.status}`);
     const updated = await this.repo.updatePurchaseRequestStatus(ctx.companyId, id, 'REJECTED', { rejectedByUserId: ctx.userId, rejectedAt: new Date(), approvalNote: note, updatedByUserId: ctx.userId });
     await this.repo.appendPurchaseApprovalEvent(ctx.companyId, 'PURCHASE_REQUEST', id, 'REJECTED', ctx.userId, note);
@@ -124,6 +138,7 @@ export class CancelPurchaseRequestUseCase {
     if (!ctx.permissions.includes('procurement.purchase_request.create')) throw new ForbiddenException();
     const pr = await this.repo.findPurchaseRequestById(ctx.companyId, id);
     if (!pr) throw new NotFoundException('Purchase request not found');
+    assertProcurementBranchScope(ctx, pr.branchId, 'Purchase request');
     if (!canTransitionPR(pr.status, 'CANCELLED')) throw new BadRequestException(`Cannot cancel from status ${pr.status}`);
     const updated = await this.repo.updatePurchaseRequestStatus(ctx.companyId, id, 'CANCELLED', { updatedByUserId: ctx.userId });
     await this.repo.appendPurchaseApprovalEvent(ctx.companyId, 'PURCHASE_REQUEST', id, 'CANCELLED', ctx.userId, reason);

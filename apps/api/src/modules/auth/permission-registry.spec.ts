@@ -71,6 +71,19 @@ describe('permission-registry', () => {
     }
   });
 
+  it('every company role has view-only access to each procurement document family it participated in', () => {
+    const related = [
+      'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
+    ];
+    for (const role of SYSTEM_ROLES.map(({ key }) => key).filter((key) => key !== 'SYSTEM_ADMIN')) {
+      for (const permission of related) {
+        assert.ok(ROLE_GRANTS[role]?.includes(permission), `${role} missing ${permission}`);
+      }
+    }
+  });
+
   it('ADMIN can upload receipt evidence through web', () => {
     assert.ok(ROLE_GRANTS.ADMIN.includes('attachment.create'));
     assert.ok(ROLE_GRANTS.ADMIN.includes('expense.receipt.upload'));

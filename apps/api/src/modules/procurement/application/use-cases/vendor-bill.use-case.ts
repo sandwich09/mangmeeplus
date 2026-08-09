@@ -12,6 +12,7 @@ import { civilPeriodKey, coerceCivilDate, LEDGER_SEQUENCE_KEY, PROCUREMENT_SEQUE
 import type { VendorBillRecord } from '../../domain/models/procurement.model';
 import type { ResolveTransactionTaxPreviewDto, TaxEvidenceReviewStatus, TransactionTaxContext } from '@watchdog-bms/contracts';
 import { TransactionTaxConfigUseCase } from '../../../tax/application/use-cases/transaction-tax-config.use-case';
+import { assertProcurementBranchScope, PROCUREMENT_RELATED_READ_PERMISSIONS } from './procurement-access';
 
 function requiresClaimableDomesticVatEvidence(bill: VendorBillRecord): boolean {
   return (bill.lines ?? []).some((line) => {
@@ -225,9 +226,13 @@ export class GetVendorBillUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, id: string): Promise<VendorBillRecord> {
-    if (!ctx.permissions.includes('procurement.vendor_bill.read')) throw new ForbiddenException();
+    const canReadAll = ctx.permissions.includes('procurement.vendor_bill.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.VENDOR_BILL);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
+    if (!canReadAll && !await this.repo.isProcurementDocumentRelatedToUser(ctx.companyId, 'VENDOR_BILL', id, ctx.userId, ctx.scopes ?? {})) throw new ForbiddenException();
     return bill;
   }
 }
@@ -240,6 +245,7 @@ export class UpdateVendorBillTaxEvidenceUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.create')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(bill.status)) throw new BadRequestException(`Cannot edit tax evidence from status ${bill.status}`);
     if (!requiresClaimableDomesticVatEvidence(bill)) throw new UnprocessableEntityException({ code: 'vendor_bill_tax_evidence_not_required', message: 'This vendor bill has no claimable domestic VAT line.' });
     const taxInvoiceNumber = dto.taxInvoiceNumber?.trim();
@@ -266,6 +272,7 @@ export class ReviewVendorBillTaxEvidenceUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.approve')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(bill.status)) throw new BadRequestException(`Cannot review tax evidence from status ${bill.status}`);
     if (!requiresClaimableDomesticVatEvidence(bill)) throw new UnprocessableEntityException({ code: 'vendor_bill_tax_evidence_not_required', message: 'This vendor bill has no claimable domestic VAT line.' });
     if (!['VERIFIED', 'REJECTED'].includes(status)) throw new BadRequestException('Tax evidence review status must be VERIFIED or REJECTED');
@@ -308,8 +315,12 @@ export class ListVendorBillsUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: VendorBillRecord[]; total: number; page: number; pageSize: number }> {
-    if (!ctx.permissions.includes('procurement.vendor_bill.read')) throw new ForbiddenException();
-    const { data, total } = await this.repo.listVendorBills(ctx.companyId, filter);
+    const canReadAll = ctx.permissions.includes('procurement.vendor_bill.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.VENDOR_BILL);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    const { data, total } = await this.repo.listVendorBills(ctx.companyId, {
+      ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
+    }, ctx.scopes ?? {});
     return { data, total, page: filter.page ?? 1, pageSize: filter.pageSize ?? 20 };
   }
 }
@@ -322,6 +333,7 @@ export class MatchVendorBillUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.match')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!bill.purchaseOrderId) {
       await this.repo.updateVendorBillMatchingStatus(ctx.companyId, id, 'NOT_REQUIRED', '0');
       return this.repo.findVendorBillById(ctx.companyId, id) as Promise<VendorBillRecord>;
@@ -368,6 +380,7 @@ export class OverrideVendorBillMatchUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.match.override')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!['NOT_MATCHED', 'MATCHED_WITH_VARIANCE', 'BLOCKED'].includes(bill.matchingStatus)) {
       throw new BadRequestException(`Cannot override matching status ${bill.matchingStatus}`);
     }
@@ -391,6 +404,7 @@ export class SubmitVendorBillUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.create')) throw new ForbiddenException();
     let bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!canTransitionVB(bill.status, 'PENDING_APPROVAL')) throw new BadRequestException(`Cannot submit from status ${bill.status}`);
     bill = await assertVendorBillTaxEvidenceReady(this.repo, bill, ctx.userId);
 
@@ -419,6 +433,7 @@ export class ApproveVendorBillUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.approve')) throw new ForbiddenException();
     let bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!canTransitionVB(bill.status, 'APPROVED')) throw new BadRequestException(`Cannot approve from status ${bill.status}`);
     bill = await assertVendorBillTaxEvidenceReady(this.repo, bill, ctx.userId);
 
@@ -585,6 +600,7 @@ export class GetVendorBillPostingSourceUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.read')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!['APPROVED', 'PARTIALLY_PAID', 'PAID', 'VOIDED'].includes(bill.status)) throw new BadRequestException('Vendor bill is not finalized');
     return buildVendorBillPostingSource(bill);
   }
@@ -598,6 +614,7 @@ export class GetVendorBillPp36PostingSourceUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.read')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (bill.status !== 'PAID') {
       throw new BadRequestException({ code: 'pp36_payment_not_finalized', message: 'PP36 posting is available only after the imported-service bill is fully paid.' });
     }
@@ -686,6 +703,7 @@ export class RejectVendorBillUseCase {
     if (!ctx.permissions.includes('procurement.vendor_bill.approve')) throw new ForbiddenException();
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!canTransitionVB(bill.status, 'REJECTED')) throw new BadRequestException(`Cannot reject from status ${bill.status}`);
     const updated = await this.repo.updateVendorBillStatus(ctx.companyId, id, 'REJECTED', { updatedByUserId: ctx.userId });
     await this.repo.appendPurchaseApprovalEvent(ctx.companyId, 'VENDOR_BILL', id, 'REJECTED', ctx.userId, note);
@@ -710,6 +728,7 @@ export class VoidVendorBillUseCase {
     if (!reason?.trim() || reason.trim().length > 500) throw new BadRequestException('A void reason of 1-500 characters is required');
     const bill = await this.repo.findVendorBillById(ctx.companyId, id);
     if (!bill) throw new NotFoundException('Vendor bill not found');
+    assertProcurementBranchScope(ctx, bill.branchId, 'Vendor bill');
     if (!canTransitionVB(bill.status, 'VOIDED')) throw new BadRequestException(`Cannot void from status ${bill.status}`);
     if (Number(bill.paidAmount) > 0) throw new BadRequestException('Cannot void a partially or fully paid bill');
 

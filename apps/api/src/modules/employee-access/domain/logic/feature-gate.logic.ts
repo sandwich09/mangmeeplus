@@ -41,6 +41,11 @@ const SUBFEATURE_RULES = FEATURE_CATALOG.flatMap((feature) =>
 const PREFIX_FEATURE_RULES: ReadonlyArray<{ prefix: string; featureKeys: readonly string[] }> = [
   { prefix: 'accounting.document.read_related', featureKeys: ['sales_documents'] },
   { prefix: 'expense.read_related', featureKeys: ['expenses.list'] },
+  { prefix: 'procurement.purchase_request.read_related', featureKeys: ['procurement.purchase_requests'] },
+  { prefix: 'procurement.purchase_order.read_related', featureKeys: ['procurement.purchase_orders'] },
+  { prefix: 'procurement.goods_receipt.read_related', featureKeys: ['procurement.goods_receipts'] },
+  { prefix: 'procurement.vendor_bill.read_related', featureKeys: ['procurement.vendor_bills'] },
+  { prefix: 'procurement.supplier_payment.read_related', featureKeys: ['procurement.supplier_payments'] },
   { prefix: 'inventory.product.', featureKeys: ['product_catalog'] },
   { prefix: 'report.', featureKeys: ['reports'] },
   { prefix: 'reimbursement.', featureKeys: ['reimbursement'] },

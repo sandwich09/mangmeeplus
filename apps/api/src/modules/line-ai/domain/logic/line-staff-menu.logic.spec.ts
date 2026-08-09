@@ -39,6 +39,8 @@ describe('LINE staff menu', () => {
     const message = buildStaffQueryMenu({ ...context, permissions: ['dashboard.read', 'crm.booking.read'] });
     assert.equal(message.type, 'text');
     assert.deepEqual(message.quickReply?.items.map((item) => item.action.label), ['ยอดขายวันนี้', 'คิว/นัดวันนี้', '« เมนูหลัก']);
+    const related = buildStaffQueryMenu({ ...context, permissions: ['procurement.purchase_order.read_related'] });
+    assert.deepEqual(related.quickReply?.items.map((item) => item.action.label), ['ใบสั่งซื้อ (PO)', '« เมนูหลัก']);
   });
 
   it('shows บริษัทของฉัน only to owners and sends the existing deterministic command', () => {

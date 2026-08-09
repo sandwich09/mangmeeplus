@@ -23,6 +23,13 @@ describe('visibleAccountsPayableTabs', () => {
     assert.deepEqual(visibleAccountsPayableTabs([]), []);
   });
 
+  it('shows related AP documents without widening aging or WHT access', () => {
+    assert.deepEqual(visibleAccountsPayableTabs([
+      'procurement.vendor_bill.read_related',
+      'procurement.supplier_payment.read_related',
+    ]), ['bills', 'payments']);
+  });
+
   // H4: the 50 ทวิ handoff panel is the fallback for a company the system cannot issue a
   // certificate for. Gating it on a Tax permission would make it invisible to exactly the
   // companies that need it.

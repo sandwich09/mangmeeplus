@@ -12,6 +12,7 @@ import { WhtCertificateHandoffUseCase } from '../../../tax/application/use-cases
 import type { LedgerSourcePostingInput, ResolveTransactionTaxPreviewDto } from '@watchdog-bms/contracts';
 import { TransactionTaxConfigUseCase } from '../../../tax/application/use-cases/transaction-tax-config.use-case';
 import { formatTransactionTaxAmount } from '../../../tax/domain/logic/transaction-tax.logic';
+import { assertProcurementBranchScope, PROCUREMENT_RELATED_READ_PERMISSIONS } from './procurement-access';
 
 @Injectable()
 export class CreateSupplierPaymentUseCase {
@@ -46,7 +47,10 @@ export class CreateSupplierPaymentUseCase {
     if (!idempotencyKey || idempotencyKey.length > 128) throw new BadRequestException('A payment idempotency key of at most 128 characters is required');
     if (idempotencyKey) {
       const existing = await this.repo.findSupplierPaymentByIdempotencyKey(ctx.companyId, idempotencyKey);
-      if (existing) return existing;
+      if (existing) {
+        assertProcurementBranchScope(ctx, existing.branchId, 'Supplier payment');
+        return existing;
+      }
     }
     const supplier = await this.repo.findSupplierById(ctx.companyId, dto.supplierId);
     if (!supplier) throw new BadRequestException('Supplier does not exist in this company');
@@ -224,9 +228,13 @@ export class GetSupplierPaymentUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, id: string): Promise<SupplierPaymentRecord> {
-    if (!ctx.permissions.includes('procurement.supplier_payment.read')) throw new ForbiddenException();
+    const canReadAll = ctx.permissions.includes('procurement.supplier_payment.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.SUPPLIER_PAYMENT);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
     const payment = await this.repo.findSupplierPaymentById(ctx.companyId, id);
     if (!payment) throw new NotFoundException('Supplier payment not found');
+    assertProcurementBranchScope(ctx, payment.branchId, 'Supplier payment');
+    if (!canReadAll && !await this.repo.isProcurementDocumentRelatedToUser(ctx.companyId, 'SUPPLIER_PAYMENT', id, ctx.userId, ctx.scopes ?? {})) throw new ForbiddenException();
     return payment;
   }
 }
@@ -296,7 +304,7 @@ export class GetSupplierPaymentPostingSourceUseCase {
     if (!ctx.permissions.includes('procurement.supplier_payment.read')) throw new ForbiddenException();
     const payment = await this.repo.findSupplierPaymentById(ctx.companyId, id);
     if (!payment) throw new NotFoundException('Supplier payment not found');
-    if (payment.branchId && ctx.scopes?.branchIds && !ctx.scopes.branchIds.includes(payment.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    assertProcurementBranchScope(ctx, payment.branchId, 'Supplier payment');
     return buildSupplierPaymentPostingSource(payment);
   }
 }
@@ -309,7 +317,7 @@ export class GetSupplierPaymentPp36PostingSourceUseCase {
     if (!ctx.permissions.includes('procurement.supplier_payment.read')) throw new ForbiddenException();
     const payment = await this.repo.findSupplierPaymentById(ctx.companyId, id);
     if (!payment) throw new NotFoundException('Supplier payment not found');
-    if (payment.branchId && ctx.scopes?.branchIds && !ctx.scopes.branchIds.includes(payment.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    assertProcurementBranchScope(ctx, payment.branchId, 'Supplier payment');
     return buildSupplierPaymentPp36PostingSource(payment);
   }
 }
@@ -319,8 +327,12 @@ export class ListSupplierPaymentsUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
   async execute(ctx: RequestContext, filter: { status?: string; supplierId?: string; method?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: SupplierPaymentRecord[]; total: number; page: number; pageSize: number }> {
-    if (!ctx.permissions.includes('procurement.supplier_payment.read')) throw new ForbiddenException();
-    const { data, total } = await this.repo.listSupplierPayments(ctx.companyId, filter);
+    const canReadAll = ctx.permissions.includes('procurement.supplier_payment.read');
+    const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.SUPPLIER_PAYMENT);
+    if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    const { data, total } = await this.repo.listSupplierPayments(ctx.companyId, {
+      ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
+    }, ctx.scopes ?? {});
     return { data, total, page: filter.page ?? 1, pageSize: filter.pageSize ?? 20 };
   }
 }
@@ -340,6 +352,7 @@ export class VoidSupplierPaymentUseCase {
     if (!reason?.trim() || reason.trim().length > 500) throw new BadRequestException('A void reason of 1-500 characters is required');
     const payment = await this.repo.findSupplierPaymentById(ctx.companyId, id);
     if (!payment) throw new NotFoundException('Supplier payment not found');
+    assertProcurementBranchScope(ctx, payment.branchId, 'Supplier payment');
     if (payment.status === 'VOIDED') return payment;
     if (payment.status !== 'RECORDED') throw new BadRequestException(`Cannot void payment with status ${payment.status}`);
     if (payment.pp36RecognitionStatus === 'ACTIVE' && !ctx.permissions.includes('tax.review_issue.resolve')) throw new ForbiddenException('Missing permission: tax.review_issue.resolve');

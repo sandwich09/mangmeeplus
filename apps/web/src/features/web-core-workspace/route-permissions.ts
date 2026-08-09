@@ -68,11 +68,16 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
     anyOf: [
       'procurement.supplier.read', 'procurement.purchase_request.read',
       'procurement.purchase_order.read', 'procurement.goods_receipt.read',
+      'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+      'procurement.goods_receipt.read_related',
     ],
   },
   {
     path: '/accounts-payable',
-    anyOf: ['procurement.vendor_bill.read', 'procurement.supplier_payment.read', 'procurement.ap.report'],
+    anyOf: [
+      'procurement.vendor_bill.read', 'procurement.supplier_payment.read',
+      'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related', 'procurement.ap.report',
+    ],
   },
   {
     path: '/workflow',

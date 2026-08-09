@@ -892,6 +892,7 @@ model AuditLog {
 
   @@index([companyId, createdAt])
   @@index([actorUserId, createdAt])
+  @@index([companyId, actorUserId, targetType, targetId])
   @@index([targetType, targetId])
   @@index([requestId])
 }
@@ -4142,6 +4143,11 @@ model PurchaseRequest {
   @@index([companyId, status])
   @@index([companyId, branchId, status])
   @@index([companyId, requesterUserId])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, approvedByUserId])
+  @@index([companyId, rejectedByUserId])
+  @@index([companyId, convertedPurchaseOrderId])
 }
 
 model PurchaseRequestLine {
@@ -4251,6 +4257,14 @@ model PurchaseOrder {
   @@index([companyId, branchId, status])
   @@index([companyId, supplierId])
   @@index([companyId, orderDate])
+  @@index([companyId, sourcePurchaseRequestId])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, approvedByUserId])
+  @@index([companyId, rejectedByUserId])
+  @@index([companyId, issuedByUserId])
+  @@index([companyId, cancelledByUserId])
+  @@index([companyId, closedByUserId])
 }
 
 model PurchaseOrderLine {
@@ -4345,6 +4359,10 @@ model GoodsReceipt {
   @@index([companyId, purchaseOrderId, status])
   @@index([companyId, supplierId])
   @@index([companyId, receivedAt])
+  @@index([companyId, receivedByUserId])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, voidedByUserId])
 }
 
 model GoodsReceiptLine {
@@ -4445,6 +4463,13 @@ model VendorBill {
   @@index([companyId, dueDate])
   @@index([companyId, postingStatus])
   @@index([companyId, taxSyncStatus])
+  @@index([companyId, purchaseOrderId])
+  @@index([companyId, goodsReceiptId])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, approvedByUserId])
+  @@index([companyId, voidedByUserId])
+  @@index([companyId, taxEvidenceReviewedByUserId])
 }
 
 model VendorBillLine {
@@ -4534,6 +4559,7 @@ model VendorBillMatch {
 
   @@index([companyId, vendorBillId])
   @@index([companyId, matchStatus])
+  @@index([companyId, overriddenByUserId])
 }
 
 model SupplierPayment {
@@ -4585,6 +4611,10 @@ model SupplierPayment {
   @@index([companyId, supplierId, status])
   @@index([companyId, paymentDate])
   @@index([companyId, postingStatus])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, updatedByUserId])
+  @@index([companyId, recordedByUserId])
+  @@index([companyId, voidedByUserId])
 }
 
 model SupplierPaymentAllocation {
@@ -4609,6 +4639,9 @@ model SupplierPaymentAllocation {
 
   @@unique([supplierPaymentId, vendorBillId])
   @@index([companyId, vendorBillId])
+  @@index([companyId, supplierPaymentId])
+  @@index([companyId, createdByUserId])
+  @@index([companyId, pp36ReversedByUserId])
 }
 
 model Pp36PaymentEvidenceBinding {
@@ -4639,6 +4672,7 @@ model PurchaseApprovalEvent {
   company               Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, sourceType, sourceId])
+  @@index([companyId, actorUserId])
 }
 
 // H-07: company-level maker-checker policy for vendor bill approval.

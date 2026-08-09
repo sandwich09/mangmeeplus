@@ -16,6 +16,11 @@ import { round2, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../domain/l
 // income base, and procurement already depends on tax for the handoff use case.
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
+import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+
+export type ProcurementDocumentKind = 'PURCHASE_REQUEST' | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'VENDOR_BILL' | 'SUPPLIER_PAYMENT';
+
+type RelatedProcurementDocumentIds = Record<ProcurementDocumentKind, Set<string>>;
 
 function decimal(v: unknown): string {
   return v != null ? String(v) : '0';
@@ -254,6 +259,216 @@ export class PrismaProcurementRepository {
     return row ? this.toBankAccountRecord(row) : null;
   }
 
+  private async relatedProcurementDocumentIds(
+    companyId: string,
+    userId: string,
+    scopes: BranchScopes = {},
+  ): Promise<RelatedProcurementDocumentIds> {
+    const ids: RelatedProcurementDocumentIds = {
+      PURCHASE_REQUEST: new Set(), PURCHASE_ORDER: new Set(), GOODS_RECEIPT: new Set(),
+      VENDOR_BILL: new Set(), SUPPLIER_PAYMENT: new Set(),
+    };
+    const scoped = (where: Record<string, unknown>) => ({
+      companyId,
+      AND: [branchScopeWhere(scopes), where],
+    });
+    const [requests, orders, receipts, bills, payments, events, auditActors, matches, allocations] = await Promise.all([
+      this.prisma.client.purchaseRequest.findMany({
+        where: scoped({ OR: [
+          { requesterUserId: userId }, { createdByUserId: userId }, { updatedByUserId: userId },
+          { approvedByUserId: userId }, { rejectedByUserId: userId },
+        ] }) as any,
+        select: { id: true },
+      }),
+      this.prisma.client.purchaseOrder.findMany({
+        where: scoped({ OR: [
+          { createdByUserId: userId }, { updatedByUserId: userId }, { approvedByUserId: userId },
+          { rejectedByUserId: userId }, { issuedByUserId: userId }, { cancelledByUserId: userId },
+          { closedByUserId: userId },
+        ] }) as any,
+        select: { id: true },
+      }),
+      this.prisma.client.goodsReceipt.findMany({
+        where: scoped({ OR: [
+          { receivedByUserId: userId }, { createdByUserId: userId }, { updatedByUserId: userId },
+          { voidedByUserId: userId },
+        ] }) as any,
+        select: { id: true },
+      }),
+      this.prisma.client.vendorBill.findMany({
+        where: scoped({ OR: [
+          { createdByUserId: userId }, { updatedByUserId: userId }, { approvedByUserId: userId },
+          { voidedByUserId: userId }, { taxEvidenceReviewedByUserId: userId },
+        ] }) as any,
+        select: { id: true },
+      }),
+      this.prisma.client.supplierPayment.findMany({
+        where: scoped({ OR: [
+          { createdByUserId: userId }, { updatedByUserId: userId }, { recordedByUserId: userId },
+          { voidedByUserId: userId },
+        ] }) as any,
+        select: { id: true },
+      }),
+      this.prisma.client.purchaseApprovalEvent.findMany({
+        where: { companyId, actorUserId: userId },
+        select: { sourceType: true, sourceId: true },
+      }),
+      this.prisma.client.auditLog.findMany({
+        where: {
+          companyId, actorUserId: userId, result: 'SUCCESS',
+          targetType: { in: ['purchase_request', 'purchase_order', 'goods_receipt', 'vendor_bill', 'supplier_payment'] },
+        },
+        select: { targetType: true, targetId: true },
+      }),
+      this.prisma.client.vendorBillMatch.findMany({
+        where: { companyId, overriddenByUserId: userId },
+        select: { vendorBillId: true },
+      }),
+      this.prisma.client.supplierPaymentAllocation.findMany({
+        where: { companyId, OR: [{ createdByUserId: userId }, { pp36ReversedByUserId: userId }] },
+        select: { supplierPaymentId: true, vendorBillId: true },
+      }),
+    ]);
+    for (const row of requests) ids.PURCHASE_REQUEST.add(row.id);
+    for (const row of orders) ids.PURCHASE_ORDER.add(row.id);
+    for (const row of receipts) ids.GOODS_RECEIPT.add(row.id);
+    for (const row of bills) ids.VENDOR_BILL.add(row.id);
+    for (const row of payments) ids.SUPPLIER_PAYMENT.add(row.id);
+
+    const eventSeeds: Partial<Record<ProcurementDocumentKind, string[]>> = {};
+    for (const event of events) {
+      const kind = event.sourceType as ProcurementDocumentKind;
+      if (kind !== 'PURCHASE_REQUEST' && kind !== 'PURCHASE_ORDER' && kind !== 'VENDOR_BILL') continue;
+      (eventSeeds[kind] ??= []).push(event.sourceId);
+    }
+    const auditKind: Record<string, ProcurementDocumentKind> = {
+      purchase_request: 'PURCHASE_REQUEST', purchase_order: 'PURCHASE_ORDER', goods_receipt: 'GOODS_RECEIPT',
+      vendor_bill: 'VENDOR_BILL', supplier_payment: 'SUPPLIER_PAYMENT',
+    };
+    for (const audit of auditActors) {
+      const kind = auditKind[audit.targetType];
+      if (kind && audit.targetId) (eventSeeds[kind] ??= []).push(audit.targetId);
+    }
+    const billSeeds = [...matches.map((row) => row.vendorBillId), ...allocations.map((row) => row.vendorBillId), ...(eventSeeds.VENDOR_BILL ?? [])];
+    const paymentSeeds = [...allocations.map((row) => row.supplierPaymentId), ...(eventSeeds.SUPPLIER_PAYMENT ?? [])];
+    const [eventRequests, eventOrders, eventReceipts, eventBills, allocationPayments] = await Promise.all([
+      this.prisma.client.purchaseRequest.findMany({ where: scoped({ id: { in: eventSeeds.PURCHASE_REQUEST ?? [] } }) as any, select: { id: true } }),
+      this.prisma.client.purchaseOrder.findMany({ where: scoped({ id: { in: eventSeeds.PURCHASE_ORDER ?? [] } }) as any, select: { id: true } }),
+      this.prisma.client.goodsReceipt.findMany({ where: scoped({ id: { in: eventSeeds.GOODS_RECEIPT ?? [] } }) as any, select: { id: true } }),
+      this.prisma.client.vendorBill.findMany({ where: scoped({ id: { in: billSeeds } }) as any, select: { id: true } }),
+      this.prisma.client.supplierPayment.findMany({ where: scoped({ id: { in: paymentSeeds } }) as any, select: { id: true } }),
+    ]);
+    for (const row of eventRequests) ids.PURCHASE_REQUEST.add(row.id);
+    for (const row of eventOrders) ids.PURCHASE_ORDER.add(row.id);
+    for (const row of eventReceipts) ids.GOODS_RECEIPT.add(row.id);
+    for (const row of eventBills) ids.VENDOR_BILL.add(row.id);
+    for (const row of allocationPayments) ids.SUPPLIER_PAYMENT.add(row.id);
+
+    let frontier: RelatedProcurementDocumentIds = {
+      PURCHASE_REQUEST: new Set(ids.PURCHASE_REQUEST), PURCHASE_ORDER: new Set(ids.PURCHASE_ORDER),
+      GOODS_RECEIPT: new Set(ids.GOODS_RECEIPT), VENDOR_BILL: new Set(ids.VENDOR_BILL),
+      SUPPLIER_PAYMENT: new Set(ids.SUPPLIER_PAYMENT),
+    };
+    while (Object.values(frontier).some((set) => set.size > 0)) {
+      const [requestLinks, orderLinks, receiptLinks, billLinks, paymentLinks] = await Promise.all([
+        this.prisma.client.purchaseRequest.findMany({
+          where: scoped({ id: { in: [...frontier.PURCHASE_REQUEST] } }) as any,
+          select: { convertedPurchaseOrderId: true },
+        }),
+        this.prisma.client.purchaseOrder.findMany({
+          where: scoped({ id: { in: [...frontier.PURCHASE_ORDER] } }) as any,
+          select: { sourcePurchaseRequestId: true },
+        }),
+        this.prisma.client.goodsReceipt.findMany({
+          where: scoped({ id: { in: [...frontier.GOODS_RECEIPT] } }) as any,
+          select: { purchaseOrderId: true },
+        }),
+        this.prisma.client.vendorBill.findMany({
+          where: scoped({ id: { in: [...frontier.VENDOR_BILL] } }) as any,
+          select: { purchaseOrderId: true, goodsReceiptId: true },
+        }),
+        this.prisma.client.supplierPaymentAllocation.findMany({
+          where: { companyId, OR: [
+            { vendorBillId: { in: [...frontier.VENDOR_BILL] } },
+            { supplierPaymentId: { in: [...frontier.SUPPLIER_PAYMENT] } },
+          ] },
+          select: { supplierPaymentId: true, vendorBillId: true },
+        }),
+      ]);
+      const requestCandidates = orderLinks.flatMap((row) => row.sourcePurchaseRequestId ? [row.sourcePurchaseRequestId] : []);
+      const orderCandidates = [
+        ...requestLinks.flatMap((row) => row.convertedPurchaseOrderId ? [row.convertedPurchaseOrderId] : []),
+        ...receiptLinks.map((row) => row.purchaseOrderId),
+        ...billLinks.flatMap((row) => row.purchaseOrderId ? [row.purchaseOrderId] : []),
+      ];
+      const receiptCandidates = billLinks.flatMap((row) => row.goodsReceiptId ? [row.goodsReceiptId] : []);
+      const relatedBillIds = paymentLinks.map((row) => row.vendorBillId);
+      const relatedPaymentIds = paymentLinks.map((row) => row.supplierPaymentId);
+      const [nextRequests, nextOrders, nextReceipts, nextBills, nextPayments] = await Promise.all([
+        this.prisma.client.purchaseRequest.findMany({
+          where: scoped({ OR: [
+            { id: { in: requestCandidates } },
+            { convertedPurchaseOrderId: { in: [...frontier.PURCHASE_ORDER] } },
+          ] }) as any,
+          select: { id: true },
+        }),
+        this.prisma.client.purchaseOrder.findMany({
+          where: scoped({ OR: [
+            { id: { in: orderCandidates } },
+            { sourcePurchaseRequestId: { in: [...frontier.PURCHASE_REQUEST] } },
+          ] }) as any,
+          select: { id: true },
+        }),
+        this.prisma.client.goodsReceipt.findMany({
+          where: scoped({ OR: [
+            { id: { in: receiptCandidates } },
+            { purchaseOrderId: { in: [...frontier.PURCHASE_ORDER] } },
+          ] }) as any,
+          select: { id: true },
+        }),
+        this.prisma.client.vendorBill.findMany({
+          where: scoped({ OR: [
+            { id: { in: relatedBillIds } },
+            { purchaseOrderId: { in: [...frontier.PURCHASE_ORDER] } },
+            { goodsReceiptId: { in: [...frontier.GOODS_RECEIPT] } },
+          ] }) as any,
+          select: { id: true },
+        }),
+        this.prisma.client.supplierPayment.findMany({
+          where: scoped({ id: { in: relatedPaymentIds } }) as any,
+          select: { id: true },
+        }),
+      ]);
+      const next: RelatedProcurementDocumentIds = {
+        PURCHASE_REQUEST: new Set(), PURCHASE_ORDER: new Set(), GOODS_RECEIPT: new Set(),
+        VENDOR_BILL: new Set(), SUPPLIER_PAYMENT: new Set(),
+      };
+      const add = (kind: ProcurementDocumentKind, rows: Array<{ id: string }>) => {
+        for (const row of rows) if (!ids[kind].has(row.id)) {
+          ids[kind].add(row.id);
+          next[kind].add(row.id);
+        }
+      };
+      add('PURCHASE_REQUEST', nextRequests);
+      add('PURCHASE_ORDER', nextOrders);
+      add('GOODS_RECEIPT', nextReceipts);
+      add('VENDOR_BILL', nextBills);
+      add('SUPPLIER_PAYMENT', nextPayments);
+      frontier = next;
+    }
+    return ids;
+  }
+
+  async isProcurementDocumentRelatedToUser(
+    companyId: string,
+    kind: ProcurementDocumentKind,
+    documentId: string,
+    userId: string,
+    scopes: BranchScopes = {},
+  ): Promise<boolean> {
+    return (await this.relatedProcurementDocumentIds(companyId, userId, scopes))[kind].has(documentId);
+  }
+
   // ---- Purchase Request ----
 
   async createPurchaseRequest(companyId: string, data: {
@@ -282,10 +497,16 @@ export class PrismaProcurementRepository {
     return this.toPurchaseRequestRecord(row);
   }
 
-  async listPurchaseRequests(companyId: string, filter: { status?: string; requesterUserId?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: PurchaseRequestRecord[]; total: number }> {
+  async listPurchaseRequests(companyId: string, filter: { status?: string; requesterUserId?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: PurchaseRequestRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
-    const where: any = { companyId, ...(filter.status && { status: filter.status }), ...(filter.requesterUserId && { requesterUserId: filter.requesterUserId }), ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }), ...(filter.fromDate || filter.toDate ? { createdAt: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}) };
+    const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
+    const where: any = { companyId, AND: [branchScopeWhere(scopes), {
+      ...(filter.status && { status: filter.status }), ...(filter.requesterUserId && { requesterUserId: filter.requesterUserId }),
+      ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }),
+      ...(filter.fromDate || filter.toDate ? { createdAt: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(relatedIds && { id: { in: [...relatedIds.PURCHASE_REQUEST] } }),
+    }] };
     const [rows, total] = await Promise.all([this.prisma.client.purchaseRequest.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { createdAt: 'desc' } }), this.prisma.client.purchaseRequest.count({ where })]);
     return { data: rows.map((r) => this.toPurchaseRequestRecord(r)), total };
   }
@@ -357,7 +578,7 @@ export class PrismaProcurementRepository {
     supplierSnapshotJson?: Record<string, unknown>;
     lines: { lineNumber: number; lineType?: string; productId?: string; description: string; unitName?: string; orderedQuantity: string; unitPrice: string; discountAmount: string; vatMode: string; vatRate?: string; vatAmount: string; whtCategoryCode?: string; whtRate?: string; whtEstimateAmount?: string; lineSubtotalAmount: string; lineTotalAmount: string; accountHint?: string; inventoryLocationId?: string; sourcePurchaseRequestLineId?: string }[];
   }, createdByUserId: string): Promise<PurchaseOrderRecord> {
-    const row = await this.prisma.client.purchaseOrder.create({
+    const create = (db: any) => db.purchaseOrder.create({
       data: {
         companyId, supplierId: data.supplierId, branchId: data.branchId, orderDate: data.orderDate,
         expectedDeliveryDate: data.expectedDeliveryDate, paymentTermsDays: data.paymentTermsDays,
@@ -372,6 +593,48 @@ export class PrismaProcurementRepository {
       },
       include: { lines: true },
     });
+    const row = data.sourcePurchaseRequestId
+      ? await this.prisma.client.$transaction(async (tx) => {
+        const source = await tx.purchaseRequest.findFirst({
+          where: {
+            id: data.sourcePurchaseRequestId,
+            companyId,
+            status: 'APPROVED',
+            convertedPurchaseOrderId: null,
+          },
+          include: { lines: { select: { id: true } } },
+        });
+        const sourceLineIds = new Set(source?.lines.map((line) => line.id) ?? []);
+        const convertedLineIds = data.lines.map((line) => line.sourcePurchaseRequestLineId);
+        if (
+          !source
+          || (source.branchId && source.branchId !== data.branchId)
+          || (source.supplierId && source.supplierId !== data.supplierId)
+          || source.currency !== (data.currency ?? 'THB')
+          || convertedLineIds.some((id) => !id || !sourceLineIds.has(id))
+          || convertedLineIds.length !== sourceLineIds.size
+          || new Set(convertedLineIds).size !== sourceLineIds.size
+        ) {
+          throw new ConflictException('purchase_request_conversion_source_changed');
+        }
+        const created = await create(tx);
+        const converted = await tx.purchaseRequest.updateMany({
+          where: {
+            id: data.sourcePurchaseRequestId,
+            companyId,
+            status: 'APPROVED',
+            convertedPurchaseOrderId: null,
+          },
+          data: {
+            status: 'CONVERTED',
+            convertedPurchaseOrderId: created.id,
+            updatedByUserId: createdByUserId,
+          },
+        });
+        if (converted.count !== 1) throw new ConflictException('purchase_request_conversion_conflict');
+        return created;
+      }, { isolationLevel: 'Serializable' })
+      : await create(this.prisma.client);
     return this.toPurchaseOrderRecord(row);
   }
 
@@ -381,10 +644,16 @@ export class PrismaProcurementRepository {
     return this.toPurchaseOrderRecord(row);
   }
 
-  async listPurchaseOrders(companyId: string, filter: { status?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: PurchaseOrderRecord[]; total: number }> {
+  async listPurchaseOrders(companyId: string, filter: { status?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: PurchaseOrderRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
-    const where: any = { companyId, ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }), ...(filter.fromDate || filter.toDate ? { orderDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}) };
+    const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
+    const where: any = { companyId, AND: [branchScopeWhere(scopes), {
+      ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }),
+      ...(filter.branchId && { branchId: filter.branchId }),
+      ...(filter.fromDate || filter.toDate ? { orderDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(relatedIds && { id: { in: [...relatedIds.PURCHASE_ORDER] } }),
+    }] };
     const [rows, total] = await Promise.all([this.prisma.client.purchaseOrder.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { createdAt: 'desc' } }), this.prisma.client.purchaseOrder.count({ where })]);
     return { data: rows.map((r) => this.toPurchaseOrderRecord(r)), total };
   }
@@ -429,10 +698,15 @@ export class PrismaProcurementRepository {
     return this.toGoodsReceiptRecord(row);
   }
 
-  async listGoodsReceipts(companyId: string, filter: { status?: string; purchaseOrderId?: string; supplierId?: string; branchId?: string; page?: number; pageSize?: number }): Promise<{ data: GoodsReceiptRecord[]; total: number }> {
+  async listGoodsReceipts(companyId: string, filter: { status?: string; purchaseOrderId?: string; supplierId?: string; branchId?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: GoodsReceiptRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
-    const where: any = { companyId, ...(filter.status && { status: filter.status }), ...(filter.purchaseOrderId && { purchaseOrderId: filter.purchaseOrderId }), ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }) };
+    const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
+    const where: any = { companyId, AND: [branchScopeWhere(scopes), {
+      ...(filter.status && { status: filter.status }), ...(filter.purchaseOrderId && { purchaseOrderId: filter.purchaseOrderId }),
+      ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.branchId && { branchId: filter.branchId }),
+      ...(relatedIds && { id: { in: [...relatedIds.GOODS_RECEIPT] } }),
+    }] };
     const [rows, total] = await Promise.all([this.prisma.client.goodsReceipt.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { receivedAt: 'desc' } }), this.prisma.client.goodsReceipt.count({ where })]);
     return { data: rows.map((r) => this.toGoodsReceiptRecord(r)), total };
   }
@@ -878,10 +1152,17 @@ export class PrismaProcurementRepository {
     return this.toVendorBillRecord(row);
   }
 
-  async listVendorBills(companyId: string, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: VendorBillRecord[]; total: number }> {
+  async listVendorBills(companyId: string, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: VendorBillRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
-    const where: any = { companyId, ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.purchaseOrderId && { purchaseOrderId: filter.purchaseOrderId }), ...(filter.matchingStatus && { matchingStatus: filter.matchingStatus }), ...(filter.postingStatus && { postingStatus: filter.postingStatus }), ...(filter.fromDate || filter.toDate ? { billDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}) };
+    const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
+    const where: any = { companyId, AND: [branchScopeWhere(scopes), {
+      ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }),
+      ...(filter.purchaseOrderId && { purchaseOrderId: filter.purchaseOrderId }), ...(filter.matchingStatus && { matchingStatus: filter.matchingStatus }),
+      ...(filter.postingStatus && { postingStatus: filter.postingStatus }),
+      ...(filter.fromDate || filter.toDate ? { billDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(relatedIds && { id: { in: [...relatedIds.VENDOR_BILL] } }),
+    }] };
     const [rows, total] = await Promise.all([this.prisma.client.vendorBill.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { billDate: 'desc' } }), this.prisma.client.vendorBill.count({ where })]);
     return { data: rows.map((r) => this.toVendorBillRecord(r)), total };
   }
@@ -1218,10 +1499,16 @@ export class PrismaProcurementRepository {
     return { pending: pending + pp36PaymentIds.filter((paymentId) => !postedIds.has(paymentId)).length, errors };
   }
 
-  async listSupplierPayments(companyId: string, filter: { status?: string; supplierId?: string; method?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: SupplierPaymentRecord[]; total: number }> {
+  async listSupplierPayments(companyId: string, filter: { status?: string; supplierId?: string; method?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: SupplierPaymentRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
-    const where: any = { companyId, ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }), ...(filter.method && { method: filter.method }), ...(filter.postingStatus && { postingStatus: filter.postingStatus }), ...(filter.fromDate || filter.toDate ? { paymentDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}) };
+    const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
+    const where: any = { companyId, AND: [branchScopeWhere(scopes), {
+      ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }),
+      ...(filter.method && { method: filter.method }), ...(filter.postingStatus && { postingStatus: filter.postingStatus }),
+      ...(filter.fromDate || filter.toDate ? { paymentDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
+      ...(relatedIds && { id: { in: [...relatedIds.SUPPLIER_PAYMENT] } }),
+    }] };
     const [rows, total] = await Promise.all([this.prisma.client.supplierPayment.findMany({ where, skip: (page - 1) * pageSize, take: pageSize, orderBy: { paymentDate: 'desc' }, include: { allocations: true } }), this.prisma.client.supplierPayment.count({ where })]);
     return { data: rows.map((r) => this.toSupplierPaymentRecord(r)), total };
   }
