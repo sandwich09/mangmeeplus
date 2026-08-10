@@ -67,8 +67,10 @@ export const workspaceDictionary = {
     'module.workflow': 'เวิร์กโฟลว์',
     'module.ai_suggestions': 'AI แนะนำ',
     'module.roles': 'พนักงานและสิทธิ์',
-    'module.individual': 'ภาพรวมสิทธิ์',
-    'module.add_employee': 'รายชื่อพนักงาน',
+    // ชื่อเมนูตามการใช้งานจริง: หน้า access-overview คือรายชื่อพนักงานที่ดูสิทธิ์ได้
+    // ส่วนหน้า employees คือขั้นตอนเพิ่มพนักงานใหม่ (คีย์เดิมไว้เพื่อไม่ให้ต้องแก้ทุกจุดที่อ้างถึง)
+    'module.individual': 'รายชื่อพนักงาน',
+    'module.add_employee': 'เพิ่มพนักงาน',
     'module.poapproval': 'อนุมัติคำสั่งซื้อ',
     'module.discount': 'นโยบายส่วนลด',
     'module.notifications': 'การแจ้งเตือน',
@@ -1325,8 +1327,8 @@ export const workspaceDictionary = {
     'module.workflow': 'Workflow',
     'module.ai_suggestions': 'AI Suggestions',
     'module.roles': 'Employees & Access',
-    'module.individual': 'Access Overview',
-    'module.add_employee': 'Employee Directory',
+    'module.individual': 'Employee Directory',
+    'module.add_employee': 'Add Employee',
     'module.poapproval': 'PO Approval',
     'module.discount': 'Discount Policy',
     'module.notifications': 'Notifications',

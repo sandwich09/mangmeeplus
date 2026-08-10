@@ -72,16 +72,19 @@ const MODULELESS_SUBITEM_HREFS = {
 const USER_GUIDE_NAV_KEY = 'guide';
 
 /**
- * เรียงตามลำดับเมนูจริงในแถบซ้าย (ค่าใช้จ่ายและใบเสร็จ → การเบิกจ่าย → ภาษี → รายงานการเงิน)
+ * เรียงตามลำดับเมนูจริงในแถบซ้าย (ค่าใช้จ่ายและใบเสร็จ → การเบิกจ่าย)
  * โดยคู่มือใบรับรองแทนใบเสร็จอยู่ถัดจากค่าใช้จ่ายและใบเสร็จ เพราะเป็นเมนูย่อยของกลุ่มนั้น
  * ผู้ใช้จึงหาคู่มือได้จากตำแหน่งเดียวกับที่จำเมนูไว้ ไม่ต้องไล่อ่านทั้งรายการ
+ *
+ * ภาษี และ รายงานการเงิน ซ่อนไว้ก่อน (owner decision 2026-08-10) เพราะยังไม่เปิดใช้ฟีเจอร์
+ * เนื้อหาและ route ของทั้งสองเล่มยังอยู่ครบ เพิ่มกลับเข้า array นี้เมื่อฟีเจอร์เปิดใช้งาน:
+ *   { key: 'guide.tax', label: 'ภาษี', slug: 'tax', iconKey: 'DocsIcon' },
+ *   { key: 'guide.reports', label: 'รายงานการเงิน', slug: 'reports', iconKey: 'PieChartIcon' },
  */
 const USER_GUIDE_PAGES = [
   { key: 'guide.expenses', label: 'ค่าใช้จ่ายและใบเสร็จ', slug: 'expenses', iconKey: 'FileIcon' },
   { key: 'guide.substitute_receipts', label: 'ใบรับรองแทนใบเสร็จรับเงิน', slug: 'substitute-receipts', iconKey: 'SwapIcon' },
   { key: 'guide.reimbursements', label: 'การเบิกจ่ายและอนุมัติ', slug: 'reimbursements', iconKey: 'DollarLineIcon' },
-  { key: 'guide.tax', label: 'ภาษี', slug: 'tax', iconKey: 'DocsIcon' },
-  { key: 'guide.reports', label: 'รายงานการเงิน', slug: 'reports', iconKey: 'PieChartIcon' },
 ] as const;
 
 function buildUserGuideNavItem(companyId: string, iconMap: Record<string, React.ReactNode>): NavItem {
