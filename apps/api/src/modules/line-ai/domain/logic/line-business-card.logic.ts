@@ -28,7 +28,7 @@ function safeTenantLink(webBaseUrl: string | undefined, companyId: string, path:
 }
 
 function bubble(card: LineAiAnswerCard, webBaseUrl: string | undefined, companyId: string): Record<string, unknown> {
-  const title = bounded(card.title || 'ข้อมูลจากมั่งมี', 80);
+  const title = bounded(card.title || 'ข้อมูลจากน้องมั่งมี', 80);
   const text = bounded(card.text, 1_200);
   const sources = (card.sourceLabels ?? []).map((label) => bounded(label, 60)).filter(Boolean).slice(0, 5);
   const link = card.webLink && safeTenantLink(webBaseUrl, companyId, card.webLink.path);
@@ -78,7 +78,7 @@ export function buildLineBusinessAnswerMessage(
   const bubbles = cards.map((card) => bubble(card, webBaseUrl, companyId));
   return {
     type: 'flex',
-    altText: bounded(fallbackText, 400) || 'ข้อมูลจากมั่งมี',
+    altText: bounded(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
     contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
   };
 }

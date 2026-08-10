@@ -40,7 +40,7 @@ export function buildLineMessage(params: {
     : `${baseUrl}/companies/${params.companyId}/dashboard`;
 
   return [
-    `[WatchDog] ${label}`,
+    `[มั่งมีพลัส] ${label}`,
     params.title,
     params.body,
     `เปิดแดชบอร์ด: ${deepLink}`,
@@ -56,7 +56,7 @@ export function buildStockLowLineMessage(params: {
 }): string {
   const baseUrl = process.env['WEB_BASE_URL'] ?? 'https://app.watchdog.local';
   return [
-    '[WatchDog] 🟡 สต็อกต่ำ',
+    '[มั่งมีพลัส] 🟡 สต็อกต่ำ',
     `SKU ${params.productSku}: ปัจจุบัน ${params.currentBalance}, Reorder Point ${params.reorderPoint}`,
     `เปิดระบบ: ${baseUrl}/companies/${params.companyId}/inventory/products/${params.productId}`,
   ].join('\n');

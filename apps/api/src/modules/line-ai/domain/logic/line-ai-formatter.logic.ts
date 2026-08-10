@@ -6,34 +6,36 @@
 import type { LineAiRefusalReason, LineAiWebLink } from '@watchdog-bms/contracts';
 import type { SourceRef } from '@watchdog-bms/contracts';
 
-const BASE_WEB_URL = process.env['WATCHDOG_WEB_BASE_URL'] ?? 'https://app.watchdog-bms.com';
+// ponytail: reuse the deploy-injected web URL (same chain as notification.use-cases.ts);
+// WATCHDOG_WEB_BASE_URL stays as an explicit override, no env is set for it today.
+const BASE_WEB_URL = process.env['WATCHDOG_WEB_BASE_URL'] ?? process.env['WEB_BASE_URL'] ?? process.env['PUBLIC_BASE_URL'] ?? 'https://mangmeeplus.com';
 
 // ---- Refusal messages ----
 
 export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
   mutation_blocked:
-    '⚠️ ขออภัย WatchDog AI ไม่สามารถดำเนินการนี้ผ่าน LINE ได้\n' +
-    'กรุณาเปิดเว็บแอปเพื่อดำเนินการต่อ',
+    '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\n' +
+    'กรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ',
   unsupported_module:
-    '📋 ขออภัย ฟีเจอร์นี้ยังไม่พร้อมใช้งานผ่าน LINE ในขณะนี้\n' +
-    'กรุณาเปิดเว็บแอปเพื่อดูข้อมูลเพิ่มเติม',
+    '📋 ขออภัยค่ะ ฟีเจอร์นี้ยังไม่พร้อมใช้งานผ่าน LINE ในขณะนี้\n' +
+    'กรุณาเปิดเว็บแอปเพื่อดูข้อมูลเพิ่มเติมนะคะ',
   forbidden:
-    '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้\n' +
-    'หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อผู้ดูแลระบบ',
+    '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ\n' +
+    'หากต้องการสิทธิ์เพิ่มเติม กรุณาติดต่อผู้ดูแลระบบนะคะ',
   unlinked_user:
-    '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนใช้งาน\n' +
-    'แตะ "เชื่อมต่อบัญชี" หรือเข้าสู่ระบบผ่านเว็บแอป',
+    '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\n' +
+    'แตะ "เชื่อมต่อบัญชี" หรือเข้าสู่ระบบผ่านเว็บแอปค่ะ',
   ambiguous_company:
-    '🏢 พบหลายบริษัทที่เชื่อมต่อกับบัญชีของคุณ\n' +
-    'กรุณาเลือกบริษัทที่ต้องการผ่านเว็บแอป',
+    '🏢 พบหลายบริษัทที่เชื่อมต่อกับบัญชีของคุณค่ะ\n' +
+    'กรุณาเลือกบริษัทที่ต้องการผ่านเว็บแอปนะคะ',
   tool_unavailable:
-    '⏳ ข้อมูลไม่พร้อมใช้งานในขณะนี้ กรุณาลองใหม่อีกครั้ง',
+    '⏳ ข้อมูลไม่พร้อมใช้งานในขณะนี้ กรุณาลองใหม่อีกครั้งนะคะ',
   feature_disabled:
-    '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้',
+    '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้ค่ะ',
   ai_timeout:
-    '⏱ ขออภัย ระบบใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง',
+    '⏱ ขออภัยค่ะ ระบบใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้งนะคะ',
   line_delivery_failure:
-    '❌ เกิดข้อผิดพลาดในการส่งข้อความ กรุณาลองใหม่อีกครั้ง',
+    '❌ เกิดข้อผิดพลาดในการส่งข้อความ กรุณาลองใหม่อีกครั้งนะคะ',
 };
 
 export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): string {

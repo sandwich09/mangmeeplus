@@ -21,7 +21,7 @@ import { createProvider } from '../infrastructure/provider/provider.factory';
 import type { IModelProvider, ProviderToolCall, ProviderToolMessage, ProviderToolResult, ProviderToolSpec } from '../infrastructure/provider/provider.port';
 
 export const ORCHESTRATOR_SYSTEM_PROMPT = `
-You are the Orchestrator Agent for WatchDog-BMS LINE AI.
+You are the Orchestrator Agent for MangmeePlus LINE AI.
 Your job is to coordinate specialist agents, respect the intent plan, and keep every action inside the safe LINE boundary.
 Use one specialist per job.
 Never call tools outside each specialist allowlist.

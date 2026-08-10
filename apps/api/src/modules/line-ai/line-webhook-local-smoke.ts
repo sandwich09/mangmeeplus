@@ -95,7 +95,7 @@ const signature = createHmac('sha256', SECRET).update(payload).digest('base64');
 
 const EXPECTED: Record<typeof SCENARIO, string> = {
   query: 'AI Gateway call attempted; check API logs for turn result',
-  mutation: 'mutation_blocked refusal; expect: ขออภัย WatchDog AI ไม่สามารถดำเนินการนี้ผ่าน LINE ได้',
+  mutation: 'mutation_blocked refusal; expect: ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้',
   companies: 'company list returned; expect: 🏢 บริษัทที่คุณเข้าถึงได้ (or UNLINKED if no membership)',
   fragments: `ONE buffered AI turn after ~2.5s debounce with joined text "${FRAGMENTS.join('\\n')}" — check API logs for a single requestLineTurn`,
   multiintent: 'item 10F: with LINE_AI_TOOLUSE_LOOP_ENABLED=true expect parallel tool calls + coverage verdicts in gateway logs; date 9/12/2537 must reach tools as 1994-12-09 only; with LINE_AI_LEDGER_ENABLED=true expect ai.line.ledger.appended/acked audit rows',

@@ -356,6 +356,6 @@ describe('CustomerLineRegisterController', () => {
       get: () => 'api.example.test',
     } as any);
 
-    assert.ok(html.includes('<title>WatchDog LINE Customer Registration</title>'));
+    assert.ok(html.includes('<title>มั่งมีพลัส LINE Customer Registration</title>'));
   });
 });

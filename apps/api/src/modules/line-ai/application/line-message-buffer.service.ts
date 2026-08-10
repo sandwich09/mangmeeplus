@@ -71,8 +71,8 @@ export type LineBufferEnvelope = {
   item: LineBufferIncomingItem;
 };
 
-const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วส่งอีกครั้ง';
-const DISPATCH_ERROR_REPLY = '⏳ ขออภัย ระบบตอบกลับไม่ได้ชั่วคราว กรุณาลองส่งข้อความอีกครั้ง';
+const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วส่งอีกครั้งนะคะ';
+const DISPATCH_ERROR_REPLY = '⏳ ขออภัยค่ะ ระบบตอบกลับไม่ได้ชั่วคราว กรุณาลองส่งข้อความอีกครั้งนะคะ';
 
 type ChatState = {
   chatId: string;

@@ -362,7 +362,7 @@ describe('UpdateRoleUseCase', () => {
           requestId: 'req-protected',
         }),
         (error) => error instanceof ForbiddenException
-          && error.message === 'This role is managed by WatchDog and cannot be edited.',
+          && error.message === 'This role is managed by MangmeePlus and cannot be edited.',
       );
     }
   });

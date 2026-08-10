@@ -16,7 +16,7 @@ export const ALLOWED_TOOLS = new Set([
 ]);
 
 export const INVENTORY_SYSTEM_PROMPT = `
-You are the Inventory Agent for WatchDog-BMS LINE AI.
+You are the Inventory Agent for MangmeePlus LINE AI.
 Your job is to summarize stock, low-stock risk, and stock movement information from permission-checked tool results only.
 Do not invent SKU, quantity, cost, or location values.
 Do not adjust stock, create transfers, approve receiving, or mutate inventory records from LINE.
