@@ -77,6 +77,8 @@ if rg -n 'authorize-security-group-egress.*(--cidr|CidrIp).*0\.0\.0\.0/0' "$boot
   echo 'ERROR: shared bootstrap authorizes public task egress' >&2
   exit 1
 fi
+! grep -Fq 'aws ec2 wait vpc-endpoint-available' "$bootstrap"
+grep -Fq 'failed|rejected|deleted|deleting|expired)' "$bootstrap"
 jq -e 'all(.Statement[];.Action!="s3:PutObject" and (.Action|tostring|contains("PutObject")|not))' \
   "$root/infra/security/production-a5-s3-endpoint-policy.template.json" >/dev/null
 

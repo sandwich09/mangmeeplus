@@ -161,7 +161,23 @@ ensure_endpoint() {
       --policy-document "file://$policy" >/dev/null
   fi
   [[ "$id" =~ ^vpce-[0-9a-f]{8,17}$ ]]
-  aws ec2 wait vpc-endpoint-available --region "$region" --vpc-endpoint-ids "$id"
+  local state attempt
+  for attempt in {1..60}; do
+    state="$(aws ec2 describe-vpc-endpoints --region "$region" --vpc-endpoint-ids "$id" \
+      --query 'VpcEndpoints[0].State' --output text)"
+    case "$state" in
+      available) break ;;
+      failed|rejected|deleted|deleting|expired)
+        echo "ERROR: $service endpoint $id entered terminal state $state" >&2
+        exit 1
+        ;;
+    esac
+    [ "$attempt" -lt 60 ] || {
+      echo "ERROR: timed out waiting for $service endpoint $id (state=$state)" >&2
+      exit 1
+    }
+    sleep 5
+  done
   printf '%s' "$id"
 }
 ecr_api_endpoint="$(ensure_endpoint ecr.api Interface "$ecr_policy")"
