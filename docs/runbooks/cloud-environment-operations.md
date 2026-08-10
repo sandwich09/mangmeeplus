@@ -78,6 +78,13 @@ aws ecr describe-images --repository-name watchdog-bms-workers \
 
 tag จะเป็น `git-<full-sha>` ต้องตรงกับ SHA ที่สั่ง deploy
 
+**Release task network (พบ 2026-08-11):** run `31408125154` attempts 1 และ 2 เลือก public
+subnet `subnet-004898abc874821c2` (`ap-southeast-1a`) แล้วหยุดก่อน container เริ่ม เพราะติดต่อ
+Secrets Manager timeout แม้ main route ไป IGW, `MapPublicIpOnLaunch=true` และ app egress SG เปิด
+`0.0.0.0/0`; tasks ที่รันปกติอยู่ใน `ap-southeast-1b/1c`. `run-release-task.sh` จึงรันทีละ
+public subnet และลอง subnet ถัดไปเฉพาะ `TaskFailedToStart` แบบ control-plane network timeout ที่
+ทุก container ยังไม่มี exit code เท่านั้น ห้าม retry เมื่อ container เริ่มแล้ว เพราะอาจทำ mutation ซ้ำ
+
 ### UAT — ปิด (จอดที่ศูนย์)
 
 วิธีที่ถูกต้องคือผ่าน deploy script ซึ่งรองรับตั้งแต่ commit `333e711`:

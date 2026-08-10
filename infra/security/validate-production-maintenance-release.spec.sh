@@ -47,6 +47,7 @@ full_files=(
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh
+  infra/prod-ecs-express/release-task-network-failure.jq
   infra/prod-ecs-express/wait-production-maintenance-ingress-drain.sh
   apps/api/src/modules/data-model-core/infrastructure/storage/s3-storage.adapter.ts
   apps/api/src/modules/data-model-core/application/use-cases/create-upload-intent.use-case.ts

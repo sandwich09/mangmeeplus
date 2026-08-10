@@ -197,6 +197,15 @@ Verification:
   Gateway `/v1/health` and workers `/health` returned `status=ok`. Production was not
   changed.
 Next:
+- UAT/all run `31408125154` for source `a37430c644aa0cb8447e39a18e719e226182da25`
+  stopped before migration/deploy in attempts 1 and 2. Both one-shot release tasks landed in
+  `subnet-004898abc874821c2` (`ap-southeast-1a`) and reached `TaskFailedToStart` while retrieving
+  `watchdog-bms/uat/database-url` from Secrets Manager; container exit code remained null, so no
+  database or service mutation occurred. Live UAT tasks were independently read back in
+  `subnet-0d61fcc3def86edd3` / `subnet-05b0bb57ed2f20a39` (`1b/1c`). The release runner now tries
+  public subnets one at a time and fails over only for this proven pre-container network failure;
+  focused failover and immutable maintenance-byte validator specs pass. Commit/push/CI and a fresh
+  UAT/all dispatch remain next.
 - Run the normal UAT/all workflow for this SHA so signed, SBOM'd and ECR-scanned artifacts
   replace the four direct images, and so the release operation gets its audit record.
 - Test the urgent journey on `https://uat.mangmeeplus.com`; hard-refresh any tab opened before

@@ -941,8 +941,6 @@ if [ "$vpc_id" = "None" ] || [ "$security_group" = "None" ] || [ "$subnets" = "[
   echo "ERROR: release task network is incomplete" >&2
   exit 1
 fi
-network="$(jq -cn --arg sg "$security_group" --argjson subnets "$subnets" \
-  '{awsvpcConfiguration:{subnets:$subnets,securityGroups:[$sg],assignPublicIp:"ENABLED"}}')"
 
 # A cancelled GitHub runner releases its workflow concurrency lock but does not stop the Fargate
 # task. Reconcile that detached task before starting another one. The PostgreSQL lock in the task is
@@ -1001,35 +999,52 @@ if [ "$mode" = "retire" ] || [ "$mode" = "reconcile" ]; then
 fi
 
 run_result="$tmp_dir/run-result.json"
-if [ "$capacity_task" = "true" ]; then
-  aws_cmd ecs run-task \
-    --cluster "$cluster" \
-    --task-definition "$task_definition_arn" \
-    --started-by "$started_by" \
-    --tags key=WatchdogOperation,value=U5Capacity key=U5CapacityMarker,value="${capacity_marker#U5C-}" \
-    --launch-type FARGATE \
-    --network-configuration "$network" \
-    --region "$region" > "$run_result"
-else
-  aws_cmd ecs run-task \
-    --cluster "$cluster" \
-    --task-definition "$task_definition_arn" \
-    --started-by "$started_by" \
-    --launch-type FARGATE \
-    --network-configuration "$network" \
-    --region "$region" > "$run_result"
-fi
-if ! jq -e '(.failures | length) == 0 and (.tasks | length) == 1' "$run_result" >/dev/null; then
-  jq '{failures}' "$run_result" >&2
-  exit 1
-fi
-task_arn="$(jq -r '.tasks[0].taskArn' "$run_result")"
-echo "[release-task] task=$task_arn definition=$task_definition_arn"
-aws_cmd ecs wait tasks-stopped --cluster "$cluster" --tasks "$task_arn" --region "$region"
-
 task_result="$tmp_dir/task-result.json"
-aws_cmd ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" --region "$region" > "$task_result"
-exit_code="$(jq -r --arg name "$container_name" '.tasks[0].containers[] | select(.name == $name) | .exitCode // "missing"' "$task_result")"
+task_arn=""
+exit_code="missing"
+mapfile -t release_subnets < <(jq -r '.[]' <<< "$subnets")
+for subnet_index in "${!release_subnets[@]}"; do
+  subnet="${release_subnets[$subnet_index]}"
+  network="$(jq -cn --arg sg "$security_group" --arg subnet "$subnet" \
+    '{awsvpcConfiguration:{subnets:[$subnet],securityGroups:[$sg],assignPublicIp:"ENABLED"}}')"
+  if [ "$capacity_task" = "true" ]; then
+    aws_cmd ecs run-task \
+      --cluster "$cluster" \
+      --task-definition "$task_definition_arn" \
+      --started-by "$started_by" \
+      --tags key=WatchdogOperation,value=U5Capacity key=U5CapacityMarker,value="${capacity_marker#U5C-}" \
+      --launch-type FARGATE \
+      --network-configuration "$network" \
+      --region "$region" > "$run_result"
+  else
+    aws_cmd ecs run-task \
+      --cluster "$cluster" \
+      --task-definition "$task_definition_arn" \
+      --started-by "$started_by" \
+      --launch-type FARGATE \
+      --network-configuration "$network" \
+      --region "$region" > "$run_result"
+  fi
+  if ! jq -e '(.failures | length) == 0 and (.tasks | length) == 1' "$run_result" >/dev/null; then
+    jq '{failures}' "$run_result" >&2
+    exit 1
+  fi
+  task_arn="$(jq -r '.tasks[0].taskArn' "$run_result")"
+  echo "[release-task] task=$task_arn definition=$task_definition_arn subnet=$subnet"
+  aws_cmd ecs wait tasks-stopped --cluster "$cluster" --tasks "$task_arn" --region "$region"
+  aws_cmd ecs describe-tasks --cluster "$cluster" --tasks "$task_arn" --region "$region" > "$task_result"
+  exit_code="$(jq -r --arg name "$container_name" '.tasks[0].containers[] | select(.name == $name) | .exitCode // "missing"' "$task_result")"
+
+  # A Fargate task that never entered its container cannot have changed the database. If one
+  # public subnet cannot reach AWS control-plane endpoints, try the next reviewed public subnet.
+  if [ "$exit_code" = "missing" ] \
+    && [ "$subnet_index" -lt "$(( ${#release_subnets[@]} - 1 ))" ] \
+    && jq -e -f "$(dirname "$0")/release-task-network-failure.jq" "$task_result" >/dev/null; then
+    echo "[release-task] subnet=$subnet failed before container start; trying the next public subnet" >&2
+    continue
+  fi
+  break
+done
 task_id="${task_arn##*/}"
 log_messages=''
 if [ "$capacity_task" = "true" ] && [ "$exit_code" = "0" ]; then
