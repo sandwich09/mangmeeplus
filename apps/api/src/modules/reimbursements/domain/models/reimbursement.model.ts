@@ -233,6 +233,10 @@ export type MaterializeClaimExpenseItem = {
   captureSource: string;
   vatMode: string;
   inputVatClaimStatus: string;
+  sourceDocumentType: string;
+  taxEvidenceStatus: string;
+  /** Claim-form number (line-suffixed on multi-line claims) — the projection's document reference. */
+  vendorDocumentNumber: string | null;
   /** Canonical CC2 VAT state retained until the shared CC4 resolution exists. */
   sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED' };
   /** Header totals for the neutral single-line ExpenseRecord projection. */

@@ -13,6 +13,8 @@ const cleanRow: SharedEvidenceRow = {
   expenseId: 'exp-1',
   expenseNumber: 'EXP-001',
   status: 'CONFIRMED',
+  sourceReimbursementRequestId: null,
+  missingReceiptReason: null,
   sourceDocumentType: 'TAX_INVOICE',
   taxEvidenceStatus: 'USABLE_FOR_TAX',
   taxEvidenceReasonCode: 'VALID_TAX_INVOICE_FIELDS',
@@ -37,6 +39,17 @@ const flagsFor = (overrides: Partial<SharedEvidenceRow>) =>
   deriveEvidenceRowFlags({ ...cleanRow, ...overrides });
 
 describe('deriveEvidenceRowFlags', () => {
+  it('treats a receipt-less claim projection as informational, not attention', () => {
+    const flags = flagsFor({
+      attachments: [],
+      sourceReimbursementRequestId: 'rb-1',
+      missingReceiptReason: 'ผู้ให้บริการรายย่อยไม่ออกใบเสร็จ',
+      taxEvidenceStatus: 'SUPPORTING_ONLY',
+    });
+    assert.deepEqual(flags.map((flag) => flag.key), ['CLAIM_FORM_EVIDENCE', 'SUPPORTING_ONLY']);
+    assert.equal(evidenceRowState(flags), 'ok');
+  });
+
   it('returns no flags and ok for a complete row', () => {
     const flags = flagsFor({});
     assert.deepEqual(flags, []);

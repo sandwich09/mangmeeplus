@@ -3,6 +3,7 @@ import type { SharedEvidenceRow, TaxEvidenceStatus } from './expenses.model';
 
 export type EvidenceFlagKey =
   | 'NO_FILE'
+  | 'CLAIM_FORM_EVIDENCE'
   | 'TAX_NEEDS_REVIEW'
   | 'NOT_TAX_EVIDENCE'
   | 'SUPPORTING_ONLY'
@@ -28,7 +29,15 @@ export const TAX_EVIDENCE_TONE: Record<TaxEvidenceStatus, MangmeeTone> = {
 
 export function deriveEvidenceRowFlags(row: SharedEvidenceRow): EvidenceFlag[] {
   const flags: EvidenceFlag[] = [];
-  if (row.attachments.length === 0) flags.push({ key: 'NO_FILE', severity: 'warn', label: 'ไม่มีไฟล์' });
+  if (row.attachments.length === 0) {
+    // A receipt-less claim line is evidenced by its signed ใบเบิก — nothing on the (immutable,
+    // confirmed) projection can or should be attached, so a red flag here would be a dead end.
+    if (row.sourceReimbursementRequestId && row.missingReceiptReason) {
+      flags.push({ key: 'CLAIM_FORM_EVIDENCE', severity: 'info', label: 'ใช้ใบเบิกที่ลงนามเป็นหลักฐาน (บรรทัดเบิกไม่มีใบเสร็จ)' });
+    } else {
+      flags.push({ key: 'NO_FILE', severity: 'warn', label: 'ไม่มีไฟล์' });
+    }
+  }
   if (row.taxEvidenceStatus === 'NEEDS_REVIEW') flags.push({ key: 'TAX_NEEDS_REVIEW', severity: 'warn', label: 'ยังไม่ตรวจภาษี' });
   if (row.taxEvidenceStatus === 'NOT_TAX_EVIDENCE') flags.push({ key: 'NOT_TAX_EVIDENCE', severity: 'warn', label: 'เอกสารใช้เป็นหลักฐานภาษีไม่ได้' });
   if (!row.vendorNameSnapshot?.trim()) flags.push({ key: 'NO_VENDOR', severity: 'warn', label: 'ไม่มีผู้ขาย' });

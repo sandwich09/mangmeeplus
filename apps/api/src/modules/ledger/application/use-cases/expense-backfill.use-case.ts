@@ -33,17 +33,25 @@ function branchScopeSql(branchIds: string[] | undefined): Prisma.Sql {
   return Prisma.sql`AND (expense."branchId" IS NULL OR expense."branchId" IN (${Prisma.join(branchIds)}))`;
 }
 
+// The OR arm mirrors the live drain: a receipt-less claim projection is evidenced by its
+// signed ใบเบิก, so historical claim rows are not stranded behind NO_ACTIVE_EVIDENCE either.
 const activeEvidenceSql = Prisma.sql`
-  EXISTS (
-    SELECT 1
-    FROM "AttachmentLink" AS link
-    INNER JOIN "AttachmentObject" AS attachment
-      ON attachment."companyId" = link."companyId"
-      AND attachment."id" = link."attachmentId"
-    WHERE link."companyId" = expense."companyId"
-      AND link."targetType" = 'expense.record'
-      AND link."targetId" = expense."id"
-      AND attachment."status"::text = 'ACTIVE'
+  (
+    EXISTS (
+      SELECT 1
+      FROM "AttachmentLink" AS link
+      INNER JOIN "AttachmentObject" AS attachment
+        ON attachment."companyId" = link."companyId"
+        AND attachment."id" = link."attachmentId"
+      WHERE link."companyId" = expense."companyId"
+        AND link."targetType" = 'expense.record'
+        AND link."targetId" = expense."id"
+        AND attachment."status"::text = 'ACTIVE'
+    )
+    OR (
+      expense."sourceReimbursementRequestId" IS NOT NULL
+      AND btrim(coalesce(expense."missingReceiptReason", '')) <> ''
+    )
   )
 `;
 

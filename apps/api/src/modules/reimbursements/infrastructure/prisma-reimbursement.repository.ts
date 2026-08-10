@@ -1103,6 +1103,9 @@ export class PrismaReimbursementRepository {
             currency: item.currency,
             vatMode: item.vatMode,
             inputVatClaimStatus: item.inputVatClaimStatus,
+            sourceDocumentType: item.sourceDocumentType,
+            taxEvidenceStatus: item.taxEvidenceStatus,
+            vendorDocumentNumber: item.vendorDocumentNumber,
             sourceChannelMetadataJson: item.sourceChannelMetadataJson,
             vendorNameSnapshot: item.vendorNameSnapshot,
             note: item.description,
@@ -1479,87 +1482,6 @@ export class PrismaReimbursementRepository {
     });
   }
 
-  private async materializeClaimLineExpensesInTransaction(
-    tx: any,
-    companyId: string,
-    requestId: string,
-    actorUserId: string,
-    items: MaterializeClaimExpenseItem[],
-  ): Promise<{ reimbursementLineId: string; expenseId: string }[]> {
-    const results: { reimbursementLineId: string; expenseId: string }[] = [];
-    for (const item of items) {
-        const expense = await tx.expenseRecord.create({
-          data: {
-            companyId,
-            branchId: item.branchId ?? null,
-            sourceReimbursementRequestId: requestId,
-            status: item.status,
-            captureSource: item.captureSource,
-            expenseDate: item.expenseDate,
-            currency: item.currency,
-            vatMode: item.vatMode,
-            inputVatClaimStatus: item.inputVatClaimStatus,
-            vendorNameSnapshot: item.vendorNameSnapshot,
-            note: item.description,
-            primaryAttachmentId: item.attachmentId ?? null,
-            missingReceiptReason: item.missingReceiptReason ?? null,
-            createdByUserId: actorUserId,
-            subtotalAmount: item.subtotalAmount,
-            discountAmount: item.discountAmount,
-            taxableAmount: item.taxableAmount,
-            vatAmount: item.vatAmount,
-            whtAmount: item.whtAmount,
-            grandTotalAmount: item.grandTotalAmount,
-            netPayableAmount: item.netPayableAmount,
-            outstandingAmount: item.outstandingAmount,
-          },
-        });
-        await tx.expenseLine.create({
-          data: {
-            companyId,
-            expenseId: expense.id,
-            lineNumber: 1,
-            description: item.description,
-            quantity: item.line.quantity,
-            unitPrice: item.line.unitPrice,
-            discountAmount: item.line.discountAmount,
-            taxableAmount: item.line.taxableAmount,
-            vatAmount: item.line.vatAmount,
-            whtAmount: item.line.whtAmount,
-            lineSubtotalAmount: item.line.lineSubtotalAmount,
-            lineTotalAmount: item.line.lineTotalAmount,
-          },
-        });
-        if (item.attachmentId) {
-          // Relink the receipt to the new expense; a pre-existing identical link
-          // (retry) is harmless to ignore via the unique constraint.
-          await tx.attachmentLink.createMany({
-            data: [{
-              companyId,
-              attachmentId: item.attachmentId,
-              targetType: 'expense.record',
-              targetId: expense.id,
-              purpose: 'expense.receipt.primary',
-              linkedByUserId: actorUserId,
-            }],
-            skipDuplicates: true,
-          });
-        }
-        const linked = await tx.reimbursementLine.updateMany({
-          where: {
-            id: item.reimbursementLineId,
-            companyId,
-            reimbursementRequestId: requestId,
-            linkedExpenseId: null,
-          },
-          data: { linkedExpenseId: expense.id },
-        });
-        if (linked.count !== 1) throw new ConflictException('stale_approval_snapshot');
-        results.push({ reimbursementLineId: item.reimbursementLineId, expenseId: expense.id });
-    }
-    return results;
-  }
-
   /**
    * Lines of OTHER still-live claims that already reference one of these
    * receipts/expenses — the double-claim guard at submit.
@@ -1847,6 +1769,33 @@ export class PrismaReimbursementRepository {
       });
       if (changed.count !== 1) throw new ConflictException('reimbursement_payment_state_changed');
 
+      if (paymentStatus === 'PAID') {
+        // Mirror the payout onto the claim's CONFIRMED expense projections (owner decision
+        // 2026-08-10): the cash left through THIS payment, so a projection must stop reading
+        // ยังไม่ชำระ. Deliberately no ExpensePayment row — bank reconciliation already matches
+        // the reimbursement payment's own source ref, and a projection-side row would offer
+        // the same cash to the matcher twice. Unconfirmed projections (duplicate suspects
+        // parked by finance) are left untouched; ReimbursementPaymentMethod values are a
+        // subset of ExpensePaymentMethod, so the method carries over verbatim.
+        const projections = await tx.expenseRecord.findMany({
+          where: { companyId: data.companyId, sourceReimbursementRequestId: data.reimbursementRequestId, status: 'CONFIRMED' },
+          select: { id: true, netPayableAmount: true },
+        });
+        for (const projection of projections) {
+          await tx.expenseRecord.update({
+            where: { id: projection.id },
+            data: {
+              paymentStatus: 'PAID',
+              paidAmount: projection.netPayableAmount,
+              outstandingAmount: '0.0000',
+              paymentMethod: data.paymentMethod,
+              paidAt: data.paidAt,
+              updatedByUserId: data.paidByUserId,
+            },
+          });
+        }
+      }
+
       const updated = await tx.reimbursementRequest.findFirstOrThrow({
         where: { id: data.reimbursementRequestId, companyId: data.companyId },
         include: {
@@ -2063,6 +2012,28 @@ export class PrismaReimbursementRepository {
         where: { id: requestId },
         data: { paymentTotalAmount: clampedTotal, outstandingAmount: outstanding, paymentStatus, status: requestStatus, updatedByUserId: actorUserId },
       });
+
+      if (paymentStatus !== 'PAID') {
+        // Take the payout mirror back with the void (MVP payments are full-amount, so a void
+        // returns the claim — and therefore its projections — to unpaid in one step).
+        const projections = await tx.expenseRecord.findMany({
+          where: { companyId, sourceReimbursementRequestId: requestId, status: 'CONFIRMED', paymentStatus: 'PAID' },
+          select: { id: true, netPayableAmount: true },
+        });
+        for (const projection of projections) {
+          await tx.expenseRecord.update({
+            where: { id: projection.id },
+            data: {
+              paymentStatus: 'UNPAID',
+              paidAmount: '0.0000',
+              outstandingAmount: projection.netPayableAmount,
+              paymentMethod: null,
+              paidAt: null,
+              updatedByUserId: actorUserId,
+            },
+          });
+        }
+      }
 
       const updated = await tx.reimbursementRequest.findFirstOrThrow({
         where: { id: requestId, companyId },

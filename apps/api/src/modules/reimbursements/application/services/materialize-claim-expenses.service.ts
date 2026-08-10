@@ -11,6 +11,7 @@ import { normalizeReimbursementAmount } from '../../domain/logic/reimbursement.l
 export class MaterializeClaimExpensesService {
   buildItems(request: ReimbursementRequestRecord): MaterializeClaimExpenseItem[] {
     const vendorNameSnapshot = `เบิกคืนพนักงาน: ${request.requesterDisplayNameSnapshot}`;
+    const lineCount = (request.lines ?? []).length;
     return (request.lines ?? []).map((line) => {
       // Single line, no VAT: Decimal-safe satang normalization keeps the claim
       // and its expense projection byte-equivalent even at storage boundaries.
@@ -31,12 +32,26 @@ export class MaterializeClaimExpensesService {
         // Created READY_FOR_CONFIRMATION so finance confirms it on the normal
         // expense path (numbering/outbox/postingStatus behave identically to a
         // manual confirm). captureSource API_INTERNAL: no user upload happened.
-        // A reimbursement source does not prove VAT non-recoverability. Keep
-        // the commercial gross/evidence and let the shared VAT review resolve it.
+        //
+        // Born review-complete (owner decision 2026-08-10): the projection is confirmed
+        // in the same finance-approval saga, and a CONFIRMED expense is immutable — any
+        // NEEDS_REVIEW left here would be un-resolvable forever, flag the accountant
+        // hand-off screen red, and block auto-post (TAX_EVIDENCE_NEEDS_REVIEW). The
+        // claim's legal instrument is the signed ใบเบิก: gross amount, no VAT split,
+        // input VAT non-claimable (employee-held receipts are not company tax invoices;
+        // the exceptional claimable case is void-and-rebook as a normal bill).
         status: 'READY_FOR_CONFIRMATION',
         captureSource: 'API_INTERNAL',
-        vatMode: 'NEEDS_REVIEW',
-        inputVatClaimStatus: 'NEEDS_REVIEW',
+        vatMode: 'NO_VAT',
+        inputVatClaimStatus: 'NON_CLAIMABLE',
+        sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+        taxEvidenceStatus: 'SUPPORTING_ONLY',
+        // The claim form's own number is the expense's reference document. Suffix the
+        // line number on multi-line claims so sibling projections never share a vendor
+        // document number (the duplicate scorer treats an exact match as +30).
+        vendorDocumentNumber: request.requestNo
+          ? (lineCount > 1 ? `${request.requestNo}-${line.lineNo}` : request.requestNo)
+          : null,
         sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED' },
         subtotalAmount: amount,
         discountAmount: zero,

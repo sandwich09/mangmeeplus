@@ -763,7 +763,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
-        {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && (
+        {Boolean(detail.sourceReimbursementRequestId) && (
+          <p className="text-sm text-gray-500">
+            รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อการเงินบันทึกจ่ายใบเบิก
+          </p>
+        )}
+        {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <input className={inputClass} type="number" min="0.01" max={detail.outstandingAmount} step="0.01" placeholder={t('expenses.payment_amount', locale)} value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} />
             <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>

@@ -49,3 +49,31 @@ Changes (10 items):
 Verification: apps/api `pnpm test` exit 0; apps/web `pnpm test` 895/895; `tsc --noEmit` clean in both.
 Pre-existing unrelated local failure seen once: web legal-content.spec ENOENT on untracked
 `apps/web/public/legal/releases/v2/` (user's in-progress legal-review work) — passed on the final full run.
+
+## Bug-fix round 3 — claim-projection consistency (2026-08-10, from UAT test)
+
+Status: DONE — suites green (api exit 0, web 896/896, tsc both), committed separately from user's legal work.
+Symptoms reported: claim-projected expense confirmed with NEEDS_REVIEW everywhere → evidence page
+permanently red + fields locked; RBPAY payout not reflected (expense stuck ยังไม่ชำระ with a live
+manual-payment form = double-pay hole); "ยังไม่มีเลขที่เอกสารอ้างอิง" unfixable.
+Root cause: MaterializeClaimExpensesService created projections vatMode/inputVat NEEDS_REVIEW, no
+doc type/tax status/doc number, then the finance saga confirmed (immutable) immediately.
+
+Changes:
+1. Projections born review-complete: NO_VAT + NON_CLAIMABLE + OTHER_EXPENSE_DOCUMENT +
+   SUPPORTING_ONLY + vendorDocumentNumber = requestNo (line-suffixed when multi-line to dodge the
+   +30 duplicate-scorer rule). Item type + active writer updated; deleted the uncalled legacy
+   writer materializeClaimLineExpensesInTransaction.
+2. recordPaymentAtomic mirrors PAID onto CONFIRMED projections (per-row netPayable, method/date
+   from RBPAY, NO ExpensePayment row — bank rec matches the RBPAY source ref);
+   voidPaymentTrueReversal reverts the mirror. New spec prisma-reimbursement.repository.payment-mirror.spec.ts.
+3. RecordExpensePaymentUseCase rejects claim-born expenses with code expense_settled_via_reimbursement
+   (Thai in api-error-message); web payment card hides the form for claim rows and explains the RBPAY path.
+   contracts ExpenseDetail + SharedEvidenceRow now expose sourceReimbursementRequestId (+ missingReceiptReason
+   on evidence rows) — contracts dist rebuilt (web resolves dist).
+4. Receipt-less claim lines: auto-post drain + backfill activeEvidence SQL accept
+   (sourceReimbursementRequestId != null AND missingReceiptReason != '') — the signed ใบเบิก is the
+   evidence; web evidence flag becomes info CLAIM_FORM_EVIDENCE instead of warn NO_FILE.
+5. apps/api package.json test script: registered the two new spec files (repo's own meta-spec enforces this).
+
+Note: rows created before the fix (UAT RB-202608-00001 / EXP-202608-00002) keep their broken state — retest with new claims after deploy.

@@ -61,16 +61,26 @@ export function expenseAutoPostCandidateSql(companyId: string, activationAt: Dat
         AND expense."confirmedAt" >= ${activationAt}
         AND btrim(coalesce(expense."vendorNameSnapshot", '')) <> ''
         AND expense."taxEvidenceStatus"::text NOT IN ('NEEDS_REVIEW', 'NOT_TAX_EVIDENCE')
-        AND EXISTS (
-          SELECT 1
-          FROM "AttachmentLink" AS link
-          INNER JOIN "AttachmentObject" AS attachment
-            ON attachment."companyId" = link."companyId"
-            AND attachment."id" = link."attachmentId"
-          WHERE link."companyId" = expense."companyId"
-            AND link."targetType" = 'expense.record'
-            AND link."targetId" = expense."id"
-            AND attachment."status"::text = 'ACTIVE'
+        -- A receipt-less claim projection is evidenced by its signed ใบเบิก (owner decision
+        -- 2026-08-10): the confirm gate accepted the claim's missing-receipt reason under the
+        -- projection authority, so the accrual must not wait for an attachment that can never
+        -- be added to a confirmed record.
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM "AttachmentLink" AS link
+            INNER JOIN "AttachmentObject" AS attachment
+              ON attachment."companyId" = link."companyId"
+              AND attachment."id" = link."attachmentId"
+            WHERE link."companyId" = expense."companyId"
+              AND link."targetType" = 'expense.record'
+              AND link."targetId" = expense."id"
+              AND attachment."status"::text = 'ACTIVE'
+          )
+          OR (
+            expense."sourceReimbursementRequestId" IS NOT NULL
+            AND btrim(coalesce(expense."missingReceiptReason", '')) <> ''
+          )
         )
         AND NOT EXISTS (
           SELECT 1
