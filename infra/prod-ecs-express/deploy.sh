@@ -9,7 +9,7 @@
 #   ai-gateway  AI Gateway service
 #   workers     BullMQ workers (repeat jobs: outbox drain, scans, CRM SLA scan)
 #   all         steady state: concurrent waves (uat: all three at once;
-#               production: api-web, then ai-gateway + workers), then an api-web
+#               production: ai-gateway + workers, then api-web), then a UAT api-web
 #               refresh only if the AI Gateway endpoint moved. Bootstrap and
 #               workstation runs stay sequential:
 #               api-web -> ai-gateway -> api-web -> workers
@@ -24,6 +24,9 @@ CLAMAV_HOST_INPUT="${CLAMAV_HOST:-}"
 REIMBURSEMENT_WRITE_QUIESCE_INPUT="${REIMBURSEMENT_WRITE_QUIESCE:-false}"
 REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
+MAINTENANCE_BOOTSTRAP_READONLY_INPUT="${MAINTENANCE_BOOTSTRAP_READONLY:-false}"
+PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
+RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOG_KMS_KEY_ID="${LOG_KMS_KEY_ID:-}"
 SECURITY_ALERT_TOPIC_ARN="${SECURITY_ALERT_TOPIC_ARN:-}"
@@ -58,6 +61,17 @@ case "$DEPLOY_ENV" in
   uat) RESOURCE_STAGE="uat" ;;
   *) echo "ERROR: DEPLOY_ENV must be production or uat" >&2; exit 2 ;;
 esac
+case "$PRODUCTION_SERVING_MODE_INPUT" in
+  maintenance_only|live) ;;
+  '')
+    if [ "$DEPLOY_ENV" = production ]; then
+      echo "ERROR: PRODUCTION_SERVING_MODE is required in production and must be maintenance_only or live" >&2
+      exit 2
+    fi
+    PRODUCTION_SERVING_MODE_INPUT=live
+    ;;
+  *) echo "ERROR: PRODUCTION_SERVING_MODE must be exactly maintenance_only or live" >&2; exit 2 ;;
+esac
 case "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" in
   true|false) ;;
   *) echo "ERROR: REIMBURSEMENT_WRITE_QUIESCE must be exactly true or false" >&2; exit 2 ;;
@@ -69,6 +83,42 @@ esac
 case "$PARTIAL_INCIDENT_READONLY_INPUT" in true|false) ;; *)
   echo "ERROR: PARTIAL_INCIDENT_READONLY must be exactly true or false" >&2; exit 2 ;;
 esac
+case "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" in true|false) ;; *)
+  echo "ERROR: MAINTENANCE_BOOTSTRAP_READONLY must be exactly true or false" >&2; exit 2 ;;
+esac
+if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
+  maintenance_intent_valid=false
+  if [ "$RELEASE_MODE_INPUT" = promotion ]; then
+    if { [ "$TARGET" = all ] && [ "$REIMBURSEMENT_BRIDGE_INPUT" = false ]; } \
+      || { [ "$TARGET" = api-web ] && [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; }; then
+      [ "$PARTIAL_INCIDENT_READONLY_INPUT" = false ] \
+        && [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = false ] \
+        && maintenance_intent_valid=true
+    fi
+  elif [ "$RELEASE_MODE_INPUT" = maintenance-bootstrap ] \
+    && [ "$TARGET" = all ] \
+    && [ "$REIMBURSEMENT_BRIDGE_INPUT" = false ] \
+    && [ "$PARTIAL_INCIDENT_READONLY_INPUT" = false ] \
+    && [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ]; then
+    maintenance_intent_valid=true
+  fi
+  if [ "$DEPLOY_ENV" != production ] || [ "$maintenance_intent_valid" != true ] \
+    || [ -z "$MANIFEST_INPUT" ] || [[ ! "${SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] \
+    || [ "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" != true ]; then
+    echo "ERROR: maintenance_only requires an immutable quiesced all-target bootstrap, promotion bridge, or coordinated promotion" >&2
+    exit 2
+  fi
+fi
+if { [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ] \
+    || [ "$RELEASE_MODE_INPUT" = maintenance-bootstrap ]; } \
+  && { [ "$DEPLOY_ENV" != production ] || [ "$RELEASE_MODE_INPUT" != maintenance-bootstrap ] \
+    || [ "$TARGET" != all ] || [ "$PRODUCTION_SERVING_MODE_INPUT" != maintenance_only ] \
+    || [ "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" != true ] || [ -z "$MANIFEST_INPUT" ] \
+    || [[ ! "${SOURCE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || [ "$REIMBURSEMENT_BRIDGE_INPUT" != false ] \
+    || [ "$PARTIAL_INCIDENT_READONLY_INPUT" != false ]; }; then
+  echo "ERROR: maintenance bootstrap requires production target=all, maintenance_only, quiesce=true, one immutable manifest and no bridge/partial mode" >&2
+  exit 2
+fi
 if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
   && { [ "$DEPLOY_ENV" != production ] || [ "$TARGET" = all ]; }; then
   echo "ERROR: the read-only incident path is production single-service only" >&2
@@ -77,7 +127,8 @@ fi
 if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
   && { [ "$DEPLOY_ENV" != production ] || [ "$TARGET" != api-web ] \
     || [ "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" != true ] || [ -z "$MANIFEST_INPUT" ] \
-    || [ "$PARTIAL_INCIDENT_READONLY_INPUT" != false ]; }; then
+    || [ "$PARTIAL_INCIDENT_READONLY_INPUT" != false ] \
+    || [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" != false ]; }; then
   echo "ERROR: reimbursement bridge requires production api-web, quiesce=true, one immutable manifest and no incident mode" >&2
   exit 2
 fi
@@ -92,7 +143,8 @@ fi
 case "$TARGET" in
   api-web|ai-gateway|workers|all)
     if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
-      || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; then
+      || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
+      || [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ]; then
       [ -n "${DEPLOYMENT_EVIDENCE_DIR:-}" ] || {
         echo "ERROR: no-database rollout requires DEPLOYMENT_EVIDENCE_DIR" >&2
         exit 2
@@ -205,7 +257,12 @@ PROD_DOC_MODEL="global.anthropic.claude-sonnet-4-6"
 # Allowlist covers both roles without shipping a duplicate entry when they coincide.
 PROD_MODEL_ALLOWLIST="$PROD_CHAT_MODEL"
 [ "$PROD_DOC_MODEL" != "$PROD_CHAT_MODEL" ] && PROD_MODEL_ALLOWLIST="$PROD_CHAT_MODEL,$PROD_DOC_MODEL"
-if [ "$DEPLOY_ENV" = "production" ]; then
+if [ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
+  BEDROCK_MODEL_ID="apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
+  DOCUMENT_AI_MODEL_ID="$BEDROCK_MODEL_ID"
+  APPROVED_AI_MODEL_IDS="$BEDROCK_MODEL_ID"
+  AI_GLOBAL_INFERENCE_PROFILE_APPROVED=""
+elif [ "$DEPLOY_ENV" = "production" ]; then
   BEDROCK_MODEL_ID="$PROD_CHAT_MODEL"
   DOCUMENT_AI_MODEL_ID="$PROD_DOC_MODEL"
   AI_GLOBAL_INFERENCE_PROFILE_APPROVED="true"
@@ -250,6 +307,34 @@ else
   fi
 fi
 
+# One serving-mode decision feeds every process. Live retains the existing values; maintenance
+# disables every asynchronous/customer-facing AI path while health endpoints stay available.
+SERVING_CRM_AUTO_REPLY_ENABLED="${CRM_AUTO_REPLY_ENABLED:-false}"
+SERVING_AI_ENABLED=true
+SERVING_MODEL_PROVIDER="${MODEL_PROVIDER:-disabled}"
+SERVING_APPROVED_AI_PROVIDERS="${APPROVED_AI_PROVIDERS:-}"
+SERVING_QUEUE_ENABLED=true
+SERVING_MAINTENANCE_ACTIVE=false
+if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
+  SERVING_CRM_AUTO_REPLY_ENABLED=false
+  SERVING_AI_ENABLED=false
+  SERVING_MODEL_PROVIDER=disabled
+  SERVING_QUEUE_ENABLED=false
+  SERVING_MAINTENANCE_ACTIVE=true
+fi
+if [ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" = live ] \
+  && { [ "$TARGET" = all ] || [ "$TARGET" = ai-gateway ]; }; then
+  case "$SERVING_MODEL_PROVIDER" in bedrock|openai) ;; *)
+    echo "ERROR: production live AI rollout requires explicit MODEL_PROVIDER=bedrock or openai" >&2
+    exit 2
+  esac
+  approved_providers=",${SERVING_APPROVED_AI_PROVIDERS//[[:space:]]/},"
+  case "$approved_providers" in *",${SERVING_MODEL_PROVIDER},"*) ;; *)
+    echo "ERROR: production live MODEL_PROVIDER must appear in APPROVED_AI_PROVIDERS" >&2
+    exit 2
+  esac
+fi
+
 # Do not let a workstation .env select a different artifact or source revision.
 PRODUCTION_IMAGE_MANIFEST="$MANIFEST_INPUT"
 if [ -n "$PRODUCTION_IMAGE_MANIFEST" ]; then
@@ -264,6 +349,10 @@ fi
 # (F1.5.1): a 12-char prefix is an abbreviation, not an immutable build identity. Both must match
 # what run-release-task.sh injects, or the release-task seeder attests a build the services deny.
 SHA="${COMMIT:0:12}"
+if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ] && [ "$SOURCE_SHA" != "$COMMIT" ]; then
+  echo "ERROR: maintenance_only SOURCE_SHA does not match the immutable manifest commit" >&2
+  exit 2
+fi
 if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ]; then
   [ "${PARTIAL_INCIDENT_READONLY_PROVED_SHA:-}" = "$COMMIT" ] \
     && [ "${RELEASE_DATABASE_COMPATIBILITY_PROVED_SHA:-}" = "$COMMIT" ] || {
@@ -275,6 +364,13 @@ if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ]; then
     echo "ERROR: incident api-web source is not already accepted and unretired" >&2
     exit 2
   fi
+fi
+if [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ]; then
+  [ "${MAINTENANCE_BOOTSTRAP_READONLY_PROVED_SHA:-}" = "$COMMIT" ] \
+    && [ "${RELEASE_DATABASE_COMPATIBILITY_PROVED_SHA:-}" = "$COMMIT" ] || {
+    echo "ERROR: maintenance bootstrap proof is absent or belongs to another source" >&2
+    exit 2
+  }
 fi
 if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
   && [ "${REIMBURSEMENT_BRIDGE_PROVED_SHA:-}" != "$COMMIT" ]; then
@@ -931,6 +1027,10 @@ prepare_release_operation_intent() {
     printf '%s' incident-readonly-no-database-intent
     return 0
   fi
+  if [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ]; then
+    printf '%s' maintenance-bootstrap-no-database-intent
+    return 0
+  fi
   if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; then
     printf '%s' reimbursement-bridge-no-database-intent
     return 0
@@ -1025,7 +1125,8 @@ deploy_express_service() {
   local before_service="/tmp/watchdog-bms-ecs-express-before-service-${service_name}.json"
   service_arn="$(get_param "$service_arn_param")" || return $?
   if { [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
-    || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; } \
+    || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
+    || [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = true ]; } \
     && { [ -z "$service_arn" ] || [ "$service_arn" = None ]; }; then
     echo "ERROR: no-database rollout cannot create a service" >&2
     return 1
@@ -1193,6 +1294,8 @@ api_container_json() {
     --arg sha "$SHA" \
     --arg commit "$COMMIT" \
     --arg deployEnvironment "$DEPLOY_ENV" \
+    --arg productionServingMode "$PRODUCTION_SERVING_MODE_INPUT" \
+    --arg globalMaintenanceMode "$SERVING_MAINTENANCE_ACTIVE" \
     --arg publicBaseUrl "$public_base_url" \
     --arg publicWebUrl "$public_web_url" \
     --arg aiGatewayUrl "$ai_gateway_url" \
@@ -1205,7 +1308,8 @@ api_container_json() {
     --arg lineOaAddUrl "${LINE_OA_ADD_URL:-}" \
     --arg lineOaQrImageUrl "${LINE_OA_QR_IMAGE_URL:-}" \
     --arg lineAccountLinkQrImageUrl "${LINE_ACCOUNT_LINK_QR_IMAGE_URL:-}" \
-    --arg crmAutoReplyEnabled "${CRM_AUTO_REPLY_ENABLED:-false}" \
+    --arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED" \
+    --arg aiEnabled "$SERVING_AI_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
     --arg crmAiOutboundAllowedDomains "${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-}" \
     --arg workflowWebhookAllowedHosts "$WORKFLOW_WEBHOOK_ALLOWED_HOSTS" \
@@ -1246,6 +1350,8 @@ api_container_json() {
         {name:"NODE_ENV", value:"production"},
         {name:"APP_ENV", value:"production"},
         {name:"DEPLOY_ENVIRONMENT", value:$deployEnvironment},
+        {name:"PRODUCTION_SERVING_MODE", value:$productionServingMode},
+        {name:"GLOBAL_MAINTENANCE_MODE", value:$globalMaintenanceMode},
         {name:"SERVICE_NAME", value:"watchdog-api"},
         {name:"SERVICE_VERSION", value:$sha},
         {name:"GIT_SHA", value:$commit},
@@ -1276,8 +1382,8 @@ api_container_json() {
         {name:"LINE_ACCOUNT_LINK_QR_IMAGE_URL", value:$lineAccountLinkQrImageUrl},
         {name:"NEXT_PUBLIC_LINE_ACCOUNT_LINK_QR_IMAGE_URL", value:$lineAccountLinkQrImageUrl},
         {name:"AI_GATEWAY_INTERNAL_URL", value:$aiGatewayUrl},
-        {name:"AI_GATEWAY_ENABLED", value:"true"},
-        {name:"LINE_AI_LEDGER_ENABLED", value:"true"},
+        {name:"AI_GATEWAY_ENABLED", value:$aiEnabled},
+        {name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},
         {name:"WATCHDOG_JWT_AUDIENCE", value:$jwtAudience},
         {name:"S3_BUCKET", value:$s3Bucket},
@@ -1350,6 +1456,7 @@ ai_container_json() {
     --arg sha "$SHA" \
     --arg commit "$COMMIT" \
     --arg deployEnvironment "$DEPLOY_ENV" \
+    --arg productionServingMode "$PRODUCTION_SERVING_MODE_INPUT" \
     --arg publicBaseUrl "$public_base_url" \
     --arg erpCoreUrl "$erp_core_url" \
     --arg agentcoreArn "$agentcore_arn" \
@@ -1361,7 +1468,8 @@ ai_container_json() {
     --arg agentcoreMaxMessageChars "${AGENTCORE_MAX_MESSAGE_CHARS:-8000}" \
     --arg agentcoreMaxAttachments "${AGENTCORE_MAX_ATTACHMENTS:-10}" \
     --arg agentcoreMaxConcurrentInvocations "${AGENTCORE_MAX_CONCURRENT_INVOCATIONS:-16}" \
-    --arg modelProvider "${MODEL_PROVIDER:-disabled}" \
+    --arg modelProvider "$SERVING_MODEL_PROVIDER" \
+    --arg aiEnabled "$SERVING_AI_ENABLED" \
     --arg approvedAiProviders "${APPROVED_AI_PROVIDERS:-}" \
     --arg approvedAiModelIds "${APPROVED_AI_MODEL_IDS:-}" \
     --arg approvedAiRegions "${APPROVED_AI_REGIONS:-}" \
@@ -1387,6 +1495,7 @@ ai_container_json() {
         {name:"NODE_ENV", value:"production"},
         {name:"APP_ENV", value:"production"},
         {name:"DEPLOY_ENVIRONMENT", value:$deployEnvironment},
+        {name:"PRODUCTION_SERVING_MODE", value:$productionServingMode},
         {name:"SERVICE_NAME", value:"ai-gateway"},
         {name:"SERVICE_VERSION", value:$sha},
         {name:"GIT_SHA", value:$commit},
@@ -1406,9 +1515,9 @@ ai_container_json() {
         {name:"BEDROCK_REGION", value:$bedrockRegion},
         {name:"BEDROCK_MODEL_ID", value:$bedrockModelId},
         {name:"DOCUMENT_AI_MODEL_ID", value:$documentAiModelId},
-        {name:"LINE_AI_AGENT_ORCHESTRATION_ENABLED", value:"true"},
-        {name:"LINE_AI_TOOLUSE_LOOP_ENABLED", value:"true"},
-        {name:"LINE_AI_COVERAGE_CRITIC_ENABLED", value:"true"},
+        {name:"LINE_AI_AGENT_ORCHESTRATION_ENABLED", value:$aiEnabled},
+        {name:"LINE_AI_TOOLUSE_LOOP_ENABLED", value:$aiEnabled},
+        {name:"LINE_AI_COVERAGE_CRITIC_ENABLED", value:$aiEnabled},
         {name:"LINE_AI_AGENT_RUNTIME", value:$lineAiAgentRuntime},
         {name:"AGENTCORE_REGION", value:$agentcoreRegion},
         {name:"AGENTCORE_RUNTIME_ARN", value:$agentcoreArn},
@@ -1423,10 +1532,10 @@ ai_container_json() {
         {name:"WATCHDOG_JWT_AUDIENCE", value:$jwtAudience},
         {name:"AI_TOOL_TIMEOUT_MS", value:"15000"},
         {name:"AI_MAX_TOOL_CALLS", value:"8"},
-        {name:"AI_GATEWAY_ENABLED", value:"true"},
-        {name:"AI_AGENT_REGISTRY_ENABLED", value:"true"},
-        {name:"AI_TOOL_POLICY_ENFORCED", value:"true"},
-        {name:"AI_TOOL_AUDIT_ENABLED", value:"true"},
+        {name:"AI_GATEWAY_ENABLED", value:$aiEnabled},
+        {name:"AI_AGENT_REGISTRY_ENABLED", value:$aiEnabled},
+        {name:"AI_TOOL_POLICY_ENFORCED", value:$aiEnabled},
+        {name:"AI_TOOL_AUDIT_ENABLED", value:$aiEnabled},
         {name:"AI_FINAL_MUTATION_ENABLED", value:"false"},
         {name:"AI_PROMPT_LOGGING_ENABLED", value:"false"},
         {name:"LOG_FORMAT", value:"json"},
@@ -1628,6 +1737,8 @@ workers_container_json() {
     --arg sha "$SHA" \
     --arg commit "$COMMIT" \
     --arg deployEnvironment "$DEPLOY_ENV" \
+    --arg productionServingMode "$PRODUCTION_SERVING_MODE_INPUT" \
+    --arg queueEnabled "$SERVING_QUEUE_ENABLED" \
     --arg publicWebUrl "$public_web_url" \
     --arg internalApiUrl "$internal_api_url" \
     --arg s3Bucket "$S3_BUCKET" \
@@ -1644,6 +1755,7 @@ workers_container_json() {
         {name:"NODE_ENV", value:"production"},
         {name:"APP_ENV", value:"production"},
         {name:"DEPLOY_ENVIRONMENT", value:$deployEnvironment},
+        {name:"PRODUCTION_SERVING_MODE", value:$productionServingMode},
         {name:"SERVICE_NAME", value:"watchdog-workers"},
         {name:"SERVICE_VERSION", value:$sha},
         {name:"GIT_SHA", value:$commit},
@@ -1654,7 +1766,7 @@ workers_container_json() {
         {name:"S3_BUCKET", value:$s3Bucket},
         {name:"S3_REGION", value:$region},
         {name:"AWS_REGION", value:$region},
-        {name:"QUEUE_ENABLED", value:"true"},
+        {name:"QUEUE_ENABLED", value:$queueEnabled},
         {name:"LOG_FORMAT", value:"json"}
       ],
       secrets: [
@@ -1718,12 +1830,17 @@ deploy_workers() {
 }
 
 # Spec §4.1: 'all' rolls services out as concurrent waves only with prebuilt
-# images (a wave job must not build) and a steady-state environment. Bootstrap
+# images (a wave job must not build) and a steady-state environment. UAT bootstrap
 # environments miss these params and keep the sequential ordering, including the
-# two-phase api-web URL dance. ECS_EXPRESS_SUBNET_MODE=private is the other
+# two-phase api-web URL dance. Production refuses that fallback so its public api-web
+# gate can never move before AI/workers. ECS_EXPRESS_SUBNET_MODE=private is the other
 # precondition; the 'all' case already refuses it outright below.
 wave_mode_ready() {
   if [ -z "$PRODUCTION_IMAGE_MANIFEST" ]; then
+    if [ "$DEPLOY_ENV" = production ]; then
+      echo "[deploy-all] ERROR: production all-target rollout requires an immutable manifest" >&2
+      return 2
+    fi
     echo "[deploy-all] no image manifest; running the sequential rollout" >&2
     return 1
   fi
@@ -1743,6 +1860,10 @@ wave_mode_ready() {
       return 75
     fi
     if [ -z "$value" ] || [ "$value" = "None" ]; then
+      if [ "$DEPLOY_ENV" = production ]; then
+        echo "[deploy-all] ERROR: production all-target rollout requires every existing service endpoint" >&2
+        return 2
+      fi
       echo "[deploy-all] $name is empty (bootstrap); running the sequential rollout" >&2
       return 1
     fi
@@ -1774,16 +1895,16 @@ deploy_all_wave() {
   # its own ECS mutation for single-target and sequential bootstrap paths.
   ensure_s3_upload_controls
   export WATCHDOG_COMMON_ENSURED=1
-  # Spec §4.2: same runner both environments, the grouping is the difference.
-  # Production gates on api-web first — if its canary rolls back, nothing else
-  # moves. A failed wave returns non-zero, so set -e skips the rest.
+  # Spec §4.2: production moves internal/background services first and the only
+  # customer ingress last. A failed first wave therefore leaves the public gate
+  # unchanged in both maintenance and live transitions.
   if [ "$DEPLOY_ENV" = "production" ]; then
-    run_rollout_wave api-web
     run_rollout_wave ai-gateway workers
+    run_rollout_wave api-web
   else
     run_rollout_wave api-web ai-gateway workers
+    refresh_api_web_on_endpoint_drift "$ai_gateway_url_before"
   fi
-  refresh_api_web_on_endpoint_drift "$ai_gateway_url_before"
 }
 
 deploy_all_sequential() {

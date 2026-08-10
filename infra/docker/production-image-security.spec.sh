@@ -223,7 +223,8 @@ grep -Fq 'PRODUCTION_IMAGE_MANIFEST' "$deploy_workflow"
 grep -Fq 'verify-deployment.sh' "$deploy_workflow"
 grep -Fq 'ECS_DEPLOY_MANAGE_IAM: "false"' "$deploy_workflow"
 recheck_line="$(grep -n 'name: Recheck release authority immediately before final mutation' "$deploy_workflow" | cut -d: -f1)"
-legal_policy_line="$(grep -n 'name: Verify legal evidence gate policy and manifest preflight' "$deploy_workflow" | cut -d: -f1)"
+legal_policy_line="$(grep -n 'name: Verify legal evidence gate policy pins' "$deploy_workflow" | cut -d: -f1)"
+legal_preflight_line="$(grep -n 'name: Verify legal evidence manifest preflight' "$deploy_workflow" | cut -d: -f1)"
 legal_reader_line="$(grep -n 'name: Configure AWS legal evidence reader credentials' "$deploy_workflow" | cut -d: -f1)"
 legal_provision_line="$(grep -n 'name: Provision independently reviewed legal release evidence' "$deploy_workflow" | cut -d: -f1)"
 legal_validate_line="$(grep -n 'name: Validate legal operator and privacy release evidence' "$deploy_workflow" | cut -d: -f1)"
@@ -234,7 +235,7 @@ clone_wait_line="$(grep -n 'name: Wait for exact clone rehearsal before quiesce'
 bridge_publisher_line="$(grep -n 'name: Configure AWS bridge image publisher credentials' "$deploy_workflow" | cut -d: -f1)"
 bridge_restore_line="$(grep -n 'name: Restore exact UAT-attested bridge image' "$deploy_workflow" | cut -d: -f1)"
 rollout_credentials_line="$(grep -n 'name: Configure AWS rollout credentials' "$deploy_workflow" | cut -d: -f1)"
-bridge_line="$(grep -n 'name: Deploy exact UAT-attested bridge and build PRE stage context' "$deploy_workflow" | cut -d: -f1)"
+bridge_line="$(grep -n 'name: Prove the exact UAT-attested bridge is globally closed and build PRE context' "$deploy_workflow" | cut -d: -f1)"
 owner_line="$(grep -n 'name: Wait for and fully verify independent U5 owner authority' "$deploy_workflow" | cut -d: -f1)"
 apply_line="$(grep -n 'name: Apply the exact reviewed migration while the bridge stays quiesced' "$deploy_workflow" | cut -d: -f1)"
 post_migration_line="$(grep -n 'name: Wait for exact signed POST_MIGRATION evidence' "$deploy_workflow" | cut -d: -f1)"
@@ -245,6 +246,8 @@ post_context_line="$(grep -n 'name: Build exact POST_DEPLOYMENT stage context' "
 post_validate_line="$(grep -n 'name: Wait for and fully verify signed POST deployment chain' "$deploy_workflow" | cut -d: -f1)"
 test "$legal_policy_line" -lt "$recheck_line"
 test "$legal_policy_line" -lt "$bridge_publisher_line"
+test "$legal_policy_line" -lt "$legal_preflight_line"
+test "$legal_preflight_line" -lt "$bridge_publisher_line"
 test "$bridge_publisher_line" -lt "$bridge_restore_line"
 test "$bridge_restore_line" -lt "$rollout_credentials_line"
 test "$rollout_credentials_line" -lt "$clone_wait_line"
@@ -311,24 +314,8 @@ manifest_validator_hash="$(sha256sum "$repo_root/infra/docker/validate-productio
 [[ "$manifest_validator_hash" =~ ^[0-9a-f]{64}$ ]]
 test "$(grep -Fhc "$acceptance_validator_hash" "$deploy_workflow" "$uat_workflow" | awk '{sum += $1} END {print sum}')" -eq 5
 
-test "$("$intent_validator" all 123 false '' '')" = promotion
-test "$("$intent_validator" api-web '' true INC-1234 approval://incident/1234)" = partial-incident
-if "$intent_validator" all '' false '' '' >/dev/null 2>&1; then
-  echo "ERROR: target=all bypassed exact UAT promotion" >&2
-  exit 1
-fi
-if "$intent_validator" all 123 true INC-1234 approval://incident/1234 >/dev/null 2>&1; then
-  echo "ERROR: target=all accepted direct incident authority" >&2
-  exit 1
-fi
-if "$intent_validator" workers '' false INC-1234 approval://incident/1234 >/dev/null 2>&1; then
-  echo "ERROR: partial source build lacked explicit incident authority" >&2
-  exit 1
-fi
-if "$intent_validator" all 123 false '' '' approval://owner/u5 >/dev/null 2>&1; then
-  echo "ERROR: promotion accepted a free-form owner approval argument" >&2
-  exit 1
-fi
+bash "$repo_root/infra/docker/production-release-intent.spec.sh"
+bash "$repo_root/infra/docker/production-maintenance-workflow.spec.sh"
 
 acceptance_source=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 acceptance_controller=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -1781,15 +1768,27 @@ for caller in "$deploy_workflow" "$uat_workflow"; do
   # Exit 75 is blocking: the held parent must remain unresolved until exact operator reconciliation.
   grep -Fq 'if [ "$rc" -eq 75 ]; then' "$caller"
   grep -Fq 'held release operation remains unresolved' "$caller"
-  grep -Fq "if: always() && (inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
   if [ "$caller" = "$deploy_workflow" ]; then
-    grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success' && (needs.resolve-release.outputs.release_mode != 'promotion' || steps.unquiesce.outcome == 'success') }}" "$caller"
+    grep -Fq "needs.resolve-release.outputs.release_mode != 'maintenance-bootstrap'" "$caller"
+    grep -Fq "(inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
+  else
+    grep -Fq "if: always() && (inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
+  fi
+  if [ "$caller" = "$deploy_workflow" ]; then
+    grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success'" "$caller"
+    grep -Fq "inputs.maintenance_only && steps.verify-maintenance.outcome == 'success'" "$caller"
+    grep -Fq "steps.unquiesce.outcome == 'success'" "$caller"
   else
     grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success' }}" "$caller"
   fi
   grep -Fq '[ "$HEALTH_VERIFIED" = "true" ] || mode=reconcile' "$caller"
   grep -Fq 'id: verify-health' "$caller"
-  grep -Fq 'DEPLOYMENT_EVIDENCE_DIR=$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}' "$caller"
+  if [ "$caller" = "$deploy_workflow" ]; then
+    grep -Fq 'evidence_dir="$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}"' "$caller"
+    grep -Fq 'echo "DEPLOYMENT_EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"' "$caller"
+  else
+    grep -Fq 'DEPLOYMENT_EVIDENCE_DIR=$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}' "$caller"
+  fi
   if grep -Fq 'DEPLOYMENT_EVIDENCE_DIR: ${{ runner.temp }}' "$caller"; then
     echo "ERROR: job-level env cannot use the runner context" >&2
     exit 1

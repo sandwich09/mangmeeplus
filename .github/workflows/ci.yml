@@ -285,6 +285,16 @@ jobs:
           bash infra/security/provision-legal-release-evidence.spec.sh
           bash infra/security/validate-legal-release-readiness.spec.sh
       - run: bash infra/docker/production-image-security.spec.sh
+      - name: Test production maintenance controls
+        run: |
+          node --test infra/api-web/web-api-proxy.spec.mjs
+          pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
+            src/common/http/production-maintenance.middleware.spec.ts
+          bash infra/prod-ecs-express/production-serving-mode.spec.sh
+          bash infra/prod-ecs-express/maintenance-preflight.spec.sh
+          bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
+          bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
+          bash infra/security/validate-production-maintenance-release.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
