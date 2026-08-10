@@ -124,7 +124,7 @@ export const MENUS: MenuSpec[] = [
   // The roles parent renders when ANY child survives its per-child registry key and points at
   // the first visible child. COMPANY_VIEW holds only access.role.read — no child, no parent.
   // SALES reaches it through นโยบายส่วนลด (crm.customer.update); MANAGER through
-  // ภาพรวมสิทธิ์/รายชื่อพนักงาน (access.employee.read).
+  // รายชื่อพนักงาน/เพิ่มพนักงาน (access.employee.read).
   { key: 'roles',       th: 'พนักงานและสิทธิ์',        en: 'Employees & Access',        path: 'settings/permissions',   visibleTo: ['OWNER', 'ADMIN', 'MANAGER', 'SALES'] },
   // The hub key list (web-core-workspace.constants.ts `settings`) includes tax.config.read and
   // ledger read keys, so MANAGER / FINANCE / ACCOUNTANT see the hub too — matching the cards
@@ -159,8 +159,8 @@ export const SUB_MENUS: SubMenuSpec[] = [
   // access.employee.read, po-approval needs procurement.purchase_order.manage, discount-policy
   // needs crm.customer.update, LINE OA needs crm.channel.manage.
   { parent: 'roles', routeGuard: 'own', key: 'roles.permissions', th: 'บทบาทและสิทธิ์',   en: 'Roles & permissions', path: 'settings/permissions',      visibleTo: ['OWNER'] },
-  { parent: 'roles', routeGuard: 'own', key: 'roles.individual',  th: 'ภาพรวมสิทธิ์',     en: 'Access overview',     path: 'settings/access-overview',  visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
-  { parent: 'roles', routeGuard: 'own', key: 'roles.employees',   th: 'รายชื่อพนักงาน',   en: 'Employees',           path: 'settings/employees',        visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.individual',  th: 'รายชื่อพนักงาน',   en: 'Employee directory',  path: 'settings/access-overview',  visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
+  { parent: 'roles', routeGuard: 'own', key: 'roles.employees',   th: 'เพิ่มพนักงาน',      en: 'Add employee',        path: 'settings/employees',        visibleTo: ['OWNER', 'ADMIN', 'MANAGER'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.poapproval',  th: 'อนุมัติคำสั่งซื้อ',  en: 'PO Approval',         path: 'settings/po-approval',      visibleTo: ['OWNER', 'ADMIN'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.discount',    th: 'นโยบายส่วนลด',     en: 'Discount policy',     path: 'settings/discount-policy',  visibleTo: ['OWNER', 'ADMIN', 'SALES'] },
   { parent: 'roles', routeGuard: 'own', key: 'roles.lineoa',      th: 'เชื่อมต่อ LINE OA', en: 'LINE OA',            path: 'settings/line-oa',          visibleTo: ['OWNER', 'ADMIN'] },

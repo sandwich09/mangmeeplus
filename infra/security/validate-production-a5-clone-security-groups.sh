@@ -56,6 +56,12 @@ task_exact_egress="$(jq -cnS --arg db "$db_id" --arg endpoint "$endpoint_id" \
   {ipProtocol:"tcp",fromPort:5432,toPort:5432,ipv4:[],ipv6:[],prefixLists:[],groups:[$db]}
 ] | sort_by([.ipProtocol,(.fromPort // -1),(.toPort // -1),(.ipv4|join(",")),
   (.ipv6|join(",")),(.prefixLists|join(",")),(.groups|join(","))])')"
+task_canonical_egress="$(jq -cnS --arg db "$db_id" --arg endpoint "$endpoint_id" \
+  --arg prefix "$s3_prefix_id" '[
+  {ipProtocol:"tcp",fromPort:443,toPort:443,ipv4:[],ipv6:[],prefixLists:[$prefix],groups:[$endpoint]},
+  {ipProtocol:"tcp",fromPort:5432,toPort:5432,ipv4:[],ipv6:[],prefixLists:[],groups:[$db]}
+] | sort_by([.ipProtocol,(.fromPort // -1),(.toPort // -1),(.ipv4|join(",")),
+  (.ipv6|join(",")),(.prefixLists|join(",")),(.groups|join(","))])')"
 db_exact_ingress="$(jq -cnS --arg task "$task_id" '[
   {ipProtocol:"tcp",fromPort:5432,toPort:5432,ipv4:[],ipv6:[],prefixLists:[],groups:[$task]}
 ]')"
@@ -69,11 +75,12 @@ test "$task_ingress" = "$empty"
 if [ "$mode" = preflight ]; then
   { test "$task_egress" = "$empty" || test "$task_egress" = "$default_egress" \
       || test "$task_egress" = "$task_legacy_egress" \
-      || test "$task_egress" = "$task_exact_egress"; }
+      || test "$task_egress" = "$task_exact_egress" \
+      || test "$task_egress" = "$task_canonical_egress"; }
   { test "$db_ingress" = "$empty" || test "$db_ingress" = "$db_exact_ingress"; }
   { test "$db_egress" = "$empty" || test "$db_egress" = "$default_egress"; }
 else
-  test "$task_egress" = "$task_exact_egress"
+  test "$task_egress" = "$task_exact_egress" || test "$task_egress" = "$task_canonical_egress"
   test "$db_ingress" = "$db_exact_ingress"
   test "$db_egress" = "$empty"
 fi

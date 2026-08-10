@@ -380,8 +380,10 @@ describe('buildNavItems', () => {
   });
 
   // คู่มือการใช้งานระบบ carries no company data and gates on nothing, so a session holding no
-  // permission at all still gets the row — and both manuals must stay reachable from it.
-  it('always offers the user-guide menu with one sub-item per manual', () => {
+  // permission at all still gets the row — and every listed manual must stay reachable from it.
+  // ภาษี/รายงานการเงิน are hidden from the row while their features are unreleased; their routes
+  // stay open, which is exactly what the reachability loop below still asserts.
+  it('always offers the user-guide menu with one sub-item per released manual', () => {
     const guide = buildNavItems([], 'guide-company', 'th', {}, []).find((nav) => nav.key === 'guide');
 
     assert.ok(guide);
@@ -390,15 +392,11 @@ describe('buildNavItems', () => {
       'guide.expenses',
       'guide.substitute_receipts',
       'guide.reimbursements',
-      'guide.tax',
-      'guide.reports',
     ]);
     assert.deepEqual(guide.subItems?.map((sub) => sub.href), [
       '/companies/guide-company/user-guide/expenses',
       '/companies/guide-company/user-guide/substitute-receipts',
       '/companies/guide-company/user-guide/reimbursements',
-      '/companies/guide-company/user-guide/tax',
-      '/companies/guide-company/user-guide/reports',
     ]);
     assert.equal(guide.href, '/companies/guide-company/user-guide/expenses');
     for (const slug of ['expenses', 'substitute-receipts', 'reimbursements', 'tax', 'reports']) {
