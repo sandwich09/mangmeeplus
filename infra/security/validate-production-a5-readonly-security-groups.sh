@@ -37,6 +37,11 @@ expected="$(jq -cnS --arg db "$database_id" --arg endpoint "$endpoint_id" \
   {protocol:"tcp",from:443,to:443,groups:[$endpoint],cidrs:[],ipv6:[],prefixes:[]},
   {protocol:"tcp",from:5432,to:5432,groups:[$db],cidrs:[],ipv6:[],prefixes:[]}
 ] | sort_by([.from,.to,(.groups|join(",")),(.prefixes|join(",")),(.cidrs|join(","))])')"
+canonical="$(jq -cnS --arg db "$database_id" --arg endpoint "$endpoint_id" \
+  --arg prefix "$s3_prefix_id" '[
+  {protocol:"tcp",from:443,to:443,groups:[$endpoint],cidrs:[],ipv6:[],prefixes:[$prefix]},
+  {protocol:"tcp",from:5432,to:5432,groups:[$db],cidrs:[],ipv6:[],prefixes:[]}
+] | sort_by([.from,.to,(.groups|join(",")),(.prefixes|join(",")),(.cidrs|join(","))])')"
 
 jq -e --arg task "$task_id" '
   (.SecurityGroups|length)==1 and .SecurityGroups[0].GroupId==$task
@@ -44,9 +49,10 @@ jq -e --arg task "$task_id" '
 ' "$task" >/dev/null
 actual="$(normalize_egress "$task")"
 if [ "$mode" = preflight ]; then
-  test "$actual" = "$default" || test "$actual" = "$legacy" || test "$actual" = "$expected"
+  test "$actual" = "$default" || test "$actual" = "$legacy" || test "$actual" = "$expected" \
+    || test "$actual" = "$canonical"
 else
-  test "$actual" = "$expected"
+  test "$actual" = "$expected" || test "$actual" = "$canonical"
 fi
 
 # The production DB group is shared. Ignore unrelated application rules but allow zero (preflight)

@@ -156,6 +156,11 @@ Cost Explorer คิด **$0.01 ต่อ request** และข้อมูล 
 IAM user `watchdog-bedrock-dev` ที่ agent ใช้ **อ่าน IAM ของตัวเองไม่ได้** (`iam:List*` ไม่ได้ให้)
 ถ้าโดน AccessDenied แล้วอยากรู้ว่า policy ไหนบล็อก ต้องใช้ Policy Simulator ใน Console
 
+> **A5 security-group read-back:** `describe-security-groups` อาจ canonicalize กฎ egress
+> TCP/443 ที่มี endpoint security group และ S3 prefix list เป็น `IpPermission` เดียว แม้ส่งคำสั่ง
+> authorize แยกกันสองครั้ง ให้ตรวจ resource targets ทั้งสองแบบ semantic; อย่าเทียบจำนวน
+> `IpPermissions` ว่าต้องเป็นสอง object
+
 ### CloudWatch log retention — policy ปัจจุบัน (อัปเดต 2026-08-09)
 
 | ขอบเขต | Log group/prefix | เก็บไว้ |

@@ -31,6 +31,14 @@ cat > "$work/database.json" <<JSON
 JSON
 bash "$validator" "$work/task.json" "$work/database.json" "$task_sg" "$db_sg" \
   "$endpoint_sg" "$s3_prefix" exact
+jq --arg endpoint "$endpoint_sg" --arg prefix "$s3_prefix" '
+  .SecurityGroups[0].IpPermissionsEgress =
+    ([.SecurityGroups[0].IpPermissionsEgress[] | select(.FromPort!=443)] +
+      [{IpProtocol:"tcp",FromPort:443,ToPort:443,IpRanges:[],Ipv6Ranges:[],
+        UserIdGroupPairs:[{GroupId:$endpoint}],PrefixListIds:[{PrefixListId:$prefix}]}])' \
+  "$work/task.json" > "$work/task-canonical.json"
+bash "$validator" "$work/task-canonical.json" "$work/database.json" "$task_sg" "$db_sg" \
+  "$endpoint_sg" "$s3_prefix" exact
 
 expect_reject() {
   local label="$1" task="$2" database="$3"

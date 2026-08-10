@@ -88,6 +88,14 @@ jq -cnS --arg id "$db_sg" --arg task "$task_sg" '{SecurityGroups:[{
     UserIdGroupPairs:[{GroupId:$task}]}],IpPermissionsEgress:[]}]}' > "$fixture/db.json"
 bash "$sg_validator" "$fixture/task.json" "$fixture/db.json" "$task_sg" "$db_sg" \
   "$endpoint_sg" "$s3_prefix" exact
+jq --arg endpoint "$endpoint_sg" --arg prefix "$s3_prefix" '
+  .SecurityGroups[0].IpPermissionsEgress =
+    ([.SecurityGroups[0].IpPermissionsEgress[] | select(.FromPort!=443)] +
+      [{IpProtocol:"tcp",FromPort:443,ToPort:443,IpRanges:[],Ipv6Ranges:[],
+        UserIdGroupPairs:[{GroupId:$endpoint}],PrefixListIds:[{PrefixListId:$prefix}]}])' \
+  "$fixture/task.json" > "$fixture/task-canonical.json"
+bash "$sg_validator" "$fixture/task-canonical.json" "$fixture/db.json" "$task_sg" "$db_sg" \
+  "$endpoint_sg" "$s3_prefix" exact
 
 expect_sg_reject() {
   local task="$1" db="$2" mode="${3:-exact}"
