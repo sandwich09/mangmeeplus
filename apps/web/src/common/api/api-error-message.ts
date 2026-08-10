@@ -9,6 +9,9 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 const CODE_LABELS: Record<string, string> = {
   // Permissions / scope
   insufficient_permissions: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
+  legal_acceptance_not_required: 'บัญชีนี้ไม่ต้องยอมรับเอกสารกฎหมาย',
+  platform_access_closed: 'ระบบกำลังปรับปรุง กรุณาลองใหม่ภายหลัง',
+  platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
   // Feature entitlement vs launch availability — two DISTINCT states (spec:65, spec:335).
   // "not enabled" = the company has not turned the feature on.
   feature_not_enabled: 'ยังไม่ได้เปิดฟีเจอร์นี้',
