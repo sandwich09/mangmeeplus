@@ -69,7 +69,8 @@ reimbursement DTO/schema changes.
 
 15. [ ] Extend signed production PRE/POST evidence with bridge/final source+image, active revision/task
     set, flag readback, quiesce start/end, invariant hashes and bounded UX-impact count.
-16. [x] Add controller steps in this exact order: bridge api-web true → retire/prove → signed PRE →
+16. [x] Add controller steps in this exact order: restore only the exact UAT-attested bridge digest →
+    bridge api-web true → retire/prove → signed PRE →
     migrations/invariants → final all services with api-web true → retire/prove → api-web same image
     false → postflight.
 17. [x] Make every failure path retain `true`; prohibit unquiesce when schema/invariant, digest,

@@ -5,7 +5,8 @@
 
 **อ่านก่อนเริ่ม:** ceremony นี้มีทั้ง owner approval และ reimbursement quiesce window อย่างละ
 **1800 วินาที (30 นาที)** Evidence ทุกชิ้นผูกกับ `parent_production_run_id` ของ
-deploy-production run **ที่กำลังรันอยู่** ตัว parent จะรอ clone ก่อนแตะ production, deploy bridge
+deploy-production run **ที่กำลังรันอยู่** ตัว parent จะ verify signed UAT acceptance แล้ว restore
+bridge image ผ่าน publisher role โดยยอมรับเฉพาะ digest เดิมแบบ byte-for-byte, รอ clone ก่อนแตะ runtime, deploy bridge
 หลัง clone ผ่าน, แล้วหยุดรอ evidence ของแต่ละ stage ตามลำดับ ทำต่อเนื่องจนจบ; ถ้า window หมด
 ให้หยุดโดยคง quiesce และเริ่ม parent/evidence chain ใหม่ ห้ามข้าม predicate
 
@@ -83,7 +84,7 @@ deploy-production run **ที่กำลังรันอยู่** ตั�
        gh workflow run production-a5-clone.yml --ref main \
          -f parent_production_run_id=<X> -f parent_production_run_attempt=<A> -f uat_acceptance_run_id=<uat>
        ```
-       Parent จะ verify clone, deploy exact UAT-attested bridge ด้วย
+       Parent จะ restore/verify exact UAT-attested digest ก่อน, verify clone, deploy bridge ด้วย
        `REIMBURSEMENT_WRITE_QUIESCE=true`, prove exact revision/tasks และ upload PRE context
 3. [ ] **production-a5** stage `PRE_MUTATION` — ใช้ clone run id → จด producer run id
 4. [ ] **production-security-preflight** stage `PRE_MUTATION` — ต้องอ้าง exact A5 PRE run

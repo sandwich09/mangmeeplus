@@ -407,6 +407,58 @@ jobs:
           test "$(sha256sum packages/contracts/src/legal-acceptance.ts | awk '{print $1}')" \
             = "$EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256"
           bash infra/security/provision-legal-release-evidence.sh preflight "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        with:
+          ref: ${{ inputs.bridge_source_sha }}
+          path: bridge-source
+          fetch-depth: 0
+      - name: Configure AWS bridge image publisher credentials
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-bridge-restore-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Log in to ECR for exact bridge restore
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Restore exact UAT-attested bridge image
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        id: restore-bridge
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: bridge-source
+          file: ./bridge-source/infra/api-web/Dockerfile.api-web
+          push: true
+          platforms: linux/amd64
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:git-${{ inputs.bridge_source_sha }}
+          labels: org.opencontainers.image.revision=${{ inputs.bridge_source_sha }}
+          cache-from: type=gha,scope=production-api-web
+          cache-to: type=gha,mode=max,scope=production-api-web,ignore-error=true
+      - name: Prove restored bridge bytes and sign this controller restore
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+          BRIDGE_IMAGE: ${{ inputs.bridge_api_image }}
+          RESTORED_DIGEST: ${{ steps.restore-bridge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          expected_digest="${BRIDGE_IMAGE##*@}"
+          [[ "$RESTORED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$RESTORED_DIGEST" = "$expected_digest" || {
+            echo "ERROR: rebuilt bridge bytes differ from the exact UAT-attested digest" >&2
+            exit 1
+          }
+          docker pull "$BRIDGE_IMAGE"
+          bash infra/docker/verify-production-image.sh "$BRIDGE_IMAGE"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$BRIDGE_IMAGE")" = "$BRIDGE_SOURCE"
+          cosign sign --yes "$BRIDGE_IMAGE"
+          rm -rf "$GITHUB_WORKSPACE/bridge-source"
       - name: Configure AWS rollout credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
@@ -469,20 +521,26 @@ jobs:
         run: |
           set -euo pipefail
           aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-          manifests=(release/production-image-manifest.json)
-          if [ "$RELEASE_MODE" = promotion ]; then
-            manifests+=("$U5_BRIDGE_ROOT/release/production-image-manifest.json")
-          fi
-          for manifest in "${manifests[@]}"; do
-            for service in api-web ai-gateway workers; do
-              image="$(jq -r --arg service "$service" '.images[] | select(.service == $service) | .image' "$manifest")"
-              cosign verify \
-                --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
-                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-                "$image" >/dev/null
-            done
+          for service in api-web ai-gateway workers; do
+            image="$(jq -r --arg service "$service" '.images[] | select(.service == $service) | .image' \
+              release/production-image-manifest.json)"
+            cosign verify \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$image" >/dev/null
           done
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+          if [ "$RELEASE_MODE" = promotion ]; then
+            image="$(jq -r '.images[] | select(.service == "api-web") | .image' \
+              "$U5_BRIDGE_ROOT/release/production-image-manifest.json")"
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-ref refs/heads/main \
+              --certificate-github-workflow-sha "$GITHUB_SHA" \
+              --certificate-github-workflow-trigger workflow_dispatch \
+              "$image" >/dev/null
+          fi
       - name: Build and push exact-commit release task before quiesce
         id: release-image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
