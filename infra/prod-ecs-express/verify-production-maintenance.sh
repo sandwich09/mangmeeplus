@@ -119,9 +119,13 @@ probe() {
   [ -z "$set_cookie" ] \
     || { echo "ERROR: $label maintenance response set a cookie" >&2; exit 1; }
   content_type="$(header_value Content-Type "$prefix.headers")"
-  if [ "$body_kind" = html ]; then
+  if [ "$body_kind" = login-html ]; then
     [[ "$content_type" == text/html* ]]
+    grep -Fq 'data-platform-access="closed"' "$prefix.body"
     grep -Fq 'ระบบกำลังปรับปรุง' "$prefix.body"
+  elif [ "$body_kind" = access-json ]; then
+    [[ "$content_type" == application/json* ]]
+    jq -e '.state=="CLOSED"' "$prefix.body" >/dev/null
   else
     [[ "$content_type" == application/json* ]]
     jq -e '.code=="global_maintenance" and .statusCode==200' "$prefix.body" >/dev/null
@@ -235,12 +239,12 @@ api_url="$(param /watchdog-bms/production/ecs-express-api-web-url)"
   || { echo "ERROR: api-web raw origin is invalid" >&2; exit 1; }
 api_url="${api_url%/}"
 
-probe custom-page GET "$public_url/login" html
-probe custom-login POST "$public_url/api/auth/login" json
+probe custom-page GET "$public_url/login" login-html
+probe custom-access GET "$public_url/v1/auth/platform-access" access-json
 probe custom-line POST "$public_url/v1/line/webhook" json
 probe custom-crm-line POST "$public_url/v1/crm/line/webhook/maintenance-proof" json
-probe raw-page GET "$api_url/login" html
-probe raw-login POST "$api_url/api/auth/login" json
+probe raw-page GET "$api_url/login" login-html
+probe raw-access GET "$api_url/v1/auth/platform-access" access-json
 probe raw-line POST "$api_url/v1/line/webhook" json
 
 if [ "$target" = all ]; then

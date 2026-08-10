@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
 import { generateCsrfToken, resolveHomePath, setAuthCookies } from '@/common/auth/auth-cookies.server';
+import { loginFailureResponse } from '@/features/auth/login-failure-response.server';
 
 type ApiAuthSession = {
   accessToken?: string;
@@ -42,10 +43,7 @@ export async function POST(request: NextRequest) {
   const data = (await apiRes.json().catch(() => ({}))) as ApiAuthSession;
   if (!apiRes.ok || !data.accessToken || !data.refreshToken) {
     const status = apiRes.ok ? 502 : apiRes.status;
-    return NextResponse.json({
-      message: data.message ?? 'Invalid username or password.',
-      ...(data.code ? { code: data.code } : {}),
-    }, { status });
+    return loginFailureResponse(data, status);
   }
 
   const homePath = resolveHomePath(data.redirectPath, data.companyId);

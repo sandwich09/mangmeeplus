@@ -45,6 +45,11 @@ enum AuthSessionStatus {
   EXPIRED
 }
 
+enum PlatformAccessState {
+  OPEN
+  CLOSED
+}
+
 enum LegalDocumentType {
   TERMS_OF_USE
   PRIVACY_NOTICE
@@ -895,6 +900,17 @@ model AuditLog {
   @@index([companyId, actorUserId, targetType, targetId])
   @@index([targetType, targetId])
   @@index([requestId])
+}
+
+// One platform-wide customer access switch. Missing/unreadable state fails CLOSED in production;
+// maintenance_only also overrides this row CLOSED so an operator cannot open a partial runtime.
+model PlatformAccessControl {
+  id                           String              @id
+  state                        PlatformAccessState @default(CLOSED)
+  updatedBySystemAdminUserId   String?
+  reason                       String?
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
 }
 
 model OutboxEvent {

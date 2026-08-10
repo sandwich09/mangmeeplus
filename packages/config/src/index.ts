@@ -182,6 +182,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // One bounded production-upgrade safety switch. It is not a commercial feature flag:
   // reads stay available while reimbursement mutations are paused before DTO validation.
   REIMBURSEMENT_WRITE_QUIESCE: envBoolean.default(false),
+  PRODUCTION_SERVING_MODE: z.enum(['live', 'maintenance_only']).optional(),
   // Auth
   AUTH_PROVIDER: z.enum(['line', 'dev']).default('dev'),
   DEV_AUTH_ENABLED: envBoolean.default(false),

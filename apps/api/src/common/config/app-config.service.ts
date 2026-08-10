@@ -56,6 +56,7 @@ export class AppConfigService {
   get rateLimitWindowSeconds(): number { return this.config.RATE_LIMIT_WINDOW_SECONDS; }
   get rateLimitMaxRequests(): number { return this.config.RATE_LIMIT_MAX_REQUESTS; }
   get reimbursementWriteQuiesce(): boolean { return this.config.REIMBURSEMENT_WRITE_QUIESCE; }
+  get productionServingMode(): 'live' | 'maintenance_only' | undefined { return this.config.PRODUCTION_SERVING_MODE; }
   get devAuthSecret(): string | undefined { return this.config.DEV_AUTH_SECRET; }
   get lineLoginChannelId(): string | undefined { return this.config.LINE_LOGIN_CHANNEL_ID; }
   get lineLiffId(): string | undefined { return this.config.LINE_LIFF_ID; }

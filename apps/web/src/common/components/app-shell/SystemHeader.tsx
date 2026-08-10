@@ -6,6 +6,7 @@ import { logoutCurrentSession } from '@/common/auth/session';
 import { AlertModal } from '@/common/components/modal';
 
 const SECTIONS = [
+  { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
   { href: '/system/data-rights', label: 'สิทธิข้อมูล' },

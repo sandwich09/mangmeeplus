@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import ChangePasswordPage from '@/features/auth/ChangePasswordPage';
 import { HOME_PATH_COOKIE } from '@/common/auth/auth-cookies.constants';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
@@ -13,6 +14,7 @@ export const dynamic = 'force-dynamic';
 // (an API older than this build) keeps the sign-out-only page instead of a button that loops.
 export default async function ChangePasswordRoute() {
   const result = await fetchServerSessionResult();
+  if (result.status === 'platform_closed') redirect('/maintenance');
   const session = result.status === 'signed_in' && result.session.mustChangePassword === false
     ? result.session
     : null;

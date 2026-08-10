@@ -97,7 +97,7 @@ done
   echo 'HTTP/2 200'
   [ "${FAKE_MISSING_MARKER:-false}" = true ] || echo 'X-Mangmee-Maintenance: active'
   echo 'Cache-Control: no-store, max-age=0'
-  if [ "$method" = GET ] && [[ "$url" == */login ]]; then
+if [ "$method" = GET ] && [[ "$url" == */login ]]; then
     echo 'Content-Type: text/html; charset=utf-8'
   else
     echo 'Content-Type: application/json; charset=utf-8'
@@ -106,7 +106,9 @@ done
   echo
 } > "$headers"
 if [ "$method" = GET ] && [[ "$url" == */login ]]; then
-  echo '<html><body>ระบบกำลังปรับปรุง</body></html>' > "$body"
+  echo '<html><body data-platform-access="closed">ระบบกำลังปรับปรุง</body></html>' > "$body"
+elif [ "$method" = GET ] && [[ "$url" == */v1/auth/platform-access ]]; then
+  echo '{"state":"CLOSED"}' > "$body"
 else
   echo '{"statusCode":200,"code":"global_maintenance","message":"Service temporarily unavailable."}' > "$body"
 fi

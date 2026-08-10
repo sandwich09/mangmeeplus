@@ -15,6 +15,7 @@ export const AuditAction = {
   /** PDPA objection route (M-05 register §3.1): user toggled the LINE AI assistant. */
   AUTH_AI_ASSISTANT_PREFERENCE_UPDATE: 'auth.ai_assistant.preference_update',
   AUTH_COMPANY_SWITCH: 'auth.company.switch',
+  PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',
   ADMIN_USER_INVITE: 'admin.user.invite',
   ADMIN_USER_DISABLE: 'admin.user.disable',
   ADMIN_ROLE_ASSIGN: 'admin.role.assign',

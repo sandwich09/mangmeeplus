@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -11,6 +11,7 @@ import { DevJwtVerifierAdapter } from '../infrastructure/dev-jwt-verifier.adapte
 import { ResolveRequestContextUseCase } from '../application/use-cases/resolve-request-context.use-case';
 import type { RequestContext } from '../domain/models/request-context.model';
 import { LegalAcceptanceService } from '../application/legal-acceptance.service';
+import { PlatformAccessService } from '../application/platform-access.service';
 
 export type RequestWithContext = Request & {
   context?: RequestContext;
@@ -40,6 +41,25 @@ function isLegalAcceptanceExempt(path: string): boolean {
   return LEGAL_ACCEPTANCE_EXEMPT_PATHS.has(cleanRequestPath(path));
 }
 
+const CLOSED_PUBLIC_PATHS = new Set([
+  '/v1/auth/platform-access',
+  '/v1/auth/login-channels',
+  '/v1/auth/password/login',
+  '/v1/auth/session/refresh',
+]);
+
+const ALWAYS_PUBLIC_PATHS = new Set([
+  '/v1/health',
+  '/v1/internal/health/readiness',
+]);
+
+function platformClosed(): ServiceUnavailableException {
+  return new ServiceUnavailableException({
+    code: 'platform_access_closed',
+    message: 'MangmeePlus customer access is currently closed.',
+  });
+}
+
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
@@ -50,6 +70,7 @@ export class AuthGuard implements CanActivate {
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
     private readonly legalAcceptance: LegalAcceptanceService,
+    private readonly platformAccess?: PlatformAccessService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -57,9 +78,17 @@ export class AuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (isPublic) return true;
-
     const req = context.switchToHttp().getRequest<RequestWithContext>();
+    const reqPath = req.path ?? req.url ?? '';
+    const cleanPath = cleanRequestPath(reqPath);
+    if (isPublic && ALWAYS_PUBLIC_PATHS.has(cleanPath)) return true;
+
+    const access = this.platformAccess ? await this.platformAccess.getStatus() : null;
+    const accessClosed = access?.effectiveState === 'CLOSED';
+    if (isPublic) {
+      if (!accessClosed || CLOSED_PUBLIC_PATHS.has(cleanPath)) return true;
+      throw platformClosed();
+    }
     const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
     const headerCompanyId = req.headers['x-company-id'] as string | undefined;
     const routeCompanyId = req.params?.['companyId'] as string | undefined;
@@ -133,7 +162,10 @@ export class AuthGuard implements CanActivate {
     // Block business module access until temporary password is changed.
     // Null credential (LINE-only users) is treated as no block.
     // LINE-login sessions are never blocked: the forced change belongs to the password login.
-    const reqPath = req.path ?? req.url ?? '';
+    if (accessClosed && !req.context.roles.includes('SYSTEM_ADMIN')) {
+      throw platformClosed();
+    }
+
     if (sessionProvider !== 'line' && !isMustChangePasswordExempt(reqPath)) {
       const credential = await this.prisma.client.userCredential.findUnique({
         where: { userId: req.context.userId },

@@ -126,6 +126,7 @@ function makeUseCase(store: ReturnType<typeof makeStore>, opts: {
   config?: Record<string, unknown>;
   audit?: any;
   limiter?: any;
+  platformAccess?: any;
 } = {}) {
   return new RefreshSessionUseCase(
     jwtService,
@@ -134,10 +135,28 @@ function makeUseCase(store: ReturnType<typeof makeStore>, opts: {
     null,
     opts.audit ?? null,
     opts.limiter ?? null,
+    opts.platformAccess ?? null,
   );
 }
 
 describe('RefreshSessionUseCase — L-01 rotation, replay and reuse', () => {
+  it('refreshes only SYSTEM_ADMIN sessions while customer access is closed', async () => {
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) };
+    const ordinary = makeStore();
+    (ordinary.prisma.client as any).companyMembership = { findFirst: async () => null };
+    await assert.rejects(
+      () => makeUseCase(ordinary, { platformAccess: closed }).execute(refreshTokenFor('token-current')),
+      (error: any) => error.getResponse().code === 'platform_access_closed',
+    );
+    assert.equal(ordinary.rows[0]!.tokenId, 'token-current');
+
+    const admin = makeStore();
+    (admin.prisma.client as any).companyMembership = { findFirst: async () => ({ id: 'system-membership' }) };
+    const result = await makeUseCase(admin, { platformAccess: closed }).execute(refreshTokenFor('token-current'));
+    assert.ok(result.accessToken);
+    assert.notEqual(admin.rows[0]!.tokenId, 'token-current');
+  });
+
   it('rotates on the current token and never extends expiresAt', async () => {
     const store = makeStore();
     const originalExpiry = store.rows[0]!.expiresAt.getTime();

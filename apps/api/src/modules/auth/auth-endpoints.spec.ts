@@ -127,6 +127,57 @@ describe('IssueTokenUseCase', () => {
 // ---- Password credentials ----
 
 describe('PasswordLoginUseCase', () => {
+  it('blocks an ordinary valid credential while customer access is closed and issues no token', async () => {
+    let issued = 0;
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'user-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('watchdogbms11'), mustChangePassword: false, expiresAt: null,
+          },
+        }) },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }],
+        }) },
+      },
+    } as any;
+    const issueToken = { execute: async () => { issued += 1; return {}; } } as any;
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+
+    await assert.rejects(
+      () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance, closed).execute('owner', 'watchdogbms11'),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.equal((error.getResponse() as any).code, 'platform_access_closed');
+        return true;
+      },
+    );
+    assert.equal(issued, 0);
+  });
+
+  it('allows SYSTEM_ADMIN while customer access is closed', async () => {
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'admin-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('watchdogbms11'), mustChangePassword: false,
+            expiresAt: null, updatedAt: new Date(),
+          },
+        }) },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'system-company', roles: [{ role: { key: 'SYSTEM_ADMIN' } }],
+        }) },
+      },
+    } as any;
+    const issueToken = { execute: async () => ({ accessToken: 'access', refreshToken: 'refresh', expiresIn: 900 }) } as any;
+    const accepted = { getStatus: async () => ({ required: false }) } as any;
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+    const result = await new PasswordLoginUseCase(prisma, issueToken, accepted, closed)
+      .execute('system-admin', 'watchdogbms11');
+    assert.equal(result.redirectPath, '/system/platform-access');
+    assert.equal(result.legalAcceptanceRequired, false);
+  });
+
   it('issues watchdog tokens for an active username/password credential', async () => {
     const credentialUpdatedAt = new Date('2026-08-09T07:00:00.000Z');
     const issueToken = { execute: async (userId: string, provider: string, version: Date) => {
@@ -222,7 +273,7 @@ describe('PasswordLoginUseCase', () => {
     const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('thawatchai.watchdog', 'watchdogbms11');
 
     assert.equal(result.companyId, null);
-    assert.equal(result.redirectPath, '/system/partners');
+    assert.equal(result.redirectPath, '/system/platform-access');
   });
 
   it('only considers active memberships whose company is active', async () => {

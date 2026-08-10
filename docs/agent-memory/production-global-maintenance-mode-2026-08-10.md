@@ -1,17 +1,21 @@
 # Agent Memory: production global maintenance mode 2026-08-10
 
-Status: Implementation and local verification complete; production unchanged pending protected-main/UAT
+Status: Customer-access switch implemented and locally verified; production unchanged
 Owner: Codex with MangmeeDev; protected-main reviewer and production owner approval remain human-owned
-Scope: Global outer-proxy maintenance gate, paused worker queues, maintenance-only production
-promotion, verification, and deployment while the product remains closed.
-Decisions: Gate at `infra/api-web/web-api-proxy.mjs`, before every public API/web/LINE path and raw
-origin. Add the same pre-body gate to AI Gateway; keep workers healthy with queues disabled. Allow
-only exact liveness/readiness. Use HTTP 200 plus an explicit maintenance header because the ECS
-canary rollback alarm counts intentional non-2xx responses. Do not change package manifests. Do not
-use a bridge that predates the gate. Bootstrap all three services from one exact UAT release through
-the read-only maintenance-bootstrap path, then use that release as the full promotion bridge. Live
-opening remains legal-evidence gated and requires a distinct all-target UAT source C with closed B
-as bridge. Require canonical serving-mode/secondary-flag agreement at api-web and workers boot.
+Scope: Fail-closed customer-access switch, SYSTEM_ADMIN-only onboarding access, clickwrap exemption
+for platform operators, outer-proxy/AI/worker closure, and maintenance-only production promotion.
+Decisions: Reuse `SYSTEM_ADMIN` and `system.launch_gate.manage`; do not add a parallel role or
+permission. Keep the ordinary login shell available while closed, but issue/accept sessions only for
+SYSTEM_ADMIN. Store one audited OPEN/CLOSED state; production missing/error defaults CLOSED and
+maintenance_only overrides it CLOSED/cannot-open. SYSTEM_ADMIN is a platform operator and is exempt
+from customer clickwrap without creating acceptance rows. Forward only login/auth/status/system
+control through the outer proxy; LINE/uploads/business routes remain stopped before Nest, AI stays
+blocked, and worker queues stay disabled. A valid ordinary member is detected before token issuance,
+receives no new session, has browser auth cookies cleared, and sees `/maintenance`; invalid or
+non-member accounts remain ordinary login failures. Existing ordinary sessions are blocked and
+protected layouts redirect them to `/maintenance`. SYSTEM_ADMIN lands on the access-control page.
+Live opening still requires the legal-evidence-gated
+all-target source C, after which SYSTEM_ADMIN may open access in the console.
 After singleton closure, wait 900 seconds and retain a timestamped proof that previously issued
 direct-storage URLs reached their byte-pinned maximum lifetime.
 Maintenance may defer only launch-specific evidence; it does not exempt residual processing. Keep
@@ -21,8 +25,14 @@ Open questions: Production Redis/security preflight and the independent owner ap
 the real promotion ceremony. Maintenance does not mean zero PDPA processing for infrastructure logs
 or any data already stored.
 Artifacts: `docs/specs/production-global-maintenance-mode-spec.md`,
-`docs/plans/production-global-maintenance-mode-plan.md`.
-Verification: Proxy suite 4/4 passed, including canonical-mode mismatch rejection,
+`docs/plans/production-global-maintenance-mode-plan.md`, Prisma migration and singleton access
+service/controller, auth/session/legal gates, login and maintenance UI, SYSTEM_ADMIN control page,
+and production proxy/verifier/immutable-byte contracts.
+Verification: Customer-access auth/legal/platform suites 91/91 passed; web session/cookie suites
+24/24 passed; API and Web typechecks passed; Prisma validate and Nest provider boot smoke passed;
+the optimized Next production build passed and a localhost request proved that initial `/login`
+HTML contains the closed marker and public maintenance notice without disclosing the operator path.
+Proxy suite 4/4 passed, including canonical-mode mismatch rejection,
 exact company/contact, discarded-content warning,
 inline residual-processing privacy copy, and absence of scripts/forms; AI maintenance middleware 2/2
 and full AI regression 523/523 passed; shared config 118/118 passed; serving-mode, read-only
@@ -31,6 +41,5 @@ external-probe fake, immutable-maintenance-byte validator, production image secu
 quiesce, YAML parse, AI typecheck, and `git diff --check` passed. Browser checks passed at
 1280×900 and 390×844 with no script, form, iframe, external stylesheet/image, or horizontal
 overflow. Full GitHub CI/UAT/production proof remains pending.
-Next: Run the full focused/security suite, commit and merge through protected main, create two exact
-UAT releases, close all three production services first, then promote all and capture
-custom/raw-origin, disabled-queue, and direct-storage drain evidence.
+Next: Review the final scoped diff, then commit and push through protected main before UAT and the
+maintenance-only production proof. Do not stage the unrelated production-deploy memory update.

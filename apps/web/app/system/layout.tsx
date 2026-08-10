@@ -15,8 +15,9 @@ export default async function SystemLayout({ children }: { children: ReactNode }
   const result = await fetchServerSessionResult();
 
   if (result.status === 'signed_out') {
-    redirect(`/login?next=${encodeURIComponent('/system/partners')}`);
+    redirect(`/login?next=${encodeURIComponent('/system/platform-access')}`);
   }
+  if (result.status === 'platform_closed') redirect('/maintenance');
   if (result.status === 'unavailable') {
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
@@ -24,10 +25,10 @@ export default async function SystemLayout({ children }: { children: ReactNode }
     return <SystemAccessDenied />;
   }
   if (result.session.mustChangePassword) {
-    redirect(`/change-password?next=${encodeURIComponent('/system/partners')}`);
+    redirect(`/change-password?next=${encodeURIComponent('/system/platform-access')}`);
   }
   if (result.session.legalAcceptanceRequired !== false) {
-    redirect(legalAcceptancePath('/system/partners', result.session.companyId));
+    redirect(legalAcceptancePath('/system/platform-access', result.session.companyId));
   }
 
   return (

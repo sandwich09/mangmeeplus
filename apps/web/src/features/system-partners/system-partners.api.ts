@@ -62,6 +62,30 @@ export type PartnerLifecycleResultDto = {
   archivedAt?: string;
 };
 
+export type PlatformAccessStatus = {
+  requestedState: 'OPEN' | 'CLOSED';
+  effectiveState: 'OPEN' | 'CLOSED';
+  canOpen: boolean;
+  servingMode: 'live' | 'maintenance_only' | 'non-production' | 'unknown';
+  updatedAt: string | null;
+  updatedBySystemAdminUserId: string | null;
+  reason: string | null;
+};
+
+export function getPlatformAccess(): Promise<PlatformAccessStatus> {
+  return apiFetch<PlatformAccessStatus>('/v1/system/platform-access');
+}
+
+export function setPlatformAccess(
+  state: 'OPEN' | 'CLOSED',
+  reason: string,
+): Promise<PlatformAccessStatus> {
+  return apiFetch<PlatformAccessStatus>('/v1/system/platform-access', {
+    method: 'PUT',
+    body: JSON.stringify({ state, reason }),
+  });
+}
+
 export async function listPartners(params?: {
   status?: string;
   page?: number;

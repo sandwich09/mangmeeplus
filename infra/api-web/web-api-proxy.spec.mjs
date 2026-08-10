@@ -48,16 +48,16 @@ describe('combined web/API proxy 404 handling', () => {
 });
 
 describe('combined web/API proxy global maintenance mode', () => {
-  it('blocks every business ingress before either upstream and keeps exact health paths available', async (context) => {
-    let apiRequests = 0;
-    let webRequests = 0;
+  it('keeps login/system onboarding available while blocking every customer business ingress', async (context) => {
+    const apiRequests = [];
+    const webRequests = [];
     const api = http.createServer((req, res) => {
-      apiRequests += 1;
+      apiRequests.push(`${req.method} ${req.url}`);
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: 'ok', path: req.url }));
     });
-    const web = http.createServer((_req, res) => {
-      webRequests += 1;
-      res.writeHead(200, { 'content-type': 'text/html' }).end('live-web');
+    const web = http.createServer((req, res) => {
+      webRequests.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { 'content-type': 'text/html' }).end('login-shell-maintenance');
     });
     await Promise.all([listen(api), listen(web)]);
     context.after(async () => Promise.all([close(api), close(web)]));
@@ -75,13 +75,29 @@ describe('combined web/API proxy global maintenance mode', () => {
     });
     const origin = `http://127.0.0.1:${server.address().port}`;
 
-    const blocked = [
+    const forwarded = [
       ['GET', '/'],
       ['GET', '/login'],
       ['GET', '/privacy'],
       ['GET', '/_next/static/app.js'],
       ['POST', '/api/auth/login'],
       ['GET', '/api/v1/auth/me'],
+      ['GET', '/v1/auth/platform-access'],
+      ['GET', '/v1/system/platform-access'],
+    ];
+    for (const [method, path] of forwarded) {
+      const response = await fetch(`${origin}${path}`, {
+        method,
+        headers: { accept: path.startsWith('/v1') || path.startsWith('/api/v1') ? 'application/json' : 'text/html' },
+        ...(method === 'GET' ? {} : { body: '{}' }),
+      });
+      assert.equal(response.status, 200, `${method} ${path}`);
+      assert.equal(response.headers.get('x-mangmee-maintenance'), 'active', `${method} ${path}`);
+      assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
+    }
+
+    const blocked = [
+      ['POST', '/system/platform-access'],
       ['POST', '/v1/line/webhook'],
       ['POST', '/v1/webhooks/line'],
       ['POST', '/v1/crm/line/webhook/channel-key'],
@@ -103,40 +119,33 @@ describe('combined web/API proxy global maintenance mode', () => {
       assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
       assert.equal(response.headers.get('set-cookie'), null);
     }
-    assert.equal(apiRequests, 0);
-    assert.equal(webRequests, 0);
-
-    const page = await fetch(`${origin}/`, { headers: { accept: 'text/html' } });
-    const pageHtml = await page.text();
-    assert.match(pageHtml, /ระบบกำลังปรับปรุง/);
-    assert.match(pageHtml, /มั่ง.*มี.*MangmeePlus/);
-    assert.match(pageHtml, /บริษัท มั่งมียั่งยืน จำกัด/);
-    assert.match(pageHtml, /ถูกทิ้งโดยไม่นำเข้าหรือจัดเก็บในระบบงาน/);
-    assert.match(pageHtml, /mailto:contact@mangmeeplus\.com/);
-    assert.match(pageHtml, /หมายเลขไอพี \(IP Address\) วันเวลา และข้อมูลเบราว์เซอร์ \(User-Agent\)/);
-    assert.match(pageHtml, /บันทึกความปลอดภัย/);
-    assert.match(pageHtml, /รักษาความมั่นคงปลอดภัย ป้องกันเหตุผิดปกติ และปฏิบัติตามกฎหมาย/);
-    assert.match(pageHtml, /ตามระยะเวลาที่กฎหมายกำหนดและเท่าที่จำเป็น/);
-    assert.match(pageHtml, /ขอเข้าถึง แก้ไข ลบ คัดค้าน หรือใช้สิทธิอื่นตามกฎหมาย/);
-    assert.doesNotMatch(pageHtml, /<(?:script|form)\b/i);
-    const apiReply = await fetch(`${origin}/v1/auth/me`, { headers: { accept: 'application/json' } });
-    assert.deepEqual(await apiReply.json(), {
-      statusCode: 200,
-      code: 'global_maintenance',
-      message: 'Service temporarily unavailable.',
-    });
+    assert.deepEqual(webRequests, [
+      'GET /',
+      'GET /login',
+      'GET /privacy',
+      'GET /_next/static/app.js',
+      'POST /api/auth/login',
+    ]);
+    assert.deepEqual(apiRequests, [
+      'GET /v1/auth/me',
+      'GET /v1/auth/platform-access',
+      'GET /v1/system/platform-access',
+    ]);
 
     for (const path of ['/v1/health?probe=1', '/v1/internal/health/readiness']) {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.headers.get('x-mangmee-maintenance'), null);
       assert.equal((await response.json()).status, 'ok');
     }
-    assert.equal(apiRequests, 2);
-    assert.equal(webRequests, 0);
+    assert.deepEqual(apiRequests.slice(-2), [
+      'GET /v1/health?probe=1',
+      'GET /v1/internal/health/readiness',
+    ]);
 
     const head = await fetch(`${origin}/login`, { method: 'HEAD' });
     assert.equal(head.headers.get('x-mangmee-maintenance'), 'active');
     assert.equal(await head.text(), '');
+    assert.equal(webRequests.at(-1), 'HEAD /login');
   });
 
   it('rejects a malformed maintenance setting instead of failing open', async () => {

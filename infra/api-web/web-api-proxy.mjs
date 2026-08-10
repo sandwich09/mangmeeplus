@@ -34,6 +34,15 @@ const maintenanceMode = resolveMaintenanceMode(
   process.env.NODE_ENV === 'production',
 );
 const maintenanceBypassPaths = new Set(['/v1/health', '/v1/internal/health/readiness']);
+const maintenanceAuthPaths = new Set([
+  '/v1/auth/platform-access',
+  '/v1/auth/login-channels',
+  '/v1/auth/password/login',
+  '/v1/auth/session/refresh',
+  '/v1/auth/password/change',
+  '/v1/auth/logout',
+  '/v1/auth/me',
+]);
 const maintenanceHtml = `<!doctype html>
 <html lang="th">
 <head>
@@ -83,6 +92,27 @@ export function mayBypassMaintenance(method, url) {
   return (method === 'GET' || method === 'HEAD') && maintenanceBypassPaths.has(parsed.pathname);
 }
 
+export function mayForwardMaintenance(method, url) {
+  if (String(url).startsWith('//')) return false;
+  const pathname = new URL(url, 'http://localhost').pathname;
+  if (!isApiPath(pathname)) return method === 'GET' || method === 'HEAD';
+  if (pathname === '/api/auth' || pathname.startsWith('/api/auth/')) return true;
+  const apiPath = pathname.startsWith('/api/v1/') ? pathname.slice(4) : pathname;
+  return maintenanceAuthPaths.has(apiPath)
+    || apiPath === '/v1/system'
+    || apiPath.startsWith('/v1/system/');
+}
+
+function upstreamHeaders(headers, markMaintenance) {
+  if (!markMaintenance) return headers;
+  return {
+    ...headers,
+    'cache-control': 'no-store, max-age=0',
+    'x-mangmee-maintenance': 'active',
+    'x-robots-tag': 'noindex, nofollow, noarchive',
+  };
+}
+
 function renderMaintenance(req, res, pathname) {
   const apiResponse = isApiPath(pathname) || (req.method !== 'GET' && req.method !== 'HEAD');
   const body = apiResponse
@@ -126,10 +156,14 @@ export function shouldRenderWebNotFound(method, accept, statusCode) {
 
 export const server = http.createServer((req, res) => {
   const parsed = new URL(req.url || '/', 'http://localhost');
-  if (maintenanceMode && !mayBypassMaintenance(req.method || 'GET', parsed.href)) {
+  const maintenanceBypass = mayBypassMaintenance(req.method || 'GET', parsed.href);
+  if (maintenanceMode
+    && !maintenanceBypass
+    && !mayForwardMaintenance(req.method || 'GET', req.url || '/')) {
     renderMaintenance(req, res, parsed.pathname);
     return;
   }
+  const markMaintenance = maintenanceMode && !maintenanceBypass;
   const target = targetFor(req.url || '/');
   // Preserve the public host/proto for upstream URL building (publicApiBase reads x-forwarded-*).
   const headers = {
@@ -159,7 +193,7 @@ export const server = http.createServer((req, res) => {
             headers: { ...headers, host: `127.0.0.1:${webPort}` },
           },
           (webRes) => {
-            res.writeHead(webRes.statusCode || 502, webRes.headers);
+            res.writeHead(webRes.statusCode || 502, upstreamHeaders(webRes.headers, markMaintenance));
             webRes.pipe(res);
           },
         );
@@ -170,7 +204,7 @@ export const server = http.createServer((req, res) => {
         webRequest.end();
         return;
       }
-      res.writeHead(upstreamRes.statusCode || 502, upstreamRes.headers);
+      res.writeHead(upstreamRes.statusCode || 502, upstreamHeaders(upstreamRes.headers, markMaintenance));
       upstreamRes.pipe(res);
     },
   );

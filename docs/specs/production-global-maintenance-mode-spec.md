@@ -4,23 +4,27 @@ Status: Implementation authorized on 2026-08-10
 
 ## Goal
 
-Deploy and exercise the complete production release while the customer-facing product remains
-closed. Every request entering the combined public API/web origin must stop at the outer runtime
-proxy before Next.js, NestJS, authentication, LINE webhook parsing, file upload, database access,
-or queue enqueue. The AI Gateway applies the same stop before body parsing, and worker queues remain
-disabled. Users see a MangmeePlus-branded maintenance page only.
+Deploy and exercise the complete production release while customer access remains closed. Keep the
+ordinary MangmeePlus login screen available, but authenticate only a platform onboarding operator
+with the existing `SYSTEM_ADMIN` role. The operator can use the system console to view and change a
+singleton customer-access switch. Ordinary accounts cannot log in or use an existing session while
+the switch is closed. LINE, uploads, business APIs, AI Gateway, and worker queues remain closed until
+the switch is open and the deployed production serving mode is `live`.
 
 ## Runtime contract
 
 - `GLOBAL_MAINTENANCE_MODE` accepts only `true` or `false`; missing/empty is `false`. In production,
   `PRODUCTION_SERVING_MODE` is mandatory and the two values must agree. Missing, malformed, or
   contradictory values stop the proxy at boot so a split production setting cannot fail open.
-- When `true`, only `GET`/`HEAD` for exact `/v1/health` and
-  `/v1/internal/health/readiness` may reach the API. The readiness route keeps its worker-token
-  authentication in NestJS.
-- Every other host, path, query, and method is answered directly by the outer proxy. Browser
-  navigation receives one inline, dependency-free Thai maintenance page. API/BFF/LINE/upload
-  routes receive a small maintenance JSON response. Request bodies are never forwarded.
+- When `true`, the proxy forwards the web shell, auth routes, the public platform-access status,
+  and `/v1/system/*`. Authentication and the API guard still fail closed: only `SYSTEM_ADMIN` may
+  receive or use a session. A valid ordinary member receives `platform_access_closed` before token
+  issuance; the BFF clears any browser auth cookies and shows the public maintenance page. Invalid
+  credentials or an account without an active membership remain ordinary login failures. Exact
+  health/readiness routes retain their existing behavior.
+- LINE webhooks, uploads, business APIs, callbacks, local-storage routes, and mutations are answered
+  directly by the outer proxy with maintenance JSON; their bodies are never forwarded. AI Gateway
+  and workers remain closed independently.
 - Maintenance responses intentionally use HTTP 200 plus `X-Mangmee-Maintenance: active` because
   the ECS Express canary alarm treats intentional 4xx/5xx responses as rollout failure. They also
   set `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow`, strict security headers, and no
@@ -31,8 +35,15 @@ disabled. Users see a MangmeePlus-branded maintenance page only.
   consumer starts.
 - The AI Gateway permits only exact `GET`/`HEAD /v1/health`; all other direct-origin requests stop
   before helmet, CORS, JSON parsing, authentication, provider selection, or tools.
-- Opening the product is a separate production deployment with maintenance `false`; it is never a
-  tenant/admin setting and never changes in place without the production workflow.
+- `PlatformAccessControl` is a singleton `OPEN`/`CLOSED` runtime switch. A missing/unreadable value
+  fails closed in production and defaults open outside production. Only `SYSTEM_ADMIN` with the
+  existing `system.launch_gate.manage` permission may change it, and every change is audited.
+- `maintenance_only` overrides the switch to effective `CLOSED` and reports `canOpen=false`. Opening
+  therefore requires a legal/security-approved `live` production release first; after that release,
+  `SYSTEM_ADMIN` may open or close customer access without another deployment.
+- `SYSTEM_ADMIN` is a platform operator, not a customer representative. It is exempt from the
+  customer Terms/Privacy clickwrap and no acceptance record is fabricated. All other users retain
+  the existing acceptance requirement after customer access opens.
 
 ## Production release contract
 
@@ -76,29 +87,39 @@ disabled. Users see a MangmeePlus-branded maintenance page only.
    a separate timestamped drain proof.
    Deep database readiness is reported separately and is not claimed unless the guarded operator
    credential was actually supplied.
-6. Keep the product closed until a separate legally approved `maintenance_only=false` release.
-   Under the current bridge contract that opening is a distinct all-target UAT source C using the
-   closed source B as its bridge; re-dispatching source B in place is not an approved shortcut.
+6. Keep the customer-access switch closed until a separate legally approved
+   `maintenance_only=false` release. Under the current bridge contract that release is a distinct
+   all-target UAT source C using closed source B as its bridge. Once C is verified live, the
+   onboarding `SYSTEM_ADMIN` opens customer access from the system console.
 
 This is a verified `DEPLOYED_NOT_LAUNCHED` state, not a private network and not a claim of zero PDPA
 processing. Exact health routes, infrastructure traffic logs, named operators, and any data already
-stored remain operational processing. The maintenance page identifies the company and privacy
-contact, explains that request content reaching the MangmeePlus/LINE gate is discarded without
-being imported into or stored in the business system, and gives a concise notice for IP address,
-time, User-Agent, security-log purposes, retention, and rights. AWS WAF is not part of this release
+stored remain operational processing. The closed-state login notice identifies the company and
+privacy contact, explains that customer access and business intake are inactive, and keeps the
+public privacy notice reachable. AWS WAF is not part of this release
 because the current
 production operator role has no WAF authority; the two-release ceremony ensures every api-web
 revision that can serve during the full rollout already contains the same gate.
 
 ## Acceptance criteria
 
-- `/`, `/login`, legal pages, Next static paths, auth, API, LINE employee/CRM webhooks, uploads,
-  local storage, callbacks, and mutations cannot reach either fake upstream in focused tests.
+- `/login`, required Next assets, auth, the read-only access-status route, and `SYSTEM_ADMIN` system
+  console routes are forwarded. The public login page states only that the system is under
+  maintenance and does not disclose the privileged operator path.
+- An ordinary active-member credential receives `platform_access_closed`, creates no session token,
+  clears browser auth cookies, and lands on `/maintenance`. An existing ordinary session cannot use
+  or refresh protected access while closed and protected web layouts redirect it to `/maintenance`.
+  A `SYSTEM_ADMIN` credential signs in and lands directly on `/system/platform-access`.
+- LINE employee/CRM webhooks, uploads, local storage, callbacks, business API routes, and mutations
+  cannot reach either fake upstream while maintenance is active.
 - Health/readiness exact paths only are forwarded; near matches and encoded/double-slash variants
   stay blocked. HEAD has no body.
-- Maintenance HTML is responsive, uses MangmeePlus green/gold tokens and inline sprout-coin mark,
-  makes no third-party request, accurately explains discarded request content, and includes the
-  company, privacy contact, residual-processing notice, retention rule, and rights channel.
+- The existing login shell remains responsive and makes no unnecessary third-party request. Its
+  closed-state notice identifies the company/privacy contact and explains that customer access,
+  LINE, documents, and business processing are not active.
+- The system console shows the effective state and requested state. `OPEN` is disabled with an
+  explanation whenever the deployment is `maintenance_only` or the state cannot be verified.
+- `SYSTEM_ADMIN` legal status is always `required=false` without inserting legal-action rows.
 - Deploy config contains exact maintenance state on api-web and exact inverse queue state on
   workers. Verification fails on mismatch.
 - Normal production mode still requires the complete legal bundle and cannot inherit a stale

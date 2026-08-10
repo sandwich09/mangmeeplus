@@ -29,10 +29,12 @@ function session(overrides: Partial<WebSession> = {}): WebSession {
 }
 
 describe('mapAuthMeStatus', () => {
-  it('keeps signed-out, forbidden and unavailable distinct', () => {
+  it('keeps signed-out, forbidden, platform closure and unavailable distinct', () => {
     assert.equal(mapAuthMeStatus(200), 'signed_in');
     assert.equal(mapAuthMeStatus(401), 'signed_out');
     assert.equal(mapAuthMeStatus(403), 'forbidden');
+    assert.equal(mapAuthMeStatus(503, 'platform_access_closed'), 'platform_closed');
+    assert.equal(mapAuthMeStatus(503, 'different_error'), 'unavailable');
     // An outage or a bad gateway must never be reported as a signed-out user: that is the
     // mapping that turned an API failure into a /login redirect loop.
     assert.equal(mapAuthMeStatus(500), 'unavailable');
@@ -90,8 +92,8 @@ describe('resolveLoginLanding', () => {
     );
   });
 
-  it('defaults system admins to the platform partner list and everyone else to their dashboard', () => {
-    assert.equal(resolveLoginLanding(null, undefined, session({ roles: ['SYSTEM_ADMIN'] })), '/system/partners');
+  it('defaults system admins to the platform access control and everyone else to their dashboard', () => {
+    assert.equal(resolveLoginLanding(null, undefined, session({ roles: ['SYSTEM_ADMIN'] })), '/system/platform-access');
     assert.equal(resolveLoginLanding(null, undefined, session()), '/companies/c1/dashboard');
   });
 
@@ -158,7 +160,7 @@ describe('legal acceptance redirects', () => {
     assert.equal(resolvePostLegalAcceptanceTarget(null, session()), '/companies/c1/dashboard');
     assert.equal(
       resolvePostLegalAcceptanceTarget(null, session({ roles: ['SYSTEM_ADMIN'] })),
-      '/system/partners',
+      '/system/platform-access',
     );
   });
 });
