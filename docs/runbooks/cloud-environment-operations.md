@@ -1,6 +1,6 @@
 # Cloud Environment Operations — start, stop, inspect, and what it costs
 
-สร้าง 2026-08-07 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ในวันนั้น ไม่ได้อ่านจากโค้ด
+สร้าง 2026-08-07; ตรวจ live เพิ่ม 2026-08-10 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ไม่ได้อ่านจากโค้ด
 บริบทเต็มของเหตุการณ์ที่ทำให้เกิดเอกสารนี้: `docs/agent-memory/aws-cost-spike-2026-08.md`
 
 เอกสารนี้มีไว้ให้ agent ตัวถัดไป **ไม่ต้องไล่โค้ดซ้ำ** เพื่อตอบคำถามว่า "ตอนนี้อะไรรันอยู่ ปิดยังไง
@@ -15,7 +15,7 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 | Resource | ตัวตน | สถานะ |
 | --- | --- | --- |
 | ECS cluster | `watchdog-bms-prod`, `watchdog-bms-uat` | ทั้งคู่ ACTIVE |
-| prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | capacity 0 — production ยังไม่เคย deploy จริง |
+| prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; api-web/AI ใช้ `eb515b9…`, workers ใช้ `0bdbe50…` ณ 2026-08-10 |
 | uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **จอดที่ 0/0** |
 | RDS | `watchdog-bms-prod-db`, `watchdog-bms-uat-db` — `db.t4g.micro`, 20 GB | encrypted, `PubliclyAccessible: false` |
 | ElastiCache | `watchdog-bms-uat-redis` — `cache.t4g.micro`, engine 7.1.0 | pg `watchdog-bms-uat-redis7`, **ไม่ได้เข้ารหัส** |
@@ -104,13 +104,14 @@ capacity ไม่ใช่ deploy ใหม่
 
 ### Production
 
-ตอนนี้ capacity 0 ทั้งสาม service และ App Runner legacy ทั้งคู่ PAUSED
+ณ 2026-08-10 ทั้งสาม service มี capacity `1/2` และมี task รันครบ แต่เป็นคนละ source SHA เพราะ
+ถูกเปิดด้วย single-service incident deploy หลายรอบ; App Runner legacy ทั้งคู่ยัง PAUSED
 
-> **ยังขึ้นไม่ได้:** secret `watchdog-bms/production/redis-url` ชี้ endpoint ของ Redis ที่ถูกลบไปแล้ว
-> `deploy.sh` ฉีดค่านี้เข้า api-web และ workers ดังนั้น container จะขึ้นมาแล้วต่อ Redis ไม่ติด
-> ต้องสร้างใหม่ (**ก้อนว่าง** ห้าม restore snapshot ของก้อนเดิมที่เต็ม) แล้วอัปเดต secret ก่อน —
-> **ไม่มีสคริปต์ bootstrap ของ prod ใน repo** มีแต่ของ UAT (`infra/uat/bootstrap-data.sh`)
-> ตอนทำจริงให้เขียนเก็บไว้ด้วย
+> **สถานะ Redis ต้องพิสูจน์ใหม่ก่อน full promotion:** เมื่อ 2026-08-07 secret
+> `watchdog-bms/production/redis-url` ยังชี้ endpoint ที่ถูกลบ แต่ production tasks กลับมารันได้แล้ว
+> ในวันที่ 2026-08-10. IAM user ฝั่ง workstation ไม่มี `elasticache:DescribeReplicationGroups` จึงห้าม
+> สรุปว่า M-17 ปิดจากการเห็น task รัน; ให้ `production-security-preflight.yml` กับ dedicated role
+> พิสูจน์ topology/encryption/auth/failover/snapshot retention ภายใน promotion ceremony
 >
 > production **ต้องเป็น replication group** ไม่ใช่ standalone node เพราะ
 > `infra/security/verify-production-security-baseline.sh` อ่าน `describe-replication-groups` และ
