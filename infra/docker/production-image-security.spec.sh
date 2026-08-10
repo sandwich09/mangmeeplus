@@ -428,6 +428,7 @@ grep -Fq 'git ls-tree "$sha" -- "$path"' "$ci"
 grep -Fq '== "100644 blob"' "$ci"
 recovery_workflow="$repo_root/.github/workflows/recover-release-intent.yml"
 grep -Fq 'test "$GITHUB_REF" = refs/heads/main' "$recovery_workflow"
+grep -Fq 'RECOVERY_FIX_BASELINE_UAT: 668a2d0827921257d6412a5edc0598d5aeb9a0fa' "$recovery_workflow"
 grep -Fq 'git merge-base --is-ancestor "$RELEASE_REF" "origin/$branch"' "$recovery_workflow"
 grep -Fq 'git merge-base --is-ancestor "$RELEASE_REF" "$RECOVERY_REF"' "$recovery_workflow"
 grep -Fq 'git merge-base --is-ancestor "$baseline" "$RECOVERY_REF"' "$recovery_workflow"
@@ -708,9 +709,12 @@ grep -Fq 'freshclam --daemon --foreground --stdout --user=node' "$repo_root/infr
 grep -Fq '/v1/health 2048 6144)' "$repo_root/infra/prod-ecs-express/deploy.sh"
 jq -e . "$repo_root/infra/prod-ecs-express/github-deploy-role-trust.template.json" >/dev/null
 jq -e . "$repo_root/infra/prod-ecs-express/github-deploy-role-policy.template.json" >/dev/null
+# The readback statement covers both the release task role and the workers role, so `.Resource` is a
+# list now; keep the check shape-tolerant rather than pinning it back to a single string.
 jq -e '.Statement[] | select(.Sid == "VerifyReleaseTaskRolePolicy")
   | .Action == "iam:GetRolePolicy"
-    and (.Resource | endswith(":role/watchdog-bms-release-task-role"))' \
+    and ((.Resource | if type == "array" then . else [.] end)
+      | any(endswith(":role/watchdog-bms-release-task-role")))' \
   "$repo_root/infra/prod-ecs-express/github-deploy-role-policy.template.json" >/dev/null
 jq -e '
   .Statement[] | select(.Sid == "ReleaseTaskImage")
@@ -724,10 +728,15 @@ for policy in "$repo_root"/infra/uat/*.json; do
     exit 1
   fi
 done
+# Exact list, so it stays a least-privilege pin rather than drifting open. The workers role belongs
+# here because deploy.sh reads that role's object-version-cleanup policy back before it mutates the
+# environment; without the grant the deploy dies at the readback, which is how UAT ended up migrated
+# but not rolled out.
 jq -e '.Statement[] | select(.Sid == "VerifyUatReleaseTaskRolePolicy")
   | .Action == "iam:GetRolePolicy"
     and ((.Resource | sort) == [
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
+      "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role"
     ])' \
   "$repo_root/infra/uat/github-deploy-role-policy.template.json" >/dev/null

@@ -138,7 +138,8 @@
       "Action": "iam:GetRolePolicy",
       "Resource": [
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
-        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat"
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
       ]
     },
     {

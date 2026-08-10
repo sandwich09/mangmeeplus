@@ -20,7 +20,7 @@ jq -e '
       == "arn:aws:iam::311414082667:oidc-provider/token.actions.githubusercontent.com"
     and .Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com"
     and .Condition.StringEquals["token.actions.githubusercontent.com:sub"]
-      == "repo:MangmeeDev/mangmeeplus:environment:production"
+      == "repo:MangmeeDev@314278152/mangmeeplus@1326789216:environment:production"
 ' "$controller_trust" >/dev/null
 
 jq -e '

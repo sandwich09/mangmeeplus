@@ -66,7 +66,10 @@
       "Sid": "VerifyReleaseTaskRolePolicy",
       "Effect": "Allow",
       "Action": "iam:GetRolePolicy",
-      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role"
+      "Resource": [
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-workers-role"
+      ]
     },
     {
       "Sid": "EcrLogin",
