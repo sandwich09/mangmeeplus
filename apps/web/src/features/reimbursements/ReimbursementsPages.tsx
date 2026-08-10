@@ -19,7 +19,8 @@ import {
   assertAllowedUploadFile,
 } from '@/common/files/upload-file.logic';
 import {
-  listReimbursements, submitReimbursement, cancelReimbursement, getReimbursement,
+  listReimbursements, submitReimbursement, cancelReimbursement,
+  reopenReimbursement, getReimbursement,
   setLineReceipt, previewReimbursementClaimForm,
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
@@ -475,6 +476,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file), 'แนบใบเสร็จเรียบร้อยแล้ว')}
         onSubmit={() => drawerAction(() => submitReimbursement(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
         onCancel={() => drawerAction(() => cancelReimbursement(companyId, detail.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว')}
+        onReopen={() => drawerAction(() => reopenReimbursement(companyId, detail.id), 'เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง')}
         onApprove={approveFromDrawer}
         onRequestReject={() => setRejecting(true)}
         onFinanceApprove={() => drawerAction(() => financeReviewReimbursement(companyId, detail.id, {
@@ -802,7 +804,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
 }
 
 // ── Detail drawer (lifted: reachable from every queue) ─────────────────────────
-function DetailDrawer({ detail, context, userId, permissions, busy, error, onClose, onPrintClaimForm, onSign, onUploadSignedCopy, onOpenAttachment, onLineReceipt, onSubmit, onCancel, onApprove, onRequestReject, onFinanceApprove, onRecordPayment }: {
+function DetailDrawer({ detail, context, userId, permissions, busy, error, onClose, onPrintClaimForm, onSign, onUploadSignedCopy, onOpenAttachment, onLineReceipt, onSubmit, onCancel, onReopen, onApprove, onRequestReject, onFinanceApprove, onRecordPayment }: {
   detail: any;
   context: HubTab;
   userId: string;
@@ -817,13 +819,14 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
   onLineReceipt: (lineNo: number, file: File | null) => void;
   onSubmit: () => void;
   onCancel: () => void;
+  onReopen: () => void;
   onApprove: () => void;
   onRequestReject: () => void;
   onFinanceApprove: () => void;
   onRecordPayment: () => void;
 }) {
   const lines: any[] = detail.lines ?? [];
-  const { canEditDraft, canSubmit, canCancel } = reimbursementOwnActions(detail, userId, permissions);
+  const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
   const canApprove = context === 'approvals' && permissions.includes('reimbursement.approve') && detail.status === 'PENDING_APPROVAL';
   const canFinanceApprove = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
   const canPay = context === 'finance' && permissions.includes('reimbursement.payment.record') && detail.status === 'READY_FOR_PAYMENT';
@@ -831,13 +834,14 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
   const signedCopies: any[] = detail.signedCopies ?? [];
   const signableRoles = eligibleSignatureRoles(detail, userId);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
-  const showActions = canSubmit || canCancel || canApprove || canFinanceApprove || canPay;
+  const showActions = canSubmit || canCancel || canReopen || canApprove || canFinanceApprove || canPay;
   const footerButtons = detail.requestNo || showActions ? (
     <>
       {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
       {detail.requestNo && <button className={ghostClass} disabled={busy} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
       {canSubmit && <button className={btnClass} disabled={busy} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
       {canCancel && <button className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิกคำขอ</button>}
+      {canReopen && <button className={btnClass} disabled={busy} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
       {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onApprove}>อนุมัติ</button>}
       {canApprove && <button className={dangerClass} disabled={busy} onClick={onRequestReject}>ปฏิเสธ</button>}
       {canFinanceApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}

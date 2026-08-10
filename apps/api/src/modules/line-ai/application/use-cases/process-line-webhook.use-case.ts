@@ -308,11 +308,12 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
 export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
-    lines.push(`Sources: ${response.sourceLabels.slice(0, 5).join(', ')}`);
+    // Same Thai label the Flex answer cards use, so the plain-text fallback reads consistently.
+    lines.push(`แหล่งข้อมูล: ${response.sourceLabels.slice(0, 5).join(', ')}`);
   }
   const firstLink = response.webLinks[0];
   if (firstLink) {
-    lines.push(`Open: ${firstLink.label} ${absoluteWebLink(webBaseUrl, firstLink.path)}`);
+    lines.push(`เปิดดู: ${firstLink.label} ${absoluteWebLink(webBaseUrl, firstLink.path)}`);
   }
   return lines.join('\n');
 }

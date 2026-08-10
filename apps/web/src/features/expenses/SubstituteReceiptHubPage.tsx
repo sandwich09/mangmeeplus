@@ -61,12 +61,12 @@ export function SubstituteReceiptHubPage({
   companyId,
   userId,
   permissions,
-  isOwner,
+  canSelfApprove,
 }: {
   companyId: string;
   userId: string;
   permissions: string[];
-  isOwner: boolean;
+  canSelfApprove: boolean;
 }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
@@ -133,10 +133,10 @@ export function SubstituteReceiptHubPage({
   const model = useMemo(() => buildSubstituteReceiptHubModel(result?.items ?? [], {
     userId,
     canApprove,
-    isOwner,
+    canSelfApprove,
     approvalMode,
     currentYearMonth: new Date().toISOString().slice(0, 7),
-  }), [approvalMode, canApprove, isOwner, result?.items, userId]);
+  }), [approvalMode, canApprove, canSelfApprove, result?.items, userId]);
 
   const expenseHref = (expenseId: string) => (
     `/companies/${companyId}/expenses/${encodeURIComponent(expenseId)}`

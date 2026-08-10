@@ -8,7 +8,7 @@ import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { getUnreadCount, listNotifications, markAllRead, markRead } from './dashboard-notifications.api';
 import type { NotificationItem } from './dashboard-notifications.model';
-import { formatRelativeTime, notificationBadgeText, severityColor, severityLabel } from './dashboard-notifications.logic';
+import { formatRelativeTime, notificationBadgeText, severityColor, severityLabel, internalNotificationHref } from './dashboard-notifications.logic';
 
 const POLL_MS = 60_000;
 
@@ -109,8 +109,9 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
                   </>
                 );
                 const rowClass = `block w-full border-b border-gray-50 px-4 py-3 text-left hover:bg-brand-25 ${item.read ? '' : 'bg-brand-25/50'}`;
-                return item.deepLinkHref ? (
-                  <Link key={item.id} href={item.deepLinkHref} className={rowClass} onClick={() => handleItemClick(item)}>
+                const href = internalNotificationHref(item.deepLinkHref);
+                return href ? (
+                  <Link key={item.id} href={href} className={rowClass} onClick={() => handleItemClick(item)}>
                     {body}
                   </Link>
                 ) : (

@@ -1649,6 +1649,29 @@ export class PrismaReimbursementRepository {
     return this.toRequest(row);
   }
 
+  /**
+   * REJECTED -> DRAFT with CAS so the requester can correct and resubmit. The requestNo is
+   * kept on purpose: submit reserves numbers under `reimb-submit:{id}`, so resubmission
+   * reuses the same document number instead of burning a new one.
+   */
+  async reopenRejectedRequest(companyId: string, id: string, expectedUpdatedAt: Date, actorUserId: string): Promise<ReimbursementRequestRecord> {
+    const changed = await this.prisma.client.reimbursementRequest.updateMany({
+      where: { id, companyId, status: 'REJECTED', updatedAt: expectedUpdatedAt },
+      data: {
+        status: 'DRAFT', rejectedAt: null, rejectionReason: null,
+        approvalSnapshotHash: null, updatedByUserId: actorUserId,
+      },
+    });
+    if (changed.count !== 1) {
+      throw new ConflictException({ code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' });
+    }
+    const row = await this.prisma.client.reimbursementRequest.findFirstOrThrow({
+      where: { id, companyId },
+      include: { _count: { select: { lines: true } } },
+    });
+    return this.toRequest(row);
+  }
+
   /** Candidate requests for duplicate scoring: same requester, not this request, active states. */
   async findDuplicateCandidates(companyId: string, requesterUserId: string, excludeId: string): Promise<ReimbursementRequestRecord[]> {
     const rows = await this.prisma.client.reimbursementRequest.findMany({

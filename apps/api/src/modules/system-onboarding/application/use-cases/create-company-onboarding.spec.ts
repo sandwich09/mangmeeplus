@@ -295,10 +295,10 @@ describe('CreateCompanyOnboardingUseCase', () => {
     // raw token never persisted — only its hash
     const rawToken = new URL(result.ownerLineLink.linkUrl).searchParams.get('token')!;
     assert.notEqual(lineTokenArgs.data.tokenHash, rawToken);
-    // handoff-window TTL capped at 24h (H-09), not the 15-minute in-person TTL
+    // handoff-window TTL matches the 72h temporary-password window, not the 15-minute in-person TTL
     const ttlMs = new Date(result.ownerLineLink.expiresAt).getTime() - Date.now();
-    assert.ok(ttlMs > 23 * 60 * 60 * 1000, 'owner QR should carry the 24h handoff TTL');
-    assert.ok(ttlMs <= 24 * 60 * 60 * 1000, 'owner QR TTL must not exceed 24h');
+    assert.ok(ttlMs > 71 * 60 * 60 * 1000, 'owner QR should carry the 72h handoff TTL');
+    assert.ok(ttlMs <= 72 * 60 * 60 * 1000, 'owner QR TTL must not exceed 72h');
 
     // Zero admin setup: the autoEnable workflow templates arrive as ENABLED rules on the new
     // company, in the same transaction, so notifications work before any release-task run.

@@ -846,10 +846,26 @@ export class PrismaExpenseRepository {
       });
       if (changed.count !== 1) throw new ConflictException({ code: 'substitute_evidence_stale', message: 'Substitute evidence changed while superseding.' });
       if (evidence.status === 'ISSUED') {
+        // Issuing marked the expense PAID and recorded a payment (issueSubstituteEvidence);
+        // superseding the certificate must take both back. The expense is still unconfirmed
+        // here, so its payments can only have come from issuance and are never posted —
+        // voiding them needs no GL reversal.
+        await tx.expensePayment.updateMany({
+          where: { companyId: input.companyId, expenseId: input.expenseId, status: 'RECORDED', postingStatus: 'pending' },
+          data: {
+            status: 'VOIDED', voidedByUserId: input.actorUserId, voidedAt: new Date(),
+            postingStatus: 'not_required', postingError: null,
+          },
+        });
         await tx.expenseRecord.updateMany({ where: { id: input.expenseId, companyId: input.companyId }, data: {
           missingReceiptReason: null,
           substituteReceiptGeneratedAt: null,
           substituteReceiptGeneratedByUserId: null,
+          paidAmount: '0.0000',
+          outstandingAmount: new Decimal(expense.netPayableAmount.toString()).toFixed(4),
+          paymentStatus: 'UNPAID',
+          paymentMethod: null,
+          paidAt: null,
           updatedByUserId: input.actorUserId,
         } });
       }

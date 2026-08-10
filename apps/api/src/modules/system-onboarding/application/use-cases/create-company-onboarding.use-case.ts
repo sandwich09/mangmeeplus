@@ -139,7 +139,7 @@ export class CreateCompanyOnboardingUseCase {
     const tempPassword = attach ? undefined : generateTempPassword();
     const passwordHash = tempPassword ? hashPassword(tempPassword) : undefined;
     const expiresAt = new Date(Date.now() + TEMP_PASSWORD_TTL_MS);
-    // Owner QR travels with the credential handoff but is capped at 24h (H-09); regenerate-temporary-password reissues it.
+    // Owner QR travels with the credential handoff and lives 72h like the temporary password; regenerate-temporary-password reissues it.
     const lineLinkToken = issueLineLink ? generateLineLinkToken(OWNER_LINE_LINK_TOKEN_TTL_MS) : undefined;
 
     const result = await this.prisma.client.$transaction(async (tx) => {

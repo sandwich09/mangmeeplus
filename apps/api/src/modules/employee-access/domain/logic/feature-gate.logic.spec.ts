@@ -324,10 +324,16 @@ describe('filterPermissionsByEntitlement', () => {
     );
   });
 
-  it('gates reimbursement (การเบิกจ่าย) behind its own entitlement, overriding its ungated pack', () => {
-    const perms = ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.create'];
-    assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['expenses', 'procurement'])), []);
-    assert.deepEqual(filterPermissionsByEntitlement(perms, new Set(['reimbursement'])), perms);
+  it('gates new reimbursement roots behind its entitlement while runoff work keeps flowing', () => {
+    // Owner decision 2026-08-10 (§6.3 r5): OFF blocks new claims only — reads, approve/reject,
+    // finance review, payout/void and duplicate resolution continue for in-flight claims.
+    const blocked = ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit',
+      'reimbursement.cancel_own', 'reimbursement.export', 'reimbursement.policy.read', 'reimbursement.policy.manage'];
+    const retained = ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related',
+      'reimbursement.approve', 'reimbursement.reject', 'reimbursement.finance_review',
+      'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve'];
+    assert.deepEqual(filterPermissionsByEntitlement([...blocked, ...retained], new Set(['expenses', 'procurement'])), retained);
+    assert.deepEqual(filterPermissionsByEntitlement([...blocked, ...retained], new Set(['reimbursement'])), [...blocked, ...retained]);
   });
 
   it('gates the CRM domain (including ungated inbox/template keys) behind the crm feature', () => {
@@ -399,13 +405,18 @@ function prismaWithEntitlements(rows: Array<{ featureKey: string; enabled: boole
 
 describe('loadEntitledFeatureKeys submenu inheritance', () => {
   it('keeps legacy permissions when a new menu entitlement has no row, while explicit false still wins', async () => {
-    const cases: Array<[string, string, string[]]> = [
-      ['expenses', 'reimbursement', PERMISSIONS.map(({ key }) => key).filter((key) => key.startsWith('reimbursement.'))],
-      ['inventory', 'product_catalog', ['inventory.product.read', 'inventory.product.manage']],
-      ['crm', 'line_oa', ['crm.channel.read', 'crm.channel.manage']],
+    // Reimbursement's runoff set (owner decision 2026-08-10) survives even an explicit
+    // disable — only new-root permissions are stripped. The other families strip fully.
+    const REIMBURSEMENT_RUNOFF = ['reimbursement.read', 'reimbursement.read_own', 'reimbursement.read_related',
+      'reimbursement.approve', 'reimbursement.reject', 'reimbursement.finance_review',
+      'reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve'];
+    const cases: Array<[string, string, string[], string[]]> = [
+      ['expenses', 'reimbursement', PERMISSIONS.map(({ key }) => key).filter((key) => key.startsWith('reimbursement.')), REIMBURSEMENT_RUNOFF],
+      ['inventory', 'product_catalog', ['inventory.product.read', 'inventory.product.manage'], []],
+      ['crm', 'line_oa', ['crm.channel.read', 'crm.channel.manage'], []],
     ];
 
-    for (const [legacyKey, featureKey, permissions] of cases) {
+    for (const [legacyKey, featureKey, permissions, survivesDisable] of cases) {
       const inherited = await loadEntitledFeatureKeys(
         prismaWithEntitlements([{ featureKey: legacyKey, enabled: true }]),
         'co-1',
@@ -421,7 +432,10 @@ describe('loadEntitledFeatureKeys submenu inheritance', () => {
         'co-1',
       );
       assert.equal(explicitlyDisabled?.has(featureKey), false);
-      assert.deepEqual(filterPermissionsByEntitlement(permissions, explicitlyDisabled), []);
+      assert.deepEqual(
+        filterPermissionsByEntitlement(permissions, explicitlyDisabled),
+        permissions.filter((key) => survivesDisable.includes(key)),
+      );
     }
   });
 

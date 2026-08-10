@@ -38,7 +38,7 @@ function makeUseCase(opts: { run?: any; membership?: any } = {}) {
 }
 
 describe('ReissueOwnerLineLinkUseCase', () => {
-  it('reissues a 24h owner QR without touching the password credential', async () => {
+  it('reissues a 72h owner QR without touching the password credential', async () => {
     const { useCase, credentialTouches, tokenSweeps, tokenCreates } = makeUseCase();
     const result = await useCase.execute('run-1', 'admin-1', 'req-1', 'https://api.example.com/v1');
 
@@ -51,8 +51,8 @@ describe('ReissueOwnerLineLinkUseCase', () => {
 
     // replacement token carries the 24h owner TTL, not the 15m in-person default
     const ttlMs = tokenCreates[0].data.expiresAt.getTime() - Date.now();
-    assert.ok(ttlMs > 23 * 60 * 60 * 1000, `TTL too short: ${ttlMs}`);
-    assert.ok(ttlMs <= 24 * 60 * 60 * 1000, `TTL too long: ${ttlMs}`);
+    assert.ok(ttlMs > 71 * 60 * 60 * 1000, `TTL too short: ${ttlMs}`);
+    assert.ok(ttlMs <= 72 * 60 * 60 * 1000, `TTL too long: ${ttlMs}`);
     assert.equal(tokenCreates[0].data.companyId, 'co-1');
     assert.equal(tokenCreates[0].data.userId, 'owner-1');
     assert.equal(tokenCreates[0].data.issuedByUserId, 'admin-1');

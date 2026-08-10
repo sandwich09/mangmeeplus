@@ -109,8 +109,8 @@ describe('employee-access.logic', () => {
     assert.equal(pkg.linkUrl, 'https://liff.line.me/2010784350-ruzn5beM/employee?token=raw-token-value');
   });
 
-  it('caps the owner LINE link token TTL at 24 hours (H-09)', () => {
-    assert.equal(OWNER_LINE_LINK_TOKEN_TTL_MS, 24 * 60 * 60 * 1000);
+  it('matches the owner LINE link token TTL to the 72h temporary-password window', () => {
+    assert.equal(OWNER_LINE_LINK_TOKEN_TTL_MS, 72 * 60 * 60 * 1000);
   });
 
   it('rejects grants above the granter and requires owner approval for finance roles', () => {

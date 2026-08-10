@@ -48,7 +48,7 @@ test('buckets work waiting on the current user in owner-self mode', () => {
   const model = buildSubstituteReceiptHubModel(items, {
     userId: 'me',
     canApprove: true,
-    isOwner: true,
+    canSelfApprove: true,
     approvalMode: 'OWNER_SELF',
     currentYearMonth: '2026-08',
   });
@@ -67,7 +67,7 @@ test('excludes self-approval outside owner-self mode and all approvals without p
   const designated = buildSubstituteReceiptHubModel(items, {
     userId: 'me',
     canApprove: true,
-    isOwner: true,
+    canSelfApprove: true,
     approvalMode: 'DESIGNATED_APPROVERS',
     currentYearMonth: '2026-08',
   });
@@ -75,19 +75,19 @@ test('excludes self-approval outside owner-self mode and all approvals without p
   assert.equal(buildSubstituteReceiptHubModel(items, {
     userId: 'me',
     canApprove: false,
-    isOwner: true,
+    canSelfApprove: true,
     approvalMode: 'OWNER_SELF',
     currentYearMonth: '2026-08',
   }).waitingForApproval.length, 0);
 });
 
-// The API restricts self-approval to the OWNER role. A non-owner payer with expense.confirm who saw
+// The API restricts self-approval to OWNER/ADMIN/MANAGER roles. An unexempted payer with expense.confirm who saw
 // their own certificate in "รอคุณอนุมัติ" would open it, sign, and be rejected at the last step.
 test('never offers a non-owner their own certificate to approve, even in owner-self mode', () => {
   const nonOwner = buildSubstituteReceiptHubModel(items, {
     userId: 'me',
     canApprove: true,
-    isOwner: false,
+    canSelfApprove: false,
     approvalMode: 'OWNER_SELF',
     currentYearMonth: '2026-08',
   });

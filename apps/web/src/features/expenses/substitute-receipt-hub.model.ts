@@ -19,8 +19,8 @@ export function buildSubstituteReceiptHubModel(
   input: {
     userId: string;
     canApprove: boolean;
-    /** Self-approval is OWNER-only server-side; without this the strip offers work the API rejects. */
-    isOwner: boolean;
+    /** Self-approval needs an OWNER/ADMIN/MANAGER role server-side (owner decision 2026-08-10); without this the strip offers work the API rejects. */
+    canSelfApprove: boolean;
     approvalMode: SubstituteReceiptApprovalMode;
     currentYearMonth: string;
   },
@@ -33,7 +33,7 @@ export function buildSubstituteReceiptHubModel(
       userId: input.userId,
       payerUserId: item.payerUserId,
       canConfirm: input.canApprove,
-      isOwner: input.isOwner,
+      canSelfApprove: input.canSelfApprove,
       approvalMode: input.approvalMode,
     }));
   const issuedThisMonth = items.filter(

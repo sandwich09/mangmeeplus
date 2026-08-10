@@ -41,6 +41,8 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
   { path: '/tax/reconciliation', anyOf: ['tax.report.read'] },
   { path: '/tax', anyOf: ['tax.period.read'] },
   { path: '/notifications', anyOf: ['notification.read'] },
+  // Same screen as /settings/notification-rules — both URLs must demand the same authority.
+  { path: '/notifications/rules', anyOf: ['notification.rule.manage'] },
   {
     path: '/inventory',
     anyOf: [

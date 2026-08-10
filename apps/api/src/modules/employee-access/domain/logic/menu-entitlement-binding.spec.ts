@@ -60,15 +60,27 @@ describe('MENU_ENTITLEMENT_BINDINGS', () => {
     const sellableBindings = MENU_ENTITLEMENT_BINDINGS.filter(({ entitlementKeys }) => entitlementKeys.length > 0);
     assert.ok(sellableBindings.length > 0, 'at least one sellable binding is required');
 
+    // Owner decision 2026-08-10 (runoff, launch matrix §6.3 r5): disabling reimbursement blocks
+    // NEW claims only — its menu gates stay alive so in-flight approvals/payouts remain reachable.
+    const RUNOFF_NAV_KEYS = new Set(['reimbursements']);
+
     for (const binding of sellableBindings) {
       const disabled = new Set(ALL_ENTITLEMENTS);
       for (const entitlementKey of binding.entitlementKeys) disabled.delete(entitlementKey);
 
-      assert.deepEqual(
-        filterPermissionsByEntitlement(binding.gatePermissions, disabled),
-        [],
-        `${binding.navKey}: disabling its entitlements must remove every OR gate`,
-      );
+      if (RUNOFF_NAV_KEYS.has(binding.navKey)) {
+        assert.deepEqual(
+          filterPermissionsByEntitlement(binding.gatePermissions, disabled),
+          binding.gatePermissions,
+          `${binding.navKey}: runoff keeps its gate permissions while disabled`,
+        );
+      } else {
+        assert.deepEqual(
+          filterPermissionsByEntitlement(binding.gatePermissions, disabled),
+          [],
+          `${binding.navKey}: disabling its entitlements must remove every OR gate`,
+        );
+      }
       for (const entitlementKey of binding.entitlementKeys) disabled.add(entitlementKey);
       assert.ok(
         filterPermissionsByEntitlement(binding.gatePermissions, disabled).length > 0,

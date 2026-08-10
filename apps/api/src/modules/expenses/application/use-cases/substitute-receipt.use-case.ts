@@ -26,6 +26,16 @@ import { renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receip
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
 import type { ExpenseRecordWithRelations, SubstituteReceiptEvidenceRecord } from '../../domain/models/expense.model';
 import { GetExpenseUseCase } from './expense-draft.use-case';
+import { SELF_APPROVAL_EXEMPT_ROLES } from '../../../procurement/domain/logic/procurement.logic';
+
+// Owner decision 2026-08-10: the OWNER/ADMIN/MANAGER self-approval exemption applies to every
+// approval workflow, substitute receipts included. Under the OWNER_SELF policy those roles may
+// approve a certificate they paid themselves (audited); DESIGNATED_APPROVERS keeps the
+// configured separation of duties untouched.
+function selfApprovalPermitted(approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS', roles: readonly string[]): boolean {
+  return approvalMode === 'OWNER_SELF' && roles.some((role) => SELF_APPROVAL_EXEMPT_ROLES.includes(role));
+}
+
 import type {
   ApproveSubstituteReceiptInput,
   CertifySubstituteReceiptInput,
@@ -665,8 +675,8 @@ export class ApproveSubstituteReceiptUseCase {
     const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     const selfApproved = evidence.payerUserId === ctx.userId;
-    if (selfApproved && !(approvalMode === 'OWNER_SELF' && ctx.roles.includes('OWNER'))) {
-      throw new ForbiddenException('Only the company owner may approve a substitute receipt they paid themselves.');
+    if (selfApproved && !selfApprovalPermitted(approvalMode, ctx.roles)) {
+      throw new ForbiddenException('Self-approval of a substitute receipt requires the owner-self policy and an owner, admin, or manager role.');
     }
     const eligibleApproverIds = new Set((await this.repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, expense.branchId))
       .map((candidate) => candidate.userId));
@@ -715,7 +725,7 @@ export class ApproveSubstituteReceiptUseCase {
         approverPosition,
         // State the policy, not the outcome: a later refactor of the guard above must not silently
         // widen what the in-transaction re-check permits.
-        allowSelfApproval: approvalMode === 'OWNER_SELF' && ctx.roles.includes('OWNER'),
+        allowSelfApproval: selfApprovalPermitted(approvalMode, ctx.roles),
         approverSignatureAttachmentId: approverSignature.id,
         approvedAt,
         expectedExpenseUpdatedAt: evidence.expenseUpdatedAtAtPreparation,
@@ -925,8 +935,8 @@ async function assertSignatureActor(
     const policy = await repo.getSubstituteReceiptPolicy(ctx.companyId);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     const selfApproved = evidence.payerUserId === ctx.userId;
-    if (selfApproved && !(approvalMode === 'OWNER_SELF' && ctx.roles.includes('OWNER'))) {
-      throw new ForbiddenException('Only the company owner may approve a substitute receipt they paid themselves.');
+    if (selfApproved && !selfApprovalPermitted(approvalMode, ctx.roles)) {
+      throw new ForbiddenException('Self-approval of a substitute receipt requires the owner-self policy and an owner, admin, or manager role.');
     }
     const eligibleApproverIds = new Set((await repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, expense.branchId))
       .map((candidate) => candidate.userId));

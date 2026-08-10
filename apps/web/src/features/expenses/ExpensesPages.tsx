@@ -369,7 +369,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 }
 
 // ── Document type / tax evidence review + substitute + signature fill ─────────
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, isOwner, onSaved, onOpenFile }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; isOwner: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -696,7 +696,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     userId,
     payerUserId: evidence.payerUserId,
     canConfirm,
-    isOwner,
+    canSelfApprove,
     approvalMode: substitutePolicy?.approvalMode,
   }) : false;
 

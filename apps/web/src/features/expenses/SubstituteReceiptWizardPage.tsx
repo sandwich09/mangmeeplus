@@ -418,14 +418,14 @@ export function SubstituteReceiptWizardPage({
   companyId,
   userId,
   permissions,
-  isOwner,
+  canSelfApprove,
   initialExpenseId,
   evidenceId,
 }: {
   companyId: string;
   userId: string;
   permissions: string[];
-  isOwner: boolean;
+  canSelfApprove: boolean;
   initialExpenseId?: string;
   evidenceId?: string;
 }) {
@@ -1218,7 +1218,7 @@ export function SubstituteReceiptWizardPage({
     userId,
     payerUserId: receiptEvidence.payerUserId,
     canConfirm,
-    isOwner,
+    canSelfApprove,
     approvalMode: policy?.approvalMode,
   }) : false;
   const ownerSelfCollapse = Boolean(receiptEvidence
@@ -2096,7 +2096,8 @@ export function SubstituteReceiptWizardPage({
             </div>
             <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
               <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.approver_position', locale)}<RequiredMark /></span>
-              <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => setSignerPosition(stripDisallowed(event.target.value))} />
+              {/* Same rule as the payer step: editing the position invalidates the reviewed badge. */}
+              <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setCertifiedPreviewed(false); }} />
               <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
             </label>
             <div className="rounded-2xl border border-gray-200 p-4">

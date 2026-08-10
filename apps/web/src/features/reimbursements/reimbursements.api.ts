@@ -79,6 +79,9 @@ export function submitReimbursement(companyId: string, id: string) {
 export function cancelReimbursement(companyId: string, id: string, reason?: string) {
   return apiFetch<any>(`${base(companyId)}/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
+export function reopenReimbursement(companyId: string, id: string) {
+  return apiFetch<any>(`${base(companyId)}/${id}/reopen`, { method: 'POST', body: '{}' });
+}
 
 // ---- Approval ----
 

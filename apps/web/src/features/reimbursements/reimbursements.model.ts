@@ -138,6 +138,8 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
     canCancel: isRequester
       && permissions.includes('reimbursement.cancel_own')
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
+    // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
+    canReopen: isRequester && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
   };
 }
 
@@ -150,6 +152,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   // self-approval had no reason to look for the switch. Quotes the toggle's own label verbatim —
   // a message that paraphrases a control is a message you cannot search the settings page with.
   self_approval_denied: 'ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน — เปิดได้ที่ ตั้งค่าเบิกจ่าย › "อนุญาตให้อนุมัติคำขอตนเอง"',
+  reimbursement_changed: 'คำขอถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่แล้วลองอีกครั้ง',
   stale_approval_snapshot: 'คำขอถูกแก้ไขหลังส่งอนุมัติ กรุณาเปิดดูรายละเอียดใหม่ก่อนตัดสินใจ',
   expense_already_claimed: 'ค่าใช้จ่ายนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',
   attachment_already_claimed: 'ใบเสร็จนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว',

@@ -192,7 +192,7 @@ function MaintenanceCard({ prefillRunId }: { prefillRunId: string }) {
       <div className="space-y-3">
         <div className="rounded border border-gray-200 px-3 py-3 space-y-2">
           <p className="text-sm text-gray-700">
-            <span className="font-semibold">QR expired?</span> Issue a fresh 24-hour owner LINE link QR. The owner's password is <span className="font-semibold">not</span> changed; any older pending QR is revoked.
+            <span className="font-semibold">QR expired?</span> Issue a fresh 72-hour owner LINE link QR. The owner's password is <span className="font-semibold">not</span> changed; any older pending QR is revoked.
           </p>
           <button
             type="button"

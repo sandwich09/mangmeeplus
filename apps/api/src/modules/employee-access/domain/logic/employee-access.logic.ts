@@ -114,10 +114,11 @@ export function hashLineLinkToken(rawToken: string): string {
   return createHash('sha256').update(rawToken).digest('hex');
 }
 
-/** Owner handoff QR is capped at 24h even though the temporary password package lives 72h:
- *  the QR is a bearer credential for the OWNER LINE identity, and SYSTEM_ADMIN can reissue
- *  an expired one via reissue-owner-line-link (QR only, password untouched). */
-export const OWNER_LINE_LINK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+/** Owner handoff QR lives 72h, matching the temporary-password window (spec + owner decision
+ *  2026-08-10; previously capped at 24h under H-09). It stays single-use and bound to the owner
+ *  membership, and SYSTEM_ADMIN can still reissue via reissue-owner-line-link (QR only,
+ *  password untouched). */
+export const OWNER_LINE_LINK_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 
 export function buildLineLinkPackage(apiBaseUrl: string, rawToken: string, expiresAt: Date, lineLiffId?: string): {
   linkUrl: string;

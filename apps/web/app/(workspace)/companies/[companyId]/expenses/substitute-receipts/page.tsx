@@ -1,5 +1,6 @@
 import { fetchServerSession } from '@/common/auth/server-session';
 import { SubstituteReceiptHubPage } from '@/features/expenses/SubstituteReceiptHubPage';
+import { hasSelfApprovalExemptRole } from '@/features/expenses/substitute-receipt-wizard.model';
 
 export default async function SubstituteReceiptsPage({
   params,
@@ -13,7 +14,7 @@ export default async function SubstituteReceiptsPage({
       companyId={companyId}
       userId={session?.userId ?? ''}
       permissions={session?.permissions ?? []}
-      isOwner={session?.roles.includes('OWNER') ?? false}
+      canSelfApprove={hasSelfApprovalExemptRole(session?.roles)}
     />
   );
 }
