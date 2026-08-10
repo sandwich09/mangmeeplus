@@ -23,6 +23,7 @@ bridge image ผ่าน publisher role โดยยอมรับเฉพา
 | O2 | หา **independent reviewer จริง** สำหรับ protected `main` (decision #6) | self-approve ไม่ได้ ห้ามลด/แก้ branch protection |
 | O3 | กด **owner approval** ใน `u5-owner-approval.yml` — ผู้อนุมัติต้องเป็น **repo owner** ตัวจริง | chain ตรวจ approver identity |
 | O4 | ยืนยัน **synthetic SNS delivery** (decision #1) — ได้เมล + acknowledge | ต้องเป็นคนกดรับจริง |
+| O5 | จัดทำและให้ผู้รับผิดชอบจริง review **legal release evidence bundle** ตาม `legal-release-evidence-bundle.md`, สร้าง legal-reader OIDC role และตั้ง protected variables ทั้ง 5 ค่า | agent ห้ามสร้างหลักฐานทดแทน เปลี่ยน `BLOCKED` เป็น `VERIFIED` หรืออนุมัติแทนผู้ตรวจจริง |
 
 **O1 คือ blocker ตัวแรกสุด** — bootstrap A5 network/preflight บางส่วนอ่าน branch protection ผ่าน token นี้
 ถ้าไม่มี ทำ Phase 1 ไม่ได้
@@ -33,6 +34,14 @@ bridge image ผ่าน publisher role โดยยอมรับเฉพา
 
 - [ ] **O1**: สร้าง `PRODUCTION_POLICY_READ_TOKEN` → env `production`
 - [ ] **O2**: ยืนยันมี independent reviewer พร้อม
+- [ ] **O5**: `legal-release-evidence.json` เป็น `VERIFIED`, หลักฐานจริงครบ 5 รายการและยังไม่หมดอายุ,
+      bundle อยู่ที่ immutable/versioned S3 object, legal-reader role จำกัดสิทธิ์เฉพาะ object version นั้น
+      และ env `production` มี `LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN`,
+      `LEGAL_RELEASE_EVIDENCE_SHA256`, `LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI`,
+      `LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID`, `LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256`
+- [ ] รัน preflight แบบไม่แตะ production: workflow YAML ทุกไฟล์ parse ได้, production/security
+      specs ผ่าน, action ทุกตัว pin ด้วย SHA ที่ fetch ได้จริง และ promoted-run validator fetch
+      `refs/heads/main` เข้า local ref ที่ verifier ใช้
 - [ ] Decision #4 (VPC endpoint cost) — ตัดสินแล้ว: สร้างชั่วคราวตอน ceremony แล้วลบ
 - [ ] main ล่าสุด = develop head ที่จะ promote (ตอนนี้ main มี workflow fix แล้ว; ต้อง merge
       candidate SHA เข้า main ก่อน เพราะ A5 workflow ต้องรันจาก main และ source ต้อง reachable จาก main)

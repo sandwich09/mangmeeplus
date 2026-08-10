@@ -14,11 +14,14 @@ fi
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/legal-release-gate.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/packages/contracts/src" "$fixture/apps/web/public/legal/releases/v1" \
+  "$fixture/apps/web/public/legal/releases/v2" \
   "$fixture/apps/web/app/privacy" "$fixture/apps/web/app/terms" "$fixture/apps/web/app/data-deletion" \
   "$fixture/docs/security-evidence" "$fixture/reviewed-evidence/test"
 cp "$repo_root/packages/contracts/src/legal-acceptance.ts" "$fixture/packages/contracts/src/"
 cp "$repo_root/apps/web/public/legal/releases/v1/"*.html \
   "$fixture/apps/web/public/legal/releases/v1/"
+cp "$repo_root/apps/web/public/legal/releases/v2/"*.html \
+  "$fixture/apps/web/public/legal/releases/v2/"
 cp "$repo_root/apps/web/app/privacy/page.tsx" "$fixture/apps/web/app/privacy/"
 cp "$repo_root/apps/web/app/terms/page.tsx" "$fixture/apps/web/app/terms/"
 cp "$repo_root/apps/web/app/data-deletion/page.tsx" "$fixture/apps/web/app/data-deletion/"
@@ -43,7 +46,7 @@ jq -n \
   --arg thaiCounselApproval "$(fixture_hash "$fixture/reviewed-evidence/test/thaiCounselApproval")" \
   '{
   schemaVersion: 1,
-  releaseVersion: "v1",
+  releaseVersion: "v2",
   status: "VERIFIED",
   evidence: ([
     "operatorIdentity",
@@ -75,7 +78,7 @@ fi
 LEGAL_RELEASE_EVIDENCE_SHA256="$manifest_hash" \
   LEGAL_RELEASE_EVIDENCE_DIR="$fixture/reviewed-evidence" \
   bash "$validator" "$fixture" |
-  grep -Fq 'Legal release gate passed for v1'
+  grep -Fq 'Legal release gate passed for v2'
 
 # Hashing a symlink target is not evidence that the reviewed path itself remained
 # immutable. Reject both evidence indirection and a Git working-tree type change.
@@ -92,7 +95,7 @@ rm "$fixture/reviewed-evidence/test/operatorIdentity"
 mv "$fixture/reviewed-evidence/test/operatorIdentity.target" \
   "$fixture/reviewed-evidence/test/operatorIdentity"
 
-privacy_artifact="$fixture/apps/web/public/legal/releases/v1/privacy-th.html"
+privacy_artifact="$fixture/apps/web/public/legal/releases/v2/privacy-th.html"
 mv "$privacy_artifact" "$privacy_artifact.target"
 ln -s "$(basename "$privacy_artifact.target")" "$privacy_artifact"
 if LEGAL_RELEASE_EVIDENCE_SHA256="$manifest_hash" \
@@ -104,14 +107,14 @@ fi
 rm "$privacy_artifact"
 mv "$privacy_artifact.target" "$privacy_artifact"
 
-printf '\nmutation' >> "$fixture/apps/web/public/legal/releases/v1/privacy-th.html"
+printf '\nmutation' >> "$fixture/apps/web/public/legal/releases/v2/privacy-th.html"
 if LEGAL_RELEASE_EVIDENCE_SHA256="$manifest_hash" \
   LEGAL_RELEASE_EVIDENCE_DIR="$fixture/reviewed-evidence" \
   bash "$validator" "$fixture" >/dev/null 2>&1; then
   echo 'validator accepted a mutated immutable artifact' >&2
   exit 1
 fi
-git -C "$fixture" checkout -q -- apps/web/public/legal/releases/v1/privacy-th.html
+git -C "$fixture" checkout -q -- apps/web/public/legal/releases/v2/privacy-th.html
 
 # Returning the bytes to their original value does not erase an intervening
 # publication. The history itself must prove that the path changed exactly once.

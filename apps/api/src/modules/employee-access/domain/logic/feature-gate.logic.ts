@@ -70,6 +70,23 @@ const RETAINED_REPORT_PERMISSIONS = new Set<string>([
   REPORT_PERMISSION_KEYS.AUDIT_READ,
 ]);
 
+// Reimbursement runoff (owner decision 2026-08-10, launch matrix §6.3 r5): disabling the
+// feature blocks NEW claims but in-flight work keeps flowing — reads, approve/reject,
+// finance review, payout/void and duplicate resolution stay alive. create/submit/draft-edit
+// stay stripped, so nothing new can enter the pipe; everything still approvable is therefore
+// pre-cutoff by construction and no per-row generation vector is needed.
+const RETAINED_REIMBURSEMENT_PERMISSIONS = new Set<string>([
+  'reimbursement.read',
+  'reimbursement.read_own',
+  'reimbursement.read_related',
+  'reimbursement.approve',
+  'reimbursement.reject',
+  'reimbursement.finance_review',
+  'reimbursement.payment.record',
+  'reimbursement.payment.void',
+  'reimbursement.duplicate.resolve',
+]);
+
 let index: { gatedFeaturesByPermission: Map<string, string[]>; ungatedPermissions: Set<string> } | null = null;
 
 function permissionFeatureIndex() {
@@ -106,6 +123,7 @@ export function featureKeyDeniedByEntitlement(permission: string, entitled: Set<
   if (subfeature && !entitled.has(subfeature.parentKey)) return subfeature.parentKey;
   if (subfeature && !entitled.has(subfeature.key)) return subfeature.key;
   if (RETAINED_REPORT_PERMISSIONS.has(permission)) return undefined;
+  if (RETAINED_REIMBURSEMENT_PERMISSIONS.has(permission)) return undefined;
   const rule = PREFIX_FEATURE_RULES.find((candidate) => permission.startsWith(candidate.prefix));
   if (rule && !rule.featureKeys.some((featureKey) => entitled.has(featureKey))) return rule.featureKeys[0];
   if (rule || ungatedPermissions.has(permission)) return undefined;

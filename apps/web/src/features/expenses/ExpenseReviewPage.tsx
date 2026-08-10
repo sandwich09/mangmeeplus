@@ -55,7 +55,7 @@ const VIEWER_TOP_REM = APP_HEADER_REM + STEPPER_REM;
 const VIEWER_BOTTOM_GAP_REM = 6; // clearance for the sticky action bar
 type ExpensePreviewSource = DocumentPreviewSource & { hideOpenNewTab?: boolean; onViewed?: () => void };
 
-export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, isOwner }: { companyId: string; expenseId: string; userId: string; permissions: string[]; isOwner: boolean }) {
+export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, canSelfApprove }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
   const router = useRouter();
   const caps = expenseCapabilities(permissions);
   const { canReview, canConfirm } = caps;
@@ -626,7 +626,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, i
     </div>
   );
   const documentReviewCard = (
-    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} isOwner={isOwner} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} />
+    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} canSelfApprove={canSelfApprove} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} />
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
   // Finance either edits the amount or records why the stored figure stands. Accepting is bound to

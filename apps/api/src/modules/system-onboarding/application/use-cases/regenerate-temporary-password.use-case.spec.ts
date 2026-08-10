@@ -52,10 +52,10 @@ describe('RegenerateTemporaryPasswordUseCase', () => {
     assert.deepEqual(tokenSweeps[0].where, { membershipId: 'mem-1', status: 'PENDING' });
     assert.deepEqual(tokenSweeps[0].data, { status: 'REVOKED' });
 
-    // replacement token carries the 24h owner TTL, not the 15m in-person default
+    // replacement token carries the 72h owner TTL, not the 15m in-person default
     const ttlMs = tokenCreates[0].data.expiresAt.getTime() - Date.now();
-    assert.ok(ttlMs > 23 * 60 * 60 * 1000, `TTL too short: ${ttlMs}`);
-    assert.ok(ttlMs <= 24 * 60 * 60 * 1000, `TTL too long: ${ttlMs}`);
+    assert.ok(ttlMs > 71 * 60 * 60 * 1000, `TTL too short: ${ttlMs}`);
+    assert.ok(ttlMs <= 72 * 60 * 60 * 1000, `TTL too long: ${ttlMs}`);
 
     // H-09: QR rides a local data URI; the raw token never appears hashed-only storage
     assert.ok(result.ownerLineLink);

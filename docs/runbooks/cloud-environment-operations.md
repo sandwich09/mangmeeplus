@@ -240,10 +240,12 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
 4. **การลบ data store ของ production ควรทำด้วยสิทธิ์คน** guardrail บน user อัตโนมัติมีไว้แบบนั้นตั้งใจ
    ใช้ Console แทนการรื้อ policy
 5. **workflow ทุกตัวเป็น `workflow_dispatch` ไม่มี cron** ไม่มีอะไรสร้าง resource เองตามเวลา
-6. **`ECS_EXPRESS_SUBNET_MODE` default เป็น `public`** และ `deploy.sh` ปฏิเสธ `private` สำหรับ api-web
-   ตรง ๆ — ถ้าจะใช้ private mode หรือรัน A5 clone/audit **ต้องสร้าง NAT คืนก่อน**
-   (`/watchdog-bms/production/a5-network/task-subnet-ids` ยังเป็น `ParameterNotFound` แปลว่า
-   `bootstrap-production-a5-private-network.sh` ไม่เคยถูกรัน)
+6. **`ECS_EXPRESS_SUBNET_MODE` default เป็น `public`** และ `deploy.sh` ยังปฏิเสธ `private` สำหรับ
+   api-web ตรง ๆ ส่วน A5 clone/audit ใช้ endpoint-only private network แยกต่างหากและไม่ต้องสร้าง NAT
+   คืนแล้ว: `bootstrap-production-a5-private-network.sh` สร้าง ECR API/DKR, Logs,
+   Secrets Manager และ S3 endpoints พร้อม narrow SG/route read-back เมื่อ 2026-08-10
+   AWS CLI v2.36.15 ไม่มี waiter `vpc-endpoint-available`; bootstrap จึง poll `State` แบบ bounded
+   และรับเฉพาะ `available` โดย fail ทันทีเมื่อเจอ terminal failure state
 7. **UAT Redis ตัวที่รันอยู่ยังไม่ได้เข้ารหัส** ทั้ง at-rest, in-transit และไม่มี auth token — secret
    เก็บเป็น `redis://` ต่างจาก RDS ที่สร้างด้วย `--storage-encrypted` `bootstrap-data.sh` แก้แล้ว
    (สร้างเป็น single-node replication group ที่เข้ารหัสครบ เพราะ `create-cache-cluster` ไม่มี

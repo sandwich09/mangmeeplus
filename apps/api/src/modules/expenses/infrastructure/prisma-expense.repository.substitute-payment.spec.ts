@@ -88,4 +88,48 @@ describe('substitute receipt payment history', () => {
     await issue(repo);
     assert.equal(payments.length, 0);
   });
+
+  it('superseding an issued certificate voids its payment and resets the expense to unpaid', async () => {
+    let paymentVoid: Record<string, unknown> | undefined;
+    let expenseUpdate: Record<string, unknown> | undefined;
+    const evidence: any = {
+      id: 'evidence-1', companyId: 'company-1', expenseId: 'expense-1',
+      status: 'ISSUED', version: 1, updatedAt: VERSION,
+      preparedAt: VERSION, expenseUpdatedAtAtPreparation: VERSION,
+    };
+    const client: any = {
+      $transaction: async (work: (tx: any) => Promise<unknown>) => work({
+        $executeRaw: async () => 0,
+        expenseSubstituteReceiptEvidence: {
+          findFirst: async () => evidence,
+          updateMany: async () => ({ count: 1 }),
+          findUniqueOrThrow: async () => ({ ...evidence, status: 'SUPERSEDED', supersedeReason: 'wrong amount' }),
+        },
+        expenseRecord: {
+          findFirst: async () => ({ id: 'expense-1', companyId: 'company-1', status: 'NEEDS_REVIEW', netPayableAmount: '100.0000' }),
+          updateMany: async ({ data }: any) => { expenseUpdate = data; return { count: 1 }; },
+        },
+        expensePayment: {
+          updateMany: async ({ where, data }: any) => { paymentVoid = { where, data }; return { count: 1 }; },
+        },
+      }),
+    };
+    const repo = new PrismaExpenseRepository({ client } as any);
+    await repo.supersedeSubstituteEvidence({
+      companyId: 'company-1', expenseId: 'expense-1', evidenceId: 'evidence-1',
+      actorUserId: 'finance-1', reason: 'wrong amount', expectedEvidenceUpdatedAt: VERSION,
+    });
+
+    assert.deepEqual((paymentVoid as any)?.where, {
+      companyId: 'company-1', expenseId: 'expense-1', status: 'RECORDED', postingStatus: 'pending',
+    });
+    assert.equal((paymentVoid as any)?.data.status, 'VOIDED');
+    assert.equal((paymentVoid as any)?.data.postingStatus, 'not_required');
+    assert.equal(expenseUpdate?.paymentStatus, 'UNPAID');
+    assert.equal(expenseUpdate?.paidAmount, '0.0000');
+    assert.equal(expenseUpdate?.outstandingAmount, '100.0000');
+    assert.equal(expenseUpdate?.paymentMethod, null);
+    assert.equal(expenseUpdate?.paidAt, null);
+    assert.equal(expenseUpdate?.missingReceiptReason, null);
+  });
 });

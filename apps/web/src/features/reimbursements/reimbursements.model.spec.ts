@@ -87,7 +87,7 @@ describe('reimbursementOwnActions', () => {
         'related-approver',
         ['reimbursement.read_related', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own'],
       ),
-      { canEditDraft: false, canSubmit: false, canCancel: false },
+      { canEditDraft: false, canSubmit: false, canCancel: false, canReopen: false },
     );
   });
 
@@ -96,13 +96,28 @@ describe('reimbursementOwnActions', () => {
       reimbursementOwnActions(detail({ status: 'DRAFT' }), 'staff-1', [
         'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
       ]),
-      { canEditDraft: true, canSubmit: true, canCancel: true },
+      { canEditDraft: true, canSubmit: true, canCancel: true, canReopen: false },
     );
     assert.deepEqual(
       reimbursementOwnActions(detail({ status: 'PAID' }), 'staff-1', [
         'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
       ]),
-      { canEditDraft: false, canSubmit: false, canCancel: false },
+      { canEditDraft: false, canSubmit: false, canCancel: false, canReopen: false },
+    );
+  });
+
+  it('offers reopen only to the requester of a rejected claim holding the draft-edit permission', () => {
+    assert.deepEqual(
+      reimbursementOwnActions(detail({ status: 'REJECTED' }), 'staff-1', ['reimbursement.update_own_draft']),
+      { canEditDraft: false, canSubmit: false, canCancel: false, canReopen: true },
+    );
+    assert.equal(
+      reimbursementOwnActions(detail({ status: 'REJECTED' }), 'related-approver', ['reimbursement.update_own_draft']).canReopen,
+      false,
+    );
+    assert.equal(
+      reimbursementOwnActions(detail({ status: 'REJECTED' }), 'staff-1', ['reimbursement.submit']).canReopen,
+      false,
     );
   });
 });

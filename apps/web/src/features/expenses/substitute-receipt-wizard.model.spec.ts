@@ -199,7 +199,7 @@ test('allows approval of another payer with expense.confirm', () => {
     userId: 'approver',
     payerUserId: 'payer',
     canConfirm: true,
-    isOwner: false,
+    canSelfApprove: false,
     approvalMode: 'DESIGNATED_APPROVERS',
   }), true);
 });
@@ -211,14 +211,14 @@ test('allows self-approval only for an owner in owner-self mode', () => {
     canConfirm: true,
     approvalMode: 'OWNER_SELF' as const,
   };
-  assert.equal(mayApproveSubstituteReceipt({ ...input, isOwner: true }), true);
-  assert.equal(mayApproveSubstituteReceipt({ ...input, isOwner: false }), false);
+  assert.equal(mayApproveSubstituteReceipt({ ...input, canSelfApprove: true }), true);
+  assert.equal(mayApproveSubstituteReceipt({ ...input, canSelfApprove: false }), false);
   assert.equal(mayApproveSubstituteReceipt({
     ...input,
-    isOwner: true,
+    canSelfApprove: true,
     approvalMode: 'DESIGNATED_APPROVERS',
   }), false);
-  assert.equal(mayApproveSubstituteReceipt({ ...input, canConfirm: false, isOwner: true }), false);
+  assert.equal(mayApproveSubstituteReceipt({ ...input, canConfirm: false, canSelfApprove: true }), false);
 });
 
 test('sorts candidates by every key and slices five per page', async () => {

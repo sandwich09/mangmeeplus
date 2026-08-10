@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CreateReimbursementDraftUseCase,
   CancelReimbursementUseCase,
+  ReopenRejectedReimbursementUseCase,
   UpdateReimbursementDraftUseCase,
   SubmitReimbursementUseCase,
   reimbursementPeriodKey,
@@ -101,6 +102,15 @@ function fakeRepo(options: RepoOptions = {}) {
       ? { ...request, approvalSteps: [], payments: [], duplicateCandidates: [] }
       : request),
     updateRequest: async (_companyId: string, _id: string, data: any) => { Object.assign(request, data); return request; },
+    reopenRejectedRequest: async (_companyId: string, _id: string, expectedUpdatedAt: Date, actorUserId: string) => {
+      assert.equal(expectedUpdatedAt, request.updatedAt);
+      if (request.status !== 'REJECTED') throw new Error('reimbursement_changed');
+      Object.assign(request, {
+        status: 'DRAFT', rejectedAt: null, rejectionReason: null, approvalSnapshotHash: null,
+        updatedByUserId: actorUserId, updatedAt: new Date(request.updatedAt.getTime() + 1),
+      });
+      return request;
+    },
     // Cancellation is two-phase since d1d3b23e: the intent commits first, every claim expense
     // projection is voided outside the transaction, and only a claim with no live projection may
     // close. Both fakes keep the repository's guards so the spec still proves that order.
@@ -336,6 +346,33 @@ describe('CancelReimbursementUseCase', () => {
     );
     assert.notEqual(state.request.status, 'CANCELLED');
     assert.ok(state.request.cancellationPendingAt, 'the intent stays pending so a retry can finish it');
+  });
+});
+
+describe('ReopenRejectedReimbursementUseCase', () => {
+  it('reopens a rejected claim as a draft and clears the request-level rejection fields', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    Object.assign(state.request, { status: 'REJECTED', rejectedAt: new Date(), rejectionReason: 'ยอดไม่ตรงกับใบเสร็จ', requestNo: 'RB-202601-000001' });
+    const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
+    const result = await reopen.execute(ctx(), 'rb-1');
+    assert.equal(result.status, 'DRAFT');
+    assert.equal(state.request.rejectionReason, null);
+    assert.equal(state.request.rejectedAt, null);
+    // The document number survives the reopen so resubmission reuses it.
+    assert.equal(state.request.requestNo, 'RB-202601-000001');
+  });
+
+  it('refuses reopen for non-requesters without finance review and for non-rejected claims', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    const reopen = new ReopenRejectedReimbursementUseCase(state.repo, noopAudit);
+    await assert.rejects(() => reopen.execute(ctx(), 'rb-1'), /Cannot reopen from status DRAFT/);
+    Object.assign(state.request, { status: 'REJECTED' });
+    await assert.rejects(
+      () => reopen.execute(ctx({ userId: 'someone-else', permissions: ['reimbursement.update_own_draft'] }), 'rb-1'),
+      /Cannot reopen this reimbursement/,
+    );
   });
 });
 

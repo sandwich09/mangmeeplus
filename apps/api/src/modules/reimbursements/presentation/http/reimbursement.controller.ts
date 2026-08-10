@@ -28,6 +28,7 @@ import {
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
   CancelReimbursementUseCase,
+  ReopenRejectedReimbursementUseCase,
 } from '../../application/use-cases/reimbursement-request.use-case';
 import { ListApprovalQueueUseCase, ApproveReimbursementUseCase, RejectReimbursementUseCase } from '../../application/use-cases/reimbursement-approval.use-case';
 import {
@@ -60,6 +61,7 @@ export class ReimbursementController {
     private readonly listRequests: ListReimbursementsUseCase,
     private readonly submit: SubmitReimbursementUseCase,
     private readonly cancel: CancelReimbursementUseCase,
+    private readonly reopenRejected: ReopenRejectedReimbursementUseCase,
     private readonly approvalQueue: ListApprovalQueueUseCase,
     private readonly approve: ApproveReimbursementUseCase,
     private readonly reject: RejectReimbursementUseCase,
@@ -171,6 +173,14 @@ export class ReimbursementController {
   @ApiOperation({ summary: 'Submit reimbursement for approval' })
   submitRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
     return this.submit.execute(ctx, requestId);
+  }
+
+  @Post(':requestId/reopen')
+  @RequirePermissions('reimbursement.update_own_draft')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Reopen a rejected reimbursement as a draft for correction and resubmission' })
+  reopenRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string) {
+    return this.reopenRejected.execute(ctx, requestId);
   }
 
   @Post(':requestId/cancel')

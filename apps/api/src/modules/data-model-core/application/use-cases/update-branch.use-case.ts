@@ -45,7 +45,8 @@ export class UpdateBranchUseCase {
     if (cmd.status === 'ARCHIVED') {
       const count = await this.branches.countActiveHeadOffice(ctx.companyId);
       const err = canArchiveBranch(existing, count);
-      if (err) throw new UnprocessableEntityException(err);
+      // Carry a stable code so the web can render this business rule in Thai.
+      if (err) throw new UnprocessableEntityException({ code: 'branch_head_office_required', message: err });
     }
 
     if (cmd.taxBranchCode != null) {

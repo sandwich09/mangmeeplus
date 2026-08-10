@@ -71,3 +71,10 @@ export function formatRelativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   return `${days} วันที่แล้ว`;
 }
+
+/** Only same-origin app paths are followed: deepLinkHref is server-built, but an absolute
+ *  URL there must never turn a notification click into an off-site redirect. Shared by the
+ *  bell panel and the notification centre so both ends enforce the same rule. */
+export function internalNotificationHref(href: string | null | undefined): string | undefined {
+  return href && href.startsWith('/') && !href.startsWith('//') ? href : undefined;
+}

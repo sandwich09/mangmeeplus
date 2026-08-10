@@ -264,7 +264,7 @@ jobs:
               | select(.path == $path and .sha == $sha and .ref == "refs/heads/main")]
             | length == 1
           ' <<< "$run_json" >/dev/null
-          git fetch origin main --force
+          git fetch --no-tags origin '+refs/heads/main:refs/heads/main' --force
           git merge-base --is-ancestor "$controller_sha" origin/main || {
             echo "ERROR: UAT controller commit is not reachable from main" >&2
             exit 1
@@ -397,7 +397,7 @@ jobs:
         env:
           EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
           EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: 66fdfa5b9fc936d657612f306a741efc321c0565b81750489ebd337db9f52ad1
-          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 833bdaa26ca3ca852d6e23b3274ca990d382bf3f60144652b334057c3ae9cb5e
+          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 6a4f4c3db12a452afee62f3560a10bc9bbe594d6d9053a9bcdd044f496bb66f8
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \

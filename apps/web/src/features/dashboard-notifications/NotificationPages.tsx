@@ -19,8 +19,7 @@ import {
   severityColor,
   severityLabel,
   formatRelativeTime,
-  visibleNotificationChildLinks,
-} from './dashboard-notifications.logic';
+  visibleNotificationChildLinks, internalNotificationHref } from './dashboard-notifications.logic';
 import type { NotificationItem, NotificationRule, NotificationPreference, NotificationSeverity } from './dashboard-notifications.model';
 import { canSeeRoute } from '@/features/web-core-workspace/route-permissions';
 
@@ -85,11 +84,8 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
     }
   }
 
-  // Only same-origin app paths are followed: deepLinkHref is server-built but an absolute
-  // URL there must never turn a notification click into an off-site redirect.
   function internalHref(item: NotificationItem): string | undefined {
-    const href = item.deepLinkHref;
-    return href && href.startsWith('/') && !href.startsWith('//') ? href : undefined;
+    return internalNotificationHref(item.deepLinkHref);
   }
 
   async function handleOpen(item: NotificationItem) {
@@ -308,11 +304,12 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
     setBusyRuleId(rule.id);
     const newStatus = rule.status === 'enabled' ? 'disabled' : 'enabled';
     try {
-      const updated = await updateRule(companyId, rule.id, { status: newStatus }).catch(() => null);
-      if (updated) {
-        setRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, status: newStatus } : r));
-        toast.success(newStatus === 'enabled' ? 'เปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว' : 'ปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว');
-      }
+      await updateRule(companyId, rule.id, { status: newStatus });
+      setRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, status: newStatus } : r));
+      toast.success(newStatus === 'enabled' ? 'เปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว' : 'ปิดใช้งานกฎการแจ้งเตือนเรียบร้อยแล้ว');
+    } catch {
+      // A silent revert read as "the switch is broken"; failing loudly names the action that failed.
+      toast.error(newStatus === 'enabled' ? 'เปิดใช้งานกฎการแจ้งเตือนไม่สำเร็จ กรุณาลองใหม่' : 'ปิดใช้งานกฎการแจ้งเตือนไม่สำเร็จ กรุณาลองใหม่');
     } finally {
       setBusyRuleId(null);
     }

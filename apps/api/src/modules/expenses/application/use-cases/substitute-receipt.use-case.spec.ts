@@ -432,13 +432,13 @@ describe('substitute receipt signing lifecycle', () => {
       approverPosition: 'ผู้จัดการ', approvalAcknowledged: true, signatureAttachmentId: 'sig-approver',
       certifiedArtifactChecksumSha256: 'certified-checksum',
       expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
-    }), /Only the company owner/);
+    }), /Self-approval of a substitute receipt requires/);
     approvalMode = 'OWNER_SELF';
     await assert.rejects(() => useCase.execute(ctx('payer-1', ['expense.confirm']), 'exp-1', 'sub-1', {
       approverPosition: 'เจ้าของกิจการ', approvalAcknowledged: true, signatureAttachmentId: 'sig-approver',
       certifiedArtifactChecksumSha256: 'certified-checksum',
       expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
-    }), /Only the company owner/);
+    }), /Self-approval of a substitute receipt requires/);
     let uploadInput: any;
     await new InitSubstituteSignatureUploadUseCase(repo, {
       execute: async (_ctx: unknown, input: unknown) => { uploadInput = input; return {}; },
@@ -455,6 +455,13 @@ describe('substitute receipt signing lifecycle', () => {
     // The repository re-checks separation of duties inside its advisory-locked transaction, so the
     // permission has to travel with the call. A live solo-owner approval failed at that second guard
     // while every check in this use case passed.
+    assert.equal(issueInput.allowSelfApproval, true);
+    // Owner decision 2026-08-10: ADMIN/MANAGER share the self-approval exemption under OWNER_SELF.
+    await useCase.execute(ctx('payer-1', ['expense.confirm'], ['ADMIN']), 'exp-1', 'sub-1', {
+      approverPosition: 'ผู้ดูแลระบบ', approvalAcknowledged: true, signatureAttachmentId: 'sig-approver',
+      certifiedArtifactChecksumSha256: 'certified-checksum',
+      expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+    });
     assert.equal(issueInput.allowSelfApproval, true);
     approvalMode = 'DESIGNATED_APPROVERS';
     await assert.rejects(() => useCase.execute(ctx('unconfigured-1', ['expense.confirm']), 'exp-1', 'sub-1', {

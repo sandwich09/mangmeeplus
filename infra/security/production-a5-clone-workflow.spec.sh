@@ -17,8 +17,11 @@ raise 'permissions widened' unless doc.fetch('permissions') == {
 job = doc.fetch('jobs').fetch('clone')
 raise 'wrong environment' unless job.fetch('environment') == 'production'
 raise 'wrong timeout' unless job.fetch('timeout-minutes') == 120
-uses = job.fetch('steps').filter_map { |step| step['uses'] }
+uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
+raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'
+)
 RUBY
 
 for required in \

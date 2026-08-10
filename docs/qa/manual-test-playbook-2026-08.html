@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MangmeePlus — คู่มือเล่นระบบหาบัค (Manual Test Playbook) 2026-08</title>
+<style>
+:root{
+  --ink:#1e293b; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --card:#ffffff;
+  --brand:#0f766e; --brand-soft:#ccfbf1;
+  --amber:#b45309; --amber-bg:#fffbeb; --amber-line:#fcd34d;
+  --red:#b91c1c; --red-bg:#fef2f2; --red-line:#fecaca;
+  --green:#15803d; --green-bg:#f0fdf4; --green-line:#bbf7d0;
+  --blue:#1d4ed8; --blue-bg:#eff6ff; --blue-line:#bfdbfe;
+  --purple:#7e22ce; --purple-bg:#faf5ff;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Thai","Sarabun","Thonburi",Roboto,sans-serif;color:var(--ink);background:var(--bg);font-size:14.5px;line-height:1.65}
+a{color:var(--brand)}
+code{background:#f1f5f9;border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:.86em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+.ui{background:var(--brand-soft);border-radius:4px;padding:0 5px;font-weight:600;color:#134e4a;white-space:normal}
+.layout{display:flex;min-height:100vh}
+nav#toc{width:280px;flex:0 0 280px;background:#0f172a;color:#cbd5e1;padding:18px 14px;position:sticky;top:0;height:100vh;overflow-y:auto;font-size:13px}
+nav#toc h1{font-size:15px;color:#fff;margin:0 0 4px}
+nav#toc .sub{color:#64748b;font-size:11.5px;margin-bottom:12px}
+nav#toc a{display:block;color:#cbd5e1;text-decoration:none;padding:5px 8px;border-radius:6px;margin-bottom:1px}
+nav#toc a:hover{background:#1e293b;color:#fff}
+nav#toc .prog{float:right;color:#5eead4;font-size:11px}
+nav#toc .grp{margin:10px 0 4px;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+#globalprog{background:#134e4a;color:#5eead4;border-radius:8px;padding:8px 10px;margin:10px 0;font-size:12.5px}
+#resetbtn{background:none;border:1px solid #334155;color:#94a3b8;border-radius:6px;padding:4px 10px;font-size:11.5px;cursor:pointer;width:100%}
+#resetbtn:hover{border-color:#f87171;color:#f87171}
+main{flex:1;max-width:1080px;padding:28px 34px 120px;min-width:0}
+header.top{border-bottom:3px solid var(--brand);padding-bottom:14px;margin-bottom:22px}
+header.top h1{margin:0;font-size:25px}
+header.top p{color:var(--muted);margin:6px 0 0}
+section.flow{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px 26px;margin-bottom:26px;scroll-margin-top:12px}
+section.flow>h2{margin:0 0 4px;font-size:20px;border-left:5px solid var(--accent,#0f766e);padding-left:12px}
+section.flow>.desc{color:var(--muted);margin:0 0 14px;padding-left:17px}
+h3{font-size:16.5px;margin:24px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+h4{font-size:14.5px;margin:16px 0 6px}
+table{width:100%;border-collapse:collapse;margin:8px 0 14px;font-size:13.2px}
+th{background:#f1f5f9;text-align:left;padding:7px 9px;border:1px solid var(--line);font-size:12.3px;white-space:nowrap}
+td{padding:7px 9px;border:1px solid #eef2f7;vertical-align:top}
+tr:hover td{background:#fafcff}
+table.steps td:first-child{white-space:nowrap;color:var(--muted);font-weight:600;width:34px;text-align:center}
+table.steps td:last-child{width:30px;text-align:center}
+input.ck{width:17px;height:17px;accent-color:var(--brand);cursor:pointer}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px;padding-left:17px}
+.meta .tag{background:#f1f5f9;border:1px solid var(--line);border-radius:999px;padding:2px 11px;font-size:12px;color:#334155}
+.meta .tag b{color:var(--ink)}
+.box{border-radius:10px;padding:11px 15px;margin:11px 0;font-size:13.4px;border:1px solid}
+.box b.t{display:block;margin-bottom:3px}
+.warn{background:var(--amber-bg);border-color:var(--amber-line);color:#78350f}
+.bug{background:var(--red-bg);border-color:var(--red-line);color:#7f1d1d}
+.ok{background:var(--green-bg);border-color:var(--green-line);color:#14532d}
+.info{background:var(--blue-bg);border-color:var(--blue-line);color:#1e3a8a}
+ul.hunt{list-style:none;padding:0;margin:8px 0}
+ul.hunt li{padding:6px 8px 6px 4px;border-bottom:1px dashed var(--line);display:flex;gap:9px;align-items:flex-start}
+ul.hunt li input.ck{margin-top:2px;flex:0 0 17px}
+.svgwrap{overflow-x:auto;background:#fcfdff;border:1px solid var(--line);border-radius:10px;padding:12px;margin:12px 0}
+.svgwrap svg{display:block;margin:0 auto;min-width:700px}
+.cap{text-align:center;color:var(--muted);font-size:12.3px;margin:4px 0 0}
+.pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.p-green{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+.p-amber{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+.p-red{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+.p-gray{background:#f1f5f9;color:#475569;border:1px solid var(--line)}
+.p-blue{background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-line)}
+details{border:1px solid var(--line);border-radius:9px;margin:10px 0;background:#fbfdff}
+details summary{cursor:pointer;padding:9px 14px;font-weight:600;font-size:13.5px}
+details[open] summary{border-bottom:1px solid var(--line)}
+details .inner{padding:4px 14px 10px}
+.flowchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.flowchips .c{background:var(--brand-soft);color:#134e4a;border-radius:8px;padding:5px 12px;font-size:12.8px;font-weight:600}
+.flowchips .a{color:#94a3b8;font-weight:700}
+.flowchips .c.alt{background:#fee2e2;color:#7f1d1d}
+.flowchips .c.gray{background:#f1f5f9;color:#475569}
+.secprog{float:right;font-size:12px;color:var(--muted);font-weight:400;background:#f1f5f9;border-radius:999px;padding:2px 10px}
+@media(max-width:960px){.layout{display:block}nav#toc{position:static;width:auto;height:auto}main{padding:16px}}
+@media print{nav#toc{display:none}section.flow{break-inside:avoid-page;border:none;padding:0}body{background:#fff}input.ck{-webkit-print-color-adjust:exact}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="toc">
+  <h1>🐛 คู่มือเล่นระบบหาบัค</h1>
+  <div class="sub">MangmeePlus (WatchDog-BMS)<br>Release 2026-08 · สร้างจากโค้ดจริง ณ branch develop</div>
+  <div id="globalprog">ความคืบหน้ารวม: <b id="gcount">0/0</b></div>
+  <button id="resetbtn" onclick="resetAll()">ล้าง checkbox ทั้งหมด</button>
+  <div class="grp">เตรียมตัว</div>
+  <a href="#s0">0. เตรียมระบบก่อนเล่น <span class="prog" data-for="s0"></span></a>
+  <a href="#s1">1. ภาพรวม + แผนที่เมนู <span class="prog" data-for="s1"></span></a>
+  <div class="grp">ฝั่งแอดมินแพลตฟอร์ม</div>
+  <a href="#s2">2. Admin onboard + เปิด-ปิดฟีเจอร์ <span class="prog" data-for="s2"></span></a>
+  <a href="#s3">3. เข้าระบบครั้งแรก (Owner) <span class="prog" data-for="s3"></span></a>
+  <div class="grp">Flow หลัก</div>
+  <a href="#s4">4. Dashboard + การแจ้งเตือน <span class="prog" data-for="s4"></span></a>
+  <a href="#s5">5. ค่าใช้จ่าย / บิล / ใบเสร็จ <span class="prog" data-for="s5"></span></a>
+  <a href="#s6">6. ใบรับรองแทนใบเสร็จ <span class="prog" data-for="s6"></span></a>
+  <a href="#s7">7. การเบิกจ่าย <span class="prog" data-for="s7"></span></a>
+  <a href="#s8">8. พนักงานและสิทธิ์ <span class="prog" data-for="s8"></span></a>
+  <a href="#s9">9. ตั้งค่าบริษัท <span class="prog" data-for="s9"></span></a>
+  <a href="#s10">10. LINE ทุกเส้นทาง <span class="prog" data-for="s10"></span></a>
+  <div class="grp">Flow เสริมใน release</div>
+  <a href="#s11">11. ขาย·CRM·สต๊อก·จัดซื้อ·ธนาคาร·ภาษี·รายงาน <span class="prog" data-for="s11"></span></a>
+  <div class="grp">มัดรวม</div>
+  <a href="#s12">12. ทุก flow เชื่อมกันยังไง + ซีนาริโอ E2E <span class="prog" data-for="s12"></span></a>
+  <a href="#s13">13. บัคที่รู้อยู่แล้ว vs จุดต้องสงสัย</a>
+</nav>
+<main>
+<header class="top">
+  <h1>คู่มือเล่นระบบเพื่อหาบัคฝั่ง Human — MangmeePlus</h1>
+  <p>ทุกขั้นตอน ทุกปุ่ม ทุกข้อความ ดึงมาจากโค้ดจริงใน repo (ไม่ใช่จาก spec ที่อาจยังไม่ได้ทำ) · คอลัมน์ <b>"ผลที่คาดหวัง"</b> คือพฤติกรรมที่โค้ดตั้งใจให้เป็น — ถ้าเล่นแล้วไม่ตรง = ว่าที่บัค ให้จดทันที · ติ๊ก ☑ ได้เลย ระบบจำให้ในเครื่อง (localStorage)</p>
+</header>
+
+<!-- ============================================================ -->
+<section class="flow" id="s0" style="--accent:#334155">
+<h2>0. เตรียมระบบก่อนเล่น <span class="secprog"></span></h2>
+<p class="desc">รันระบบ เตรียมบัญชีทดสอบ และเข้าใจวิธีจดบัค ก่อนเริ่มไล่ flow</p>
+
+<h3>0.1 รันระบบ (local)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ที่ root ของ repo รัน <code>pnpm docker:local</code> (ต้องมีไฟล์ <code>.env</code> ที่ copy จาก <code>.env.example</code> แล้ว)</td><td>ทุก service ขึ้น: web, api, ai-gateway, postgres, redis, minio</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>เปิด <code>http://localhost:3000</code> (web) · เช็ค API ที่ <code>http://localhost:3001/v1/health</code> · AI gateway ที่ <code>http://localhost:3002/v1/health</code></td><td>หน้า login ขึ้น, health ตอบ OK</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<div class="box warn"><b class="t">⚠ กับดักที่เคยเจอจริง: stack เขียว ≠ โค้ดล่าสุด</b>
+Local stack เสิร์ฟ image ที่ build ค้างไว้ — ถ้าเพิ่ง pull โค้ดใหม่มา ต้อง rebuild image ก่อน (เช่น <code>docker build -f apps/web/Dockerfile ...</code> หรือ down แล้ว build ใหม่) ไม่งั้นจะเล่นบนโค้ดเก่าแล้วเจอ "บัค" ที่แก้ไปแล้ว</div>
+<div class="box info"><b class="t">ℹ ถ้าเล่นบน UAT/Production</b> ใช้ URL ของ environment นั้นแทน localhost — ทุก route ในคู่มือนี้เป็น path เดียวกัน (<code>/login</code>, <code>/system/...</code>, <code>/companies/{id}/...</code>) · บน production ห้ามใช้รหัส seed ด้านล่าง (มีเฉพาะ local)</div>
+
+<h3>0.2 บัญชีทดสอบ (seed local — บริษัท "Room45 Eyes Lashes" มี 3 สาขา: สยาม / อารีย์ / ทองหล่อ)</h3>
+<table>
+<tr><th>บทบาท</th><th>Username</th><th>รหัสผ่าน</th><th>ใช้ทดสอบอะไร</th></tr>
+<tr><td><span class="pill p-red">SYSTEM_ADMIN</span></td><td><code>thawatchai.watchdog</code></td><td><code>watchdogbms11</code> (local เท่านั้น)</td><td>ฝั่ง <code>/system</code> ทั้งหมด — onboard บริษัท, เปิด-ปิดฟีเจอร์</td></tr>
+<tr><td><span class="pill p-green">OWNER</span></td><td><code>qa.owner</code></td><td><code>Qa@Owner123</code></td><td>ทุกเมนู, force refresh dashboard, อนุมัติแทนทุก role, ตั้งค่าทั้งหมด</td></tr>
+<tr><td><span class="pill p-blue">ADMIN</span></td><td><code>qa.admin</code></td><td><code>Qa@Admin123</code></td><td>จัดการพนักงาน (แต่<b>เปิดหน้า "บทบาทและสิทธิ์" ไม่ได้</b> — by design)</td></tr>
+<tr><td><span class="pill p-blue">MANAGER</span></td><td><code>qa.manager</code></td><td><code>Qa@Manager123</code></td><td>อนุมัติเบิกจ่าย (คิวอนุมัติ)</td></tr>
+<tr><td><span class="pill p-gray">SALES</span></td><td><code>qa.sales</code></td><td><code>Qa@Sales123</code></td><td>งานขาย/CRM, สร้างคำขอเบิกของตัวเอง</td></tr>
+<tr><td><span class="pill p-gray">INVENTORY</span></td><td><code>qa.inventory</code></td><td><code>Qa@Inventory123</code></td><td>สต๊อก (เข้าทาง URL ตรง — ดู §11)</td></tr>
+<tr><td><span class="pill p-amber">FINANCE</span></td><td><code>qa.finance</code></td><td><code>Qa@Finance123</code></td><td>คิวการเงินเบิกจ่าย, บันทึกจ่าย, ยืนยันค่าใช้จ่าย</td></tr>
+<tr><td><span class="pill p-amber">ACCOUNTANT</span></td><td><code>qa.accountant</code></td><td><code>Qa@Accountant123</code></td><td>ตรวจการเงิน (แต่<b>ไม่มีสิทธิ์บันทึกจ่าย</b> — ต่างจาก FINANCE), ภาษี</td></tr>
+<tr><td><span class="pill p-gray">MARKETING</span></td><td><code>qa.marketing</code></td><td><code>Qa@Marketing123</code></td><td>CRM/แคมเปญ</td></tr>
+<tr><td><span class="pill p-gray">STAFF</span></td><td><code>qa.staff</code></td><td><code>Qa@Staff123</code></td><td>มุมมองสิทธิ์น้อยสุด — ใช้ทดสอบว่าเมนู/ปุ่มต้องหาย</td></tr>
+<tr><td><span class="pill p-gray">AUDITOR_READONLY</span></td><td><code>qa.auditor</code></td><td><code>Qa@Auditor123</code></td><td>อ่านอย่างเดียว — ปุ่ม action ทุกปุ่มต้องไม่มี</td></tr>
+<tr><td><span class="pill p-green">OWNER (seed หลัก)</span></td><td><code>owner@watchdog.local</code></td><td><code>Owner@12345</code></td><td>บัญชีเดียวกับปุ่ม "Dev sign-in" บนหน้า login (local เท่านั้น)</td></tr>
+</table>
+<div class="box info"><b class="t">ℹ หลักการเล่นข้ามบทบาท</b> เปิด browser 2 โปรไฟล์ (หรือ 1 ปกติ + 1 incognito) จะได้เล่นเป็น 2 คนพร้อมกัน เช่น STAFF ยื่นเบิก → MANAGER อนุมัติ → FINANCE จ่าย โดยไม่ต้อง logout สลับไปมา</div>
+
+<h3>0.3 วิธีจดบัคให้ทีม dev ตามรอยได้</h3>
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span>จดทุกครั้ง: <b>URL เต็ม</b> + <b>บทบาทที่ login</b> + <b>เวลาที่กด</b> + screenshot + ข้อความ error ตรงตัว (โดยเฉพาะ <code>รหัสอ้างอิง: xxx</code> ที่ต่อท้าย error — คือ requestId ใช้ค้น log ได้)</span></li>
+<li><input class="ck" type="checkbox"><span>ก่อนแจ้งบัค เช็ค §13 ก่อนว่าเป็น "อาการที่โค้ดตั้งใจ/รู้อยู่แล้ว" หรือไม่ — จะได้ไม่แจ้งซ้ำ</span></li>
+<li><input class="ck" type="checkbox"><span>บัคยอดฮิตฝั่ง human ที่ระบบอัตโนมัติจับไม่ได้: ข้อความไทยเพี้ยน/ปนอังกฤษ, ปุ่มที่ควรโดน disable แต่กดได้, กด 2 ครั้งเร็วๆ แล้วเกิดรายการซ้ำ, เปิด 2 แท็บแก้ชนกัน, มือถือแสดงผลเพี้ยน, กด back กลางทาง wizard</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s1" style="--accent:#0e7490">
+<h2>1. ภาพรวมระบบ + แผนที่เมนูจริงของ release นี้ <span class="secprog"></span></h2>
+<p class="desc">ระบบมี 3 โลก: คอนโซลแอดมินแพลตฟอร์ม (<code>/system</code>), เว็บบริษัท (<code>/companies/{id}</code>), และ LINE (2 OA) — เข้าใจแผนที่นี้ก่อน จะได้รู้ว่าจุดไหน "หายไป" คือบัค จุดไหนคือตั้งใจซ่อน</p>
+
+<div class="svgwrap">
+<svg viewBox="0 0 940 430" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12.5">
+  <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+  <!-- system console -->
+  <rect x="20" y="20" width="270" height="150" rx="12" fill="#fef2f2" stroke="#fca5a5"/>
+  <text x="155" y="44" text-anchor="middle" font-weight="700" fill="#991b1b">คอนโซลแพลตฟอร์ม /system</text>
+  <text x="155" y="62" text-anchor="middle" fill="#b91c1c" font-size="11">login ด้วย SYSTEM_ADMIN เท่านั้น</text>
+  <rect x="35" y="74" width="115" height="30" rx="6" fill="#fff" stroke="#fca5a5"/><text x="92" y="93" text-anchor="middle">Partners + ฟีเจอร์</text>
+  <rect x="160" y="74" width="115" height="30" rx="6" fill="#fff" stroke="#fca5a5"/><text x="217" y="93" text-anchor="middle">เปิดบริษัทใหม่</text>
+  <rect x="35" y="112" width="115" height="30" rx="6" fill="#fff" stroke="#fca5a5"/><text x="92" y="131" text-anchor="middle">AI Budget</text>
+  <rect x="160" y="112" width="115" height="30" rx="6" fill="#fff" stroke="#fca5a5"/><text x="217" y="131" text-anchor="middle">สิทธิข้อมูล (PDPA)</text>
+  <!-- workspace -->
+  <rect x="330" y="20" width="330" height="150" rx="12" fill="#f0fdfa" stroke="#5eead4"/>
+  <text x="495" y="44" text-anchor="middle" font-weight="700" fill="#115e59">เว็บบริษัท /companies/{id}</text>
+  <text x="495" y="62" text-anchor="middle" fill="#0f766e" font-size="11">พนักงานทุกบทบาท · เมนูตามสิทธิ์ × ฟีเจอร์</text>
+  <rect x="345" y="74" width="93" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="391" y="93" text-anchor="middle">แดชบอร์ด</text>
+  <rect x="446" y="74" width="100" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="496" y="93" text-anchor="middle">ค่าใช้จ่าย</text>
+  <rect x="554" y="74" width="93" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="600" y="93" text-anchor="middle">เบิกจ่าย</text>
+  <rect x="345" y="112" width="93" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="391" y="131" text-anchor="middle">ขาย/CRM</text>
+  <rect x="446" y="112" width="100" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="496" y="131" text-anchor="middle">ภาษี/รายงาน</text>
+  <rect x="554" y="112" width="93" height="30" rx="6" fill="#fff" stroke="#5eead4"/><text x="600" y="131" text-anchor="middle">ตั้งค่า</text>
+  <!-- LINE -->
+  <rect x="700" y="20" width="220" height="150" rx="12" fill="#f0fdf4" stroke="#86efac"/>
+  <text x="810" y="44" text-anchor="middle" font-weight="700" fill="#166534">LINE (2 OA แยกกัน!)</text>
+  <rect x="715" y="58" width="190" height="46" rx="6" fill="#fff" stroke="#86efac"/>
+  <text x="810" y="76" text-anchor="middle" font-weight="600">OA พนักงาน (มั่งมีกลาง)</text>
+  <text x="810" y="93" text-anchor="middle" font-size="11" fill="#15803d">AI ผู้ช่วย · ส่งบิล · แจ้งเตือน</text>
+  <rect x="715" y="112" width="190" height="46" rx="6" fill="#fff" stroke="#86efac"/>
+  <text x="810" y="130" text-anchor="middle" font-weight="600">OA ลูกค้า (ของแต่ละบริษัท)</text>
+  <text x="810" y="147" text-anchor="middle" font-size="11" fill="#15803d">แชทลูกค้า → CRM Inbox</text>
+  <!-- backend -->
+  <rect x="120" y="250" width="700" height="70" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="470" y="275" text-anchor="middle" font-weight="700" fill="#1e40af">API (NestJS) — สิทธิ์ · feature gate · audit ทุกจุดตัดสินที่นี่</text>
+  <text x="470" y="298" text-anchor="middle" fill="#1d4ed8" font-size="11.5">Postgres · Redis · MinIO/S3 · เลขเอกสารกลาง (EXP- / RB- / SRC- / INV- / JRN- ...)</text>
+  <!-- workers / gateway -->
+  <rect x="120" y="360" width="330" height="50" rx="10" fill="#faf5ff" stroke="#d8b4fe"/>
+  <text x="285" y="381" text-anchor="middle" font-weight="600" fill="#6b21a8">Workers (BullMQ)</text>
+  <text x="285" y="398" text-anchor="middle" font-size="11" fill="#7e22ce">sweep แจ้งเตือน 30 วิ · สรุปเช้า 07:00 · สต๊อกต่ำทุก ชม.</text>
+  <rect x="490" y="360" width="330" height="50" rx="10" fill="#faf5ff" stroke="#d8b4fe"/>
+  <text x="655" y="381" text-anchor="middle" font-weight="600" fill="#6b21a8">AI Gateway (Bedrock + Typhoon OCR)</text>
+  <text x="655" y="398" text-anchor="middle" font-size="11" fill="#7e22ce">อ่านใบเสร็จ · ตอบคำถามธุรกิจ · ถูกจำกัดด้วย budget/rate</text>
+  <!-- arrows -->
+  <line x1="155" y1="170" x2="300" y2="250" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="495" y1="170" x2="470" y2="250" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="810" y1="170" x2="650" y2="250" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="745" y="215" fill="#64748b" font-size="11">webhook + push</text>
+  <line x1="285" y1="360" x2="285" y2="320" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar)"/>
+  <line x1="655" y1="360" x2="655" y2="320" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar)"/>
+</svg>
+<p class="cap">ภาพที่ 1 — สามโลกของระบบ และเส้นทางข้อมูลเข้า API เดียวกัน</p>
+</div>
+
+<h3>1.1 กติกาที่ต้องเข้าใจก่อนเล่น: เมนูโผล่/หาย เพราะ 2 ระนาบคูณกัน</h3>
+<table>
+<tr><th>ระนาบ</th><th>ใครตั้ง</th><th>เมื่อไม่ผ่าน จะเห็นอะไร</th></tr>
+<tr><td><b>สิทธิ์ (permission)</b> — บทบาทของพนักงาน</td><td>Owner/Admin ตั้งใน "พนักงานและสิทธิ์"</td><td>เมนูหาย · เข้าตรงถูกเด้งไปหน้าแรกที่เปิดได้ · ถ้ายิง API: 403 <span class="ui">คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน</span></td></tr>
+<tr><td><b>ฟีเจอร์ (entitlement)</b> — แพ็กเกจของบริษัท</td><td>SYSTEM_ADMIN ตั้งใน <code>/system/partners/{id}</code></td><td>ระบบ "ริบ permission" ของฟีเจอร์นั้นทุกคนทั้งบริษัท → เมนูหาย + API ตอบ 403 code <code>feature_not_enabled</code> → เว็บแปลเป็น <span class="ui">ยังไม่ได้เปิดฟีเจอร์นี้</span></td></tr>
+</table>
+<div class="box warn"><b class="t">⚠ สำคัญ: ฟีเจอร์ปิดแล้ว "เมนูหายเงียบๆ" ไม่มีหน้า fallback</b> ยกเว้น <b>รายงาน</b> ตัวเดียวที่มีหน้า "ประวัติรายงาน" (ดาวน์โหลดไฟล์เดิมได้) — ข้อความ fallback สวยๆ ต่อฟีเจอร์อย่าง "ยังไม่ได้เปิดระบบสต๊อก" <b>ไม่มีอยู่ในระบบ</b> อย่าตามหา</div>
+
+<h3>1.2 แผนที่ sidebar จริง (16 เมนูที่ render ใน release นี้)</h3>
+<table>
+<tr><th>กลุ่ม</th><th>เมนู (ป้ายไทยตรงตามจอ)</th><th>route</th><th>ฟีเจอร์ที่คุม</th></tr>
+<tr><td>—</td><td>แดชบอร์ด</td><td><code>/dashboard</code></td><td>dashboard_notifications</td></tr>
+<tr><td rowspan="6">ลูกค้าและการขาย</td><td>กล่องข้อความ</td><td><code>/inbox</code></td><td>crm</td></tr>
+<tr><td>ลูกค้า</td><td><code>/customers</code></td><td>crm</td></tr>
+<tr><td>การจองออนไลน์</td><td><code>/bookings</code></td><td>crm</td></tr>
+<tr><td>เอกสารขายและรับชำระ</td><td><code>/sales-documents</code></td><td>sales_documents</td></tr>
+<tr><td>รายงาน CRM</td><td><code>/crm-reports</code></td><td>crm</td></tr>
+<tr><td>สินค้าและบริการ</td><td><code>/settings/crm-catalog</code></td><td>product_catalog</td></tr>
+<tr><td rowspan="4">การเงินและบัญชี</td><td>ค่าใช้จ่ายและใบเสร็จ (7 เมนูย่อย)</td><td><code>/expenses</code></td><td>expenses</td></tr>
+<tr><td>การเบิกจ่าย</td><td><code>/reimbursements</code></td><td>reimbursement</td></tr>
+<tr><td>ภาษี</td><td><code>/tax</code></td><td>thai_tax</td></tr>
+<tr><td>รายงานการเงิน</td><td><code>/reports</code></td><td>reports</td></tr>
+<tr><td rowspan="3">บุคลากรและการตั้งค่า</td><td>พนักงานและสิทธิ์ (+ ลูกย่อย: บทบาทและสิทธิ์ · รายชื่อพนักงาน · เพิ่มพนักงาน · อนุมัติคำสั่งซื้อ · นโยบายส่วนลด · เชื่อมต่อ LINE OA)</td><td><code>/settings/permissions</code> ฯลฯ</td><td>employee_access (ปิดไม่ได้)</td></tr>
+<tr><td>ตั้งค่าบริษัท (+ ลูกย่อย 6 รายการ — ดู §9)</td><td><code>/settings</code></td><td>company_settings (ปิดไม่ได้)</td></tr>
+<tr><td>คู่มือการใช้งานระบบ (3 เรื่อง)</td><td><code>/user-guide/expenses</code></td><td>— (ทุกคนเห็น)</td></tr>
+</table>
+
+<h4>เมนูที่ "ไม่มีใน sidebar แต่หน้าใช้งานได้จริง" — ต้องพิมพ์ URL ตรงเท่านั้น (ตั้งใจของ release นี้)</h4>
+<table>
+<tr><th>หน้า</th><th>URL</th><th>ฟีเจอร์</th></tr>
+<tr><td>คลังสินค้า (hub 7 การ์ด)</td><td><code>/companies/{id}/inventory</code></td><td>inventory</td></tr>
+<tr><td>จัดซื้อ (PR/PO/GR)</td><td><code>/companies/{id}/procurement</code></td><td>procurement</td></tr>
+<tr><td>เจ้าหนี้การค้า (AP + หัก ณ ที่จ่าย)</td><td><code>/companies/{id}/accounts-payable</code></td><td>procurement</td></tr>
+<tr><td>บัญชีธนาคาร + กระทบยอด</td><td><code>/companies/{id}/banking</code></td><td>bank_reconciliation</td></tr>
+<tr><td>เวิร์กโฟลว์อัตโนมัติ</td><td><code>/companies/{id}/workflow</code></td><td>workflow_automation</td></tr>
+<tr><td>AI แนะนำ</td><td><code>/companies/{id}/ai-suggestions</code></td><td>ai_line_assistant</td></tr>
+<tr><td>CRM hub (ลีด/ไปป์ไลน์/ติดตาม)</td><td><code>/companies/{id}/crm</code></td><td>crm</td></tr>
+<tr><td>ศูนย์การแจ้งเตือน</td><td><code>/companies/{id}/notifications</code> (หรือกดกระดิ่งมุมขวาบน)</td><td>dashboard_notifications</td></tr>
+</table>
+<div class="box bug"><b class="t">🚫 เมนูที่ถูก "บล็อคจริง" ไม่ใช่แค่ซ่อน</b> <code>/journal</code> (สมุดรายวัน) และ <code>/period-closing</code> (ปิดงวด) ถูกปิดด้วย flag <code>ACCOUNTING_UI_HIDDEN</code> — พิมพ์ URL ตรงก็ต้องถูกเด้งออก · ระบบบัญชีเบื้องหลังยังทำงานปกติ (JV ถูกสร้างจริง) — ถ้าเข้าได้ = บัค</div>
+
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span>login เป็น <code>qa.owner</code> แล้วนับเมนู sidebar — ต้องเห็นครบตามตาราง 1.2 และ<b>ไม่เห็น</b> สมุดรายวัน/ปิดงวด</span></li>
+<li><input class="ck" type="checkbox"><span>login เป็น <code>qa.staff</code> — เมนูต้องน้อยลงชัดเจน (ตามสิทธิ์ role) และการพิมพ์ URL ของเมนูที่ไม่มีสิทธิ์ต้องถูกเด้งไปหน้าแรกที่เปิดได้ <b>โดยไม่มีข้อความอธิบาย</b> (พฤติกรรมปัจจุบัน — ถ้าคิดว่า UX แย่ให้จดเป็น improvement ไม่ใช่บัค)</span></li>
+<li><input class="ck" type="checkbox"><span>พิมพ์ <code>/companies/{id}/journal</code> ตรงๆ ทุกบทบาท — ต้องเข้าไม่ได้เลย</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s2" style="--accent:#b91c1c">
+<h2>2. Admin onboard บริษัท + เปิด-ปิดฟีเจอร์ <span class="secprog"></span></h2>
+<p class="desc">โลกของ SYSTEM_ADMIN — สร้างบริษัทใหม่ครบวงจรใน 1 คลิก แล้วคุมแพ็กเกจฟีเจอร์รายบริษัท · นี่คือจุดตั้งต้นของทุก flow อื่น</p>
+<div class="meta">
+<span class="tag">เข้าที่ <b><code>/system/partners</code></b></span>
+<span class="tag">บทบาท <b>SYSTEM_ADMIN</b> เท่านั้น</span>
+<span class="tag">ปุ่ม Dev sign-in บนหน้า login = OWNER บริษัท seed <b>ไม่ใช่</b> system admin</span>
+</div>
+
+<h3>2.1 เข้าสู่คอนโซล /system</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เปิด <code>/login</code> — เช็คป้าย: หัวข้อ <span class="ui">เข้าสู่ระบบ</span>, ช่อง <span class="ui">ชื่อผู้ใช้ หรือ อีเมล</span> / <span class="ui">รหัสผ่าน</span>, checkbox <span class="ui">จดจำการเข้าสู่ระบบ</span>, ลิงก์ <span class="ui">ลืมรหัสผ่าน?</span></td><td>ครบทุกป้าย · ใส่รหัสผิด → <span class="ui">ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง</span> · ยิงรัวๆ → <span class="ui">พยายามเข้าสู่ระบบบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>login ด้วย <code>thawatchai.watchdog</code></td><td>ถูกพาไป <code>/system/partners</code> อัตโนมัติ (ไม่ใช่ dashboard บริษัท) · ครั้งแรกอาจเจอหน้า <span class="ui">ก่อนเริ่มใช้งาน MangmeePlus</span> ให้ติ๊ก 3 ช่อง (ช่องที่ 3 ของ system admin คือ <span class="ui">ขอบเขตหน้าที่ของผู้ดูแลระบบ</span>) แล้วกด <span class="ui">ยืนยันและเริ่มใช้งาน</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ลอง login บัญชีธรรมดา (เช่น qa.owner) แล้วพิมพ์ <code>/system/partners</code> ตรงๆ</td><td>เจอหน้า <span class="ui">ไม่มีสิทธิ์เข้าถึง</span> — <span class="ui">บัญชีนี้ไม่มีสิทธิ์เข้าถึงส่วนผู้ดูแลแพลตฟอร์ม...</span> (fail-closed)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>สำรวจ header nav ของ /system</td><td>มี 4 เมนู: <span class="ui">พาร์ทเนอร์</span> · <span class="ui">เปิดบริษัทใหม่</span> · <span class="ui">สิทธิข้อมูล</span> · <span class="ui">AI Budget</span> + ปุ่ม <span class="ui">ออกจากระบบ</span> · <b>ไม่มีเมนู LINE settings</b> (ถูกซ่อนโดยตั้งใจ — ดู §13)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>2.2 เปิดบริษัทใหม่ (New Company Onboarding)</h3>
+<div class="flowchips"><span class="c">กรอกฟอร์ม</span><span class="a">→</span><span class="c">Create Onboarding (1 transaction)</span><span class="a">→</span><span class="c">Handoff Package (โชว์ครั้งเดียว!)</span><span class="a">→</span><span class="c">ส่งรหัสให้ลูกค้า</span><span class="a">→</span><span class="c">ตั้งแพ็กเกจฟีเจอร์</span></div>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ที่ <code>/system/partners</code> กดปุ่ม <span class="ui">Onboard New Partner</span></td><td>ไป <code>/system/company-onboardings/new</code> — หัวข้อ "New Company Onboarding" (หน้า list ของ onboardings <b>ไม่มี</b> — มีแต่ /new)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กรอกฟอร์ม: <b>Company Name*</b> · <b>ประเภทธุรกิจ*</b> (7 ตัวเลือก: ค้าปลีก / ค้าส่ง / บริการทั่วไป / คลินิก / สปา / ร้านขายยา / อื่นๆ) · <b>เลขประจำตัวผู้เสียภาษี</b> (ไม่บังคับ) · <b>จดทะเบียน VAT</b> (ยังไม่ทราบ / จดแล้ว / ยังไม่จด) · <b>Owner Display Name*</b> · <b>Owner Username*</b></td><td>เลือก "จดทะเบียนแล้ว" → ช่อง <span class="ui">วันที่มีผล (ตาม ภ.พ.20) *</span> โผล่เพิ่ม · Tax ID ไม่ครบ 13 หลัก → error ใต้ช่อง <span class="ui">ต้องเป็นตัวเลข 13 หลัก (กรอกแล้ว N หลัก)</span> และกด submit ไม่ผ่าน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ทดสอบชื่อซ้ำ: ใช้ Company Name หรือ Username ที่มีอยู่แล้ว</td><td>409 พร้อมข้อความ <code>Company name "…" is already taken.</code> / <code>Username "…" is already taken.</code></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ทดสอบโหมดผูกเจ้าของเดิม: ติ๊ก checkbox <span class="ui">Attach to an existing owner username…</span> แล้วใส่ username ของ owner ที่มีอยู่</td><td>ช่อง Owner Display Name หายไป · สร้างสำเร็จโดย<b>ไม่ออกรหัสผ่านใหม่</b> — handoff ขึ้นแบนเนอร์เขียวว่า attach บัญชีเดิม · owner สลับบริษัทจาก header ได้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">Create Onboarding</span></td><td>ปุ่มเปลี่ยนเป็น "Creating…" แล้วขึ้นการ์ด <b>Handoff Package</b></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>ตรวจ Handoff Package ครบ 6 อย่าง</td><td>① แบนเนอร์เหลือง <span class="ui">This password will not be shown again…</span> ② Company Dashboard URL + ปุ่ม Copy ③ Login Username ④ <b>TEMPORARY PASSWORD (shown once only)</b> — อายุ 72 ชม. ⑤ การ์ด QR <span class="ui">Owner LINE link QR (single use…)</span> + เวลาหมดอายุ (<b>72 ชม. — เท่ารหัสผ่านชั่วคราว</b>) ⑥ การ์ดเขียว <span class="ui">ผังบัญชีมาตรฐานพร้อมใช้งาน</span> TH_SME_COA_V1 + ชิป <span class="ui">ลงบัญชีเอง: พร้อม</span> / <span class="ui">ลงบัญชีอัตโนมัติ: รอตรวจ mapping</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td>refresh หน้า แล้วพยายามดูรหัสผ่านอีกครั้ง</td><td>ไม่มีทางเห็นจากหน้านี้อีก (ถูกต้อง) — ถ้าต้องออกใหม่ใช้การ์ด <b>Existing Onboarding Maintenance</b> ด้านล่าง: ใส่ Run ID → ปุ่มเขียว <span class="ui">Reissue owner LINE QR</span> (QR ใหม่ รหัสผ่านเดิม) หรือปุ่มแดง <span class="ui">Regenerate temporary password</span> (มี confirm เตือนว่าจะ<b>ล้างรหัสที่ owner ตั้งเองไปแล้ว</b>)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<div class="box info"><b class="t">ℹ กด Create ครั้งเดียว ระบบสร้างให้ทั้งหมดนี้ (atomic — พังคือ rollback หมด ไม่มีบริษัทครึ่งเดียว)</b>
+บริษัท + owner (รหัสชั่วคราว 72 ชม. บังคับเปลี่ยน) + สาขา HO (code <code>HO</code>, tax branch <code>00000</code>) + ผังบัญชี TH_SME_COA_V1 + Tax Code ชุดไทย + หมวดหมู่ค่าใช้จ่าย 12 หมวด + entitlement ครบ 60 แถว + QR ผูก LINE ของ owner · <b>ไม่มีการส่งอีเมลใดๆ</b> — รหัสผ่านส่งมือเท่านั้น</div>
+<div class="box warn"><b class="t">⚠ ฟีเจอร์เริ่มต้นของบริษัทใหม่: เปิด 12 / ปิด 6</b>
+เปิด: expenses, reimbursement, product_catalog, crm, line_oa, dashboard_notifications, ai_line_assistant, thai_tax, double_entry_ledger, workflow_automation (+2 ตัวปิดไม่ได้) · <b>ปิดไว้ก่อน</b>: inventory, sales_documents, procurement, bank_reconciliation, reports, expense_auto_post → บริษัทใหม่จะ<b>ไม่เห็นเมนู "เอกสารขายและรับชำระ" กับ "รายงานการเงิน"</b> จนกว่าจะมาเปิดที่หน้า Partner detail — อย่าเพิ่งแจ้งเป็นบัค</div>
+
+<h3>2.3 หน้าเปิด-ปิดฟีเจอร์ (<code>/system/partners/{companyId}</code> → การ์ด "แพ็กเกจการใช้งาน")</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ที่ตาราง partners กด <span class="ui">View</span> บริษัทที่จะแก้</td><td>เห็นการ์ดตามลำดับ: Company Identity (+แก้ VAT) · Members · <b>แพ็กเกจการใช้งาน</b> · AI Model · AI Usage &amp; Budget · LINE Context · แถว Lifecycle (Activate / Disable / Archive)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ดูหัวการ์ดแพ็กเกจ</td><td>หัวข้อ <span class="ui">แพ็กเกจการใช้งาน</span> — <span class="ui">เลือกจากเมนูเดียวกับแถบข้างของบริษัท แล้วตรวจสอบผลรวมก่อนบันทึก</span> · badge <span class="ui">เปิด N/28 เมนู</span> · ปุ่ม preset 3 ปุ่ม: <span class="ui">เริ่มต้น</span> / <span class="ui">มาตรฐาน</span> / <span class="ui">ครบวงจร</span> · ช่อง <span class="ui">ค้นหาเมนู…</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>เลื่อนดูการ์ดเมนู จัดกลุ่มตาม sidebar จริง (เมนูหลัก / ลูกค้าและการขาย / การเงินและบัญชี / สินค้าและการดำเนินงาน / บุคลากรและการตั้งค่า) แต่ละกลุ่มมีลิงก์ <span class="ui">เปิดทั้งกลุ่ม</span> / <span class="ui">ปิดทั้งกลุ่ม</span></td><td>การ์ด <span class="ui">ตั้งค่าบริษัท</span> ไม่มีสวิตช์ — ขึ้น <span class="ui">พื้นฐาน — ปิดไม่ได้</span> · เมนูที่ยังไม่เปิดตัวมี badge <span class="ui">เร็วๆ นี้</span> · กด <span class="ui">เมนูย่อย N/M</span> เพื่อกางลูก — ถ้าแม่ปิด ลูกขึ้น <span class="ui">ปิดทั้งหมดเพราะเมนูหลักปิดอยู่</span> และล็อค</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ดู section <span class="ui">การทำงานเบื้องหลัง (ไม่ใช่เมนู)</span></td><td>มีการ์ดเดียว: <span class="ui">ลงบัญชีค่าใช้จ่ายอัตโนมัติ</span> (expense_auto_post) — <span class="ui">ต้องเปิดบัญชีแยกประเภท</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>ดู rail ขวา <span class="ui">เมนูที่บริษัทจะเห็น</span> + ติ๊ก <span class="ui">แสดงเมนูที่ปิดด้วย</span></td><td>Preview อัปเดตตามที่กดสวิตช์ทันที (ยังไม่บันทึก) · เมนูที่ปิดขึ้นแบบขีดฆ่า · มีคำเตือน <span class="ui">สำหรับผู้ใช้ที่มีสิทธิ์ครบ — พนักงานจะเห็นน้อยกว่านี้ตามบทบาท</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>ปิดฟีเจอร์สัก 2-3 ตัว แล้วกด <span class="ui">ตรวจสอบและบันทึก</span> ที่แถบล่าง (แถบขึ้นว่า <span class="ui">มีการเปลี่ยนแปลง N รายการ</span> พร้อมปุ่ม <span class="ui">คืนค่า</span>)</td><td>Modal <span class="ui">ตรวจสอบการเปลี่ยนแปลงแพ็กเกจ</span> โชว์ 2 กล่อง: แดง <span class="ui">จะปิดใช้งาน — ข้อมูลเดิมยังอยู่ (N)</span> และเขียว <span class="ui">จะเพิ่ม (N)</span> → กด <span class="ui">ยืนยันและบันทึก</span> → toast <span class="ui">บันทึกแพ็กเกจแล้ว N รายการ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td><b>ทดสอบ dependency cascade:</b> เปิด expense_auto_post ไว้ แล้วปิด <span class="ui">บัญชีแยกประเภท</span> (double_entry_ledger)</td><td>ใน modal กล่องแดงมีแถว expense_auto_post ติดมาด้วย พร้อมป้าย <span class="ui">ปิดตามฟีเจอร์ที่เกี่ยวข้อง</span> — ปิดแม่ = ลูกโดนด้วย</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>8</td><td><b>ทดสอบ invariant:</b> พยายามปิด <span class="ui">พนักงานและสิทธิ์</span> หรือ <span class="ui">ตั้งค่าบริษัท</span> (ผ่าน API ถ้า UI ไม่มีสวิตช์)</td><td>ถูกปฏิเสธ: <span class="ui">ฟีเจอร์พื้นฐานของระบบปิดไม่ได้</span> (422)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>9</td><td><b>ทดสอบเปิด auto-post ก่อนพร้อม:</b> บริษัทที่ยังไม่ผ่าน mapping ผังบัญชี → เปิด <span class="ui">ลงบัญชีค่าใช้จ่ายอัตโนมัติ</span></td><td>ถูกปฏิเสธ: <span class="ui">ผังบัญชีหรือกฎลงบัญชียังไม่พร้อมสำหรับการลงบัญชีอัตโนมัติ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>10</td><td><b>ทดสอบแก้ชนกัน:</b> เปิดหน้า partner เดียวกัน 2 แท็บ บันทึกแท็บแรก แล้วบันทึกแท็บสอง</td><td>แท็บสอง → <span class="ui">แพ็กเกจถูกแก้ไขโดยผู้อื่นระหว่างบันทึก กรุณาเปิดใหม่แล้วลองอีกครั้ง</span> (409) · เน็ตหลุดกลางทาง → <span class="ui">การเชื่อมต่อขาดหาย กดบันทึกอีกครั้งได้ ระบบจะไม่ทำรายการซ้ำ</span> แล้วกดซ้ำต้องไม่เกิดรายการคู่</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>11</td><td><b>ทดสอบ Lifecycle:</b> กด <span class="ui">Disable</span> บริษัท (มี modal ให้ใส่ Reason) แล้วกลับมาดูหน้าเดิม</td><td>แบนเนอร์เหลือง "This company is DISABLED — profile, features, and AI model are read-only…" ทุกสวิตช์กดไม่ได้ · พนักงานบริษัทนั้น login → <span class="ui">บริษัทถูกปิดใช้งานหรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลระบบ</span> · กด Re-activate แล้วทุกอย่างกลับมา</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>2.4 ตารางใหญ่: ปิดฟีเจอร์แต่ละตัวแล้ว "เกิดอะไรขึ้นจริง"</h3>
+<p>วิธีเล่น: ปิดทีละตัว → login เป็น qa.owner ในแท็บอื่น (เมนูอัปเดตเองภายใน ~60 วิ หรือ refresh) → เช็คตามคอลัมน์ · ข้อมูลเดิม<b>ไม่หายไม่ถูกลบ</b>ทุกกรณี (freeze-in-place) เปิดกลับมาแล้วใช้ต่อได้</p>
+<table>
+<tr><th>ฟีเจอร์ (ป้ายในหน้า admin)</th><th>ปิดแล้วเมนูไหนหาย</th><th>เห็นผลใน sidebar?</th><th>สิ่งที่ยังทำงานต่อ / หมายเหตุ</th></tr>
+<tr><td><b>ค่าใช้จ่าย+ใบเสร็จ</b> (expenses)</td><td>ค่าใช้จ่ายและใบเสร็จ + เมนูย่อยทั้ง 7 (รวมใบรับรองแทนใบเสร็จ)</td><td>✅ เห็นชัด</td><td>การ์ดแดชบอร์ด "ค่าใช้จ่ายและใบเสร็จ" หายด้วย · ส่งบิลทาง LINE จะโดนปฏิเสธ</td></tr>
+<tr><td><b>การเบิกจ่าย</b> (reimbursement)</td><td>การเบิกจ่าย</td><td>✅ ปุ่มสร้างหาย</td><td>✔ แก้แล้ว (2026-08-10): ปิดแล้ว<b>บล็อคเฉพาะการสร้าง/ส่งใบใหม่</b> — เมนูยังอยู่ อนุมัติ/ปฏิเสธ/ตรวจการเงิน/บันทึกจ่าย/ตัดสินใบซ้ำของงานค้างทำต่อได้จนจบ (runoff)</td></tr>
+<tr><td><b>แดชบอร์ด/แจ้งเตือน</b> (dashboard_notifications)</td><td>แดชบอร์ด + กระดิ่งแจ้งเตือน + หน้าแจ้งเตือนทุกหน้า</td><td>✅ แรงสุด</td><td>ถ้า user ไม่เหลือเมนูอื่นเลย → หน้า <span class="ui">ยังไม่มีหน้าที่คุณเปิดได้ในบริษัทนี้</span> — <span class="ui">ฟีเจอร์ที่คุณมีสิทธิ์อาจถูกปิดใช้งานอยู่ กรุณาติดต่อผู้ดูแลบริษัท...</span></td></tr>
+<tr><td><b>ผู้ช่วย AI ทาง LINE</b> (ai_line_assistant)</td><td>AI แนะนำ (URL-only) + ปุ่ม AI ในกล่องข้อความ</td><td>❌ แทบไม่เห็น</td><td>เช็คทาง LINE: ทักบอท → <span class="ui">📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้</span></td></tr>
+<tr><td><b>เชื่อมต่อ LINE OA</b> (line_oa)</td><td>เมนูลูก "เชื่อมต่อ LINE OA" ใต้พนักงานและสิทธิ์</td><td>✅ (เมนูลูก)</td><td>⚠ webhook ลูกค้า<b>ยังรับข้อความต่อ</b> (เก็บเข้า inbox) — ปิดแค่หน้าตั้งค่า · แยกอิสระจาก OA พนักงาน</td></tr>
+<tr><td><b>ลูกค้าและ CRM</b> (crm)</td><td>กล่องข้อความ, ลูกค้า, การจองออนไลน์, รายงาน CRM, นโยบายส่วนลด</td><td>✅ หาย 4-5 เมนู</td><td></td></tr>
+<tr><td><b>เอกสารขาย</b> (sales_documents)</td><td>เอกสารขายและรับชำระ</td><td>✅</td><td>ปิดแล้วรับชำระ/void ของใบเดิมทำไม่ได้เช่นกัน (permission โดนริบทั้ง family)</td></tr>
+<tr><td><b>สินค้าและบริการ</b> (product_catalog)</td><td>สินค้าและบริการ (crm-catalog)</td><td>✅</td><td>อิสระจาก inventory และ crm</td></tr>
+<tr><td><b>ภาษีไทย</b> (thai_tax)</td><td>ภาษี + เมนูตั้งค่าขั้นสูง Tax Code/Tax Account หายจากตั้งค่า</td><td>✅</td><td>ตัวตนภาษีบริษัท (ชื่อ/เลข 13 หลัก/สถานะ VAT) ยังอยู่โดยตั้งใจ</td></tr>
+<tr><td><b>บัญชีแยกประเภท</b> (double_entry_ledger)</td><td>ไม่มีเมนูให้หาย (journal/closing ถูกซ่อนอยู่แล้ว) — เมนูตั้งค่า "ผังบัญชี Master Data" หาย</td><td>⚠ เกือบไม่เห็น</td><td>Cascade ปิด expense_auto_post ด้วย · JV ใหม่หยุดเกิด · เช็คผ่านหน้า "หลักฐานทางบัญชี": สถานะลงบัญชีค้าง "รอบันทึกบัญชี"</td></tr>
+<tr><td><b>ลงบัญชีค่าใช้จ่ายอัตโนมัติ</b> (expense_auto_post)</td><td>ไม่ใช่เมนู — พฤติกรรมเบื้องหลัง</td><td>❌</td><td>ปิด: ค่าใช้จ่ายที่ยืนยันค้างสถานะ <span class="ui">รอบันทึกบัญชี</span> รอคนกดเอง · เปิด: worker ทยอยลงบัญชีเฉพาะรายการที่ยืนยัน<b>หลัง</b>เวลาที่เปิด (ของเก่าต้องใช้ backfill)</td></tr>
+<tr><td><b>รายงาน/BI</b> (reports)</td><td>รายงานการเงิน</td><td>✅</td><td>⭐ ตัวเดียวที่มี fallback: เข้า <code>/reports</code> ตรงได้ เจอหน้า <span class="ui">ประวัติรายงาน</span> — <span class="ui">ฟีเจอร์รายงานปิดอยู่ จึงสร้างหรือคำนวณรายงานใหม่ไม่ได้ แต่ยังดาวน์โหลดไฟล์เดิมที่คุณมีสิทธิ์ได้</span></td></tr>
+<tr><td><b>สินค้า/สต๊อก</b> (inventory) · <b>จัดซื้อ/เจ้าหนี้</b> (procurement) · <b>ธนาคารและกระทบยอด</b> (bank_reconciliation) · <b>ระบบอัตโนมัติ</b> (workflow_automation)</td><td>เมนูพวกนี้ไม่อยู่ใน sidebar อยู่แล้ว</td><td>❌ ไม่เห็นเลย</td><td>ทดสอบด้วยการเข้า URL ตรง → ต้องโดนเด้ง/403 <span class="ui">ยังไม่ได้เปิดฟีเจอร์นี้</span> (procurement ปิดแล้วเมนูลูก "อนุมัติคำสั่งซื้อ" หายด้วย)</td></tr>
+<tr><td><b>พนักงานและสิทธิ์</b> · <b>ตั้งค่าบริษัท</b></td><td colspan="3">🔒 ปิดไม่ได้ทุกกรณี — ระบบตอบ <span class="ui">ฟีเจอร์พื้นฐานของระบบปิดไม่ได้</span></td></tr>
+</table>
+
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span><b>รอบใหญ่ที่ควรเล่น:</b> ปิดฟีเจอร์ → สลับไปแท็บ workspace รอ ≤60 วิ (ระบบ poll /auth/me เอง) — เมนูต้องหายเอง<b>โดยไม่ต้อง logout</b> · เปิดกลับ → เมนูกลับมาเอง</span></li>
+<li><input class="ck" type="checkbox"><span>ปิด expenses ขณะมีเอกสารค้าง NEEDS_REVIEW → เปิดกลับ → เอกสารเดิมต้องอยู่ครบ สถานะเดิม ทำต่อได้ (freeze-in-place)</span></li>
+<li><input class="ck" type="checkbox"><span>กด preset <span class="ui">เริ่มต้น</span> ↔ <span class="ui">ครบวงจร</span> สลับกัน — badge N/28 ต้องเปลี่ยนสอดคล้อง และ expense_auto_post ต้องถูก force ปิดเสมอหลังกด preset</span></li>
+<li><input class="ck" type="checkbox"><span>การ์ด Members: กดรูปตา (ดูรหัสชั่วคราว — audited), <span class="ui">Reset password</span>, <span class="ui">Unlink LINE</span> — ทุกปุ่มต้องมี confirm ก่อนทำจริง</span></li>
+<li><input class="ck" type="checkbox"><span>AI Budget: ใส่ ฿0 → ต้องถูกปฏิเสธพร้อมคำอธิบายว่าให้ไปปิดฟีเจอร์ ai_line_assistant แทน</span></li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section class="flow" id="s3" style="--accent:#c2410c">
+<h2>3. เข้าระบบครั้งแรกของบริษัทใหม่ (ฝั่ง Owner) <span class="secprog"></span></h2>
+<p class="desc">เอารหัสจาก Handoff Package (§2.2) มาเล่นเป็นลูกค้า — เส้นทางบังคับ 3 ด่านก่อนถึง dashboard</p>
+<div class="flowchips"><span class="c">login รหัสชั่วคราว</span><span class="a">→</span><span class="c">บังคับเปลี่ยนรหัสผ่าน</span><span class="a">→</span><span class="c">ยอมรับข้อกำหนด 3 ข้อ</span><span class="a">→</span><span class="c">Dashboard</span></div>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>login ด้วย username + รหัสชั่วคราวจาก handoff</td><td>ถูกพาไป <code>/change-password</code> ทันที — หัวข้อ <span class="ui">เปลี่ยนรหัสผ่าน</span> — <span class="ui">ต้องเปลี่ยนรหัสผ่านชั่วคราวก่อนเริ่มใช้งานระบบ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ลองรหัสใหม่สั้นกว่า 8 ตัว / รหัสเดิมซ้ำ</td><td><span class="ui">รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร</span> / <span class="ui">รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม</span> · มีปุ่มหนี <span class="ui">ยกเลิกและออกจากระบบ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>เปลี่ยนรหัสสำเร็จ</td><td><b>ระบบตัด session ทิ้งโดยตั้งใจ</b> — ต้อง login ใหม่ด้วยรหัสใหม่ (ไม่ใช่บัค)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>login ใหม่ → หน้า <span class="ui">ก่อนเริ่มใช้งาน MangmeePlus</span></td><td>ต้องติ๊ก 3 ช่อง: ข้อกำหนดการใช้งาน · ประกาศความเป็นส่วนตัว · <span class="ui">อำนาจในการยืนยันแทนกิจการ</span> (ของ owner) — ติ๊กไม่ครบ → <span class="ui">กรุณายืนยันรายการที่มีเครื่องหมาย * ให้ครบทั้ง 3 รายการ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">ยืนยันและเริ่มใช้งาน</span></td><td>ถึง <code>/companies/{id}/dashboard</code> — บริษัทใหม่จะมีการ์ดว่างเป็นส่วนใหญ่ (<span class="ui">ยังไม่มีข้อมูลสำหรับช่วงเวลานี้</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>ทดสอบรหัสหมดอายุ:</b> (ถ้าเล่นได้) ปล่อยรหัสชั่วคราวเกิน 72 ชม. แล้ว login</td><td><span class="ui">รหัสผ่านชั่วคราวหมดอายุ กรุณาติดต่อผู้ดูแลเพื่อออกรหัสใหม่</span> → แก้โดย admin กด Regenerate ที่ §2.2 ขั้น 7</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s4" style="--accent:#0f766e">
+<h2>4. Dashboard + การแจ้งเตือน <span class="secprog"></span></h2>
+<p class="desc">หน้าแรกหลัง login และระบบแจ้งเตือน (กระดิ่ง + LINE push) — เล่นด้วยบริษัท seed (Room45) จะเห็นข้อมูลครบกว่าบริษัทใหม่</p>
+<div class="meta">
+<span class="tag">Route <b><code>/companies/{id}/dashboard</code></b></span>
+<span class="tag">แจ้งเตือน: กระดิ่งมุมขวาบน → <code>/notifications</code></span>
+<span class="tag">ฟีเจอร์ <b>dashboard_notifications</b></span>
+</div>
+
+<h3>4.1 โครงหน้า Dashboard</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ส่วนหัว</td><td>ทักทาย <span class="ui">สวัสดี {ชื่อ}</span> + บรรทัด <span class="ui">ภาพรวมธุรกิจ · ทุกสาขา (รวม) · อัปเดตล่าสุด HH:MM</span> · ชิป <span class="ui">ทุกสาขา (รวม)</span> มุมขวา<b>เป็นป้ายเฉยๆ กดไม่ได้</b> (ไม่ใช่ตัวกรองสาขา — อย่าแจ้งว่า dropdown เสีย)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>แท็บช่วงเวลา (ตัวกรองเดียวของหน้า)</td><td>4 ปุ่ม: <span class="ui">วันนี้</span> · <span class="ui">7 วันล่าสุด</span> · <span class="ui">เดือนนี้</span> · <span class="ui">ไตรมาสนี้</span> — กดแล้วตัวเลขการ์ดเปลี่ยน (ระหว่างโหลด การ์ดเดิมค้างไว้ ไม่กระพริบเป็น skeleton)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ปุ่ม <span class="ui">รีเฟรช</span></td><td>ไอคอนหมุน + ปุ่ม disable ระหว่างโหลด · <b>เฉพาะ OWNER</b> เท่านั้นที่ force คำนวณใหม่จริง — บทบาทอื่นกดแล้วอาจได้ค่าแคชเดิม (แคชอายุ 15 นาที; ตั้งใจ) · พังแล้วขึ้นแบนเนอร์ <span class="ui">รีเฟรชข้อมูลไม่สำเร็จ</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>4.2 การ์ดชุดที่ 1 — สรุปงานลูกค้า (CRM) <span class="pill p-gray">เห็นเมื่อมีสิทธิ์ crm.inbox.read</span></h3>
+<p>การ์ดสูงสุด 10 ใบ กดได้ทุกใบ (ทั้งใบเป็นลิงก์) · สี: แดง = วิกฤต, เหลือง = ควรทำ, ขาว = ข้อมูล</p>
+<table>
+<tr><th>การ์ด</th><th>กดแล้วไปไหน</th><th>จุดเช็ค</th></tr>
+<tr><td>ยังไม่ได้ตอบ</td><td><code>/inbox</code></td><td>ตัวเลขตรงกับจำนวนแชทที่ยังไม่ตอบใน inbox จริง</td></tr>
+<tr><td>เกิน SLA</td><td><code>/inbox?overdue=true</code></td><td>&gt;0 ต้องเป็นสีแดง</td></tr>
+<tr><td>ลูกค้าใหม่{ช่วงเวลา} / นัดหมาย{ช่วงเวลา}</td><td><code>/crm</code> · <code>/bookings</code></td><td>คำต่อท้ายเปลี่ยนตามแท็บช่วงเวลา</td></tr>
+<tr><td>หลักฐานโอนรอตรวจ</td><td><code>/crm/payment-proofs</code></td><td>ตรงกับหน้า payment proofs</td></tr>
+<tr><td>มูลค่าดีลเปิด · ใบเสนอรอลูกค้าตอบรับ · ยอดค้างชำระเกินกำหนด</td><td><code>/crm?tab=pipeline</code> · <code>/sales-documents?documentType=QUOTATION</code> · <code>/sales-documents</code></td><td>3 ใบนี้โผล่เฉพาะเมื่อมีสิทธิ์เพิ่ม (opportunity / accounting.document)</td></tr>
+<tr><td>ข้อร้องเรียนยังไม่จบ · ตอบครั้งแรกเฉลี่ย{ช่วงเวลา}</td><td><code>/inbox</code> · <code>/crm-reports?period=...</code></td><td>ค่าเฉลี่ยไม่มีข้อมูล = "—"</td></tr>
+</table>
+<div class="box warn"><b class="t">⚠ จุดหาบัคของการ์ดชุดนี้</b> ① ถ้า API พัง การ์ดทั้งชุด<b>หายเงียบ</b>ไม่มี error ให้เห็น (พฤติกรรมปัจจุบัน — น่าจดเป็น improvement) ② เลือกแท็บ <span class="ui">7 วันล่าสุด</span>: การ์ด CRM นับ "7 วันย้อนหลัง" แต่การ์ดชุดที่ 2 นับ "สัปดาห์ จ.-อา." — ตัวเลขสองโซนอาจไม่ตรงกันโดยตั้งใจ ③ ตัวเลข CRM ใช้คอมม่าแบบไทย แต่การ์ดชุดที่ 2 ใช้แบบ en-US — ความไม่สม่ำเสมอที่มีอยู่จริง</div>
+
+<h3>4.3 การ์ดชุดที่ 2 — ภาพรวม (สุขภาพคลังสินค้า / ค่าใช้จ่ายและใบเสร็จ)</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>การ์ด <span class="ui">สุขภาพคลังสินค้า</span>: 3 แถว — สินค้าที่ใช้งาน / สินค้าต่ำกว่า Reorder Point / การเคลื่อนไหวล่าสุด (แต่ละแถวกดไปหน้า inventory ได้)</td><td>แถวต่ำกว่า reorder &gt;0 = ป้ายเหลือง · <b>บัคที่รู้อยู่แล้วให้ยืนยัน:</b> แถว "การเคลื่อนไหวล่าสุด" โชว์เวลาดิบแบบ ISO (<code>2026-08-10T...Z</code>) ไม่ฟอร์แมตไทย — เจอแบบนี้คือ confirmed จดได้เลย</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>การ์ด <span class="ui">ค่าใช้จ่ายและใบเสร็จ</span>: ค่าใช้จ่ายที่ยืนยันแล้ว / ใบเสร็จรอตรวจ / ยอดค้างชำระ</td><td>แถวแรกเปลี่ยนตามแท็บช่วงเวลา แต่ <span class="ui">ใบเสร็จรอตรวจ</span> เป็น "ยอดสะสมปัจจุบัน" <b>ไม่เปลี่ยนตามช่วงเวลา</b> (ตั้งใจ) · สร้าง expense ใหม่ 1 ใบแล้วรีเฟรช ตัวเลขต้อง +1</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>สิทธิ์การเห็น</td><td>การ์ดคลังต้องการ inventory.report/movement.read (INVENTORY เห็น, SALES ไม่เห็น) · การ์ดค่าใช้จ่ายต้องการ expense.read เต็ม (STAFF ที่มีแค่ read_own ไม่เห็นการ์ด) · ไม่มีการ์ดไหนเลย → <span class="ui">ยังไม่มีข้อมูลสำหรับช่วงเวลานี้</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>4.4 กระดิ่งแจ้งเตือน + ศูนย์การแจ้งเตือน</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ดูกระดิ่งมุมขวาบน (มีทุกหน้า)</td><td>badge แดงนับเฉพาะยังไม่อ่าน (เกิน 99 = <span class="ui">99+</span>) · อัปเดตเองทุก 60 วิ + ตอนสลับกลับมาที่แท็บ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กดกระดิ่ง</td><td>Panel หัวข้อ <span class="ui">การแจ้งเตือน</span> + ปุ่ม <span class="ui">อ่านทั้งหมดแล้ว</span> (disable เมื่อไม่มีค้าง) · โชว์ 8 รายการล่าสุด<b>รวมที่อ่านแล้ว</b> · รายการยังไม่อ่านมีจุดฟ้า+พื้นอ่อน · ลิงก์ล่าง <span class="ui">ดูการแจ้งเตือนทั้งหมด</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>กดรายการที่มี deep link</td><td>panel ปิด → mark อ่าน → พาไปหน้าปลายทาง (เช่น เบิกจ่ายเปิด drawer ใบนั้นเลย) · badge ลดลง 1</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>เปิด <code>/companies/{id}/notifications</code></td><td>หัวข้อ <span class="ui">ศูนย์การแจ้งเตือน</span> · ตัวกรองมีแค่ 2 ปุ่ม: <span class="ui">ยังไม่ได้อ่าน</span> (ค่าเริ่มต้น) / <span class="ui">ทั้งหมด</span> · ปุ่มขวาบน: <span class="ui">อ่านทั้งหมด</span> · <span class="ui">ตั้งค่า</span> (→ <code>/settings/notifications</code>) · <span class="ui">กฎ</span> — สองปุ่มหลังโผล่ตามสิทธิ์ · แต่ละแถวมีปุ่ม <span class="ui">อ่านแล้ว</span> / <span class="ui">ปิด</span> · โชว์สูงสุด 50 แถว ไม่มีปุ่มหน้าถัดไป (ข้อจำกัดปัจจุบัน)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>หน้า <span class="ui">ตั้งค่าการแจ้งเตือน</span> (<code>/settings/notifications</code>)</td><td>ช่องทาง: ปุ่ม <b>Web กดไม่ได้ถาวร</b> (เว็บบันทึกเสมอ) + ปุ่ม <b>LINE</b> เปิด-ปิดได้ (toast <span class="ui">เปิด/ปิดช่องทาง LINE เรียบร้อยแล้ว</span>) · ช่อง <span class="ui">เริ่มเวลาเงียบ</span>/<span class="ui">สิ้นสุดเวลาเงียบ</span> เป็น text ธรรมดา <b>บันทึกตอน blur ไม่มีปุ่ม Save</b> · พิมพ์มั่ว (เช่น "สามทุ่ม") → 400 จาก server (ช่องไม่มี validation ฝั่งหน้าจอ — จุดหาบัค UX)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>หน้า <span class="ui">กฎการแจ้งเตือน</span> (<code>/notifications/rules</code>)</td><td>เห็นกฎ seed: Daily Owner Summary + Low Stock Alert (toggle <span class="ui">เปิดใช้งาน</span>/<span class="ui">ปิดใช้งาน</span> ได้) · กฎอนาคต 9 ตัว (system) <b>ไม่มีปุ่มอะไรเลย</b> — ดูเหมือนพังแต่คือ "ยังไม่เปิดให้ใช้" · แก้เงื่อนไข/เวลา/ผู้รับใน UI ไม่ได้ (มีแค่เปิดปิด)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>4.5 เหตุการณ์ที่ "ต้องเกิดแจ้งเตือน" — เอาไว้ทดสอบข้าม flow</h3>
+<table>
+<tr><th>ทำอะไร (ที่ flow ไหน)</th><th>ใครได้แจ้งเตือน</th><th>ข้อความ (หัว)</th><th>ช่องทาง</th></tr>
+<tr><td>ยื่นเบิกจ่าย (§7)</td><td>MANAGER + OWNER (ยกเว้นคนยื่นเอง)</td><td><span class="ui">อนุมัติเบิกจ่าย: RB-...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>อนุมัติ/ปฏิเสธเบิกจ่าย</td><td>คนยื่น</td><td><span class="ui">ผลอนุมัติเบิกจ่าย: RB-...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>เบิกจ่ายผ่านตรวจการเงิน → พร้อมจ่าย</td><td>คนมีสิทธิ์บันทึกจ่าย</td><td><span class="ui">พร้อมจ่ายเบิกจ่าย: RB-...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>บันทึกจ่ายเบิกแล้ว</td><td>คนยื่น</td><td><span class="ui">จ่ายเงินเบิกแล้ว: RB-...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>เตรียมใบรับรองแทนใบเสร็จเสร็จ (§6)</td><td>ผู้อนุมัติที่มีสิทธิ์ (ไม่รวมคนกดเอง)</td><td><span class="ui">ใบรับรองแทนใบเสร็จรอการลงลายมือชื่อ เลขที่ SRC-...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>สต๊อกต่ำกว่า reorder point (สแกนทุก 60 นาที)</td><td>OWNER, INVENTORY, ADMIN</td><td><span class="ui">สต็อกต่ำ: {สินค้า}</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>ลูกค้า LINE ทักใหม่ / เกิน SLA / ส่งสลิป / นัดใกล้ถึง (§10-11)</td><td>ทีม inbox</td><td><span class="ui">แชทใหม่จาก...</span> / <span class="ui">SLA เกินกำหนด:...</span> / <span class="ui">หลักฐานการโอนใหม่:...</span> / <span class="ui">นัดหมายใกล้ถึง:...</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>ไฟล์รายงาน CSV เสร็จ (§11)</td><td>คนสั่ง export</td><td><span class="ui">ไฟล์รายงานพร้อมดาวน์โหลดแล้ว</span></td><td>กระดิ่ง + LINE</td></tr>
+<tr><td>ทุกเช้า 07:00 (ถ้าเปิดกฎ)</td><td>OWNER + ADMIN</td><td><span class="ui">สรุปธุรกิจประจำวัน</span></td><td>กระดิ่ง + LINE</td></tr>
+</table>
+<div class="box info"><b class="t">ℹ เงื่อนไข LINE push:</b> ผู้รับต้องผูก LINE แล้ว (§8/§10) + ไม่ปิดช่องทาง LINE ใน preferences + ไม่อยู่ช่วงเวลาเงียบ (ยกเว้น severity วิกฤตทะลุได้) · รูปแบบข้อความ: <code>[WatchDog] {ระดับ}\n{หัวข้อ}\n{เนื้อหา}\n{ลิงก์}</code></div>
+<div class="box warn"><b class="t">⚠ ที่ "ไม่มีแจ้งเตือน" โดยตั้งใจ — อย่าตามหา:</b> ยืนยันค่าใช้จ่ายสำเร็จ · ยกเลิกเบิกจ่าย · void การจ่าย · budget alert — ยังไม่มี trigger เหล่านี้ในระบบ</div>
+
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span>ยิงเหตุการณ์แถวแรกของตาราง 4.5 (STAFF ยื่นเบิก) แล้วจับเวลา — กระดิ่ง MANAGER ต้องเด้งภายใน ~1 นาที (worker sweep ทุก 30 วิ)</span></li>
+<li><input class="ck" type="checkbox"><span>ตั้งเวลาเงียบครอบเวลาปัจจุบัน → ยิงเหตุการณ์ → เว็บต้องยังได้รับ แต่ LINE ต้องเงียบ · แล้วลองเหตุการณ์ระดับวิกฤต (เกิน SLA อนุมัติ) → LINE ต้องทะลุเวลาเงียบ</span></li>
+<li><input class="ck" type="checkbox"><span>AUDITOR_READONLY: เห็นกระดิ่ง+ศูนย์ได้ แต่ปุ่ม <span class="ui">ตั้งค่า</span> ต้องไม่โผล่ และเข้าหน้าตั้งค่าตรงๆ ต้องเจอ <span class="ui">บัญชีของคุณไม่มีสิทธิ์ตั้งค่าการแจ้งเตือน</span></span></li>
+<li><input class="ck" type="checkbox"><span>ปิด toggle กฎแจ้งเตือนตอน API ล่ม (ปิด wifi ชั่วคราว) — <b>บัคที่รู้อยู่แล้ว:</b> ปุ่มเด้งกลับเงียบๆ ไม่มี error ใดๆ (โค้ด .catch แล้วทิ้ง) — ยืนยันแล้วจดได้</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s5" style="--accent:#7c3aed">
+<h2>5. ค่าใช้จ่าย / บิล / ใบเสร็จ <span class="secprog"></span></h2>
+<p class="desc">Flow ใหญ่สุดของระบบ — บิลเข้าได้ 4 ทาง (อัปโหลดให้ AI อ่าน · คีย์มือ · ส่งจาก LINE · เกิดจากเบิกจ่าย) มาจบที่การยืนยันลงบัญชีเดียวกัน</p>
+<div class="meta">
+<span class="tag">เมนู <b>ค่าใช้จ่ายและใบเสร็จ</b> → เมนูย่อย: รายการค่าใช้จ่าย · อัปโหลดใบเสร็จ · บันทึกด้วยมือ · หมวดหมู่ · ใบรับรองแทนใบเสร็จ · ตั้งค่าใบรับรองแทนใบเสร็จ · หลักฐานทางบัญชี</span>
+<span class="tag">เลขเอกสาร <b>EXP-YYYYMM-#####</b> (ได้ตอนยืนยัน)</span>
+</div>
+<div class="box warn"><b class="t">⚠ เมนูย่อย "ลายเซ็นบริษัท" ไม่มีอยู่จริงแล้ว</b> — route <code>/expenses/signatures</code> ถูก redirect กลับหน้ารายการ (feature ถูกพักโดย owner 2026-08-05) · ลายเซ็นที่ใช้จริงอยู่ในใบรับรองแทนใบเสร็จ (§6) เท่านั้น</div>
+
+<h3>5.1 วงจรชีวิตเอกสาร (state machine)</h3>
+<div class="svgwrap">
+<svg viewBox="0 0 940 250" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12">
+  <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+  <rect x="15" y="80" width="110" height="44" rx="9" fill="#f1f5f9" stroke="#94a3b8"/><text x="70" y="99" text-anchor="middle" font-weight="700">DRAFT</text><text x="70" y="115" text-anchor="middle" font-size="10.5" fill="#475569">ฉบับร่าง</text>
+  <rect x="165" y="80" width="120" height="44" rx="9" fill="#eff6ff" stroke="#93c5fd"/><text x="225" y="99" text-anchor="middle" font-weight="700">EXTRACTING</text><text x="225" y="115" text-anchor="middle" font-size="10.5" fill="#1d4ed8">AI กำลังอ่าน</text>
+  <rect x="325" y="80" width="135" height="44" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="392" y="99" text-anchor="middle" font-weight="700">NEEDS_REVIEW</text><text x="392" y="115" text-anchor="middle" font-size="10.5" fill="#b45309">รอตรวจสอบ</text>
+  <rect x="500" y="80" width="165" height="44" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="582" y="99" text-anchor="middle" font-weight="700">READY_FOR_CONFIRMATION</text><text x="582" y="115" text-anchor="middle" font-size="10.5" fill="#b45309">พร้อมยืนยัน (ส่งตรวจสอบแล้ว)</text>
+  <rect x="705" y="80" width="110" height="44" rx="9" fill="#f0fdf4" stroke="#86efac"/><text x="760" y="99" text-anchor="middle" font-weight="700">CONFIRMED</text><text x="760" y="115" text-anchor="middle" font-size="10.5" fill="#15803d">ยืนยันแล้ว 🔒</text>
+  <rect x="845" y="80" width="80" height="44" rx="9" fill="#fef2f2" stroke="#fca5a5"/><text x="885" y="99" text-anchor="middle" font-weight="700">VOIDED</text><text x="885" y="115" text-anchor="middle" font-size="10.5" fill="#b91c1c">ยกเลิก (จบ)</text>
+  <rect x="380" y="185" width="120" height="40" rx="9" fill="#fef2f2" stroke="#fca5a5"/><text x="440" y="203" text-anchor="middle" font-weight="700">REJECTED</text><text x="440" y="218" text-anchor="middle" font-size="10.5" fill="#b91c1c">ยกเลิกรายการ</text>
+  <line x1="125" y1="102" x2="165" y2="102" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar2)"/>
+  <line x1="285" y1="102" x2="325" y2="102" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar2)"/>
+  <line x1="460" y1="102" x2="500" y2="102" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar2)"/><text x="480" y="93" text-anchor="middle" font-size="10" fill="#64748b">ส่งตรวจสอบ</text>
+  <line x1="665" y1="102" x2="705" y2="102" stroke="#15803d" stroke-width="2" marker-end="url(#ar2)"/><text x="685" y="93" text-anchor="middle" font-size="10" fill="#15803d">ยืนยัน</text>
+  <line x1="815" y1="102" x2="845" y2="102" stroke="#b91c1c" stroke-width="1.6" marker-end="url(#ar2)"/><text x="830" y="93" text-anchor="middle" font-size="10" fill="#b91c1c">void</text>
+  <path d="M560,124 Q500,160 470,185" fill="none" stroke="#b91c1c" stroke-width="1.4" marker-end="url(#ar2)"/><text x="540" y="160" font-size="10" fill="#b91c1c">ยกเลิกรายการ (ใส่เหตุผล)</text>
+  <path d="M410,185 Q380,150 392,124" fill="none" stroke="#0f766e" stroke-width="1.4" marker-end="url(#ar2)"/><text x="300" y="165" font-size="10" fill="#0f766e">เริ่มตรวจใหม่</text>
+  <path d="M540,80 Q470,45 420,78" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ar2)"/><text x="475" y="48" font-size="10" fill="#64748b">ตีกลับไปตรวจใหม่ได้</text>
+  <path d="M70,80 Q200,20 480,68" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ar2)"/><text x="180" y="34" font-size="10" fill="#64748b">เบิกจ่ายอนุมัติจ่าย → สร้างตรงมาที่พร้อมยืนยัน</text>
+</svg>
+<p class="cap">ภาพที่ 2 — วงจรเอกสารค่าใช้จ่าย · CONFIRMED แก้ไขไม่ได้อีก มีทางเดียวคือ void แล้วคีย์ใหม่ · แกนแยก: สถานะจ่ายเงิน (ยังไม่ชำระ/บางส่วน/ชำระแล้ว) และสถานะลงบัญชี (รอบันทึก/บันทึกแล้ว/ผิดพลาด)</p>
+</div>
+
+<h3>5.2 เส้นทางที่ 1 — อัปโหลดให้ AI อ่าน (<code>/expenses/upload</code>)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เปิดเมนู <span class="ui">อัปโหลดใบเสร็จ</span></td><td>มีแถบอธิบาย <span class="ui">หน้านี้ใช้ทำอะไร?</span> + 3 ชิป: <b>1 ส่งไฟล์ → 2 AI อ่านใบเสร็จ → 3 ตรวจแล้วบันทึก</b> · dropzone <span class="ui">ลากไฟล์มาวาง หรือคลิกเพื่อเลือก</span> รองรับ JPG/PNG/HEIC/PDF</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>เลือกรูปใบเสร็จจริง (ลองรูปจากมือถือใหญ่ๆ &gt;2MB)</td><td>รูปถูกย่ออัตโนมัติ → ขึ้น <span class="ui">✓ ย่อรูปเหลือ N.NN MB</span> · ไฟล์ HEIC (iPhone) ถูกแปลงให้ · PDF &gt;4MB อัปได้แต่เตือน <span class="ui">AI จะไม่สามารถอ่านอัตโนมัติได้ ต้องกรอกข้อมูลเอง</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>กรอก <span class="ui">วันที่อัพโหลดใบเสร็จ</span> (default วันนี้) + <span class="ui">หมายเหตุ (ไม่บังคับ)</span> แล้วกด <span class="ui">ให้ AI อ่านใบเสร็จ</span></td><td>ปุ่มไล่สถานะ: กำลังเตรียมไฟล์… → กำลังอัปโหลด… → AI กำลังอ่านเอกสาร… (มีบรรทัด <span class="ui">ประมาณ 10–20 วินาที</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>รอ AI เสร็จ</td><td>เด้งไปหน้ารายละเอียด <code>/expenses/{id}</code> พร้อมแถบสรุป <span class="ui">AI อ่านเอกสารแล้ว: ผู้ขาย X · เลขเอกสาร Y · วันที่ … · ยอดรวม … — กรุณาตรวจสอบก่อนยืนยัน</span> · ถ้าระบบ AI ไม่ได้ตั้งค่า → <span class="ui">ยังไม่ได้ตั้งค่าระบบ AI — เอกสารยังเป็นฉบับร่าง กรุณาตรวจและกรอกข้อมูลเอง</span> (ต้องยังได้ draft เสมอ ไม่หาย)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td><b>ลองไฟล์ที่ไม่ใช่ใบเสร็จ</b> (ใบเสนอราคา / รูปเซลฟี่ / เมนูอาหาร)</td><td>ขึ้นข้อความจำแนกประเภท เช่น <span class="ui">AI ตรวจพบว่าไฟล์นี้เป็น {ประเภท} — ...</span> และเอกสารถูกบล็อคไม่ให้ส่งตรวจ/ยืนยัน จนกว่าผู้มีสิทธิ์ตรวจจะ override พร้อมเหตุผล (<span class="ui">ยืนยันว่าเป็นหลักฐานค่าใช้จ่าย</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>ลองไฟล์นามสกุลปลอม</b> (เปลี่ยน .png เป็น .pdf)</td><td>ถูกปฏิเสธ: <span class="ui">รองรับเฉพาะไฟล์ JPG/JPEG, PNG, HEIC/HEIF หรือ PDF</span> (เช็ค MIME กับนามสกุลต้องตรงกัน)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>5.3 เส้นทางที่ 2 — บันทึกด้วยมือ (<code>/expenses/manual</code>)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>การ์ด <span class="ui">ข้อมูลเอกสาร</span>: เลือก <span class="ui">วันที่ค่าใช้จ่าย *</span> + แนบไฟล์ (ไม่บังคับ)</td><td>เปลี่ยนวันที่ข้ามช่วงจด/ไม่จด VAT ของบริษัท → การ์ด <span class="ui">ภาษี (Tax Code)</span> ต้องโผล่/หายแบบสด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>การ์ด <span class="ui">รายการค่าใช้จ่าย</span>: กรอก <span class="ui">รายละเอียด *</span> / <span class="ui">จำนวน *</span> / <span class="ui">ราคาต่อหน่วย *</span> / <span class="ui">ส่วนลด</span> + ปุ่ม <span class="ui">เพิ่มรายการ</span> + ช่อง <span class="ui">ค่าบริการ (Service charge)</span></td><td>ยอดรวมด้านขวาคำนวณสด · ค่าบริการกลายเป็นบรรทัดของตัวเองใช้ VAT/Tax Code เดียวกับรายการหลัก</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>(โหมดบริษัทจด VAT) การ์ดภาษี: เลือก Tax Code</td><td><span class="ui">รูปแบบ VAT</span> ถูก seed ตาม Tax Code อัตโนมัติ (ไม่มี VAT / VAT รวมในราคา / VAT แยกจากราคา) แต่ถ้าผู้ใช้แก้เองแล้ว ระบบต้องไม่ทับค่าอีก</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>กด <span class="ui">บันทึกฉบับร่าง</span></td><td>เด้งไปหน้ารายละเอียด สถานะ "ฉบับร่าง" · <b>เคสสำคัญ:</b> ถ้า draft สำเร็จแต่แนบไฟล์ล้ม → <span class="ui">บันทึกฉบับร่างแล้ว แต่แนบใบเสร็จไม่สำเร็จ: …</span> และปุ่มเปลี่ยนเป็น <span class="ui">เปิดรายการที่บันทึกไว้</span> — กดซ้ำต้อง<b>ไม่สร้างใบที่สอง</b></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>5.4 หน้ารายละเอียด — ตรวจ 3 ขั้น แล้วยืนยัน (<code>/expenses/{expenseId}</code>)</h3>
+<p>ซ้าย = ตัวดูเอกสาร (เลื่อนหน้า ‹1/3›, <span class="ui">เปิดเต็มจอ</span>, <span class="ui">โหลดไฟล์ใหม่</span> — ลิงก์ไฟล์หมดอายุ 15 นาที) · ขวา = ฟอร์ม 3 ขั้น: <b>ตรวจข้อมูล → ภาษีและเอกสาร → ตรวจก่อนส่ง</b></p>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>ขั้น 1 ตรวจข้อมูล:</b> เช็คแถบ AI (<span class="ui">AI อ่านข้อมูลได้ครบแล้ว — ตรวจทานให้ตรงกับใบเสร็จ</span> หรือชิปเหลือง <span class="ui">ต้องกรอกเอง: {ช่อง}</span> + ปุ่ม <span class="ui">อ่านเอกสารอีกครั้ง</span>) แล้วกรอก: ชื่อผู้ขาย* · เลขผู้เสียภาษีผู้ขาย (13 หลัก auto-format) · เลขที่เอกสาร · วันที่ค่าใช้จ่าย* · รูปแบบ VAT (5 แบบ) · รายการสินค้า (จำนวน/ราคา/ส่วนลด/หัก ณ ที่จ่าย/อัตรา VAT ต่อบรรทัด)</td><td>วันที่อนาคต → <span class="ui">วันที่ในใบเสร็จต้องไม่เกินวันนี้</span> · เลขภาษีไม่ครบ → <span class="ui">เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก</span> · ปุ่ม <span class="ui">ถัดไป</span> disable พร้อม tooltip <span class="ui">ยังมีข้อมูลที่ต้องแก้ {n} รายการ</span> · กดถัดไป = บันทึกอัตโนมัติ (<span class="ui">บันทึกข้อมูลและคำนวณยอดใหม่แล้ว</span>) — ไม่มีปุ่ม Save แยก</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>การ์ดยอดเงิน:</b> ตรวจ ฐานภาษี → VAT → <span class="ui">ยอดรวมทั้งสิ้น</span> → หัก ณ ที่จ่าย → <span class="ui">ยอดที่ต้องชำระจริง (หลังหัก ณ ที่จ่าย)</span></td><td>ใส่หัก ณ ที่จ่าย 0.03 ในบรรทัด → ระบบโชว์ <span class="ui">= 3%</span> และช่อง <span class="ui">ประเภทผู้รับเงิน (หัก ณ ที่จ่าย)</span> โผล่ (บุคคลธรรมดา ภ.ง.ด.3 / นิติบุคคล ภ.ง.ด.53) — ไม่เลือกแล้วยืนยันไม่ได้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>ขั้น 2 ภาษีและเอกสาร:</b> เลือก <span class="ui">ประเภทเอกสาร</span> (ใบเสร็จรับเงิน / ใบกำกับภาษีเต็มรูป / อย่างย่อ / สลิปโอน / บิลเขียนมือ / สกรีนช็อตคำสั่งซื้อ ฯลฯ) + <span class="ui">สถานะหลักฐานภาษี</span> + <span class="ui">หมวดหมู่ค่าใช้จ่าย</span> แล้วกด <span class="ui">บันทึกการตรวจ</span></td><td>เลือก "ใบกำกับภาษีอย่างย่อ" → สถานะหลักฐานเปลี่ยนเป็น <span class="ui">หลักฐานประกอบเท่านั้น</span> อัตโนมัติ + Tax Code บนบรรทัดถูกล้าง (ขอคืน VAT ไม่ได้) · toast <span class="ui">บันทึกการตรวจเอกสารเรียบร้อยแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>ขั้น 3 ตรวจก่อนส่ง:</b> ดู <span class="ui">สรุปการตรวจ</span> (<span class="ui">ผ่าน n รายการ · ต้องตรวจ m รายการ</span>) แล้วกด <span class="ui">ส่งตรวจสอบ</span></td><td>สถานะเปลี่ยนเป็น "พร้อมยืนยัน" · toast <span class="ui">ส่งตรวจสอบเรียบร้อยแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>login เป็นคนมีสิทธิ์ยืนยัน (qa.finance / qa.owner) เปิดใบเดิม กด <span class="ui">ยืนยันเอกสาร</span> (ปุ่มเขียว)</td><td>ได้เลข <b>EXP-YYYYMM-#####</b> · toast <span class="ui">ยืนยันและลงบัญชีเรียบร้อยแล้ว</span> · เอกสาร<b>ล็อคแก้ไม่ได้</b> มีบรรทัด <span class="ui">เอกสารยืนยันแล้ว แก้ไขข้อมูลไม่ได้ · หากข้อมูลไม่ถูกต้อง ให้ยกเลิกเอกสารแล้วบันทึกใหม่</span> + การ์ด <span class="ui">สถานะบัญชี</span> ขึ้น (รอ JV / JV-... / ไม่ต้องลงสมุด)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>เช็คเงื่อนไขที่ปุ่มยืนยันต้อง disable</b> (hover อ่าน tooltip)</td><td>มี 5 เหตุ: รายการซ้ำค้าง / ไม่มีใบเสร็จหรือใบรับรองแทน (<span class="ui">ต้องแนบใบเสร็จ หรือจัดทำใบรับรองแทนใบเสร็จรับเงินให้เสร็จก่อนยืนยัน</span>) / ยอด AI ไม่ตรง / <b>ยอดรวมเป็นศูนย์</b> (<span class="ui">ยอดรวมเป็นศูนย์ — กรุณาตรวจสอบรายละเอียดก่อนยืนยันเอกสาร</span>) / ใบรับรองแทนยังไม่ออกฉบับสมบูรณ์</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td><b>บันทึกการจ่าย:</b> ในใบที่ยืนยันแล้ว การ์ด <span class="ui">การชำระเงิน</span> ใส่ยอด + วิธี (เงินสด/โอนเงิน/บัตรเครดิต/เช็ค/อื่นๆ) กด <span class="ui">บันทึกชำระ</span></td><td>toast <span class="ui">บันทึกการจ่ายเรียบร้อยแล้ว</span> · ประวัติการจ่าย append ต่อท้าย จ่ายเกินยอดคงค้างไม่ได้ · จ่ายครบ → badge เปลี่ยนเป็น "ชำระแล้ว"</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>8</td><td><b>ยกเลิกเอกสาร (void):</b> ใบ CONFIRMED กด <span class="ui">ยกเลิกเอกสาร</span> ใส่ <span class="ui">เหตุผลยกเลิก</span> (ต้อง ≥3 ตัวอักษร)</td><td>toast <span class="ui">ยกเลิกเอกสารเรียบร้อยแล้ว</span> · ถ้าเคยลงบัญชี JV จะถูกกลับรายการ (reversal) อัตโนมัติ · สถานะจบที่ VOIDED ถาวร</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>9</td><td><b>ตีกลับ (reject → เริ่มใหม่):</b> ใบที่ยังไม่ยืนยัน กด <span class="ui">ยกเลิกรายการ</span> + เหตุผล → แล้วกด <span class="ui">เริ่มตรวจใหม่</span></td><td>REJECTED โชว์เหตุผลสีแดง → เริ่มตรวจใหม่แล้วกลับมาที่ "รอตรวจสอบ" (ไม่กระโดดไปพร้อมยืนยันทันที) · <b>หมายเหตุ:</b> การ "ตีกลับใบที่ CONFIRMED ไปแก้" <b>ไม่มีในระบบ</b> (spec มีแต่ยังไม่ทำ) — ทางเดียวคือ void</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>5.5 ระบบตรวจใบซ้ำ (duplicate detection)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>อัปโหลด<b>ไฟล์เดียวกันซ้ำ 2 รอบ</b></td><td>ใบที่สองขึ้นการ์ดเหลือง <span class="ui">⚠ คำเตือน: อาจซ้ำกับรายการอื่น</span> ระบุคู่ซ้ำ + คะแนน + เหตุผล <span class="ui">ไฟล์เอกสารเป็นไฟล์เดียวกัน</span> (คะแนน 40)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ถ่ายรูปใบเสร็จ<b>ใบเดิมมุมใหม่</b> (คนละไฟล์)</td><td>ยังจับได้ด้วย perceptual hash → เหตุผล <span class="ui">ภาพเอกสารเหมือนกัน</span> (คะแนน 35)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>คีย์มือ 2 ใบ: ผู้ขายเดียวกัน + วันเดียวกัน + ยอดเท่ากัน แล้วกดปุ่ม <span class="ui">ตรวจหารายการซ้ำ</span></td><td>toast <span class="ui">พบรายการที่อาจซ้ำ {n} รายการ</span> (เกณฑ์ 25 คะแนน) หรือ <span class="ui">ไม่มีรายการซ้ำ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>กด <span class="ui">ยืนยันว่าเป็นรายการซ้ำ</span> (ใส่เหตุผล ≥3 ตัว)</td><td>ใบนี้กลายเป็น CONFIRMED_DUPLICATE — <b>จะไม่ลงบัญชีตลอดไป</b> (สถานะบัญชีขึ้น "-") + คู่เทียบที่เหลือถูกปิดอัตโนมัติ · กด <span class="ui">ไม่ใช่รายการซ้ำ</span> = ปลดล็อคยืนยันได้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>คู่ซ้ำอยู่คนละสาขา (ผู้ตรวจไม่มีสิทธิ์เห็นอีกสาขา)</td><td>เห็นข้อความ <span class="ui">พบรายการที่อาจซ้ำ แต่ต้องให้ผู้ตรวจสอบที่มีสิทธิ์เข้าถึงรายการคู่ซ้ำเป็นผู้ตัดสิน</span> และไม่มีปุ่มตัดสิน</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>5.6 หน้ารายการ / หมวดหมู่ / หลักฐานทางบัญชี</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>รายการค่าใช้จ่าย</b> (<code>/expenses</code>): ตัวกรอง รายวัน/รายเดือน + ปุ่มวันนี้ · ชิปสถานะ (ทั้งหมด/ฉบับร่าง/รอตรวจสอบ/ยืนยันแล้ว/ปฏิเสธ) · ช่องค้นหา · KPI 5 ใบ (ค่าใช้จ่ายรวม / รอตรวจสอบ / ค้างจ่าย / เกินกำหนดชำระ / ภาษีซื้อ VAT)</td><td>เปิดใบแล้วกด back — ตัวกรองเดิมต้องคงอยู่ · reload หรือสลับเมนู — ตัวกรอง reset (ตั้งใจ) · แถวที่ยกเลิกไม่ถูกนับใน KPI</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ปุ่ม <span class="ui">ส่งออก Excel</span> + ชุดคอลัมน์ <span class="ui">แบบย่อ (อ่านง่าย)</span> / <span class="ui">แบบเต็ม (สำนักงานบัญชี)</span></td><td>ช่วงที่ไม่มีใบยืนยัน → toast เหลือง <span class="ui">ไม่มีรายการที่ยืนยันแล้วในช่วงนี้ จึงยังส่งออกไม่ได้</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ปุ่มลบ (ถังขยะ) ในแถว</td><td>Modal <span class="ui">ลบรายการ “…” อย่างถาวร?</span> → <span class="ui">ลบถาวร</span> ทำได้เฉพาะ DRAFT/REJECTED (หรือใบ 0 บาทที่ยังไม่จ่าย) · ใบที่มีข้อมูลเชื่อม (จ่ายแล้ว/ลง JV/มีภาษี) → <span class="ui">ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: {อะไร}</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>หมวดหมู่</b> (<code>/expenses/categories</code>): ปุ่ม <span class="ui">+ เพิ่มหมวดหมู่ใหม่</span> · rename ด้วยดินสอ · เลือก <span class="ui">Tax Code เริ่มต้น</span> ต่อแถว · toggle เก็บถาวร</td><td>หมวด <span class="ui">ค่าเริ่มต้นระบบ</span> (12 หมวด seed) แก้/ลบไม่ได้ · Modal เก็บถาวรอธิบาย <span class="ui">หมวดหมู่ที่เก็บถาวรจะไม่แสดงให้ AI หรือผู้ใช้เลือกอีก แต่รายการเดิมที่ใช้หมวดนี้ยังอยู่ครบ</span> · Tax Code เริ่มต้นมีผลแค่ "แนะนำ" ตอนบรรทัดยังไม่เลือกเอง</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td><b>หลักฐานทางบัญชี</b> (<code>/expenses/evidence</code>): มุมมองส่งงานสำนักงานบัญชี — โฟลเดอร์ปี/เดือน + ชิป <span class="ui">⚠ ต้องตรวจ</span> / <span class="ui">ไม่มีไฟล์</span> / <span class="ui">ยังไม่ตรวจภาษี</span> / <span class="ui">ไม่มีผู้ขาย</span> / <span class="ui">ยังไม่จัดหมวด</span></td><td>โชว์เฉพาะใบยืนยันแล้ว (กับยกเลิก) · ปุ่ม <span class="ui">ส่งออกชุดเอกสารให้บัญชี</span> → ได้ XLSX + <span class="ui">ดาวน์โหลดรายการหลักฐาน (JSON)</span> ที่มีลิงก์ไฟล์หมดอายุ · ปุ่ม <span class="ui">ตรวจรายการเก่าก่อน Auto-post</span> เปิด modal ลงบัญชีย้อนหลัง (สูงสุด 50 ใบ/ครั้ง)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>5.7 Checklist หาบัคเพิ่ม (VAT / AI / ความพร้อมกัน)</h3>
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span><b>VAT ไม่ระบุ ≠ 0%:</b> ตั้งรูปแบบ "VAT รวมในราคา" แต่ปล่อยอัตรา <span class="ui">ยังไม่ระบุ</span> → ต้องโดนบล็อค <span class="ui">เอกสารนี้ระบุว่ามี VAT — กรุณาเลือกอัตรา หรือกรอกยอด VAT ตามใบเสร็จ</span> · ส่วนเลือก 0% จริงๆ (ส่งออก) ต้องยืนยันผ่านและไม่เด้งกลับเป็น 7%</span></li>
+<li><input class="ck" type="checkbox"><span><b>กรอกยอด VAT ตามใบเสร็จ:</b> เลือก "อัตราอื่น" แล้วใส่ยอดบาท (เช่น 11.78) → ระบบคำนวณอัตราย้อนกลับให้เอง — เทียบกับใบจริงต้องเป๊ะ ±0.05</span></li>
+<li><input class="ck" type="checkbox"><span><b>ยอด AI ไม่ตรง:</b> แก้ยอดให้ต่างจากที่ AI อ่าน &gt; ฿0.05 → การ์ดเหลืองบังคับใส่เหตุผล + ปุ่ม <span class="ui">รับรองว่ายอด ฿X ถูกต้อง</span> · รับรองแล้ว<b>แก้ยอดอีกครั้ง</b> → บล็อคต้องกลับมาใหม่ (การรับรองผูกกับยอดเป๊ะๆ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>2 แท็บชนกัน:</b> เปิดใบเดียวกัน 2 แท็บ บันทึกแท็บแรก แล้วบันทึกแท็บสอง → ต้องเจอ error ให้ reload ไม่ใช่เขียนทับเงียบๆ</span></li>
+<li><input class="ck" type="checkbox"><span><b>อักขระพิเศษ:</b> พิมพ์ <code>&lt;script&gt;</code> หรือ &amp; ในชื่อผู้ขาย → <span class="ui">ห้ามใช้อักขระพิเศษ: …</span></span></li>
+<li><input class="ck" type="checkbox"><span><b>ใบเสร็จเที่ยงคืน:</b> สร้างใบเวลา ~23:50 → ตัวกรอง "รายวัน" ของวันนั้นต้องยังหาเจอ (วันที่เก็บแบบ date-only)</span></li>
+<li><input class="ck" type="checkbox"><span><b>ลิงก์ไฟล์หมดอายุ:</b> เปิดหน้ารายละเอียดทิ้งไว้ 20 นาที รูปจะโหลดไม่ขึ้น → ปุ่ม <span class="ui">โหลดไฟล์ใหม่</span> ต้องกู้กลับมาได้ (กดถี่สุด 1 ครั้ง/20 วิ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>ส่วนลดเกินยอด:</b> ใส่ส่วนลดมากกว่าจำนวน×ราคา → <span class="ui">ส่วนลดมากกว่ายอดของรายการนี้</span></span></li>
+<li><input class="ck" type="checkbox"><span><b>บริษัทไม่จด VAT (SIMPLE mode):</b> ทั้งหน้า manual/review/evidence ต้องไม่มีส่วนภาษีเลย — แต่ใบเก่าที่เคยมี VAT ต้องยังโชว์ส่วนภาษีของมันได้</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s6" style="--accent:#be185d">
+<h2>6. ใบรับรองแทนใบเสร็จรับเงิน (ใบทดแทนใบเสร็จ) <span class="secprog"></span></h2>
+<p class="desc">ใช้เมื่อจ่ายเงินจริงแต่ผู้รับเงินออกใบเสร็จให้ไม่ได้ (แม่ค้าตลาด วินมอไซค์ ฟรีแลนซ์) — เป็น wizard เอกสารทางการ มีลงลายมือชื่อ 2 คน และออกเป็น PDF เลขที่ <b>SRC-YYYYMM-#####</b> (รีเซ็ตทุกเดือน)</p>
+<div class="meta">
+<span class="tag">Hub <b><code>/expenses/substitute-receipts</code></b></span>
+<span class="tag">ตั้งค่า <b><code>/settings/substitute-receipt</code></b></span>
+<span class="tag">คู่มือในแอป <code>/user-guide/substitute-receipts</code></span>
+<span class="tag">⚠ ใช้ได้บนเว็บเท่านั้น — session จาก LINE ถูกบล็อคทุก endpoint</span>
+</div>
+
+<div class="svgwrap">
+<svg viewBox="0 0 940 150" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12">
+  <defs><marker id="ar3" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+  <rect x="10" y="45" width="140" height="46" rx="9" fill="#f1f5f9" stroke="#94a3b8"/><text x="80" y="64" text-anchor="middle" font-weight="700">เลือก/สร้างรายการ</text><text x="80" y="80" text-anchor="middle" font-size="10.5" fill="#475569">ค่าใช้จ่ายที่ไม่มีใบเสร็จ</text>
+  <rect x="190" y="45" width="150" height="46" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="265" y="64" text-anchor="middle" font-weight="700">PREPARED</text><text x="265" y="80" text-anchor="middle" font-size="10.5" fill="#b45309">เตรียมแล้ว รอผู้จ่ายลงนาม</text>
+  <rect x="380" y="45" width="170" height="46" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="465" y="64" text-anchor="middle" font-weight="700">PAYER_CERTIFIED</text><text x="465" y="80" text-anchor="middle" font-size="10.5" fill="#b45309">ผู้จ่ายลงนามแล้ว รออนุมัติ</text>
+  <rect x="590" y="45" width="130" height="46" rx="9" fill="#f0fdf4" stroke="#86efac"/><text x="655" y="64" text-anchor="middle" font-weight="700">ISSUED</text><text x="655" y="80" text-anchor="middle" font-size="10.5" fill="#15803d">ออกเอกสาร + expense จ่ายแล้ว</text>
+  <rect x="770" y="45" width="150" height="46" rx="9" fill="#fef2f2" stroke="#fca5a5"/><text x="845" y="64" text-anchor="middle" font-weight="700">SUPERSEDED</text><text x="845" y="80" text-anchor="middle" font-size="10.5" fill="#b91c1c">ยกเลิก/แทนด้วยฉบับแก้ไข</text>
+  <line x1="150" y1="68" x2="190" y2="68" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar3)"/>
+  <line x1="340" y1="68" x2="380" y2="68" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar3)"/><text x="360" y="59" text-anchor="middle" font-size="10" fill="#64748b">ลงนาม</text>
+  <line x1="550" y1="68" x2="590" y2="68" stroke="#15803d" stroke-width="2" marker-end="url(#ar3)"/><text x="570" y="59" text-anchor="middle" font-size="10" fill="#15803d">อนุมัติ</text>
+  <path d="M265,91 Q400,135 800,91" fill="none" stroke="#b91c1c" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar3)"/><text x="480" y="126" font-size="10" fill="#b91c1c">ยกเลิก/จัดทำฉบับแก้ไข ได้จากทุกสถานะ (เก็บประวัติทุกฉบับ)</text>
+</svg>
+<p class="cap">ภาพที่ 3 — วงจรใบรับรองแทนใบเสร็จ · ตอน ISSUED ระบบตั้ง expense เป็น "ชำระแล้ว" ให้อัตโนมัติ</p>
+</div>
+
+<h3>6.1 ตั้งค่าก่อนใช้ครั้งแรก (<code>/settings/substitute-receipt</code> — ต้องมีสิทธิ์ company.setup.manage)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เปิดหน้า — เช็ค badge สถานะมุมหัวข้อ</td><td><span class="ui">ตั้งค่าแล้ว</span> หรือ <span class="ui">ยังไม่ตั้งค่า</span> (เหลือง) · <b>ไม่ตั้งเลยก็ใช้ได้</b> — ค่า default คือโหมดเจ้าของลงนามเอง + บังคับหลักฐานเงินสด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>การ์ด <span class="ui">รูปแบบการอนุมัติ</span> — 2 ตัวเลือก</td><td>① <span class="ui">เจ้าของกิจการลงนามและอนุมัติด้วยตนเอง (ค่าเริ่มต้น)</span> — เจ้าของเป็นทั้งผู้จ่าย+ผู้อนุมัติได้ (PDF พิมพ์กำกับ <span class="ui">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</span>) ② <span class="ui">กำหนดผู้อนุมัติแยกจากผู้จ่ายเงิน</span> — บังคับคนละคน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>เลือกโหมด ② แล้วดูการ์ด <span class="ui">ผู้อนุมัติที่ได้รับมอบหมาย</span></td><td>รายชื่อ = สมาชิก active ที่มีสิทธิ์ <span class="ui">มีสิทธิ์ยืนยันค่าใช้จ่าย</span> เท่านั้น · เลือกได้ 1–20 คน · ไม่เลือกเลยแล้วกดบันทึก → <span class="ui">เลือกผู้อนุมัติอย่างน้อย 1 คน</span> · ถ้าคนที่เคยเลือกโดนถอนสิทธิ์ไปแล้ว → แบนเนอร์ <span class="ui">ผู้อนุมัติเดิมบางคนไม่มีสิทธิ์หรือไม่ active แล้ว กรุณาเลือกผู้อนุมัติใหม่ก่อนบันทึก</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>การ์ด <span class="ui">หลักฐานเมื่อชำระเงินสด</span> + ช่อง <span class="ui">คำแนะนำหลักฐานของบริษัท</span> (จำกัด 500 ตัว มี counter)</td><td>ค่า default = <span class="ui">บังคับหลักฐานการจ่ายเงินแยกอย่างน้อย 1 ไฟล์ (แนะนำ)</span> · ข้อความคำแนะนำที่พิมพ์จะไปโผล่ใน wizard ขั้นแนบหลักฐานเมื่อจ่ายเงินสด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">บันทึกการตั้งค่า</span></td><td>toast <span class="ui">บันทึกการตั้งค่าใบรับรองแทนใบเสร็จแล้ว</span> · <b>สิ่งที่ตั้งไม่ได้ที่นี่ (อย่าตามหา):</b> โลโก้หัวกระดาษ / รูปลายเซ็นบริษัท / prefix เลขเอกสาร — ลายเซ็นอัปโหลดสดใน wizard ทีละฉบับ</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>6.2 Hub + เริ่ม wizard</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เปิดเมนู <span class="ui">ใบรับรองแทนใบเสร็จ</span></td><td>หัว <span class="ui">ใบรับรองแทนใบเสร็จรับเงิน</span> + ปุ่ม <span class="ui">+ สร้างใบรับรองฉบับใหม่</span> · KPI 4 ใบ (ออกเอกสารแล้วเดือนนี้ / มูลค่ารวม / รอลงนาม-รออนุมัติ / ยกเลิกแล้ว) · ถ้ามีงานค้างของเรา จะมีการ์ด <span class="ui">รอคุณลงนาม (n)</span> / <span class="ui">รอคุณอนุมัติ (n)</span> กดแล้วกระโดดเข้าใบแรก · ตัวกรองสถานะ + เดือนที่จ่ายเงิน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กดสร้าง — ดูแถบเส้นทาง <span class="ui">เส้นทางการจัดทำเอกสาร</span></td><td>4 สถานี: <b>รายการค่าใช้จ่าย → ข้อมูลและหลักฐาน → ลงนามและอนุมัติ → รับเอกสาร</b> + <span class="ui">ขั้นตอน {n} จาก 4</span> · มีแถบเตือนภาษีทุกครั้ง: <span class="ui">เอกสารนี้ไม่ใช่ใบกำกับภาษี จึงใช้ขอคืน VAT ไม่ได้ และไม่ยกเว้นหน้าที่ภาษีหัก ณ ที่จ่าย</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>ขั้น 1:</b> ตอบคำถาม <span class="ui">รายการนี้ถูกบันทึกในระบบแล้วหรือยัง?</span></td><td>① <span class="ui">บันทึกรายการไว้แล้ว</span> (badge <span class="ui">แนะนำ</span>) → ตัวเลือกโชว์เฉพาะใบที่<b>เข้าเกณฑ์</b>: ยังไม่ยืนยัน + ไม่มีไฟล์ใบเสร็จหลัก + สกุล THB + ยอด &gt; 0 + ทุกบรรทัดมีรายละเอียด ② <span class="ui">ยังไม่ได้บันทึกรายการ</span> → ฟอร์มย่อสร้าง draft สดในหน้านี้ (สูงสุด 8 บรรทัด) พร้อมคำอธิบาย <span class="ui">สิ่งที่จะเกิดขึ้น: ระบบจะสร้างรายการค่าใช้จ่าย "ฉบับร่าง" และเลือกให้โดยอัตโนมัติ...</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>เลือกใบแล้วต้องติ๊ก consent</td><td>กล่องเหลืองบังคับติ๊ก <span class="ui">ข้าพเจ้ารับทราบและยืนยันการดำเนินการ *</span> · rail ขวา <span class="ui">ผู้ช่วยตรวจความพร้อม</span> ต้องขึ้น <span class="ui">ข้อมูลส่วนนี้ครบแล้ว พร้อมไปต่อ</span> ก่อนกด <span class="ui">ยืนยันรายการนี้และกรอกข้อมูลต่อ</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>6.3 ขั้น 2 — ผู้รับเงินและเหตุผล + ขั้น 3 — แนบหลักฐาน</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>กรอกส่วน <span class="ui">ผู้รับเงินคือใคร</span>: ชื่อผู้รับเงิน* (≤200) · ที่อยู่ (ไม่บังคับ ≤300) · เลขบัตร ปชช./ผู้เสียภาษี (ถ้ากรอกต้อง 13 หลัก มี counter <span class="ui">กรอกแล้ว {n} จาก 13 หลัก</span>)</td><td>ผิดเงื่อนไขขึ้น error รายช่อง เช่น <span class="ui">เลขประจำตัวต้องมี 13 หลัก</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ส่วน <span class="ui">ทำไมจึงไม่มีใบเสร็จ</span>: เลือกประเภทเหตุผล (4 แบบ: ผู้รับเงินไม่สามารถออกใบเสร็จ / ไม่ได้ออกให้ / หลักฐานไม่ครบถ้วน / อื่น) + เหตุผล* + <span class="ui">วัตถุประสงค์ทางธุรกิจ *</span></td><td>มีคำเตือน <span class="ui">หากเคยได้รับใบเสร็จแล้วแต่เอกสารสูญหาย ควรขอสำเนาหรือใบแทนจากผู้ออกก่อน...</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ส่วน <span class="ui">ใครจ่าย และจ่ายอย่างไร</span>: เลือก <span class="ui">ผู้จ่ายเงินจริง *</span> (dropdown สมาชิกในสาขา) + วิธีชำระ (เงินสด/โอนเงิน/บัตรเครดิต/เช็ค/วิธีอื่น) + วันที่ชำระเงิน*</td><td><b>ผู้จ่ายเงินจริงคือคนที่ต้องลงนามเอง</b> ในขั้นถัดไป — เลือกคนอื่นเพื่อทดสอบ flow 2 คน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>ขั้น 3 แนบหลักฐาน</b> — 2 การ์ด: <span class="ui">หลักฐานประกอบรายการ *</span> (บังคับ ≥1 เสมอ) และ <span class="ui">หลักฐานการชำระเงิน</span> (บังคับเมื่อไม่ใช่เงินสด หรือเงินสด+นโยบายเข้ม)</td><td>เลือกไฟล์เดิมของ expense หรืออัปใหม่ (<span class="ui">รองรับไฟล์รูปภาพและ PDF</span>) · รวมทุกไฟล์ได้สูงสุด <b>8 ไฟล์</b> — เกิน → <span class="ui">ใบรับรอง 1 ใบรองรับหลักฐานรวมได้สูงสุด 8 ไฟล์ กรุณานำไฟล์ที่ไม่จำเป็นออก</span> · จ่ายเงินสดมีปุ่มพิเศษ <span class="ui">พิมพ์แบบฟอร์มใบสำคัญรับเงิน</span> (ดาวน์โหลด PDF ไปให้ผู้รับเงินเซ็น แล้วถ่ายรูปกลับมาแนบ)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">จัดทำเอกสารเพื่อให้ผู้จ่ายเงินลงลายมือชื่อ</span></td><td>ได้เลข <b>SRC-YYYYMM-#####</b> · สถานะ PREPARED · แจ้งเตือนวิ่งไปหาผู้เกี่ยวข้อง (<span class="ui">ใบรับรองแทนใบเสร็จรอการลงลายมือชื่อ เลขที่ SRC-…</span>) · <b>ผลข้างเคียงที่ต้องรู้:</b> expense ต้นทางถูกปรับ tax evidence เป็น "หลักฐานประกอบเท่านั้น" + ภาษีซื้อขอคืนไม่ได้ ทันที</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>6.4 ขั้น 4 — ลงนาม 2 คน แล้วรับเอกสาร</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ถ้าเราไม่ใช่ผู้จ่าย: ดูหน้าจอรอ</td><td><span class="ui">รอผู้จ่ายเงิน ({ชื่อ}) ลงลายมือชื่อด้วยตนเอง</span> + ปุ่ม <span class="ui">คัดลอกลิงก์สำหรับส่งให้ผู้ลงนาม</span> (→ <span class="ui">คัดลอกลิงก์แล้ว</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>login เป็น<b>ผู้จ่ายเงินจริง</b> เปิดลิงก์ — ทำ 4 บล็อค: ① <span class="ui">ตำแหน่งของผู้จ่ายเงิน *</span> ② <span class="ui">ตรวจสอบเอกสารฉบับเต็ม *</span> (ต้องเปิด preview จนโหลดเสร็จถึงได้ badge <span class="ui">ตรวจแล้ว</span>) ③ ลายมือชื่อ — วาดบนจอ หรืออัปโหลดรูปแล้วกด <span class="ui">ลบพื้นหลังสีอ่อนและตรวจสอบลายมือชื่อ</span> ④ ติ๊กคำรับรอง <span class="ui">ข้าพเจ้าขอรับรองว่ารายจ่ายนี้เกิดขึ้นจริงเพื่อกิจการ...</span></td><td>ข้ามการ preview → <span class="ui">กรุณาเปิดและตรวจสอบเอกสารฉบับเต็มก่อนลงลายมือชื่อ</span> · รูปลายเซ็นต้อง PNG/JPEG ≤2MB · กด <span class="ui">ลงลายมือชื่อรับรอง</span> → toast <span class="ui">ผู้จ่ายเงินลงลายมือชื่อรับรองแล้ว</span> → สถานะ PAYER_CERTIFIED</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>login เป็น<b>ผู้อนุมัติ</b> — ขั้นตอนเหมือนกัน: เปิดฉบับที่ผู้จ่ายลงนามแล้ว* → ตำแหน่ง* → ลายมือชื่อ* → ติ๊ก <span class="ui">ข้าพเจ้าได้ตรวจสอบเอกสารและหลักฐานแล้ว และอนุมัติ...</span> → กด <span class="ui">อนุมัติและออกเอกสาร</span></td><td>สถานะ ISSUED · หน้าจบมี ✓ ใหญ่ <span class="ui">จัดทำใบรับรองแทนใบเสร็จรับเงินเสร็จสิ้น</span> + ปุ่ม <span class="ui">ดาวน์โหลด PDF</span> / <span class="ui">เปิดดูเอกสาร</span> / <span class="ui">ไปยืนยันรายการเพื่อบันทึกบัญชี</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ตรวจ PDF ที่ได้</td><td>หัว <span class="ui">ใบรับรองแทนใบเสร็จรับเงิน</span> + เลขที่ + ข้อมูลบริษัท/สาขา/เลขภาษี + ตารางรายการ + <span class="ui">รวมเป็นตัวอักษร: …บาทถ้วน</span> + เหตุผล + วัตถุประสงค์ + กล่องคำรับรอง + ลายเซ็น 2 ช่อง + footer <span class="ui">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</span> · ชื่อไฟล์ = เลขเอกสาร.pdf</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กลับไปดู expense ต้นทาง</td><td><b>ระบบตั้งเป็นชำระแล้วให้อัตโนมัติ</b> (ยอดค้าง 0, มีรายการจ่ายตามวิธี/วันที่ในใบรับรอง) → เหลือแค่กด <span class="ui">ยืนยันเอกสาร</span> ปิดจบ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>ยกเลิก/ฉบับแก้ไข:</b> ใน panel <span class="ui">ประวัติและการจัดทำฉบับแก้ไข</span> ใส่เหตุผล* แล้วกด <span class="ui">ยกเลิกฉบับนี้และเก็บประวัติ</span> → แล้วกด <span class="ui">จัดทำฉบับแก้ไข</span></td><td>ฉบับเดิมกลายเป็น SUPERSEDED (PDF จะมีตราประทับแดง <b>SUPERSEDED</b> ชื่อไฟล์ต่อท้าย -SUPERSEDED) · ฉบับใหม่เริ่มที่ขั้นข้อมูลโดย prefill ผู้จ่ายเดิม · void expense ที่มีใบ ISSUED → ใบรับรองโดนประทับ <b>VOID</b> อัตโนมัติ</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>6.5 Checklist หาบัค — จุดที่ระบบต้องกันให้ได้</h3>
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span><b>กติกาผู้อนุมัติ (อัปเดต 2026-08-10):</b> โหมด OWNER_SELF — <b>OWNER/ADMIN/MANAGER</b> ที่เป็นผู้จ่ายเอง อนุมัติใบตัวเองได้ (role exemption เดียวกับเบิกจ่าย) · role อื่น (เช่น FINANCE ล้วน) ที่เป็นผู้จ่าย พยายามอนุมัติใบตัวเอง → ต้องโดนปฏิเสธ · โหมดกำหนดผู้อนุมัติยังเข้มเหมือนเดิม (คนละคนเสมอ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>โหมดกำหนดผู้อนุมัติ:</b> ตั้งผู้อนุมัติคนเดียว = คนเดียวกับผู้จ่าย → กด "จัดทำเอกสาร" ต้องล้มตั้งแต่ต้น (ไม่มีผู้อนุมัติที่ valid)</span></li>
+<li><input class="ck" type="checkbox"><span><b>แก้ใบระหว่างทาง:</b> เตรียมเอกสารแล้ว (PREPARED) → ไปแก้ยอด expense → กลับมาลงนาม → ต้องโดนบล็อคให้เตรียมฉบับใหม่ (ข้อมูลบนเอกสารต้องตรงกับ expense เป๊ะ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>กดสร้างรัวๆ:</b> ดับเบิลคลิกปุ่มจัดทำเอกสาร → ต้องได้เลข SRC เดียว ไม่เผาเลข 2 เบอร์</span></li>
+<li><input class="ck" type="checkbox"><span><b>ไฟล์ซ้ำสองช่อง:</b> เลือกไฟล์เดียวกันเป็นทั้ง "หลักฐานประกอบ" และ "หลักฐานการชำระเงิน" → server ต้องปฏิเสธ</span></li>
+<li><input class="ck" type="checkbox"><span><b>เปลี่ยนวิธีชำระกลางทาง:</b> เงินสด→โอนเงิน หลังผ่านขั้น 2 → การ์ดหลักฐานการชำระเงินต้องเปลี่ยนจาก "ไม่บังคับ" เป็น <span class="ui">จำเป็น</span> สดๆ</span></li>
+<li><input class="ck" type="checkbox"><span><b>เปลี่ยนนโยบายกลางทาง:</b> เตรียม+ลงนามใบเงินสดไว้ (ไม่มีไฟล์หลักฐานจ่าย นโยบายผ่อน) → admin เปลี่ยนนโยบายเป็นเข้ม → ผู้อนุมัติกดอนุมัติ → ต้องโดนบล็อคให้ทำฉบับใหม่</span></li>
+<li><input class="ck" type="checkbox"><span><b>STAFF ที่เป็นผู้จ่าย:</b> พนักงานสิทธิ์ต่ำสุดที่ถูกระบุเป็นผู้จ่าย เปิดลิงก์จากแจ้งเตือน → ต้องดู+ลงนามใบของตัวเองได้ (ไม่ต้องมีสิทธิ์ expense.review)</span></li>
+<li><input class="ck" type="checkbox"><span><b>ข้ามเดือน:</b> ออกใบวันสิ้นเดือน แล้วอีกใบวันที่ 1 → เลขต้องรีเซ็ต SRC-202608-xxxxx → SRC-202609-00001</span></li>
+<li><input class="ck" type="checkbox"><span><b>✔ แก้แล้ว (2026-08-10) — ทดสอบการ revert:</b> ออกใบจน ISSUED (expense กลายเป็น "ชำระแล้ว") → กดยกเลิกฉบับ (supersede) → expense ต้อง<b>กลับเป็น "ยังไม่ชำระ"</b> ยอดค้างกลับมาเต็ม รายการจ่ายที่ระบบสร้างตอนออกเอกสารถูก void และวิธีจ่าย/วันที่จ่ายถูกล้าง</span></li>
+<li><input class="ck" type="checkbox"><span><b>มือถือ:</b> วาดลายเซ็นด้วยนิ้วบนจอมือถือ — เส้นต้องไม่ขาด ปุ่ม <span class="ui">ล้างลายมือชื่อ</span> ทำงาน</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s7" style="--accent:#b45309">
+<h2>7. การเบิกจ่าย (เบิกคืนพนักงาน) <span class="secprog"></span></h2>
+<p class="desc">Flow 3 บทบาทต่อเนื่อง: พนักงานยื่น → หัวหน้าอนุมัติ → การเงินอนุมัติจ่าย+บันทึกจ่าย · ตอนการเงินอนุมัติจ่าย ระบบจะ<b>สร้างเอกสารค่าใช้จ่าย (§5) ให้อัตโนมัติ 1 ใบต่อ 1 บรรทัด</b></p>
+<div class="meta">
+<span class="tag">Route <b><code>/companies/{id}/reimbursements</code></code></b> (hub 4 แท็บ) + <code>/reimbursements/new</code></span>
+<span class="tag">เลขคำขอ <b>RB-YYYYMM-#####</b> · เลขจ่าย <b>RBPAY-YYYYMM-#####</b></span>
+<span class="tag">ผู้เล่น: qa.staff → qa.manager → qa.finance</span>
+</div>
+
+<div class="svgwrap">
+<svg viewBox="0 0 940 240" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12">
+  <defs><marker id="ar4" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+  <rect x="10" y="60" width="100" height="46" rx="9" fill="#f1f5f9" stroke="#94a3b8"/><text x="60" y="79" text-anchor="middle" font-weight="700">DRAFT</text><text x="60" y="95" text-anchor="middle" font-size="10.5" fill="#475569">ร่าง</text>
+  <rect x="150" y="60" width="150" height="46" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="225" y="79" text-anchor="middle" font-weight="700">PENDING_APPROVAL</text><text x="225" y="95" text-anchor="middle" font-size="10.5" fill="#b45309">รออนุมัติ · ได้เลข RB-</text>
+  <rect x="345" y="60" width="150" height="46" rx="9" fill="#fffbeb" stroke="#fcd34d"/><text x="420" y="79" text-anchor="middle" font-weight="700">FINANCE_REVIEW</text><text x="420" y="95" text-anchor="middle" font-size="10.5" fill="#b45309">รอตรวจสอบการเงิน</text>
+  <rect x="540" y="60" width="170" height="46" rx="9" fill="#eff6ff" stroke="#93c5fd"/><text x="625" y="79" text-anchor="middle" font-weight="700">READY_FOR_PAYMENT</text><text x="625" y="95" text-anchor="middle" font-size="10.5" fill="#1d4ed8">พร้อมจ่าย · expense ถูกสร้างแล้ว</text>
+  <rect x="750" y="60" width="100" height="46" rx="9" fill="#f0fdf4" stroke="#86efac"/><text x="800" y="79" text-anchor="middle" font-weight="700">PAID</text><text x="800" y="95" text-anchor="middle" font-size="10.5" fill="#15803d">จ่ายแล้ว</text>
+  <rect x="150" y="170" width="150" height="42" rx="9" fill="#fef2f2" stroke="#fca5a5"/><text x="225" y="188" text-anchor="middle" font-weight="700">REJECTED</text><text x="225" y="203" text-anchor="middle" font-size="10.5" fill="#b91c1c">ปฏิเสธ — กด "แก้ไขและยื่นใหม่" กลับเป็นร่างได้</text>
+  <rect x="480" y="170" width="150" height="42" rx="9" fill="#f1f5f9" stroke="#94a3b8"/><text x="555" y="188" text-anchor="middle" font-weight="700">CANCELLED</text><text x="555" y="203" text-anchor="middle" font-size="10.5" fill="#475569">ผู้ยื่นยกเลิกเองได้ก่อนจ่าย</text>
+  <line x1="110" y1="83" x2="150" y2="83" stroke="#64748b" stroke-width="1.6" marker-end="url(#ar4)"/><text x="130" y="74" text-anchor="middle" font-size="10" fill="#64748b">ส่งอนุมัติ</text>
+  <line x1="300" y1="83" x2="345" y2="83" stroke="#15803d" stroke-width="1.8" marker-end="url(#ar4)"/><text x="322" y="74" text-anchor="middle" font-size="10" fill="#15803d">อนุมัติ</text>
+  <line x1="495" y1="83" x2="540" y2="83" stroke="#15803d" stroke-width="1.8" marker-end="url(#ar4)"/><text x="518" y="74" text-anchor="middle" font-size="10" fill="#15803d">อนุมัติจ่าย</text>
+  <line x1="710" y1="83" x2="750" y2="83" stroke="#15803d" stroke-width="1.8" marker-end="url(#ar4)"/><text x="730" y="74" text-anchor="middle" font-size="10" fill="#15803d">บันทึกจ่าย</text>
+  <path d="M240,106 Q235,140 228,170" fill="none" stroke="#b91c1c" stroke-width="1.4" marker-end="url(#ar4)"/><text x="255" y="145" font-size="10" fill="#b91c1c">ปฏิเสธ+เหตุผล</text>
+  <path d="M225,60 Q380,10 615,58" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ar4)"/><text x="400" y="26" font-size="10" fill="#64748b">ถ้านโยบายปิด "ต้องผ่านตรวจการเงิน" — อนุมัติแล้วกระโดดข้ามมาพร้อมจ่ายเลย</text>
+  <path d="M800,106 Q720,160 640,112" fill="none" stroke="#b91c1c" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ar4)"/><text x="700" y="152" font-size="10" fill="#b91c1c">void การจ่าย (API เท่านั้น ไม่มีปุ่ม)</text>
+</svg>
+<p class="cap">ภาพที่ 4 — วงจรเบิกจ่าย · REJECTED เปิดกลับเป็นร่างเพื่อแก้และยื่นใหม่ได้ (เลขที่เดิม) · การจ่ายยังรองรับ "จ่ายเต็มจำนวน" เท่านั้น</p>
+</div>
+
+<h3>7.1 แท็บและสิทธิ์ (เปิด hub ด้วยแต่ละบทบาทแล้วนับแท็บ)</h3>
+<table>
+<tr><th>แท็บ</th><th>ใครเห็น</th><th>มีอะไร</th></tr>
+<tr><td><span class="ui">รายการที่เกี่ยวข้อง</span></td><td>ทุกคนที่มีสิทธิ์อ่าน (คนยื่นเห็นของตัวเอง)</td><td>KPI 4 ใบ + ชิปสถานะ (ทั้งหมด·ร่าง·รออนุมัติ·อนุมัติแล้ว·จ่ายแล้ว) + ตาราง + ปุ่มสร้าง</td></tr>
+<tr><td><span class="ui">คิวอนุมัติ</span></td><td>MANAGER / OWNER / ADMIN</td><td>KPI: รอคุณอนุมัติ · ยอดรวมที่รออนุมัติ · เกิน SLA (แดง) + ปุ่มอนุมัติ/ปฏิเสธ</td></tr>
+<tr><td><span class="ui">คิวการเงิน</span></td><td>FINANCE / ACCOUNTANT</td><td>KPI: รอตรวจ/รอจ่าย · ยอดคงค้างรวม · พบรายการที่อาจซ้ำ + ปุ่มอนุมัติจ่าย/บันทึกจ่าย</td></tr>
+<tr><td><span class="ui">ตั้งค่านโยบาย</span></td><td>OWNER / ADMIN (ที่มีสิทธิ์ policy.manage)</td><td>เกณฑ์อนุมัติ · ใบเสร็จและรายการซ้ำ · การเงินและ SLA</td></tr>
+</table>
+<div class="box info"><b class="t">ℹ ไม่มีสิทธิ์สักแท็บ</b> → หน้าเต็มขึ้น <span class="ui">ไม่มีสิทธิ์เข้าถึง</span> — <span class="ui">บัญชีนี้ยังไม่มีสิทธิ์ใช้งานหน้าการเบิกจ่าย</span></div>
+
+<h3>7.2 บทบาทที่ 1 — พนักงานยื่นเบิก (login: qa.staff)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>กดปุ่มเขียว <span class="ui">+ สร้างคำขอเบิก</span></td><td>ไป <code>/reimbursements/new</code> — หัว <span class="ui">สร้างคำขอเบิก</span> — <span class="ui">กรอกเหตุผลและรายการที่ขอเบิก ระบบจะบันทึกเป็นฉบับร่างให้ตรวจก่อนส่งอนุมัติ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กรอกการ์ด <span class="ui">ข้อมูลคำขอ</span>: เหตุผล* · สกุลเงิน (มีแค่ <span class="ui">บาท (THB)</span>) · <span class="ui">เหตุผลที่ไม่มีใบเสร็จ</span> (บังคับเมื่อมีบรรทัดไม่แนบใบเสร็จ)</td><td>—</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>การ์ด <span class="ui">รายการที่ขอเบิก</span>: ต่อบรรทัด — วันที่* · หมวด* (เดินทาง/อาหาร/วัสดุอุปกรณ์/ที่พัก/อื่นๆ) · รายการ* · วัตถุประสงค์ · จำนวนเงิน* · ใบเสร็จ (ปุ่ม <span class="ui">เลือกไฟล์</span>) + <span class="ui">+ เพิ่มรายการ</span></td><td>≥2 บรรทัดมีปุ่ม <span class="ui">ย่อทั้งหมด/ขยายทั้งหมด</span> · การ์ดขวา <span class="ui">สรุปคำขอ</span> โชว์ยอดรวมสด + <span class="ui">แนบใบเสร็จแล้ว x / y</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ทดสอบ validation: ไม่กรอกเหตุผล / ยอด 0 / เกิน 50 บรรทัด / มีบรรทัดไม่แนบใบเสร็จและไม่กรอกเหตุผล</td><td>error ระบุบรรทัด เช่น <span class="ui">รายการที่ 2: จำนวนเงินต้องมากกว่า 0</span> · <span class="ui">ใบเบิกหนึ่งใบมีได้ไม่เกิน 50 รายการ</span> · <span class="ui">มีรายการที่ยังไม่แนบใบเสร็จ กรุณาระบุ "เหตุผลที่ไม่มีใบเสร็จ" หรือแนบใบเสร็จให้ครบทุกรายการ</span> — และบรรทัดที่ผิดถูกกางออกอัตโนมัติ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">บันทึกร่าง</span></td><td>กลับ hub เห็นร่าง (ยังไม่มีเลขที่) · <b>เคสไฟล์ล้ม:</b> ถ้า draft สำเร็จแต่อัปไฟล์พลาด → <span class="ui">บันทึกร่างแล้ว แต่แนบไฟล์ไม่สำเร็จ: {เหตุผล}</span> + ปุ่มกลายเป็น <span class="ui">เปิดร่างที่บันทึกไว้</span> — กันสร้างใบซ้ำ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>เปิดร่าง (modal <span class="ui">รายละเอียดคำขอ</span>) แล้วกด <span class="ui">ส่งอนุมัติ</span></td><td>toast <span class="ui">ส่งขออนุมัติเรียบร้อยแล้ว</span> · ได้เลข <b>RB-YYYYMM-#####</b> · สถานะ <span class="ui">รออนุมัติ</span> การจ่าย <span class="ui">ยังไม่จ่าย</span> · แจ้งเตือนวิ่งไป MANAGER+OWNER (ไม่รวมตัวเอง)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td>ลองกด <span class="ui">ยกเลิกคำขอ</span> ใบอื่นที่ยังไม่จ่าย</td><td>toast <span class="ui">ยกเลิกคำขอเรียบร้อยแล้ว</span> · ทำได้จนก่อน PAID — หลังจ่ายแล้วห้าม</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7b</td><td><b>ใบที่ถูกปฏิเสธ:</b> เปิด drawer ใบ REJECTED ของตัวเอง กด <span class="ui">แก้ไขและยื่นใหม่</span> → แก้บรรทัด → <span class="ui">ส่งอนุมัติ</span> อีกครั้ง</td><td>toast <span class="ui">เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง</span> · สถานะกลับเป็น <span class="ui">ร่าง</span> เหตุผลปฏิเสธเดิมย้ายไปอยู่ในประวัติขั้นตอนอนุมัติ · ส่งใหม่แล้ว<b>ได้เลข RB- เดิม</b> ไม่เปลืองเลขใหม่ · คนอื่นที่ไม่ใช่เจ้าของใบต้องไม่เห็นปุ่มนี้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>8</td><td>กด <span class="ui">พิมพ์ใบเบิก</span> จาก drawer (ใบที่มีเลขแล้ว)</td><td>เปิด preview + ปุ่ม <span class="ui">ดาวน์โหลด PDF</span> · ใบร่างที่ยังไม่มีเลข → <span class="ui">ต้องส่งคำขอให้ได้เลขที่เอกสารก่อนจึงจะพิมพ์ใบเบิกได้</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>7.3 บทบาทที่ 2 — ผู้อนุมัติ (login: qa.manager)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เข้าได้ 3 ทาง: แท็บ <span class="ui">คิวอนุมัติ</span> / กดแจ้งเตือนกระดิ่ง (เปิด drawer ใบนั้นอัตโนมัติ) / LINE push</td><td>คิวโชว์เฉพาะใบที่ route มาถึงเรา + <b>ไม่มีใบของตัวเอง</b> (self-approval ปิด default) · คอลัมน์ <span class="ui">อายุ</span> โชว์ {n} ชม. + badge แดง <span class="ui">เกิน SLA</span> ถ้าตั้ง SLA ไว้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กด <span class="ui">อนุมัติ</span></td><td>toast <span class="ui">อนุมัติคำขอเรียบร้อยแล้ว</span> → ใบไปโผล่คิวการเงิน (นโยบาย default เปิดตรวจการเงิน) · คนยื่นได้แจ้งเตือน <span class="ui">ผลอนุมัติเบิกจ่าย: RB-...</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>กด <span class="ui">ปฏิเสธ</span> อีกใบ</td><td>Modal <span class="ui">ปฏิเสธคำขอ RB-...</span> — <span class="ui">ระบุเหตุผลที่ปฏิเสธ ผู้ขอจะเห็นข้อความนี้</span> (บังคับกรอก ≤500 มี counter) → toast <span class="ui">ปฏิเสธคำขอเรียบร้อยแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>เคสแก้หลังส่ง (stale):</b> ให้คนมีสิทธิ์การเงินแก้บรรทัดใบที่รออนุมัติ แล้ว manager กดอนุมัติจากคิวเดิม</td><td>Modal <span class="ui">ตรวจสอบข้อมูลล่าสุด RB-...</span> แบนเนอร์แดง <span class="ui">คำขอนี้ถูกแก้ไขหลังจากส่งอนุมัติ กรุณาตรวจสอบข้อมูลล่าสุดก่อนตัดสินใจ</span> + ตารางเทียบ ก่อนหน้า/ปัจจุบัน (แถวที่แก้มี badge <span class="ui">แก้ไขแล้ว</span>) + ปุ่ม <span class="ui">อนุมัติด้วยข้อมูลล่าสุด</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td><b>อนุมัติใบตัวเอง:</b> MANAGER ยื่นเอง แล้วลองอนุมัติเอง</td><td>✔ ยืนยันแล้วว่า<b>ตั้งใจ</b> (owner decision 2026-08-10 — ใช้หลักนี้ทุก workflow): OWNER/ADMIN/MANAGER อนุมัติใบตัวเองได้แม้ toggle ปิด (มี audit) · พนักงานทั่วไปต้องเจอ <span class="ui">ไม่สามารถอนุมัติคำขอของตนเองได้ตามการตั้งค่าปัจจุบัน...</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>7.4 บทบาทที่ 3 — การเงิน (login: qa.finance)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>แท็บ <span class="ui">คิวการเงิน</span> — ใบสถานะ <span class="ui">รอตรวจสอบการเงิน</span> กด <span class="ui">อนุมัติจ่าย</span></td><td>toast <span class="ui">อนุมัติจ่ายเรียบร้อยแล้ว</span> → สถานะ <span class="ui">พร้อมจ่าย</span> · <b>เบื้องหลัง: ระบบสร้าง expense 1 ใบ/บรรทัด</b> ผู้ขาย = <span class="ui">เบิกคืนพนักงาน: {ชื่อผู้ขอ}</span> — ไปเช็คที่เมนูค่าใช้จ่าย ต้องเจอ!</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>เคสค้างกลางทาง:</b> ถ้าสร้าง expense พลาด (เช่น เน็ตสะดุด)</td><td>ปุ่มเปลี่ยนเป็น <span class="ui">ดำเนินการต่อ</span> ให้กดซ้ำ — <b>ต้องเป็นคนเดิมที่กดอนุมัติ</b> ไม่งั้นเจอ <span class="ui">คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ใบ <span class="ui">พร้อมจ่าย</span> กด <span class="ui">บันทึกจ่าย</span></td><td>Modal <span class="ui">บันทึกการจ่ายเงิน — RB-...</span>: จำนวนเงิน (prefill = ยอดคงค้าง, <b>ต้องจ่ายเต็ม</b>) · วิธีจ่าย (เงินสด/โอนเงิน/เช็ค/อื่นๆ) · วันที่จ่าย* · เลขอ้างอิง (บังคับเมื่อโอน/เช็ค) → toast <span class="ui">บันทึกจ่ายเรียบร้อยแล้ว</span> ได้เลข <b>RBPAY-...</b> สถานะ <span class="ui">จ่ายแล้ว</span> · คนยื่นได้แจ้งเตือน+LINE</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ลองจ่ายไม่เต็มจำนวน</td><td>โดนบล็อค: <span class="ui">ต้องจ่ายเต็มจำนวน (MVP รองรับการจ่ายเต็มเท่านั้น)</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>การ์ด <span class="ui">ลายเซ็นในใบเบิก</span> — 4 ช่อง: ผู้เบิก / ผู้อนุมัติ / ฝ่ายบัญชี / ฝ่ายการเงิน</td><td>ลิงก์ <span class="ui">ลงนาม</span> โผล่<b>เฉพาะช่องของบทบาทที่ตัวเองทำจริง</b> · modal อัปโหลดรูปลายเซ็น PNG/JPEG ≤2MB + toggle <span class="ui">ลบพื้นหลังให้อัตโนมัติ</span> → toast <span class="ui">ลงนามใบเบิกเรียบร้อยแล้ว</span> · ลงนามช่องคนอื่น → <span class="ui">คุณไม่ใช่ผู้มีสิทธิ์ลงนามในช่องนี้</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>การ์ด <span class="ui">ใบเบิกที่เซ็นแล้ว</span> — แนบสแกนใบจริงกลับเข้าระบบ (PDF/JPG/PNG)</td><td>toast <span class="ui">แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td>สลับ login เป็น qa.accountant แล้วดูคิวการเงิน</td><td>ACCOUNTANT เห็นปุ่ม <span class="ui">อนุมัติจ่าย</span> แต่<b>ไม่มีปุ่มบันทึกจ่าย</b> (ไม่มีสิทธิ์ payment.record) — ต่างจาก FINANCE · และถ้าใบติดธง <span class="ui">อาจซ้ำ</span> ACCOUNTANT กดอนุมัติจ่ายจะโดน 403 (ไม่มีสิทธิ์ตัดสินรายการซ้ำ)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>7.5 แท็บตั้งค่านโยบาย (login: qa.owner)</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>การ์ด <span class="ui">เกณฑ์การอนุมัติ</span>: ยอดขั้นต่ำที่ต้องอนุมัติ · โหมดผู้อนุมัติ (ตามบทบาทผู้จัดการ/เจ้าของกิจการ/บทบาทที่กำหนด/ผู้ใช้ที่กำหนด) · toggle <span class="ui">อนุญาตให้อนุมัติคำขอตนเอง</span></td><td>ค่า default: ≥ ฿1 ต้องอนุมัติ · MANAGER role · self-approval ปิด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>การ์ด <span class="ui">ใบเสร็จและรายการซ้ำ</span>: toggle <span class="ui">ต้องมีใบเสร็จ</span> / <span class="ui">อนุญาตไม่มีใบเสร็จได้หากระบุเหตุผล</span> / นโยบายรายการซ้ำ (เตือน / ระงับการส่ง / ระงับการจ่าย)</td><td>เปลี่ยนเป็น "ระงับการส่ง" แล้วยื่นใบที่ใช้ใบเสร็จรูปเดียวกับใบเก่า → ส่งไม่ผ่าน · ใช้ไฟล์ใบเสร็จซ้ำข้ามคำขอ → <span class="ui">ใบเสร็จนี้ถูกใช้เบิกในคำขออื่นอยู่แล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>การ์ด <span class="ui">การเงินและ SLA</span>: toggle <span class="ui">ต้องผ่านการตรวจสอบการเงินก่อนจ่าย</span> + <span class="ui">SLA (ชั่วโมง)</span> แล้วกด <span class="ui">บันทึกนโยบาย</span></td><td>toast <span class="ui">บันทึกนโยบายเบิกจ่ายแล้ว</span> · <b>ปิดตรวจการเงิน</b> → รอบใหม่พออนุมัติปุ๊บใบกระโดดไป "พร้อมจ่าย" ทันที (ไม่แวะคิวตรวจ) · ตั้ง SLA 1 ชม. แล้วปล่อยใบค้าง → badge <span class="ui">เกิน SLA</span> + แจ้งเตือนวิกฤต <span class="ui">อนุมัติเกิน SLA: RB-...</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>7.6 Checklist หาบัค</h3>
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span><b>✔ แก้แล้ว (2026-08-10) — ทดสอบ flow ยื่นใหม่:</b> ใบ REJECTED ต้องมีปุ่ม <span class="ui">แก้ไขและยื่นใหม่</span> ใน drawer (เฉพาะเจ้าของใบ) → กดแล้ว toast <span class="ui">เปิดคำขอกลับเป็นร่างแล้ว แก้ไขและส่งอนุมัติได้อีกครั้ง</span> สถานะกลับเป็นร่าง เหตุผลปฏิเสธหาย (ยังดูได้ในขั้นตอนอนุมัติ) → แก้แล้วส่งอนุมัติ → <b>ต้องได้เลข RB- เดิม</b> ตรงตามคู่มือในแอป</span></li>
+<li><input class="ck" type="checkbox"><span><b>ยกเลิกการจ่าย (void):</b> ไม่มีปุ่มใน UI เลย (ทำได้ผ่าน API เท่านั้น) — ถ้า flow ธุรกิจต้องการปุ่มนี้ให้จดเป็น gap</span></li>
+<li><input class="ck" type="checkbox"><span><b>สถานะ "อนุมัติแล้ว" ในชิปตัวกรอง:</b> ชิป <span class="ui">อนุมัติแล้ว</span> บนแท็บแรกจะไม่มีวันมีใบ (โค้ดไม่เคยเขียนสถานะ APPROVED — ใบกระโดดข้ามไป FINANCE_REVIEW/READY เลย) — นับใบใต้ชิปนี้ดู ถ้ามี = แปลว่าเจออะไรใหม่</span></li>
+<li><input class="ck" type="checkbox"><span><b>อนุมัติพร้อมกัน 2 คน:</b> MANAGER 2 คน (2 browser) กดอนุมัติใบเดียวกันพร้อมกัน → ต้องสำเร็จคนเดียว อีกคนได้ error ที่อ่านรู้เรื่อง</span></li>
+<li><input class="ck" type="checkbox"><span><b>ผู้อนุมัติลาออกกลางทาง:</b> ใบที่ route ไปหาคนที่โดนปิดบัญชี (§8) → ต้องไม่ค้าง — คนอื่นใน role เดิม (หรือ OWNER) ต้องเห็นและอนุมัติแทนได้</span></li>
+<li><input class="ck" type="checkbox"><span><b>เบิกแทนกันไม่ได้:</b> ฟอร์มสร้างไม่มีช่องเลือกผู้ขอ — ผู้ขอ = คน login เสมอ (ตั้งใจ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>ครบวงจรบัญชี:</b> หลังบันทึกจ่าย ไปดูใบ expense ที่ถูกสร้าง (เมนูค่าใช้จ่าย ค้นชื่อ "เบิกคืนพนักงาน") — ใบเสร็จของบรรทัดต้องติดมาด้วย และใบที่ไม่มีใบเสร็จต้องมีเหตุผลติดมา</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s8" style="--accent:#1d4ed8">
+<h2>8. พนักงานและสิทธิ์ <span class="secprog"></span></h2>
+<p class="desc">สร้างพนักงาน → ส่งรหัสเข้าใช้ → ผูก LINE → จัดการบทบาท/สิทธิ์/สาขา → ระงับ/ลบ · <b>ไม่มีระบบส่งอีเมลเชิญ</b> — เจ้าของสร้างบัญชีแล้วส่งรหัสเอง (รหัสตั้งต้น = วันเกิด DDMMYYYY)</p>
+<div class="meta">
+<span class="tag">รายชื่อ+จัดการรายคน: <b><code>/settings/access-overview</code></b> (หัวหน้า "สิทธิ์รายบุคคล")</span>
+<span class="tag">เพิ่ม/แก้ไข: <b><code>/settings/employees</code></b> (wizard 4 ขั้น)</span>
+<span class="tag">บทบาท: <b><code>/settings/permissions</code></b> (<code>/settings/roles</code> จะ redirect มาที่นี่)</span>
+</div>
+
+<h3>8.1 เพิ่มพนักงาน — wizard 4 ขั้น (login: qa.owner)</h3>
+<div class="flowchips"><span class="c">1 ข้อมูลส่วนตัว</span><span class="a">→</span><span class="c">2 ช่องทางติดต่อ</span><span class="a">→</span><span class="c">3 ตำแหน่งและสาขา</span><span class="a">→</span><span class="c">4 เข้าใช้งาน (เสร็จสิ้น + QR LINE)</span></div>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>ขั้น 1:</b> คำนำหน้า* (นาย/นาง/นางสาว) · ชื่อ* · นามสกุล* · ชื่อเล่น (ใช้โชว์ในหน้าจองและรายชื่อ) · Username* · วันเดือนปีเกิด (ค.ศ.)* รูปแบบ DD/MM/YYYY · เลขบัตรประชาชน* 13 หลัก</td><td>Username มีตัวห้าม → <span class="ui">Username ใช้ได้เฉพาะ a-z, A-Z, 0-9, จุด, ขีดกลาง และขีดล่าง</span> · วันเกิดมั่ว → <span class="ui">กรุณากรอกวันเกิดจริง รูปแบบ DD/MM/YYYY และใช้ปี ค.ศ.</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>ขั้น 2:</b> อีเมล (ใช้เข้าสู่ระบบ)* · เบอร์โทร* (10 หลักขึ้นต้น 0) · รหัสไปรษณีย์ → ระบบค้นที่อยู่ master ให้</td><td>พิมพ์รหัสไปรษณีย์จริง → dropdown จังหวัด/อำเภอ/ตำบล เติมให้เอง · รหัสมั่ว → <span class="ui">ไม่พบข้อมูลใน master กรุณากรอกที่อยู่เอง</span> (สลับเป็นช่องพิมพ์อิสระ)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>ขั้น 3:</b> เลือกตำแหน่ง (1 คน 1 ตำแหน่ง — ไม่มี OWNER/SYSTEM_ADMIN ให้เลือก) · สาขาที่สังกัด (เลือกหลายได้ / <span class="ui">ทุกสาขา</span>) · <span class="ui">สาขาหลัก (Default Branch) *</span> แล้วกด <span class="ui">บันทึกแบบร่าง</span></td><td>สาขาสุดท้ายเอาออกไม่ได้ · บันทึกแล้วเป็น <b>Draft</b> — ยังเข้าระบบไม่ได้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>ขั้น 4:</b> ดู 2 การ์ด: <span class="ui">บัญชีเข้าระบบเว็บ</span> (Username + รหัสผ่าน + ปุ่ม <span class="ui">คัดลอก</span> — รหัส = วันเกิด DDMMYYYY) และ <span class="ui">เชื่อม LINE OA</span> (ยังไม่มี QR — ขึ้น <span class="ui">LINE จะพร้อมเชื่อมหลังเปิดใช้งานพนักงาน</span>)</td><td>แบนเนอร์เหลือง <span class="ui">ข้อมูลนี้ยังเป็นแบบร่าง พนักงานจะเข้าใช้งานเว็บและเชื่อม LINE ได้หลังจากกด "เสร็จสิ้น"</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>กด <span class="ui">เสร็จสิ้น</span></td><td>toast <span class="ui">เปิดใช้งานพนักงานเรียบร้อยแล้ว</span> · แบนเนอร์เขียว + <b>QR ผูก LINE โผล่</b> (อายุ 15 นาที ใช้ครั้งเดียว + ปุ่ม <span class="ui">คัดลอกลิงก์</span>) · ปุ่มเปลี่ยนเป็น <span class="ui">ไปหน้าภาพรวมสิทธิ์</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>คนที่มีบัญชีอยู่แล้ว (ข้ามบริษัท):</b> ใส่ Username ที่มีในระบบ</td><td>Panel เหลือง <span class="ui">Username นี้มีบัญชีในระบบอยู่แล้ว</span> + ปุ่ม <span class="ui">ยืนยันเพิ่มเข้าบริษัท</span> / <span class="ui">แก้ไข Username</span> — เพิ่มแบบ attach จะ<b>ไม่ออกรหัสใหม่</b> (ใช้รหัสเดิม) และอีเมลต้องไม่ซ้ำกับบัญชีเดิม</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td>พนักงานใหม่ login ครั้งแรก (browser อื่น)</td><td>บังคับ <code>/change-password</code> → ตัด session → login ใหม่ → ยอมรับข้อกำหนด 3 ข้อ → เข้า dashboard เห็นเมนูตามตำแหน่ง (เหมือน §3 แต่ role clause เป็น <span class="ui">สิทธิการใช้งานที่กิจการมอบหมาย</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>8.2 จัดการรายคน (<code>/settings/access-overview</code> — "สิทธิ์รายบุคคล")</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ภาพรวม: KPI 4 ใบกดกรองได้ (พนักงานทั้งหมด/ใช้งาน/แบบร่าง/ปิดใช้งาน) + ช่องค้นหา <span class="ui">ค้นหาชื่อหรือเบอร์โทร...</span> + กรองตำแหน่ง</td><td>รายชื่อโชว์ชื่อเล่น + badge สถานะ + จำนวนสาขา</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>เลือกคน → เปลี่ยน <span class="ui">ตำแหน่ง</span></td><td>toast <span class="ui">เปลี่ยนบทบาทพนักงานแล้ว</span> · กับ OWNER จะไม่มีตัวเลือก — ขึ้น <span class="ui">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</span> · เปลี่ยนตำแหน่ง<b>ตัวเอง</b>ต้องโดนปฏิเสธ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>สวิตช์ <span class="ui">สถานะบัญชี</span> (ระงับ/เปิด)</td><td>toast <span class="ui">ระงับการใช้งานพนักงานแล้ว</span> / <span class="ui">เปิดใช้งานพนักงานแล้ว</span> · คนถูกระงับ login → <span class="ui">บริษัทถูกปิดใช้งานหรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลระบบ</span> · สวิตช์ของ Draft กดไม่ได้ (ต้องไปจบ wizard)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>เมนู ⋯ → <span class="ui">รีเซ็ตรหัสผ่าน</span></td><td>Confirm 2 ชั้น → modal <span class="ui">รีเซ็ตรหัสผ่านสำเร็จ</span> โชว์รหัสชั่วคราว<b>ครั้งเดียว</b> (อายุ 72 ชม.) + บรรทัดบอกผล LINE: <span class="ui">ส่งรหัสผ่านชั่วคราวไปที่ LINE ของพนักงานแล้ว</span> หรือ <span class="ui">พนักงานยังไม่ได้ผูก LINE กรุณาส่งรหัสผ่านให้พนักงานโดยตรง</span> · <b>ทุก session เดิมของคนนั้นถูกตัดทันที</b> — ให้อีก browser ที่ login ค้างลอง refresh ต้องหลุด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>เมนู ⋯ → <span class="ui">ลบพนักงาน</span></td><td>Confirm <span class="ui">ปิดการใช้งานบัญชีของ {ชื่อ} ใช่หรือไม่?</span> → เป็น soft-delete (สถานะปิดใช้งาน) · ประวัติแชท AI ของคนนั้นในบริษัทถูกล้าง</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>การ์ด <span class="ui">สิทธิ์การใช้งานของ {ชื่อ}</span> + <span class="ui">สาขาที่เข้าถึงได้</span></td><td>สิทธิ์เป็น read-only รายเมนู (ดู/เพิ่ม/แก้ไข/ลบ/อนุมัติ) พร้อมลิงก์ <span class="ui">แก้สิทธิ์ของตำแหน่งนี้ →</span> · สาขา: สลับ <span class="ui">ทุกสาขา</span>/<span class="ui">เลือกสาขา</span> → toast <span class="ui">บันทึกขอบเขตสาขาแล้ว</span> · เอาสาขาสุดท้ายออก → tooltip <span class="ui">ต้องมีอย่างน้อย 1 สาขา</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>8.3 บทบาทและสิทธิ์ (<code>/settings/permissions</code> — "สิทธิ์การใช้งาน")</h3>
+<div class="box warn"><b class="t">⚠ ต้องมีสิทธิ์ access.role.manage — ADMIN ปกติเข้าหน้านี้ไม่ได้ (by design)</b> login qa.admin แล้วกดเมนู "บทบาทและสิทธิ์" → ต้องถูกเด้งออก · ใช้ qa.owner เล่นหัวข้อนี้</div>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ดูรายการ <span class="ui">ตำแหน่งทั้งหมด</span> ซ้าย + matrix ขวา</td><td>แต่ละ role โชว์ <span class="ui">{n} คน · {m} สิทธิ์</span> · role ระบบมีไอคอนล็อค · matrix = ตาราง ดู/สร้าง/แก้ไข/ลบ/อนุมัติ ต่อเมนู (read-only) · OWNER/SYSTEM_ADMIN/COMPANY_VIEW → <span class="ui">ตำแหน่งนี้ระบบดูแลให้ แก้ไขไม่ได้</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กด <span class="ui">แก้ไข</span> role มาตรฐาน (เช่น SALES)</td><td>คำเตือน copy-on-write: <span class="ui">ตำแหน่งมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ พนักงาน N คนที่อยู่ตำแหน่งนี้จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ</span> — บันทึกแล้ว role ระบบเดิมหายจากรายการ เหลือฉบับบริษัท</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>กด <span class="ui">เพิ่ม</span> — role builder 3 ส่วน: ① <span class="ui">เริ่มจากตำแหน่งงาน</span> (preset ตามอุตสาหกรรม: ค้าปลีก/ค้าส่ง/บริการ/อีคอมเมิร์ซ) ② <span class="ui">ความสามารถ</span> (capability packs จัดกลุ่มตามโมดูล มี badge เสี่ยง <span class="ui">สูง</span>/<span class="ui">วิกฤติ</span>) ③ <span class="ui">สิทธิ์ขั้นสูง (รายคีย์ สำหรับผู้เชี่ยวชาญ)</span></td><td>Pack ของฟีเจอร์ที่บริษัทไม่ได้เปิดจะเทา <span class="ui">ล็อก: Feature "…" is not enabled for this company</span> · กล่อง <span class="ui">ตัวอย่างสิทธิ์จริง</span> อัปเดตสด (นับ <span class="ui">{n} สิทธิ์ · {m} ความสามารถ</span> + รายการ <span class="ui">บางสิทธิ์ถูกตัดออก:</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>บันทึก role ใหม่ → ผูกให้พนักงานทดสอบ → login คนนั้นเช็คเมนู</td><td>toast <span class="ui">สร้างบทบาทเรียบร้อยแล้ว</span> · เมนูของพนักงานตรงกับ matrix ที่ตั้ง · ไม่เลือก pack เลย → <span class="ui">กรุณาเลือกความสามารถอย่างน้อย 1 รายการ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>ลอง <span class="ui">ปิดใช้งาน</span> role ที่ยังมีคนใช้</td><td>409: "Role is still assigned to active employees. Reassign before disabling." (ต้องย้ายคนออกก่อน)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>8.4 Checklist หาบัค — การป้องกันที่ต้องมีจริง</h3>
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span><b>ป้องกัน OWNER:</b> ระงับ/ลบ/เปลี่ยนตำแหน่ง/เปลี่ยนสาขา OWNER — ทุกทางต้องทำไม่ได้ (ทั้งปุ่มหายและ API ปฏิเสธ)</span></li>
+<li><input class="ck" type="checkbox"><span><b>กันยกระดับสิทธิ์:</b> MANAGER (ไม่มี access.role.manage) พยายามตั้งใครเป็น role ที่จัดการคนได้ / ระงับคนที่ถือ role นั้น → ถูกกัน · การมอบ role FINANCE/ACCOUNTANT ต้องเป็น owner เท่านั้น</span></li>
+<li><input class="ck" type="checkbox"><span><b>สร้าง role เกินตัว:</b> คนที่ไม่มีสิทธิ์ X สร้าง role ที่มีสิทธิ์ X → ต้องโดนตัด <span class="ui">เกินสิทธิ์ที่คุณมี (มอบให้ไม่ได้)</span> (ยกเว้น OWNER)</span></li>
+<li><input class="ck" type="checkbox"><span><b>🐞 ตำแหน่งชื่อไทยล้วน:</b> สร้าง role พิมพ์ชื่อไทยเองโดยไม่กด preset (เช่น "หัวหน้าร้าน") → ระบบสร้าง key เป็น <code>ROLE</code> → คนใน role นี้จะ<b>ไม่โผล่ในคิวอนุมัติเบิกจ่าย</b>ที่ route หา MANAGER — ทดสอบต่อเนื่องกับ §7 แล้วจดถ้าจริง</span></li>
+<li><input class="ck" type="checkbox"><span><b>Wizard ค้างกลางทาง:</b> ปิด browser ก่อนกดเสร็จสิ้น → รายชื่อมีแถว Draft ค้าง → เข้า wizard ใหม่ด้วยเลขบัตรเดิม → ต้อง resume draft เดิม (รหัสผ่านใหม่ + QR ใหม่) ไม่ใช่ error ซ้ำ</span></li>
+<li><input class="ck" type="checkbox"><span><b>ข้อมูลซ้ำ:</b> เลขบัตร/เบอร์/อีเมลซ้ำกับพนักงาน active คนอื่น → ต้องแจ้ง conflict ชัดเจน ไม่ใช่ error 500</span></li>
+<li><input class="ck" type="checkbox"><span><b>รีเซ็ตรหัสของคนข้ามบริษัท (attach):</b> ต้องถูกปฏิเสธ — บัญชีเป็นของอีกบริษัท ("...cannot be regenerated here")</span></li>
+<li><input class="ck" type="checkbox"><span><b>🐞 ข้อความเก่าขัดกับพฤติกรรมจริง:</b> ถ้าเจอหน้าจอที่บอกว่า "ไม่ต้องเปลี่ยนรหัสผ่านตอนเข้าสู่ระบบครั้งแรก" — อันนี้เป็น copy ตกค้าง โค้ดจริงบังคับเปลี่ยนเสมอ — จดที่พบ</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s9" style="--accent:#0f766e">
+<h2>9. ตั้งค่าบริษัท <span class="secprog"></span></h2>
+<p class="desc">ศูนย์ตั้งค่า (<code>/companies/{id}/settings</code>) — หัวข้อ <span class="ui">ตั้งค่า</span> · การตั้งค่าที่นี่คือ "ต้นน้ำ" ของหลาย flow: สาขาคุมขอบเขตข้อมูล, ตั้งค่าบัญชี-ภาษีคุมว่า Tax Code จะโผล่ทั้งระบบหรือไม่</p>
+
+<h3>9.1 หน้ารวมตั้งค่า — ต้องเห็นอะไรบ้าง</h3>
+<table>
+<tr><th>โซน</th><th>รายการ (ป้ายไทยตรงจอ)</th><th>ต้องมีสิทธิ์/ฟีเจอร์</th></tr>
+<tr><td>การ์ดใหญ่</td><td><b>ตั้งค่าบัญชีและภาษี</b> + ปุ่ม <span class="ui">เริ่มตั้งค่าหรือทำต่อ →</span></td><td>double_entry_ledger หรือ thai_tax</td></tr>
+<tr><td rowspan="4">ทั่วไป</td><td>เชื่อมต่อ LINE OA</td><td>crm.channel.manage + line_oa</td></tr>
+<tr><td>สินค้าและบริการสำหรับ CRM</td><td>product_catalog</td></tr>
+<tr><td>สาขา</td><td>company.branch.read/manage</td></tr>
+<tr><td>ตั้งค่าใบรับรองแทนใบเสร็จ</td><td>company.setup.manage</td></tr>
+<tr><td rowspan="3">การตั้งค่าขั้นสูง</td><td>Tax Code และ Tax Profile</td><td>thai_tax</td></tr>
+<tr><td>Tax Account Determination</td><td>thai_tax + double_entry_ledger</td></tr>
+<tr><td>ผังบัญชี Master Data</td><td>double_entry_ledger</td></tr>
+</table>
+<div class="box info"><b class="t">ℹ ของที่ "ไม่อยู่หน้านี้" โดยตั้งใจ:</b> อนุมัติคำสั่งซื้อ / นโยบายส่วนลด / เชื่อมต่อ LINE OA อยู่เป็นเมนูลูกของ <b>พนักงานและสิทธิ์</b> ใน sidebar · ตั้งค่าการแจ้งเตือนเข้าได้จากปุ่ม <span class="ui">ตั้งค่า</span> ในศูนย์การแจ้งเตือนเท่านั้น · <code>/settings/security</code> ถูกพัก — พิมพ์ URL ตรงจะเด้งไป dashboard</div>
+
+<h3>9.2 สาขา (<code>/settings/branches</code>)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>กด <span class="ui">+ เพิ่มสาขา</span> กรอก: <span class="ui">รหัสสาขา (A-Z, 0-9)</span> (พิมพ์เล็กจะถูกแปลงเป็นใหญ่เอง) · <span class="ui">ชื่อสาขา</span>* · <span class="ui">ประเภท</span> (สำนักงานใหญ่/สาขา/ออนไลน์/คลังสินค้า) · <span class="ui">รหัสสาขาภาษี (5 หลัก ไม่บังคับ)</span> → <span class="ui">บันทึกสาขาใหม่</span></td><td>toast <span class="ui">สร้างสาขาเรียบร้อยแล้ว</span> · รหัสภาษีซ้ำกับสาขา active อื่น → 409</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>กด <span class="ui">แก้ไข</span> แถวเดิม</td><td>Panel <span class="ui">แก้ไขสาขา {code} (รหัสสาขาแก้ไม่ได้หลังมีข้อมูลอ้างอิง)</span> — แก้ได้: ชื่อ/รหัสภาษี/โทร/สถานะ → toast <span class="ui">บันทึกการแก้ไขสาขาเรียบร้อยแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ลองเก็บถาวรสำนักงานใหญ่สาขาเดียวที่เหลือ</td><td>ถูกกัน — <b>แต่ error เป็นภาษาอังกฤษดิบ</b> (จุดจดได้: ควรเป็นไทย)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>ผลต่อเนื่อง:</b> จำกัดสาขาพนักงานทดสอบไว้สาขาเดียว (§8.2) แล้ว login คนนั้นดูรายการค่าใช้จ่าย/เบิกจ่าย</td><td>เห็นเฉพาะเอกสารสาขาตัวเอง (+รายการกลางที่ไม่ผูกสาขา) · ใบเสร็จที่คนนั้นส่งทาง LINE ต้องตกสาขาของเขา</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>9.3 ตั้งค่าบัญชีและภาษี — wizard 5 ขั้น (สำคัญสุดของ section นี้)</h3>
+<div class="box warn"><b class="t">⚠ ทำไมต้องเล่น:</b> ถ้าบริษัทยังไม่มี Tax Profile ที่ ACTIVE ทุกช่องเลือก Tax Code ทั้งระบบ (ค่าใช้จ่าย/เอกสารขาย/AP) จะขึ้น <span class="ui">ยังไม่มี Tax Code ที่ใช้งานได้สำหรับบริบทและวันที่นี้</span> — บริษัท seed ตั้งไว้แล้ว แต่บริษัทที่สร้างใหม่จาก §2 ต้องมาไล่ wizard นี้</div>
+<div class="flowchips"><span class="c">ตรวจความพร้อม</span><span class="a">→</span><span class="c">ผังบัญชี (+ตรวจผลกระทบ)</span><span class="a">→</span><span class="c">ชุดรหัสภาษี (Tax Profile)</span><span class="a">→</span><span class="c">ผูกบัญชีและรายงาน</span><span class="a">→</span><span class="c">ตรวจและเปิดใช้</span></div>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>หน้าแรก: 3 ไทล์สถานะ (สิทธิ์ที่จำเป็น / ผังบัญชี / ชุดรหัสภาษี) + ปุ่ม <span class="ui">เริ่มตั้งค่าหรือทำต่อ</span></td><td>บริษัทที่ตอบ "ยังไม่จด VAT" มีกล่องฟ้าบอกว่าขั้นภาษียังไม่จำเป็น · <b>หน้านี้ไม่มีช่องตั้ง VAT เอง</b> — สถานะ VAT แก้ได้จากคอนโซล /system เท่านั้น</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ขั้น <span class="ui">ผังบัญชี</span> → <span class="ui">ตรวจผลกระทบก่อนใช้ผังบัญชี</span></td><td>ตัวนับ 4 ช่อง (ตรงกัน/จะสร้าง/แก้ได้/กำลังใช้งาน) + ตารางขัดแย้ง · เลือกวิธี <span class="ui">เพิ่มเฉพาะบัญชีที่ขาด</span> หรือ <span class="ui">เพิ่มและแทนที่เฉพาะบัญชีที่ยังไม่ถูกใช้</span> + ติ๊กยืนยันตรวจแล้ว → <span class="ui">ยืนยันใช้ผังบัญชีและไปต่อ</span> · ไม่ติ๊ก → <span class="ui">กรุณายืนยันว่าตรวจรายการขัดแย้งแล้ว</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ขั้น <span class="ui">ชุดรหัสภาษี (Tax Profile)</span>: เลือก template (เฉพาะชุด WATCHDOG) + <span class="ui">เริ่มมีผลวันที่</span> → <span class="ui">สร้าง Draft และไปต่อ</span></td><td>วันที่มีผลสำคัญมาก: เอกสารที่ลงวันที่<b>ก่อน</b>วันนี้จะไม่มี Tax Code ให้เลือก — จุดทดสอบ: ตั้งวันมีผลเป็นพรุ่งนี้ แล้วไปคีย์ค่าใช้จ่ายวันนี้ ต้องไม่เห็น Tax Code</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ขั้น <span class="ui">ผูกบัญชีและรายงาน</span>: ระบบเสนอบัญชีให้ต่อกฎที่ขาด — เลือกบัญชีตามคำแนะนำ → <span class="ui">บันทึกที่ตรวจแล้วและไปต่อ</span></td><td>blocker ที่อาจเห็น: <span class="ui">ยังไม่ผูกบัญชี …</span> / <span class="ui">ยังไม่ผูกรายงาน …</span> / <span class="ui">Profile ยังไม่มี Tax Code</span> / <span class="ui">ช่วงวันที่ Profile ซ้อนกับ Profile ที่เปิดใช้งานอยู่</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>ขั้น <span class="ui">ตรวจและเปิดใช้</span> → <span class="ui">ยืนยันและเปิดใช้งานชุดรหัสภาษี (Tax Profile)</span></td><td>toast <span class="ui">เปิดใช้งานชุดรหัสภาษีเรียบร้อยแล้ว</span> · จากนั้นช่อง Tax Code ทั้งระบบต้องมีตัวเลือกทันที · ลองพิมพ์ URL ข้ามขั้น (เช่นเข้า /review ก่อนทำ /chart) → <span class="ui">ต้องทำขั้นก่อนหน้าให้เสร็จก่อน</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>9.4 ตั้งค่าอื่นๆ — จุดตรวจสั้นๆ + ผลต่อเนื่อง</h3>
+<table>
+<tr><th>หน้า</th><th>จุดตรวจหลัก</th><th>ผลต่อเนื่อง / จุดหาบัค</th></tr>
+<tr><td><b>ผังบัญชี Master Data</b><br><code>/settings/chart-of-accounts</code></td><td>การ์ดสถานะ (ชิป <span class="ui">ลงบัญชีเอง: พร้อม</span> / <span class="ui">ลงบัญชีอัตโนมัติ: พร้อม|ยังไม่พร้อม</span>) · ช่องว่างก่อน auto-post · Preview + Apply template · ตารางบัญชีพร้อมค้นหา/กรอง</td><td><b>อ่านอย่างเดียวรายบัญชี</b> — ไม่มีปุ่มเพิ่ม/แก้/เก็บถาวรบัญชีเดี่ยว (มีแต่ apply template) · เปิด 2 แท็บ apply พร้อมกัน → แท็บช้ากว่าต้องเจอ error ให้ preview ใหม่ ไม่เขียนทับ</td></tr>
+<tr><td><b>Tax Code และ Tax Profile</b><br><code>/settings/tax-codes</code></td><td>รายการ Profiles (Activate/Retire) · <span class="ui">สร้าง Draft จาก template</span> (รวมชุด SAP) · ฟอร์ม <span class="ui">เพิ่ม Tax Code</span> (อัตรา% + บริบทธุรกรรม 9 แบบ) · <span class="ui">Import SAP / ERP Tax Codes</span> (CSV ≤500 แถว preview ก่อน)</td><td>Retire profile → คำแนะนำ Tax Code ในหมวดหมู่ค่าใช้จ่ายหายเงียบ (ไม่มีคำเตือน — by design แต่ควรรู้) · กติกาหน่วย: ฝั่ง expense เก็บ 0.07 ฝั่งเอกสารขาย/AP เก็บ 7 — ถ้าเห็นภาษีเพี้ยน x100 ให้จดทันที</td></tr>
+<tr><td><b>Tax Account Determination</b><br><code>/settings/tax-accounts</code></td><td><span class="ui">เพิ่มกฎลงบัญชี</span> (Tax Code → บัญชี + Debit/Credit) · <span class="ui">เพิ่มกฎช่องรายงาน</span> (ภ.พ.30/ภ.พ.36 box) · <span class="ui">Preview การ resolve</span> สดที่ยอด 1000/1070</td><td>ถ้ากฎขาด → ปิดงวดบัญชีจะไม่ผ่าน + ใบกำกับภาษีเลือกรหัสไม่ได้ — เอาไว้ทดสอบสาย tax ลึก</td></tr>
+<tr><td><b>สินค้าและบริการ (CRM catalog)</b><br><code>/settings/crm-catalog</code></td><td>เพิ่มสินค้า/บริการ (SKU* ชื่อ* หน่วย* ประเภท* ราคา + <span class="ui">ระยะเวลาจอง</span> เฉพาะบริการ + สวิตช์ <span class="ui">เปิดให้ลูกค้าเห็น</span>)</td><td>ของใหม่ default <b>ปิดไม่ให้ลูกค้าเห็น</b> — AI/หน้าจองยังไม่เห็นจนกว่าจะเปิดสวิตช์ (จุดที่คนมักงงว่า "ทำไม AI ไม่รู้จักสินค้า") · <b>🐞 ปุ่มเก็บถาวรไม่มีใน UI</b> ทั้งที่มีตัวกรอง "เก็บถาวร" — ยืนยันแล้วจดได้</td></tr>
+<tr><td><b>นโยบายส่วนลด</b><br><code>/settings/discount-policy</code></td><td>สวิตช์ AI ให้ส่วนลดอัตโนมัติ · ค่ากลาง (เริ่มต้น/เพดาน) · ส่วนลดตามระดับลูกค้า (VIP/ประจำ/ทั่วไป) · ผู้อนุมัติส่วนลดเกินเพดาน</td><td><b>🐞 บันทึกได้จริงแต่ยังไม่มีระบบไหนเอาค่าไปใช้</b> — ข้อความ "เปลี่ยนแล้วมีผลกับทุกหน้าที่อ้างอิงทันที" ยังไม่จริง — ทดสอบ: ตั้งเพดาน 5% แล้วไปหน้าขาย/แชท ดูว่ามีอะไรเตือนไหม (คาด: ไม่มี) → จดเป็น gap</td></tr>
+<tr><td><b>ตั้งค่าอนุมัติคำสั่งซื้อ</b><br><code>/settings/po-approval</code></td><td>ขั้นอนุมัติตามวงเงิน (default: ≤1,000 auto · 1,000–10,000 MANAGER · &gt;10,000 MANAGER|OWNER) + กล่อง <span class="ui">ทดลองเงื่อนไข</span></td><td><b>🐞 นโยบายนี้ยังไม่ถูกบังคับใช้ตอนอนุมัติ PO จริง</b> (ปุ่มอนุมัติใน §11 เช็คแค่ permission ไม่เช็ควงเงิน) และปุ่มดินสอเลือกผู้อนุมัติ<b>กดไม่ได้</b> — ทดสอบ: ตั้งวงเงินต่ำ แล้วไปอนุมัติ PO ยอดสูงด้วย role ที่ไม่อยู่ในขั้น → ถ้าผ่าน = ยืนยัน gap</td></tr>
+</table>
+
+<ul class="hunt">
+<li><input class="ck" type="checkbox"><span>เล่น wizard บัญชี-ภาษีจนจบด้วยบริษัทใหม่จาก §2 แล้วกลับไปคีย์ค่าใช้จ่าย — Tax Code ต้องโผล่ · แล้วไปที่ /system เปิด expense_auto_post ต้องเปิดได้แล้ว (readiness ผ่าน)</span></li>
+<li><input class="ck" type="checkbox"><span>สร้างสาขาใหม่ → ไปดูฟอร์มที่มี dropdown สาขา (เพิ่มพนักงาน, ใบรับรองแทนใบเสร็จ) — สาขาใหม่ต้องโผล่ทันที</span></li>
+<li><input class="ck" type="checkbox"><span>ปิดฟีเจอร์ thai_tax จาก /system → เมนูตั้งค่าขั้นสูง 2 อันต้องหาย + การ์ดใหญ่ยังอยู่ถ้า ledger ยังเปิด</span></li>
+</ul>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s10" style="--accent:#15803d">
+<h2>10. LINE ทุกเส้นทาง <span class="secprog"></span></h2>
+<p class="desc">มี LINE 2 ระบบแยกกันเด็ดขาด — ทดสอบสลับกันแล้วผลจะมั่วทันที: <b>OA พนักงาน</b> (ตัวกลางของแพลตฟอร์ม: AI ผู้ช่วย, ส่งบิล, รับแจ้งเตือน, รับรหัสผ่าน) กับ <b>OA ลูกค้า</b> (ของแต่ละบริษัท: ลูกค้าทักเข้า CRM Inbox)</p>
+<div class="meta">
+<span class="tag">OA พนักงาน: config ที่ env แพลตฟอร์ม — <b>ไม่มีหน้าตั้งค่าในระบบ</b></span>
+<span class="tag">OA ลูกค้า: ตั้งที่ <b><code>/settings/line-oa</code></b> ("เชื่อมต่อ LINE OA")</span>
+<span class="tag">ผูกพนักงาน: QR จากหน้าเพิ่มพนักงาน (§8)</span>
+</div>
+
+<h3>10.1 เชื่อม OA ลูกค้าของบริษัท (<code>/settings/line-oa</code>)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>เปิดหน้า (ต้องมีสิทธิ์ crm.channel.manage)</td><td>หัว <span class="ui">เชื่อมต่อ LINE OA</span> + คำเตือนสำคัญ: <span class="ui">LINE OA นี้ต้องเป็นของบริษัทคุณ สำหรับ "ลูกค้าของคุณ" เท่านั้น … ห้ามใช้ WatchDog OA หลัก...</span> · ไม่มีสิทธิ์ → <span class="ui">คุณไม่มีสิทธิ์เข้าถึงการตั้งค่านี้ กรุณาติดต่อ Admin ของบริษัท</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>Wizard 4 ขั้นบนจอ: เปิด LINE Developers Console → copy Channel ID + Secret → ออก Access Token → กรอก 4 ช่อง (<span class="ui">ชื่อที่แสดงในระบบ</span> / Channel ID / Channel Secret / Channel Access Token) → กด <span class="ui">เชื่อมต่อ LINE OA</span></td><td>toast <span class="ui">เชื่อมต่อ LINE OA เรียบร้อยแล้ว</span> · กรอกผิดรูปแบบ → error รายช่อง เช่น <span class="ui">Channel ID ต้องเป็นตัวเลขจาก LINE Developers Console</span> / <span class="ui">Channel Access Token ไม่ถูกต้อง กรุณาออก token ใหม่แล้วคัดลอกมาวาง</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>การ์ดช่องทางหลังเชื่อม: copy <span class="ui">Webhook URL (วางใน LINE Developers Console แล้วเปิด Use webhook)</span> ไปวางฝั่ง LINE + เปิด Use webhook + Verify · ฝั่ง LINE OA Manager: Chat ON / Auto-response OFF / Greeting OFF</td><td>กด <span class="ui">ทดสอบการเชื่อมต่อ</span> → <span class="ui">เชื่อมต่อสำเร็จ — บอท "{ชื่อบอท}" พร้อมใช้งาน</span> · token ผิด → <span class="ui">Access Token ไม่ถูกต้องหรือหมดอายุ — ออก token ใหม่... แล้วกด "เปลี่ยน Credential"</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ลูกค้า (มือถือจริง) add OA แล้วทักข้อความแรก</td><td>สถานะการ์ดเปลี่ยน <span class="ui">เชื่อมต่อแล้ว — รอข้อความแรกจากลูกค้า</span> → <span class="ui">ใช้งานอยู่ — รับข้อความลูกค้าแล้ว</span> · ช่อง <span class="ui">Webhook ล่าสุด</span> อัปเดตเวลา · ข้อความโผล่ใน <code>/inbox</code></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>การ์ดล่าง: <span class="ui">ระบบตอบอัตโนมัติและค่าเริ่มต้นการจอง</span> (toggle + จำนวนตอบ/วัน — <span class="ui">0 ข้อความต่อวัน = พักระบบตอบอัตโนมัติ</span> + พนักงาน/สาขาเริ่มต้น) และ <span class="ui">SLA การตอบกลับลูกค้า</span> (นาที 1–1440, default 30 + นับเฉพาะเวลาทำการ 09:00–18:00)</td><td>บันทึก → <span class="ui">บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว</span> / <span class="ui">บันทึกการตั้งค่า SLA แล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>ปุ่ม <span class="ui">ดู Credential (บันทึก audit)</span> และ <span class="ui">ปิดการใช้งาน</span> (ต้องใส่เหตุผล)</td><td>ดู credential ได้แต่มีบันทึก audit · ปิดแล้วส่งข้อความจาก inbox → error <span class="ui">LINE OA ของบริษัทถูกปิดใช้งาน — เปิดใช้งานที่ตั้งค่า LINE OA ก่อนส่งข้อความ</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>10.2 ผูก LINE พนักงาน (OA พนักงาน)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ยังไม่ผูก: พนักงานทัก OA พนักงาน</td><td>บอทตอบ <span class="ui">🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนใช้งาน</span> — ไม่มีข้อมูลหลุดออกมา</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>Admin เปิด wizard พนักงาน ขั้น 4 (§8) → พนักงานสแกน QR (อายุ 15 นาที ใช้ครั้งเดียว)</td><td>เปิดหน้า LIFF "Link your LINE account" → สถานะไล่ Initializing → Linking → <b>Linked. Opening LINE...</b> แล้วเด้งเข้าแชท OA · token หมดอายุ/ถูกใช้โดยคนอื่น → "Missing or invalid link token. Ask your admin for a new QR code."</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>สแกน QR เดิมซ้ำด้วย LINE เดิม / ด้วย LINE เครื่องอื่น</td><td>เครื่องเดิม = สำเร็จซ้ำได้ (idempotent) · เครื่องอื่น = ปฏิเสธ · ผูก LINE ใหม่ทับ → LINE เครื่องเก่าหลุดอัตโนมัติ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ยกเลิกผูก: (a) system admin ที่ <code>/system/partners/{id}</code> → Members → <span class="ui">Unlink LINE</span> (b) ฝั่งบริษัทดูสถานะที่หน้าเพิ่มพนักงาน (<span class="ui">เชื่อม LINE แล้ว n/ทั้งหมด</span>)</td><td>หลัง unlink พนักงานทักบอท → กลับไปเจอข้อความให้เชื่อมต่อใหม่</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>10.3 สคริปต์แชทกับ AI ผู้ช่วย (พิมพ์ตามนี้ได้เลย)</h3>
+<h4>ก. เมนูสำเร็จรูป (ตอบแบบ deterministic — ทดสอบง่ายสุด เริ่มที่นี่)</h4>
+<table>
+<tr><th>พิมพ์</th><th>บอทต้องตอบ</th></tr>
+<tr><td><code>เมนูหลัก</code></td><td>การ์ดทักทาย <span class="ui">สวัสดีค่ะ {ชื่อ} 👋</span> + <span class="ui">ตำแหน่ง {role} · ดูข้อมูลได้ {สาขา} · เข้าถึง {n} เมนู</span> + ปุ่มลัดตามสิทธิ์ (ยอดขายวันนี้ · คิว/นัดวันนี้ · แชทค้างตอบ · ค่าใช้จ่ายเดือนนี้ · รายงานการเงิน · ใบสั่งซื้อ (PO) · 📊 ถามข้อมูล · ✅ รายการรออนุมัติ · 📷 ถ่ายใบเสร็จ · 🏢 บริษัทของฉัน เฉพาะ OWNER)</td></tr>
+<tr><td><code>รายการรออนุมัติ</code></td><td>การ์ด <span class="ui">✅ รายการรออนุมัติ</span> + ปุ่ม <span class="ui">คำขอเบิกเงิน</span> (ลิงก์เปิดเว็บแท็บคิวอนุมัติ) และ <span class="ui">ใบขอซื้อ/ใบสั่งซื้อ</span></td></tr>
+<tr><td><code>ถ่ายใบเสร็จ</code></td><td>การ์ด <span class="ui">แนบรูปใบเสร็จเข้าระบบ</span> + quick reply 🖼 แนบรูปใบเสร็จ / 📷 เปิดกล้อง — ย้ำว่า <span class="ui">ไม่อนุมัติหรือชำระเงินอัตโนมัติ</span></td></tr>
+<tr><td><code>/companies</code> หรือ <code>เปลี่ยนบริษัท</code> (OWNER หลายบริษัท)</td><td>การ์ดเลือกบริษัท (สูงสุด 11 ใบ) · เลือกแล้ว → <span class="ui">🏢 เปลี่ยนบริษัทเป็น {ชื่อ} แล้ว</span> · ตอบเป็นตัวเลขเฉยๆ ได้เฉพาะภายใน 15 นาทีหลังการ์ดเด้ง</td></tr>
+</table>
+<h4>ข. ส่งรูปใบเสร็จ → ระบบสร้าง draft (§5) ให้</h4>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ส่งรูปใบเสร็จชัดๆ 1 ใบ (ไม่มีแคปชัน)</td><td>ตอบ <span class="ui">🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)</span> + รายการที่อ่านได้ (ประเภทเอกสาร/ยอดรวม/ผู้ขาย/วันที่/เลขที่/VAT/หมวดหมู่ — ช่องที่อ่านไม่ได้ขึ้น <span class="ui">ยังไม่ระบุ</span>) + ลิงก์ <span class="ui">✅ ตรวจสอบและยืนยันในเว็บแอป</span> ตรงไปใบนั้น · ในเว็บ ใบนี้มี badge ช่องทาง <b>LINE</b></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ส่งรูป<b>เดิมซ้ำ</b></td><td>ไม่สร้างใบที่สอง — ตอบใบเดิม (idempotent)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ส่งรูปที่ไม่ใช่ใบเสร็จ: 2 ใบในรูปเดียว / รูปเบลอ / ใบเสนอราคา / การ์ดนัดหมาย / เซลฟี่</td><td>ตอบจำแนกอย่างสุภาพ เช่น <span class="ui">📄 พบเอกสารมากกว่า 1 ฉบับในภาพ กรุณาถ่ายแยกเอกสารละ 1 ภาพ...</span> · <span class="ui">📷 ยังอ่านเอกสารนี้ได้ไม่ชัด กรุณาถ่ายใหม่...</span> · <span class="ui">🖼️ รูปนี้ไม่ใช่เอกสารค่าใช้จ่ายหรือเอกสารธุรกิจ จึงไม่ได้สร้างรายการใดๆ ครับ</span> — และต้อง<b>ไม่มี draft เกิดขึ้น</b></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ส่งรูป<b>พร้อมแคปชันเป็นคำถาม</b> เช่น รูปบิล + "ยอดขายเดือนนี้เท่าไหร่"</td><td>บอทถามยืนยัน 1 ครั้ง: <span class="ui">🤔 รูปนี้เป็นอะไรครับ ตอบเลขข้อได้เลย 1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก 2) ภาพประกอบคำถาม ไม่ต้องบันทึก</span> — ตอบ <code>1</code> = สร้าง draft · ตอบ <code>2</code> หรือมีคำว่า "ไม่" = ไม่บันทึกและตอบคำถามแทน (หน้าต่างตอบ 30 นาที)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>พิมพ์โน้ตค่าใช้จ่ายล้วนๆ: <code>ค่ากาแฟรับรองลูกค้า 65 บาท</code></td><td>สร้าง draft แบบไม่มีไฟล์ + ตอบพร้อมบรรทัด <span class="ui">📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td><b>คำสั่งแก้ไข</b> (ภายใน 24 ชม. แชทเดิม): <code>แก้ยอดเป็น 590</code> / <code>วันที่ผิด ต้องเป็น 20 ก.ค. 2569</code> / <code>ที่จริงร้าน ABC ไม่ใช่ XYZ</code></td><td>ตอบ <span class="ui">✅ แก้ไขรายการเดิมให้แล้ว (ไม่ได้สร้างรายการใหม่)</span> + บรรทัดเทียบ เก่า → ใหม่ · <b>เช็คในเว็บว่าจำนวนใบไม่เพิ่ม!</b> (regression หลักของฟีเจอร์นี้) · ข้อความกำกวมมีทั้งค่าเก่าค่าใหม่ → <span class="ui">🤔 ข้อความมีทั้งค่าเดิมและค่าใหม่ กรุณาระบุให้ชัด...</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>7</td><td>ส่งรูป 3 ใบรัวๆ + แคปชัน 1 ข้อความ (เช่น "ค่าเดินทางทีมขาย")</td><td>ระบบ buffer รวมเป็นชุดเดียว → ได้ <b>draft 3 ใบ</b> แคปชันติดทุกใบ · พิมพ์ทีละท่อน ("ขอ" / "รายชื่อ" / "ลูกค้า") ห่างกัน &lt;2.5 วิ → ตอบครั้งเดียวรวมความ</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<h4>ค. ถามข้อมูลธุรกิจ (read-only เสมอ)</h4>
+<table>
+<tr><th>ลองพิมพ์</th><th>คาดหวัง</th></tr>
+<tr><td><code>ยอดขายวันนี้</code> · <code>ค่าใช้จ่ายเดือนนี้</code> · <code>ของอะไรใกล้หมด</code> · <code>ลูกค้าทั้งหมดมีกี่คน</code> · <code>มีใบแจ้งหนี้ค้างชำระเท่าไหร่</code> · <code>ภาษีอะไรใกล้ครบกำหนด</code> · <code>คำขอเบิกเงินรออนุมัติ</code> · <code>ยอดเงินในบัญชี</code></td><td>การ์ดเขียว "ข้อมูลจากมั่งมี" + บรรทัด <span class="ui">แหล่งข้อมูล: …</span> + ปุ่ม <span class="ui">เปิดดูข้อมูล</span> ลิงก์เข้าเว็บบริษัทตัวเองเท่านั้น · ถามเรื่องที่ role ไม่มีสิทธิ์ → <span class="ui">🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้</span> (เช่น qa.staff ถามยอดขาย)</td></tr>
+<tr><td><code>อนุมัติใบขอซื้อให้หน่อย</code> / <code>โอนเงินให้ supplier</code></td><td>ปฏิเสธชัดเจน: <span class="ui">🔒 LINE AI ไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี/ยื่นภาษี หรือเปิดใช้ลายเซ็นได้ กรุณาทำรายการในเว็บแอป WatchDog</span> — <b>LINE ห้ามแก้ข้อมูลธุรกิจเด็ดขาด</b> (ยกเว้นสร้าง draft ใบเสร็จ)</td></tr>
+<tr><td><code>สรุปยอดวันนี้ เช็คของใกล้หมด และมีบิลไหนต้องตรวจบ้าง</code> (3 เรื่องในข้อความเดียว)</td><td>ตอบครบตามลำดับที่ถาม ถามกลับได้ไม่เกิน 1 คำถาม เรื่องที่ตอบไม่ได้ต้องบอกตรงๆ ว่าเพราะอะไร</td></tr>
+</table>
+<div class="box warn"><b class="t">⚠ 3 กับดักฝั่ง LINE — อย่าแจ้งผิด</b>
+① <b>ข้อความเสียง (voice note) → บอทเงียบสนิท</b> ไม่ตอบอะไรเลย (ฟีเจอร์มี spec แต่ยังไม่ได้ทำ — จดเป็น UX gap ได้ ไม่ใช่ regression) ② <b>rate limit / งบ AI หมด / gateway ล่ม ตอบเหมือนกันหมด:</b> <span class="ui">⏳ ขออภัย เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง</span> — แยกสาเหตุจากแชทไม่ได้ ต้องดู log ③ หน้า <code>/system/line-settings</code> เข้าได้แต่กด save = 403 เสมอ (ถูกปลดโดยตั้งใจ ห้ามใช้ทดสอบ rotation)</div>
+
+<h3>10.4 ปิด AI รายคน (PDPA opt-out) + รีเซ็ตรหัสผ่านผ่าน LINE</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ในเว็บ: โปรไฟล์ → ความปลอดภัยบัญชี → การ์ด <span class="ui">ผู้ช่วย AI ทาง LINE</span> → กด <span class="ui">ปิดใช้งานผู้ช่วย AI</span></td><td>toast <span class="ui">ปิดใช้งานผู้ช่วย AI แล้ว</span> · จากนั้นทัก LINE (ทั้งข้อความและรูป) → <span class="ui">🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI — เปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย</span> — ต้องไม่มีการเรียก AI ใดๆ (fail-closed)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ฝั่ง<b>ลูกค้า</b> (OA บริษัท): พิมพ์คำเป๊ะๆ <code>ยกเลิกข่าวสาร</code> หรือ <code>หยุดโปร</code> หรือ <code>STOP</code></td><td>ตอบ <span class="ui">ยกเลิกข่าวสารและโปรโมชันเรียบร้อยแล้ว การยกเลิกนี้ไม่กระทบข้อความเกี่ยวกับการจองหรือบริการที่คุณใช้</span> · พิมพ์ปนประโยค (เช่น "ขอ STOP หน่อย") ต้อง<b>ไม่</b> trigger</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>ลืมรหัสผ่าน:</b> หน้า <code>/forgot-password</code> ใส่ username แล้วส่ง</td><td>ได้ข้อความกลางๆ เสมอ (ไม่บอกว่า username มีจริงไหม — ตั้งใจ) · เบื้องหลัง: ADMIN ของบริษัทที่ผูก LINE ได้ push <span class="ui">🔐 {ชื่อ} ({username}) ขอรีเซ็ตรหัสผ่าน — ไปที่ ตั้งค่า → ภาพรวมสิทธิ์ ...</span> · admin กดรีเซ็ตตาม §8.2 → พนักงานได้รหัสชั่วคราวทาง LINE ตัวเอง <span class="ui">🔐 รหัสผ่านชั่วคราวของคุณ: … ใช้ได้ถึง …</span></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>10.5 CRM Inbox — แชทลูกค้า (<code>/inbox</code> "กล่องข้อความ")</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ลูกค้า (มือถือ) ทัก OA บริษัท: <code>สวัสดีค่ะ</code></td><td>ทักทายล้วน → บอทตอบทันทีแบบไม่ใช้ AI: <span class="ui">สวัสดีค่ะ 😊 มีอะไรให้เราช่วยดูแลไหมคะ?</span> · แชทโผล่ในเว็บ inbox คอลัมน์ซ้าย สถานะ <span class="ui">ใหม่</span> + มีตัวจับเวลา SLA (<span class="ui">เหลือ N นาที</span> → แดง <span class="ui">เกิน N นาที</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>ลูกค้าถามคำถามที่ AI ตอบไม่ได้/ซับซ้อน</td><td>ระบบส่ง holding: <span class="ui">ได้รับข้อความแล้วค่ะ เจ้าหน้าที่จะรีบติดต่อกลับนะคะ</span> แล้วรอคนตอบ · ถ้าปิด toggle ตอบอัตโนมัติ = เงียบรอคนอย่างเดียว (ไม่มี holding)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>จองคิวผ่านแชท: <code>จองวันเสาร์ 14:00</code> → บอทขอชื่อ+เบอร์ → ส่งการ์ดสรุป → ลูกค้าพิมพ์ <code>ยืนยัน</code></td><td>การ์ดตรวจสอบ <span class="ui">กรุณาตรวจสอบข้อมูลการจองค่ะ</span> (บริการ/วันที่/เวลา/สาขา/ชื่อ/เบอร์) → <span class="ui">ยืนยันการจองสำเร็จค่ะ ✅</span> · booking โผล่ที่เมนูการจองออนไลน์ · คิวเต็ม → เสนอเวลาว่าง · <b>ขอเลื่อน/ยกเลิกนัดที่จองแล้ว</b> → ต้องส่งต่อพนักงาน (<span class="ui">รับเรื่องแล้วค่ะ 🙏 ... เจ้าหน้าที่จะติดต่อกลับ...</span>) ไม่สร้างนัดซ้อน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ฝั่งพนักงานในเว็บ: เปิดแชท → ปุ่ม <span class="ui">รับเรื่อง</span> · composer 2 แท็บ <span class="ui">ส่งหาลูกค้า</span> / <span class="ui">โน้ตภายใน</span> · พิมพ์ <code>/</code> เพื่อเรียกข้อความตอบด่วน</td><td>ตอบแล้วลูกค้าได้รับใน LINE จริง · โน้ตภายในลูกค้า<b>ต้องไม่เห็น</b> (label <span class="ui">โน้ตภายใน · ลูกค้าไม่เห็น</span>) · แถบขวามี <span class="ui">ข้อมูลลูกค้า</span> (แท็ก, สร้างดีล/งานติดตาม/ใบเสนอราคา, ปุ่ม <span class="ui">เปิด Customer 360</span>) และแท็บ <span class="ui">AI ช่วย</span> (สรุปบทสนทนา / ร่างคำตอบ → <span class="ui">แทรกลงช่องพิมพ์</span>)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>ลูกค้าส่ง<b>สลิปโอนเงิน</b> → พนักงานกดตั้งเป็นหลักฐานชำระเงินในแชท</td><td>โน้ตระบบ <span class="ui">💰 ตั้งค่าเป็นหลักฐานการชำระเงิน (เข้าคิวการเงิน)</span> · การเงินได้แจ้งเตือน <span class="ui">หลักฐานการโอนใหม่: {ลูกค้า}</span> · ไปดูที่ <code>/crm/payment-proofs</code> — การ์ดรูป + badge <span class="ui">รอตรวจสอบ</span> + ปุ่ม <span class="ui">เปิดแชท</span>/<span class="ui">ดาวน์โหลด</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>6</td><td>ลูกค้าส่งวิดีโอ/ข้อความเสียง</td><td>ใน inbox ขึ้นแถวพร้อมหมายเหตุ <span class="ui">ยังไม่รองรับวิดีโอ/ข้อความเสียง</span> (ต่างจาก OA พนักงานที่เงียบ)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s11" style="--accent:#7e22ce">
+<h2>11. Flow เสริมที่เปิดใน release นี้ <span class="secprog"></span></h2>
+<p class="desc">ทุกตัวในหมวดนี้ทำงานจริงแล้ว — บางตัวมีเมนู บางตัวต้องเข้าทาง URL ตรง (ดูตาราง §1.2) · แต่ละหัวข้อคือ happy path + จุดหาบัคแบบกระชับ</p>
+
+<h3>11.1 เอกสารขายและรับชำระ (<code>/sales-documents</code>) — ใบเสร็จ/บิลฝั่ง "ขาย"</h3>
+<p>เอกสาร 7 ประเภท: <b>ใบเสนอราคา (QT-) · ใบแจ้งหนี้ (INV-) · ใบวางบิล (BN-) · ใบเสร็จรับเงิน (REC-) · ใบกำกับภาษี (TAX-) · ใบลดหนี้ (CN-) · ใบเพิ่มหนี้ (DN-)</b> — เลขจริงออกตอนกด Issue</p>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>ฟอร์มซ้าย "New document": เลือกประเภท + วันที่ + VAT mode + <span class="ui">หัก ณ ที่จ่ายที่ลูกค้าจะหัก (%)</span> + บริบทธุรกรรม (ขายในประเทศ/ส่งออก) + บรรทัดสินค้า + Tax Code → Save draft</td><td>toast <span class="ui">บันทึกร่างเอกสารเรียบร้อยแล้ว</span> · ใบกำกับภาษีบังคับมี Tax Code ทุกบรรทัด</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>เลือกใบ → ปุ่ม action ตามสถานะ: แก้ไข Draft → (QT: Submit approval → Approve/Reject) → <b>Issue</b> → Convert to invoice → Create tax invoice → Create credit/debit note → Void</td><td>Issue ได้เลขจริง + toast <span class="ui">ออกเอกสารเรียบร้อยแล้ว</span> · Void ต้องใส่เหตุผล และกลับรายการบัญชีแบบ true reversal · <b>ไม่มีปุ่มพิมพ์ PDF เอกสารขาย</b> (ยังไม่ทำ — อย่าตามหา)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>Record payment</b> (ใบ INV/BN/DN ที่ Issue แล้ว): เงินสดที่ได้รับ + <span class="ui">ถูกหัก ณ ที่จ่าย</span> + <span class="ui">เลขที่หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)</span> + วิธีชำระ</td><td>เงินสด+WHT รวมเกินยอดค้างไม่ได้ · จ่ายครบ → payment status <span class="ui">ชำระแล้ว</span> · การรับเงินไปโผล่เป็น candidate ฝั่งกระทบยอดธนาคาร (§11.5)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>สลับสถานะเอกสารครบวงจร: QT → approve → issue → convert → INV → issue → payment → REC/TAX → CN</td><td>สถานะไล่: ร่าง → รอการอนุมัติ → อนุมัติแล้ว → ออกแล้ว → ชำระแล้ว/ออกใบลดหนี้แล้ว · ตัวเลขเอกสารรันตามเดือน ไม่ข้ามเบอร์</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.2 ลูกค้า / CRM / การจอง</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>ลูกค้า</b> (<code>/customers</code>): <span class="ui">+ เพิ่มลูกค้า</span> (ชื่อ* เบอร์ อีเมล เลขภาษี source tier) · เปิดโปรไฟล์ → เก็บเข้าคลัง / <span class="ui">รวมข้อมูลลูกค้า</span> (merge — OWNER/ADMIN เท่านั้น มี preview ก่อน)</td><td>กรอกเบอร์ซ้ำ → dialog เตือนซ้ำให้เลือก <span class="ui">ใช้ข้อมูลเดิม</span> หรือสร้างต่อ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>CRM hub</b> (<code>/crm</code> — URL ตรง): แท็บ ภาพรวม / ลูกค้ามุ่งหวัง / ไปป์ไลน์ / งานติดตาม</td><td>ในไปป์ไลน์กด <span class="ui">สร้างใบเสนอราคา (ร่าง)</span> → ต้องไปโผล่เป็น QT ร่างใน §11.1 (จุดเชื่อม CRM→ขาย) · ปิดดีลต้องใส่เหตุผล ปิดชนะ/ปิดแพ้</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>Customer 360</b> (<code>/crm/customers/{id}</code>): 10 แท็บ (ภาพรวม/ไทม์ไลน์/การสนทนา/ดีล/ใบเสนอราคา/การเงิน/นัดหมาย/งานบริการ/โน้ต/ความยินยอม)</td><td>แชท LINE, ใบเสนอราคา, การจอง ของลูกค้าคนเดียวกันต้องมารวมที่นี่ครบ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>การจองออนไลน์</b> (<code>/bookings</code>): <span class="ui">จองคิวใหม่</span> → ค้นหา/สร้างลูกค้า → เลือกบริการ (จาก catalog §9.4) + พนักงาน + เวลา → บันทึก · แล้วลอง เลื่อนนัด / เสร็จสิ้น / ไม่มาตามนัด / ยกเลิก</td><td>toast <span class="ui">บันทึกคิวเรียบร้อยแล้ว</span> · บริการที่ปิด "เปิดให้ลูกค้าเห็น" ต้องไม่โผล่ให้เลือก · booking จากแชทลูกค้า (§10.5) ต้องมาโผล่ปฏิทินเดียวกัน</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.3 คลังสินค้า (<code>/inventory</code> — URL ตรง)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>Hub 7 การ์ด: สินค้า / สถานที่จัดเก็บ / ความเคลื่อนไหว / บันทึกสต็อก / ตรวจนับ / รายงานสต็อก / สแกน QR (แต่ละการ์ดโผล่ตามสิทธิ์ — เทียบ qa.inventory กับ qa.sales)</td><td>—</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><span class="ui">บันทึกสต็อก</span>: เลือกโหมด รับเข้า/จ่ายออก/โอนย้าย/ตรวจนับ/ปรับเพิ่ม/ปรับลด + จำนวน + เหตุผล (บังคับตอนนับ/ปรับ)</td><td>ตรวจนับแล้วยอดตรง → toast <span class="ui">ยอดตรงกับระบบอยู่แล้ว ไม่มีการปรับปรุง</span> · movement ได้เลข MOV-YYYYMM-#####</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ตั้ง <span class="ui">จุดสั่งซื้อ (Reorder point)</span> สินค้าตัวหนึ่ง แล้วจ่ายออกให้ต่ำกว่า</td><td>ภายใน ~1 ชม. เกิดแจ้งเตือน <span class="ui">สต็อกต่ำ: {สินค้า}</span> + การ์ดแดชบอร์ด "สินค้าต่ำกว่า Reorder Point" ขยับ (จุดเชื่อม inventory→dashboard→notification)</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.4 จัดซื้อ + เจ้าหนี้ (<code>/procurement</code>, <code>/accounts-payable</code> — URL ตรง)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>จัดซื้อ</b> 4 แท็บ: ผู้จำหน่าย / ใบขอซื้อ (PR) / ใบสั่งซื้อ (PO) / ใบรับสินค้า (GR) — ไล่ปุ่ม: PR <span class="ui">ส่งขออนุมัติ</span> → <span class="ui">อนุมัติ</span>/<span class="ui">ปฏิเสธ</span> · PO <span class="ui">ออก PO</span> · GR <span class="ui">บันทึกรับสินค้า</span>/<span class="ui">ยกเลิก</span></td><td>สถานะไล่ตามป้าย ร่าง→รออนุมัติ→อนุมัติแล้ว→ออกแล้ว→รับครบ→วางบิลครบ · <b>หมายเหตุ:</b> หน้าเว็บเป็น list+ปุ่มเปลี่ยนสถานะ — การสร้าง PR/PO ใหม่ยังไม่มีฟอร์มใน UI</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>เจ้าหนี้</b> แท็บ <span class="ui">ใบวางบิล</span>: ฟอร์ม <span class="ui">สร้าง Vendor Bill พร้อม Tax Code รายบรรทัด</span> (supplier + บริบท ซื้อในประเทศ/นำเข้า/ภ.พ.36 + บรรทัด + Tax Code) → แนบ <span class="ui">หลักฐานภาษีซื้อ</span> (เลขที่/วันที่ใบกำกับ + ไฟล์) → <span class="ui">ยืนยันหลักฐาน</span> → <span class="ui">ส่งขออนุมัติ</span> → <span class="ui">อนุมัติ</span></td><td>หลักฐานไม่ครบ → รายการ blocking โชว์เป็นไทย (เช่น ผู้ขายยังไม่มีเลขประจำตัวผู้เสียภาษี) และปุ่มส่ง/อนุมัติ disable · นโยบาย maker-checker ตั้งได้ (ยอดเกิน N ต้องอนุมัติ 2 คน)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>แท็บ <span class="ui">การชำระเงิน</span>: <span class="ui">บันทึกจ่ายเจ้าหนี้</span> — เลือกบิล + ยอดจ่าย (จ่ายบางส่วนได้!) + วิธี + <b>fieldset หัก ณ ที่จ่าย</b> (หมวดเงินได้ต้องเปิดใช้ที่หน้า /tax ก่อน + อัตรา% + ยอดหัก)</td><td>ยอดโอนสุทธิ = ยอด − WHT · จ่ายครบ → บิล <span class="ui">ชำระแล้ว</span> · dropdown หมวดเงินได้ว่างเปล่า = ยังไม่ได้เปิดหมวดที่ /tax แท็บ WHT (จุดเชื่อม tax→AP ที่คนมักตกม้า)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>แท็บ <span class="ui">หนังสือรับรองหัก ณ ที่จ่าย</span>: กด <span class="ui">ดูข้อมูลสำหรับออกเอกสาร</span> → คัดลอกข้อมูลไปออก 50 ทวิภายนอก → กลับมา <span class="ui">แนบเอกสาร</span> (เลขที่+วันที่ออก)</td><td>สถานะไล่ <span class="ui">รอออกเอกสารภายนอก</span> → <span class="ui">แนบเอกสารแล้ว</span> — ระบบ<b>ไม่พิมพ์ 50 ทวิเอง</b> (มีแบนเนอร์บอกตรงๆ)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>แท็บ <span class="ui">AP Aging</span></td><td>Bucket ยังไม่ถึงกำหนด / 0–30 / 31–60 / 61–90 / 91+ วัน — ยอดรวมต้องตรงกับบิลค้างจ่ายจริง</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.5 ธนาคารและกระทบยอด (<code>/banking</code> — URL ตรง)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><span class="ui">+ เพิ่มบัญชีธนาคาร</span> (ชื่อ* ธนาคาร* ประเภท เลขบัญชี 4 หลักท้าย ยอดยกมา)</td><td>เลขบัญชีเต็มถูกปกปิด — เห็นได้เฉพาะคนมีสิทธิ์ระดับ sensitive</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><span class="ui">นำเข้า statement</span>: อัปโหลด CSV (≤4MB) หรือ PDF/รูป (≤25MB ให้ระบบอ่าน) หรือวางข้อความจาก Excel → <span class="ui">ตรวจสอบตัวอย่าง</span> → เลือก <span class="ui">ข้ามแถวที่ซ้ำ (แนะนำ)</span> → <span class="ui">ยืนยันนำเข้า N แถว</span></td><td>Preview แยก ถูกต้อง/ซ้ำ/ผิดพลาด + เตือนยอดคงเหลือไม่ต่อเนื่อง + ธง OCR ความมั่นใจต่ำ · นำเข้าไฟล์เดิมซ้ำ → แถวซ้ำถูกจับ · <span class="ui">ยกเลิกการนำเข้า</span> ได้พร้อมเหตุผล</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><span class="ui">จับคู่รายการ</span>: ต่อแถว statement ระบบเสนอ candidate (รับชำระลูกค้า / จ่ายซัพพลายเออร์ / จ่ายค่าใช้จ่าย / จ่ายเบิกคืน ฯลฯ) → <span class="ui">จับคู่</span> / <span class="ui">ยกเลิกการจับคู่</span> / <span class="ui">ข้ามรายการนี้ (ระบุเหตุผล)</span></td><td>การจ่ายจาก §5/§7/§11.1/§11.4 ต้องโผล่เป็น candidate ยอดตรงวันใกล้ (±7 วัน) — นี่คือจุดรวมทุกสายการเงิน</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><span class="ui">+ สร้างรอบกระทบยอด</span> (ช่วงวันที่ + ยอดเปิด/ปิดตาม statement) → <span class="ui">เสร็จสิ้น</span> → <span class="ui">เปิดใหม่</span> (ใส่เหตุผล) · <span class="ui">+ สร้างรายการปรับปรุง</span> → ส่งขออนุมัติ → อนุมัติ (ระบุบัญชีเดบิต/เครดิต)</td><td>ปิดรอบไม่ได้ถ้ามีแถวข้ามที่ยังไม่มีเหตุผลผ่านตรวจ · รายการปรับปรุงที่อนุมัติ → เกิด JV เบื้องหลัง</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.6 ภาษี (<code>/tax</code> — มีเมนู)</h3>
+<table class="steps">
+<tr><th>#</th><th>ขั้นตอน</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td>กด <span class="ui">ซิงค์แหล่งข้อมูล</span></td><td>แบนเนอร์ <span class="ui">ซิงค์สำเร็จ: ภาษีขาย n · ภาษีซื้อ n · WHT n · ปัญหา n · ล็อก n</span> — งวดภาษีโผล่ซ้าย (ภ.พ.30 / ภ.พ.36 / ภ.ง.ด.3 / ภ.ง.ด.53 / ภ.ง.ด.50 / ภ.ง.ด.51)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>เลือกงวด → <span class="ui">คำนวณรายงาน</span> → ตรวจ <span class="ui">ปัญหาที่ต้องตรวจสอบ</span> + ตาราง <span class="ui">รายการภาษี</span> → Export (JSON/CSV/XLSX/PDF) → <span class="ui">ยื่นแบบแล้ว</span> → <span class="ui">ชำระแล้ว</span></td><td>ค่าใช้จ่ายที่ยืนยัน (มี VAT claimable) จาก §5 ต้องมาเป็นแถว "ภาษีซื้อ" · WHT ที่กรอกใน §5 มาเป็นแถว ภ.ง.ด.3/53 · งวดที่ยื่นแล้ว → <span class="ui">ล็อกแล้ว (ไม่สามารถแก้ไข)</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>แท็บ WHT: panel <span class="ui">หมวดเงินได้ หัก ณ ที่จ่าย</span> — กด <span class="ui">เปิดใช้งาน</span> หมวดที่ใช้ (seed มา 15 หมวดเป็น DRAFT ทั้งหมด)</td><td>ก่อนเปิด: มีแบนเนอร์เหลืองเตือน + dropdown WHT ฝั่ง AP ว่าง · หลังเปิด: AP เลือกหมวดได้ (จุดเชื่อม tax→AP)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><span class="ui">Reconciliation</span> (<code>/tax/reconciliation</code>): เลือกแบบ ภ.พ.30 + เดือน → <span class="ui">สร้าง Reconciliation</span> → ดู box 1–9 + ตารางไล่ Source→Event→Journal→Report → <span class="ui">ยืนยันตรวจแล้ว</span></td><td>มี blocking issue → ปุ่มยืนยัน disable (<span class="ui">ต้องแก้ blocking issues ที่ source/config ก่อน</span>) · แถว delta คลิกย้อนกลับไปเอกสารต้นทางได้</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+
+<h3>11.7 รายงานการเงิน (<code>/reports</code>) · เวิร์กโฟลว์ (<code>/workflow</code>) · AI แนะนำ (<code>/ai-suggestions</code>)</h3>
+<table class="steps">
+<tr><th>#</th><th>จุดตรวจ</th><th>ผลที่คาดหวัง</th><th>☑</th></tr>
+<tr><td>1</td><td><b>รายงาน:</b> เลือก dataset จาก <span class="ui">รายการรายงาน</span> (มี 18 ชุด: General Ledger, Trial Balance, P&amp;L, Balance Sheet, AR/AP Aging, Sales Summary, Sales Pipeline, Stock Balance/Movement/Reorder, Expense Summary, Accountant Expense Evidence, Tax Summary, Cash Position, Workflow SLA, Operational Health, AI Suggestion Summary) → ตั้ง filter → <span class="ui">เรียกรายงาน</span> → <span class="ui">บันทึกมุมมอง</span> + <span class="ui">ส่งออก CSV</span></td><td>dataset ที่ role ไม่มีสิทธิ์ขึ้น <span class="ui">ไม่มีสิทธิ์</span> · export เสร็จมีแจ้งเตือน <span class="ui">ไฟล์รายงานพร้อมดาวน์โหลดแล้ว</span> + โหลดซ้ำได้จาก <span class="ui">ศูนย์ส่งออกข้อมูล</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td><b>เวิร์กโฟลว์:</b> แท็บ เทมเพลต / กฎอัตโนมัติ / ประวัติการทำงาน / งานที่มอบหมาย / ข้อผิดพลาดค้าง / Webhook — กด <span class="ui">เปิดใช้งาน</span> เทมเพลต (เช่น Low Stock Alert) ตั้งชื่อกฎ + คูลดาวน์</td><td>มี disclaimer ตายตัว: <span class="ui">กฎที่ตั้งค่าไว้จะแจ้งเตือนและสร้างงานให้อัตโนมัติ แต่ไม่สามารถอนุมัติ โอนเงิน ตัดสต๊อก หรือยื่นภาษีแทนคุณได้</span> · ปุ่ม <span class="ui">ทดสอบเงื่อนไข</span> ระบุ <span class="ui">ไม่มีผลกระทบจริง</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td><b>AI แนะนำ:</b> ปุ่ม <span class="ui">ขอคำแนะนำ</span> เลือกเทมเพลต (สรุปความเสี่ยงกระแสเงินสด / การติดตามลูกค้าครั้งถัดไป / ทบทวนการสั่งซื้อซ้ำ / เช็กลิสต์หลักฐานภาษี / เช็กลิสต์ทบทวนเวิร์กโฟลว์) → เปิดคำแนะนำ → <span class="ui">ตรวจสอบ</span> → <span class="ui">สร้างร่างในระบบ</span> หรือ <span class="ui">ปิดคำแนะนำ</span></td><td>ทุกร่างที่ AI สร้างเป็น "ร่างรอรีวิว" เสมอ — <span class="ui">การสร้างร่างในระบบต้องรีวิวและยืนยันที่นี่เท่านั้น</span> · ถ้าข้อมูลต้นทางเปลี่ยนหลังสร้างคำแนะนำ ต้องมีธง <span class="ui">⚠️ ข้อมูลต้นทางเปลี่ยนหลังสร้างคำแนะนำ</span></td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td><b>คู่มือในแอป</b> (เมนู <span class="ui">คู่มือการใช้งานระบบ</span>)</td><td>release นี้โชว์ 3 เรื่อง: ค่าใช้จ่ายและใบเสร็จ / ใบรับรองแทนใบเสร็จรับเงิน / การเบิกจ่ายและอนุมัติ · คู่มือภาษีกับรายงานถูกซ่อน (URL ตรงยังเปิดได้ — ตั้งใจ) · <b>ระหว่างเล่น ให้เทียบคู่มือกับของจริง — เจอจุดที่คู่มือเขียนไม่ตรง = บัคเอกสาร จดด้วย</b></td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+</section>
+<!-- ============================================================ -->
+<section class="flow" id="s12" style="--accent:#0e7490">
+<h2>12. ทุก flow เชื่อมกันยังไง + ซีนาริโอ E2E <span class="secprog"></span></h2>
+<p class="desc">แผนที่เส้นทางข้อมูลข้ามโมดูล — บัคที่แพงที่สุดมักอยู่ "ตรงรอยต่อ" ไม่ใช่ในหน้าเดียว · ปิดท้ายด้วยสคริปต์เล่นยาว 4 เรื่องที่ลากผ่านทุกรอยต่อ</p>
+
+<div class="svgwrap">
+<svg viewBox="0 0 940 480" xmlns="http://www.w3.org/2000/svg" font-family="inherit" font-size="12">
+  <defs><marker id="ar5" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker></defs>
+  <!-- inputs -->
+  <rect x="15" y="30" width="150" height="40" rx="8" fill="#f0fdf4" stroke="#86efac"/><text x="90" y="54" text-anchor="middle">LINE: ส่งรูปบิล (§10)</text>
+  <rect x="15" y="85" width="150" height="40" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="90" y="109" text-anchor="middle">เว็บ: อัปโหลด/คีย์มือ (§5)</text>
+  <rect x="15" y="140" width="150" height="40" rx="8" fill="#fffbeb" stroke="#fcd34d"/><text x="90" y="158" text-anchor="middle">เบิกจ่ายอนุมัติจ่าย (§7)</text><text x="90" y="173" text-anchor="middle" font-size="10" fill="#b45309">1 บรรทัด = 1 expense</text>
+  <rect x="15" y="195" width="150" height="40" rx="8" fill="#fdf2f8" stroke="#f9a8d4"/><text x="90" y="219" text-anchor="middle">ใบรับรองแทนใบเสร็จ (§6)</text>
+  <!-- center -->
+  <rect x="245" y="95" width="200" height="90" rx="12" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="2"/>
+  <text x="345" y="125" text-anchor="middle" font-weight="700" fill="#5b21b6">เอกสารค่าใช้จ่าย</text>
+  <text x="345" y="145" text-anchor="middle" fill="#6d28d9">EXP-… (§5)</text>
+  <text x="345" y="165" text-anchor="middle" font-size="10.5" fill="#7c3aed">ยืนยันแล้ว = จุดปล่อยข้อมูลออก</text>
+  <!-- outputs of expense -->
+  <rect x="540" y="20" width="170" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="625" y="44" text-anchor="middle">สมุดบัญชี JV (ซ่อน UI)</text>
+  <rect x="540" y="75" width="170" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="625" y="99" text-anchor="middle">ภาษี: ภ.พ.30 / ภ.ง.ด. (§11.6)</text>
+  <rect x="540" y="130" width="170" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="625" y="154" text-anchor="middle">แดชบอร์ด + แจ้งเตือน (§4)</text>
+  <rect x="540" y="185" width="170" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="625" y="209" text-anchor="middle">ส่งออกให้สำนักงานบัญชี</text>
+  <rect x="760" y="100" width="165" height="46" rx="8" fill="#ecfeff" stroke="#67e8f9"/><text x="842" y="119" text-anchor="middle">กระทบยอดธนาคาร (§11.5)</text><text x="842" y="136" text-anchor="middle" font-size="10" fill="#0e7490">ทุกการจ่ายมารวมที่นี่</text>
+  <!-- sales chain -->
+  <rect x="15" y="300" width="150" height="40" rx="8" fill="#f0fdf4" stroke="#86efac"/><text x="90" y="318" text-anchor="middle">LINE ลูกค้า → Inbox</text><text x="90" y="333" text-anchor="middle" font-size="10" fill="#15803d">แชท/จอง/สลิป (§10.5)</text>
+  <rect x="215" y="300" width="130" height="40" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="280" y="324" text-anchor="middle">CRM ดีล/ลีด (§11.2)</text>
+  <rect x="395" y="300" width="160" height="40" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="475" y="318" text-anchor="middle">เอกสารขาย QT→INV→REC</text><text x="475" y="333" text-anchor="middle" font-size="10" fill="#475569">+ ใบกำกับภาษี (§11.1)</text>
+  <rect x="615" y="300" width="130" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="680" y="324" text-anchor="middle">รับชำระ + WHT</text>
+  <!-- procurement chain -->
+  <rect x="15" y="395" width="150" height="40" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="90" y="413" text-anchor="middle">จัดซื้อ PR→PO→GR</text><text x="90" y="428" text-anchor="middle" font-size="10" fill="#475569">(§11.4)</text>
+  <rect x="215" y="395" width="150" height="40" rx="8" fill="#f8fafc" stroke="#cbd5e1"/><text x="290" y="413" text-anchor="middle">Vendor Bill + หลักฐาน</text><text x="290" y="428" text-anchor="middle" font-size="10" fill="#475569">ภาษีซื้อ/ภ.พ.36</text>
+  <rect x="415" y="395" width="140" height="40" rx="8" fill="#eff6ff" stroke="#93c5fd"/><text x="485" y="413" text-anchor="middle">จ่ายเจ้าหนี้ + WHT</text><text x="485" y="428" text-anchor="middle" font-size="10" fill="#1d4ed8">50 ทวิแนบภายนอก</text>
+  <rect x="615" y="395" width="150" height="40" rx="8" fill="#f0fdfa" stroke="#5eead4"/><text x="690" y="413" text-anchor="middle">สินค้า/สต๊อก + Catalog</text><text x="690" y="428" text-anchor="middle" font-size="10" fill="#0f766e">→ การจอง + AI ตอบลูกค้า</text>
+  <!-- arrows -->
+  <line x1="165" y1="50" x2="245" y2="110" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="165" y1="105" x2="245" y2="125" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="165" y1="160" x2="245" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="165" y1="215" x2="245" y2="170" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="445" y1="115" x2="540" y2="45" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="445" y1="130" x2="540" y2="95" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="445" y1="150" x2="540" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="445" y1="165" x2="540" y2="205" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="710" y1="95" x2="760" y2="115" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="710" y1="205" x2="760" y2="140" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="165" y1="320" x2="215" y2="320" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="345" y1="320" x2="395" y2="320" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="555" y1="320" x2="615" y2="320" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="745" y1="320" x2="835" y2="150" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="165" y1="415" x2="215" y2="415" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="365" y1="415" x2="415" y2="415" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="555" y1="415" x2="790" y2="146" stroke="#64748b" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="690" y1="395" x2="680" y2="342" stroke="#94a3b8" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#ar5)"/>
+</svg>
+<p class="cap">ภาพที่ 5 — แผนที่รอยต่อ: ทุกทางเข้า (LINE/เว็บ/เบิกจ่าย/ใบทดแทน) ไหลเข้าเอกสารค่าใช้จ่าย แล้วกระจายออกบัญชี/ภาษี/แดชบอร์ด/กระทบยอด · สายขายกับสายซื้อไปบรรจบที่กระทบยอดธนาคารเหมือนกัน</p>
+</div>
+
+<h3>12.1 ตารางรอยต่อที่ต้อง "ตามข้อมูลข้ามหน้า" ให้ครบ</h3>
+<table>
+<tr><th>ต้นทาง → ปลายทาง</th><th>วิธีตรวจ</th></tr>
+<tr><td>LINE รูปบิล → expense draft</td><td>เลขใบใน reply ของบอท = ใบเดียวกับในเว็บ badge <b>LINE</b> · แก้ทางแชท "แก้ยอดเป็น..." → ตัวเลขในเว็บเปลี่ยนตาม ไม่เกิดใบใหม่</td></tr>
+<tr><td>เบิกจ่าย → expense → บัญชี</td><td>อนุมัติจ่าย 1 ใบ 3 บรรทัด → เมนูค่าใช้จ่ายมีใบใหม่ 3 ใบชื่อ "เบิกคืนพนักงาน: {ชื่อ}" · หลักฐานทางบัญชีเห็นสถานะลงบัญชีของมัน</td></tr>
+<tr><td>ใบรับรองแทนใบเสร็จ → expense</td><td>ISSUED ปุ๊บ expense ต้นทางกลายเป็น "ชำระแล้ว" อัตโนมัติ + ไฟล์ PDF ใบรับรองแนบเข้า expense</td></tr>
+<tr><td>expense ยืนยัน → ภาษี</td><td>ใบมี VAT claimable → หน้า /tax หลังซิงค์ต้องมีแถวภาษีซื้อยอดตรงกัน · ใส่ WHT → โผล่ใน ภ.ง.ด.3/53</td></tr>
+<tr><td>expense/เบิกจ่าย/AP/ขาย → ธนาคาร</td><td>ทุก "การจ่าย/รับเงิน" ต้องเป็น candidate ให้จับคู่ใน /banking — ยอดและวันที่ตรง</td></tr>
+<tr><td>catalog → จอง → CRM → ขาย</td><td>สร้างบริการ+เปิดให้ลูกค้าเห็น → จองได้ทั้งจากเว็บและแชทลูกค้า → ดีลใน CRM กด "สร้างใบเสนอราคา" → ไปโผล่เอกสารขาย</td></tr>
+<tr><td>ทุกโมดูล → กระดิ่ง+LINE</td><td>ใช้ตาราง §4.5 ไล่ยิงเหตุการณ์ทีละแถวแล้วเช็คปลายทางทั้ง 2 ช่อง</td></tr>
+<tr><td>/system → ทุกอย่าง</td><td>ปิดฟีเจอร์กลางทางขณะอีกคนใช้งานอยู่ — ภายใน ~60 วิ เมนูอีกฝั่งต้องหายเอง งานเก่า freeze ไม่พัง</td></tr>
+</table>
+
+<h3>12.2 ซีนาริโอ E2E — เล่นยาวข้าม flow (แนะนำให้ทำหลังไล่รายหมวดครบ)</h3>
+<h4>🎬 E2E-1: วงจรรายจ่ายเต็มสาย (LINE → เว็บ → บัญชี → ภาษี → ธนาคาร)</h4>
+<table class="steps">
+<tr><th>#</th><th>ทำ</th><th>เช็ค</th><th>☑</th></tr>
+<tr><td>1</td><td>พนักงาน (ผูก LINE แล้ว) ถ่ายบิลจริงส่งเข้า OA พนักงาน</td><td>ได้ reply 🧾 + ใบโผล่ในเว็บ badge LINE</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>พิมพ์แก้ยอดทางแชท 1 ครั้ง → แล้วเปิดเว็บตรวจ 3 ขั้น → ส่งตรวจสอบ</td><td>ยอดตรงกับที่แก้ · ไม่มีใบซ้ำ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>qa.finance ยืนยันเอกสาร → บันทึกชำระ (โอนเงิน)</td><td>ได้เลข EXP- · แดชบอร์ดการ์ดค่าใช้จ่ายขยับ · สถานะบัญชี "รอบันทึกบัญชี" หรือ JV- (ถ้าเปิด auto-post)</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>4</td><td>ไป /tax ซิงค์ + คำนวณ ภ.พ.30</td><td>ภาษีซื้อใบนี้อยู่ในงวด ยอดตรง</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>5</td><td>ไป /banking นำเข้า statement ที่มียอดโอนนี้ → จับคู่</td><td>candidate "จ่ายค่าใช้จ่าย" ยอดตรงเสนอให้อัตโนมัติ → จับคู่สำเร็จ</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<h4>🎬 E2E-2: วงจรเบิกจ่าย 3 คน + แจ้งเตือนครบวง</h4>
+<table class="steps">
+<tr><th>#</th><th>ทำ</th><th>เช็ค</th><th>☑</th></tr>
+<tr><td>1</td><td>qa.staff สร้างคำขอ 2 บรรทัด (1 บรรทัดแนบใบเสร็จ, 1 บรรทัดไม่แนบ+เหตุผล) → ส่งอนุมัติ</td><td>qa.manager ได้กระดิ่ง+LINE ภายใน 1 นาที</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>qa.manager กดจากแจ้งเตือน → อนุมัติ</td><td>drawer เปิดใบถูกต้องอัตโนมัติ · qa.staff ได้แจ้งผล</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>qa.finance อนุมัติจ่าย → บันทึกจ่าย → ลงนามช่องการเงิน</td><td>expense เกิด 2 ใบ · qa.staff ได้แจ้ง "จ่ายเงินเบิกแล้ว" · พิมพ์ใบเบิก PDF มีลายเซ็นครบช่องที่ลง</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<h4>🎬 E2E-3: วงจรขาย (ลูกค้า LINE → จอง → ดีล → ใบเสนอ → เก็บเงิน → สลิป)</h4>
+<table class="steps">
+<tr><th>#</th><th>ทำ</th><th>เช็ค</th><th>☑</th></tr>
+<tr><td>1</td><td>มือถือลูกค้าทัก OA บริษัท ถามบริการ + จองคิว + พิมพ์ยืนยัน</td><td>inbox มีแชท · การจองโผล่ปฏิทิน · Customer 360 เห็นครบ</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>พนักงานสร้างดีลจากแชท → สร้างใบเสนอราคา → อนุมัติ → Issue → Convert to invoice → Issue → Record payment (มี WHT)</td><td>เลขเอกสารไล่ QT-/INV- ถูกต้อง · ยอดค้างชำระบนแดชบอร์ด CRM ลดลง</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>ลูกค้าส่งสลิปทางแชท → พนักงานตั้งเป็นหลักฐานชำระเงิน</td><td>การเงินได้แจ้งเตือน + รูปอยู่ใน /crm/payment-proofs</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+<h4>🎬 E2E-4: วงจรแอดมิน (เปิดบริษัท → ตั้งค่า → จ้างคน → ปิดฟีเจอร์กลางคัน)</h4>
+<table class="steps">
+<tr><th>#</th><th>ทำ</th><th>เช็ค</th><th>☑</th></tr>
+<tr><td>1</td><td>System admin เปิดบริษัทใหม่ (§2) → owner เข้าครั้งแรก (§3) → ทำ wizard บัญชี-ภาษี (§9.3) → เพิ่มพนักงาน 1 คน (§8)</td><td>ทุกด่านผ่านตามคู่มือ ไม่ติดตาย</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>2</td><td>พนักงานใหม่คีย์ค่าใช้จ่าย 1 ใบค้างไว้ที่ "รอตรวจสอบ"</td><td>—</td><td><input class="ck" type="checkbox"></td></tr>
+<tr><td>3</td><td>System admin ปิดฟีเจอร์ expenses → รอ 1 นาที → เปิดกลับ</td><td>ระหว่างปิด: เมนูหาย เข้า URL ตรงถูกเด้ง · เปิดกลับ: ใบเดิมอยู่ครบสถานะเดิม ทำต่อจนยืนยันได้</td><td><input class="ck" type="checkbox"></td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section class="flow" id="s13" style="--accent:#b91c1c">
+<h2>13. บัคที่รู้อยู่แล้ว vs จุดต้องสงสัย</h2>
+<p class="desc">อ่านก่อนแจ้งบัค — ครึ่งแรกคือพฤติกรรมที่โค้ด "ตั้งใจหรือรู้ตัวอยู่แล้ว" (แจ้งซ้ำ = เสียเวลา dev) · ครึ่งหลังคือจุดที่วิเคราะห์โค้ดแล้ว<b>น่าจะเป็นบัคจริง</b> รอคนกดยืนยัน</p>
+
+<div class="box ok"><b class="t">✅ รอบแก้บัค 2026-08-10 — สิ่งที่เปลี่ยนและควรเทสซ้ำ</b>
+แก้แล้ว: ① supersede ใบทดแทน revert การจ่าย (§6.5) ② ใบเบิก REJECTED กดแก้ไขและยื่นใหม่ได้เลขเดิม (§7) ③ ปิดฟีเจอร์เบิกจ่าย = block เฉพาะใบใหม่ งานค้างไหลต่อ (§2.4) ④ self-approval exemption OWNER/ADMIN/MANAGER ใช้ทุก workflow รวมใบทดแทนโหมด OWNER_SELF (§6.5, §7.3) ⑤ QR ผูก LINE เจ้าของอายุ 72 ชม. (§2.2) ⑥ LINE fallback เป็นไทย ⑦ error สำนักงานใหญ่เป็นไทย ⑧ toggle กฎแจ้งเตือนแจ้ง error + สอง URL หน้ากฎใช้ guard เดียวกัน (<code>notification.rule.manage</code>) + กระดิ่งกรอง origin ของ deep link ⑨ แก้ตำแหน่งฝั่งผู้อนุมัติใบทดแทนแล้ว badge ตรวจแล้วถูก reset ⑩ FAQ เลขเอกสารในคู่มือในแอปอธิบายถูกแล้ว (SRC- รายเดือน) · <b>ที่เหลือใน §13.2 (PO approval, ส่วนลด, ISO timestamp, role ชื่อไทย, ปุ่มเก็บถาวร catalog, เวลาเงียบ) ยังคงเดิมตามที่ระบุ — ไม่อยู่ในขอบเขต release นี้</b></div>
+<h3>13.1 ตั้งใจ / รู้อยู่แล้ว — อย่าแจ้งเป็นบัคใหม่</h3>
+<table>
+<tr><th>อาการ</th><th>สถานะ</th></tr>
+<tr><td>เมนู คลังสินค้า / จัดซื้อ / เจ้าหนี้ / ธนาคาร / เวิร์กโฟลว์ / AI แนะนำ / CRM hub ไม่อยู่ใน sidebar</td><td>ตั้งใจของ release นี้ — เข้าทาง URL ตรง</td></tr>
+<tr><td>สมุดรายวัน + ปิดงวด เข้าไม่ได้เลย แต่ JV เกิดเบื้องหลัง</td><td>ตั้งใจ (ACCOUNTING_UI_HIDDEN)</td></tr>
+<tr><td>ปิดฟีเจอร์แล้วเมนูหายเงียบ ไม่มีคำอธิบาย (ยกเว้นรายงาน)</td><td>พฤติกรรมปัจจุบัน — จดเป็น UX improvement ได้</td></tr>
+<tr><td>ปุ่มรีเฟรช dashboard ของ role อื่นที่ไม่ใช่ OWNER ได้ค่าแคช ≤15 นาที</td><td>ตั้งใจ</td></tr>
+<tr><td>ศูนย์แจ้งเตือนไม่มีเมนู sidebar — เข้าจากกระดิ่งเท่านั้น · โชว์สูงสุด 50 แถวไม่มีเพจ</td><td>รู้อยู่แล้ว</td></tr>
+<tr><td>เบิกจ่าย: จ่ายบางส่วนไม่ได้ (บังคับเต็มจำนวน) · ปุ่ม void การจ่ายไม่มีใน UI</td><td>MVP scope</td></tr>
+<tr><td>LINE: ส่งเสียงแล้วบอทเงียบ · error ทุกชนิดตอบ "⏳ ขออภัย เกิดข้อผิดพลาดชั่วคราว..." เหมือนกันหมด · /system/line-settings save ไม่ได้</td><td>รู้อยู่แล้ว (voice ยังไม่ทำ / ตั้งใจซ่อน)</td></tr>
+<tr><td>เอกสารขายไม่มีปุ่มพิมพ์/PDF · จัดซื้อไม่มีฟอร์มสร้าง PR/PO ใน UI · ผังบัญชีแก้รายบัญชีไม่ได้</td><td>ยังไม่ทำใน release นี้</td></tr>
+<tr><td>ADMIN เข้า "บทบาทและสิทธิ์" ไม่ได้ (ต้อง OWNER หรือ role ที่มี access.role.manage)</td><td>ตั้งใจ (ตัดสินใจทีม 2026-07-28)</td></tr>
+<tr><td>ไม่มีอีเมลเชิญพนักงาน/ส่งรหัสผ่าน — ส่งมือ + LINE เท่านั้น</td><td>ตั้งใจ (non-goal)</td></tr>
+</table>
+
+<h3>13.2 จุดต้องสงสัย — วิเคราะห์โค้ดแล้วน่าจะเป็นบัคจริง ช่วยกดยืนยันแล้วแจ้งได้เลย</h3>
+<table>
+<tr><th>#</th><th>จุดสงสัย (วิธีเจออยู่ใน section ที่อ้าง)</th><th>ความแรง</th></tr>
+<tr><td>1</td><td><b>ใบรับรองแทนใบเสร็จ:</b> supersede ฉบับ ISSUED แล้วสถานะ "ชำระแล้ว" ของ expense ไม่ถูก reset (§6.5) — <b>✔ แก้แล้ว 2026-08-10</b> (ตอนนี้ revert เป็นยังไม่ชำระ + void รายการจ่าย)</td><td><span class="pill p-red">สูง — ข้อมูลการเงินค้างผิด</span></td></tr>
+<tr><td>2</td><td><b>เบิกจ่าย:</b> ใบ REJECTED เป็นทางตัน (§7.6) — <b>✔ แก้แล้ว 2026-08-10</b>: เพิ่มปุ่ม <span class="ui">แก้ไขและยื่นใหม่</span> กลับเป็นร่าง แก้ ส่งใหม่ด้วยเลข RB- เดิม ตรงตามคู่มือในแอป</td><td><span class="pill p-red">สูง — เอกสารหลอกผู้ใช้</span></td></tr>
+<tr><td>3</td><td><b>ตั้งค่า PO approval:</b> วงเงิน/ขั้นอนุมัติที่ตั้ง ไม่ถูกบังคับใช้ตอนอนุมัติ PO จริง + ปุ่มเลือกผู้อนุมัติกดไม่ได้ (§9.4)</td><td><span class="pill p-red">สูง — นโยบายไม่มีผล</span></td></tr>
+<tr><td>4</td><td><b>นโยบายส่วนลด:</b> บันทึกได้แต่ไม่มีโมดูลไหนอ่านค่าไปใช้ ทั้งที่หน้าจอบอก "มีผลทันที" (§9.4)</td><td><span class="pill p-amber">กลาง</span></td></tr>
+<tr><td>5</td><td><b>Dashboard:</b> "การเคลื่อนไหวล่าสุด" การ์ดคลังโชว์เวลาดิบ ISO (§4.3)</td><td><span class="pill p-amber">กลาง — เห็นง่าย</span></td></tr>
+<tr><td>6</td><td><b>แจ้งเตือน:</b> toggle กฎล้มเหลวแบบเงียบ · หน้า "กฎ" 2 URL คนละ guard · กระดิ่งไม่กรอง origin ของ deep link — <b>✔ แก้แล้วทั้งสามจุด 2026-08-10</b> (toggle ล้มต้องขึ้น toast แดง <span class="ui">…ไม่สำเร็จ กรุณาลองใหม่</span>)</td><td><span class="pill p-amber">กลาง</span></td></tr>
+<tr><td>7</td><td><b>Role ชื่อไทยล้วน:</b> key กลายเป็น <code>ROLE</code> ทำให้ routing อนุมัติเบิกจ่ายไม่เจอคน (§8.4)</td><td><span class="pill p-red">สูง — ใบค้างเงียบ</span></td></tr>
+<tr><td>8</td><td><b>CRM catalog:</b> ตัวกรอง "เก็บถาวร" มี แต่ปุ่มเก็บถาวรไม่มีใน UI (§9.4)</td><td><span class="pill p-gray">ต่ำ</span></td></tr>
+<tr><td>9</td><td><b>Role exemption อนุมัติใบตัวเอง</b> — <b>✔ ยืนยันว่าตั้งใจ</b> (owner decision 2026-08-10) และขยายให้ครอบใบทดแทนแล้ว (OWNER_SELF mode) — ไม่ใช่บัค</td><td><span class="pill p-amber">ต้องถามทีม</span></td></tr>
+<tr><td>10</td><td><b>LINE fallback ภาษาอังกฤษ</b> — <b>✔ แก้แล้ว 2026-08-10</b>: <span class="ui">แหล่งข้อมูล: …</span> / <span class="ui">เปิดดู: …</span></td><td><span class="pill p-gray">ต่ำ — UX</span></td></tr>
+<tr><td>11</td><td><b>สาขา:</b> error สำนักงานใหญ่ — <b>✔ แก้แล้ว</b>: ต้องขึ้น <span class="ui">เก็บถาวรสาขานี้ไม่ได้ — บริษัทต้องมีสำนักงานใหญ่ที่ใช้งานอยู่อย่างน้อย 1 สาขา</span> · ส่วน "ลบเบอร์โทร/อีเมลให้ว่างไม่ได้" ยังไม่แก้ (นอกรอบนี้)</td><td><span class="pill p-gray">ต่ำ</span></td></tr>
+<tr><td>12</td><td><b>ช่องเวลาเงียบแจ้งเตือน:</b> ไม่มี validation หน้าจอ พิมพ์อะไรก็ส่ง (§4.4)</td><td><span class="pill p-gray">ต่ำ</span></td></tr>
+</table>
+<div class="box ok"><b class="t">✔ ส่งผลทดสอบกลับมาได้เลย</b> — ติ๊กหมวดไหนครบแล้วเจออะไร จดเลข section + ข้อ กำกับ เดี๋ยวผมช่วยไล่แก้เป็นรายตัวต่อได้ทันที</div>
+</section>
+
+<footer style="color:var(--muted);font-size:12px;text-align:center;padding:20px 0 40px">
+สร้างอัตโนมัติจากการวิเคราะห์โค้ด branch <code>develop</code> · 2026-08-10 · docs/qa/manual-test-playbook-2026-08.html · checkbox เก็บใน browser เครื่องนี้เท่านั้น (localStorage)
+</footer>
+</main>
+</div>
+<script>
+(function(){
+  var boxes = document.querySelectorAll('input.ck');
+  boxes.forEach(function(cb,i){
+    cb.id = 'ck-' + i;
+    var k = 'mmqa:' + cb.id;
+    try { if (localStorage.getItem(k) === '1') cb.checked = true; } catch(e){}
+    cb.addEventListener('change', function(){
+      try { localStorage.setItem(k, cb.checked ? '1' : '0'); } catch(e){}
+      update();
+    });
+  });
+  function update(){
+    var total=0, done=0;
+    document.querySelectorAll('section.flow').forEach(function(sec){
+      var b = sec.querySelectorAll('input.ck'); if(!b.length){ return; }
+      var d = sec.querySelectorAll('input.ck:checked').length;
+      total += b.length; done += d;
+      var badge = sec.querySelector('.secprog');
+      if(badge) badge.textContent = d + '/' + b.length;
+      var tocp = document.querySelector('.prog[data-for="'+sec.id+'"]');
+      if(tocp) tocp.textContent = d + '/' + b.length;
+    });
+    var g = document.getElementById('gcount');
+    if(g) g.textContent = done + '/' + total + (total ? ' ('+Math.round(done/total*100)+'%)' : '');
+  }
+  window.resetAll = function(){
+    if(!confirm('ล้าง checkbox ทั้งหมด?')) return;
+    boxes.forEach(function(cb){ cb.checked=false; try{ localStorage.removeItem('mmqa:'+cb.id);}catch(e){} });
+    update();
+  };
+  update();
+})();
+</script>
+</body>
+</html>

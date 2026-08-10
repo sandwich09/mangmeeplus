@@ -131,6 +131,8 @@ raise unless dispatch.keys == [
   "pre_mutation_run_id", "post_migration_run_id",
 ]
 steps = doc.fetch("jobs").fetch("evidence").fetch("steps")
+uses = steps.map { |step| step["uses"] }.compact
+raise unless uses.include?("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020")
 names = steps.map { |step| step.fetch("name", "") }
 aws_index = steps.index { |step| step.fetch("uses", "").start_with?("aws-actions/configure-aws-credentials@") }
 raise unless aws_index

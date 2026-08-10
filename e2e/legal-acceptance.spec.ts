@@ -60,14 +60,18 @@ test.describe('LEGAL — explicit Terms acceptance and Privacy Notice acknowledg
     let employeeId: string | null = null;
 
     try {
-      const [terms, privacy] = await Promise.all([
+      const [terms, privacy, dataDeletion] = await Promise.all([
         request.get(`${WEB_BASE_URL}/terms`),
         request.get(`${WEB_BASE_URL}/privacy`),
+        request.get(`${WEB_BASE_URL}/data-deletion`),
       ]);
       expect(terms.status(), 'Terms stay public before authentication').toBe(200);
       expect(await terms.text()).toMatch(/ข้อกำหนดการใช้งาน|Terms of Use/i);
       expect(privacy.status(), 'Privacy Notice stays public before authentication').toBe(200);
       expect(await privacy.text()).toMatch(/นโยบายความเป็นส่วนตัว|Privacy Notice/i);
+      expect(dataDeletion.status(), 'Data Deletion Notice stays public before authentication').toBe(200);
+      expect(await dataDeletion.text()).toMatch(/การลบบัญชีและข้อมูลส่วนบุคคล/);
+      expect(await dataDeletion.text()).toMatch(/ไม่เกิน 90 วัน/);
 
       const roles = await json<Role[]>(await api.get(`companies/${companyId}/settings/roles`));
       const staffRole = roles.find((role) => role.key === 'STAFF' && role.status === 'ACTIVE');

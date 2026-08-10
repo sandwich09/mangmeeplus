@@ -1,33 +1,33 @@
 export const CURRENT_LEGAL_DOCUMENTS = {
   terms: {
     type: 'TERMS_OF_USE',
-    version: 'v1',
-    displayVersionTh: 'เวอร์ชัน 1 (v1)',
-    displayVersionEn: 'Version 1 (v1)',
+    version: 'v2',
+    displayVersionTh: 'เวอร์ชัน 2 (v2)',
+    displayVersionEn: 'Version 2 (v2)',
     effectiveDate: '2026-08-10',
-    href: '/legal/releases/v1/terms-th.html',
+    href: '/legal/releases/v2/terms-th.html',
     latestHref: '/terms',
     titleTh: 'ข้อกำหนดการใช้งาน MangmeePlus',
     titleEn: 'MangmeePlus Terms of Use',
     // SHA-256 of the exact UTF-8 bytes served from `href`. The release file is append-only:
     // changing it requires a new version, URL and hash rather than overwriting this artifact.
-    artifactSha256: 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
+    artifactSha256: '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
+    releaseFingerprintSha256: '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
   },
   privacy: {
     type: 'PRIVACY_NOTICE',
-    version: 'v1',
-    displayVersionTh: 'เวอร์ชัน 1 (v1)',
-    displayVersionEn: 'Version 1 (v1)',
+    version: 'v2',
+    displayVersionTh: 'เวอร์ชัน 2 (v2)',
+    displayVersionEn: 'Version 2 (v2)',
     effectiveDate: '2026-08-10',
-    href: '/legal/releases/v1/privacy-th.html',
+    href: '/legal/releases/v2/privacy-th.html',
     latestHref: '/privacy',
     titleTh: 'ประกาศความเป็นส่วนตัว MangmeePlus',
     titleEn: 'MangmeePlus Privacy Notice',
-    artifactSha256: '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
+    artifactSha256: '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
+    releaseFingerprintSha256: '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
   },
 } as const;
 

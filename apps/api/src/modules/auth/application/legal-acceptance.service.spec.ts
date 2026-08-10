@@ -115,8 +115,8 @@ describe('LegalAcceptanceService', () => {
     assert.match(status.statements.en.terms, /I accept/);
     assert.match(status.displayChallenges.th, /^[a-f0-9]{64}$/);
     assert.notEqual(status.displayChallenges.th, status.displayChallenges.en);
-    assert.equal(status.terms.href, '/legal/releases/v1/terms-th.html');
-    assert.equal(status.privacy.href, '/legal/releases/v1/privacy-th.html');
+    assert.equal(status.terms.href, '/legal/releases/v2/terms-th.html');
+    assert.equal(status.privacy.href, '/legal/releases/v2/privacy-th.html');
     assert.match(status.terms.artifactSha256, /^[a-f0-9]{64}$/);
     assert.match(status.privacy.artifactSha256, /^[a-f0-9]{64}$/);
   });

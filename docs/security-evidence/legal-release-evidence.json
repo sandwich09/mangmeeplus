@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "releaseVersion": "v1",
+  "releaseVersion": "v2",
   "status": "BLOCKED",
   "evidence": {
     "operatorIdentity": { "status": "OBTAIN", "reference": null, "sha256": null, "reviewedAt": null, "nextReviewAt": null, "reviewer": null },

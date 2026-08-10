@@ -291,16 +291,27 @@ export function evaluateSigningReadiness(input: {
   return readiness(missing);
 }
 
+/**
+ * Owner decision 2026-08-10: mirrors the server's SELF_APPROVAL_EXEMPT_ROLES
+ * (procurement.logic) — under the OWNER_SELF policy these roles may approve a
+ * certificate they paid themselves. DESIGNATED_APPROVERS stays strict.
+ */
+export const SELF_APPROVAL_EXEMPT_ROLES = ['OWNER', 'ADMIN', 'MANAGER'] as const;
+
+export function hasSelfApprovalExemptRole(roles: readonly string[] | undefined): boolean {
+  return (roles ?? []).some((role) => (SELF_APPROVAL_EXEMPT_ROLES as readonly string[]).includes(role));
+}
+
 export function mayApproveSubstituteReceipt(input: {
   userId: string;
   payerUserId: string;
   canConfirm: boolean;
-  isOwner: boolean;
+  canSelfApprove: boolean;
   approvalMode: SubstituteReceiptApprovalMode | null | undefined;
 }): boolean {
   return input.canConfirm
     && (input.payerUserId !== input.userId
-      || (input.approvalMode === 'OWNER_SELF' && input.isOwner));
+      || (input.approvalMode === 'OWNER_SELF' && input.canSelfApprove));
 }
 
 export function resolveWizardStep(

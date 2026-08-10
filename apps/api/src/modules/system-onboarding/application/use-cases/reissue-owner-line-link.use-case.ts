@@ -12,7 +12,7 @@ export type ReissueOwnerLineLinkResult = {
   ownerLineLink: EmployeeLineLinkPackage;
 };
 
-/** QR-only escape hatch for the H-09 24h owner QR TTL: regenerate-temporary-password
+/** QR-only escape hatch for an expired 72h owner QR: regenerate-temporary-password
  *  always rotates the owner's password credential, which would lock out an owner who
  *  already set a permanent password and only needs a fresh LINE-link QR. */
 @Injectable()

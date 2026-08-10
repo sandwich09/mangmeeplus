@@ -11,6 +11,7 @@ import { GetReimbursementPolicyUseCase, UpdateReimbursementPolicyUseCase } from 
 import {
   CreateReimbursementDraftUseCase,
   UpdateReimbursementDraftUseCase,
+  ReopenRejectedReimbursementUseCase,
   GetReimbursementDetailUseCase,
   ListReimbursementsUseCase,
   SubmitReimbursementUseCase,
@@ -51,6 +52,7 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     UpdateReimbursementPolicyUseCase,
     CreateReimbursementDraftUseCase,
     UpdateReimbursementDraftUseCase,
+    ReopenRejectedReimbursementUseCase,
     GetReimbursementDetailUseCase,
     ListReimbursementsUseCase,
     SubmitReimbursementUseCase,

@@ -199,6 +199,40 @@ export class UpdateReimbursementDraftUseCase {
   }
 }
 
+/**
+ * REJECTED is not a dead end: the requester reopens the claim as a DRAFT, fixes it with the
+ * normal draft edit, and resubmits under the same request number (the in-app guide promises
+ * exactly this journey). Rejection history stays on the approval step.
+ */
+@Injectable()
+export class ReopenRejectedReimbursementUseCase {
+  constructor(
+    private readonly repo: PrismaReimbursementRepository,
+    private readonly audit: AuditService,
+  ) {}
+
+  async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestSummary> {
+    const req = await this.repo.findRequestById(ctx.companyId, id);
+    if (!req) throw new NotFoundException('Reimbursement request not found');
+
+    const isOwner = req.requesterUserId === ctx.userId;
+    const canReopen = (isOwner && ctx.permissions.includes('reimbursement.update_own_draft')) || ctx.permissions.includes('reimbursement.finance_review');
+    if (!canReopen) throw new ForbiddenException('Cannot reopen this reimbursement');
+    assertReimbursementBranchInScope(ctx, req.branchId);
+    if (req.status !== 'REJECTED' || !canTransition(req.status, 'DRAFT')) {
+      throw new UnprocessableEntityException(`Cannot reopen from status ${req.status}`);
+    }
+
+    const updated = await this.repo.reopenRejectedRequest(ctx.companyId, id, req.updatedAt, ctx.userId);
+    void this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.reopen',
+      targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { requestNo: req.requestNo, previousRejectionReason: req.rejectionReason },
+    });
+    return toRequestSummary(updated);
+  }
+}
+
 @Injectable()
 export class GetReimbursementDetailUseCase {
   constructor(
