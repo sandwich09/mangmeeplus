@@ -30,9 +30,10 @@ export const LEGAL_NAV_ITEMS: ReadonlyArray<{
 ];
 
 export const LEGAL_SOURCES = {
-  pdpaAct: 'https://odl.parliament.go.th/handle/20.500.13072/547319',
+  pdpaAct: 'https://mdes.go.th/law/detail/3541-พระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล-พ-ศ--๒๕๖๒',
   pdpaRules: 'https://www.mdes.go.th/law',
-  pdpaErasureRule: 'https://infocenter.oic.go.th/upload/cms/1744195455_4477.pdf',
+  pdpaErasureRule: 'https://mdes.go.th/law/detail/8511-ประกาศคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล-เรื่อง-หลักเกณฑ์ในการลบหรือทำลาย-หรือทำให้ข้อมูลส่วนบุคคลเป็นข้อมูลที่ไม่สามารถระบุตัวบุคคลที่เป็นเจ้าของข้อมูลส่วนบุคคลได้-พ-ศ--๒๕๖๗',
+  pdpaAccessRule: 'https://mdes.go.th/law/detail/11276-ประกาศคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล-เรื่อง-หลักเกณฑ์เกี่ยวกับการเข้าถึงและการขอรับสำเนาข้อมูลส่วนบุคคลที่เกี่ยวกับเจ้าของข้อมูลส่วนบุคคลซึ่งอยู่ในความรับผิดชอบของผู้ควบคุมข้อมูลส่วนบุคคล-หรือขอให้เปิดเผยถึงการได้มาซึ่งข้อมูลส่วนบุคคลที่เจ้าของข้อมูลส่วนบุคคลไม่ได้ให้ความยินยอม-พ-ศ--๒๕๖๙',
   crossBorderSection28: 'https://ratchakitcha.soc.go.th/documents/14915.pdf',
   crossBorderSection29: 'https://ratchakitcha.soc.go.th/documents/14913.pdf',
   pdpcOffice: 'https://www.pdpc.or.th/',

@@ -2,6 +2,8 @@
 
 Status 2026-08-09: public Privacy, Terms, and Data Deletion surfaces are being aligned to repository truth and current Thai law. The copy is a production-oriented draft, not a substitute for unresolved operational controls or Thai counsel approval.
 
+Status 2026-08-10 v2 implementation: web copy, immutable Terms/Privacy artifacts, current acceptance contract, production contract pin, evidence-manifest version, and focused regression coverage are implemented and verified. Every v1 artifact remains byte-for-byte unchanged. `docs/security-evidence/legal-release-evidence.json` remains `BLOCKED` until the external evidence and exact-hash Thai-counsel approval are complete.
+
 Plan: [[plans/mangmeeplus-privacy-terms-data-deletion-plan|MangmeePlus Privacy, Terms, and Data Deletion Plan]]
 
 ## Permanent product/legal decisions
@@ -14,13 +16,16 @@ Plan: [[plans/mangmeeplus-privacy-terms-data-deletion-plan|MangmeePlus Privacy, 
 6. A service cancellation is not an erasure request. Never make a valid PDPA right conditional on a paid recovery window or delay it to a general one-year cleanup policy.
 7. A platform account is global and can belong to several companies. Deleting one company removes that membership/workspace scope; it must not silently delete a member's account in other companies.
 8. Data can be retained or restricted where a law, security need, contract, or legal claim requires it. Public v1 wording stays generic and retention must end when the supporting reason ends.
-9. A valid erasure request is targeted for completion normally within 30 days and, under the applicable 2024 rule, without delay and no later than 90 days, subject to identity/authority checks and lawful exceptions. Backups that cannot be immediately purged must be isolated from use and carry the deletion instruction through restore/overwrite.
+9. A valid erasure request must be handled without delay and no later than 90 days under the applicable 2024 rule, subject to identity/authority checks and lawful exceptions. Access/copy requests under section 30 must be handled without delay and no later than 30 days from receipt. Do not claim complete backup, object-version, or provider deletion until the exact scope is verified by operational evidence.
 10. Do not promise immediate physical attachment deletion until S3 objects and versions are actually deleted or governed by an approved lifecycle. Current generic delete is a database soft-delete.
 11. Feature-specific policy constants can remain in their owning contracts, but the public v1 legal module must not import or expose them when that feature is outside launch scope.
 12. Legal clickwrap occurs only after authentication. Terms require affirmative acceptance; the Privacy Notice requires acknowledgment that is expressly not consent or a waiver of PDPA rights; authority/access capacity is confirmed separately. None of the three required controls may be preselected.
 13. Owner decision 2026-08-10: acceptance is required once per **user + exact legal release**, then applies across every company accessible by that user. Company, membership, capacity and roles are immutable snapshots of the initial confirmation, not scope keys. A company/role/capacity change alone must not prompt again; a new Terms or Privacy artifact/statement release must.
 14. Current legal evidence is append-only and server-authored: immutable artifact URLs and exact served-byte SHA-256 values, document versions, exact localized statements, display challenge, initial user/company/membership/capacity/roles, session/request metadata, and one server timestamp. Business API and employee LINE use remain gated until the current user has recorded the current release.
 15. The first release describes only the neutral service boundary and functions visibly enabled for the user. Any newly named feature or materially new processing requires revised copy, a new release artifact, and re-confirmation.
+16. v2 may name only the declared first-production scope: employee accounts/access; expenses, receipts and reimbursements; employee LINE receipt-image intake and read-only bill questions; OCR/AI assistance; and security/legal evidence. CRM customer and marketing functions remain excluded.
+17. v2 must distinguish the 30-day access/copy deadline from eligible erasure, which must be handled without delay and no later than 90 days subject to lawful exceptions. Do not publish a universal 30-day rights rule, a universal one/two-year log rule, a fixed 30-day recovery buffer, or 15/30-day payment grace numbers without the separate approved policy and operating support.
+18. A whole-workspace deletion request requires written authority matching the current DBD signing condition or a lawful power of attorney. A company stamp is required only when the signing condition or actual corporate practice requires it; an administrator login alone is insufficient.
 
 ## Public routes and shared source
 
@@ -28,7 +33,8 @@ Plan: [[plans/mangmeeplus-privacy-terms-data-deletion-plan|MangmeePlus Privacy, 
 - `/terms`
 - `/data-deletion`
 - `/legal-acceptance` (authenticated; user + legal-release gate with initial company evidence context)
-- `/legal/releases/v1/terms-th.html` and `/legal/releases/v1/privacy-th.html` are the pre-launch Thai v1 artifacts used by the current clickwrap release. After v1 is launched/accepted in production, changes require a new v2 path and hash; every older dated development artifact remains untouched.
+- `/legal/releases/v2/terms-th.html` and `/legal/releases/v2/privacy-th.html` are the current immutable Thai acceptance artifacts. The current contract points to their exact byte hashes; Data Deletion remains a public procedure page rather than a third clickwrap document.
+- `/legal/releases/v1/terms-th.html` and `/legal/releases/v1/privacy-th.html` remain immutable historical artifacts and are covered by regression hashes.
 - `apps/web/src/common/legal/legal-content.ts` is the public legal identity/date/source constant set.
 - `apps/web/src/common/legal/LegalPage.tsx` is the accessible responsive legal-page shell.
 - Feature-specific contract constants remain outside the public legal-copy module.
@@ -46,11 +52,14 @@ Avoid flattening these into a single universal retention period.
 
 ## Verification 2026-08-10
 
-- Contracts build, API typecheck, Web typecheck, and `git diff --check` pass.
-- Focused legal/acceptance suite passes 23/23, including Login → latest public pages and Acceptance → exact immutable v1 artifact links.
-- Browser QA at 320 px and 1280 px confirms no horizontal overflow on Login, Acceptance, Privacy, Terms, or Data Deletion.
-- Public source and generated-artifact scan contains no CRM, LINE, OTP, AI/OCR, tax, filing, invoice, slip, report, or channel-specific opt-out claims.
+- Contracts build and Contracts/API/Web typechecks pass; `git diff --check` passes.
+- Focused contract, Web legal/acceptance, and API acceptance suites pass 24/24. The E2E legal scenario now also requires the public Data Deletion route and its 90-day text, but the full browser E2E environment was not started for this copy-only change.
+- Legal release readiness and evidence-provisioner specs pass. The checked-in unresolved v2 manifest is still rejected as intended.
+- Regenerating Terms and Privacy from current source reproduces their checked-in v2 SHA-256 hashes exactly.
+- Public source and generated-artifact scans contain the declared employee/receipt/LINE/OCR/AI scope, exclude CRM from the launch scope, and contain no named unverified AI provider or universal hard-delete claim.
 - v1 hashes: Terms `d1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7`; Privacy `7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4`.
+- v2 hashes: Terms `09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281`; Privacy `5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd`.
+- Current contract source hash and production workflow pin: `6a4f4c3db12a452afee62f3560a10bc9bbe594d6d9053a9bcdd044f496bb66f8`.
 
 ## Operational blockers
 
@@ -58,7 +67,10 @@ Avoid flattening these into a single universal retention period.
 - Complete DPO assessment.
 - Close DPA/subprocessor/cross-border evidence gaps.
 - Implement generic account/company deletion and physical storage-version purge.
+- Align the workspace-deletion authority workflow with the public DBD/POA rule; current owner membership alone must not authorize whole-workspace deletion.
+- Restrict pilot LINE tools and feature entitlements to the declared employee/receipt/read-only scope; CRM and other undeclared tools must be deny-by-default before release.
 - Approve one retention register against live infrastructure.
 - Fix or remove stale self-service AI opt-out claims.
 - Revisit the new 2026 access/copy regulation on its 14 September 2026 effective date.
+- If publication begins after 10 August 2026, replace the candidate effective date with the actual go-live date, regenerate the v2 candidate/hash/contract pin, and have counsel approve those final bytes; do not backdate.
 - Obtain final Thai counsel sign-off.

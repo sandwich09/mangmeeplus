@@ -9,6 +9,8 @@ import {
 
 describe('legal acceptance release', () => {
   it('uses immutable versioned Thai artifacts and SHA-256 byte hashes', () => {
+    assert.equal(CURRENT_LEGAL_DOCUMENTS.terms.version, 'v2');
+    assert.equal(CURRENT_LEGAL_DOCUMENTS.privacy.version, 'v2');
     assert.match(CURRENT_LEGAL_DOCUMENTS.terms.version, /^v\d+$/);
     assert.match(CURRENT_LEGAL_DOCUMENTS.privacy.version, /^v\d+$/);
     for (const document of Object.values(CURRENT_LEGAL_DOCUMENTS)) {

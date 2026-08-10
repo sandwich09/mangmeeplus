@@ -1,9 +1,21 @@
 # MangmeePlus — Privacy, Terms, and Data Deletion
 
-Status: IMPLEMENTED IN WEB COPY; OPERATIONAL CONTROLS AND THAI COUNSEL SIGN-OFF REMAIN REQUIRED BEFORE PRODUCTION REPRESENTATION
+Status: V2 WEB UPDATE IMPLEMENTED AND VERIFIED; OPERATIONAL CONTROLS AND THAI COUNSEL SIGN-OFF REMAIN REQUIRED BEFORE PRODUCTION RELEASE
 Date: 2026-08-09
 Owner request: replace the mixed SudoChatBot/WatchDog legal copy with a complete, readable Thai Privacy Notice, Terms of Use, and User Data Deletion notice that reflects MangmeePlus code and current Thai law.
 Memory: [[agent-memory/mangmeeplus-privacy-terms-data-deletion|MangmeePlus Legal Notices Memory]]
+
+## 2026-08-10 v2 amendment
+
+Owner requested that the reviewed launch-scope wording be applied to the web. This amendment supersedes the feature-neutral v1 publication boundary below without changing any v1 artifact. The latest public Privacy, Terms, and Data Deletion routes may now name employee accounts/access, expenses/receipts/reimbursements, employee LINE receipt-image intake and read-only bill questions, OCR/AI assistance, and security/legal evidence. CRM customer and marketing functions remain expressly out of scope.
+
+The implementation must create a new append-only `/legal/releases/v2/` Terms/Privacy pair, update the current legal contract to their exact byte hashes, and rely on the existing user-plus-release acceptance scope to require acknowledgment again. No API, database, migration, third checkbox, or Data Deletion acceptance document is added. `LEGAL_ACCEPTANCE_STATEMENT_VERSION` stays `v1` because the checkbox/capacity statements are unchanged.
+
+Public copy must distinguish access/copy within 30 days from eligible erasure without delay and no later than 90 days; use written DBD signing authority or lawful power of attorney for a whole-workspace request; and state that receipt of a request, account closure, or a database status change is not proof of complete deletion. It must not promise generic hard deletion, physical deletion of every S3 object version, post-restore deletion replay, provider-side deletion, a fixed 30-day recovery buffer, universal one/two-year logs, or 15/30-day payment grace. Provider names/countries and DPO status remain unpublished until their signed evidence is complete.
+
+The checked-in legal evidence manifest moves to release version `v2` but remains `BLOCKED`; v1 approvals, if any, cannot be reused as v2 counsel approval. Production deployment remains fail-closed until the exact v2 URLs/hashes and external evidence are reviewed.
+
+Implementation result: the current contract now points to immutable v2 Terms and Privacy artifacts, existing acceptance logic requires the exact v2 pair without a schema or API change, the latest public Data Deletion route carries the same launch scope and DSAR deadlines, and focused contract/Web/API plus legal-release-gate checks pass. No production deployment was performed.
 
 ## 1. Problem and boundary
 
@@ -58,7 +70,7 @@ The new 2026 access/copy subordinate rule published 16 July 2026 is scheduled to
 
 ## 5. Retention presentation
 
-The public notice uses category, purpose, contract state, risk, legal obligation, claims, and tenant instruction as retention criteria rather than publishing periods from deferred modules. Backups are isolated and erasure is replayed after restoration where deletion cannot occur immediately.
+The public notice uses category, purpose, contract state, risk, legal obligation, claims, and tenant instruction as retention criteria rather than publishing periods from deferred modules. It states that an eligible erasure request covers backups within the same 90-day ceiling unless a lawful retention ground applies. Production remains blocked until Operations can prove object-version, provider, backup, and restoration handling end to end; the notice is not evidence that those controls already exist.
 
 ## 6. Required production follow-ups
 
@@ -82,7 +94,7 @@ Interim operator guidance is recorded in `docs/runbooks/user-company-data-rights
 - Web typecheck and focused legal-content tests.
 - Public route response for `/privacy`, `/terms`, and `/data-deletion` without authentication.
 - Thai/mobile/desktop visual inspection, keyboard navigation, link and email validation.
-- Source scan for stale product names and deferred public claims including CRM, LINE, OTP, AI/OCR, accounting/tax, filing, specialist reports, and channel-specific opt-out text.
+- Source scan for stale product names, the declared employee/receipt/LINE/OCR/AI scope, explicit CRM exclusion, and absence of named unverified providers or universal deletion claims.
 - Contract/API regression coverage proving the three public marketing opt-out commands cannot be replaced by tenant policy.
 - Legal-acceptance regression coverage for password-first ordering, initial company evidence context, unchecked mandatory controls, stale version/challenge, API and employee-LINE blocking, idempotent evidence, one acceptance across company/role changes, re-acceptance on a new document release, and safe return URLs.
 - Docker Web rebuild from the final source with no data-volume reset.

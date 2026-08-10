@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const RELEASE_VERSION = 'v1';
+const RELEASE_VERSION = 'v2';
 const FIXED_COPYRIGHT_YEAR = '2026';
 
 /**

@@ -33,8 +33,8 @@ function status(): LegalAcceptanceStatusResponse {
 describe('buildLegalAcceptanceInput', () => {
   it('pairs the displayed Thai statements with the same immutable artifacts users open', () => {
     const displayed = status();
-    assert.equal(displayed.terms.href, '/legal/releases/v1/terms-th.html');
-    assert.equal(displayed.privacy.href, '/legal/releases/v1/privacy-th.html');
+    assert.equal(displayed.terms.href, '/legal/releases/v2/terms-th.html');
+    assert.equal(displayed.privacy.href, '/legal/releases/v2/privacy-th.html');
     assert.ok(displayed.statements.th.terms.includes(displayed.terms.displayVersionTh));
     assert.ok(displayed.statements.th.privacy.includes(displayed.privacy.displayVersionTh));
     assert.match(displayed.terms.artifactSha256, /^[a-f0-9]{64}$/);

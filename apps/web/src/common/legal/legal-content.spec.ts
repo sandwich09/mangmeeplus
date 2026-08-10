@@ -31,11 +31,25 @@ test('links to official Thai legal materials and carries an explicit effective d
     LEGAL_SOURCES.pdpaAct,
     LEGAL_SOURCES.pdpaRules,
     LEGAL_SOURCES.pdpaErasureRule,
+    LEGAL_SOURCES.pdpaAccessRule,
     LEGAL_SOURCES.crossBorderSection28,
     LEGAL_SOURCES.crossBorderSection29,
     LEGAL_SOURCES.pdpcOffice,
   ]) {
     assert.match(href, /^https:\/\//);
+  }
+});
+
+test('preserves the exact v1 artifacts after publishing v2', () => {
+  const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const v1Hashes = {
+    'terms-th.html': 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
+    'privacy-th.html': '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
+  } as const;
+
+  for (const [file, expectedHash] of Object.entries(v1Hashes)) {
+    const bytes = readFileSync(`${repositoryRoot}/apps/web/public/legal/releases/v1/${file}`);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), expectedHash);
   }
 });
 
@@ -58,26 +72,34 @@ test('immutable release URLs serve the exact bytes recorded in the contract', ()
   }
 });
 
-test('keeps v1 public legal copy free of deferred feature claims', () => {
+test('publishes the declared v2 launch scope without deferred or unproven provider claims', () => {
   const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
-  const publicPages = [
-    'apps/web/app/privacy/page.tsx',
-    'apps/web/app/terms/page.tsx',
-    'apps/web/app/data-deletion/page.tsx',
-  ].map((path) => readFileSync(`${repositoryRoot}/${path}`, 'utf8')).join('\n');
+  const privacy = readFileSync(`${repositoryRoot}/apps/web/app/privacy/page.tsx`, 'utf8');
+  const terms = readFileSync(`${repositoryRoot}/apps/web/app/terms/page.tsx`, 'utf8');
+  const deletion = readFileSync(`${repositoryRoot}/apps/web/app/data-deletion/page.tsx`, 'utf8');
+  const publicPages = [privacy, terms, deletion].join('\n');
 
-  for (const deferredClaim of [
-    /\bCRM\b/i,
-    /\bLINE\b/i,
-    /\bOTP\b/i,
-    /\bOCR\b/i,
-    /\bAI\b/i,
-    /ภาษี/,
-    /ใบกำกับ/,
-    /ยื่นแบบ/,
-    /ยกเลิกข่าวสาร/,
+  for (const launchScope of [/พนักงาน/, /ใบเสร็จ/, /\bLINE\b/, /\bOCR\b/, /\bAI\b/]) {
+    assert.match(publicPages, launchScope);
+  }
+  assert.match(publicPages, /CRM[^\n]+ไม่อยู่ในขอบเขต/);
+  assert.match(privacy, /ไม่ใช่การอนุมัติ การบันทึกบัญชี การยื่นภาษี/);
+  assert.match(privacy, /เว้นแต่และเท่าที่กฎหมายที่มีผลใช้บังคับอนุญาต/);
+  assert.match(deletion, /โดยไม่ชักช้าและไม่เกิน 90 วัน/);
+  assert.match(deletion, /โดยไม่ชักช้าและไม่เกิน 30 วัน/);
+  assert.match(deletion, /ข้อจำกัดของระบบหรือผู้ให้บริการไม่ทำให้ขยายเวลาโดยอัตโนมัติ/);
+  assert.match(deletion, /หนังสือรับรองนิติบุคคลฉบับปัจจุบัน/);
+  assert.match(deletion, /การเปลี่ยนสถานะรายการในฐานข้อมูลไม่ใช่หลักฐานว่าลบเสร็จทั้งหมด/);
+
+  for (const unprovenClaim of [
+    /\bTyphoon\b/i,
+    /\bBedrock\b/i,
+    /\bOpenAI\b/i,
+    /soft[- ]delete.{0,30}30 วัน/i,
+    /ลบถาวรทั้งหมด/,
+    /กู้ระบบ.{0,60}สถานะการลบกลับมามีผล/,
   ]) {
-    assert.doesNotMatch(publicPages, deferredClaim);
+    assert.doesNotMatch(publicPages, unprovenClaim);
   }
 });
 

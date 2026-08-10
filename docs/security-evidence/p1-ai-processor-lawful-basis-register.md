@@ -84,6 +84,11 @@ Worth stating plainly, because it narrows the assessment in §4:
 - **Stored on our side** per turn (`AiTurn`): `userMessagePreview`, `messagePreviewHash`
   (SHA-256 hex prefix, 16 chars — the schema comment states *no raw text stored*),
   `replyPreview` (≤120 chars), and provider/model/region/purpose lineage.
+- **Stored outside `AiTurn` for LINE recovery/context:** a raw webhook recovery payload can
+  exist temporarily until terminal handling (or be parked and cleared after the bounded orphan
+  window), and the Redis conversation ledger holds full message text with a one-day TTL. The
+  `AiTurn` preview statement therefore must not be presented as “MangmeePlus stores no raw LINE
+  text anywhere.” Obtain the live Redis persistence/snapshot and worker-health evidence.
 - **Sent to the model** for P1/P4: the message content of the turn plus permission-scoped
   ERP results. For an SME ERP this can include customer names, phone numbers, LINE user
   ids, order and booking details.
@@ -101,6 +106,10 @@ Worth stating plainly, because it narrows the assessment in §4:
   (`purgeExpiredAiData`), alongside expired CRM message text and media, and writes an
   audit entry `crm.pdpa.purge_sweep` when anything was removed. The sweep is what makes
   the retention period a fact rather than a policy statement.
+- The 90-day AI purge does **not** delete final receipt objects below the S3 `evidence/`
+  prefix or structured OCR/extraction/verification fields stored with an `ExpenseRecord`.
+  Those copies follow the approved expense/accounting schedule and currently require physical
+  object-version deletion and purge evidence before any public hard-delete claim.
 - Customer erasure runs as a durable case: `CrmDataSubjectRequest`
   (`requestType`, `status`, `dueAt`, `attemptCount`, `resultJson`, `notificationStatus`)
   — so a request has an SLA and an auditable outcome rather than a fire-and-forget delete.
