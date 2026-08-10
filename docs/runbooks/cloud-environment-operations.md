@@ -161,6 +161,53 @@ IAM user `watchdog-bedrock-dev` ที่ agent ใช้ **อ่าน IAM ข
 > authorize แยกกันสองครั้ง ให้ตรวจ resource targets ทั้งสองแบบ semantic; อย่าเทียบจำนวน
 > `IpPermissions` ว่าต้องเป็นสอง object
 
+### UAT DB จากเครื่อง dev (เพิ่ม 2026-08-10)
+
+UAT RDS ไม่ public — เข้าโดย port-forward ผ่าน SSM bastion `watchdog-bms-ssm-bastion`
+ต้องมี `session-manager-plugin` (`brew install --cask session-manager-plugin`) และ psql
+(`brew install libpq` ได้ client อย่างเดียว keg-only ที่ `/opt/homebrew/opt/libpq/bin/psql`)
+
+**แท็บที่ 1 — เปิดอุโมงค์ค้างไว้** (Ctrl-C ปิด):
+
+```sh
+infra/uat/db-port-forward.sh                        # 127.0.0.1:55432 → UAT RDS:5432
+```
+
+**แท็บที่ 2 — ใช้งาน** อุโมงค์ต้องเปิดอยู่:
+
+```sh
+psql "$(infra/uat/db-port-forward.sh --url)"        # URL จาก secret ชี้อุโมงค์ให้แล้ว
+infra/uat/db-port-forward.sh --fields               # host/port/db/user/password สำหรับ DBeaver
+```
+
+`--url` แก้ URL ที่เก็บใน secret สองจุดเพราะ libpq ไม่รับของ Prisma: ตัด `schema=public`
+(psql ตอบ `invalid URI query parameter: "schema"`) และลด `verify-full` เป็น `require`
+เพราะ cert ของ RDS ไม่ match ชื่อ `127.0.0.1` — ยังเป็น TLS อยู่ แค่ไม่ตรวจชื่อโฮสต์
+
+DBeaver ต้องชี้ **Host `127.0.0.1` Port `55432`** ไม่ใช่ RDS host ที่ `--fields` พิมพ์ออกมา
+(ช่องนั้นมีไว้ดูว่าอุโมงค์ปลายทางไปไหน) ส่วน database/user/password ใช้ตามที่พิมพ์ได้ตรง ๆ
+
+script ตรวจ SG ให้ก่อนเปิด: ถ้า UAT DB SG ยังไม่รับ bastion SG บน 5432 จะพิมพ์คำสั่ง
+`authorize-security-group-ingress` ให้ copy ไปรัน (รูปแบบเดียวกับ production support path)
+
+**ล้าง LINE link รายบัญชีเพื่อเทสซ้ำ** — survey ก่อนเสมอ แล้วค่อย `--apply`:
+
+```sh
+# 1. หาว่ามีบัญชี LINE ไหน link อยู่
+psql "$(infra/uat/db-port-forward.sh --url)" -c 'SELECT ei."providerUserId", ei.status, u.email FROM "ExternalIdentity" ei JOIN "User" u ON u.id = ei."userId" WHERE ei.provider = $$LINE$$ ORDER BY ei."linkedAt" DESC;'
+
+# 2. ดูว่าจะโดนอะไรบ้าง (ไม่ลบ)
+scripts/heal/line-link-reset.sh "$(infra/uat/db-port-forward.sh --url)" <LINE_USER_ID>
+
+# 3. ลบจริงใน transaction เดียว
+scripts/heal/line-link-reset.sh "$(infra/uat/db-port-forward.sh --url)" <LINE_USER_ID> --apply
+```
+
+ลบเฉพาะ `ExternalIdentity` (provider=LINE), `LineCompanyContext`, `LineWebhookEventLog`
+ของ LINE id นั้น — webhook log จับคู่ด้วย sha256 hex 16 ตัวแรก ตรงกับ `hashMessagePreview()`
+**ไม่แตะ** `EmployeeLineLinkToken` (ผูกกับ membership ไม่ใช่บัญชี LINE — ออก QR ใหม่แทน)
+และ identity ฝั่ง CRM ลูกค้า; ปฏิเสธ URL ที่มีคำว่า `prod` ทันที
+
 ### CloudWatch log retention — policy ปัจจุบัน (อัปเดต 2026-08-09)
 
 | ขอบเขต | Log group/prefix | เก็บไว้ |
