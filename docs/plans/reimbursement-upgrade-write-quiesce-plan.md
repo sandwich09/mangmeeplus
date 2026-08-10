@@ -69,14 +69,15 @@ reimbursement DTO/schema changes.
 
 15. [ ] Extend signed production PRE/POST evidence with bridge/final source+image, active revision/task
     set, flag readback, quiesce start/end, invariant hashes and bounded UX-impact count.
-16. [ ] Add controller steps in this exact order: bridge api-web true → retire/prove → signed PRE →
+16. [x] Add controller steps in this exact order: restore only the exact UAT-attested bridge digest →
+    bridge api-web true → retire/prove → signed PRE →
     migrations/invariants → final all services with api-web true → retire/prove → api-web same image
     false → postflight.
-17. [ ] Make every failure path retain `true`; prohibit unquiesce when schema/invariant, digest,
+17. [x] Make every failure path retain `true`; prohibit unquiesce when schema/invariant, digest,
     health, task retirement or exact-revision proof is missing/moving.
 18. [ ] Add adversarial shell/workflow tests for skipped bridge, unguarded active task, flag mismatch,
     old task left alive, changed image during unquiesce, migration failure and stale/replayed evidence.
-19. [ ] Update rollback so pre-migration failure may restore the bridge, while post-migration failure
+19. [x] Update rollback so pre-migration failure may restore the bridge, while post-migration failure
     stays quiesced until a compatible build passes. Neither path changes entitlement/route state.
 
 ## Phase 4 — integration and promotion

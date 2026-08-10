@@ -166,11 +166,36 @@ grep -Fq -- '--certificate-github-workflow-trigger "workflow_dispatch"' "$deploy
 grep -Fq 'validate-uat-deployment-acceptance.sh' "$deploy_workflow"
 grep -Fq 'name: Wait for and fully verify independent U5 owner authority' "$deploy_workflow"
 grep -Fq 'wait-for-production-evidence.sh \' "$deploy_workflow"
+grep -Fq '"$SOURCE_SHA"' "$deploy_workflow"
+grep -Fq 'expected-source-sha' "$repo_root/infra/security/wait-for-production-evidence.sh"
 grep -Fq 'OWNER_U5E_APPROVAL_V1 "$GITHUB_RUN_ID" APPROVAL 1800' "$deploy_workflow"
 grep -Fq 'fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1' "$deploy_workflow"
 grep -Fq 'fetch-verified-production-evidence.sh PRODUCTION_A5_CLONE_REHEARSAL_V1' "$deploy_workflow"
 grep -Fq 'fetch-verified-production-evidence.sh PRODUCTION_SECURITY_PREFLIGHT_V1' "$deploy_workflow"
+grep -Fq '"$BRIDGE_RUN" "$GITHUB_RUN_ID" "$root" "$BRIDGE_SOURCE" "$BRIDGE_ATTEMPT"' "$deploy_workflow"
+grep -Fq 'attempts/$expected_run_attempt' "$repo_root/infra/security/fetch-verified-uat-release.sh"
+grep -Fq 'name: Restore exact UAT-attested bridge image' "$deploy_workflow"
+grep -Fq 'role-to-assume: ${{ vars.AWS_ROLE_ARN }}' "$deploy_workflow"
+grep -Fq 'expected_digest="${BRIDGE_IMAGE##*@}"' "$deploy_workflow"
+grep -Fq 'test "$RESTORED_DIGEST" = "$expected_digest"' "$deploy_workflow"
+grep -Fq 'deploy-production.yml@refs/heads/main' "$deploy_workflow"
+grep -Fq -- '--certificate-github-workflow-sha "$GITHUB_SHA"' "$deploy_workflow"
 grep -Fq 'validate-u5-production-chain.sh validate-pre' "$deploy_workflow"
+grep -Fq 'REIMBURSEMENT_BRIDGE=true REIMBURSEMENT_BRIDGE_PROVED_SHA="$BRIDGE_SOURCE"' "$deploy_workflow"
+grep -Fq 'REIMBURSEMENT_WRITE_QUIESCE=true DEPLOYMENT_EVIDENCE_DIR="$bridge_evidence"' "$deploy_workflow"
+grep -Fq 'build-production-a5-stage-context.sh \' "$deploy_workflow"
+grep -Fq '"$output" PRE_MUTATION "$SOURCE_SHA"' "$deploy_workflow"
+grep -Fq 'run-production-a5-reviewed-migration.sh' "$deploy_workflow"
+grep -Fq '"$output" POST_MIGRATION "$SOURCE_SHA"' "$deploy_workflow"
+grep -Fq 'RELEASE_DATABASE_AUTHORITY=U5_REVIEWED_APPLY \' "$deploy_workflow"
+grep -Fq 'run-release-task.sh "$release_image" "$SOURCE_SHA" release-prepare' "$deploy_workflow"
+grep -Fq 'REIMBURSEMENT_WRITE_QUIESCE=false \' "$deploy_workflow"
+grep -Fq 'requiesce_on_error() {' "$deploy_workflow"
+grep -Fq 'REIMBURSEMENT_WRITE_QUIESCE=true \' "$deploy_workflow"
+grep -Fq 'trap requiesce_on_error ERR' "$deploy_workflow"
+grep -Fq 'automatic fail-closed re-quiesce could not be verified' "$deploy_workflow"
+grep -Fq '"$output" POST_DEPLOYMENT "$SOURCE_SHA"' "$deploy_workflow"
+grep -Fq 'validate-u5-production-chain.sh validate-post' "$deploy_workflow"
 test "$(grep -Fc 'validate-u5-production-chain.sh validate-approval-current' "$deploy_workflow")" -ge 4
 if grep -Eq 'U5_SHADOW_PROMOTION_APPROVAL|u5-shadow-promotion-approval|inputs\.u5_' "$deploy_workflow"; then
   echo 'ERROR: production controller still accepts or synthesizes legacy U5 authority' >&2
@@ -196,7 +221,7 @@ grep -Fq 'run-release-task.sh' "$deploy_workflow"
 grep -Fq 'PRODUCTION_IMAGE_MANIFEST' "$deploy_workflow"
 grep -Fq 'verify-deployment.sh' "$deploy_workflow"
 grep -Fq 'ECS_DEPLOY_MANAGE_IAM: "false"' "$deploy_workflow"
-recheck_line="$(grep -n 'name: Recheck release authority immediately before AWS' "$deploy_workflow" | cut -d: -f1)"
+recheck_line="$(grep -n 'name: Recheck release authority immediately before final mutation' "$deploy_workflow" | cut -d: -f1)"
 legal_policy_line="$(grep -n 'name: Verify legal evidence gate policy and manifest preflight' "$deploy_workflow" | cut -d: -f1)"
 legal_reader_line="$(grep -n 'name: Configure AWS legal evidence reader credentials' "$deploy_workflow" | cut -d: -f1)"
 legal_provision_line="$(grep -n 'name: Provision independently reviewed legal release evidence' "$deploy_workflow" | cut -d: -f1)"
@@ -204,7 +229,24 @@ legal_validate_line="$(grep -n 'name: Validate legal operator and privacy releas
 legal_cleanup_line="$(grep -n 'name: Remove local legal release evidence' "$deploy_workflow" | cut -d: -f1)"
 legal_recheck_line="$(grep -n 'name: Recheck release authority after legal evidence verification' "$deploy_workflow" | cut -d: -f1)"
 aws_line="$(grep -n 'name: Configure AWS deploy credentials' "$deploy_workflow" | cut -d: -f1)"
+clone_wait_line="$(grep -n 'name: Wait for exact clone rehearsal before quiesce' "$deploy_workflow" | cut -d: -f1)"
+bridge_publisher_line="$(grep -n 'name: Configure AWS bridge image publisher credentials' "$deploy_workflow" | cut -d: -f1)"
+bridge_restore_line="$(grep -n 'name: Restore exact UAT-attested bridge image' "$deploy_workflow" | cut -d: -f1)"
+rollout_credentials_line="$(grep -n 'name: Configure AWS rollout credentials' "$deploy_workflow" | cut -d: -f1)"
+bridge_line="$(grep -n 'name: Deploy exact UAT-attested bridge and build PRE stage context' "$deploy_workflow" | cut -d: -f1)"
+owner_line="$(grep -n 'name: Wait for and fully verify independent U5 owner authority' "$deploy_workflow" | cut -d: -f1)"
+apply_line="$(grep -n 'name: Apply the exact reviewed migration while the bridge stays quiesced' "$deploy_workflow" | cut -d: -f1)"
+post_migration_line="$(grep -n 'name: Wait for exact signed POST_MIGRATION evidence' "$deploy_workflow" | cut -d: -f1)"
+final_deploy_line="$(grep -n 'name: Deploy immutable manifest' "$deploy_workflow" | cut -d: -f1)"
+unquiesce_line="$(grep -n 'name: Prove final quiesced revision and unquiesce the same image last' "$deploy_workflow" | cut -d: -f1)"
+retire_line="$(grep -n 'name: Retire superseded launch builds' "$deploy_workflow" | cut -d: -f1)"
+post_context_line="$(grep -n 'name: Build exact POST_DEPLOYMENT stage context' "$deploy_workflow" | cut -d: -f1)"
+post_validate_line="$(grep -n 'name: Wait for and fully verify signed POST deployment chain' "$deploy_workflow" | cut -d: -f1)"
 test "$legal_policy_line" -lt "$recheck_line"
+test "$legal_policy_line" -lt "$bridge_publisher_line"
+test "$bridge_publisher_line" -lt "$bridge_restore_line"
+test "$bridge_restore_line" -lt "$rollout_credentials_line"
+test "$rollout_credentials_line" -lt "$clone_wait_line"
 test "$recheck_line" -lt "$aws_line"
 test "$recheck_line" -lt "$legal_reader_line"
 test "$legal_reader_line" -lt "$legal_provision_line"
@@ -213,8 +255,18 @@ test "$legal_validate_line" -lt "$legal_cleanup_line"
 test "$legal_cleanup_line" -lt "$legal_recheck_line"
 test "$legal_recheck_line" -lt "$aws_line"
 test "$((aws_line - recheck_line))" -lt 100
+test "$clone_wait_line" -lt "$bridge_line"
+test "$bridge_line" -lt "$owner_line"
+test "$owner_line" -lt "$apply_line"
+test "$apply_line" -lt "$post_migration_line"
+test "$post_migration_line" -lt "$final_deploy_line"
+test "$final_deploy_line" -lt "$unquiesce_line"
+test "$unquiesce_line" -lt "$retire_line"
+test "$retire_line" -lt "$post_context_line"
+test "$post_context_line" -lt "$post_validate_line"
 grep -Fq 'bash infra/security/provision-legal-release-evidence.spec.sh' "$ci"
 grep -Fq 'bash infra/security/validate-legal-release-readiness.spec.sh' "$ci"
+grep -Fq 'bash infra/security/production-a5-current-health.spec.sh' "$ci"
 grep -Fq 'publish_environment:' "$ci"
 grep -Fq "environment: \${{ inputs.publish_environment || 'production' }}" "$ci"
 grep -Fq 'git fetch origin develop --tags --force' "$uat_workflow"
@@ -712,10 +764,26 @@ jq -e . "$repo_root/infra/prod-ecs-express/github-deploy-role-policy.template.js
 # The readback statement covers both the release task role and the workers role, so `.Resource` is a
 # list now; keep the check shape-tolerant rather than pinning it back to a single string.
 jq -e '.Statement[] | select(.Sid == "VerifyReleaseTaskRolePolicy")
-  | .Action == "iam:GetRolePolicy"
+  | ((.Action | if type == "array" then . else [.] end) | index("iam:GetRolePolicy")) != null
     and ((.Resource | if type == "array" then . else [.] end)
       | any(endswith(":role/watchdog-bms-release-task-role")))' \
   "$repo_root/infra/prod-ecs-express/github-deploy-role-policy.template.json" >/dev/null
+jq -e '
+  .Statement as $statements
+  | ($statements[] | select(.Sid=="EcsReleaseAndExpressDeploy").Action) as $ecs
+  | ($statements[] | select(.Sid=="PassExistingEcsRoles").Resource) as $pass
+  | ($statements[] | select(.Sid=="VerifyAndPullRuntimeImages").Resource) as $images
+  | ($statements[] | select(.Sid=="NetworkRead").Action) as $network
+  | ($ecs|index("ecs:DeregisterTaskDefinition"))!=null
+    and ($ecs|index("ecs:StopTask"))!=null
+    and ($pass|index("arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-production-a5-apply-execution"))!=null
+    and ($images|index("arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-migration-tool"))!=null
+    and ($network|index("ec2:DescribeRouteTables"))!=null
+    and ($network|index("ec2:DescribeVpcEndpoints"))!=null
+    and any($statements[]; .Sid=="ProductionDatabaseReadback"
+      and .Action=="rds:DescribeDBInstances"
+      and .Resource=="arn:aws:rds:ap-southeast-1:<ACCOUNT_ID>:db:watchdog-bms-prod-db")
+' "$repo_root/infra/prod-ecs-express/github-deploy-role-policy.template.json" >/dev/null
 jq -e '
   .Statement[] | select(.Sid == "ReleaseTaskImage")
   | (.Action | index("ecr:DescribeImages")) != null
@@ -1713,7 +1781,11 @@ for caller in "$deploy_workflow" "$uat_workflow"; do
   grep -Fq 'if [ "$rc" -eq 75 ]; then' "$caller"
   grep -Fq 'held release operation remains unresolved' "$caller"
   grep -Fq "if: always() && (inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
-  grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success' }}" "$caller"
+  if [ "$caller" = "$deploy_workflow" ]; then
+    grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success' && (needs.resolve-release.outputs.release_mode != 'promotion' || steps.unquiesce.outcome == 'success') }}" "$caller"
+  else
+    grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success' }}" "$caller"
+  fi
   grep -Fq '[ "$HEALTH_VERIFIED" = "true" ] || mode=reconcile' "$caller"
   grep -Fq 'id: verify-health' "$caller"
   grep -Fq 'DEPLOYMENT_EVIDENCE_DIR=$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}' "$caller"

@@ -3,10 +3,12 @@
 เป้า: ขึ้น production ทาง A (promotion เต็ม) ให้จบ | สร้าง 2026-08-08
 คู่กับ `feature-entitlement-u5-production-handoff.md`, `production-u5-live-prerequisites.md`
 
-**อ่านก่อนเริ่ม:** ceremony นี้มี owner approval หน้าต่าง **1800 วินาที (30 นาที)** และ evidence
-ทุกชิ้นผูกกับ `parent_production_run_id` ของ deploy-production run **ที่กำลังรันอยู่** แปลว่า
-Phase 3 ทั้งหมดต้องทำ **ระหว่างที่ deploy-production run ค้างรอ** ที่ step "Wait for U5 authority"
-ทำต่อเนื่องจนจบ พลาดแล้วเริ่ม deploy ใหม่ทั้งรอบ
+**อ่านก่อนเริ่ม:** ceremony นี้มีทั้ง owner approval และ reimbursement quiesce window อย่างละ
+**1800 วินาที (30 นาที)** Evidence ทุกชิ้นผูกกับ `parent_production_run_id` ของ
+deploy-production run **ที่กำลังรันอยู่** ตัว parent จะ verify signed UAT acceptance แล้ว restore
+bridge image ผ่าน publisher role โดยยอมรับเฉพาะ digest เดิมแบบ byte-for-byte, รอ clone ก่อนแตะ runtime, deploy bridge
+หลัง clone ผ่าน, แล้วหยุดรอ evidence ของแต่ละ stage ตามลำดับ ทำต่อเนื่องจนจบ; ถ้า window หมด
+ให้หยุดโดยคง quiesce และเริ่ม parent/evidence chain ใหม่ ห้ามข้าม predicate
 
 ทุก A5/U5 workflow ต้อง dispatch **จาก `main` เท่านั้น** (`GITHUB_REF = refs/heads/main` และ
 `GITHUB_SHA = rev-parse refs/heads/main` ปัจจุบัน — controller ต้องเป็น main ล่าสุด)
@@ -67,7 +69,9 @@ Phase 3 ทั้งหมดต้องทำ **ระหว่างที่
 
 ลำดับบังคับ แต่ละขั้นป้อน run id ให้ขั้นถัดไป **ทุกอันจาก `main`**:
 
-1. [ ] เริ่ม **deploy-production** (mode promotion) — จะค้างรอที่ "Wait for U5 authority" 1800s
+1. [ ] เริ่ม **deploy-production** (mode promotion) — controller ตรวจ UAT bytes/signatures,
+       build final release-task image ล่วงหน้า แล้วค้างที่ "Wait for exact clone rehearsal before
+       quiesce" โดยยังไม่เปลี่ยน production
        ```sh
        gh workflow run deploy-production.yml --ref main -f release_ref=<sha> -f target=all \
          -f promote_from_run_id=<uat-run-id> \
@@ -75,17 +79,30 @@ Phase 3 ทั้งหมดต้องทำ **ระหว่างที่
          -f bridge_source_sha=<sha> -f bridge_api_image=<digest>
        ```
        → จด **parent_production_run_id** + attempt จาก run ที่เพิ่งเกิด
-2. [ ] **production-security-preflight** (stage PRE_MUTATION) → จด producer run id
-3. [ ] **production-a5-clone** (clone rehearsal = restore drill M-17 ในตัว) → จด run id
+2. [ ] **production-a5-clone** (clone rehearsal = restore drill M-17 ในตัว) → จด run id
        ```sh
        gh workflow run production-a5-clone.yml --ref main \
          -f parent_production_run_id=<X> -f parent_production_run_attempt=<A> -f uat_acceptance_run_id=<uat>
        ```
-4. [ ] **production-a5** (stage PRE_MUTATION) — ใช้ clone_rehearsal_run_id → จด run id
-5. [ ] **u5-shadow-evidence** (stage PRE_AUTHORIZATION) — รวม preflight+clone+a5+uat → จด aggregate run id
-6. [ ] **u5-owner-approval** (O3 — คุณกด, ผู้อนุมัติ = repo owner) — ใช้ pre_aggregate_run_id
-       → ปล่อยให้ deploy-production ที่ค้างอยู่ fetch approval แล้วเดินต่อ
-7. [ ] deploy-production เดิน migration (apply 51 ตัว) → canary bake → verify digest/GIT_SHA/health
+       Parent จะ restore/verify exact UAT-attested digest ก่อน, verify clone, deploy bridge ด้วย
+       `REIMBURSEMENT_WRITE_QUIESCE=true`, prove exact revision/tasks และ upload PRE context
+3. [ ] **production-a5** stage `PRE_MUTATION` — ใช้ clone run id → จด producer run id
+4. [ ] **production-security-preflight** stage `PRE_MUTATION` — ต้องอ้าง exact A5 PRE run
+       → จด producer run id
+5. [ ] **u5-shadow-evidence** stage `PRE_AUTHORIZATION` — รวม clone+A5 PRE+security+UAT
+       → จด aggregate run id
+6. [ ] **u5-owner-approval** (**O3 — เจ้าของกดเอง**) — ใช้ pre-aggregate run id
+       → parent verify chain/approval, รัน exact reviewed migration ขณะ bridge ยัง quiesced,
+       upload `POST_MIGRATION` context แล้วหยุดรอ
+7. [ ] **production-a5** stage `POST_MIGRATION` — อ้าง parent และ exact PRE/clone evidence
+       → parent verify signed result แล้ว deploy final `all` โดย api-web ยัง `true`, prove exact
+       final revision จากนั้น deploy **api-web image เดิม** ด้วย flag `false` เป็น mutation สุดท้าย
+8. [ ] หลัง parent upload `POST_DEPLOYMENT` context ให้ dispatch **production-a5** stage
+       `POST_DEPLOYMENT`
+9. [ ] Dispatch **u5-shadow-evidence** stage `POST_DEPLOYMENT` โดยอ้าง exact A5 PRE,
+       POST_MIGRATION, POST_DEPLOYMENT, clone, security และ owner approval
+10. [ ] Parent verify `validate-post`, finalizes release operation และจบ success เท่านั้นเมื่อ
+        digest/GIT_SHA/health + chain ทั้งเส้นตรงกัน
 
 ## Phase 4 — หลัง deploy
 
@@ -101,8 +118,9 @@ Phase 3 ทั้งหมดต้องทำ **ระหว่างที่
 
 ## ความเสี่ยงหลักของ ceremony นี้
 
-- **หน้าต่าง 1800s** — Phase 3 ต้องทำต่อเนื่อง ถ้าขั้น 2–5 รวมกันเกิน 30 นาที approval จะหมดอายุ
-  แล้ว deploy-production timeout → เริ่ม Phase 3 ใหม่ทั้งหมด **เตรียม run id ให้พร้อมก่อนกด**
+- **สองหน้าต่าง 1800s** — clone อยู่ก่อน quiesce และ final release-task image build ล่วงหน้าเพื่อลด
+  downtime; หลัง bridge live ต้อง dispatch PRE chain ต่อทันที และหลัง owner approval ต้อง dispatch
+  POST_MIGRATION/POST_DEPLOYMENT ต่อทันที ถ้าหมดเวลาให้ถือว่า fail-closed และคง quiesce
 - **ทุก workflow จาก main** — dispatch ผิด branch = fail ที่ guard ทันที
 - **evidence ผูก parent run** — ถ้า deploy-production ตาย ต้องเริ่ม chain ใหม่ทั้งเส้น
 - Phase 1 (infra) ทำแยกก่อนได้ ไม่มี time pressure — **ทำ Phase 0–2 ให้เสร็จสมบูรณ์ก่อนแตะ Phase 3**

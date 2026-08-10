@@ -117,9 +117,11 @@ jobs:
           H3_RUN_ID: ${{ inputs.security_preflight_run_id }}
         run: |
           set -euo pipefail
-          bash infra/security/fetch-verified-uat-release.sh "$UAT_RUN_ID" "$PARENT_RUN_ID" "$EVIDENCE_ROOT/uat"
           bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_EVIDENCE_V1 \
             "$H2_PRE_RUN_ID" "$PARENT_RUN_ID" PRE_MUTATION "$EVIDENCE_ROOT/h2-pre"
+          source_sha="$(jq -er '.sourceCommit' "$EVIDENCE_ROOT/h2-pre/evidence.json")"
+          bash infra/security/fetch-verified-uat-release.sh \
+            "$UAT_RUN_ID" "$PARENT_RUN_ID" "$EVIDENCE_ROOT/uat" "$source_sha"
           bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_A5_CLONE_REHEARSAL_V1 \
             "$CLONE_RUN_ID" "$PARENT_RUN_ID" CLONE "$EVIDENCE_ROOT/clone"
           bash infra/security/fetch-verified-production-evidence.sh PRODUCTION_SECURITY_PREFLIGHT_V1 \

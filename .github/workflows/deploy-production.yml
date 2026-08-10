@@ -363,7 +363,7 @@ jobs:
           root="$RUNNER_TEMP/u5-bridge"
           mkdir -m 700 "$root"
           observed_source="$(bash infra/security/fetch-verified-uat-release.sh \
-            "$BRIDGE_RUN" "$GITHUB_RUN_ID" "$root" "$BRIDGE_SOURCE")"
+            "$BRIDGE_RUN" "$GITHUB_RUN_ID" "$root" "$BRIDGE_SOURCE" "$BRIDGE_ATTEMPT")"
           test "$observed_source" = "$BRIDGE_SOURCE"
           test "$(jq -er '.run_attempt' "$root/uat-run.json")" = "$BRIDGE_ATTEMPT"
           observed_image="$(jq -er '.images[]|select(.service=="api-web")|.image' \
@@ -373,6 +373,262 @@ jobs:
           test "$BRIDGE_IMAGE" != "$(jq -er '.images[]|select(.service=="api-web")|.image' \
             release/production-image-manifest.json)"
           echo "U5_BRIDGE_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Validate final and bridge release artifacts before AWS
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$SOURCE_SHA"
+          for service in api-web ai-gateway workers; do
+            jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" >/dev/null
+            test -s "release/cosign-${service}.json"
+          done
+          if [ "$RELEASE_MODE" = promotion ]; then
+            test "$(bash infra/docker/validate-production-manifest.sh "$U5_BRIDGE_ROOT/release/production-image-manifest.json" "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$BRIDGE_SOURCE"
+            for service in api-web ai-gateway workers; do
+              jq -e '.spdxVersion | startswith("SPDX-")' "$U5_BRIDGE_ROOT/release/sbom-${service}.spdx.json" >/dev/null
+              test -s "$U5_BRIDGE_ROOT/release/cosign-${service}.json"
+            done
+          fi
+      # These pins are controller-owned policy. Verify them before the bridge receives AWS access.
+      - name: Verify legal evidence gate policy and manifest preflight
+        env:
+          EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
+          EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: 66fdfa5b9fc936d657612f306a741efc321c0565b81750489ebd337db9f52ad1
+          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 833bdaa26ca3ca852d6e23b3274ca990d382bf3f60144652b334057c3ae9cb5e
+        run: |
+          set -euo pipefail
+          test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256"
+          test "$(sha256sum infra/security/validate-legal-release-readiness.sh | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256"
+          test "$(sha256sum packages/contracts/src/legal-acceptance.ts | awk '{print $1}')" \
+            = "$EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256"
+          bash infra/security/provision-legal-release-evidence.sh preflight "$GITHUB_WORKSPACE"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        with:
+          ref: ${{ inputs.bridge_source_sha }}
+          path: bridge-source
+          fetch-depth: 0
+      - name: Configure AWS bridge image publisher credentials
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-bridge-restore-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Log in to ECR for exact bridge restore
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Restore exact UAT-attested bridge image
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        id: restore-bridge
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: bridge-source
+          file: ./bridge-source/infra/api-web/Dockerfile.api-web
+          push: true
+          platforms: linux/amd64
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:git-${{ inputs.bridge_source_sha }}
+          labels: org.opencontainers.image.revision=${{ inputs.bridge_source_sha }}
+          cache-from: type=gha,scope=production-api-web
+          cache-to: type=gha,mode=max,scope=production-api-web,ignore-error=true
+      - name: Prove restored bridge bytes and sign this controller restore
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+          BRIDGE_IMAGE: ${{ inputs.bridge_api_image }}
+          RESTORED_DIGEST: ${{ steps.restore-bridge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          expected_digest="${BRIDGE_IMAGE##*@}"
+          [[ "$RESTORED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$RESTORED_DIGEST" = "$expected_digest" || {
+            echo "ERROR: rebuilt bridge bytes differ from the exact UAT-attested digest" >&2
+            exit 1
+          }
+          docker pull "$BRIDGE_IMAGE"
+          bash infra/docker/verify-production-image.sh "$BRIDGE_IMAGE"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$BRIDGE_IMAGE")" = "$BRIDGE_SOURCE"
+          cosign sign --yes "$BRIDGE_IMAGE"
+          rm -rf "$GITHUB_WORKSPACE/bridge-source"
+      - name: Configure AWS rollout credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-rollout-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Preserve active non-secret configuration
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          api_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-api-web-service-arn --query Parameter.Value --output text)"
+          ai_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-ai-gateway-service-arn --query Parameter.Value --output text)"
+          aws ecs describe-express-gateway-service --service-arn "$api_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/api-env.json
+          aws ecs describe-express-gateway-service --service-arn "$ai_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/ai-env.json
+          preserve() {
+            local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
+            value="${!output:-}"
+            if [ -z "$value" ]; then
+              value="$(jq -r --arg name "$source" '.[] | select(.name == $name) | .value' "$file")"
+            fi
+            if [ -z "$value" ] && [ -n "$fallback" ]; then
+              echo "notice: $output is unset everywhere; deploying the default '$fallback'"
+              value="$fallback"
+            fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* || ( "$required" == "true" && -z "$value" ) ]]; then
+              echo "ERROR: missing or invalid production config: $output" >&2
+              exit 1
+            fi
+            echo "$output=$value" >> "$GITHUB_ENV"
+          }
+          preserve PUBLIC_DOMAIN_URL PUBLIC_BASE_URL /tmp/api-env.json
+          preserve LINE_LOGIN_CHANNEL_ID LINE_LOGIN_CHANNEL_ID /tmp/api-env.json
+          preserve LINE_LIFF_ID LINE_LIFF_ID /tmp/api-env.json
+          preserve LINE_MESSAGING_CHANNEL_ID LINE_MESSAGING_CHANNEL_ID /tmp/api-env.json
+          preserve WEB_LINE_ACCOUNT_LINK_URL LINE_ACCOUNT_LINK_URL /tmp/api-env.json false
+          preserve LINE_OA_ADD_URL LINE_OA_ADD_URL /tmp/api-env.json false
+          preserve LINE_OA_QR_IMAGE_URL LINE_OA_QR_IMAGE_URL /tmp/api-env.json false
+          preserve LINE_ACCOUNT_LINK_QR_IMAGE_URL LINE_ACCOUNT_LINK_QR_IMAGE_URL /tmp/api-env.json false
+          preserve CRM_AUTO_REPLY_ENABLED CRM_AUTO_REPLY_ENABLED /tmp/api-env.json
+          preserve CRM_AI_MIN_CONFIDENCE CRM_AI_MIN_CONFIDENCE /tmp/api-env.json
+          preserve CRM_AI_OUTBOUND_ALLOWED_DOMAINS CRM_AI_OUTBOUND_ALLOWED_DOMAINS /tmp/api-env.json
+          preserve WORKFLOW_WEBHOOK_ALLOWED_HOSTS WORKFLOW_WEBHOOK_ALLOWED_HOSTS /tmp/api-env.json true none
+          preserve CLAMAV_HOST CLAMAV_HOST /tmp/api-env.json
+          preserve MODEL_PROVIDER MODEL_PROVIDER /tmp/ai-env.json
+          preserve APPROVED_AI_PROVIDERS APPROVED_AI_PROVIDERS /tmp/ai-env.json
+          preserve APPROVED_AI_REGIONS APPROVED_AI_REGIONS /tmp/ai-env.json
+          preserve OPENAI_PROCESSING_REGION OPENAI_PROCESSING_REGION /tmp/ai-env.json false
+          preserve TYPHOON_PROCESSING_REGION TYPHOON_PROCESSING_REGION /tmp/ai-env.json false
+          preserve BEDROCK_REGION BEDROCK_REGION /tmp/ai-env.json
+          preserve LINE_AI_AGENT_RUNTIME LINE_AI_AGENT_RUNTIME /tmp/ai-env.json
+          preserve AGENTCORE_REGION AGENTCORE_REGION /tmp/ai-env.json
+          preserve AGENTCORE_RUNTIME_QUALIFIER AGENTCORE_RUNTIME_QUALIFIER /tmp/ai-env.json
+          preserve AGENTCORE_INVOKE_TIMEOUT_MS AGENTCORE_INVOKE_TIMEOUT_MS /tmp/ai-env.json
+      - name: Verify immutable final and bridge image signatures
+        env:
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          for service in api-web ai-gateway workers; do
+            image="$(jq -r --arg service "$service" '.images[] | select(.service == $service) | .image' \
+              release/production-image-manifest.json)"
+            cosign verify \
+              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$image" >/dev/null
+          done
+          if [ "$RELEASE_MODE" = promotion ]; then
+            image="$(jq -r '.images[] | select(.service == "api-web") | .image' \
+              "$U5_BRIDGE_ROOT/release/production-image-manifest.json")"
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-ref refs/heads/main \
+              --certificate-github-workflow-sha "$GITHUB_SHA" \
+              --certificate-github-workflow-trigger workflow_dispatch \
+              "$image" >/dev/null
+          fi
+      - name: Build and push exact-commit release task before quiesce
+        id: release-image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: local
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:release-task-${{ needs.resolve-release.outputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ needs.resolve-release.outputs.source_sha }}
+          cache-from: type=gha,scope=release-task-api
+          cache-to: type=gha,mode=max,scope=release-task-api,ignore-error=true
+      - name: Sign the exact production release-task digest
+        env:
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+      - name: Wait for exact clone rehearsal before quiesce
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/production-pre-context"
+          mkdir -m 700 "$root"
+          clone_run_id="$(bash infra/security/wait-for-production-evidence.sh \
+            PRODUCTION_A5_CLONE_REHEARSAL_V1 "$GITHUB_RUN_ID" CLONE 1800 "$root/clone" "$SOURCE_SHA")"
+          echo "U5_PRE_CONTEXT_ROOT=$root" >> "$GITHUB_ENV"
+          echo "U5_CLONE_RUN_ID=$clone_run_id" >> "$GITHUB_ENV"
+      - name: Deploy exact UAT-attested bridge and build PRE stage context
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        id: pre-context
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          BRIDGE_SOURCE: ${{ inputs.bridge_source_sha }}
+          BRIDGE_IMAGE: ${{ inputs.bridge_api_image }}
+        run: |
+          set -euo pipefail
+          bridge_manifest="$U5_BRIDGE_ROOT/release/production-image-manifest.json"
+          bridge_evidence="$RUNNER_TEMP/watchdog-bms-bridge-${GITHUB_RUN_ID}"
+          mkdir -m 700 "$bridge_evidence"
+          env -u RELEASE_PARENT_OPERATION_ID -u RELEASE_TASK_IMAGE \
+            REIMBURSEMENT_BRIDGE=true REIMBURSEMENT_BRIDGE_PROVED_SHA="$BRIDGE_SOURCE" \
+            REIMBURSEMENT_WRITE_QUIESCE=true DEPLOYMENT_EVIDENCE_DIR="$bridge_evidence" \
+            PRODUCTION_IMAGE_MANIFEST="$bridge_manifest" \
+            bash infra/prod-ecs-express/deploy.sh api-web
+          bash infra/prod-ecs-express/verify-deployment.sh "$bridge_manifest" api-web
+          root="$U5_PRE_CONTEXT_ROOT"
+          final_image="$(jq -er '.images[]|select(.service=="api-web")|.image' release/production-image-manifest.json)"
+          health="$root/health"
+          mkdir "$health"
+          bash infra/security/collect-production-a5-current-health.sh "$health" >/dev/null
+          live="$root/live"
+          mkdir "$live"
+          bash infra/security/capture-production-a5-live-state.sh pre \
+            "$health/current-health.json" "$BRIDGE_SOURCE" "$BRIDGE_IMAGE" \
+            "$SOURCE_SHA" "$final_image" "$live"
+          jq -cS '.payload.reviewedManifest' "$root/clone/evidence.json" > "$root/reviewed-manifest.json"
+          jq -cS --slurpfile ref "$root/clone/ref.json" \
+            '{sourceAppliedMigrationsHash:.payload.sourceAppliedMigrationsHash,
+              cloneRehearsal:.payload.cloneRehearsal,cloneRehearsalRef:$ref[0]}' \
+            "$root/clone/evidence.json" > "$root/invariant-context.json"
+          printf '%s\n' null > "$root/null.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$root/parent.json"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$root/parent.json")"
+          parent_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/deploy-production.yml")"
+          output="$root/output"
+          mkdir "$output"
+          artifact_name="$(bash infra/security/build-production-a5-stage-context.sh \
+            "$output" PRE_MUTATION "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$parent_blob" "$parent_started" \
+            "$root/reviewed-manifest.json" "$live/serving-builds.json" \
+            "$live/reimbursement-quiesce.json" "$root/invariant-context.json" \
+            "$root/null.json" "$root/null.json")"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        with:
+          name: ${{ steps.pre-context.outputs.artifact_name }}
+          path: ${{ steps.pre-context.outputs.output }}/context.json
+          if-no-files-found: error
+          retention-days: 7
       # Sets U5_OWNER_APPROVAL_FILE, which the five later `validate-approval-current` rechecks
       # already read — until this step existed they ran against an unset variable, so a promotion
       # could not survive its own authority rechecks. Promotion-scoped to match those rechecks;
@@ -397,7 +653,7 @@ jobs:
           # job or be replayed from another attempt. Waiting longer than the 1800s an approval is
           # valid for could only ever surface an expired one.
           approval_run_id="$(bash infra/security/wait-for-production-evidence.sh \
-            OWNER_U5E_APPROVAL_V1 "$GITHUB_RUN_ID" APPROVAL 1800 "$root/approval")"
+            OWNER_U5E_APPROVAL_V1 "$GITHUB_RUN_ID" APPROVAL 1800 "$root/approval" "$SOURCE_SHA")"
           approval="$root/approval/evidence.json"
           test "$(jq -er '.sourceCommit' "$approval")" = "$SOURCE_SHA"
           # Every producer run id is read out of the signed approval, never from a dispatch input:
@@ -427,36 +683,8 @@ jobs:
           echo "U5_OWNER_APPROVAL_FILE=$approval" >> "$GITHUB_ENV"
           echo "U5_AUTHORITY_ROOT=$root" >> "$GITHUB_ENV"
           echo "U5_OWNER_APPROVAL_RUN_ID=$approval_run_id" >> "$GITHUB_ENV"
-      - name: Validate release artifact
-        env:
-          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$SOURCE_SHA"
-          for service in api-web ai-gateway workers; do
-            jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" >/dev/null
-            test -s "release/cosign-${service}.json"
-          done
-      # These pins are controller-owned policy. A candidate checkout must not be able to
-      # replace the parser, validator or runtime legal contract before receiving even the
-      # narrowly scoped compliance-bucket credential.
-      - name: Verify legal evidence gate policy and manifest preflight
-        env:
-          EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
-          EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: 66fdfa5b9fc936d657612f306a741efc321c0565b81750489ebd337db9f52ad1
-          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 833bdaa26ca3ca852d6e23b3274ca990d382bf3f60144652b334057c3ae9cb5e
-        run: |
-          set -euo pipefail
-          test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \
-            = "$EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256"
-          test "$(sha256sum infra/security/validate-legal-release-readiness.sh | awk '{print $1}')" \
-            = "$EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256"
-          test "$(sha256sum packages/contracts/src/legal-acceptance.ts | awk '{print $1}')" \
-            = "$EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256"
-          bash infra/security/provision-legal-release-evidence.sh preflight "$GITHUB_WORKSPACE"
-      # Last gate before any credential exists: the approval is valid for 1800s, and everything
-      # between the wait and here (artifact validation, image checks) can burn that window.
-      - name: Recheck release authority immediately before AWS
+      # The bridge is already live and fail-closed. Recheck before any migration/final mutation.
+      - name: Recheck release authority immediately before final mutation
         if: needs.resolve-release.outputs.release_mode == 'promotion'
         run: |
           set -euo pipefail
@@ -507,107 +735,92 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: watchdog-bms-deploy-${{ github.run_id }}
           unset-current-credentials: true
-      - name: Preserve active non-secret configuration
+      - name: Apply the exact reviewed migration while the bridge stays quiesced
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
         env:
-          TARGET: ${{ inputs.target }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
         run: |
           set -euo pipefail
-          api_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-api-web-service-arn --query Parameter.Value --output text)"
-          ai_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-ai-gateway-service-arn --query Parameter.Value --output text)"
-          aws ecs describe-express-gateway-service --service-arn "$api_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/api-env.json
-          aws ecs describe-express-gateway-service --service-arn "$ai_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/ai-env.json
-          preserve() {
-            local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
-            value="${!output:-}"
-            if [ -z "$value" ]; then
-              value="$(jq -r --arg name "$source" '.[] | select(.name == $name) | .value' "$file")"
-            fi
-            # A fallback applies only when neither the repository variable nor the live service
-            # states a value, so an existing live setting is never overwritten by the default.
-            if [ -z "$value" ] && [ -n "$fallback" ]; then
-              echo "notice: $output is unset everywhere; deploying the default '$fallback'"
-              value="$fallback"
-            fi
-            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* || ( "$required" == "true" && -z "$value" ) ]]; then
-              echo "ERROR: missing or invalid production config: $output" >&2
-              exit 1
-            fi
-            echo "$output=$value" >> "$GITHUB_ENV"
-          }
-          preserve PUBLIC_DOMAIN_URL PUBLIC_BASE_URL /tmp/api-env.json
-          preserve LINE_LOGIN_CHANNEL_ID LINE_LOGIN_CHANNEL_ID /tmp/api-env.json
-          preserve LINE_LIFF_ID LINE_LIFF_ID /tmp/api-env.json
-          preserve LINE_MESSAGING_CHANNEL_ID LINE_MESSAGING_CHANNEL_ID /tmp/api-env.json
-          preserve WEB_LINE_ACCOUNT_LINK_URL LINE_ACCOUNT_LINK_URL /tmp/api-env.json false
-          preserve LINE_OA_ADD_URL LINE_OA_ADD_URL /tmp/api-env.json false
-          preserve LINE_OA_QR_IMAGE_URL LINE_OA_QR_IMAGE_URL /tmp/api-env.json false
-          preserve LINE_ACCOUNT_LINK_QR_IMAGE_URL LINE_ACCOUNT_LINK_QR_IMAGE_URL /tmp/api-env.json false
-          preserve CRM_AUTO_REPLY_ENABLED CRM_AUTO_REPLY_ENABLED /tmp/api-env.json
-          preserve CRM_AI_MIN_CONFIDENCE CRM_AI_MIN_CONFIDENCE /tmp/api-env.json
-          preserve CRM_AI_OUTBOUND_ALLOWED_DOMAINS CRM_AI_OUTBOUND_ALLOWED_DOMAINS /tmp/api-env.json
-          # M-09: with no allowlist stated by variable or live service, deploy the deny-all
-          # sentinel instead of blocking the release or inventing a placeholder host.
-          preserve WORKFLOW_WEBHOOK_ALLOWED_HOSTS WORKFLOW_WEBHOOK_ALLOWED_HOSTS /tmp/api-env.json true none
-          # M-14: no default — attachment scanning fails closed, so this must be a real scanner.
-          preserve CLAMAV_HOST CLAMAV_HOST /tmp/api-env.json
-          preserve MODEL_PROVIDER MODEL_PROVIDER /tmp/ai-env.json
-          preserve APPROVED_AI_PROVIDERS APPROVED_AI_PROVIDERS /tmp/ai-env.json
-          preserve APPROVED_AI_REGIONS APPROVED_AI_REGIONS /tmp/ai-env.json
-          preserve OPENAI_PROCESSING_REGION OPENAI_PROCESSING_REGION /tmp/ai-env.json false
-          preserve TYPHOON_PROCESSING_REGION TYPHOON_PROCESSING_REGION /tmp/ai-env.json false
-          preserve BEDROCK_REGION BEDROCK_REGION /tmp/ai-env.json
-          # BEDROCK_MODEL_ID, DOCUMENT_AI_MODEL_ID and APPROVED_AI_MODEL_IDS are deliberately
-          # NOT preserved. deploy.sh owns model selection for both environments
-          # (PROD_CHAT_MODEL / PROD_DOC_MODEL) and overwrites whatever is preserved here, so
-          # preserving them made APPROVED_AI_MODEL_IDS a *required* value that neither the
-          # repository variables nor the live service supplied — the run died here, before
-          # deploy.sh ever ran, over a value that would have been discarded anyway.
-          # Change the production models in deploy.sh, not by adding a variable back here.
-          preserve LINE_AI_AGENT_RUNTIME LINE_AI_AGENT_RUNTIME /tmp/ai-env.json
-          preserve AGENTCORE_REGION AGENTCORE_REGION /tmp/ai-env.json
-          # AGENTCORE_RUNTIME_ARN is deliberately NOT preserved, for the same reason as the models
-          # above: deploy.sh owns it. Preserving it read the ARN back off the live service and wrote
-          # it straight back, so the value could only ever be whatever it already was. The live
-          # service held one truncated 8 characters short - the gateway booted green and every real
-          # invocation failed - and because no repository variable existed to outrank it, each
-          # deploy faithfully copied the broken value forward. A self-perpetuating value cannot
-          # self-correct; take it from the script, which is version-controlled and reviewable.
-          preserve AGENTCORE_RUNTIME_QUALIFIER AGENTCORE_RUNTIME_QUALIFIER /tmp/ai-env.json
-          preserve AGENTCORE_INVOKE_TIMEOUT_MS AGENTCORE_INVOKE_TIMEOUT_MS /tmp/ai-env.json
-      - name: Log in to ECR
-        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
-      - name: Verify release image signatures
+          bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+            "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          root="$DEPLOYMENT_EVIDENCE_DIR/a5-apply"
+          mkdir -m 700 "$root"
+          jq -cS '.payload.migrationState | {
+            candidateMigrationSetHash,reviewedMigrationOperationsHash,expectedSchemaDeltaHash,
+            expectedDataTransformHash,preflightCatalogHash,lockBudgetPolicyHash,
+            expectedSeededRouteHash,expectedClosedWhtRouteHash
+          }' "$U5_AUTHORITY_ROOT/h2-pre/evidence.json" > "$root/expected-hashes.json"
+          jq -cnS --slurpfile approvalRef "$U5_AUTHORITY_ROOT/approval/ref.json" \
+            --slurpfile approval "$U5_OWNER_APPROVAL_FILE" '
+              {ownerApprovalRef:$approvalRef[0],maintenanceWindow:$approval[0].payload.maintenanceWindow}
+            ' > "$root/apply-authority.json"
+          migration_image="$(jq -er '.payload.migrationTool.image' "$U5_AUTHORITY_ROOT/clone/evidence.json")"
+          source_ledger="$(jq -er '.payload.sourceAppliedMigrationsHash' "$U5_AUTHORITY_ROOT/clone/evidence.json")"
+          output="$root/output"
+          mkdir "$output"
+          AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" AWS_REGION="$AWS_REGION" SOURCE_SHA="$SOURCE_SHA" \
+            PARENT_RUN_ID="$GITHUB_RUN_ID" PARENT_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            MIGRATION_IMAGE="$migration_image" SOURCE_APPLIED_MIGRATIONS_HASH="$source_ledger" \
+            EXPECTED_HASHES_PATH="$root/expected-hashes.json" \
+            APPLY_AUTHORITY_PATH="$root/apply-authority.json" OUTPUT_DIR="$output" \
+            bash infra/security/run-production-a5-reviewed-migration.sh
+          echo "U5_A5_APPLY_ROOT=$root" >> "$GITHUB_ENV"
+      - name: Build exact POST_MIGRATION stage context
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        id: post-migration-context
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
         run: |
           set -euo pipefail
-          for service in api-web ai-gateway workers; do
-            image="$(jq -r --arg service "$service" '.images[] | select(.service == $service) | .image' release/production-image-manifest.json)"
-            cosign verify \
-              --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              "$image" >/dev/null
-          done
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build and push exact-commit release task
-        id: release-image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+          root="$RUNNER_TEMP/production-post-migration-context"
+          mkdir -m 700 "$root"
+          health="$root/health"
+          mkdir "$health"
+          bash infra/security/collect-production-a5-current-health.sh "$health" >/dev/null
+          live="$root/live"
+          mkdir "$live"
+          invariant_hash="$(jq -er '.reimbursementInvariantHash' "$U5_A5_APPLY_ROOT/output/apply-result.json")"
+          bash infra/security/capture-production-a5-live-state.sh post-migration \
+            "$health/current-health.json" \
+            "$U5_PRE_CONTEXT_ROOT/live/reimbursement-quiesce.json" "$invariant_hash" "$live"
+          jq -cS '.payload.migrationState.reviewedManifest' \
+            "$U5_AUTHORITY_ROOT/h2-pre/evidence.json" > "$root/reviewed-manifest.json"
+          jq -cS '{sourceAppliedMigrationsHash,executedMigrations,executionBudgetResults,
+            productionApplyAuthority}' "$U5_A5_APPLY_ROOT/output/apply-result.json" \
+            > "$root/invariant-context.json"
+          printf '%s\n' null > "$root/null.json"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$U5_PRE_CONTEXT_ROOT/parent.json")"
+          parent_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/deploy-production.yml")"
+          output="$root/output"
+          mkdir "$output"
+          artifact_name="$(bash infra/security/build-production-a5-stage-context.sh \
+            "$output" POST_MIGRATION "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$parent_blob" "$parent_started" \
+            "$root/reviewed-manifest.json" "$live/serving-builds.json" \
+            "$live/reimbursement-quiesce.json" "$root/invariant-context.json" \
+            "$U5_AUTHORITY_ROOT/h2-pre/ref.json" "$root/null.json")"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+          echo "U5_POST_MIGRATION_CONTEXT_ROOT=$root" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
         with:
-          context: .
-          file: ./apps/api/Dockerfile
-          target: local
-          platforms: linux/amd64
-          push: true
-          provenance: mode=max
-          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:release-task-${{ needs.resolve-release.outputs.source_sha }}
-          labels: org.opencontainers.image.revision=${{ needs.resolve-release.outputs.source_sha }}
-          cache-from: type=gha,scope=release-task-api
-          cache-to: type=gha,mode=max,scope=release-task-api,ignore-error=true
-      - name: Sign the exact production release-task digest
+          name: ${{ steps.post-migration-context.outputs.artifact_name }}
+          path: ${{ steps.post-migration-context.outputs.output }}/context.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Wait for exact signed POST_MIGRATION evidence
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
         env:
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          cosign sign --yes "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          root="$RUNNER_TEMP/u5-post-migration"
+          post_run_id="$(bash infra/security/wait-for-production-evidence.sh \
+            PRODUCTION_A5_EVIDENCE_V1 "$GITHUB_RUN_ID" POST_MIGRATION 1800 "$root" "$SOURCE_SHA")"
+          echo "U5_POST_MIGRATION_ROOT=$root" >> "$GITHUB_ENV"
+          echo "U5_POST_MIGRATION_RUN_ID=$post_run_id" >> "$GITHUB_ENV"
       - name: Verify and run release task
         env:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
@@ -625,7 +838,12 @@ jobs:
             bash infra/security/validate-u5-production-chain.sh validate-approval-current \
               "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
           fi
-          bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
+          if [ "$RELEASE_MODE" = promotion ]; then
+            RELEASE_DATABASE_AUTHORITY=U5_REVIEWED_APPLY \
+              bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA" release-prepare
+          else
+            bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
+          fi
       - name: Deploy immutable manifest
         env:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
@@ -640,12 +858,75 @@ jobs:
             bash infra/security/validate-u5-production-chain.sh validate-approval-current \
               "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
           fi
-          RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" bash infra/prod-ecs-express/deploy.sh "$TARGET"
+          quiesce=false
+          [ "$RELEASE_MODE" != promotion ] || quiesce=true
+          REIMBURSEMENT_WRITE_QUIESCE="$quiesce" \
+            RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" \
+            bash infra/prod-ecs-express/deploy.sh "$TARGET"
       - name: Verify active digest and health
         id: verify-health
         env:
           TARGET: ${{ inputs.target }}
         run: bash infra/prod-ecs-express/verify-deployment.sh release/production-image-manifest.json "$TARGET"
+      - name: Prove final quiesced revision and unquiesce the same image last
+        if: needs.resolve-release.outputs.release_mode == 'promotion'
+        id: unquiesce
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
+        run: |
+          set -euo pipefail
+          export RELEASE_TASK_IMAGE="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          unquiesced=false
+          requiesce_on_error() {
+            local original_rc=$?
+            trap - ERR
+            if [ "$unquiesced" = true ]; then
+              echo "::warning::POST proof failed after unquiesce; restoring the exact final image with reimbursement writes quiesced"
+              if ! REIMBURSEMENT_WRITE_QUIESCE=true \
+                bash infra/prod-ecs-express/deploy.sh api-web; then
+                echo "ERROR: automatic fail-closed re-quiesce failed; incident response is required" >&2
+              elif ! bash infra/prod-ecs-express/verify-deployment.sh "$PRODUCTION_IMAGE_MANIFEST" api-web; then
+                echo "ERROR: automatic fail-closed re-quiesce could not be verified" >&2
+              else
+                requiesced_health="$root/requiesced-health"
+                mkdir "$requiesced_health"
+                bash infra/security/collect-production-a5-current-health.sh "$requiesced_health" >/dev/null
+                bash infra/security/capture-production-a5-live-state.sh final-quiesced \
+                  "$requiesced_health/current-health.json" \
+                  "$U5_POST_MIGRATION_CONTEXT_ROOT/live/reimbursement-quiesce.json" \
+                  "$SOURCE_SHA" "$final_image" "$root/requiesced-state.json"
+              fi
+            fi
+            exit "$original_rc"
+          }
+          trap requiesce_on_error ERR
+          root="$RUNNER_TEMP/production-final-live-state"
+          mkdir -m 700 "$root"
+          closed_health="$root/closed-health"
+          mkdir "$closed_health"
+          bash infra/security/collect-production-a5-current-health.sh "$closed_health" >/dev/null
+          final_image="$(jq -er '.images[]|select(.service=="api-web")|.image' "$PRODUCTION_IMAGE_MANIFEST")"
+          bash infra/security/capture-production-a5-live-state.sh final-quiesced \
+            "$closed_health/current-health.json" \
+            "$U5_POST_MIGRATION_CONTEXT_ROOT/live/reimbursement-quiesce.json" \
+            "$SOURCE_SHA" "$final_image" "$root/final-quiesced-state.json"
+          bash infra/security/validate-u5-production-chain.sh validate-approval-current \
+            "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
+          REIMBURSEMENT_WRITE_QUIESCE=false \
+            bash infra/prod-ecs-express/deploy.sh api-web
+          unquiesced=true
+          bash infra/prod-ecs-express/verify-deployment.sh "$PRODUCTION_IMAGE_MANIFEST" all
+          open_health="$root/open-health"
+          mkdir "$open_health"
+          bash infra/security/collect-production-a5-current-health.sh "$open_health" >/dev/null
+          post="$root/post"
+          mkdir "$post"
+          bash infra/security/capture-production-a5-live-state.sh post-deployment \
+            "$open_health/current-health.json" "$root/final-quiesced-state.json" "$post"
+          trap - ERR
+          echo "U5_FINAL_LIVE_ROOT=$root" >> "$GITHUB_ENV"
       # UAT r5 item 1 + r6 item 4b — retirement is a POST-deploy step that runs whether the rollout
       # SUCCEEDED or FAILED. The release task before the deploy only APPENDS acceptance of the
       # incoming build, so skipping this step on failure left a build that never served holding
@@ -660,7 +941,7 @@ jobs:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
-          HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' }}
+          HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' && (needs.resolve-release.outputs.release_mode != 'promotion' || steps.unquiesce.outcome == 'success') }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_DIGEST:-}" ]; then
@@ -727,6 +1008,62 @@ jobs:
             RETIRE_SERVICE_ARN="$arn" RETIRE_TARGET_REVISION_ARN="$target_revision_arn" \
             bash infra/prod-ecs-express/run-release-task.sh \
             "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" "$mode"
+      - name: Build exact POST_DEPLOYMENT stage context
+        if: needs.resolve-release.outputs.release_mode == 'promotion' && steps.unquiesce.outcome == 'success'
+        id: post-deployment-context
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/production-post-deployment-context"
+          mkdir -m 700 "$root"
+          jq -cS '.payload.migrationState.reviewedManifest' \
+            "$U5_AUTHORITY_ROOT/h2-pre/evidence.json" > "$root/reviewed-manifest.json"
+          jq -cS '{sourceAppliedMigrationsHash,productionApplyAuthority}' \
+            "$U5_A5_APPLY_ROOT/output/apply-result.json" > "$root/invariant-context.json"
+          parent_started="$(jq -er '.run_started_at|fromdateiso8601' "$U5_PRE_CONTEXT_ROOT/parent.json")"
+          parent_blob="$(git rev-parse "$GITHUB_SHA:.github/workflows/deploy-production.yml")"
+          output="$root/output"
+          mkdir "$output"
+          artifact_name="$(bash infra/security/build-production-a5-stage-context.sh \
+            "$output" POST_DEPLOYMENT "$SOURCE_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$parent_blob" "$parent_started" \
+            "$root/reviewed-manifest.json" "$U5_FINAL_LIVE_ROOT/post/serving-builds.json" \
+            "$U5_FINAL_LIVE_ROOT/post/reimbursement-quiesce.json" "$root/invariant-context.json" \
+            "$U5_AUTHORITY_ROOT/h2-pre/ref.json" "$U5_POST_MIGRATION_ROOT/ref.json")"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: needs.resolve-release.outputs.release_mode == 'promotion' && steps.unquiesce.outcome == 'success'
+        with:
+          name: ${{ steps.post-deployment-context.outputs.artifact_name }}
+          path: ${{ steps.post-deployment-context.outputs.output }}/context.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Wait for and fully verify signed POST deployment chain
+        if: needs.resolve-release.outputs.release_mode == 'promotion' && steps.unquiesce.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          post_root="$RUNNER_TEMP/u5-post-deployment"
+          post_run_id="$(bash infra/security/wait-for-production-evidence.sh \
+            PRODUCTION_A5_EVIDENCE_V1 "$GITHUB_RUN_ID" POST_DEPLOYMENT 1800 \
+            "$post_root" "$SOURCE_SHA")"
+          aggregate_root="$RUNNER_TEMP/u5-post-aggregate"
+          aggregate_run_id="$(bash infra/security/wait-for-production-evidence.sh \
+            U5_SHADOW_AGGREGATE_V1 "$GITHUB_RUN_ID" POST_DEPLOYMENT 1800 \
+            "$aggregate_root" "$SOURCE_SHA")"
+          bash infra/security/validate-u5-production-chain.sh validate-post \
+            "$U5_AUTHORITY_ROOT/h2-pre/evidence.json" "$U5_AUTHORITY_ROOT/h2-pre/ref.json" \
+            "$U5_AUTHORITY_ROOT/clone/evidence.json" "$U5_AUTHORITY_ROOT/clone/ref.json" \
+            "$U5_AUTHORITY_ROOT/h3/evidence.json" "$U5_AUTHORITY_ROOT/h3/ref.json" \
+            "$U5_POST_MIGRATION_ROOT/evidence.json" "$U5_POST_MIGRATION_ROOT/ref.json" \
+            "$post_root/evidence.json" "$post_root/ref.json" \
+            "$U5_OWNER_APPROVAL_FILE" "$U5_AUTHORITY_ROOT/approval/ref.json" \
+            "$aggregate_root/evidence.json" "$aggregate_root/ref.json"
+          echo "Verified POST chain: A5=$post_run_id aggregate=$aggregate_run_id"
       - name: Finalize non-api release operation
         if: always() && steps.verify-health.outcome == 'success' && inputs.target != 'all' && inputs.target != 'api-web'
         env:

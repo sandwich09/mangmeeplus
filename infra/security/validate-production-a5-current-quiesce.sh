@@ -27,8 +27,10 @@ proof_filter='.reimbursementWriteQuiesce.bridgeProof'
 [ "$stage" = POST_DEPLOYMENT ] && proof_filter='.reimbursementWriteQuiesce.finalUnquiescedProof'
 proof="$(jq -ce "$proof_filter" "$context")" || fail "current proof is absent"
 now="$(date -u +%s)"
-jq -e --argjson now "$now" '
-  .observedAtEpoch <= $now and ($now - .observedAtEpoch) <= 600
+max_age=600
+[ "$stage" = POST_MIGRATION ] && max_age=1800
+jq -e --argjson now "$now" --argjson maxAge "$max_age" '
+  .observedAtEpoch <= $now and ($now - .observedAtEpoch) <= $maxAge
 ' <<< "$proof" >/dev/null || fail "current proof is stale or from the future"
 
 service_arn="$(aws_cmd ssm get-parameter --name "$service_parameter" --region "$region" \
