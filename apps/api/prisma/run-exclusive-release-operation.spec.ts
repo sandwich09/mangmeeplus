@@ -1439,6 +1439,9 @@ describe('durable remote release operation (real PostgreSQL)', () => {
        WHERE "id" = $1
     `, [releaseId]);
 
+    assert.equal((await first.query(`
+      SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1
+    `, [releaseId])).rows[0].count, 0, 'the release failed before its first durable service intent');
     assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
       operationId: releaseId, targetEnvironment: 'uat', recovererTaskArn: TASK_B,
       controller: GITHUB_CONTROLLER,
