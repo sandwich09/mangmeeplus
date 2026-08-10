@@ -22,6 +22,7 @@ CRM_AI_OUTBOUND_ALLOWED_DOMAINS_INPUT="${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-}"
 WORKFLOW_WEBHOOK_ALLOWED_HOSTS_INPUT="${WORKFLOW_WEBHOOK_ALLOWED_HOSTS:-}"
 CLAMAV_HOST_INPUT="${CLAMAV_HOST:-}"
 REIMBURSEMENT_WRITE_QUIESCE_INPUT="${REIMBURSEMENT_WRITE_QUIESCE:-false}"
+REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"
 PARTIAL_INCIDENT_READONLY_INPUT="${PARTIAL_INCIDENT_READONLY:-false}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
 LOG_KMS_KEY_ID="${LOG_KMS_KEY_ID:-}"
@@ -61,12 +62,23 @@ case "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" in
   true|false) ;;
   *) echo "ERROR: REIMBURSEMENT_WRITE_QUIESCE must be exactly true or false" >&2; exit 2 ;;
 esac
+case "$REIMBURSEMENT_BRIDGE_INPUT" in true|false) ;; *)
+  echo "ERROR: REIMBURSEMENT_BRIDGE must be exactly true or false" >&2
+  exit 2
+esac
 case "$PARTIAL_INCIDENT_READONLY_INPUT" in true|false) ;; *)
   echo "ERROR: PARTIAL_INCIDENT_READONLY must be exactly true or false" >&2; exit 2 ;;
 esac
 if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
   && { [ "$DEPLOY_ENV" != production ] || [ "$TARGET" = all ]; }; then
   echo "ERROR: the read-only incident path is production single-service only" >&2
+  exit 2
+fi
+if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
+  && { [ "$DEPLOY_ENV" != production ] || [ "$TARGET" != api-web ] \
+    || [ "$REIMBURSEMENT_WRITE_QUIESCE_INPUT" != true ] || [ -z "$MANIFEST_INPUT" ] \
+    || [ "$PARTIAL_INCIDENT_READONLY_INPUT" != false ]; }; then
+  echo "ERROR: reimbursement bridge requires production api-web, quiesce=true, one immutable manifest and no incident mode" >&2
   exit 2
 fi
 RESOURCE_PREFIX="watchdog-bms-${RESOURCE_STAGE}"
@@ -79,9 +91,10 @@ if [ "$DEPLOY_ENV" = "uat" ] && [ "$CLUSTER_NAME" != "watchdog-bms-uat" ]; then
 fi
 case "$TARGET" in
   api-web|ai-gateway|workers|all)
-    if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ]; then
+    if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
+      || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; then
       [ -n "${DEPLOYMENT_EVIDENCE_DIR:-}" ] || {
-        echo "ERROR: read-only incident rollout requires DEPLOYMENT_EVIDENCE_DIR" >&2
+        echo "ERROR: no-database rollout requires DEPLOYMENT_EVIDENCE_DIR" >&2
         exit 2
       }
     elif [[ ! "${RELEASE_PARENT_OPERATION_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] \
@@ -263,6 +276,11 @@ if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ]; then
     exit 2
   fi
 fi
+if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
+  && [ "${REIMBURSEMENT_BRIDGE_PROVED_SHA:-}" != "$COMMIT" ]; then
+  echo "ERROR: reimbursement bridge proof is absent or belongs to another source" >&2
+  exit 2
+fi
 
 if [ "$DEPLOY_ENV" = "production" ]; then
   EXECUTION_ROLE="ecsTaskExecutionRole"
@@ -383,6 +401,9 @@ manifest_image() {
 }
 
 require_api_release_tasks() {
+  if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; then
+    return 0
+  fi
   if [ "${RELEASE_TASKS_APPLIED_SHA:-}" = "$SHA" ]; then
     return 0
   fi
@@ -910,6 +931,10 @@ prepare_release_operation_intent() {
     printf '%s' incident-readonly-no-database-intent
     return 0
   fi
+  if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; then
+    printf '%s' reimbursement-bridge-no-database-intent
+    return 0
+  fi
   local intent_id request_hash desired_config_hash descriptors_file legacy_descriptor="null"
   intent_id="$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')"
   request_hash="$(jq -cS . "$request_file" | sha256_text)"
@@ -999,9 +1024,10 @@ deploy_express_service() {
   local before_deployments_response="/tmp/watchdog-bms-ecs-express-before-deployments-response-${service_name}.json"
   local before_service="/tmp/watchdog-bms-ecs-express-before-service-${service_name}.json"
   service_arn="$(get_param "$service_arn_param")" || return $?
-  if [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
+  if { [ "$PARTIAL_INCIDENT_READONLY_INPUT" = true ] \
+    || [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ]; } \
     && { [ -z "$service_arn" ] || [ "$service_arn" = None ]; }; then
-    echo "ERROR: read-only incident path cannot create a service" >&2
+    echo "ERROR: no-database rollout cannot create a service" >&2
     return 1
   fi
 

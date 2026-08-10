@@ -285,6 +285,7 @@ jobs:
           bash infra/security/provision-legal-release-evidence.spec.sh
           bash infra/security/validate-legal-release-readiness.spec.sh
       - run: bash infra/docker/production-image-security.spec.sh
+      - run: bash infra/security/production-a5-current-health.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
         env:

@@ -4,7 +4,11 @@ set -euo pipefail
 deploy='infra/prod-ecs-express/deploy.sh'
 
 grep -Fq 'REIMBURSEMENT_WRITE_QUIESCE_INPUT="${REIMBURSEMENT_WRITE_QUIESCE:-false}"' "$deploy"
+grep -Fq 'REIMBURSEMENT_BRIDGE_INPUT="${REIMBURSEMENT_BRIDGE:-false}"' "$deploy"
 grep -Fq 'REIMBURSEMENT_WRITE_QUIESCE must be exactly true or false' "$deploy"
+grep -Fq 'reimbursement bridge requires production api-web, quiesce=true, one immutable manifest and no incident mode' "$deploy"
+grep -Fq 'REIMBURSEMENT_BRIDGE_PROVED_SHA' "$deploy"
+grep -Fq 'reimbursement-bridge-no-database-intent' "$deploy"
 grep -Fq -- '--arg reimbursementWriteQuiesce "$REIMBURSEMENT_WRITE_QUIESCE_INPUT"' "$deploy"
 grep -Fq '{name:"REIMBURSEMENT_WRITE_QUIESCE", value:$reimbursementWriteQuiesce}' "$deploy"
 

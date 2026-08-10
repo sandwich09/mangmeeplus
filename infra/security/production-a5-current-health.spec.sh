@@ -5,6 +5,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 collector="$root/infra/security/collect-production-a5-current-health.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/production-a5-health-spec.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
+fixture_created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 fake_aws="$work/aws"
 fake_curl="$work/curl"
@@ -17,6 +18,9 @@ operation="$2"
 shift 2
 args=" $* "
 mode="${FAKE_HEALTH_MODE:-ok}"
+created_at="${FAKE_HEALTH_CREATED_AT:?}"
+source_sha="dddddddddddddddddddddddddddddddddddddddd"
+api_image="311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:$(printf 'd%.0s' {1..64})"
 
 if [ "$service $operation" = "sts get-caller-identity" ]; then
   printf '311414082667\n'
@@ -60,9 +64,13 @@ case "$service $operation" in
     [ "$mode" != unstable ] || [ "$count" -eq 1 ] || current='{"deploymentId":"changed"}'
     jq -cn --arg arn "$service_arn" --arg revision "$revision" --arg host "$host" \
       --arg target "$target" --arg path "$path" --argjson scaling "$scale" \
+      --arg source "$source_sha" --arg image "$api_image" --arg created "$created_at" \
       --argjson current "$current" '{service:{serviceArn:$arn,status:{statusCode:"ACTIVE"},
         currentDeployment:$current,activeConfigurations:[{serviceRevisionArn:$revision,
-        scalingTarget:$scaling,healthCheckPath:$path,primaryContainer:{containerPort:3000},
+        createdAt:$created,scalingTarget:$scaling,healthCheckPath:$path,
+        primaryContainer:{containerPort:3000,image:$image,environment:[
+          {name:"GIT_SHA",value:$source},
+          {name:"REIMBURSEMENT_WRITE_QUIESCE",value:"true"}]},
         ingressPaths:[{accessType:"PUBLIC",endpoint:$host,targetGroups:[{arn:$target}]}]}]}}' ;;
   "ecs describe-service-revisions")
     jq -cn --arg arn "$service_arn" --arg revision "$revision" --arg definition "$definition" \
@@ -120,7 +128,8 @@ run_case() {
   local command=(bash)
   [ "${SPEC_TRACE:-false}" != true ] || command+=( -x )
   mkdir "$output" "$state"
-  FAKE_HEALTH_MODE="$mode" FAKE_STATE_DIR="$state" AWS_BIN="$fake_aws" CURL_BIN="$fake_curl" \
+  FAKE_HEALTH_MODE="$mode" FAKE_HEALTH_CREATED_AT="$fixture_created_at" \
+    FAKE_STATE_DIR="$state" AWS_BIN="$fake_aws" CURL_BIN="$fake_curl" \
     A5_HEALTH_STABILITY_SECONDS=0 "${command[@]}" "$collector" "$output"
 }
 
@@ -151,4 +160,32 @@ done
 grep -Fq -- "--service-name \"\$service_name\"" "$collector"
 grep -Fq -- "--proto '=https'" "$collector"
 grep -Fq -- "--max-filesize 16384" "$collector"
+
+capture="$root/infra/security/capture-production-a5-live-state.sh"
+bridge_source="dddddddddddddddddddddddddddddddddddddddd"
+final_source="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+bridge_image="311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:$(printf 'd%.0s' {1..64})"
+final_image="311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:$(printf 'e%.0s' {1..64})"
+pre="$work/pre"
+mkdir "$pre"
+bash "$capture" pre "$result_path" "$bridge_source" "$bridge_image" \
+  "$final_source" "$final_image" "$pre"
+post="$work/post"
+mkdir "$post"
+bash "$capture" post-migration "$result_path" "$pre/reimbursement-quiesce.json" \
+  "$(printf 'a%.0s' {1..64})" "$post"
+jq -e --slurpfile pre "$pre/reimbursement-quiesce.json" \
+  '.status=="BRIDGE_ONLY_QUIESCED_POST_MIGRATION" and .bridgeProof==$pre[0].bridgeProof' \
+  "$post/reimbursement-quiesce.json" >/dev/null
+
+moved_health="$work/moved-health.json"
+jq '(.services[]|select(.service=="api-web").runningTaskArns)=[
+  "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/dddddddddddddddddddddddddddddddd"]' \
+  "$result_path" > "$moved_health"
+mkdir "$work/moved-post"
+if bash "$capture" post-migration "$moved_health" "$pre/reimbursement-quiesce.json" \
+  "$(printf 'a%.0s' {1..64})" "$work/moved-post" >/dev/null 2>&1; then
+  echo "ERROR: POST_MIGRATION capture accepted a moved bridge task set" >&2
+  exit 1
+fi
 printf 'production-a5-current-health.spec: PASS\n'

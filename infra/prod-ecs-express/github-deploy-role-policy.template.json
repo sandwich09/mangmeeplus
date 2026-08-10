@@ -15,8 +15,10 @@
         "ecs:DescribeExpressGatewayService",
         "ecs:UpdateExpressGatewayService",
         "ecs:RegisterTaskDefinition",
+        "ecs:DeregisterTaskDefinition",
         "ecs:DescribeTaskDefinition",
         "ecs:RunTask",
+        "ecs:StopTask",
         "ecs:ListTasks",
         "ecs:DescribeTasks",
         "ecs:ListServiceDeployments",
@@ -35,6 +37,7 @@
         "arn:aws:iam::<ACCOUNT_ID>:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
         "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-production-a5-apply-execution",
         "arn:aws:iam::<ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-ai-gateway-role",
@@ -48,6 +51,7 @@
       "Resource": [
         "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-production-a5-apply-execution",
         "arn:aws:iam::<ACCOUNT_ID>:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-ai-gateway-role",
@@ -65,9 +69,13 @@
     {
       "Sid": "VerifyReleaseTaskRolePolicy",
       "Effect": "Allow",
-      "Action": "iam:GetRolePolicy",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies"
+      ],
       "Resource": [
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-production-a5-apply-execution",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-ecs-express-workers-role"
       ]
     },
@@ -105,6 +113,7 @@
       ],
       "Resource": [
         "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-ai-gateway",
+        "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-migration-tool",
         "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-workers"
       ]
     },
@@ -129,9 +138,17 @@
       "Action": [
         "ec2:DescribeVpcs",
         "ec2:DescribeSubnets",
-        "ec2:DescribeSecurityGroups"
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeVpcEndpoints"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "ProductionDatabaseReadback",
+      "Effect": "Allow",
+      "Action": "rds:DescribeDBInstances",
+      "Resource": "arn:aws:rds:ap-southeast-1:<ACCOUNT_ID>:db:watchdog-bms-prod-db"
     },
     {
       "Sid": "ReleaseAndDeployLogs",

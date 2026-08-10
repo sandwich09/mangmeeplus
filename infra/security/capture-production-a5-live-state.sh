@@ -41,7 +41,7 @@ proof_from_health() {
     ' "$health" > "$output"
   [ -s "$output" ] || fail "live api-web source/image/quiesce does not match the required state"
   jq -e -L "$library" --argjson flag "$expected_flag" '
-    include "evidence-contracts"; e0_reimbursement_revision_proof($flag=="true")
+    include "evidence-contracts"; e0_reimbursement_revision_proof($flag)
   ' "$output" >/dev/null || fail "captured revision proof is invalid"
 }
 
@@ -112,7 +112,15 @@ case "$mode" in
     bridge_image="$(jq -er '.bridgeProof.image' "$previous")"
     proof="$output/current-bridge-proof.json"
     proof_from_health "$health" "$bridge_source" "$bridge_image" true "$proof"
-    cmp -s "$proof" <(jq -cS '.bridgeProof' "$previous") \
+    jq -e --slurpfile current "$proof" '
+      .bridgeProof
+      | .sourceCommit==$current[0].sourceCommit
+        and .image==$current[0].image
+        and .serviceRevisionArn==$current[0].serviceRevisionArn
+        and .activeTaskArns==$current[0].activeTaskArns
+        and .quiesceEnabled==$current[0].quiesceEnabled
+        and .observedAtEpoch <= $current[0].observedAtEpoch
+    ' "$previous" >/dev/null \
       || fail "live bridge proof moved after PRE"
     serving_from_health "$health" "$output/serving-builds.json"
     jq -cS --arg invariant "$invariant" '

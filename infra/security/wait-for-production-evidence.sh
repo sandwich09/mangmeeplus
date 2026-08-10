@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-  echo "Usage: $0 <kind> <parent-run-id> <stage> <max-wait-seconds> <empty-output-dir>" >&2
+if [ "$#" -lt 5 ] || [ "$#" -gt 6 ]; then
+  echo "Usage: $0 <kind> <parent-run-id> <stage> <max-wait-seconds> <empty-output-dir> [expected-source-sha]" >&2
   exit 2
 fi
 kind="$1"
@@ -10,16 +10,21 @@ parent_run_id="$2"
 stage="$3"
 max_wait_seconds="$4"
 output_dir="$5"
+expected_source_sha="${6:-}"
 [[ "$parent_run_id" =~ ^[1-9][0-9]*$ && "$max_wait_seconds" =~ ^[1-9][0-9]*$ ]] \
   || { echo "ERROR: invalid evidence wait binding" >&2; exit 1; }
 [ "$max_wait_seconds" -le 7200 ] || { echo "ERROR: evidence wait exceeds two hours" >&2; exit 1; }
 test -n "${GITHUB_REPOSITORY:-}" && test -n "${GH_TOKEN:-}"
+if [ -n "$expected_source_sha" ] && [[ ! "$expected_source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: expected source must be one lowercase full SHA" >&2
+  exit 1
+fi
 
 parent="$(mktemp "${RUNNER_TEMP:-/tmp}/u5-parent-run.XXXXXX.json")"
 artifacts="$(mktemp "${RUNNER_TEMP:-/tmp}/u5-artifacts.XXXXXX.json")"
 trap 'rm -f "$parent" "$artifacts"' EXIT
 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$parent_run_id" > "$parent"
-source_sha="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$parent")"
+source_sha="${expected_source_sha:-$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$parent")}"
 parent_attempt="$(jq -er '.run_attempt|select(type=="number" and .>=1 and floor==.)' "$parent")"
 prefix="${kind}-${source_sha}-production-${parent_run_id}-attempt-${parent_attempt}-producer-"
 started="$(date -u +%s)"
