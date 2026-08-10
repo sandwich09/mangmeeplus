@@ -2959,12 +2959,24 @@ export async function terminalizeRecoveredReleaseIfReady(
         preIntentRecovered = true;
       }
     }
-    if (!await hasCompleteReleaseServiceCoverage(
+    const completeServiceCoverage = await hasCompleteReleaseServiceCoverage(
       client,
       input.operationId,
       parent.rows[0].releaseDeployTarget,
       parent.rows[0].preIntentApiCleanupCompletedAt,
-    )) {
+    );
+    let allTargetStoppedBeforeAnyIntent = false;
+    if (!completeServiceCoverage
+      && parent.rows[0].releaseDeployTarget === 'all'
+      && parent.rows[0].preIntentApiCleanupCompletedAt !== null) {
+      const intentCount = await client.query<{ count: number }>(`
+        SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1
+      `, [input.operationId]);
+      // deploy.sh persists each service intent before its ECS mutation. Zero intents plus the
+      // exact api-web pre-intent cleanup therefore proves an all-target rollout never started.
+      allTargetStoppedBeforeAnyIntent = (intentCount.rows[0]?.count ?? 0) === 0;
+    }
+    if (!completeServiceCoverage && !allTargetStoppedBeforeAnyIntent) {
       await client.query('COMMIT');
       return false;
     }

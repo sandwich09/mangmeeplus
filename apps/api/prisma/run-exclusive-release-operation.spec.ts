@@ -1424,6 +1424,30 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     await finishRemoteReleaseOperation(first, workersOnlyId, TASK_A, 'FAILED_CONFIRMED', 'test cleanup');
   });
 
+  it('terminalizes an all-target release that stopped before every durable service intent', async (t) => {
+    if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
+    const releaseId = randomUUID();
+    await beginRemoteReleaseOperation(first, {
+      ...operation(releaseId, TASK_A), mode: 'release', releaseDeployTarget: 'all',
+    });
+    await holdRemoteReleaseOperation(first, releaseId, TASK_A);
+    await first.query(`
+      UPDATE "RemoteReleaseOperation"
+         SET "status" = 'UNKNOWN', "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second',
+             "preIntentApiCleanupCompletedAt" = CURRENT_TIMESTAMP,
+             "preIntentApiCleanupEvidenceJson" = '{}'::jsonb
+       WHERE "id" = $1
+    `, [releaseId]);
+
+    assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
+      operationId: releaseId, targetEnvironment: 'uat', recovererTaskArn: TASK_B,
+      controller: GITHUB_CONTROLLER,
+    }), true, 'zero intents proves no service mutation began before the controller failed');
+    assert.equal((await first.query(`
+      SELECT "status" FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0].status, 'RECONCILED_FAILED_CONFIRMED');
+  });
+
   it('persists bounded orphan evidence, completes all-target coverage and replays only after live revalidation', async (t) => {
     if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
     const releaseId = randomUUID();
