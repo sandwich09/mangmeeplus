@@ -264,7 +264,7 @@ jobs:
               | select(.path == $path and .sha == $sha and .ref == "refs/heads/main")]
             | length == 1
           ' <<< "$run_json" >/dev/null
-          git fetch origin main --force
+          git fetch --no-tags origin '+refs/heads/main:refs/heads/main' --force
           git merge-base --is-ancestor "$controller_sha" origin/main || {
             echo "ERROR: UAT controller commit is not reachable from main" >&2
             exit 1

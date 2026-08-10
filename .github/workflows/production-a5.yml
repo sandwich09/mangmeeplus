@@ -171,7 +171,7 @@ jobs:
           ref: ${{ inputs.source_commit }}
           path: candidate
 
-      - uses: actions/setup-node@1e60f620b9541d21b7b6d9a6ff498da4007b2e17 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
