@@ -111,7 +111,7 @@ function HeroPanel({ locale }: { locale: 'th' | 'en' }) {
 const heroInputClass =
   'h-12 w-full rounded-xl border-[1.5px] border-gray-200 bg-white pl-10 pr-4 text-[15px] text-gray-900 outline-none transition-colors placeholder:text-gray-400 focus:border-brand-700 focus:ring-2 focus:ring-brand-100';
 
-function LoginForm() {
+function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const searchParams = useSearchParams();
   const nextPath = sanitizeNextPath(searchParams.get('next'));
   // The server route already rejected the access session before rendering this form, and nothing on
@@ -189,6 +189,10 @@ function LoginForm() {
       const target = nextPath ?? result.redirectPath ?? '/';
       window.location.assign(result.legalAcceptanceRequired !== false ? legalAcceptancePath(target, result.companyId) : target);
     } catch (nextError) {
+      if ((nextError as { code?: unknown }).code === 'platform_access_closed') {
+        window.location.assign('/maintenance');
+        return;
+      }
       setError(
         localizedErrorMessage(nextError, locale, {
           401: 'auth.login.error.invalid',
@@ -256,6 +260,19 @@ function LoginForm() {
               {locale === 'th' ? 'EN' : 'ไทย'}
             </button>
           </div>
+
+          {accessState === 'CLOSED' ? (
+            <div
+              role="status"
+              data-platform-access="closed"
+              className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"
+            >
+              <strong className="block">ระบบกำลังปรับปรุง</strong>
+              ขณะนี้ระบบงานยังไม่เปิดให้ใช้งาน ระบบลูกค้า, LINE, เอกสาร และการประมวลผลงานยังปิดอยู่
+              หากมีคำถามติดต่อ{' '}
+              <a className="font-semibold underline" href="mailto:contact@mangmeeplus.com">contact@mangmeeplus.com</a>
+            </div>
+          ) : null}
 
           {error ? (
             <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -457,10 +474,10 @@ function LoginForm() {
   );
 }
 
-export default function LoginPage() {
+export default function LoginPage({ accessState = 'OPEN' }: { accessState?: 'OPEN' | 'CLOSED' }) {
   return (
     <Suspense fallback={null}>
-      <LoginForm />
+      <LoginForm accessState={accessState} />
     </Suspense>
   );
 }

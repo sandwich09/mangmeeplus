@@ -4,8 +4,20 @@ import LoginPage from '@/features/auth/LoginPage';
 import { HOME_PATH_COOKIE } from '@/common/auth/auth-cookies.constants';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
 import { resolveLoginLanding } from '@/common/auth/session-gate.logic';
+import { internalApiV1Base } from '@/common/api/internal-api-base';
 
 export const dynamic = 'force-dynamic';
+
+async function platformAccessState(): Promise<'OPEN' | 'CLOSED'> {
+  try {
+    const response = await fetch(`${internalApiV1Base()}/auth/platform-access`, { cache: 'no-store' });
+    if (!response.ok) return 'CLOSED';
+    const body = (await response.json()) as { state?: unknown };
+    return body.state === 'OPEN' ? 'OPEN' : 'CLOSED';
+  } catch {
+    return 'CLOSED';
+  }
+}
 
 // Only a real GET /auth/me pass redirects away from /login. Every other outcome — no cookie,
 // expired/revoked/malformed cookie, forbidden, auth service unavailable — renders the form, which
@@ -16,7 +28,11 @@ export default async function LoginRoute({
 }: {
   searchParams: Promise<{ next?: string | string[]; home?: string | string[] }>;
 }) {
-  const [{ next, home }, result] = await Promise.all([searchParams, fetchServerSessionResult()]);
+  const [{ next, home }, result, accessState] = await Promise.all([
+    searchParams,
+    fetchServerSessionResult(),
+    platformAccessState(),
+  ]);
 
   if (result.status === 'signed_in') {
     // Audit H-16: "go to an available company" sent the user here, and the remembered home pointed
@@ -29,5 +45,12 @@ export default async function LoginRoute({
     if (landing) redirect(landing);
   }
 
-  return <LoginPage />;
+  return (
+    <div className="contents" data-platform-access={accessState.toLowerCase()}>
+      {accessState === 'CLOSED' ? (
+        <span className="sr-only">ระบบกำลังปรับปรุง</span>
+      ) : null}
+      <LoginPage accessState={accessState} />
+    </div>
+  );
 }

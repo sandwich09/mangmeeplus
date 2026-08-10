@@ -11,6 +11,7 @@ export type ServerSessionResult =
   | { status: 'signed_in'; session: WebSession }
   | { status: 'signed_out' }
   | { status: 'forbidden' }
+  | { status: 'platform_closed' }
   | { status: 'unavailable' };
 
 export async function fetchServerSessionResult(companyId?: string): Promise<ServerSessionResult> {
@@ -32,7 +33,10 @@ export async function fetchServerSessionResult(companyId?: string): Promise<Serv
     return { status: 'unavailable' };
   }
 
-  const outcome = mapAuthMeStatus(res.status);
+  const errorCode = res.status === 503
+    ? ((await res.json().catch(() => ({}))) as { code?: unknown }).code
+    : undefined;
+  const outcome = mapAuthMeStatus(res.status, typeof errorCode === 'string' ? errorCode : undefined);
   if (outcome !== 'signed_in') return { status: outcome };
 
   try {

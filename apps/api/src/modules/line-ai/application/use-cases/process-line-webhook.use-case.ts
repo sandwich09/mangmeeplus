@@ -93,26 +93,26 @@ export type LineLegalAcceptancePreflight =
   | { status: 'continue' }
   | { status: 'required'; companyId: string };
 
-const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนใช้งาน\nเปิดเว็บแอปเพื่อเชื่อมต่อ';
+const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
 // PDPA objection route (M-05 register §3.1): the user opted out of AI processing, so the
 // turn stops here — before any model, tool, or gateway involvement. Deterministic text.
-const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย';
-export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้';
-const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้';
-const ERROR_REPLY = '⏳ ขออภัย เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้ง';
-const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี WatchDog กับ LINE ก่อนส่งบิลหรือใบเสร็จ';
-const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE';
-const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE';
-const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ส่งลายเซ็นบริษัทผ่าน LINE';
-const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหม กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลย\nระบบจะสร้างคำขอให้เจ้าของกิจการอนุมัติในเว็บก่อนใช้งาน';
-const CLARIFY_REPLY = '🤔 ยังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการอัปโหลดลายเซ็นบริษัท ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
-const MUTATION_REFUSAL_REPLY = '🔒 LINE AI ไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี/ยื่นภาษี หรือเปิดใช้ลายเซ็นได้\nกรุณาทำรายการในเว็บแอป WatchDog';
-const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อขออนุมัติใช้งาน\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอป';
-const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัย';
+const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผู้ช่วย AI ไว้ ข้อความนี้จึงไม่ถูกประมวลผลด้วย AI ค่ะ\nเปิดใช้งานอีกครั้งได้ที่ เว็บแอป → ตั้งค่า → ความปลอดภัย นะคะ';
+export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้นะคะ';
+const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
+const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
+const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
+const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
+const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ส่งลายเซ็นบริษัทผ่าน LINE ค่ะ';
+const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะสร้างคำขอให้เจ้าของกิจการอนุมัติในเว็บก่อนใช้งานค่ะ';
+const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการอัปโหลดลายเซ็นบริษัท ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
+const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี/ยื่นภาษี หรือเปิดใช้ลายเซ็นได้ค่ะ\nกรุณาทำรายการในเว็บแอป MangmeePlus นะคะ';
+const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อขออนุมัติใช้งานค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
+const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ';
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
 const MEDIA_CLARIFY_REPLY = [
-  '🤔 รูปนี้เป็นอะไรครับ ตอบเลขข้อได้เลย',
+  '🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ',
   '1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก',
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
 ].join('\n');
@@ -232,14 +232,14 @@ function formatBusinessDocumentReply(
   companyId: string,
 ): string {
   if (!classification) return MEDIA_CLARIFY_REPLY;
-  if (classification.contentKind === 'MULTI_DOCUMENT') return '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ กรุณาถ่ายแยกเอกสารละ 1 ภาพ เพื่อไม่ให้ยอดหรือร้านค้าถูกรวมผิดครับ';
-  if (classification.contentKind === 'UNREADABLE') return '📷 ยังอ่านเอกสารนี้ได้ไม่ชัด กรุณาถ่ายใหม่ให้เห็นทั้งใบ ภาพตรง ไม่เบลอ และไม่มีแสงสะท้อนครับ';
+  if (classification.contentKind === 'MULTI_DOCUMENT') return '📄 พบเอกสารมากกว่า 1 ฉบับในภาพ กรุณาถ่ายแยกเอกสารละ 1 ภาพ เพื่อไม่ให้ยอดหรือร้านค้าถูกรวมผิดค่ะ';
+  if (classification.contentKind === 'UNREADABLE') return '📷 ยังอ่านเอกสารนี้ได้ไม่ชัด กรุณาถ่ายใหม่ให้เห็นทั้งใบ ภาพตรง ไม่เบลอ และไม่มีแสงสะท้อนค่ะ';
   switch (classification.documentKind) {
     case 'ORDER_OR_CHECK_BILL':
       return classification.missingRequiredSignals.includes('MISSING_MONETARY_AMOUNT')
         || classification.missingRequiredSignals.includes('MISSING_TRANSACTION_TOTAL')
-        ? '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิล แต่ยังไม่พบยอดเงินรวม จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งบิลหรือใบเสร็จฉบับสุดท้ายที่มีจำนวนเงินครับ'
-        : '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิลที่ยังไม่ยืนยันการรับชำระ จึงไม่จัดเป็นใบเสร็จ กรุณาส่งใบเสร็จฉบับสุดท้าย หรือระบุให้บันทึกเป็นบิลค้างชำระครับ';
+        ? '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิล แต่ยังไม่พบยอดเงินรวม จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งบิลหรือใบเสร็จฉบับสุดท้ายที่มีจำนวนเงินค่ะ'
+        : '🧾 เอกสารนี้เป็นรายการสั่งซื้อ/เช็กบิลที่ยังไม่ยืนยันการรับชำระ จึงไม่จัดเป็นใบเสร็จ กรุณาส่งใบเสร็จฉบับสุดท้าย หรือระบุให้บันทึกเป็นบิลค้างชำระค่ะ';
     case 'QUOTATION':
     case 'PURCHASE_ORDER':
     case 'DELIVERY_NOTE':
@@ -249,12 +249,12 @@ function formatBusinessDocumentReply(
     case 'RESERVATION_CONFIRMATION':
       return `📅 พบเอกสารนัดหมาย/การจอง จึงไม่สร้างร่างค่าใช้จ่ายหรือยืนยันการจองอัตโนมัติ\nตรวจสอบการจองในเว็บ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/bookings`)}`;
     case 'NON_FINANCIAL_IMAGE':
-      return '🖼️ รูปนี้ไม่ใช่เอกสารค่าใช้จ่ายหรือเอกสารธุรกิจ จึงไม่ได้สร้างรายการใดๆ ครับ';
+      return '🖼️ รูปนี้ไม่ใช่เอกสารค่าใช้จ่ายหรือเอกสารธุรกิจ จึงไม่ได้สร้างรายการใดๆ ค่ะ';
     default:
       if (classification.missingRequiredSignals.includes('MISSING_MONETARY_AMOUNT') || classification.missingRequiredSignals.includes('MISSING_TRANSACTION_TOTAL')) {
-        return '🧾 ยังไม่พบยอดเงินรวมที่เป็นบวก จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งเอกสารฉบับที่เห็นยอดชำระชัดเจนครับ';
+        return '🧾 ยังไม่พบยอดเงินรวมที่เป็นบวก จึงยังไม่บันทึกเป็นค่าใช้จ่าย กรุณาส่งเอกสารฉบับที่เห็นยอดชำระชัดเจนค่ะ';
       }
-      return 'ℹ️ เอกสารนี้ยังไม่ผ่านเกณฑ์หลักฐานค่าใช้จ่าย ระบบจึงยังไม่สร้างร่าง กรุณาส่งฉบับที่ชัดเจนหรือระบุวัตถุประสงค์ในข้อความครับ';
+      return 'ℹ️ เอกสารนี้ยังไม่ผ่านเกณฑ์หลักฐานค่าใช้จ่าย ระบบจึงยังไม่สร้างร่าง กรุณาส่งฉบับที่ชัดเจนหรือระบุวัตถุประสงค์ในข้อความค่ะ';
   }
 }
 
@@ -492,7 +492,7 @@ export function formatCorrectionGuidanceReply(
 
 /** One clarify template for the direction case: the message named a value the record already
  *  holds, so writing either reading would be a guess. */
-const CORRECTION_DIRECTION_CLARIFY_REPLY = '🤔 ข้อความมีทั้งค่าเดิมและค่าใหม่ กรุณาระบุให้ชัดว่าต้องการแก้เป็นค่าใด (เช่น "แก้เป็น 590")';
+const CORRECTION_DIRECTION_CLARIFY_REPLY = '🤔 ข้อความมีทั้งค่าเดิมและค่าใหม่ กรุณาระบุให้ชัดว่าต้องการแก้เป็นค่าใดนะคะ (เช่น "แก้เป็น 590")';
 
 const CORRECTION_FIELD_LABELS: Record<string, string> = {
   expenseDate: 'วันที่เอกสาร', amount: 'ยอดรวม', vendorName: 'ผู้ขาย/ผู้รับเงิน',

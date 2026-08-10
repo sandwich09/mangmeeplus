@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AiGatewayConfigService } from './common/config/ai-gateway-config.service';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { parseProductionServingMode, productionMaintenanceMiddleware } from './common/http/production-maintenance.middleware';
 import { NestPinoLoggerBridge, createLogger } from './common/logger/logger.service';
 
 function getAllowedOrigins(config: AiGatewayConfigService): string[] {
@@ -36,6 +37,11 @@ async function bootstrap() {
   app.getHttpAdapter().getInstance().disable('x-powered-by');
   const allowedOrigins = getAllowedOrigins(config);
   const bodyLimit = config.bodyLimit;
+  const servingMode = parseProductionServingMode(process.env.PRODUCTION_SERVING_MODE, isProduction);
+
+  // This runs before helmet and every body parser. In maintenance mode the public gateway can
+  // still satisfy its exact health check, but it cannot read or process an AI/customer payload.
+  app.use(productionMaintenanceMiddleware(servingMode));
 
   app.use(
     helmet({

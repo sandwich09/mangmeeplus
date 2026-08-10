@@ -226,6 +226,8 @@ export type ExpenseSummary = {
   branchId: string | null;
   expenseNumber: string | null;
   status: ExpenseStatus;
+  /** Claim projection marker — settled by the reimbursement payout, no manual payment. */
+  sourceReimbursementRequestId?: string | null;
   captureSource: ExpenseCaptureSource;
   vendorNameSnapshot: string | null;
   vendorDocumentNumber: string | null;

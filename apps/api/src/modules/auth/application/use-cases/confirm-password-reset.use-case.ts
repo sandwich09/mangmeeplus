@@ -139,7 +139,7 @@ export class ConfirmPasswordResetUseCase {
       ...tokens,
       passwordChangeRequired: false,
       companyId,
-      redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/dashboard`,
+      redirectPath: isSystemAdmin ? '/system/platform-access' : `/companies/${companyId}/dashboard`,
     };
   }
 }

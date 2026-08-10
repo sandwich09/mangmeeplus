@@ -358,6 +358,9 @@ export type ExpenseSummary = {
 };
 
 export type ExpenseDetail = ExpenseSummary & {
+  /** Set when this expense is a reimbursement-claim projection — it is settled by the
+   *  claim payout (RBPAY), never by a manual expense payment. */
+  sourceReimbursementRequestId: string | null;
   vendorTaxIdSnapshot: string | null;
   vendorBranchCodeSnapshot: string | null;
   /** WHT payee taxpayer class: INDIVIDUAL files ภ.ง.ด.3, JURISTIC files ภ.ง.ด.53. */
@@ -782,6 +785,9 @@ export type SharedEvidenceRow = {
   expenseId: string;
   expenseNumber: string | null;
   status: ExpenseStatus;
+  /** Claim projection marker: evidence for a receipt-less claim line is the signed ใบเบิก. */
+  sourceReimbursementRequestId: string | null;
+  missingReceiptReason: string | null;
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   taxEvidenceReasonCode: TaxEvidenceReasonCode | null;

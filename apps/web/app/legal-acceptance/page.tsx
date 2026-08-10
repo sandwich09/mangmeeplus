@@ -33,6 +33,7 @@ export default async function LegalAcceptanceRoute({
     const gate = legalAcceptancePath(requestedNext, contextCompanyId);
     redirect(`/login?next=${encodeURIComponent(gate)}`);
   }
+  if (result.status === 'platform_closed') redirect('/maintenance');
   if (result.status === 'unavailable') {
     throw new Error('Cannot reach the authentication service. Please try again.');
   }

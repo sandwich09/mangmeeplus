@@ -7,16 +7,17 @@ import type { WebSession } from '../models/web-session.model';
 export const SYSTEM_ADMIN_ROLE = 'SYSTEM_ADMIN';
 
 /** Outcome of GET /v1/auth/me, by status: signed_out and forbidden must never be conflated. */
-export type AuthMeOutcome = 'signed_in' | 'signed_out' | 'forbidden' | 'unavailable';
+export type AuthMeOutcome = 'signed_in' | 'signed_out' | 'forbidden' | 'platform_closed' | 'unavailable';
 
 /**
  * 401 is a rejected session (recoverable via refresh), 403 is a real authorization denial, and
  * anything else — 5xx, 404, a gateway error — is the auth service being unavailable. Unavailable
  * must stay distinct: treating it as signed_out is what turns an API outage into a login loop.
  */
-export function mapAuthMeStatus(status: number): AuthMeOutcome {
+export function mapAuthMeStatus(status: number, code?: string): AuthMeOutcome {
   if (status === 401) return 'signed_out';
   if (status === 403) return 'forbidden';
+  if (status === 503 && code === 'platform_access_closed') return 'platform_closed';
   if (status >= 200 && status < 300) return 'signed_in';
   return 'unavailable';
 }
@@ -71,7 +72,7 @@ export function resolveLoginLanding(
   const landing = explicit
     ?? home
     ?? (isSystemAdmin(session)
-      ? '/system/partners'
+      ? '/system/platform-access'
       : session.companyId
         ? `/companies/${session.companyId}/dashboard`
         : null);
@@ -134,7 +135,7 @@ export function resolvePostLegalAcceptanceTarget(
 ): string {
   const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
   if (explicit) return explicit;
-  if (isSystemAdmin(session)) return '/system/partners';
+  if (isSystemAdmin(session)) return '/system/platform-access';
   return session.companyId ? `/companies/${session.companyId}/dashboard` : '/';
 }
 

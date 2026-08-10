@@ -725,7 +725,7 @@ function buildLineMessage(params: {
   };
   const baseUrl = process.env['WEB_BASE_URL'] ?? process.env['PUBLIC_BASE_URL'] ?? 'https://app.watchdog.local';
   const href = params.deepLinkHref ?? `/companies/${params.companyId}/dashboard`;
-  return [`[WatchDog] ${severityLabel[params.severity] ?? 'แจ้งเตือน'}`, params.title, params.body, `${baseUrl}${href}`].join('\n');
+  return [`[มั่งมีพลัส] ${severityLabel[params.severity] ?? 'แจ้งเตือน'}`, params.title, params.body, `${baseUrl}${href}`].join('\n');
 }
 
 function notificationLineRetryKey(deliveryId: string): string {

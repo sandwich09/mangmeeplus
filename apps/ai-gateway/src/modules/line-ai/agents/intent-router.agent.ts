@@ -12,7 +12,7 @@ import { extractJson } from '../../../common/ai/extract-json';
 import { parseBusinessDocumentClassification } from '../domain/logic/business-document-classification.logic';
 
 export const INTENT_ROUTER_SYSTEM_PROMPT = `
-You are the Intent Router Agent for WatchDog-BMS LINE AI.
+You are the Intent Router Agent for MangmeePlus LINE AI.
 Your job is to classify the user's message into an AgentIntentPlan JSON object.
 Do not answer the user directly.
 Do not execute tools.
@@ -117,7 +117,7 @@ const ROUTER_DISABLED_TOOLS = new Set([
 ]);
 
 export const LINE_INTAKE_ROUTER_SYSTEM_PROMPT = `
-You are the LINE Intake Router Agent for WatchDog-BMS.
+You are the LINE Intake Router Agent for MangmeePlus.
 Classify one LINE message (text, caption, and attachments) into exactly ONE intake route.
 Images are provided inline when available; PDFs and other files are described by attachment metadata (mimeType, purpose) — classify them semantically from that metadata plus the text, and choose CLARIFY when metadata alone is too ambiguous.
 You are a router only: do not answer the user, do not execute tools, do not create records.
@@ -193,7 +193,7 @@ const INTAKE_MIN_ACTION_CONFIDENCE = 0.6;
 /** A downgraded correction must not reuse the receipt-vs-signature copy: the user was talking
  *  about a record that already exists, and the generic template would tell them to resend it. */
 const MAX_CORRECTION_VALUE_LENGTH = 200;
-const CORRECTION_CLARIFY_FALLBACK = 'ต้องการแก้ไขรายการไหนครับ กรุณาระบุรายการและข้อมูลที่ต้องการแก้ (เช่น วันที่ ยอดเงิน ร้านค้า)';
+const CORRECTION_CLARIFY_FALLBACK = 'ต้องการแก้ไขรายการไหนคะ กรุณาระบุรายการและข้อมูลที่ต้องการแก้ (เช่น วันที่ ยอดเงิน ร้านค้า)';
 
 export class IntentRouterAgent {
   constructor(private readonly provider: IModelProvider) {}

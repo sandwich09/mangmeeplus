@@ -83,6 +83,38 @@ const mustChangePrisma = prismaFor('test-sub', { mustChangePassword: true });
 const acceptedLegal = { isRequired: async () => false } as any;
 
 describe('AuthGuard', () => {
+  it('keeps login/status public but blocks other public routes while customer access is closed', async () => {
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+    for (const path of ['/v1/auth/password/login', '/v1/auth/platform-access']) {
+      const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);
+      assert.equal(await guard.canActivate(makeContext({ path })), true);
+    }
+    const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ path: '/v1/line/webhook' })),
+      (error: any) => error.getResponse().code === 'platform_access_closed',
+    );
+  });
+
+  it('allows only SYSTEM_ADMIN protected sessions while customer access is closed', async () => {
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+    const ordinaryGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);
+    await assert.rejects(
+      () => ordinaryGuard.canActivate(makeContext({ authHeader: 'Bearer token', path: '/v1/companies/c1/dashboard' })),
+      (error: any) => error.getResponse().code === 'platform_access_closed',
+    );
+
+    const adminResolve = {
+      execute: async () => ({
+        requestId: 'req-1', authSubject: 'test-sub', userId: 'admin-1', companyId: 'system-company',
+        membershipId: 'membership-1', roles: ['SYSTEM_ADMIN'], permissions: ['system.launch_gate.manage'],
+        scopes: {},
+      }),
+    } as any;
+    const adminGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, adminResolve, localConfig, noopPrisma, acceptedLegal, closed);
+    assert.equal(await adminGuard.canActivate(makeContext({ authHeader: 'Bearer token', path: '/v1/system/platform-access' })), true);
+  });
+
   it('returns true for @Public() routes', async () => {
     const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
     const result = await guard.canActivate(makeContext({ isPublic: true }));

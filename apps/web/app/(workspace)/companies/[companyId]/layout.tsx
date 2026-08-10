@@ -20,6 +20,7 @@ export default async function CompanyWorkspaceLayout({
   if (sessionResult.status === 'signed_out') {
     redirect(`/login?next=${encodeURIComponent(`/companies/${companyId}/dashboard`)}`);
   }
+  if (sessionResult.status === 'platform_closed') redirect('/maintenance');
   // An unreachable/erroring auth service is an outage: say so honestly. Sending it to /login would
   // bounce straight back here (the cookie is still valid), and notFound() would lie about the cause.
   if (sessionResult.status === 'unavailable') {

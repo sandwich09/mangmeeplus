@@ -26,7 +26,7 @@ export class UpdateRoleUseCase {
     });
     if (!existing) throw new NotFoundException('Role not found');
     if (existing.isSystem && NON_EDITABLE_ROLE_KEYS.some((key) => key === existing.key)) {
-      throw new ForbiddenException('This role is managed by WatchDog and cannot be edited.');
+      throw new ForbiddenException('This role is managed by MangmeePlus and cannot be edited.');
     }
 
     let permissions: Array<{ id: string }> | undefined;

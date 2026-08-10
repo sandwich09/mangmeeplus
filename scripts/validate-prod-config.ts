@@ -478,6 +478,7 @@ const validAiGateway: Record<string, unknown> = {
 const validWorkers: Record<string, unknown> = {
   APP_ENV: 'production',
   DEPLOY_ENVIRONMENT: 'production',
+  PRODUCTION_SERVING_MODE: 'live',
   SERVICE_NAME: 'workers',
   SERVICE_VERSION: '0.1.0',
   GIT_SHA: PRODUCTION_GIT_SHA,

@@ -11,7 +11,7 @@ import { LINE_AI_BUSINESS_SUBJECTS } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 
 export const COVERAGE_CRITIC_SYSTEM_PROMPT = `
-You are the Coverage Critic for WatchDog-BMS LINE AI.
+You are the Coverage Critic for MangmeePlus LINE AI.
 The user sent ONE message that may contain several distinct requests. You receive the message, the tools that were called, and the grounded facts gathered.
 openClarifications (when present) are earlier unanswered questions from this chat; when the message answers one, judge the ORIGINAL request (its text), not the bare answer.
 Split the message into its distinct requests (the user's own clauses, in the user's language, in the order asked). Then judge EACH request strictly from the gathered facts:

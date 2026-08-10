@@ -934,6 +934,7 @@ describe('validateProductionConfig – L-03 closes the gateway and workers holes
     DATABASE_URL: 'postgresql://watchdog:pW9xK2mQ7v@db.internal:5432/watchdog_bms',
     REDIS_URL: 'redis://cache.internal:6379',
     S3_BUCKET: 'watchdog-prod',
+    PRODUCTION_SERVING_MODE: 'live',
     // present in every parsed workers config because the schema defaults it
     QUEUE_ENABLED: true,
     WORKER_INTERNAL_TOKEN: 'wK7m2Q9v4X8c1L6p3R5t0N2s7H9j4F6a',
@@ -987,6 +988,35 @@ describe('validateProductionConfig – L-03 closes the gateway and workers holes
       () => validateProductionConfig({ ...productionWorkers(), WORKER_INTERNAL_TOKEN: '' }),
       /WORKER_INTERNAL_TOKEN is required in production/,
     );
+  });
+
+  it('keeps worker queues exact to the production serving mode', () => {
+    const { PRODUCTION_SERVING_MODE: _omitted, ...withoutMode } = productionWorkers();
+    assert.throws(
+      () => validateProductionConfig(withoutMode),
+      /PRODUCTION_SERVING_MODE must be exactly live or maintenance_only/,
+    );
+    assert.throws(
+      () => validateProductionConfig({
+        ...productionWorkers(),
+        PRODUCTION_SERVING_MODE: 'maintenance_only',
+        QUEUE_ENABLED: true,
+      }),
+      /QUEUE_ENABLED must be false when PRODUCTION_SERVING_MODE=maintenance_only/,
+    );
+    assert.throws(
+      () => validateProductionConfig({
+        ...productionWorkers(),
+        PRODUCTION_SERVING_MODE: 'live',
+        QUEUE_ENABLED: false,
+      }),
+      /QUEUE_ENABLED must be true when PRODUCTION_SERVING_MODE=live/,
+    );
+    assert.doesNotThrow(() => validateProductionConfig({
+      ...productionWorkers(),
+      PRODUCTION_SERVING_MODE: 'maintenance_only',
+      QUEUE_ENABLED: false,
+    }));
   });
 
   it('applies the secret rules to the gateway internal secret too', () => {

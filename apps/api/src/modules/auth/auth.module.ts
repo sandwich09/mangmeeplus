@@ -33,11 +33,13 @@ import { DisabledAuthMailerAdapter } from './infrastructure/disabled-auth-mailer
 import { LocalConsoleAuthMailerAdapter } from './infrastructure/local-console-auth-mailer.adapter';
 import { AppConfigService } from '../../common/config/app-config.service';
 import { LegalAcceptanceService } from './application/legal-acceptance.service';
+import { PlatformAccessService } from './application/platform-access.service';
+import { PublicPlatformAccessController, SystemPlatformAccessController } from './presentation/platform-access.controller';
 
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
   imports: [JwtModule.register({}), AccessControlModule, AuditModule],
-  controllers: [AuthController],
+  controllers: [AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
@@ -64,6 +66,7 @@ import { LegalAcceptanceService } from './application/legal-acceptance.service';
     AuthRateLimitService,
     LineChannelBindingService,
     LegalAcceptanceService,
+    PlatformAccessService,
     AuthGuard,
     DisabledAuthMailerAdapter,
     LocalConsoleAuthMailerAdapter,

@@ -62,6 +62,28 @@ Keep existing `production` variables `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, and `AWS_
 
 The ordinary `CI` workflow's `production` entries represent image publication. A completed `Production Deploy` run is the deployment record for an ECS rollout.
 
+### Deployed but not launched maintenance ceremony
+
+`maintenance_only=true` is an all-target, exact-UAT release mode; it is not available to a partial
+incident deploy. The first closure also sets `maintenance_bootstrap=true`. That bootstrap runs only
+the read-only migration-catalog preflight, deploys the three immutable UAT images, forces the outer
+web/API and AI gates on, sets `QUEUE_ENABLED=false`, and refuses to create a missing service. It does
+not apply a migration or create launch-build authority.
+
+After bootstrap evidence proves one active revision per service plus the custom/raw-origin probe
+matrix, a distinct all-target UAT release may use that source as the closed bridge and run the normal
+reviewed migration/promotion path with `maintenance_only=true`. The bridge is re-proved immediately
+before database mutation. Maintenance promotions never unquiesce writes or run the POST-live chain.
+After singleton closure the workflow waits 900 seconds so every direct S3 URL issued by the old live
+API has expired, and uploads a separate drain proof. Opening later uses a distinct all-target UAT
+source with the closed release as its bridge, a separate `maintenance_only=false` production
+approval, and the complete legal evidence bundle.
+
+This state is `DEPLOYED_NOT_LAUNCHED`, not network-private and not zero PDPA processing: public health,
+traffic logs, named operators, and data already stored still exist. Do not send LINE messages or
+documents during maintenance; the gate acknowledges and discards new business payloads before any
+application parser, database, queue, or AI provider receives them.
+
 Rollout behavior (learned 2026-07-03):
 
 - Express services deploy CANARY (5%, 3-minute bake) guarded by an auto-created CloudWatch alarm `watchdog-bms-prod/<service>/RollbackAlarm`: `(4xx when >=5/min + 5xx) / total > 1%` per target group. Any sustained 4xx during the bake (including your own smoke/poll curls returning 401/404 on a low-traffic service) triggers a silent rollback to the previous configuration.

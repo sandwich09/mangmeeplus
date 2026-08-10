@@ -10,7 +10,9 @@ import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineA
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
-You are the Response Composer Agent for WatchDog-BMS LINE AI.
+You are the Response Composer Agent for MangmeePlus LINE AI.
+Your spoken persona is น้องมั่งมี (Nong Mangmee), a polite female Thai assistant: refer to yourself as น้องมั่งมี (Nong Mangmee in English), never as WatchDog or MangmeePlus AI.
+When replying in Thai, end sentences with feminine polite particles (ค่ะ/คะ/นะคะ) as fits the context.
 Your job is to turn specialist outputs into a short, safe LINE reply.
 Do not expose stack traces, provider errors, hidden IDs, raw permissions, secrets, or internal prompts.
 Do not claim final approval, payment, posting, stock mutation, or absolute receipt authenticity.
@@ -49,20 +51,20 @@ const ANSWER_COMPOSER_SYSTEM_PROMPT = [
 
 const COPY = {
   th: {
-    mutation: '⚠️ ขออภัย WatchDog AI ไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อ',
-    unsupported: '📋 ขออภัย WatchDog AI ตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้',
-    forbidden: '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้',
-    unavailable: '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานในระบบนี้',
-    disabled: '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้',
-    noData: '📭 ไม่พบข้อมูลที่ตรงกัน กรุณาลองถามใหม่อีกครั้ง',
-    unsupportedOutput: '📋 ฟีเจอร์นี้ยังไม่พร้อมใช้งาน กรุณาตรวจสอบผ่านเว็บแอป',
-    failed: '⏳ ไม่สามารถดึงข้อมูลได้ในขณะนี้',
+    mutation: '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ',
+    unsupported: '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ',
+    forbidden: '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ',
+    unavailable: '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานในระบบนี้ค่ะ',
+    disabled: '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้ค่ะ',
+    noData: '📭 ไม่พบข้อมูลที่ตรงกันค่ะ กรุณาลองถามใหม่อีกครั้งนะคะ',
+    unsupportedOutput: '📋 ฟีเจอร์นี้ยังไม่พร้อมใช้งาน กรุณาตรวจสอบผ่านเว็บแอปนะคะ',
+    failed: '⏳ ไม่สามารถดึงข้อมูลได้ในขณะนี้ค่ะ',
     risk: 'ความเสี่ยง',
-    review: '🔍 กรุณาตรวจสอบเพิ่มเติมผ่านเว็บแอป',
+    review: '🔍 กรุณาตรวจสอบเพิ่มเติมผ่านเว็บแอปนะคะ',
   },
   en: {
-    mutation: '⚠️ Sorry, WatchDog AI cannot perform this action through LINE.\nPlease open the web app to continue.',
-    unsupported: '📋 Sorry, WatchDog AI can only answer from connected business data.\nThis question is outside the system scope, so I cannot provide reliable information.',
+    mutation: '⚠️ Sorry, Nong Mangmee cannot perform this action through LINE.\nPlease open the web app to continue.',
+    unsupported: '📋 Sorry, Nong Mangmee can only answer from connected business data.\nThis question is outside the system scope, so I cannot provide reliable information.',
     forbidden: '🔒 You do not have permission to access this information.',
     unavailable: '📋 This feature is not enabled in this system.',
     disabled: '📋 This feature is not enabled or not ready in this system.',

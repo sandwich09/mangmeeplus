@@ -35,10 +35,13 @@ describe('MaterializeClaimExpensesService', () => {
     // Exact mapped defaults.
     assert.equal(first.status, 'READY_FOR_CONFIRMATION');
     assert.equal(first.captureSource, 'API_INTERNAL');
-    // A reimbursement source does not prove VAT non-recoverability (a3fb68cc): the projection
-    // hands the question to the shared VAT review instead of silently deciding it.
-    assert.equal(first.vatMode, 'NEEDS_REVIEW');
-    assert.equal(first.inputVatClaimStatus, 'NEEDS_REVIEW');
+    // Born review-complete (owner decision 2026-08-10): the projection is confirmed and
+    // frozen in the same saga, so nothing may be left NEEDS_REVIEW. Gross amount, no VAT
+    // split, input VAT non-claimable; the signed claim form is the reference document.
+    assert.equal(first.vatMode, 'NO_VAT');
+    assert.equal(first.inputVatClaimStatus, 'NON_CLAIMABLE');
+    assert.equal(first.sourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
+    assert.equal(first.taxEvidenceStatus, 'SUPPORTING_ONLY');
     assert.deepEqual(first.sourceChannelMetadataJson, { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED' });
     assert.equal(first.currency, 'THB');
     assert.equal(first.branchId, 'br-1');
@@ -61,6 +64,23 @@ describe('MaterializeClaimExpensesService', () => {
     assert.equal(second.description, 'Hotel (Client visit)');
     assert.equal(second.attachmentId, 'att-9');
     assert.equal(second.line.unitPrice, '250.0000');
+  });
+
+  it('references the claim-form number, line-suffixed only when the claim has several lines', async () => {
+    const svc = new MaterializeClaimExpensesService();
+    const multi = svc.buildItems(request({
+      requestNo: 'RB-202608-00001',
+      lines: [lineRecord({ id: 'rbl-1' }), lineRecord({ id: 'rbl-2', lineNo: 2 })],
+    }));
+    // Sibling projections must never share a vendor document number — the duplicate
+    // scorer scores an exact vendor+number match at +30, well past its threshold.
+    assert.deepEqual(multi.map((item) => item.vendorDocumentNumber), ['RB-202608-00001-1', 'RB-202608-00001-2']);
+
+    const single = svc.buildItems(request({ requestNo: 'RB-202608-00002' }));
+    assert.equal(single[0].vendorDocumentNumber, 'RB-202608-00002');
+
+    const unsubmitted = svc.buildItems(request({ requestNo: null }));
+    assert.equal(unsubmitted[0].vendorDocumentNumber, null);
   });
 
   it('copies the request missing-receipt reason onto attachment-less lines, null for receipt-backed', async () => {

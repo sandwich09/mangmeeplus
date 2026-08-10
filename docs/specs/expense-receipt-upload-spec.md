@@ -1448,6 +1448,94 @@ Decisions:
 
 Acceptance (the reported slip): re-extraction that reads `Sub Total 195.00` and `Total Discount -15.00` records unit price `195.00`, discount `15.00`, net `180.00` — the owner's reading. Re-extraction that reports the ฿20 extra shot as a discount without a subtotal records unit price `180.00`, discount `0.00`, net `180.00`: nothing invented, total unchanged, and the reviewer can type the printed 195/15 by hand. A receipt whose printed subtotal, discount, service charge, and total agree keeps all four unchanged (§19f), and a VAT-exclusive receipt proves its discount against the ex-VAT base rather than the gross.
 
+## 19j. Addendum 2026-08-10 — Field Format Canon: Tax ID, Document Number, Branch (Owner-reported)
+
+Owner report from UAT: a hospital ใบเสร็จรับเงิน sent through LINE produced a draft whose
+เลขผู้เสียภาษี was empty even though the number is printed on the receipt, and whose
+เลขที่เอกสาร contained the receipt's **date**. Root cause is structural, not a one-off
+misread: the extraction pipeline guards numeric money fields and `expenseDate` with the
+§13 value cross-check, but the three identity string fields — `vendorTaxId`,
+`documentNumber`, `vendorBranchCode` — have **no format definition in the prompt and no
+deterministic gate anywhere** (`parseReceiptOcrJson` accepts any non-empty string;
+`ReceiptOcrApplyService` writes it straight to the record).
+
+Exposure of the date-as-document-number half is worse than a blank field: `deriveTaxEvidence`
+grants a RECEIPT `USABLE_FOR_TAX` on total + vendor name + *any* document number, so the
+wrong number makes the draft look complete instead of flagging it; the value also feeds the
+duplicate scorer (+30 on exact `vendorDocumentNumber` match, threshold 20), so two same-day
+receipts from the same vendor whose "numbers" are both the date become a false duplicate
+pair; and the fake reference lands in the accountant evidence export.
+
+Format ground truth (families, print patterns, labels, collision traps, language envelope)
+is researched and recorded in
+`docs/research/thai-receipt-field-format-conventions.md` — the field-format sibling of the
+classification rubric. Rules below follow ADR-0011's division of labour: the model only
+*selects* values; deterministic code verifies membership and format, and never guesses.
+
+Decisions:
+
+1. **The prompt defines the three identity fields instead of naming them.**
+   `vendorTaxId`: the Thai 13-digit เลขประจำตัวผู้เสียภาษี, possibly printed with dashes or
+   spaces (`0-1055-61000-10-5`) — return digits only; look in the header *and* the footer
+   (hospitals and POS slips print it in small type at the bottom); on a full ใบกำกับภาษี
+   showing seller and buyer tax IDs, return the **seller's** (the issuer header side), never
+   the buyer's; never a phone number. `documentNumber`: the printed running number labelled
+   เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice
+   No.; when the document uses a carbon-book pair, combine as `เล่มที่/เลขที่` (e.g. เล่มที่
+   12 เลขที่ 345 → `12/345`); **never the date**, and never HN/AN/VN (hospital patient and
+   visit numbers), queue or table numbers, POS terminal/merchant ids, card approval codes,
+   the tax ID, or a phone number — if only a date is visible where the number should be,
+   omit the field. `vendorBranchCode`: the issuing-branch designation next to the seller tax
+   ID — สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → `00000`; สาขาที่ N / Branch N → the
+   5-digit branch number.
+2. **Deterministic gates join the §13 cross-check for the three fields.** All comparisons
+   run on Thai-digit-mapped text with `[-\s]` separators stripped between digits.
+   `vendorTaxId` survives only when its normalized form is exactly 13 digits **and** that
+   digit sequence appears in the normalized OCR text (selection, not invention — same bar as
+   amounts). `documentNumber` survives only when (a) its entire trimmed value does **not**
+   read as a calendar date — a full-span date candidate under the ADR-0011 canon
+   (`extractValueCandidates`) or an ISO `YYYY-MM-DD` value rejects it, while running numbers
+   like `123/2569` survive because 123 is no valid day; (b) every digit run inside it appears
+   in the normalized OCR text (so a composed `12/345` from เล่มที่ 12 เลขที่ 345 passes); and
+   (c) it is ≤ 50 characters (the review-form bound). `vendorBranchCode` is normalized (HQ
+   words → `00000`; digits zero-padded to 5) and survives only as `/^\d{5}$/` whose digits —
+   or whose head-office label — appear in the OCR text. A field that fails its gate is
+   dropped to `missingFields`; with no document number the RECEIPT honestly falls to
+   `SUPPORTING_ONLY / MISSING_DOCUMENT_NUMBER` instead of green with a fake reference.
+   `deriveTaxEvidence` itself is unchanged.
+3. **Tax-ID recovery is single-candidate selection, never a guess.** When `vendorTaxId` is
+   absent after gating, deterministic code scans the normalized OCR text for 13-digit runs.
+   Exactly one distinct candidate → adopt it (it is a value the document prints — the same
+   provenance bar as every other field; the draft is still NEEDS_REVIEW and the reviewer
+   sees it). Zero or multiple distinct candidates (e.g. a full tax invoice printing seller
+   *and* buyer IDs) → stay in `missingFields` for the reviewer, per ADR-0011's discovery
+   policy: unambiguous → auto, ambiguous → never guess. The mod-11 checksum is **not** a
+   gate in either direction: it is documented for citizen IDs but not for DBD juristic
+   numbers, and rejecting a printed number on an unverified algorithm would discard real
+   evidence (research doc §1). Repo-wide validation stays `13 digits exactly`.
+4. **Language envelope is explicit.** Stage 1 (Typhoon OCR) is bilingual Thai + English by
+   design; those are Tier 1 with full field extraction. Documents in other languages get no
+   invented fields — stage 2 omits what it cannot ground, the gates above enforce it, and
+   the existing classification/review path decides handling. No new behavior for Tier 2
+   beyond honesty.
+5. **No historical migration** — same precedent as §19c/§19g/§19h/§19i: a wrong stored
+   document number is indistinguishable from a right one in any column; rows heal on
+   re-extraction ("อ่านเอกสารอีกครั้ง") or review-form correction, and both identity fields
+   are editable on the review page today.
+
+Acceptance (the reported hospital receipt and its neighbours): a hospital ใบเสร็จรับเงิน
+whose footer prints `เลขประจำตัวผู้เสียภาษีอากร 0-9940-0016-30-11`, whose header prints
+`HN 123456`, and whose เลขที่/วันที่ boxes sit adjacent extracts `vendorTaxId`
+`0994000163011` (recovered when stage 2 misses it, because it is the only 13-digit run),
+a `documentNumber` that is the printed receipt number — never `10/08/2569`, never the HN —
+or, when the model returns the date anyway, a draft whose `documentNumber` is dropped to
+`missingFields` and whose evidence status reads `SUPPORTING_ONLY / MISSING_DOCUMENT_NUMBER`.
+A full tax invoice printing two tax IDs recovers nothing when stage 2 returns neither
+(two candidates), keeps the seller's when stage 2 selects it (membership passes), and a
+`123/2569`-style running number survives the date gate while `10/08/2569` and `2026-08-10`
+do not. `สำนักงานใหญ่` and `สาขาที่ 3` normalize to `00000` and `00003`. Every gated field
+either holds a value the document provably prints or is honestly missing.
+
 ## 20. Backlog After MVP
 
 - Typhoon OCR provider implementation for receipt/tax-invoice AI capture. See [[specs/typhoon-receipt-ocr-spec|Typhoon Receipt OCR Spec]].

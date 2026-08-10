@@ -69,7 +69,7 @@ export class CustomerLineRegisterController {
     const lineChannelId = validLineChannelId(new URLSearchParams(req.url.split('?')[1] ?? '').get('lineChannelId'));
     const channel = lineChannelId ? await this.inboxRepo.findActiveChannelByLineChannelId(lineChannelId) : null;
     const company = channel ? await this.aiContext.findCompany(channel.companyId) : null;
-    const companyDisplayName = escapeHtml(company ? company.brandName ?? company.name : 'WatchDog');
+    const companyDisplayName = escapeHtml(company ? company.brandName ?? company.name : 'มั่งมีพลัส');
     return `<!doctype html>
 <html lang="th">
 <head>

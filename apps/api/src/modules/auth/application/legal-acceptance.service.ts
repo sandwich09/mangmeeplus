@@ -182,15 +182,14 @@ export class LegalAcceptanceService {
     const membership = await this.loadMembership(locator);
     const roles = membership.roles.map((entry) => entry.role.key).sort();
     const capacity = legalAcceptanceCapacity(roles);
-    const records = await this.loadCurrentRecords(
-      locator.userId,
-    );
+    const systemOperator = roles.includes('SYSTEM_ADMIN');
+    const records = systemOperator ? [] : await this.loadCurrentRecords(locator.userId);
     const acceptedAt = this.isCoherentCurrentPair(records, locator.userId)
       ? latestAcceptedAt(records)
       : null;
 
     return {
-      required: acceptedAt === null,
+      required: !systemOperator && acceptedAt === null,
       acceptedAt,
       companyId: membership.companyId,
       companyName: membership.company.name,
@@ -242,6 +241,12 @@ export class LegalAcceptanceService {
     this.assertCurrentInput(input);
     const membership = await this.loadMembership(actor);
     const roles = membership.roles.map((entry) => entry.role.key).sort();
+    if (roles.includes('SYSTEM_ADMIN')) {
+      throw new BadRequestException({
+        code: 'legal_acceptance_not_required',
+        message: 'Platform system operators are not customer clickwrap parties.',
+      });
+    }
     const capacity = legalAcceptanceCapacity(roles);
     const expectedDisplayChallenge = legalDisplayChallenge({
       ...actor,

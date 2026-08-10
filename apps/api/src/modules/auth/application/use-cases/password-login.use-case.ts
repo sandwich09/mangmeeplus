@@ -3,6 +3,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
+import { PlatformAccessService } from '../platform-access.service';
 
 // ponytail: constant-cost verify — unknown accounts still pay one scrypt so
 // response timing cannot reveal whether an identifier exists (user enumeration).
@@ -21,6 +22,7 @@ export class PasswordLoginUseCase {
     private readonly prisma: PrismaService,
     private readonly issueToken: IssueTokenUseCase,
     private readonly legalAcceptance: LegalAcceptanceService,
+    private readonly platformAccess?: PlatformAccessService,
   ) {}
 
   // `identifier` matches the login screen field "ชื่อผู้ใช้ หรือ อีเมล": username or email.
@@ -68,6 +70,13 @@ export class PasswordLoginUseCase {
     }
 
     const isSystemAdmin = membership.roles.some((mr) => mr.role.key === 'SYSTEM_ADMIN');
+    const platformAccess = await this.platformAccess?.getStatus();
+    if (platformAccess?.effectiveState === 'CLOSED' && !isSystemAdmin) {
+      throw new ForbiddenException({
+        code: 'platform_access_closed',
+        message: 'MangmeePlus is not open for customer sign-in yet.',
+      });
+    }
     const companyId = isSystemAdmin ? null : membership.companyId;
     const legalAcceptance = await this.legalAcceptance.getStatus({
       userId: user.id,
@@ -80,7 +89,7 @@ export class PasswordLoginUseCase {
       ...tokens,
       passwordChangeRequired: credential.mustChangePassword,
       companyId,
-      redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/dashboard`,
+      redirectPath: isSystemAdmin ? '/system/platform-access' : `/companies/${companyId}/dashboard`,
       legalAcceptanceRequired: legalAcceptance.required,
     };
   }

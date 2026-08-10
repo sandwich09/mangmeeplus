@@ -97,6 +97,21 @@ function acceptedRows(
 }
 
 describe('LegalAcceptanceService', () => {
+  it('exempts SYSTEM_ADMIN without reading or fabricating acceptance evidence', async () => {
+    let recordReads = 0;
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['SYSTEM_ADMIN']) },
+        legalDocumentActionRecord: { findMany: async () => { recordReads += 1; return []; } },
+      },
+    } as any;
+    const status = await new LegalAcceptanceService(prisma, { log: async () => undefined } as any).getStatus(ACTOR);
+    assert.equal(status.required, false);
+    assert.equal(status.acceptedAt, null);
+    assert.equal(status.capacity, 'SYSTEM_OPERATOR');
+    assert.equal(recordReads, 0);
+  });
+
   it('derives company, capacity, and localized statements on the server', async () => {
     const prisma = {
       client: {

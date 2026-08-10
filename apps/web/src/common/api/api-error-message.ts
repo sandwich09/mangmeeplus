@@ -9,6 +9,9 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 const CODE_LABELS: Record<string, string> = {
   // Permissions / scope
   insufficient_permissions: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
+  legal_acceptance_not_required: 'บัญชีนี้ไม่ต้องยอมรับเอกสารกฎหมาย',
+  platform_access_closed: 'ระบบกำลังปรับปรุง กรุณาลองใหม่ภายหลัง',
+  platform_access_open_unavailable: 'ยังเปิดระบบไม่ได้จนกว่า production release จะผ่านการตรวจสอบครบถ้วน',
   // Feature entitlement vs launch availability — two DISTINCT states (spec:65, spec:335).
   // "not enabled" = the company has not turned the feature on.
   feature_not_enabled: 'ยังไม่ได้เปิดฟีเจอร์นี้',
@@ -58,6 +61,8 @@ const CODE_LABELS: Record<string, string> = {
   coa_account_in_use_conflict: 'แทนที่บัญชีไม่ได้เพราะมีเอกสารหรือกฎใช้งานบัญชีนี้อยู่',
   coa_postcondition_failed: 'ตรวจผลหลังบันทึกผังบัญชีไม่ผ่าน ระบบยกเลิกการเปลี่ยนแปลงแล้ว',
   coa_posting_readiness_incomplete: 'ผังบัญชีหรือกฎลงบัญชียังไม่พร้อมสำหรับการลงบัญชีอัตโนมัติ',
+  expense_settled_via_reimbursement:
+    'รายการนี้มาจากการเบิกคืนพนักงาน ระบบจะบันทึกการชำระให้อัตโนมัติเมื่อบันทึกจ่ายใบเบิก — ไม่ต้องบันทึกชำระที่หน้านี้',
   branch_head_office_required: 'เก็บถาวรสาขานี้ไม่ได้ — บริษัทต้องมีสำนักงานใหญ่ที่ใช้งานอยู่อย่างน้อย 1 สาขา',
   ledger_account_invalid_for_bank: 'บัญชีที่ผูกกับธนาคารต้องเป็นบัญชีของบริษัทที่ใช้งานและลงรายการได้',
   output_tax_code_line_mismatch: 'Tax Code ที่หัวเอกสารไม่ตรงกับรายการภาษี กรุณาตรวจ Tax Code ก่อนบันทึก',

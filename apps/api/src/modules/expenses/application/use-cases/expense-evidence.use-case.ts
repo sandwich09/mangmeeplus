@@ -57,6 +57,8 @@ export class GetSharedEvidenceViewUseCase {
         expenseId: r.id,
         expenseNumber: r.expenseNumber,
         status: r.status,
+        sourceReimbursementRequestId: r.sourceReimbursementRequestId ?? null,
+        missingReceiptReason: r.missingReceiptReason ?? null,
         sourceDocumentType: r.sourceDocumentType,
         taxEvidenceStatus: r.taxEvidenceStatus,
         taxEvidenceReasonCode: (r.taxEvidenceReasonCode ?? null) as SharedEvidenceView['rows'][number]['taxEvidenceReasonCode'],

@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -908,6 +908,15 @@ export class RecordExpensePaymentUseCase {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
+    // A claim projection is settled by its reimbursement payout (RBPAY), which mirrors PAID
+    // onto this record in the same transaction. Accepting a manual payment here would pay the
+    // same cash twice and strand an ExpensePayment no posting source ever drains.
+    if (r.sourceReimbursementRequestId) {
+      throw new UnprocessableEntityException({
+        code: 'expense_settled_via_reimbursement',
+        message: 'Claim-projected expenses are settled by their reimbursement payout, not a manual expense payment.',
+      });
+    }
     const result = await this.repo.recordPaymentAtomic({
       companyId: ctx.companyId,
       expenseId,

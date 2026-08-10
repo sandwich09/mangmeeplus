@@ -22,7 +22,7 @@ describe('notification worker helpers', () => {
       deepLinkHref: '/companies/c1/inventory/products/p1',
     });
 
-    assert.match(text, /WatchDog/);
+    assert.match(text, /มั่งมีพลัส/);
     assert.match(text, /\/companies\/c1\/inventory\/products\/p1/);
     assert.doesNotMatch(text, /Bearer|token|secret/i);
   });

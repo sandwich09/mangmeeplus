@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Inject, Injectable, InternalServerErrorException, Logger, Optional, UnauthorizedException } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, InternalServerErrorException, Logger, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -11,6 +11,7 @@ import type { WatchdogIssuedJwtPayload } from '../../domain/models/auth-token.mo
 import { JWT_ALGORITHM, jwtClaimIdentity } from '../../domain/logic/jwt-claims.logic';
 import type { AuthTokensResult } from './issue-token.use-case';
 import { AuthRateLimitService } from '../auth-rate-limit.service';
+import { PlatformAccessService } from '../platform-access.service';
 
 const ACCESS_EXPIRES_IN = 900;
 
@@ -37,6 +38,7 @@ export class RefreshSessionUseCase {
     @Optional() @Inject(PermissionResolverService) private readonly permissionResolver: PermissionResolverService | null = null,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
     @Optional() @Inject(AuthRateLimitService) private readonly rateLimits: AuthRateLimitService | null = null,
+    @Optional() @Inject(PlatformAccessService) private readonly platformAccess: PlatformAccessService | null = null,
   ) {}
 
   async execute(refreshToken: string): Promise<AuthTokensResult> {
@@ -80,6 +82,24 @@ export class RefreshSessionUseCase {
 
     if (!this.isLive(session)) {
       throw new UnauthorizedException('Session is expired or revoked.');
+    }
+
+    if ((await this.platformAccess?.getStatus())?.effectiveState === 'CLOSED') {
+      const systemAdmin = await this.prisma.client.companyMembership.findFirst({
+        where: {
+          userId: session.userId,
+          status: 'ACTIVE',
+          company: { status: 'ACTIVE' },
+          roles: { some: { role: { key: 'SYSTEM_ADMIN' } } },
+        },
+        select: { id: true },
+      });
+      if (!systemAdmin) {
+        throw new ServiceUnavailableException({
+          code: 'platform_access_closed',
+          message: 'MangmeePlus customer access is currently closed.',
+        });
+      }
     }
 
     // L-01: the per-session bucket is consumed only after the session is proven ACTIVE, so a

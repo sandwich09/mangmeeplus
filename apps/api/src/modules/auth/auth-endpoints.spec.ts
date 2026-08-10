@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { IssueTokenUseCase } from './application/use-cases/issue-token.use-case';
 import { ExchangeLineTokenUseCase } from './application/use-cases/exchange-line-token.use-case';
 import { LogoutUseCase } from './application/use-cases/logout.use-case';
@@ -10,6 +10,7 @@ import { ChangePasswordUseCase } from './application/use-cases/change-password.u
 import { hashPassword, verifyPassword } from './domain/logic/password-credential.logic';
 import { WatchdogJwtVerifierAdapter } from './infrastructure/watchdog-jwt-verifier.adapter';
 import { DevJwtVerifierAdapter } from './infrastructure/dev-jwt-verifier.adapter';
+import { PlatformAccessService } from './application/platform-access.service';
 
 const pendingLegalAcceptance = {
   getStatus: async () => ({ required: true }),
@@ -127,6 +128,57 @@ describe('IssueTokenUseCase', () => {
 // ---- Password credentials ----
 
 describe('PasswordLoginUseCase', () => {
+  it('blocks an ordinary valid credential while customer access is closed and issues no token', async () => {
+    let issued = 0;
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'user-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('watchdogbms11'), mustChangePassword: false, expiresAt: null,
+          },
+        }) },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }],
+        }) },
+      },
+    } as any;
+    const issueToken = { execute: async () => { issued += 1; return {}; } } as any;
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+
+    await assert.rejects(
+      () => new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance, closed).execute('owner', 'watchdogbms11'),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.equal((error.getResponse() as any).code, 'platform_access_closed');
+        return true;
+      },
+    );
+    assert.equal(issued, 0);
+  });
+
+  it('allows SYSTEM_ADMIN while customer access is closed', async () => {
+    const prisma = {
+      client: {
+        user: { findFirst: async () => ({
+          id: 'admin-1', status: 'ACTIVE', credential: {
+            status: 'ACTIVE', passwordHash: hashPassword('watchdogbms11'), mustChangePassword: false,
+            expiresAt: null, updatedAt: new Date(),
+          },
+        }) },
+        companyMembership: { findFirst: async () => ({
+          id: 'membership-1', companyId: 'system-company', roles: [{ role: { key: 'SYSTEM_ADMIN' } }],
+        }) },
+      },
+    } as any;
+    const issueToken = { execute: async () => ({ accessToken: 'access', refreshToken: 'refresh', expiresIn: 900 }) } as any;
+    const accepted = { getStatus: async () => ({ required: false }) } as any;
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+    const result = await new PasswordLoginUseCase(prisma, issueToken, accepted, closed)
+      .execute('system-admin', 'watchdogbms11');
+    assert.equal(result.redirectPath, '/system/platform-access');
+    assert.equal(result.legalAcceptanceRequired, false);
+  });
+
   it('issues watchdog tokens for an active username/password credential', async () => {
     const credentialUpdatedAt = new Date('2026-08-09T07:00:00.000Z');
     const issueToken = { execute: async (userId: string, provider: string, version: Date) => {
@@ -222,7 +274,7 @@ describe('PasswordLoginUseCase', () => {
     const result = await new PasswordLoginUseCase(prisma, issueToken, pendingLegalAcceptance).execute('thawatchai.watchdog', 'watchdogbms11');
 
     assert.equal(result.companyId, null);
-    assert.equal(result.redirectPath, '/system/partners');
+    assert.equal(result.redirectPath, '/system/platform-access');
   });
 
   it('only considers active memberships whose company is active', async () => {
@@ -571,5 +623,96 @@ describe('RevokeOtherSessionsUseCase', () => {
     });
 
     assert.equal(result.revokedCount, 0);
+  });
+});
+
+function platformConfig(targetEnvironment: 'local' | 'uat' | 'production', servingMode?: 'live' | 'maintenance_only') {
+  return { deploymentIdentity: { targetEnvironment, buildReleaseId: 'build-1' }, productionServingMode: servingMode } as any;
+}
+
+function platformService(options: {
+  target?: 'local' | 'uat' | 'production';
+  mode?: 'live' | 'maintenance_only';
+  row?: any;
+  readError?: boolean;
+} = {}) {
+  const writes: any[] = [];
+  const audits: any[] = [];
+  const row = options.row ?? null;
+  const tx = {
+    platformAccessControl: {
+      upsert: async (args: any) => {
+        writes.push(args);
+        return args.create;
+      },
+    },
+  };
+  const prisma = {
+    client: {
+      platformAccessControl: {
+        findUnique: async () => {
+          if (options.readError) throw new Error('table unavailable');
+          return row;
+        },
+      },
+      $transaction: async (fn: (client: typeof tx) => unknown) => fn(tx),
+    },
+  } as any;
+  const audit = { log: async (entry: any, client: any) => audits.push({ entry, client }) } as any;
+  return {
+    instance: new PlatformAccessService(
+      prisma,
+      platformConfig(options.target ?? 'production', options.mode),
+      audit,
+    ),
+    writes,
+    audits,
+    tx,
+  };
+}
+
+describe('PlatformAccessService', () => {
+  it('forces production maintenance closed even when the stored request says OPEN', async () => {
+    const { instance } = platformService({
+      mode: 'maintenance_only',
+      row: {
+        state: 'OPEN',
+        updatedAt: new Date('2026-08-10T12:00:00.000Z'),
+        updatedBySystemAdminUserId: 'admin-1',
+        reason: 'requested',
+      },
+    });
+    const status = await instance.getStatus();
+    assert.equal(status.requestedState, 'OPEN');
+    assert.equal(status.effectiveState, 'CLOSED');
+    assert.equal(status.canOpen, false);
+  });
+
+  it('defaults production closed and non-production open when no row exists', async () => {
+    assert.equal((await platformService({ mode: 'live' }).instance.getStatus()).effectiveState, 'CLOSED');
+    assert.equal((await platformService({ target: 'uat' }).instance.getStatus()).effectiveState, 'OPEN');
+  });
+
+  it('fails closed and refuses opening when the control table cannot be read', async () => {
+    const { instance } = platformService({ mode: 'live', readError: true });
+    const status = await instance.getStatus();
+    assert.equal(status.effectiveState, 'CLOSED');
+    assert.equal(status.canOpen, false);
+    await assert.rejects(
+      () => instance.setState({ state: 'OPEN', actorUserId: 'admin-1', requestId: 'req-1' }),
+      (error: unknown) => error instanceof ConflictException,
+    );
+  });
+
+  it('writes the switch and CRITICAL audit atomically in a verified live release', async () => {
+    const result = platformService({ mode: 'live' });
+    await result.instance.setState({ state: 'OPEN', reason: ' pilot ready ', actorUserId: 'admin-1', requestId: 'req-1' });
+    assert.equal(result.writes.length, 1);
+    assert.equal(result.writes[0].create.state, 'OPEN');
+    assert.equal(result.writes[0].create.reason, 'pilot ready');
+    assert.equal(result.audits.length, 1);
+    assert.equal(result.audits[0].client, result.tx);
+    assert.equal(result.audits[0].entry.riskLevel, 'CRITICAL');
+    assert.equal(result.audits[0].entry.metadataJson.to, 'OPEN');
   });
 });

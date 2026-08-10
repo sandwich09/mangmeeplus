@@ -182,6 +182,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // One bounded production-upgrade safety switch. It is not a commercial feature flag:
   // reads stay available while reimbursement mutations are paused before DTO validation.
   REIMBURSEMENT_WRITE_QUIESCE: envBoolean.default(false),
+  PRODUCTION_SERVING_MODE: z.enum(['live', 'maintenance_only']).optional(),
   // Auth
   AUTH_PROVIDER: z.enum(['line', 'dev']).default('dev'),
   DEV_AUTH_ENABLED: envBoolean.default(false),
@@ -386,6 +387,7 @@ export const workersConfigSchema = baseConfigSchema.extend({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   INTERNAL_API_URL: z.string().url().default('http://localhost:3001/v1'),
   WORKER_INTERNAL_TOKEN: z.string().optional(),
+  PRODUCTION_SERVING_MODE: z.enum(['live', 'maintenance_only']).optional(),
   QUEUE_ENABLED: envBoolean.default(true),
   QUEUE_CONCURRENCY: z.coerce.number().int().positive().default(5),
   QUEUE_RETRY_ATTEMPTS: z.coerce.number().int().nonnegative().default(3),
@@ -681,6 +683,15 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
   // production workers process boot and then authenticate with an empty token.
   if ((isApiConfig || isWorkersConfig) && missing('WORKER_INTERNAL_TOKEN')) {
     errors.push('WORKER_INTERNAL_TOKEN is required in production');
+  }
+
+  if (isWorkersConfig) {
+    const servingMode = str(config['PRODUCTION_SERVING_MODE']);
+    if (servingMode !== 'live' && servingMode !== 'maintenance_only') {
+      errors.push('PRODUCTION_SERVING_MODE must be exactly live or maintenance_only for production workers');
+    } else if (bool(config['QUEUE_ENABLED']) !== (servingMode === 'live')) {
+      errors.push(`QUEUE_ENABLED must be ${servingMode === 'live'} when PRODUCTION_SERVING_MODE=${servingMode}`);
+    }
   }
 
   if (isAiConfig) {

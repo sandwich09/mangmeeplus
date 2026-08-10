@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile]" >&2
+  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile]" >&2
   exit 2
 fi
 
@@ -10,7 +10,7 @@ image="$1"
 commit="$2"
 mode="${3:-release}"
 case "$mode" in
-  release|release-prepare|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile) ;;
+  release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile) ;;
   *) echo "ERROR: unsupported release-task mode: $mode" >&2; exit 2 ;;
 esac
 region="${AWS_REGION:-ap-southeast-1}"
@@ -34,6 +34,10 @@ case "$deploy_env" in
 esac
 if [ "$mode" = release-prepare ] && [ "$deploy_env" != production ]; then
   echo "ERROR: release-prepare is the production no-migration path" >&2
+  exit 2
+fi
+if [ "$mode" = maintenance-preflight ] && [ "$deploy_env" != production ]; then
+  echo "ERROR: maintenance-preflight is production read-only" >&2
   exit 2
 fi
 resource_prefix="watchdog-bms-${resource_stage}"
@@ -343,7 +347,8 @@ if [[ ! "$image" =~ ^${account_id}\.dkr\.ecr\.${region}\.amazonaws\.com/watchdog
   exit 1
 fi
 
-if [ "$mode" = "release" ] || [ "$mode" = "release-prepare" ] || [ "$mode" = "incident-preflight" ]; then
+if [ "$mode" = "release" ] || [ "$mode" = "release-prepare" ] \
+  || [ "$mode" = "maintenance-preflight" ] || [ "$mode" = "incident-preflight" ]; then
   release_deploy_target="${release_deploy_target:-all}"
   case "$release_deploy_target" in all|api-web|ai-gateway|workers) ;; *)
     echo "ERROR: RELEASE_DEPLOY_TARGET must be all, api-web, ai-gateway or workers" >&2
@@ -353,7 +358,11 @@ if [ "$mode" = "release" ] || [ "$mode" = "release-prepare" ] || [ "$mode" = "in
     echo "ERROR: incident-preflight accepts one service only" >&2
     exit 2
   fi
-  if [ "$mode" != incident-preflight ]; then
+  if [ "$mode" = maintenance-preflight ] && [ "$release_deploy_target" != all ]; then
+    echo "ERROR: maintenance-preflight requires target=all" >&2
+    exit 2
+  fi
+  if [ "$mode" != incident-preflight ] && [ "$mode" != maintenance-preflight ]; then
     operation_id="${operation_id:-$(node -e 'process.stdout.write(require("node:crypto").randomUUID())')}"
   fi
 elif [ -n "$release_deploy_target" ]; then
@@ -499,7 +508,7 @@ elif [ -n "$recovery_network_evidence$orphan_intent_json$orphan_deployment_manif
 fi
 
 readonly_database_mode=false
-case "$mode" in incident-preflight|a5-ro|a5-capacity-preflight|f2-plan|f2-verify) readonly_database_mode=true ;; esac
+case "$mode" in maintenance-preflight|incident-preflight|a5-ro|a5-capacity-preflight|f2-plan|f2-verify) readonly_database_mode=true ;; esac
 
 database_secret_arn="${DATABASE_URL_SECRET_ARN:-}"
 readonly_database_secret_arn="${A5_READONLY_DATABASE_URL_SECRET_ARN:-}"
@@ -609,6 +618,12 @@ if [ "$mode" = "retire" ] || [ "$mode" = "reconcile" ]; then
 fi
 
 case "$mode" in
+  maintenance-preflight)
+    container_name="maintenance-preflight"
+    log_prefix="maintenance-preflight"
+    omit_task_role=true
+    direct_task_command='set -eu; REQUIRE_NO_AWS_CREDENTIALS=true ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts'
+    ;;
   incident-preflight)
     container_name="incident-preflight"
     log_prefix="incident-preflight"
@@ -1064,5 +1079,9 @@ if [ "$mode" = incident-preflight ] && [ "${GITHUB_ACTIONS:-}" = true ] && [ -n 
   if [ "$release_deploy_target" = api-web ]; then
     printf 'PARTIAL_INCIDENT_BUILD_AUTHORITY_PROVED_SHA=%s\n' "$commit" >> "$GITHUB_ENV"
   fi
+fi
+if [ "$mode" = maintenance-preflight ] && [ "${GITHUB_ACTIONS:-}" = true ] && [ -n "${GITHUB_ENV:-}" ]; then
+  printf 'RELEASE_DATABASE_COMPATIBILITY_PROVED_SHA=%s\n' "$commit" >> "$GITHUB_ENV"
+  printf 'MAINTENANCE_BOOTSTRAP_READONLY_PROVED_SHA=%s\n' "$commit" >> "$GITHUB_ENV"
 fi
 echo "[release-task] success mode=$mode sha=$short_sha"
