@@ -641,6 +641,77 @@ describe('applyOcrValueCrossCheck (item 10F)', () => {
   });
 });
 
+// ── §19j: identity field gates – tax id / document number / branch ───────────
+
+describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
+  // The reported UAT shape: footer tax id in dashed small type, HN near the header,
+  // เลขที่/วันที่ adjacent, carbon-book เล่มที่/เลขที่ pair.
+  const HOSPITAL_TEXT = [
+    'โรงพยาบาลทดสอบราษฎร์',
+    'HN 123456 วันที่ 10/08/2569',
+    'เล่มที่ 12 เลขที่ 345',
+    'ค่ายา 289.00',
+    'รวมทั้งสิ้น 289.00 บาท',
+    'เลขประจำตัวผู้เสียภาษีอากร 0-9940-0016-30-11 (สำนักงานใหญ่)',
+  ].join('\n');
+
+  it('recovers the only printed 13-digit tax id when stage 2 missed it', () => {
+    const out = applyOcrValueCrossCheck({ grandTotalAmount: '289.00', missingFields: ['vendorTaxId'] }, HOSPITAL_TEXT);
+    assert.equal(out.vendorTaxId, '0994000163011');
+    assert.ok(!out.missingFields?.includes('vendorTaxId'));
+  });
+
+  it('normalizes a dash-grouped model tax id to digits only', () => {
+    const out = applyOcrValueCrossCheck({ vendorTaxId: '0-9940-0016-30-11' }, HOSPITAL_TEXT);
+    assert.equal(out.vendorTaxId, '0994000163011');
+  });
+
+  it('replaces an invented tax id with the single printed candidate', () => {
+    const out = applyOcrValueCrossCheck({ vendorTaxId: '1234567890123' }, HOSPITAL_TEXT);
+    assert.equal(out.vendorTaxId, '0994000163011', 'gate drops the invention, recovery selects the printed run');
+  });
+
+  it('never guesses between two printed tax ids (full tax invoice: seller + buyer)', () => {
+    const twoIds = 'ผู้ขาย บจก. ทดสอบ เลขประจำตัวผู้เสียภาษี 0105561000105\nผู้ซื้อ เลขประจำตัวผู้เสียภาษี 0994000163011\nรวม 100.00';
+    const out = applyOcrValueCrossCheck({}, twoIds);
+    assert.equal(out.vendorTaxId, undefined);
+    const kept = applyOcrValueCrossCheck({ vendorTaxId: '0105561000105' }, twoIds);
+    assert.equal(kept.vendorTaxId, '0105561000105', 'a model selection that the text contains survives');
+  });
+
+  it('rejects a date-valued documentNumber in printed and ISO forms (the reported bug)', () => {
+    for (const documentNumber of ['10/08/2569', '2026-08-10']) {
+      const out = applyOcrValueCrossCheck({ documentNumber }, HOSPITAL_TEXT);
+      assert.equal(out.documentNumber, undefined, `${documentNumber} must not survive as a document number`);
+      assert.ok(out.missingFields?.includes('documentNumber'));
+    }
+  });
+
+  it('keeps running numbers that are not dates, including the carbon-book composition', () => {
+    for (const documentNumber of ['123/2569', '12/345']) {
+      const out = applyOcrValueCrossCheck({ documentNumber }, HOSPITAL_TEXT);
+      assert.equal(out.documentNumber, documentNumber);
+    }
+  });
+
+  it('drops a documentNumber whose digits the OCR text never printed', () => {
+    const out = applyOcrValueCrossCheck({ documentNumber: 'INV-9998877' }, HOSPITAL_TEXT);
+    assert.equal(out.documentNumber, undefined);
+    assert.ok(out.missingFields?.includes('documentNumber'));
+  });
+
+  it('normalizes branch designations: head-office words and numbered branches', () => {
+    const hq = applyOcrValueCrossCheck({ vendorBranchCode: 'สำนักงานใหญ่' }, HOSPITAL_TEXT);
+    assert.equal(hq.vendorBranchCode, '00000');
+    const branchText = 'ร้านสะดวกซื้อ สาขาที่ 3 ใบกำกับภาษีอย่างย่อ รวม 60.00';
+    const branch = applyOcrValueCrossCheck({ vendorBranchCode: 'สาขาที่ 3' }, branchText);
+    assert.equal(branch.vendorBranchCode, '00003');
+    const invented = applyOcrValueCrossCheck({ vendorBranchCode: '00007' }, HOSPITAL_TEXT);
+    assert.equal(invented.vendorBranchCode, undefined, 'a branch the text never shows is dropped');
+    assert.ok(invented.missingFields?.includes('vendorBranchCode'));
+  });
+});
+
 function classification(overrides: Partial<BusinessDocumentClassification> = {}): BusinessDocumentClassification {
   return {
     contentKind: 'DOCUMENT',
