@@ -73,9 +73,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "run_id=" >> "$GITHUB_OUTPUT"
+          production_eligible=false
+          case "$TARGET" in all|auto) production_eligible=true ;; esac
           if ! source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")" ||
             ! caller_ci="$(git rev-parse "$GITHUB_SHA:.github/workflows/ci.yml")"; then
-            if [ "$TARGET" = all ]; then
+            if $production_eligible; then
               echo "ERROR: CI policy blob is required for an all-target UAT acceptance" >&2
               exit 1
             fi
@@ -83,14 +85,14 @@ jobs:
             exit 0
           fi
           if [ "$source_ci" != "$caller_ci" ]; then
-            if [ "$TARGET" = all ]; then
+            if $production_eligible; then
               echo "ERROR: an all-target UAT acceptance must execute the exact CI policy stored in the candidate" >&2
               exit 1
             fi
             echo "::notice::Source CI policy differs from the caller; running the full validation gate."
             exit 0
           fi
-          if [ "$TARGET" = all ]; then
+          if $production_eligible; then
             source_deploy="$(git rev-parse "$SOURCE_SHA:.github/workflows/deploy-uat.yml")"
             caller_deploy="$(git rev-parse "$GITHUB_SHA:.github/workflows/deploy-uat.yml")"
             test "$source_deploy" = "$caller_deploy" || {
@@ -132,11 +134,15 @@ jobs:
     needs: resolve-release
     runs-on: ubuntu-latest
     environment: uat
+    outputs:
+      resolved_target: ${{ steps.target.outputs.target }}
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
       - name: Require isolated UAT configuration
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -168,6 +174,40 @@ jobs:
           DEPLOY_ENV: uat
           ECS_CLUSTER_NAME: watchdog-bms-uat
         run: bash infra/uat/verify-deploy-readiness.sh
+      - name: Resolve UAT target before image publication
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+          RUN_M01_ACCEPTANCE: ${{ inputs.run_m01_acceptance }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin develop --force
+          active_sha() {
+            local parameter="$1" arn
+            arn="$(aws ssm get-parameter --name "$parameter" --query Parameter.Value --output text 2>/dev/null || true)"
+            if [[ "$arn" != arn:aws:ecs:* ]]; then
+              printf ''
+              return
+            fi
+            aws ecs describe-express-gateway-service --service-arn "$arn" \
+              --query 'service.activeConfigurations[0].primaryContainer.environment[?name==`GIT_SHA`]|[0].value' \
+              --output text 2>/dev/null | grep -E '^[0-9a-f]{40}$' || true
+          }
+          resolved="$REQUESTED_TARGET"
+          if [ "$REQUESTED_TARGET" = auto ]; then
+            resolved="$(bash infra/uat/select-deploy-target.sh "$SOURCE_SHA" \
+              "$(active_sha /watchdog-bms/uat/ecs-express-api-web-service-arn)" \
+              "$(active_sha /watchdog-bms/uat/ecs-express-ai-gateway-service-arn)" \
+              "$(active_sha /watchdog-bms/uat/ecs-express-workers-service-arn)")"
+          fi
+          case "$resolved" in api-web|ai-gateway|workers|all) ;; *) exit 2 ;; esac
+          if [ "$RUN_M01_ACCEPTANCE" = true ] && [ "$resolved" != all ]; then
+            echo "ERROR: M-01 acceptance requires a resolved all-target release" >&2
+            exit 1
+          fi
+          echo "target=$resolved" >> "$GITHUB_OUTPUT"
+          echo "Resolved UAT target before build: requested=$REQUESTED_TARGET resolved=$resolved"
 
   build_and_publish:
     name: Test and Publish Immutable UAT Release
@@ -183,12 +223,14 @@ jobs:
       source_ref: ${{ needs.resolve-release.outputs.source_sha }}
       publish_environment: uat
       validated_ci_run_id: ${{ needs.resolve-release.outputs.validated_ci_run_id }}
+      publish_release_tools: ${{ needs.validate-config.outputs.resolved_target == 'all' }}
     secrets: inherit
 
   deploy:
     name: Deploy UAT/${{ inputs.target }}
     needs:
       - resolve-release
+      - validate-config
       - build_and_publish
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -261,8 +303,13 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
           ref: ${{ needs.resolve-release.outputs.source_sha }}
           fetch-depth: 0
+          path: candidate
       - name: Set runner-owned deployment evidence directory
         run: echo "DEPLOYMENT_EVIDENCE_DIR=$RUNNER_TEMP/watchdog-bms-deployment-${GITHUB_RUN_ID}" >> "$GITHUB_ENV"
       - name: Verify exact UAT application checkout
@@ -270,7 +317,8 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"
+          test "$(git -C candidate rev-parse HEAD)" = "$SOURCE_SHA"
           git fetch origin develop --force
           git merge-base --is-ancestor "$SOURCE_SHA" origin/develop || {
             echo "ERROR: checked-out source is no longer reachable from develop" >&2
@@ -280,6 +328,16 @@ jobs:
         with:
           name: ${{ needs.build_and_publish.outputs.release_artifact }}
           path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.validate-config.outputs.resolved_target == 'all'
+        with:
+          name: ${{ needs.build_and_publish.outputs.release_tools_artifact }}
+          path: tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.validate-config.outputs.resolved_target != 'all'
+        with:
+          name: ${{ needs.build_and_publish.outputs.release_task_artifact }}
+          path: tools
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Validate release artifact
         env:
@@ -373,30 +431,13 @@ jobs:
       - name: Resolve automatic UAT target
         id: target
         env:
-          REQUESTED_TARGET: ${{ inputs.target }}
-          RUN_M01_ACCEPTANCE: ${{ inputs.run_m01_acceptance }}
-          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          PRE_RESOLVED_TARGET: ${{ needs.validate-config.outputs.resolved_target }}
         run: |
           set -euo pipefail
-          resolved="$REQUESTED_TARGET"
-          if [ "$REQUESTED_TARGET" = auto ]; then
-            active_sha() {
-              jq -r '[.[] | select(.name == "GIT_SHA") | .value]
-                | if length == 1 then .[0] else "" end' "$1"
-            }
-            resolved="$(bash infra/uat/select-deploy-target.sh \
-              "$SOURCE_SHA" \
-              "$(active_sha /tmp/api-env.json)" \
-              "$(active_sha /tmp/ai-env.json)" \
-              "$(active_sha /tmp/workers-env.json)")"
-          fi
+          resolved="$PRE_RESOLVED_TARGET"
           case "$resolved" in api-web|ai-gateway|workers|all) ;; *) exit 2 ;; esac
-          if [ "$RUN_M01_ACCEPTANCE" = true ] && [ "$resolved" != all ]; then
-            echo "ERROR: M-01 acceptance requires a resolved all-target release" >&2
-            exit 1
-          fi
           echo "target=$resolved" >> "$GITHUB_OUTPUT"
-          echo "Resolved UAT target: requested=$REQUESTED_TARGET resolved=$resolved"
+          echo "Using pre-resolved UAT target: $resolved"
       - name: Install UAT security alerts
         if: steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web'
         run: |
@@ -414,32 +455,36 @@ jobs:
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               "$image" >/dev/null
           done
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build and push exact-commit UAT release task
-        id: release-image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: ./apps/api/Dockerfile
-          target: local
-          platforms: linux/amd64
-          push: true
-          provenance: mode=max
-          tags: ${{ env.ECR_REGISTRY }}/watchdog-bms-api:uat-release-task-${{ needs.resolve-release.outputs.source_sha }}
-          labels: org.opencontainers.image.revision=${{ needs.resolve-release.outputs.source_sha }}
-          cache-from: type=gha,scope=release-task-api
-          cache-to: type=gha,mode=max,scope=release-task-api,ignore-error=true
-      - name: Sign the exact UAT release-task digest
+      - name: Verify pre-published release tools
         env:
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          TARGET: ${{ steps.target.outputs.target }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          cosign sign --yes "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          expected=$'cosign-release-task.json:f\nimage-release-task.json:f\nsbom-release-task.spdx.json:f'
+          purposes=release-task
+          if [ "$TARGET" = all ]; then
+            expected=$'cosign-migration-tool.json:f\ncosign-release-task.json:f\nimage-migration-tool.json:f\nimage-release-task.json:f\nsbom-migration-tool.spdx.json:f\nsbom-release-task.spdx.json:f'
+            purposes='migration-tool release-task'
+          fi
+          test "$(find tools -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected"
+          for purpose in $purposes; do
+            image="$(jq -er --arg purpose "$purpose" --arg source "$SOURCE_SHA" \
+              'select(.purpose==$purpose and .sourceCommit==$source) | .image' "tools/image-$purpose.json")"
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$image" >/dev/null
+          done
+          release_digest="$(jq -er '.digest|select(test("^sha256:[0-9a-f]{64}$"))' tools/image-release-task.json)"
+          echo "RELEASE_DIGEST=$release_digest" >> "$GITHUB_ENV"
+          if [ "$TARGET" = all ]; then
+            migration_digest="$(jq -er '.digest|select(test("^sha256:[0-9a-f]{64}$"))' tools/image-migration-tool.json)"
+            echo "MIGRATION_DIGEST=$migration_digest" >> "$GITHUB_ENV"
+          fi
       - name: Verify and run UAT release task
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           RELEASE_DEPLOY_TARGET: ${{ steps.target.outputs.target }}
         run: |
           set -euo pipefail
@@ -460,7 +505,6 @@ jobs:
         env:
           TARGET: ${{ steps.target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
         run: |
           set -euo pipefail
@@ -483,7 +527,6 @@ jobs:
         if: always() && (steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web')
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' }}
         run: |
           set -euo pipefail
@@ -547,7 +590,6 @@ jobs:
         if: always() && steps.verify-health.outcome == 'success' && steps.target.outputs.target != 'all' && steps.target.outputs.target != 'api-web'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -561,7 +603,6 @@ jobs:
         if: success() && inputs.run_m01_acceptance && steps.target.outputs.target == 'all'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -667,11 +708,130 @@ jobs:
             "$acceptance_dir/uat-deployment-acceptance.json"
           expected_entries=$'uat-deployment-acceptance.bundle:f\nuat-deployment-acceptance.json:f'
           test "$(find "$acceptance_dir" -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected_entries"
+      - name: Create and sign UAT Release Passport V2
+        if: success() && steps.target.outputs.target == 'all'
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          REQUESTED_TARGET: ${{ inputs.target }}
+          VALIDATED_CI_RUN_ID: ${{ needs.resolve-release.outputs.validated_ci_run_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/uat-release-passport-v2"
+          mkdir -p "$root/release" "$root/tools"
+          cp release/production-image-manifest.json release/sbom-*.spdx.json release/cosign-*.json "$root/release/"
+          cp tools/image-*.json tools/sbom-*.spdx.json tools/cosign-*.json "$root/tools/"
+
+          catalog_rows="$root/migration-catalog.rows"
+          : > "$catalog_rows"
+          while IFS= read -r file; do
+            name="$(basename "$(dirname "$file")")"
+            checksum="$(sha256sum "$file" | awk '{print $1}')"
+            printf '%s\t%s\n' "$name" "$checksum" >> "$catalog_rows"
+          done < <(find candidate/apps/api/prisma/migrations -mindepth 2 -maxdepth 2 \
+            -name migration.sql -type f | LC_ALL=C sort)
+          test -s "$catalog_rows"
+          migrations="$(jq -Rn '[inputs | split("\t") | {name:.[0],checksum:.[1]}]' < "$catalog_rows")"
+          catalog_hash="$(jq -cjS 'map({name,checksum})' <<< "$migrations" | sha256sum | awk '{print $1}')"
+          schema_hash="$(sha256sum candidate/apps/api/prisma/schema.prisma | awk '{print $1}')"
+          jq -cS -n --arg source "$SOURCE_SHA" --arg catalogHash "$catalog_hash" \
+            --arg schemaHash "$schema_hash" --argjson migrations "$migrations" '
+              {schemaVersion:1,sourceCommit:$source,migrations:$migrations,
+               repositoryCatalogHash:$catalogHash,prismaSchemaSha256:$schemaHash}
+            ' > "$root/migration-catalog.json"
+          rm "$catalog_rows"
+
+          manifest="$root/release/production-image-manifest.json"
+          manifest_hash="$(sha256sum "$manifest" | awk '{print $1}')"
+          catalog_file_hash="$(sha256sum "$root/migration-catalog.json" | awk '{print $1}')"
+          migration_count="$(jq 'length' <<< "$migrations")"
+          issued_at="$(date -u +%s)"
+          expires_at="$((issued_at + 86400))"
+          jq -cS -n \
+            --arg repository "$GITHUB_REPOSITORY" --arg run "$GITHUB_RUN_ID" \
+            --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg controller "$GITHUB_WORKFLOW_SHA" \
+            --arg source "$SOURCE_SHA" --arg requested "$REQUESTED_TARGET" \
+            --arg validatedCiRunId "$VALIDATED_CI_RUN_ID" --arg manifestHash "$manifest_hash" \
+            --arg catalogFileHash "$catalog_file_hash" --arg catalogHash "$catalog_hash" \
+            --arg schemaHash "$schema_hash" --argjson migrationCount "$migration_count" \
+            --argjson issued "$issued_at" --argjson expires "$expires_at" \
+            --arg apiSbom "$(sha256sum "$root/release/sbom-api-web.spdx.json" | awk '{print $1}')" \
+            --arg aiSbom "$(sha256sum "$root/release/sbom-ai-gateway.spdx.json" | awk '{print $1}')" \
+            --arg workersSbom "$(sha256sum "$root/release/sbom-workers.spdx.json" | awk '{print $1}')" \
+            --arg apiSignature "$(sha256sum "$root/release/cosign-api-web.json" | awk '{print $1}')" \
+            --arg aiSignature "$(sha256sum "$root/release/cosign-ai-gateway.json" | awk '{print $1}')" \
+            --arg workersSignature "$(sha256sum "$root/release/cosign-workers.json" | awk '{print $1}')" \
+            --slurpfile manifest "$manifest" \
+            --slurpfile migrationTool "$root/tools/image-migration-tool.json" \
+            --slurpfile releaseTask "$root/tools/image-release-task.json" '
+              def tool($record):
+                {purpose:$record.purpose,repository:$record.repository,image:$record.image,
+                 digest:$record.digest,sourceCommit:$record.sourceCommit,
+                 sbom:{path:("tools/"+$record.sbom),sha256:""},
+                 signature:{path:("tools/"+$record.signature),sha256:""},
+                 attestations:$record.attestations};
+              def runtime($record):
+                $record as $image
+                | {service:$image.service,repository:$image.repository,image:$image.image,
+                   digest:$image.digest,sourceCommit:$image.sourceCommit,
+                   sbom:{path:("release/"+$image.sbom),sha256:(
+                     if $image.service=="api-web" then $apiSbom
+                     elif $image.service=="ai-gateway" then $aiSbom else $workersSbom end)},
+                   signature:{path:("release/cosign-"+$image.service+".json"),sha256:(
+                     if $image.service=="api-web" then $apiSignature
+                     elif $image.service=="ai-gateway" then $aiSignature else $workersSignature end)},
+                   attestations:{provenance:"BUILDKIT_MAX",sbom:"BUILDKIT_REGISTRY_NATIVE"}};
+              {schemaVersion:2,artifactKind:"UAT_RELEASE_PASSPORT_V2",environment:"uat",
+               repository:$repository,
+               workflow:{path:".github/workflows/deploy-uat.yml",runId:$run,runAttempt:$attempt,
+                 controllerRef:"refs/heads/main",controllerCommit:$controller},
+               sourceCommit:$source,requestedTarget:$requested,resolvedTarget:"all",
+               issuedAtEpoch:$issued,expiresAtEpoch:$expires,validatedCiRunId:$validatedCiRunId,
+               release:{artifactName:("uat-accepted-release-"+$source+"-attempt-"+($attempt|tostring)),
+                 manifestPath:"release/production-image-manifest.json",manifestSha256:$manifestHash,
+                 images:($manifest[0].images|map(runtime(.))|sort_by(.service))},
+               tools:[tool($migrationTool[0]),tool($releaseTask[0])],
+               migrationCatalog:{path:"migration-catalog.json",sha256:$catalogFileHash,
+                 migrationCount:$migrationCount,repositoryCatalogHash:$catalogHash,
+                 prismaSchemaSha256:$schemaHash},
+               uatProof:{ciVerified:true,healthVerified:true,imageScanVerified:true,releaseFinalized:true}}
+            ' > "$root/passport-body.json"
+          jq -cS '
+            .tools |= map(
+              .sbom.sha256 = (if .purpose=="migration-tool" then $migrationSbom else $releaseSbom end)
+              | .signature.sha256 = (if .purpose=="migration-tool" then $migrationSignature else $releaseSignature end))
+          ' --arg migrationSbom "$(sha256sum "$root/tools/sbom-migration-tool.spdx.json" | awk '{print $1}')" \
+            --arg releaseSbom "$(sha256sum "$root/tools/sbom-release-task.spdx.json" | awk '{print $1}')" \
+            --arg migrationSignature "$(sha256sum "$root/tools/cosign-migration-tool.json" | awk '{print $1}')" \
+            --arg releaseSignature "$(sha256sum "$root/tools/cosign-release-task.json" | awk '{print $1}')" \
+            "$root/passport-body.json" > "$root/passport-with-evidence.json"
+          content_hash="$(jq -cjS . "$root/passport-with-evidence.json" | sha256sum | awk '{print $1}')"
+          jq -cS --arg hash "$content_hash" '. + {contentSha256:$hash}' \
+            "$root/passport-with-evidence.json" > "$root/passport.json"
+          rm "$root/passport-body.json" "$root/passport-with-evidence.json"
+
+          bash infra/security/validate-uat-release-passport-v2.sh "$root/passport.json" "$root" \
+            "$SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_WORKFLOW_SHA" \
+            "$GITHUB_REPOSITORY" "$AWS_ACCOUNT_ID" "$AWS_REGION" "$issued_at"
+          cosign sign-blob --yes --bundle "$root/passport.bundle" "$root/passport.json"
+          cosign verify-blob --bundle "$root/passport.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --certificate-github-workflow-trigger workflow_dispatch "$root/passport.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: success() && steps.target.outputs.target == 'all'
         with:
           name: uat-accepted-release-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: release
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && steps.target.outputs.target == 'all'
+        with:
+          name: uat-release-passport-v2-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/uat-release-passport-v2
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

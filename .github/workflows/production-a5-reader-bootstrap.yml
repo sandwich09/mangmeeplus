@@ -1,0 +1,171 @@
+name: Production A5 Reader Bootstrap V2
+run-name: Bootstrap A5 reader from UAT run ${{ inputs.uat_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      uat_run_id:
+        description: Exact successful UAT run carrying UAT_RELEASE_PASSPORT_V2
+        required: true
+        type: string
+      schema_profile:
+        description: Current Production schema profile during the one-time bootstrap
+        required: true
+        default: F1_CURRENT
+        type: choice
+        options:
+          - F1_CURRENT
+          - LEGACY_PRE_F1
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-a5-reader-bootstrap-v2
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap or read back the dedicated A5 reader
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      AWS_ACCOUNT_ID: '311414082667'
+      AWS_REGION: ap-southeast-1
+      A5_READER_BOOTSTRAP_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Download and verify exact UAT Release Passport V2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UAT_RUN_ID: ${{ inputs.uat_run_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          [[ "$UAT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          git fetch --no-tags origin main --force
+          test "$GITHUB_WORKFLOW_SHA" = "$(git rev-parse origin/main)"
+
+          root="$RUNNER_TEMP/production-a5-reader-bootstrap-v2"
+          mkdir -p "$root"
+          run_json="$root/uat-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID" > "$run_json"
+          jq -e --arg run "$UAT_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
+            (.id|tostring)==$run and .status=="completed" and .conclusion=="success"
+            and .event=="workflow_dispatch" and .path==".github/workflows/deploy-uat.yml"
+            and .head_branch=="main" and .repository.full_name==$repository
+          ' "$run_json" >/dev/null
+          uat_attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$run_json")"
+          uat_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$run_json")"
+          all_artifacts="$root/artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts?per_page=100" > "$all_artifacts"
+          passport_name="$(jq -er --argjson attempt "$uat_attempt" '
+            [.artifacts[] | select(.expired==false) | .name
+              | capture("^uat-release-passport-v2-(?<sha>[0-9a-f]{40})-attempt-(?<attempt>[1-9][0-9]*)$")
+              | select((.attempt|tonumber)==$attempt)]
+            | select(length==1) | .[0] | "uat-release-passport-v2-"+.sha+"-attempt-"+.attempt
+          ' "$all_artifacts")"
+          source_sha="${passport_name#uat-release-passport-v2-}"
+          source_sha="${source_sha%-attempt-*}"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${source_sha}^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main
+
+          metadata="$root/passport-artifact.json"
+          archive="$root/passport.zip"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts" \
+            -f name="$passport_name" -f per_page=100 > "$metadata"
+          artifact_id="$(jq -er 'select(.total_count==1 and (.artifacts|length)==1)
+            | .artifacts[0] | select(.expired==false) | .id' "$metadata")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          source infra/security/validate-production-security-preflight.sh
+          security_preflight_validate_artifact_metadata "$metadata" "$archive" "$passport_name" \
+            "$UAT_RUN_ID" "$uat_controller" >/dev/null
+          passport_root="$(security_preflight_extract_artifact passport-v2 "$archive")"
+          cosign verify-blob --bundle "$passport_root/passport.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$uat_controller" \
+            --certificate-github-workflow-trigger workflow_dispatch "$passport_root/passport.json"
+          bash infra/security/validate-uat-release-passport-v2.sh \
+            "$passport_root/passport.json" "$passport_root" "$source_sha" "$UAT_RUN_ID" \
+            "$uat_attempt" "$uat_controller" "$GITHUB_REPOSITORY" "$AWS_ACCOUNT_ID" "$AWS_REGION" \
+            "$(date -u +%s)"
+          migration_image="$(jq -er '.tools[]|select(.purpose=="migration-tool")|.image' "$passport_root/passport.json")"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$migration_image" >/dev/null
+          printf '%s\n' "PASSPORT_ROOT=$passport_root" "SOURCE_SHA=$source_sha" \
+            "MIGRATION_IMAGE=$migration_image" "UAT_RUN_ID=$UAT_RUN_ID" \
+            "UAT_RUN_ATTEMPT=$uat_attempt" "UAT_CONTROLLER_SHA=$uat_controller" >> "$GITHUB_ENV"
+      - name: Configure one-time A5 reader controller
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.A5_READER_BOOTSTRAP_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-session-name: production-a5-reader-bootstrap-${{ github.run_id }}
+      - name: Bootstrap reader and self-revoke temporary writer
+        env:
+          SCHEMA_PROFILE: ${{ inputs.schema_profile }}
+        run: |
+          set -euo pipefail
+          identity="$(aws sts get-caller-identity --output json)"
+          jq -e --arg account "$AWS_ACCOUNT_ID" '
+            .Account==$account and (.Arn|test(":assumed-role/watchdog-bms-production-a5-reader-bootstrap/"))
+          ' <<< "$identity" >/dev/null
+          output="$RUNNER_TEMP/a5-reader-bootstrap-result.json"
+          bash infra/security/bootstrap-production-a5-database-reader.sh \
+            "$MIGRATION_IMAGE" "$SOURCE_SHA" "$SCHEMA_PROFILE" | tee "$output"
+          jq -e '
+            .artifact=="production-a5-reader-bootstrap"
+            and (.state=="CREATED" or .state=="EXISTING")
+            and .readerRole=="watchdog_a5_prod_ro"
+            and (.readerSecretVersionId|test("^[A-Fa-f0-9-]{32,64}$"))
+          ' "$output" >/dev/null
+          echo "BOOTSTRAP_RESULT=$output" >> "$GITHUB_ENV"
+      - name: Sign bootstrap evidence
+        env:
+          SCHEMA_PROFILE: ${{ inputs.schema_profile }}
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/production-a5-reader-bootstrap-evidence-v2"
+          mkdir -p "$output"
+          issued="$(date -u +%s)"
+          passport_hash="$(sha256sum "$PASSPORT_ROOT/passport.json" | awk '{print $1}')"
+          jq -cS -n --arg repository "$GITHUB_REPOSITORY" --arg controller "$GITHUB_WORKFLOW_SHA" \
+            --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg source "$SOURCE_SHA" --arg uatRun "$UAT_RUN_ID" \
+            --argjson uatAttempt "$UAT_RUN_ATTEMPT" --arg passportHash "$passport_hash" \
+            --arg profile "$SCHEMA_PROFILE" --argjson issued "$issued" \
+            --slurpfile result "$BOOTSTRAP_RESULT" '
+              {schemaVersion:2,artifactKind:"PRODUCTION_A5_READER_BOOTSTRAP_V2",
+               repository:$repository,environment:"production",controllerCommit:$controller,
+               workflowRunId:$run,workflowRunAttempt:$attempt,sourceCommit:$source,
+               uatRunId:$uatRun,uatRunAttempt:$uatAttempt,passportSha256:$passportHash,
+               schemaProfile:$profile,issuedAtEpoch:$issued,result:$result[0]}
+            ' > "$output/body.json"
+          content="$(jq -cjS . "$output/body.json" | sha256sum | awk '{print $1}')"
+          jq -cS --arg hash "$content" '. + {contentSha256:$hash}' \
+            "$output/body.json" > "$output/evidence.json"
+          rm "$output/body.json"
+          cosign sign-blob --yes --bundle "$output/evidence.bundle" "$output/evidence.json"
+          cosign verify-blob --bundle "$output/evidence.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/production-a5-reader-bootstrap.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$output/evidence.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-a5-reader-bootstrap-v2-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-a5-reader-bootstrap-evidence-v2
+          if-no-files-found: error
+          retention-days: 30

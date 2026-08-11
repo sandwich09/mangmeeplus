@@ -6,6 +6,7 @@ import {
   assertNoProductionA5AwsCredentials,
   readProductionA5AppliedMigrations,
 } from '../src/scripts/production-a5-evidence.pg';
+import { assertProductionA5NoDestructiveSql } from '../src/scripts/production-a5-evidence.logic';
 import { readProductionA5RepositoryMigrationFiles } from './production-a5/reviewed-manifest';
 
 type MigrationIdentity = { name: string; checksum: string; appliedOrder: number };
@@ -69,6 +70,20 @@ export function compatibleAppliedMigrationCatalog(input: {
   };
 }
 
+export function assertAutomaticPendingMigrationSafety(input: {
+  repository: readonly { name: string; fileSha256: string; sqlBytes: string }[];
+  appliedMigrationCount: number;
+}): void {
+  if (!Number.isSafeInteger(input.appliedMigrationCount)
+    || input.appliedMigrationCount < 0
+    || input.appliedMigrationCount > input.repository.length) {
+    throw new Error('release_catalog_applied_count_invalid');
+  }
+  for (const migration of input.repository.slice(input.appliedMigrationCount)) {
+    assertProductionA5NoDestructiveSql(migration.sqlBytes);
+  }
+}
+
 async function main(): Promise<void> {
   if (process.env['REQUIRE_NO_AWS_CREDENTIALS'] === 'true') {
     assertNoProductionA5AwsCredentials(process.env);
@@ -86,14 +101,22 @@ async function main(): Promise<void> {
       await tx.$executeRawUnsafe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
       await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '2000ms'");
       await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '300000ms'");
+      const repository = readProductionA5RepositoryMigrationFiles();
+      const applied = await readProductionA5AppliedMigrations(tx as unknown as PrismaClient);
       const input = {
-        repository: readProductionA5RepositoryMigrationFiles(),
-        applied: await readProductionA5AppliedMigrations(tx as unknown as PrismaClient),
+        repository,
+        applied,
         sourceCommit,
       };
-      return allowPending === 'true'
-        ? compatibleAppliedMigrationCatalog(input)
-        : exactAppliedMigrationCatalog(input);
+      if (allowPending === 'true') {
+        const compatible = compatibleAppliedMigrationCatalog(input);
+        assertAutomaticPendingMigrationSafety({
+          repository,
+          appliedMigrationCount: applied.length,
+        });
+        return compatible;
+      }
+      return exactAppliedMigrationCatalog(input);
     }, { maxWait: 10_000, timeout: 320_000 });
     const bytes = Buffer.from(`${stableJson(result)}\n`, 'utf8');
     process.stdout.write(`INCIDENT_CATALOG_RESULT 1/1 ${sha256(bytes)} ${bytes.toString('base64')}\n`);

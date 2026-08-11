@@ -12,6 +12,16 @@ test "$AWS_REGION" = ap-southeast-1
 [[ "$CLONE_RUN_ID" =~ ^[1-9][0-9]*$ && "$CLONE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
 [[ "$MIGRATION_IMAGE" =~ ^311414082667\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/watchdog-bms-migration-tool@sha256:[0-9a-f]{64}$ ]]
 [ -d "$OUTPUT_DIR" ] && [ ! -L "$OUTPUT_DIR" ] && [ -z "$(find "$OUTPUT_DIR" -mindepth 1 -print -quit)" ]
+A5_CLONE_PROFILE="${A5_CLONE_PROFILE:-reviewed-v1}"
+case "$A5_CLONE_PROFILE" in
+  reviewed-v1) clone_program=/app/apps/api/prisma/production-a5/run-clone-rehearsal.ts ;;
+  readiness-v2)
+    clone_program=/app/apps/api/prisma/production-a5/run-release-readiness-clone.ts
+    [[ "${PRODUCTION_READY_EXPECTED_PENDING_CATALOG_HASH:-}" =~ ^[0-9a-f]{64}$ ]]
+    [[ "${PRODUCTION_READY_EXPECTED_PENDING_COUNT:-}" =~ ^[1-9][0-9]*$ ]]
+    ;;
+  *) echo 'ERROR: A5_CLONE_PROFILE must be reviewed-v1 or readiness-v2' >&2; exit 2 ;;
+esac
 
 parameter_prefix=/watchdog-bms/production/a5-clone
 cluster=watchdog-bms-prod
@@ -237,7 +247,10 @@ jq -cnS --arg family "$task_family" --arg executionRole "$execution_role_arn" \
   --arg image "$MIGRATION_IMAGE" --arg secret "$managed_secret_arn" \
   --arg secretVersion "$managed_secret_version" --arg host "$clone_host" \
   --arg port "$clone_port" --arg window "$window_id" --arg region "$AWS_REGION" \
-  --arg logGroup "$log_group" '
+  --arg logGroup "$log_group" --arg program "$clone_program" --arg profile "$A5_CLONE_PROFILE" \
+  --arg source "$SOURCE_SHA" \
+  --arg pendingHash "${PRODUCTION_READY_EXPECTED_PENDING_CATALOG_HASH:-}" \
+  --arg pendingCount "${PRODUCTION_READY_EXPECTED_PENDING_COUNT:-}" '
   {family:$family,executionRoleArn:$executionRole,networkMode:"awsvpc",
    requiresCompatibilities:["FARGATE"],cpu:"2048",memory:"4096",
    runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},
@@ -245,12 +258,17 @@ jq -cnS --arg family "$task_family" --arg executionRole "$execution_role_arn" \
      name:"clone",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
      workingDirectory:"/app",command:["/app/node_modules/.bin/tsx",
        "--tsconfig","/app/apps/api/tsconfig.json",
-       "/app/apps/api/prisma/production-a5/run-clone-rehearsal.ts"],
-     environment:[{name:"PRODUCTION_A5_EXPECTED_CLONE_HOST",value:$host},
+       $program],
+     environment:([{name:"PRODUCTION_A5_EXPECTED_CLONE_HOST",value:$host},
        {name:"PGPORT",value:$port},
        {name:"PRODUCTION_A5_CLONE_WINDOW_ID",value:$window},
+       {name:"GIT_SHA",value:$source},
        {name:"HOME",value:"/tmp"},{name:"TMPDIR",value:"/tmp"},
-       {name:"XDG_CACHE_HOME",value:"/tmp/cache"}],
+       {name:"XDG_CACHE_HOME",value:"/tmp/cache"}]
+       + (if $profile=="readiness-v2" then [
+         {name:"A5_CLONE_PROFILE",value:$profile},
+         {name:"PRODUCTION_READY_EXPECTED_PENDING_CATALOG_HASH",value:$pendingHash},
+         {name:"PRODUCTION_READY_EXPECTED_PENDING_COUNT",value:$pendingCount}] else [] end)),
      secrets:[
        {name:"PGDATABASE",valueFrom:($secret+":dbname::"+$secretVersion)},
        {name:"PGHOST",valueFrom:($secret+":host::"+$secretVersion)},
@@ -267,6 +285,21 @@ registered="$OUTPUT_DIR/registered-task-definition.json"
 aws ecs register-task-definition --region "$AWS_REGION" --cli-input-json "file://$task_definition" \
   --output json | jq -cS . > "$registered"
 task_definition_arn="$(jq -er '.taskDefinition.taskDefinitionArn' "$registered")"
+jq -e --arg source "$SOURCE_SHA" --arg profile "$A5_CLONE_PROFILE" \
+  --arg program "$clone_program" --arg image "$MIGRATION_IMAGE" '
+  .taskDefinition as $t
+  | ($t.taskRoleArn//null)==null and ($t.containerDefinitions|length)==1
+  and $t.containerDefinitions[0].image==$image
+  and $t.containerDefinitions[0].command[-1]==$program
+  and ([$t.containerDefinitions[0].environment[]|select(.name=="GIT_SHA")|.value])==[$source]
+  and (if $profile=="readiness-v2" then
+    ([$t.containerDefinitions[0].environment[]|select(.name=="A5_CLONE_PROFILE")|.value])==[$profile]
+    and ([$t.containerDefinitions[0].environment[]
+      |select(.name=="PRODUCTION_READY_EXPECTED_PENDING_CATALOG_HASH")|.value]|length)==1
+    and ([$t.containerDefinitions[0].environment[]
+      |select(.name=="PRODUCTION_READY_EXPECTED_PENDING_COUNT")|.value]|length)==1
+  else true end)
+' "$registered" >/dev/null
 
 network_configuration="$(jq -cn --arg subnets "$task_subnet_csv" --arg sg "$task_security_group_id" '
   {awsvpcConfiguration:{subnets:($subnets|split(",")|sort),securityGroups:[$sg],assignPublicIp:"DISABLED"}}
@@ -307,7 +340,7 @@ aws logs get-log-events --region "$AWS_REGION" --log-group-name "$log_group" \
   --log-stream-name "production-a5/clone/$task_id" --start-from-head --output json \
   | jq -cS . > "$logs_raw"
 bash "$(dirname "$0")/reconstruct-production-a5-clone-result.sh" \
-  "$logs_raw" "$OUTPUT_DIR/clone-task-result.json"
+  "$logs_raw" "$OUTPUT_DIR/clone-task-result.json" "$A5_CLONE_PROFILE"
 
 db_subnet_ids="$(jq -r '[.DBInstances[0].DBSubnetGroup.Subnets[].SubnetIdentifier]|unique|sort|join(" ")' "$db_raw")"
 task_subnet_ids="$(jq -r '[.NetworkInterfaces[].SubnetId]|unique|sort|join(" ")' "$eni_raw")"
@@ -376,6 +409,7 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
   --arg taskSg "$task_security_group_id" --arg taskArn "$task_arn" \
   --arg definitionArn "$task_definition_arn" --arg image "$MIGRATION_IMAGE" \
   --arg source "$SOURCE_SHA" --arg executionRole "$execution_role_arn" \
+  --arg profile "$A5_CLONE_PROFILE" \
   --arg secretArn "$managed_secret_arn" --arg secretVersion "$managed_secret_version" \
   --slurpfile network "$network_evidence" \
   --argjson deleteRequested "$delete_requested_at" --argjson deleteCompleted "$delete_completed_at" '
@@ -397,6 +431,7 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
    networkBoundary:$network[0].endpointBoundary,networkEvidence:$network[0],
    cleanup:{deleteRequestedAtEpoch:$deleteRequested,deleteCompletedAtEpoch:$deleteCompleted,
      instanceAbsent:true,secretDeleted:true,taskStopped:true,residualResourceCount:0}}
+  + (if $profile=="readiness-v2" then {rehearsalProfile:$profile} else {} end)
 ' > "$clone_infrastructure"
 
 trap - EXIT

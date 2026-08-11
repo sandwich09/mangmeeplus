@@ -6,6 +6,7 @@ account_id=311414082667
 region=ap-southeast-1
 source_db_identifier=watchdog-bms-prod-db
 controller_role=watchdog-bms-production-a5-readonly
+reader_bootstrap_role=watchdog-bms-production-a5-reader-bootstrap
 reader_execution_role=watchdog-bms-production-a5-readonly-execution
 bootstrap_execution_role=watchdog-bms-production-a5-bootstrap-execution
 apply_execution_role=watchdog-bms-production-a5-apply-execution
@@ -17,18 +18,20 @@ apply_log_group=/ecs/watchdog-bms-production-a5-apply
 
 controller_trust="$repo_root/infra/security/production-a5-readonly-trust.template.json"
 controller_policy="$repo_root/infra/security/production-a5-readonly-policy.template.json"
+reader_bootstrap_policy="$repo_root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 execution_trust="$repo_root/infra/security/production-a5-readonly-execution-trust.template.json"
 reader_policy="$repo_root/infra/security/production-a5-readonly-execution-policy.template.json"
 bootstrap_policy="$repo_root/infra/security/production-a5-bootstrap-execution-policy.template.json"
 apply_policy="$repo_root/infra/security/production-a5-apply-execution-policy.template.json"
 sg_validator="$repo_root/infra/security/validate-production-a5-readonly-security-groups.sh"
 network_bootstrap="$repo_root/infra/security/bootstrap-production-a5-private-network.sh"
-jq -e . "$controller_trust" "$controller_policy" "$execution_trust" \
+jq -e . "$controller_trust" "$controller_policy" "$reader_bootstrap_policy" "$execution_trust" \
   "$reader_policy" "$bootstrap_policy" "$apply_policy" >/dev/null
 
 if [ "${1:-}" != --apply ]; then
   printf '%s\n' 'Dry run only. Re-run with --apply after reviewing the exact IAM/network templates.'
   printf '%s\n' "Controller: arn:aws:iam::$account_id:role/$controller_role (never reads a secret value)"
+  printf '%s\n' "One-time reader bootstrap: arn:aws:iam::$account_id:role/$reader_bootstrap_role (self-revoked)"
   printf '%s\n' "Reader execution: arn:aws:iam::$account_id:role/$reader_execution_role"
   printf '%s\n' "Bootstrap execution: arn:aws:iam::$account_id:role/$bootstrap_execution_role"
   printf '%s\n' "Reviewed apply execution: arn:aws:iam::$account_id:role/$apply_execution_role"
@@ -101,6 +104,7 @@ rm -f -- "$task_exact" "$db_exact"
 trap - EXIT
 
 ensure_role "$controller_role" "$controller_trust" "$controller_policy"
+ensure_role "$reader_bootstrap_role" "$controller_trust" "$reader_bootstrap_policy"
 ensure_role "$reader_execution_role" "$execution_trust" "$reader_policy"
 ensure_role "$bootstrap_execution_role" "$execution_trust" "$bootstrap_policy"
 ensure_role "$apply_execution_role" "$execution_trust" "$apply_policy"
@@ -125,6 +129,7 @@ put_parameter bootstrap-log-group-name "$bootstrap_log_group"
 put_parameter apply-log-group-name "$apply_log_group"
 
 assert_role "$controller_role" "$controller_trust" "$controller_policy"
+assert_role "$reader_bootstrap_role" "$controller_trust" "$reader_bootstrap_policy"
 assert_role "$reader_execution_role" "$execution_trust" "$reader_policy"
 assert_role "$bootstrap_execution_role" "$execution_trust" "$bootstrap_policy"
 assert_role "$apply_execution_role" "$execution_trust" "$apply_policy"

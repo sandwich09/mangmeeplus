@@ -56,11 +56,12 @@ if [ -n "${DEPLOYMENT_EVIDENCE_DIR:-}" ]; then
     echo "ERROR: GitHub run id and attempt are required for maintenance evidence" >&2
     exit 2
   }
-  [[ "$workflow_ref" == */.github/workflows/deploy-production.yml@refs/heads/main ]] || {
+  [[ "$workflow_ref" == */.github/workflows/deploy-production.yml@refs/heads/main \
+    || "$workflow_ref" == */.github/workflows/deploy-production-v2.yml@refs/heads/main ]] || {
     echo "ERROR: maintenance evidence must come from the main production controller" >&2
     exit 2
   }
-  case "$release_mode" in promotion|maintenance-bootstrap) ;; *)
+  case "$release_mode" in promotion|maintenance-bootstrap|passport-promotion) ;; *)
     echo "ERROR: maintenance evidence requires a coordinated release mode" >&2
     exit 2 ;;
   esac

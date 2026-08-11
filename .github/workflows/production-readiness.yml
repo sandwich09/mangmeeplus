@@ -1,0 +1,397 @@
+name: Production Readiness V2
+run-name: Production readiness from UAT ${{ inputs.uat_run_id || github.event.workflow_run.id }}
+
+on:
+  workflow_run:
+    workflows: [UAT Deploy]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      uat_run_id:
+        description: Exact successful resolved-all UAT run carrying Passport V2
+        required: true
+        type: string
+      requested_serving_mode:
+        description: Customer serving state bound into READY
+        required: true
+        default: maintenance_closed
+        type: choice
+        options: [maintenance_closed, live]
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-readiness-v2-${{ inputs.uat_run_id || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover a Production-eligible UAT passport
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      eligible: ${{ steps.resolve.outputs.eligible }}
+      uat_run_id: ${{ steps.resolve.outputs.uat_run_id }}
+      requested_mode: ${{ steps.resolve.outputs.requested_mode }}
+    steps:
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_RUN_ID: ${{ inputs.uat_run_id }}
+          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
+          DISPATCH_MODE: ${{ inputs.requested_serving_mode }}
+        run: |
+          set -euo pipefail
+          run_id="$EVENT_RUN_ID"
+          mode=maintenance_closed
+          [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || { run_id="$DISPATCH_RUN_ID"; mode="$DISPATCH_MODE"; }
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+          case "$mode" in maintenance_closed|live) ;; *) exit 2 ;; esac
+          run_json="$RUNNER_TEMP/uat-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$run_json"
+          attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$run_json")"
+          artifacts="$RUNNER_TEMP/artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" > "$artifacts"
+          count="$(jq --argjson attempt "$attempt" '[.artifacts[]|select(.expired==false and
+            (.name|test("^uat-release-passport-v2-[0-9a-f]{40}-attempt-"+($attempt|tostring)+"$")))]|length' "$artifacts")"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then test "$count" = 1; fi
+          eligible=false
+          [ "$count" = 1 ] && eligible=true
+          printf '%s\n' "eligible=$eligible" "uat_run_id=$run_id" "requested_mode=$mode" >> "$GITHUB_OUTPUT"
+
+  readiness:
+    name: Prove Production readiness without application mutation
+    needs: discover
+    if: needs.discover.outputs.eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    env:
+      AWS_ACCOUNT_ID: '311414082667'
+      AWS_REGION: ap-southeast-1
+      ECR_REGISTRY: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com
+      UAT_RUN_ID: ${{ needs.discover.outputs.uat_run_id }}
+      REQUESTED_MODE: ${{ needs.discover.outputs.requested_mode }}
+      SECURITY_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly
+      A5_READER_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly
+      A5_CLONE_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone
+      LEGAL_READER_ROLE_ARN: ${{ vars.LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN }}
+      REDIS_REPLICATION_GROUP_ID: ${{ vars.REDIS_REPLICATION_GROUP_ID }}
+      LEGAL_RELEASE_EVIDENCE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_SHA256 }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_URI }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_S3_VERSION_ID }}
+      LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_BUNDLE_SHA256 }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Bind protected controller and download exact Passport V2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_POLICY_READ_TOKEN: ${{ secrets.PRODUCTION_POLICY_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$GITHUB_WORKFLOW_SHA"
+          git fetch --no-tags origin main --force
+          test "$GITHUB_WORKFLOW_SHA" = "$(git rev-parse origin/main)"
+          [[ "$UAT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          root="$RUNNER_TEMP/production-readiness-v2"
+          evidence="$root/evidence"
+          mkdir -p "$root" "$evidence"
+          run_json="$root/uat-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID" > "$run_json"
+          jq -e --arg run "$UAT_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
+            (.id|tostring)==$run and .status=="completed" and .conclusion=="success"
+            and .event=="workflow_dispatch" and .path==".github/workflows/deploy-uat.yml"
+            and .head_branch=="main" and .repository.full_name==$repository
+          ' "$run_json" >/dev/null
+          attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$run_json")"
+          uat_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$run_json")"
+          all="$root/artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts?per_page=100" > "$all"
+          name="$(jq -er --argjson attempt "$attempt" '
+            [.artifacts[]|select(.expired==false)|.name
+              |select(test("^uat-release-passport-v2-[0-9a-f]{40}-attempt-"+($attempt|tostring)+"$"))]
+            |select(length==1)|.[0]' "$all")"
+          source_sha="${name#uat-release-passport-v2-}"; source_sha="${source_sha%-attempt-*}"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${source_sha}^{commit}"
+          git merge-base --is-ancestor "$source_sha" origin/main
+          metadata="$root/passport-artifact.json"; archive="$root/passport.zip"
+          gh api -X GET "repos/$GITHUB_REPOSITORY/actions/runs/$UAT_RUN_ID/artifacts" \
+            -f name="$name" -f per_page=100 > "$metadata"
+          artifact_id="$(jq -er 'select(.total_count==1 and (.artifacts|length)==1)
+            |.artifacts[0]|select(.expired==false)|.id' "$metadata")"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          source infra/security/validate-production-security-preflight.sh
+          security_preflight_validate_artifact_metadata "$metadata" "$archive" "$name" \
+            "$UAT_RUN_ID" "$uat_controller" >/dev/null
+          passport_root="$(security_preflight_extract_artifact passport-v2 "$archive")"
+          cosign verify-blob --bundle "$passport_root/passport.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$uat_controller" \
+            --certificate-github-workflow-trigger workflow_dispatch "$passport_root/passport.json"
+          bash infra/security/validate-uat-release-passport-v2.sh "$passport_root/passport.json" \
+            "$passport_root" "$source_sha" "$UAT_RUN_ID" "$attempt" "$uat_controller" \
+            "$GITHUB_REPOSITORY" "$AWS_ACCOUNT_ID" "$AWS_REGION" "$(date -u +%s)"
+          cp "$passport_root/passport.json" "$evidence/passport.json"
+          cp "$passport_root/migration-catalog.json" "$evidence/migration-catalog.json"
+          printf '%s\n' "READINESS_ROOT=$root" "EVIDENCE_DIR=$evidence" \
+            "PASSPORT_ROOT=$passport_root" "SOURCE_SHA=$source_sha" "UAT_ATTEMPT=$attempt" \
+            "UAT_CONTROLLER=$uat_controller" >> "$GITHUB_ENV"
+
+          test -n "$GH_POLICY_READ_TOKEN"
+          status="$(curl --silent --show-error --location --output "$root/main-protection.json" \
+            --write-out '%{http_code}' --header "Authorization: Bearer $GH_POLICY_READ_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/branches/main/protection")"
+          test "$status" = 200
+          jq -e '.required_status_checks.strict==true
+            and .required_pull_request_reviews.required_approving_review_count>=1
+            and .allow_force_pushes.enabled==false and .allow_deletions.enabled==false' \
+            "$root/main-protection.json" >/dev/null
+      - name: Reject a live READY until the independent legal bundle is complete
+        if: needs.discover.outputs.requested_mode == 'live'
+        run: bash infra/security/provision-legal-release-evidence.sh preflight
+      - name: Verify the closed-mode maintenance controller
+        if: needs.discover.outputs.requested_mode == 'maintenance_closed'
+        run: bash infra/security/validate-production-maintenance-release.sh "$GITHUB_WORKSPACE" full
+      - name: Configure narrow legal evidence reader for live mode
+        if: needs.discover.outputs.requested_mode == 'live'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.LEGAL_READER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-session-name: production-readiness-legal-${{ github.run_id }}
+      - name: Provision and fully validate legal evidence for live mode
+        if: needs.discover.outputs.requested_mode == 'live'
+        run: |
+          set -euo pipefail
+          legal_dir="$(bash infra/security/provision-legal-release-evidence.sh provision)"
+          LEGAL_RELEASE_EVIDENCE_DIR="$legal_dir" bash infra/security/validate-legal-release-readiness.sh
+      - name: Configure read-only Production security credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.SECURITY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-session-name: production-readiness-security-${{ github.run_id }}
+      - name: Verify immutable images and Production runtime baseline
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          while IFS=$'\t' read -r kind repository image digest; do
+            case "$kind" in runtime|tool) ;; *) exit 2 ;; esac
+            aws ecr describe-images --region "$AWS_REGION" --repository-name "$repository" \
+              --image-ids "imageDigest=$digest" --output json \
+              | jq -e --arg repository "$repository" --arg digest "$digest" '
+                (.imageDetails|length)==1 and .imageDetails[0].repositoryName==$repository
+                and .imageDetails[0].imageDigest==$digest' >/dev/null
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image" >/dev/null
+          done < <(jq -r '(.release.images[]|["runtime",.repository,.image,.digest]|@tsv),
+            (.tools[]|["tool",.repository,.image,.digest]|@tsv)' "$PASSPORT_ROOT/passport.json")
+          bash infra/security/collect-production-runtime-readiness-v2.sh \
+            "$REDIS_REPLICATION_GROUP_ID" "$EVIDENCE_DIR/production-runtime.json"
+      - name: Configure dedicated A5 read-only controller
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.A5_READER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-session-name: production-readiness-reader-${{ github.run_id }}
+      - name: Prove current services and classify Production migration ledger
+        run: |
+          set -euo pipefail
+          role=watchdog-bms-production-a5-readonly
+          role_json="$READINESS_ROOT/a5-role.json"; policy_json="$READINESS_ROOT/a5-policy.json"
+          aws iam get-role --role-name "$role" --output json | jq -cS . > "$role_json"
+          aws iam get-role-policy --role-name "$role" --policy-name "$role" --output json | jq -cS . > "$policy_json"
+          jq -e --slurpfile expected infra/security/production-a5-readonly-trust.template.json \
+            '.Role.AssumeRolePolicyDocument==$expected[0]' "$role_json" >/dev/null
+          jq -e --arg role "$role" --slurpfile expected infra/security/production-a5-readonly-policy.template.json \
+            '.PolicyName==$role and .PolicyDocument==$expected[0]' "$policy_json" >/dev/null
+          test "$(aws iam list-role-policies --role-name "$role" --output json|jq -cS '.PolicyNames|sort')" \
+            = "$(jq -cnS --arg role "$role" '[$role]')"
+          test "$(aws iam list-attached-role-policies --role-name "$role" --output json|jq -cS '.AttachedPolicies')" = '[]'
+          a5_hash="$(jq -cnS --slurpfile role "$role_json" --slurpfile policy "$policy_json" \
+            '{trust:$role[0].Role.AssumeRolePolicyDocument,policy:$policy[0].PolicyDocument}' \
+            | sha256sum | awk '{print $1}')"
+          jq -cS --arg hash "$a5_hash" '.a5PolicySha256=$hash' \
+            "$EVIDENCE_DIR/production-runtime.json" > "$READINESS_ROOT/runtime.json"
+          mv "$READINESS_ROOT/runtime.json" "$EVIDENCE_DIR/production-runtime.json"
+
+          health_root="$READINESS_ROOT/health"; mkdir "$health_root"
+          A5_HEALTH_STABILITY_SECONDS=2 bash infra/security/collect-production-a5-current-health.sh "$health_root"
+          cp "$health_root/current-health.json" "$EVIDENCE_DIR/production-health.json"
+          migration_image="$(jq -er '.tools[]|select(.purpose=="migration-tool")|.image' "$PASSPORT_ROOT/passport.json")"
+          catalog_root="$READINESS_ROOT/catalog"; mkdir "$catalog_root"
+          started="$(date -u +%s)"
+          AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" AWS_REGION="$AWS_REGION" SOURCE_SHA="$SOURCE_SHA" \
+            READINESS_RUN_ID="$GITHUB_RUN_ID" READINESS_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            MIGRATION_IMAGE="$migration_image" PASSPORT_MIGRATION_CATALOG="$PASSPORT_ROOT/migration-catalog.json" \
+            OUTPUT_DIR="$catalog_root" bash infra/security/run-production-migration-catalog-readiness.sh
+          elapsed=$(( $(date -u +%s) - started ))
+          cp "$catalog_root/catalog-result.json" "$EVIDENCE_DIR/catalog-result.json"
+          cp "$catalog_root/catalog-runtime.json" "$EVIDENCE_DIR/catalog-runtime.json"
+          status="$(jq -er '.status' "$EVIDENCE_DIR/catalog-result.json")"
+          pending="$(jq -er '.pendingMigrationCount' "$EVIDENCE_DIR/catalog-result.json")"
+          if [ "$status" = EXACT_MATCH ]; then [ "$elapsed" -le 300 ]; fi
+          effective_target=all
+          if [ "$REQUESTED_MODE" = live ] && [ "$status" = EXACT_MATCH ]; then
+            mapfile -t active_sources < <(jq -r '[.services[]
+              |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
+              |[.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value][0]]|unique|.[]' \
+              "$EVIDENCE_DIR/production-health.json")
+            modes="$(jq -r '[.services[]
+              |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
+              |[.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value][0]]
+              |unique|join(",")' "$EVIDENCE_DIR/production-health.json")"
+            if [ "${#active_sources[@]}" -eq 1 ] && [ "$modes" = live ]; then
+              api_sha="$(jq -er '.services[]|select(.service=="api-web")
+                |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
+                |[.primaryContainer.environment[]|select(.name=="GIT_SHA")|.value][0]' \
+                "$EVIDENCE_DIR/production-health.json")"
+              ai_sha="$(jq -er '.services[]|select(.service=="ai-gateway")
+                |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
+                |[.primaryContainer.environment[]|select(.name=="GIT_SHA")|.value][0]' \
+                "$EVIDENCE_DIR/production-health.json")"
+              workers_sha="$(jq -er '.services[]|select(.service=="workers")
+                |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
+                |[.primaryContainer.environment[]|select(.name=="GIT_SHA")|.value][0]' \
+                "$EVIDENCE_DIR/production-health.json")"
+              effective_target="$(bash infra/uat/select-deploy-target.sh "$SOURCE_SHA" \
+                "$api_sha" "$ai_sha" "$workers_sha")"
+            fi
+          fi
+          printf '%s\n' "MIGRATION_STATUS=$status" "PENDING_MIGRATION_COUNT=$pending" \
+            "MIGRATION_IMAGE=$migration_image" "EFFECTIVE_TARGET=$effective_target" >> "$GITHUB_ENV"
+      - name: Configure isolated clone controller only for pending migrations
+        if: env.MIGRATION_STATUS == 'APPEND_ONLY_PENDING'
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.A5_CLONE_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: production-readiness-clone-${{ github.run_id }}
+      - name: Rehearse exact pending migration suffix and prove cleanup
+        if: env.MIGRATION_STATUS == 'APPEND_ONLY_PENDING'
+        run: |
+          set -euo pipefail
+          role=watchdog-bms-production-a5-clone
+          role_json="$READINESS_ROOT/clone-role.json"; policy_json="$READINESS_ROOT/clone-policy.json"
+          aws iam get-role --role-name "$role" --output json | jq -cS . > "$role_json"
+          aws iam get-role-policy --role-name "$role" --policy-name "$role" --output json | jq -cS . > "$policy_json"
+          jq -e --slurpfile expected infra/security/production-a5-clone-trust.template.json \
+            '.Role.AssumeRolePolicyDocument==$expected[0]' "$role_json" >/dev/null
+          jq -e --arg role "$role" --slurpfile expected infra/security/production-a5-clone-policy.template.json \
+            '.PolicyName==$role and .PolicyDocument==$expected[0]' "$policy_json" >/dev/null
+          test "$(aws iam list-role-policies --role-name "$role" --output json|jq -cS '.PolicyNames|sort')" \
+            = "$(jq -cnS --arg role "$role" '[$role]')"
+          test "$(aws iam list-attached-role-policies --role-name "$role" --output json|jq -cS '.AttachedPolicies')" = '[]'
+          clone_hash="$(jq -cnS --slurpfile role "$role_json" --slurpfile policy "$policy_json" \
+            '{trust:$role[0].Role.AssumeRolePolicyDocument,policy:$policy[0].PolicyDocument}' \
+            | sha256sum | awk '{print $1}')"
+          jq -cS --arg hash "$clone_hash" '.clonePolicySha256=$hash' \
+            "$EVIDENCE_DIR/production-runtime.json" > "$READINESS_ROOT/runtime.json"
+          mv "$READINESS_ROOT/runtime.json" "$EVIDENCE_DIR/production-runtime.json"
+          clone="$READINESS_ROOT/clone"; mkdir "$clone"
+          pending_hash="$(jq -er '.pendingCatalogHash' "$EVIDENCE_DIR/catalog-result.json")"
+          AWS_ACCOUNT_ID="$AWS_ACCOUNT_ID" AWS_REGION="$AWS_REGION" SOURCE_SHA="$SOURCE_SHA" \
+            PARENT_RUN_ID="$GITHUB_RUN_ID" PARENT_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            CLONE_RUN_ID="$GITHUB_RUN_ID" CLONE_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            MIGRATION_IMAGE="$MIGRATION_IMAGE" A5_CLONE_PROFILE=readiness-v2 \
+            PRODUCTION_READY_EXPECTED_PENDING_CATALOG_HASH="$pending_hash" \
+            PRODUCTION_READY_EXPECTED_PENDING_COUNT="$PENDING_MIGRATION_COUNT" OUTPUT_DIR="$clone" \
+            bash infra/security/run-production-a5-clone.sh
+          cp "$clone/clone-task-result.json" "$EVIDENCE_DIR/clone-result.json"
+          cp "$clone/clone-infrastructure.json" "$EVIDENCE_DIR/clone-infrastructure.json"
+      - name: Build, validate and sign Production READY V2
+        run: |
+          set -euo pipefail
+          services="$READINESS_ROOT/services.json"
+          jq -cS '[.services[] | . as $s
+            | .rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0] as $a
+            | ([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value]) as $source
+            | ([$a.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value]) as $mode
+            | select(($source|length)==1 and ($mode|length)==1)
+            | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
+               servingMode:$mode[0],serviceRevisionArn:$s.serviceRevisionArn,
+               taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service)' \
+            "$EVIDENCE_DIR/production-health.json" > "$services"
+          test "$(jq 'length' "$services")" = 3
+          issued="$(date -u +%s)"; passport_expires="$(jq -er '.expiresAtEpoch' "$PASSPORT_ROOT/passport.json")"
+          expires=$((issued+86400)); [ "$expires" -le "$passport_expires" ] || expires="$passport_expires"
+          [ "$expires" -gt "$issued" ]
+          clone_json=null
+          if [ "$MIGRATION_STATUS" = APPEND_ONLY_PENDING ]; then
+            clone_json="$(jq -cnS \
+              --arg resultHash "$(sha256sum "$EVIDENCE_DIR/clone-result.json"|awk '{print $1}')" \
+              --arg infraHash "$(sha256sum "$EVIDENCE_DIR/clone-infrastructure.json"|awk '{print $1}')" '
+              {resultPath:"clone-result.json",resultSha256:$resultHash,
+               infrastructurePath:"clone-infrastructure.json",infrastructureSha256:$infraHash}')"
+          fi
+          jq -cnS --arg repository "$GITHUB_REPOSITORY" --arg controller "$GITHUB_WORKFLOW_SHA" \
+            --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg source "$SOURCE_SHA" --arg uat "$UAT_RUN_ID" --argjson uatAttempt "$UAT_ATTEMPT" \
+            --arg passportHash "$(sha256sum "$PASSPORT_ROOT/passport.json"|awk '{print $1}')" \
+            --argjson passportExpires "$passport_expires" --arg mode "$REQUESTED_MODE" \
+            --arg target "$EFFECTIVE_TARGET" \
+            --arg healthHash "$(sha256sum "$EVIDENCE_DIR/production-health.json"|awk '{print $1}')" \
+            --arg runtimeHash "$(sha256sum "$EVIDENCE_DIR/production-runtime.json"|awk '{print $1}')" \
+            --arg catalogHash "$(sha256sum "$EVIDENCE_DIR/catalog-result.json"|awk '{print $1}')" \
+            --arg catalogRuntimeHash "$(sha256sum "$EVIDENCE_DIR/catalog-runtime.json"|awk '{print $1}')" \
+            --arg migrationStatus "$MIGRATION_STATUS" --argjson pending "$PENDING_MIGRATION_COUNT" \
+            --argjson clone "$clone_json" --argjson services "$(<"$services")" \
+            --argjson issued "$issued" --argjson expires "$expires" '
+            {schemaVersion:2,artifactKind:"PRODUCTION_RELEASE_READY_V2",environment:"production",
+             repository:$repository,workflow:{path:".github/workflows/production-readiness.yml",runId:$run,
+               runAttempt:$attempt,controllerRef:"refs/heads/main",controllerCommit:$controller},
+             sourceCommit:$source,passportRef:{runId:$uat,runAttempt:$uatAttempt,
+               contentSha256:$passportHash,expiresAtEpoch:$passportExpires},
+             serving:{requestedMode:$mode,effectiveTarget:$target},
+             aws:{accountId:"311414082667",region:"ap-southeast-1"},
+             issuedAtEpoch:$issued,expiresAtEpoch:$expires,
+             productionBaseline:{path:"production-health.json",sha256:$healthHash,services:$services},
+             runtimeBaseline:{path:"production-runtime.json",sha256:$runtimeHash},
+             migration:{classificationPath:"catalog-result.json",classificationSha256:$catalogHash,
+               runtimePath:"catalog-runtime.json",runtimeSha256:$catalogRuntimeHash,
+               status:$migrationStatus,pendingMigrationCount:$pending,clone:$clone},
+             checks:{a5Reader:"PASS",artifactIntegrity:"PASS",awsPolicies:"PASS",
+               imageSignatures:"PASS",legalMode:"PASS",productionRuntime:"PASS",serviceStability:"PASS"}}
+          ' > "$READINESS_ROOT/ready-body.json"
+          content="$(jq -cjS . "$READINESS_ROOT/ready-body.json"|sha256sum|awk '{print $1}')"
+          jq -cS --arg hash "$content" '.+{contentSha256:$hash}' \
+            "$READINESS_ROOT/ready-body.json" > "$EVIDENCE_DIR/ready.json"
+          bash infra/security/validate-production-release-ready-v2.sh "$EVIDENCE_DIR/ready.json" \
+            "$EVIDENCE_DIR" "$PASSPORT_ROOT/passport.json" "$SOURCE_SHA" "$UAT_RUN_ID" \
+            "$UAT_ATTEMPT" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_WORKFLOW_SHA" \
+            "$GITHUB_REPOSITORY" "$(date -u +%s)"
+          cosign sign-blob --yes --bundle "$EVIDENCE_DIR/ready.bundle" "$EVIDENCE_DIR/ready.json"
+          cosign verify-blob --bundle "$EVIDENCE_DIR/ready.bundle" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/production-readiness.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+            --certificate-github-workflow-ref refs/heads/main \
+            --certificate-github-workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --certificate-github-workflow-trigger "$GITHUB_EVENT_NAME" "$EVIDENCE_DIR/ready.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-release-ready-v2-${{ env.SOURCE_SHA }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 7

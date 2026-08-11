@@ -94,8 +94,10 @@ test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 7
 grep -Fq '.head_sha == $sha' "$ci"
 grep -Fq '.path == ".github/workflows/ci.yml"' "$ci"
 grep -Fq 'validationRunId:$validationRunId' "$ci"
-test "$(grep -Fc 'cache-from: type=gha' "$ci")" -eq 2
-test "$(grep -Fc 'cache-to: type=gha,mode=max' "$ci")" -eq 2
+test "$(grep -Fc 'cache-from: type=gha' "$ci")" -ge 2
+grep -Fq 'cache-from: type=gha,scope=release-tool-${{ matrix.purpose }}' "$ci"
+test "$(grep -Fc 'cache-to: type=gha,mode=max' "$ci")" -ge 2
+grep -Fq 'cache-to: type=gha,mode=max,scope=release-tool-${{ matrix.purpose }},ignore-error=true' "$ci"
 for repository in watchdog-bms-api watchdog-bms-ai-gateway watchdog-bms-workers; do
   grep -Fq "repository: $repository" "$ci"
 done
@@ -109,6 +111,9 @@ grep -Fq 'provenance: mode=max' "$ci"
 grep -Fq 'cosign sign --yes "$IMAGE_REF"' "$ci"
 grep -Fq 'cosign verify' "$ci"
 grep -Fq 'production-image-manifest.json' "$ci"
+grep -Fq 'test -f /app/apps/api/prisma/verify-production-ready-migration.ts' "$ci"
+grep -Fq 'test -f /app/apps/api/prisma/verify-applied-migration-catalog.ts' "$ci"
+grep -Fq 'test -f /app/apps/api/prisma/run-exclusive-release-operation.ts' "$ci"
 
 ecr_scan="$repo_root/infra/docker/verify-ecr-scan.sh"
 grep -Fq 'start-image-scan' "$ecr_scan"
@@ -291,7 +296,9 @@ grep -Fq 'an all-target UAT acceptance must use the exact deploy controller stor
 test "$(grep -Fc 'git merge-base --is-ancestor "$SOURCE_SHA" origin/develop' "$uat_workflow")" -eq 1
 grep -Fq 'git merge-base --is-ancestor "$source_sha" origin/develop' "$uat_workflow"
 grep -Fq 'ref: ${{ needs.resolve-release.outputs.source_sha }}' "$uat_workflow"
-grep -Fq 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"' "$uat_workflow"
+grep -Fq 'ref: ${{ github.workflow_sha }}' "$uat_workflow"
+grep -Fq 'test "$(git rev-parse HEAD)" = "$GITHUB_WORKFLOW_SHA"' "$uat_workflow"
+grep -Fq 'test "$(git -C candidate rev-parse HEAD)" = "$SOURCE_SHA"' "$uat_workflow"
 grep -Fq 'run_m01_acceptance:' "$uat_workflow"
 grep -Fq 'M-01 acceptance requires a resolved all-target release' "$uat_workflow"
 grep -Fq "if: success() && inputs.run_m01_acceptance && steps.target.outputs.target == 'all'" "$uat_workflow"
@@ -608,8 +615,12 @@ manifest_job="$(awk '/^  publish-production-manifest:/{found=1; next} found && /
 grep -Fq 'always() &&' <<< "$manifest_job"
 grep -Fq "needs.resolve-source.result == 'success'" <<< "$manifest_job"
 grep -Fq "needs.publish-production-images.result == 'success'" <<< "$manifest_job"
-grep -Fq 'cache-from: type=gha,scope=release-task-api' "$uat_workflow"
-grep -Fq 'cache-to: type=gha,mode=max,scope=release-task-api,ignore-error=true' "$uat_workflow"
+grep -Fq 'cache-from: type=gha,scope=release-tool-${{ matrix.purpose }}' "$ci"
+grep -Fq 'cache-to: type=gha,mode=max,scope=release-tool-${{ matrix.purpose }},ignore-error=true' "$ci"
+if grep -Fq 'Build and push exact-commit UAT release task' "$uat_workflow"; then
+  echo 'ERROR: UAT deploy rebuilt the release task after CI publication' >&2
+  exit 1
+fi
 if grep -Fq 'validated_ci_run_id:' "$deploy_workflow"; then
   echo "ERROR: production deploy must retain the full validation gate" >&2
   exit 1
@@ -1976,6 +1987,7 @@ bash -n "$repo_root/infra/prod-ecs-express/deploy.sh"
 bash -n "$repo_root/infra/prod-ecs-express/run-release-task.sh"
 bash "$repo_root/infra/prod-ecs-express/register-task-definition-with-retry.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-task-network-failover.spec.sh"
+bash "$repo_root/infra/prod-ecs-express/production-ready-release-task.spec.sh"
 bash -n "$repo_root/infra/prod-ecs-express/active-release-tasks.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-create.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-deployment.sh"
@@ -2083,5 +2095,16 @@ bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"
 bash "$repo_root/infra/uat/fast-selective-workflow.spec.sh"
 bash "$repo_root/infra/uat/verify-deploy-readiness.spec.sh"
 bash "$repo_root/infra/docker/production-fast-promotion.spec.sh"
+bash "$repo_root/infra/security/uat-release-passport-v2.spec.sh"
+bash "$repo_root/infra/security/production-a5-readonly-bootstrap.spec.sh"
+bash "$repo_root/infra/security/production-migration-catalog-readiness.spec.sh"
+bash "$repo_root/infra/security/production-runtime-readiness-v2.spec.sh"
+bash "$repo_root/infra/security/production-release-ready-v2.spec.sh"
+bash "$repo_root/infra/security/production-ready-baseline-v2.spec.sh"
+bash "$repo_root/infra/security/production-a5-clone-runner.spec.sh"
+bash "$repo_root/infra/security/production-readiness-workflow-v2.spec.sh"
+bash "$repo_root/infra/security/production-deploy-workflow-v2.spec.sh"
+bash "$repo_root/infra/security/production-release-result-v2.spec.sh"
+bash "$repo_root/infra/security/production-security-preflight.spec.sh"
 
 echo "production image security scanner: pass"

@@ -60,7 +60,7 @@ jq -e '
     and ([.Statement[] | select(.Sid == "DenyOutsideCloneTaskBootstrap")][0].Effect == "Deny")
 ' "$execution_policy" >/dev/null
 
-if rg -n 'ecsTaskExecutionRole|watchdog-bms/production/\*|watchdog-bms-prod-db' \
+if grep -En 'ecsTaskExecutionRole|watchdog-bms/production/\*|watchdog-bms-prod-db' \
   "$execution_policy" >/dev/null; then
   echo 'ERROR: clone execution policy can reach a shared execution role or production secret/database' >&2
   exit 1
@@ -120,7 +120,7 @@ jq '.SecurityGroups[0].IpPermissionsEgress=[{IpProtocol:"-1",IpRanges:[{CidrIp:"
 expect_sg_reject "$fixture/task.json" "$fixture/db-egress.json"
 expect_sg_reject "$fixture/task-ipv6.json" "$fixture/db.json" preflight
 
-if rg -n 'authorize-security-group-egress.*0\.0\.0\.0/0|--cidr 0\.0\.0\.0/0' "$bootstrap"; then
+if grep -En 'authorize-security-group-egress.*0\.0\.0\.0/0|--cidr 0\.0\.0\.0/0' "$bootstrap"; then
   echo 'ERROR: clone bootstrap still permits public task egress' >&2
   exit 1
 fi

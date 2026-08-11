@@ -7,7 +7,9 @@ workflow="$repo_root/.github/workflows/production-a5-clone.yml"
 ruby - "$workflow" <<'RUBY'
 require 'yaml'
 path = ARGV.fetch(0)
-doc = YAML.safe_load(File.read(path), aliases: true)
+source = File.read(path)
+raise 'candidate source controls production security authority' if source.include?('candidate/infra/security/')
+doc = YAML.safe_load(source, aliases: true)
 dispatch = doc.fetch(true).fetch('workflow_dispatch')
 expected_inputs = %w[parent_production_run_id parent_production_run_attempt uat_acceptance_run_id]
 raise 'unexpected clone inputs' unless dispatch.fetch('inputs').keys.sort == expected_inputs.sort
@@ -31,6 +33,16 @@ raise 'migration-tool validator is not controller-owned' unless verify_run.inclu
 )
 raise 'candidate source controls its own image validator' if verify_run.include?(
   'candidate/infra/security/verify-production-a5-migration-tool.sh'
+)
+workflow_run = job.fetch('steps').map { |step| step['run'] }.compact.join("\n")
+raise 'registry evidence validator is not controller-owned' unless workflow_run.include?(
+  'bash infra/security/collect-production-a5-migration-tool-registry-evidence.sh'
+)
+raise 'candidate source controls its own registry evidence validator' if workflow_run.include?(
+  'candidate/infra/security/collect-production-a5-migration-tool-registry-evidence.sh'
+)
+raise 'clone runner is not controller-owned' unless workflow_run.include?(
+  'bash infra/security/run-production-a5-clone.sh'
 )
 tsx_index = verify_run.index('--tsconfig /app/apps/api/tsconfig.json')
 hash_script_index = verify_run.index('/app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts')
@@ -56,6 +68,12 @@ RUBY
 for required in \
   'watchdog-bms-production-a5-clone' \
   'watchdog-bms-production-a5-clone-execution' \
+  'infra/security/production-a5-clone-bootstrap.spec.sh' \
+  'infra/security/production-a5-clone-runner.spec.sh' \
+  'infra/security/production-a5-clone-trust.template.json' \
+  'infra/security/production-a5-clone-policy.template.json' \
+  'infra/security/production-a5-clone-execution-trust.template.json' \
+  'infra/security/production-a5-clone-execution-policy.template.json' \
   'validate-uat-deployment-acceptance.sh' \
   'pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma' \
   'aws ssm get-parameter --name "$name" --output json' \

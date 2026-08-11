@@ -73,19 +73,19 @@ jq '.taskDefinition.containerDefinitions[0].command=[
 expect_reject missing-tsconfig
 
 bash -n "$runner" "$validator"
-rg -q 'assignPublicIp:"DISABLED"' "$runner"
-rg -q '"--tsconfig","/app/apps/api/tsconfig.json"' "$runner"
+grep -Eq 'assignPublicIp:"DISABLED"' "$runner"
+grep -Eq '"--tsconfig","/app/apps/api/tsconfig.json"' "$runner"
 if [ "$(grep -c "'--tsconfig', '/app/apps/api/tsconfig.json'" \
     "$repo_root/apps/api/prisma/production-a5/run-readonly-evidence-task.ts")" -ne 2 ]; then
   echo 'ERROR: read-only child TSX commands are not bound to the API tsconfig' >&2
   exit 1
 fi
-rg -q 'Association//null.==null' "$runner" || rg -q 'Association//null)==null' "$runner"
-if rg -n 'assignPublicIp:"ENABLED"|ecsTaskExecutionRole|taskRoleArn[[:space:]]*:[[:space:]]*"' "$runner"; then
+grep -Eq 'Association//null.==null' "$runner" || grep -Eq 'Association//null)==null' "$runner"
+if grep -En 'assignPublicIp:"ENABLED"|ecsTaskExecutionRole|taskRoleArn[[:space:]]*:[[:space:]]*"' "$runner"; then
   echo 'ERROR: public/shared/task role path is present' >&2
   exit 1
 fi
-if rg -n 'get-secret-value|DATABASE_URL:' "$runner"; then
+if grep -En 'get-secret-value|DATABASE_URL:' "$runner"; then
   echo 'ERROR: controller reads or exports a database URL' >&2
   exit 1
 fi

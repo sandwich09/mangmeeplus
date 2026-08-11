@@ -81,7 +81,7 @@ jq '.RouteTables[0].Routes[0]={DestinationCidrBlock:"0.0.0.0/0",
   GatewayId:"igw-01111111111111111",State:"active"}' "$work/routes.json" > "$work/public-route.json"
 expect_reject public-route "$work/endpoints.json" "$work/public-route.json" "$work/endpoint-sg.json"
 
-if rg -n 'authorize-security-group-egress.*(--cidr|CidrIp).*0\.0\.0\.0/0' "$bootstrap"; then
+if grep -En 'authorize-security-group-egress.*(--cidr|CidrIp).*0\.0\.0\.0/0' "$bootstrap"; then
   echo 'ERROR: shared bootstrap authorizes public task egress' >&2
   exit 1
 fi

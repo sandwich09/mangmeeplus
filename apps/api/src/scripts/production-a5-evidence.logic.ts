@@ -587,6 +587,30 @@ function dynamicExecutePayloads(sql: string): string[] {
   return payloads;
 }
 
+/**
+ * Shared fail-closed boundary for migration paths that do not carry the legacy per-migration
+ * reviewed manifest. A destructive migration must use the separately reviewed A5 path instead of
+ * the automatic UAT -> Production promotion path.
+ */
+export function assertProductionA5NoDestructiveSql(sqlBytes: string): void {
+  const sql = normalizedSql(sqlBytes);
+  const executableScan = withoutRaiseMessageLiterals(sql);
+  const dynamicPayloads = dynamicExecutePayloads(sql);
+  const withoutTempDrops = executableScan.replace(
+    /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?PG_TEMP\.[A-Z0-9_".]+/g,
+    ' ',
+  );
+  const destructiveScan = withoutTempDrops.replace(
+    /\bCREATE\s+TRIGGER\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+BEFORE\s+TRUNCATE\s+ON\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+FOR\s+EACH\s+STATEMENT\s+EXECUTE\s+FUNCTION\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s*\(\s*\)/g,
+    'CREATE TRIGGER',
+  );
+  const destructivePattern = /\b(?:DROP\s+(?:TABLE|COLUMN|TYPE|SCHEMA|DATABASE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE)|TRUNCATE|DELETE\s+FROM)\b/;
+  if (destructivePattern.test(destructiveScan)
+    || dynamicPayloads.some((payload) => destructivePattern.test(normalizedSql(payload)))) {
+    throw new Error('production_a5_destructive_data_loss_operation');
+  }
+}
+
 function assertReviewedSqlOperation(
   operation: ProductionA5ReviewedMigrationOperation,
   sqlBytes: string,
@@ -601,19 +625,7 @@ function assertReviewedSqlOperation(
     || dynamicPayloads.some((payload) => mutationPattern.test(payload));
   const nonAdditive = /\b(?:DROP\s+(?:CONSTRAINT|INDEX|DEFAULT|NOT\s+NULL)|RENAME\s+(?:TO|CONSTRAINT)|CREATE\s+OR\s+REPLACE|ALTER\s+COLUMN\s+[^;]+\s+TYPE)\b/.test(executableScan);
   const blocking = /\b(?:SET\s+NOT\s+NULL|ADD\s+CONSTRAINT|CREATE\s+UNIQUE\s+INDEX|ALTER\s+TYPE\s+[^;]+\s+ADD\s+VALUE)\b/.test(executableScan);
-  const withoutTempDrops = executableScan.replace(/DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?PG_TEMP\.[A-Z0-9_".]+/g, ' ');
-  // Protective append-only DDL names TRUNCATE as a trigger event; it does not execute a
-  // truncation. Remove only the complete BEFORE TRUNCATE trigger declaration, and remove
-  // non-executable RAISE messages, while leaving every executable statement/function body intact.
-  const destructiveScan = withoutTempDrops
-    .replace(
-      /\bCREATE\s+TRIGGER\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+BEFORE\s+TRUNCATE\s+ON\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s+FOR\s+EACH\s+STATEMENT\s+EXECUTE\s+FUNCTION\s+(?:"[^"]+"|[A-Z_][A-Z0-9_$]*)\s*\(\s*\)/g,
-      'CREATE TRIGGER',
-    );
-  if (/\b(?:DROP\s+(?:TABLE|COLUMN|TYPE|SCHEMA|DATABASE|VIEW|MATERIALIZED\s+VIEW|SEQUENCE)|TRUNCATE|DELETE\s+FROM)\b/
-    .test(destructiveScan)) {
-    throw new Error('production_a5_destructive_data_loss_operation');
-  }
+  assertProductionA5NoDestructiveSql(sqlBytes);
   if (dataMutation && operation.operationClass !== 'DATA_BACKFILL') {
     throw new Error(`production_a5_data_mutation_class_mismatch:${operation.migrationName}`);
   }

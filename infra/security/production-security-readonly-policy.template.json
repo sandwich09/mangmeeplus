@@ -39,7 +39,9 @@
       "Effect": "Allow",
       "Action": [
         "iam:GetRole",
-        "iam:GetRolePolicy"
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
       ],
       "Resource": "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"
     },
@@ -68,6 +70,8 @@
         "elasticache:DescribeReplicationGroups",
         "iam:GetRole",
         "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
         "logs:DescribeLogGroups",
         "logs:DescribeMetricFilters",
         "rds:DescribeDBInstances",
