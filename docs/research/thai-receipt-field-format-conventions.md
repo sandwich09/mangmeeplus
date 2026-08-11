@@ -1,10 +1,13 @@
 # Thai Receipt/Bill Field Format Conventions — OCR Extraction Canon
 
-Research date: 2026-08-10 (web research; RD/DBD/ETDA-cited). Owner directive: support the
+Research date: 2026-08-10; expanded 2026-08-11 (web research; Unicode/RD/AWS/Microsoft-cited). Owner directive: support the
 real variety of Thai receipt/bill formats — define per-field format families, print
 patterns, labels, and language envelope instead of case-by-case prompt patches.
 Trigger: UAT 2026-08-10 hospital receipt via LINE — printed tax ID not extracted; the
 date was written into เลขที่เอกสาร (see spec §19j for the normative rules).
+Follow-up trigger: the latest UAT Starbucks receipt on 2026-08-11 was correctly recognized
+as VAT-included with total 333.00, but both its printed date and printed VAT amount were
+missing from the extracted fields (see spec §19k).
 Consumed by: `docs/specs/expense-receipt-upload-spec.md` §19j, `RECEIPT_OCR_PROMPT` and
 `applyOcrValueCrossCheck` in
 `apps/ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller.ts`.
@@ -83,22 +86,63 @@ Receipt No., Rcpt#, Doc No., Invoice No., Tax Inv No., ABB No., Bill No.
   card approval codes (เลขอนุมัติ/APPROVAL CODE), the tax ID itself, phone numbers,
   member/card numbers
 
-## 4. expenseDate — already canonized (ADR 0011)
+## 4. expenseDate — locale families, not numeric-only
 
-Wild formats: `10/08/2569` (BE), `10/08/69` (2-digit BE), `10/08/2026` (CE), dots and
-dashes, Thai month names/abbreviations (`10 ส.ค. 2569`), English months, POS datetime
-with time suffix, ตัวเลขไทย ๐-๙. All handled by the ADR-0011 canon (BE −543, D/M
-default, ambiguity → review) + the §13 cross-check. No new rules; the date grammar has
-exactly one home (`extractValueCandidates`) and must not be re-implemented per field.
+Unicode CLDR defines Thai wide months (`กรกฎาคม`, `สิงหาคม`), abbreviated months
+(`ก.ค.`, `ส.ค.`), and Thai date order `d MMM y`; English includes both `MMM d, y` and
+`d MMM y`, plus the two-digit-year form `MMM d, ’yy`. LDML parsing guidance explicitly
+says abbreviated symbols should match both with and without their abbreviation marker.
+That matters for OCR: dots, commas, apostrophes, and spaces are commonly dropped, so
+`ก.ค.`, `กค`, `Aug.`, and `Aug` are the same month evidence, not separate templates.
 
-## 5. vendorName — ชื่อผู้ขาย
+Supported families:
+
+- Numeric: `10/08/2569`, `10-08-2026`, `2026-08-10`, ตัวเลขไทย ๐-๙. Numeric dates
+  whose two-digit year has no calendar/language anchor remain ambiguous and require review.
+- Thai named month, day first: `10 สิงหาคม 2569`, `10 ส.ค. 69`, `10 สค 69`, including
+  all punctuation-stripped aliases `มค กพ มีค เมย พค มิย กค สค กย ตค พย ธค`.
+- English named month, either order: `23 Aug 2026`, `Aug 23, 2026`, `23 Aug. ’26`,
+  `Aug 23 26`, full or abbreviated month names, case-insensitive.
+- Four-digit years keep the existing deterministic era rule (2400–2700 = BE; 1900–2399
+  = CE). A two-digit year attached to a Thai month name is read in the Thai Buddhist
+  calendar (`สค 69` = 2569); one attached to an English month name is read in the
+  Gregorian calendar (`Aug 26` = 2026). The language anchor resolves only named-month
+  dates; `10/08/69` still exposes both defensible readings and is never guessed.
+
+The date grammar still has exactly one home (`extractValueCandidates`). Receipt OCR and
+LINE text reuse the same candidates; per-vendor regexes are prohibited. When stage 2 omits
+the field, receipt OCR may recover only one unambiguous candidate carrying an explicit
+receipt/transaction/issue/document-date label; unlabeled or multiple dates stay for review.
+
+## 5. vatAmount — printed money independent of vatRate
+
+Receipt schemas from AWS Textract and Microsoft Document Intelligence model `TAX` /
+`TotalTax` as a monetary field. Microsoft separately models tax detail `Amount`, `Rate`,
+and `NetAmount`; therefore a receipt does not need to print a percentage for its printed
+VAT amount to be valid extraction evidence. Thai Revenue Code section 86/4 likewise
+requires the VAT **amount** to be shown separately from the goods/service value on a full
+tax invoice, while an abbreviated tax invoice may include VAT in the displayed price.
+
+Label families (either label-before-amount or amount-before-label): `VAT`, `VAT AMT`,
+`VAT AMOUNT`, `VAT TTL`, `VAT TOTAL`, `TOTAL VAT`, `TAX`, `TAX AMT`, `TAX AMOUNT`,
+`TOTAL TAX`, `ภาษี`, `ยอดภาษี`, `ภาษีมูลค่าเพิ่ม`. Examples: `VAT AMT 21.79`,
+`21.79 VAT TTL`, `ภาษีมูลค่าเพิ่ม 21.79 บาท`. A nearby `7%` is `vatRate`; `21.79` is
+`vatAmount`. One may exist without the other. Extraction copies printed money exactly;
+it never computes an unprinted VAT amount merely from total × rate.
+
+Deterministic recovery is intentionally narrow: recover only a decimal/currency amount
+adjacent to a VAT/tax amount label, only when there is exactly one distinct candidate.
+Rate-only text (`VAT 7.00%`), multiple different VAT components, and unlabeled arithmetic
+remain review items.
+
+## 6. vendorName — ชื่อผู้ขาย
 
 Legal-form markers (TH): บริษัท … จำกัด (มหาชน), บจ./บจก./หจก./หสน./บมจ., ร้าน,
 โรงพยาบาล/รพ., คลินิก, มหาวิทยาลัย, ส่วนราชการ names. (EN): Co., Ltd., PLC, Ltd., Part.
 When both a trade/brand name (logo) and a juristic name are printed, the juristic name
 adjacent to the tax ID is the vendor identity; the brand can stay in `description`.
 
-## 6. Language envelope
+## 7. Language envelope
 
 Typhoon OCR (SCB10X, all released variants incl. 1.5) is **bilingual Thai + English**
 by design, trained on Thai financial documents, government forms, and handwriting.
@@ -108,15 +152,20 @@ Policy tiers for extraction:
   cannot ground in the OCR text; classification/review path decides handling. Fields are
   never guessed from an unsupported-language document.
 
-## 7. Collision traps observed (UAT 2026-08-10 hospital case)
+## 8. Collision traps observed on UAT
 
 - เลขที่ ↔ วันที่ adjacent boxes → date lands in documentNumber; downstream this flips a
   RECEIPT to `USABLE_FOR_TAX` (a doc number "exists") and poisons the duplicate scorer
   (+30 on exact vendorDocumentNumber match).
 - Small-type footer tax ID + dashed grouping → stage-2 omission even when stage-1 read it.
 - HN printed larger than เลขที่ → HN is the tempting (wrong) pick for documentNumber.
+- Month-first English dates and punctuation-stripped Thai abbreviations were absent from
+  the shared grammar; stage 2 could normalize them but the §13 cross-check then discarded
+  the date as unsupported.
+- A VAT-included classification does not prove the amount. Conversely, a printed VAT
+  amount does not need a printed percentage; tying `vatAmount` to `vatRate` drops real data.
 
-## 8. Sources
+## 9. Sources
 
 - RD 13-digit tax ID usage: https://www.rd.go.th/46203.html ; OECD TIN note (juristic =
   DBD number; others RD-issued): https://www.oecd.org/content/dam/oecd/en/topics/policy-issue-focus/aeoi/thailand-tin.pdf
@@ -139,3 +188,13 @@ Policy tiers for extraction:
   https://www.rd.go.th/publish/seminar/180820_eTaxInvoice-eReceipt_doc.pdf
 - Typhoon OCR bilingual envelope: https://huggingface.co/scb10x/typhoon-ocr-7b ,
   https://github.com/scb-10x/typhoon-ocr , https://arxiv.org/html/2601.14722v1
+- Unicode CLDR Thai locale data and date grammar: https://unicode.org/cldr/charts/45/summary/th.html ,
+  https://unicode.org/cldr/charts/49/summary/en.html ,
+  https://cldr-smoke.unicode.org/spec/main/ldml/tr35-dates.html
+- AWS Textract AnalyzeExpense standard receipt fields (`INVOICE_RECEIPT_DATE`, `TAX`):
+  https://docs.aws.amazon.com/textract/latest/dg/invoices-receipts.html
+- Microsoft Document Intelligence receipt schema (`TransactionDate`, `TotalTax`, and
+  separate tax `Amount`/`Rate`/`NetAmount`):
+  https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/prebuilt/receipt?view=doc-intel-4.0.0
+- RD Revenue Code section 86/4 — VAT amount and issue date as distinct required fields:
+  https://www.rd.go.th/5208.html

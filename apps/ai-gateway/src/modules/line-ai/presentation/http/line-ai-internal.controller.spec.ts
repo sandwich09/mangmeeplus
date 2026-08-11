@@ -606,6 +606,55 @@ describe('applyOcrValueCrossCheck (item 10F)', () => {
     assert.ok(out.missingFields?.includes('expenseDate'));
   });
 
+  it('keeps locale-backed named-month dates in English and punctuation-lost Thai', () => {
+    for (const text of ['Date Aug 23 26', '**Date:** Aug 23 26', '| Date | Aug 23 26 |', 'Date 23 Aug. ’26', 'วันที่ 23 ส.ค. 69', 'วันที่ 23 สค 69']) {
+      const out = applyOcrValueCrossCheck({ expenseDate: '2026-08-23' }, `${text}\nTOTAL 333.00`);
+      assert.equal(out.expenseDate, '2026-08-23', text);
+      const recovered = applyOcrValueCrossCheck({ missingFields: ['expenseDate'] }, `${text}\nTOTAL 333.00`);
+      assert.equal(recovered.expenseDate, '2026-08-23', `single labeled date recovery: ${text}`);
+      assert.ok(!recovered.missingFields?.includes('expenseDate'), text);
+    }
+  });
+
+  it('does not recover an unlabeled or multiply-labeled date when stage 2 omitted it', () => {
+    const unlabeled = applyOcrValueCrossCheck({ missingFields: ['expenseDate'] }, 'Starbucks Aug 23 26 TOTAL 333.00');
+    assert.equal(unlabeled.expenseDate, undefined);
+    const multiple = applyOcrValueCrossCheck(
+      { missingFields: ['expenseDate'] },
+      'Receipt Date Aug 23 26\nTransaction Date Aug 24 26\nTOTAL 333.00',
+    );
+    assert.equal(multiple.expenseDate, undefined);
+    assert.ok(multiple.missingFields?.includes('expenseDate'));
+  });
+
+  it('recovers one printed VAT money amount without requiring a percentage', () => {
+    for (const text of [
+      'VAT AMT 21.79',
+      '21.79 VAT TTL',
+      'TOTAL VAT: THB 21.79',
+      'ภาษีมูลค่าเพิ่ม ๒๑.๗๙ บาท',
+      'VAT 7% 21.79',
+    ]) {
+      const out = applyOcrValueCrossCheck({ vatMode: 'VAT_INCLUDED', missingFields: ['vatAmount'] }, text);
+      assert.equal(out.vatAmount, '21.79', text);
+      assert.ok(!out.missingFields?.includes('vatAmount'), text);
+      assert.equal(out.vatRate, undefined, 'amount recovery must never invent a rate');
+    }
+  });
+
+  it('does not turn a VAT rate or multiple tax components into one guessed amount', () => {
+    const rateOnly = applyOcrValueCrossCheck({ missingFields: ['vatAmount'] }, 'VAT 7.00%');
+    assert.equal(rateOnly.vatAmount, undefined);
+    assert.ok(rateOnly.missingFields?.includes('vatAmount'));
+
+    const multiple = applyOcrValueCrossCheck(
+      { missingFields: ['vatAmount'] },
+      'VAT AMT 21.79\nLOCAL TAX AMT 2.50',
+    );
+    assert.equal(multiple.vatAmount, undefined);
+    assert.ok(multiple.missingFields?.includes('vatAmount'));
+  });
+
   it('non-numeric fields pass through untouched, including the printed rate (spec §19c)', () => {
     const out = applyOcrValueCrossCheck({ vendorName: 'ร้านกาแฟ', vatMode: 'VAT_INCLUDED', vatRate: '0.07', grandTotalAmount: '64.20' }, RECEIPT_TEXT);
     assert.equal(out.vendorName, 'ร้านกาแฟ');

@@ -44,6 +44,10 @@ export const VALUE_ASSUMPTIONS = {
   orderAssumedDayMonth: 'order_assumed_day_month',
   /** Two-digit year – materially different era readings survive → discovery required. */
   ambiguousTwoDigitYear: 'ambiguous_two_digit_year',
+  /** A Thai month name/abbreviation anchors a two-digit year to พ.ศ. 25xx. */
+  twoDigitYearResolvedThaiMonth: 'two_digit_year_resolved_thai_month',
+  /** An English month name/abbreviation anchors a two-digit year to ค.ศ. 20xx. */
+  twoDigitYearResolvedEnglishMonth: 'two_digit_year_resolved_english_month',
   /** Month-year mention without a day; candidate is a period boundary, not a day date. */
   monthPeriodBoundary: 'month_period_boundary',
   /** Candidate is after the injected today – implausible for e.g. an expense date. */
@@ -197,6 +201,9 @@ const THAI_MONTHS: Array<[string, number]> = [
   ['กรกฎาคม', 7], ['สิงหาคม', 8], ['กันยายน', 9], ['ตุลาคม', 10], ['พฤศจิกายน', 11], ['ธันวาคม', 12],
   ['ม.ค.', 1], ['ก.พ.', 2], ['มี.ค.', 3], ['เม.ย.', 4], ['พ.ค.', 5], ['มิ.ย.', 6],
   ['ก.ค.', 7], ['ส.ค.', 8], ['ก.ย.', 9], ['ต.ค.', 10], ['พ.ย.', 11], ['ธ.ค.', 12],
+  // OCR commonly drops abbreviation punctuation; CLDR lenient parsing permits both forms.
+  ['มค', 1], ['กพ', 2], ['มีค', 3], ['เมย', 4], ['พค', 5], ['มิย', 6],
+  ['กค', 7], ['สค', 8], ['กย', 9], ['ตค', 10], ['พย', 11], ['ธค', 12],
 ];
 
 const ENGLISH_MONTHS: Array<[string, number]> = [
@@ -204,6 +211,8 @@ const ENGLISH_MONTHS: Array<[string, number]> = [
   ['july', 7], ['august', 8], ['september', 9], ['october', 10], ['november', 11], ['december', 12],
   ['jan', 1], ['feb', 2], ['mar', 3], ['apr', 4], ['jun', 6], ['jul', 7], ['aug', 8],
   ['sep', 9], ['oct', 10], ['nov', 11], ['dec', 12],
+  ['jan.', 1], ['feb.', 2], ['mar.', 3], ['apr.', 4], ['may.', 5], ['jun.', 6],
+  ['jul.', 7], ['aug.', 8], ['sep.', 9], ['oct.', 10], ['nov.', 11], ['dec.', 12],
 ];
 
 const MONTH_NAME_ALTERNATION = [...THAI_MONTHS, ...ENGLISH_MONTHS]
@@ -218,6 +227,8 @@ function monthFromName(name: string): number | null {
   }
   return null;
 }
+
+const THAI_MONTH_NAMES = new Set(THAI_MONTHS.map(([name]) => name));
 
 // ── Year / era resolution (spec §7 rules, in order) ──────────────────────────
 
@@ -244,6 +255,24 @@ function resolveYearReadings(rawYear: number, digits: number): YearReading[] {
     ];
   }
   return [];
+}
+
+function resolveNamedMonthYearReadings(monthName: string, rawYear: number, digits: number): YearReading[] {
+  if (digits !== 2) return resolveYearReadings(rawYear, digits);
+  if (THAI_MONTH_NAMES.has(monthName.toLowerCase())) {
+    const yearBe = 2500 + rawYear;
+    return [{
+      yearBe,
+      yearCe: yearBe - BE_CE_OFFSET,
+      assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedThaiMonth],
+    }];
+  }
+  const yearCe = 2000 + rawYear;
+  return [{
+    yearBe: yearCe + BE_CE_OFFSET,
+    yearCe,
+    assumptions: [VALUE_ASSUMPTIONS.twoDigitYearResolvedEnglishMonth],
+  }];
 }
 
 // ── Extraction ────────────────────────────────────────────────────────────────
@@ -312,14 +341,37 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     const month = /^\d+$/.test(monthRaw) ? Number(monthRaw) : monthFromName(monthRaw) ?? -1;
     const yearRaw = match[4];
     if (day < 1 || month < 1) continue;
-    for (const reading of resolveYearReadings(Number(yearRaw), yearRaw.length === 2 ? 2 : 4)) {
+    const readings = /^\d+$/.test(monthRaw)
+      ? resolveYearReadings(Number(yearRaw), yearRaw.length === 2 ? 2 : 4)
+      : resolveNamedMonthYearReadings(monthRaw, Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
+    for (const reading of readings) {
       pushDate(start, end, day, month, reading, []);
     }
     recordDateRange(start, end);
   }
 
-  // 2) Month-name dates: <day> <monthname> <year>, and month-year periods (no day).
-  const monthNamePattern = new RegExp(`(\\d{1,2})?\\s*(${MONTH_NAME_ALTERNATION})\\s*(?:ปี)?\\s*(\\d{2,4})`, 'giu');
+  // 2) Month-first named dates: Aug 23 26 / Aug. 23, '26 / สค 23 69.
+  //    Run before month-year periods so "Aug 23 26" cannot be truncated to period "Aug 23".
+  const monthFirstPattern = new RegExp(
+    `(${MONTH_NAME_ALTERNATION})\\s*(\\d{1,2})(?:st|nd|rd|th)?` +
+    `(?:\\s*[,/\\-.]\\s*|\\s+)(?:ปี\\s*)?['’]?(\\d{2,4})`,
+    'giu',
+  );
+  for (const match of mapped.matchAll(monthFirstPattern)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    if (overlaps(dateRanges, start, end)) continue;
+    const month = monthFromName(match[1]);
+    if (!month) continue;
+    const day = Number(match[2]);
+    const yearRaw = match[3];
+    const readings = resolveNamedMonthYearReadings(match[1], Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
+    for (const reading of readings) pushDate(start, end, day, month, reading, []);
+    recordDateRange(start, end);
+  }
+
+  // 3) Day-first month-name dates and month-year periods (no day).
+  const monthNamePattern = new RegExp(`(\\d{1,2})?(?:st|nd|rd|th)?\\s*(${MONTH_NAME_ALTERNATION})\\s*(?:ปี\\s*)?['’]?(\\d{2,4})`, 'giu');
   for (const match of mapped.matchAll(monthNamePattern)) {
     const start = match.index;
     const end = start + match[0].length;
@@ -327,7 +379,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     const month = monthFromName(match[2]);
     if (!month) continue;
     const yearRaw = match[3];
-    const readings = resolveYearReadings(Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
+    const readings = resolveNamedMonthYearReadings(match[2], Number(yearRaw), yearRaw.length === 2 ? 2 : 4);
     if (match[1]) {
       const day = Number(match[1]);
       for (const reading of readings) pushDate(start, end, day, month, reading, []);
@@ -343,7 +395,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     recordDateRange(start, end);
   }
 
-  // 3) ISO form YYYY-MM-DD (also catches BE-written ISO like 2537-12-09).
+  // 4) ISO form YYYY-MM-DD (also catches BE-written ISO like 2537-12-09).
   for (const match of mapped.matchAll(/(\d{4})-(\d{2})-(\d{2})/g)) {
     const start = match.index;
     const end = start + match[0].length;
@@ -356,7 +408,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     recordDateRange(start, end);
   }
 
-  // 4) Separator dates D/M/Y (canonical order default; day > 12 locks; 2-digit year → discovery).
+  // 5) Separator dates D/M/Y (canonical order default; day > 12 locks; 2-digit year → discovery).
   for (const match of mapped.matchAll(/(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})/g)) {
     const start = match.index;
     const end = start + match[0].length;
@@ -384,7 +436,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     recordDateRange(start, end);
   }
 
-  // 5) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
+  // 6) Digit amounts (Thai digits already mapped). Tokens inside date spans are excluded so
   //    a year like 2537 can never legitimize an amount of 2537.
   for (const match of mapped.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
     const start = match.index;
@@ -395,7 +447,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     pushAmount(amounts, text, mapped, start, end, value);
   }
 
-  // 6) Thai number words (no word boundaries in Thai – substring scan, longest token first).
+  // 7) Thai number words (no word boundaries in Thai – substring scan, longest token first).
   let cursor = 0;
   while (cursor < text.length) {
     const scanned = scanThaiWordTokens(text, cursor);
@@ -410,7 +462,7 @@ export function extractValueCandidates(text: string, todayIso?: string): LineAiV
     cursor = scanned.end;
   }
 
-  // 7) English number words (word-boundary based).
+  // 8) English number words (word-boundary based).
   const englishWordPattern = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million)(?:[\s-](?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million))*\b/gi;
   for (const match of text.matchAll(englishWordPattern)) {
     const tokens = match[0].toLowerCase().split(/[\s-]+/).map((w) => ENGLISH_NUMBER_WORDS[w]).filter((t): t is WordToken => !!t);
