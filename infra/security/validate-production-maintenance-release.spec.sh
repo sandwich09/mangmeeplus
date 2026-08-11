@@ -51,6 +51,8 @@ full_exact_files=(
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh
+  infra/docker/resolve-production-fast-mode.sh
+  apps/api/prisma/verify-applied-migration-catalog.ts
   infra/prod-ecs-express/release-task-network-failure.jq
   infra/prod-ecs-express/wait-production-maintenance-ingress-drain.sh
   apps/api/src/modules/data-model-core/infrastructure/storage/s3-storage.adapter.ts

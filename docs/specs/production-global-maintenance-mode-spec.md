@@ -54,6 +54,12 @@ the switch is open and the deployed production serving mode is `live`.
 - The first closure uses the separate `maintenance_bootstrap=true` intent. It deploys all three
   UAT-attested images, runs only a read-only production migration-catalog preflight, and cannot
   apply migrations or create a launch-operation authority record.
+- `target=auto` with `maintenance_only=true` may derive that bootstrap intent when the active
+  Production API source is an ancestor but the requested source adds Prisma files. Its read-only
+  preflight accepts pending migrations only when every already-applied migration is the exact
+  ordered checksum-matching prefix of the requested repository catalog. Unknown, reordered,
+  missing-middle, or edited applied migrations remain fatal. Live automatic promotion never uses
+  this derivation.
 - Only launch-specific evidence that depends on opening customer access may be deferred while this
   fail-closed mode is active. Maintenance is not a legal exemption: minimum residual-processing
   obligations and evidence remain required, including controller/contact identification, a concise
@@ -66,7 +72,11 @@ the switch is open and the deployed production serving mode is `live`.
 - `maintenance_only=false` retains both existing legal evidence gates unchanged and forces the
   runtime flag off.
 - A full promotion may use only a bridge release that already contains the same validated global
-  gate. The old public release cannot be used as a maintenance bridge.
+  gate. The old public release cannot be used as a maintenance bridge. The bridge may be the same
+  source and digest as the final release only after a maintenance bootstrap: before mutation the
+  controller must prove all three active services match that signed manifest and the global
+  closed-state evidence. This removes the need for a no-op source commit without weakening the
+  runtime bridge boundary.
 - Exact-byte policy is limited to the small enforcement and runtime-wiring boundary whose behavior
   can open ingress, issue/refresh sessions, start queues, change signed-URL lifetime, or mutate the
   production release path. Presentation components and broad append-only registries are not pinned
@@ -86,7 +96,9 @@ the switch is open and the deployed production serving mode is `live`.
    then prove the custom domain, raw API origin, and raw AI origin show maintenance while the
    worker configuration has `QUEUE_ENABLED=false`. The bootstrap runs the read-only maintenance
    preflight and does not apply a database migration.
-3. Run all-target UAT for source B, whose image is distinct and contains the identical gate.
+3. Run all-target UAT for source B, whose image contains the identical gate. If source A itself
+   carries pending migrations, A may remain the final source as well; a second no-op UAT source is
+   not required.
 4. Promote B with `target=all`, using A as the exact bridge and keeping maintenance true through
    bridge, reviewed migration, final rollout, and rollback handling. Reimbursement writes remain
    quiesced; the ordinary unquiesce and POST-live chain are deliberately skipped.
@@ -98,8 +110,7 @@ the switch is open and the deployed production serving mode is `live`.
    Deep database readiness is reported separately and is not claimed unless the guarded operator
    credential was actually supplied.
 6. Keep the customer-access switch closed until a separate legally approved
-   `maintenance_only=false` release. Under the current bridge contract that release is a distinct
-   all-target UAT source C using closed source B as its bridge. Once C is verified live, the
+   `maintenance_only=false` release. Once the approved source is verified live, the
    onboarding `SYSTEM_ADMIN` opens customer access from the system console.
 
 This is a verified `DEPLOYED_NOT_LAUNCHED` state, not a private network and not a claim of zero PDPA

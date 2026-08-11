@@ -1792,7 +1792,7 @@ for caller in "$deploy_workflow" "$uat_workflow"; do
   grep -Fq 'if [ "$rc" -eq 75 ]; then' "$caller"
   grep -Fq 'held release operation remains unresolved' "$caller"
   if [ "$caller" = "$deploy_workflow" ]; then
-    grep -Fq "needs.resolve-release.outputs.release_mode != 'maintenance-bootstrap'" "$caller"
+    grep -Fq "steps.production-target.outputs.release_mode != 'maintenance-bootstrap'" "$caller"
     grep -Fq "(steps.production-target.outputs.target == 'all' || steps.production-target.outputs.target == 'api-web')" "$caller"
   else
     grep -Fq "if: always() && (steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web')" "$caller"

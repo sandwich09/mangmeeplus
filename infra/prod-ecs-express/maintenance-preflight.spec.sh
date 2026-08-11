@@ -45,6 +45,7 @@ jq -e '
   and ([.containerDefinitions[0].environment[] | select(.name == "RELEASE_OPERATION_ID" or .name == "RELEASE_PARENT_OPERATION_ID")]
     == [])
   and (.containerDefinitions[0].command[2] | contains("REQUIRE_NO_AWS_CREDENTIALS=true"))
+  and (.containerDefinitions[0].command[2] | contains("ALLOW_PENDING_MIGRATIONS=true"))
   and (.containerDefinitions[0].command[2] | contains("verify-applied-migration-catalog.ts"))
   and (.containerDefinitions[0].command[2] | contains("verify-feature-launch-build-authority.ts") | not)
   and (.containerDefinitions[0].command[2] | contains("attest-feature-launch-build.ts") | not)

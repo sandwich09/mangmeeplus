@@ -16,3 +16,12 @@ Memory: `docs/agent-memory/production-fast-promotion.md`
   target while leaving explicit full migration promotion unchanged.
 - [x] Add focused contract tests and run the existing deployment/security suites.
 - [x] Review the final diff for fail-open conditions and record verification.
+- [x] Let maintenance-only `auto` derive a read-only bootstrap when Production
+  has a checksum-valid applied prefix plus pending repository migrations.
+- [x] Keep live `auto` fail-closed on pending migrations and all catalog drift.
+- [x] Allow a same-source reviewed bridge only behind exact all-service
+  manifest and global-maintenance proof.
+- [x] Add focused pending/drift/effective-mode tests and rerun the deployment,
+  maintenance, release-safety, and image-security suites.
+- [ ] Re-run exact UAT acceptance and Production maintenance promotion, then
+  record timing and evidence.

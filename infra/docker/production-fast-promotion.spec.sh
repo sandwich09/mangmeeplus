@@ -5,23 +5,33 @@ repo_root="$(git rev-parse --show-toplevel)"
 workflow="$repo_root/.github/workflows/deploy-production.yml"
 runner="$repo_root/infra/prod-ecs-express/run-release-task.sh"
 intent="$repo_root/infra/docker/validate-production-release-intent.sh"
+resolver="$repo_root/infra/docker/resolve-production-fast-mode.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/production-fast-promotion.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
 
 bash -n "$runner"
 bash -n "$intent"
+bash -n "$resolver"
+bash "$repo_root/infra/docker/resolve-production-fast-mode.spec.sh" >/dev/null
 
 grep -Fq 'default: auto' "$workflow"
 grep -Fq 'needs.resolve-release.outputs.release_mode == '\''fast-promotion'\''' "$workflow"
-grep -Fq 'bash infra/uat/select-deploy-target.sh' "$workflow"
-grep -Fq 'git diff --quiet --no-renames "$api_active_sha" "$SOURCE_SHA" -- apps/api/prisma' "$workflow"
-grep -Fq 'fast promotion cannot prove the Production database-code baseline' "$workflow"
-grep -Fq 'fast promotion detected Prisma/schema/migration support changes' "$workflow"
+grep -Fq 'bash infra/docker/resolve-production-fast-mode.sh "$GITHUB_WORKSPACE"' "$workflow"
+grep -Fq 'diff --quiet --no-renames' "$resolver"
+grep -Fq 'fast promotion cannot prove the Production database-code baseline' "$resolver"
+grep -Fq 'fast promotion detected Prisma/schema/migration support changes' "$resolver"
+grep -Fq 'effective_release_mode=maintenance-bootstrap' "$resolver"
+grep -Fq 'release_mode=$effective_release_mode' "$workflow"
+grep -Fq 'RELEASE_MODE: ${{ steps.production-target.outputs.release_mode }}' "$workflow"
 grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ steps.production-target.outputs.target }}' "$workflow"
 grep -Fq 'TARGET: ${{ steps.production-target.outputs.target }}' "$workflow"
 grep -Fq 'RELEASE_DATABASE_AUTHORITY=UAT_ACCEPTED_NO_MIGRATION' "$workflow"
 grep -Fq 'RELEASE_DATABASE_AUTHORITY=U5_REVIEWED_APPLY' "$workflow"
 grep -Fq 'needs.resolve-release.outputs.release_mode == '\''promotion'\''' "$workflow"
+if grep -Fq 'test "$BRIDGE_SOURCE" != "$SOURCE_SHA"' "$workflow"; then
+  echo 'ERROR: reviewed promotion still requires a synthetic different bridge source' >&2
+  exit 1
+fi
 
 # Application publication is incident-only. Both coordinated promotion modes consume
 # the exact signed UAT artifact and therefore cannot start reusable source CI.
