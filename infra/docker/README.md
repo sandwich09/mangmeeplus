@@ -44,13 +44,13 @@ docker build -f apps/workers/Dockerfile -t watchdog-bms-workers:local .
 
 Production deploy scripts do not build from the live worktree. They call `infra/docker/build-clean-production-image.sh`, which archives one Git commit, adds its OCI revision label, and runs `infra/docker/verify-production-image.sh` against the exported final filesystem before push. ECR tags are resolved to digests before a task/service update. CI repeats the final-filesystem gate and stores an SPDX JSON SBOM per image.
 
-Routine pushes run source, test, audit, secret, config, and migration gates without the
-six-image compatibility matrix; documentation/output-only pushes stop after source
-resolution, and a newer push cancels an older branch CI. Explicit manual/tag release gates
-retain the compatibility matrix.
+Automatic CI runs only for pull requests, where source, test, audit, secret, config, and
+migration gates validate the exact PR head before merge. Branch pushes do not start a duplicate
+suite. Explicit manual and approved reusable deployment calls retain the image compatibility
+and publication path.
 
-The `CI` workflow publishes the three active ECS images only on a manual/tag release or an
-approved reusable deployment call. UAT may reuse validation from an exact successful push CI
+The `CI` workflow publishes the three active ECS images only on a manual run or an
+approved reusable deployment call. UAT may reuse validation from an exact successful pull-request CI
 only when the source and caller contain the same `ci.yml` blob; otherwise it runs the full
 validation gate. Production always runs the full gate. The production OIDC role can push and
 inspect only `watchdog-bms-api`, `watchdog-bms-ai-gateway`, and

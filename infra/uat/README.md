@@ -18,7 +18,7 @@ The controller runs from `main`, but it does not execute `main` application scri
 full SHA reachable from `develop`, checks out that exact detached commit, rechecks ancestry,
 and only then runs CI, release, lease/bind/finalize and deployment scripts from that checkout. The
 shared CI workflow receives that full SHA as its required `source_ref`; its resolver and every build/
-test/publish job check out the resolved SHA (or verify an exact successful push-CI run for it), never
+test/publish job check out the resolved SHA (or verify an exact successful pull-request CI run for it), never
 the controller's `main` application tree. The
 same neutral bootstrap also makes the two F2 PLAN/APPLY controllers dispatchable; it does not promote
 the UAT application commit or copy `.github/workflows/deploy-production.yml`/`apps/**` into `main`.

@@ -17,6 +17,9 @@ Decisions:
 - The neutral `main` controller must exact-read IAM and verify stable ECS/rollback controls, required
   secret metadata and rollback alarms before reusable CI may publish images. The deploy job repeats
   exact IAM readback immediately before mutation to close the build-time drift window.
+- Automatic full CI runs only for pull requests. Branch pushes do not duplicate the suite; UAT may
+  reuse an exact successful pull-request run for the same SHA/policy or invokes the reusable full
+  gate itself. Manual CI remains the explicit production-recovery validation path.
 - GitHub environment protection available on the current plan is branch policy only; wait timer/required-reviewer protection returned HTTP 422.
 Open questions: Employee LINE UAT still needs one real employee QR-link/message journey. CRM customer AI still needs one real inbound LINE message after the first-message hotfix.
 Artifacts:
@@ -56,6 +59,11 @@ Verification:
   enforcement edits use `sync-production-maintenance-release-pins.mjs`; CI check mode detects stale
   pins before expensive jobs fan out. The sync/validator/workflow specs, UAT early/selective specs,
   and the full `production-image-security.spec.sh` pass with this contract.
+- Commit `8e33295` aligned the LINE intake fixture with Flex replies; focused LINE tests passed
+  151/151, API typecheck passed, and the full workspace test suite passed locally. Its duplicate
+  push CI run `31478846246` was cancelled while PR run `31478849363` remained authoritative. The
+  CI trigger contract now prevents future branch-push duplicates and UAT reuse searches exact
+  successful pull-request runs instead of obsolete push runs.
 - AWS roles `watchdog-bms-ci-uat`, `watchdog-bms-deploy-uat`, and five UAT ECS runtime roles exist. GitHub OIDC trust readback is bound exactly to `repo:MangmeeDev/mangmeeplus:environment:uat`; inline policy apply completed from the committed templates, but the operator principal lacks `iam:GetRolePolicy` for independent readback.
 - GitHub environment `uat` exists with only `main` allowed (policy `55132941`) and has account, region, publisher/deploy role ARN, copied LINE IDs, `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com`, and disabled AI/autoreply defaults.
 - The owner approved recurring cost. `watchdog-bms-uat-db` (`db.t4g.micro`, encrypted/private), `watchdog-bms-uat-redis` (`cache.t4g.micro`), `watchdog-bms-uat-311414082667`, UAT security groups, secrets, SSM parameters, and `watchdog-bms-uat` ECS cluster are provisioned. Production LINE IDs/secrets were copied into UAT without printing secret values.

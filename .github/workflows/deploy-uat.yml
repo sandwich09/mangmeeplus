@@ -108,7 +108,7 @@ jobs:
               exit 1
             }
           fi
-          url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&status=success&head_sha=$SOURCE_SHA&per_page=10"
+          url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&head_sha=$SOURCE_SHA&per_page=10"
           if ! response="$(curl --fail --silent --show-error \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -118,10 +118,10 @@ jobs:
             exit 0
           fi
           run_id="$(jq -r --arg sha "$SOURCE_SHA" \
-            '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "push")][0].id // empty' \
+            '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "pull_request")][0].id // empty' \
             <<< "$response")"
           if [ -z "$run_id" ]; then
-            echo "::notice::No exact successful push CI found; running the full validation gate."
+            echo "::notice::No exact successful pull-request CI found; running the full validation gate."
             exit 0
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"

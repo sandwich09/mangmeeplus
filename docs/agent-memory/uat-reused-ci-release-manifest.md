@@ -2,7 +2,7 @@
 
 Status: Release-manifest fix verified; rollout-latency follow-up moved to `ecs-express-rollout-latency.md`
 Owner: Codex
-Scope: Reusable CI release-manifest assembly after UAT reuses exact successful push validation
+Scope: Reusable CI release-manifest assembly after UAT reuses exact successful pull-request validation
 Decisions:
 - Keep trusted validation reuse and immutable image publication unchanged.
 - Run `publish-production-manifest` through skipped validation ancestors with `always()`, but only when source resolution and all three image publishers succeeded.

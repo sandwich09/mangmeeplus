@@ -78,15 +78,17 @@ grep -Fq 'RELEASE_TASKS_APPLIED_SHA' "$repo_root/infra/prod-ecs-express/deploy.s
 ci="$repo_root/.github/workflows/ci.yml"
 grep -Fq 'workflow_dispatch:' "$ci"
 grep -Fq 'workflow_call:' "$ci"
-grep -Fq "tags: ['release-*']" "$ci"
+grep -Fq 'pull_request:' "$ci"
+if grep -Eq '^  push:' "$ci"; then
+  echo "ERROR: CI must not duplicate full validation on branch pushes" >&2
+  exit 1
+fi
 grep -Fq 'group: ci-${{ github.event_name }}-${{ github.ref }}' "$ci"
 grep -Fq "github.event_name == 'pull_request'" "$ci"
-grep -Fq "startsWith(github.ref, 'refs/tags/')" "$ci"
 grep -Fq 'code_changed: ${{ steps.source.outputs.code_changed }}' "$ci"
 grep -Fq "':(exclude)docs/**'" "$ci"
 grep -Fq "github.event_name == 'workflow_call'" "$ci"
 grep -Fq "github.event_name == 'workflow_dispatch'" "$ci"
-grep -Fq "startsWith(github.ref, 'refs/tags/release-')" "$ci"
 grep -Fq "inputs.validated_ci_run_id != ''" "$ci"
 test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 7
 grep -Fq '.head_sha == $sha' "$ci"
@@ -569,6 +571,10 @@ grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.gi
 grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/recover-release-intent.yml@refs/heads/main"' "$recovery_workflow"
 grep -Fq 'org.opencontainers.image.revision' "$recovery_workflow"
 grep -Fq 'RELEASE_RECOVERY_VALIDATED_CI_RUN_ID' "$recovery_workflow"
+grep -Fq 'ci_event=workflow_dispatch' "$recovery_workflow"
+grep -Fq '[ "$DEPLOY_ENV" = uat ] && ci_event=pull_request' "$recovery_workflow"
+grep -Fq 'event=$ci_event&status=success&head_sha=$RECOVERY_REF' "$recovery_workflow"
+grep -Fq 'and .event == $event and .path == ".github/workflows/ci.yml"' "$recovery_workflow"
 if grep -Fq -- '--certificate-identity-regexp' "$recovery_workflow"; then
   echo "ERROR: recovery accepts a cross-environment release-image signer" >&2
   exit 1
@@ -579,9 +585,9 @@ if grep -Fq 'deploy.sh' "$recovery_workflow"; then
 fi
 # The main copy is a controller only. The reusable CI receives the resolved develop SHA,
 # checks it out first, derives its output from that checkout, and every executable job checks out
-# the same output (or verifies an exact successful push run for that SHA).
+# the same output (or verifies an exact successful pull-request run for that SHA).
 grep -Fq 'source_ref: ${{ needs.resolve-release.outputs.source_sha }}' "$uat_workflow"
-grep -Fq 'ref: ${{ inputs.source_ref || github.sha }}' "$ci"
+grep -Fq 'ref: ${{ inputs.source_ref || github.event.pull_request.head.sha || github.sha }}' "$ci"
 grep -Fq 'sha="$(git rev-parse HEAD)"' "$ci"
 test "$(grep -Fc 'ref: ${{ needs.resolve-source.outputs.source_sha }}' "$ci")" -ge 1
 grep -Fq '.head_sha == $sha' "$ci"
@@ -591,6 +597,8 @@ test "$(grep -Fc 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/p
 grep -Fq 'source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'caller_ci="$(git rev-parse "$GITHUB_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'head_sha=$SOURCE_SHA' "$uat_workflow"
+grep -Fq 'event=pull_request&status=success&head_sha=$SOURCE_SHA' "$uat_workflow"
+grep -Fq '.event == "pull_request"' "$uat_workflow"
 grep -Fq 'validated_ci_run_id: ${{ needs.resolve-release.outputs.validated_ci_run_id }}' "$uat_workflow"
 manifest_job="$(awk '/^  publish-production-manifest:/{found=1; next} found && /^  [[:alnum:]_-]+:/{exit} found{print}' "$ci")"
 grep -Fq 'always() &&' <<< "$manifest_job"
