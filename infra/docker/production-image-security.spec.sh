@@ -301,7 +301,11 @@ m01_step_line="$(grep -n 'name: Run UAT M-01 actor-delegation acceptance' "$uat_
 release_finalizer_line="$(grep -n 'name: Retire superseded launch builds' "$uat_workflow" | cut -d: -f1)"
 test "$m01_step_line" -gt "$release_finalizer_line"
 grep -Fq 'name: Sign exact UAT deployment acceptance' "$uat_workflow"
-grep -Fq "if: success() && inputs.target == 'all'" "$uat_workflow"
+grep -Fq "if: success() && steps.target.outputs.target == 'all'" "$uat_workflow"
+if grep -Fq "if: success() && inputs.target == 'all'" "$uat_workflow"; then
+  echo "ERROR: UAT acceptance must follow the resolved deployment target" >&2
+  exit 1
+fi
 grep -Fq 'cosign sign-blob --yes \' "$uat_workflow"
 grep -Fq 'acceptanceKind: "UAT_DEPLOYMENT_ACCEPTANCE"' "$uat_workflow"
 grep -Fq 'target: "all"' "$uat_workflow"

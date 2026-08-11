@@ -4,7 +4,10 @@ Status: Implemented locally; live timing not yet measured
 Owner: Codex / release owner
 Scope: UAT selective release plus UAT-backed Production fast/no-migration promotion.
 Decisions:
-- Reuse the existing UAT classifier and exact signed all-target acceptance.
+- Reuse the existing UAT classifier and exact signed resolved-all acceptance.
+- Mint that acceptance from the resolved target, so explicit `all` and
+  `auto -> all` carry identical authority only after identical three-service
+  deploy, health and finalization evidence.
 - `target=auto` is coordinated UAT promotion, never incident authority.
 - Keep Production canary/bakes and every legal/security/maintenance gate.
 - Prove the exact migration catalog inside the fenced release task before any
@@ -15,6 +18,8 @@ Artifacts:
 - `docs/specs/production-fast-promotion-spec.md`
 - `docs/plans/production-fast-promotion-plan.md`
 Verification:
+- Resolved-all acceptance regression proves all three signing/upload conditions
+  use `steps.target.outputs.target`, and rejects the stale requested-target gate.
 - `production-release-intent.spec.sh`: pass.
 - `production-fast-promotion.spec.sh`: pass, including rendered release-task
   command and malformed authority rejection.

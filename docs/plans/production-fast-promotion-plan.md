@@ -3,7 +3,8 @@
 Spec: `docs/specs/production-fast-promotion-spec.md`
 Memory: `docs/agent-memory/production-fast-promotion.md`
 
-- [x] Confirm UAT selective rollout and signed all-target acceptance contracts.
+- [x] Confirm UAT selective rollout and signed resolved-all acceptance contracts;
+  `auto` resolving to `all` must not require a byte-identical second UAT deploy.
 - [x] Confirm Production already skips source CI and image publication for UAT
   promotion.
 - [x] Add `target=auto` as a UAT-backed, non-incident release intent.

@@ -6,7 +6,7 @@ Provide a production-like AWS environment where releases from `develop` can be a
 
 ## Users and journey
 
-- Release owner selects `UAT Deploy` in GitHub Actions, enters an exact commit SHA or `uat-*` tag reachable from `develop`, and normally leaves `target=auto`. The controller compares each active service's full `GIT_SHA` with the requested source and chooses one service only when the impact is unambiguous; missing, shared or unknown impact becomes `all`. The owner may still choose `all`, `api-web`, `ai-gateway`, or `workers` explicitly. Production eligibility always requires a later explicit all-target acceptance.
+- Release owner selects `UAT Deploy` in GitHub Actions, enters an exact commit SHA or `uat-*` tag reachable from `develop`, and normally leaves `target=auto`. The controller compares each active service's full `GIT_SHA` with the requested source and chooses one service only when the impact is unambiguous; missing, shared or unknown impact becomes `all`. The owner may still choose `all`, `api-web`, `ai-gateway`, or `workers` explicitly. Production eligibility requires a signed resolved-all acceptance; `auto -> all` and explicit `all` use the same three-service evidence.
 - Automatic CI runs only for pull requests. UAT invokes the reusable CI for its exact release SHA and may reuse an exact successful pull-request validation; it runs the full gate itself when no exact reusable evidence exists. Branch pushes never duplicate the full suite.
 - CI runs the existing typecheck, tests, security checks, clean image build, digest manifest, and SBOM gates.
 - The deploy job uses the GitHub `uat` environment and UAT-only OIDC roles, runs migrations against the UAT database, deploys immutable ECR digests, and verifies digest, commit, and health.

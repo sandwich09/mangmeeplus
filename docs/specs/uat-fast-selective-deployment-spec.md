@@ -20,10 +20,10 @@ retirement and is not removed by this change.
 - Remove the six minutes of fixed UAT bake delay while keeping ECS health,
   alarm rollback, circuit breaker, immutable image, release-operation and
   post-deploy verification gates.
-- Production still requires a successful signed `target=all` UAT acceptance for
-  the exact source and exact three-image manifest. Its optional fast promotion
-  may reuse this classifier against Production service SHAs, but only after
-  proving there is no pending database migration.
+- Production still requires a successful signed resolved-`all` UAT acceptance
+  for the exact source and exact three-image manifest. Its optional fast
+  promotion may reuse this classifier against Production service SHAs, but only
+  after proving there is no pending database migration.
 
 Expected warm-run targets, including image publication and the existing
 release-operation fence:
@@ -43,12 +43,15 @@ release-operation fence:
    unknown path select `all`.
 4. The workflow records the resolved target in its log and uses it consistently
    for the release task, rollout, verification and finalization.
-5. An operator may still choose an explicit service for an incident or `all`
-   for the final acceptance.
+5. An operator may still choose an explicit service for an incident. A request
+   of `all`, or `auto` that safely resolves to `all`, is eligible for final
+   acceptance after the same three-service verification and finalization.
 
-The final run before Production is always explicit `target=all`. Automatic or
-single-service runs never produce the signed all-target acceptance consumed by
-Production.
+Production consumes acceptance only when the resolved target is `all`.
+Single-service runs never produce it. An automatic run that resolves to `all`
+does produce it because the release, verification and finalization evidence is
+identical to an explicit `all` run; this avoids an otherwise byte-identical
+second deployment.
 
 ## Early infrastructure preflight
 
@@ -105,7 +108,7 @@ moving or unreadable service fails before the Express application update.
   controls are preserved, invalid state blocks, and Production performs no
   rollout-configuration read or write.
 - Workflow static checks prove `auto` is resolved once and that signed
-  acceptance remains `target=all` only. They also prove the read-only
+  acceptance requires a resolved `all` target. They also prove the read-only
   infrastructure preflight is a dependency of image publication while the
   pre-mutation IAM check remains in the deploy job.
 - A live UAT run must record the resolved target, show zero-minute bake values

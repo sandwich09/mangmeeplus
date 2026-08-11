@@ -1,11 +1,12 @@
 # Agent Memory: UAT environment
 
-Status: UAT is running source `f2e1be0c7041c936d75cc6dec6855e49ce166c1a` on all three
-services as of 2026-08-11 via Deploy UAT/auto run `31480892459`.
-The signed immutable api-web, AI Gateway and workers images are ACTIVE with one configuration each,
-capacity 1/2 and matching `GIT_SHA`/`SERVICE_VERSION`. The run did not issue signed UAT acceptance:
-its post-rollout fast-canary check false-failed while the standard ECS view still showed AI Gateway's
-draining previous deployment; independent readback after convergence proved all three services stable.
+Status: UAT is running source `06866aa4deb759c1a124e2b69762774efa41df22` on all three
+services as of 2026-08-11 via Deploy UAT/auto run `31484248203`.
+The immutable api-web, AI Gateway and workers rollouts, digest/health verification and launch-build
+retirement all succeeded after the controller waited for standard ECS convergence. That run did not
+issue signed UAT acceptance because the then-current policy keyed signing to the requested `auto`
+input instead of its resolved `all` target; the resolved-all acceptance change recorded here removes
+that duplicate-deploy requirement for subsequent runs.
 Owner: Platform/Security release owner
 Scope: GitHub UAT environment, OIDC roles, isolated AWS runtime/data resources, immutable deployment workflow, and verification.
 Decisions:

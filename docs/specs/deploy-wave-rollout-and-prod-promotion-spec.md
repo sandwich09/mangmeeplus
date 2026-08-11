@@ -46,9 +46,10 @@ stage prefix).
 
 - Automatic single-service UAT rollout is defined separately in
   `docs/specs/uat-fast-selective-deployment-spec.md`. It deliberately keeps the
-  three-image manifest contract and requires a later explicit all-target UAT
+  three-image manifest contract and requires a signed resolved-all UAT
   acceptance before Production, so no per-service Production manifest schema is
-  introduced.
+  introduced. An `auto` run that resolves to `all` already satisfies this and is
+  not deployed a second time.
 - Publishing the release-task image from CI in the manifest (today rebuilt in
   every deploy job).
 - Trimming legacy `web` / `web-lambda` entries from the `ci.yml` docker-build
