@@ -223,8 +223,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C candidate rev-parse HEAD)" = "$SOURCE_SHA"
-          bash candidate/infra/security/production-a5-clone-bootstrap.spec.sh
-          bash candidate/infra/security/production-a5-clone-runner.spec.sh
+          bash infra/security/production-a5-clone-bootstrap.spec.sh
+          bash infra/security/production-a5-clone-runner.spec.sh
           cd candidate/apps/api
           ../../node_modules/.bin/tsx --test \
             prisma/production-a5/run-clone-rehearsal.spec.ts \
@@ -263,11 +263,11 @@ jobs:
               | jq -cS '.AttachedPolicies')" = '[]'
           }
           verify_role "$CLONE_ROLE_NAME" "$CLONE_POLICY_NAME" \
-            candidate/infra/security/production-a5-clone-trust.template.json \
-            candidate/infra/security/production-a5-clone-policy.template.json
+            infra/security/production-a5-clone-trust.template.json \
+            infra/security/production-a5-clone-policy.template.json
           verify_role "$CLONE_EXECUTION_ROLE_NAME" "$CLONE_EXECUTION_POLICY_NAME" \
-            candidate/infra/security/production-a5-clone-execution-trust.template.json \
-            candidate/infra/security/production-a5-clone-execution-policy.template.json
+            infra/security/production-a5-clone-execution-trust.template.json \
+            infra/security/production-a5-clone-execution-policy.template.json
           aws ecr describe-repositories --repository-names "$MIGRATION_REPOSITORY" --output json \
             | jq -e --arg name "$MIGRATION_REPOSITORY" '
               .repositories|length==1 and .[0].repositoryName==$name
@@ -357,7 +357,7 @@ jobs:
       - name: Collect registry-native BuildKit attestations and delete only the temporary image tag
         run: |
           set -euo pipefail
-          bash candidate/infra/security/collect-production-a5-migration-tool-registry-evidence.sh \
+          bash infra/security/collect-production-a5-migration-tool-registry-evidence.sh \
             collect "$MIGRATION_IMAGE" "$SOURCE_SHA" "$MIGRATION_TOOL_ROOT"
           registry_facts="$MIGRATION_TOOL_ROOT/migration-tool.registry-facts.json"
           jq -e --arg image "$MIGRATION_IMAGE" --arg digest "$MIGRATION_DIGEST" \
@@ -410,7 +410,7 @@ jobs:
             PARENT_RUN_ATTEMPT="${{ inputs.parent_production_run_attempt }}" \
             CLONE_RUN_ID="$GITHUB_RUN_ID" CLONE_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
             MIGRATION_IMAGE="$MIGRATION_IMAGE" OUTPUT_DIR="$clone_output" \
-            bash candidate/infra/security/run-production-a5-clone.sh
+            bash infra/security/run-production-a5-clone.sh
 
       - name: Assemble, validate, sign and verify exact clone evidence
         run: |
