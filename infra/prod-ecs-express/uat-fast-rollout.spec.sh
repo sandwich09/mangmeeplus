@@ -37,7 +37,11 @@ aws_cmd() {
       snapshot 0 0 | jq '.services[0].deploymentConfiguration'
       snapshot 0 0 > "$fixture/describe.json"
       ;;
-    "ecs wait") ;;
+    "ecs wait")
+      if [ -f "$fixture/stable-on-wait.json" ]; then
+        mv "$fixture/stable-on-wait.json" "$fixture/describe.json"
+      fi
+      ;;
     *) echo "unexpected AWS call: $*" >&2; return 64 ;;
   esac
 }
@@ -56,6 +60,17 @@ test "$(jq -c '.services[0].deploymentConfiguration.deploymentCircuitBreaker' "$
 : > "$calls"
 ensure_uat_fast_rollout_configuration "$service"
 ! grep -q 'ecs update-service' "$calls"
+grep -q 'ecs wait services-stable' "$calls"
+
+# ECS Express may finish before describe-services removes the draining deployment.
+# Verification must wait for the standard ECS service view instead of failing this race.
+snapshot 0 0 > "$fixture/stable-on-wait.json"
+snapshot 0 0 | jq '.services[0].deployments += [{status:"ACTIVE",rolloutState:"IN_PROGRESS"}]' \
+  > "$fixture/describe.json"
+: > "$calls"
+verify_uat_fast_rollout_configuration "$service"
+grep -q 'ecs wait services-stable' "$calls"
+test "$(jq '.services[0].deployments | length' "$fixture/describe.json")" = 1
 
 snapshot 3 3 IN_PROGRESS > "$fixture/describe.json"
 if ensure_uat_fast_rollout_configuration "$service" >/dev/null 2>&1; then

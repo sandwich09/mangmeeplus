@@ -43,6 +43,11 @@ uat_fast_rollout_configuration() {
 verify_uat_fast_rollout_configuration() {
   local service_name="$1" snapshot desired actual
   [ "${DEPLOY_ENV:-}" = uat ] || return 0
+  # ECS Express can report the exact deployment SUCCESSFUL a few seconds before the
+  # standard ECS service view removes the draining deployment. Wait for both views to
+  # converge before enforcing the steady-state canary/rollback contract.
+  aws_cmd ecs wait services-stable \
+    --cluster "$CLUSTER_NAME" --services "$service_name" --region "$REGION" || return $?
   snapshot="$(uat_fast_rollout_snapshot "$service_name")" || return $?
   validate_uat_fast_rollout_snapshot "$service_name" "$snapshot" || {
     echo "ERROR: UAT service $service_name is not stable with the reviewed canary/rollback controls" >&2
