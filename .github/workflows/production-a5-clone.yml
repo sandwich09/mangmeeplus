@@ -346,7 +346,7 @@ jobs:
           jq -e '.candidateMigrationSetHash|test("^[0-9a-f]{64}$")' \
             "$tool_root/candidate-hashes.json" >/dev/null
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/production-a5-clone.yml@refs/heads/main"
-          cosign sign --yes --bundle "$tool_root/migration-tool.signature.bundle" "$image"
+          cosign sign --yes "$image"
           cosign verify --certificate-identity "$identity" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$image" > "$tool_root/migration-tool.signature.verify.json"
@@ -383,7 +383,7 @@ jobs:
             --arg dockerfileBlob "$(git -C candidate rev-parse "$SOURCE_SHA:apps/api/Dockerfile")" \
             --arg lockHash "$(sha256sum candidate/pnpm-lock.yaml | awk '{print $1}')" \
             --arg catalog "$candidate_hash" \
-            --arg bundleHash "$(sha256sum "$MIGRATION_TOOL_ROOT/migration-tool.signature.bundle" | awk '{print $1}')" \
+            --arg signatureHash "$(sha256sum "$MIGRATION_TOOL_ROOT/migration-tool.signature.verify.json" | awk '{print $1}')" \
             --arg identity "$MIGRATION_IDENTITY" --arg tag "$MIGRATION_TEMPORARY_TAG" \
             --slurpfile registry "$registry_facts" '
               ($registry[0]) as $native
@@ -394,7 +394,7 @@ jobs:
                target:"migration-tool",migrationCatalogHash:$catalog,
                registryBinding:$native.registryBinding,sbom:$native.sbom,provenance:$native.provenance,
                signature:{verified:true,signedDigest:$digest,identity:$identity,
-                 issuer:"https://token.actions.githubusercontent.com",bundleSha256:$bundleHash},
+                 issuer:"https://token.actions.githubusercontent.com",outputSha256:$signatureHash},
                runtimeBoundary:{serviceTrafficAttached:false,taskRoleArn:null,
                  executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution"},
                tagCleanup:{temporaryTag:$tag,mutableTagDeleted:true,digestStillPresent:true}}

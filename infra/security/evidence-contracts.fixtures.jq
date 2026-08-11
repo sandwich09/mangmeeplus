@@ -285,7 +285,7 @@ def e0_fixture_migration_tool($source): {
     sourceCommit:$source,subjectDigest:("sha256:"+("2"*64))},
   signature:{verified:true,signedDigest:("sha256:"+e0_fixture_hash),
     identity:"https://github.com/example/repo/.github/workflows/production-a5-clone.yml@refs/heads/main",
-    issuer:"https://token.actions.githubusercontent.com",bundleSha256:e0_fixture_hash},
+    issuer:"https://token.actions.githubusercontent.com",outputSha256:e0_fixture_hash},
   runtimeBoundary:{serviceTrafficAttached:false,taskRoleArn:null,
     executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution"},
   tagCleanup:{temporaryTag:("u5-a5-7001-a1-"+$source[0:8]),mutableTagDeleted:true,
