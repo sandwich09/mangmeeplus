@@ -47,7 +47,8 @@ expected_system_header=80184d241b147b2013d1601deba34b56a3bf82f648d0f123734b7a547
 expected_deploy=413096b11632eb83a860f6a76f7553e0e882fdc3032c47cdcaa9727c12a21e76
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=71104181a97f4d49321aa0ae925464aba2c5edbde3e96692a58a87f7e61eb5e4
-expected_release_task=cf5b392265f53594346921659cbf9b76fc3798c398908567a5096830396a6279
+expected_release_task=a4759b21f286d296cbd51150f612405aef8e55db603befb606470f814be30567
+expected_release_task_network_failure=82f37664dc2b0a19d1a5951247622004cb6fe6a6d2f951c3154942fa4c87d918
 expected_ingress_drain=c1b81490a74f53d483ef0da7d6852517d8e76b8ce7f3f48da6cc95b0fbd53773
 expected_s3_storage=f7bfea9d229db933a606e2e65b22eb6444211b061c3bdeecc8b0ca70a23066ab
 expected_upload_intent=f68b1094dcc34d9feaab2506c16cf5a9f9d0750b3f4167a36e3c8ceb8a1a9adc
@@ -104,6 +105,7 @@ if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"
+  check_file infra/prod-ecs-express/release-task-network-failure.jq "$expected_release_task_network_failure"
   check_file infra/prod-ecs-express/wait-production-maintenance-ingress-drain.sh "$expected_ingress_drain"
   check_file apps/api/src/modules/data-model-core/infrastructure/storage/s3-storage.adapter.ts "$expected_s3_storage"
   check_file apps/api/src/modules/data-model-core/application/use-cases/create-upload-intent.use-case.ts "$expected_upload_intent"

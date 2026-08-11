@@ -1,6 +1,6 @@
 # Cloud Environment Operations — start, stop, inspect, and what it costs
 
-สร้าง 2026-08-07; ตรวจ live เพิ่ม 2026-08-10 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ไม่ได้อ่านจากโค้ด
+สร้าง 2026-08-07; ตรวจ live เพิ่ม 2026-08-11 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ไม่ได้อ่านจากโค้ด
 บริบทเต็มของเหตุการณ์ที่ทำให้เกิดเอกสารนี้: `docs/agent-memory/aws-cost-spike-2026-08.md`
 
 เอกสารนี้มีไว้ให้ agent ตัวถัดไป **ไม่ต้องไล่โค้ดซ้ำ** เพื่อตอบคำถามว่า "ตอนนี้อะไรรันอยู่ ปิดยังไง
@@ -16,7 +16,7 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 | --- | --- | --- |
 | ECS cluster | `watchdog-bms-prod`, `watchdog-bms-uat` | ทั้งคู่ ACTIVE |
 | prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; api-web/AI ใช้ `eb515b9…`, workers ใช้ `0bdbe50…` ณ 2026-08-10 |
-| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว** ที่ `54566d1…` ณ 2026-08-10 |
+| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว** ที่ `aca7620…` ณ 2026-08-11 |
 | RDS | `watchdog-bms-prod-db`, `watchdog-bms-uat-db` — `db.t4g.micro`, 20 GB | encrypted, `PubliclyAccessible: false` |
 | ElastiCache | `watchdog-bms-uat-redis` — `cache.t4g.micro`, engine 7.1.0 | pg `watchdog-bms-uat-redis7`, **ไม่ได้เข้ารหัส** |
 | ALB | `ecs-express-gateway-alb-ff8c07dd` | ใช้ร่วมกันทั้ง prod และ uat, 3 ENI/EIP |
@@ -29,7 +29,14 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 Network: subnet public 3 อัน (main route table → IGW) และ private 2 อัน (`rtb-07f3ced2ad683cd23`) ซึ่งตอนนี้
 เหลือ route `local` อย่างเดียวหลังลบ NAT — ในนั้นมีแค่ ENI ของ UAT RDS กับ UAT Redis ซึ่งไม่ออกอินเทอร์เน็ต
-Fargate ทุกตัวรันใน **public subnet** ออกทาง IGW ไม่ใช่ NAT **ไม่มี VPC endpoint สักตัว**
+Fargate ปกติรันใน **public subnet** ออกทาง IGW ไม่ใช่ NAT แต่ production A5 สร้าง interface endpoint
+ECR API/DKR, Logs และ Secrets Manager พร้อม `PrivateDnsEnabled=true` ใน VPC เดียวกันเมื่อ 2026-08-10
+จึงทำให้ชื่อ AWS service เหล่านี้ของ UAT วิ่งเข้า private endpoint ด้วย ไม่ได้ออก IGW. Endpoint SG และ policy
+ต้อง allowlist execution role พร้อม SG ของทุก runtime ที่ยังใช้ VPC นี้: UAT ใช้
+`watchdog-bms-uat-app-egress-sg`/`watchdog-bms-uat-ai-egress-sg`; production ใช้
+`watchdog-bms-prod-app-egress-sg`/`watchdog-bms-prod-ai-egress-sg`. ถ้าขาด role, policy หรือ SG จุดใด
+task จะ timeout ก่อนเริ่ม container แม้ public route ปกติ. Task production เก่าที่ยังรันอยู่ไม่ใช่หลักฐานว่า
+พร้อม deploy เพราะมัน pull image/secret ก่อนสร้าง endpoint เหล่านี้
 
 ---
 
@@ -77,6 +84,22 @@ aws ecr describe-images --repository-name watchdog-bms-workers \
 ```
 
 tag จะเป็น `git-<full-sha>` ต้องตรงกับ SHA ที่สั่ง deploy
+
+**Release task network (พิสูจน์ 2026-08-11):** ต้นเหตุของ run `31408125154` attempts 1/2 ไม่ใช่
+subnet เสีย แต่เป็น production A5 interface endpoints ด้านบน: private DNS มีผลทั้ง VPC ขณะที่ endpoint
+SG/policy เดิมรับเฉพาะ A5 task ทำให้ UAT release task ติดต่อ Secrets Manager ไม่ได้ทุก AZ. หลังเพิ่ม
+execution role ของ UAT ลง policy แบบจำกัดเฉพาะ UAT secrets/ECR repos/log groups และเพิ่ม UAT app SG
+ใน endpoint SG, release task/migration ผ่าน; AI Gateway ยัง rollback เพราะใช้ AI SG แยก จึงเพิ่ม SG นั้น
+ด้วย. Run `31418060978` attempt 3 จาก source `aca76203239feac359988938768ab66132c2018a`
+ผ่าน all-target, health/digest verification และ signed UAT acceptance ครบ. `run-release-task.sh` ยังมี
+subnet failover เป็น safety net เฉพาะ `TaskFailedToStart` ก่อน container เริ่มและไม่มี exit code เท่านั้น;
+ห้าม retry เมื่อ container เริ่มแล้วเพราะอาจทำ mutation ซ้ำ
+
+**Production preflight (พบ 2026-08-11):** production runtime ใช้ execution role
+`ecsTaskExecutionRole` และ SG สองตัวด้านบน แต่ endpoint policy/SG ที่แก้ UAT รอบแรกยังไม่รวมสามจุดนี้.
+ก่อน rollout production ครั้งแรกต้องเพิ่ม role แบบจำกัดเฉพาะ runtime ECR repositories,
+`watchdog-bms/production/*` secrets และ `/ecs/watchdog-bms-prod-*` log groups พร้อม SG สองตัว แล้ว
+read-back policy และ endpoint boundary ให้ตรง template; ห้ามใช้ task เก่าที่ยัง ACTIVE เป็นหลักฐานแทน
 
 ### UAT — ปิด (จอดที่ศูนย์)
 
@@ -290,7 +313,9 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
 6. **`ECS_EXPRESS_SUBNET_MODE` default เป็น `public`** และ `deploy.sh` ยังปฏิเสธ `private` สำหรับ
    api-web ตรง ๆ ส่วน A5 clone/audit ใช้ endpoint-only private network แยกต่างหากและไม่ต้องสร้าง NAT
    คืนแล้ว: `bootstrap-production-a5-private-network.sh` สร้าง ECR API/DKR, Logs,
-   Secrets Manager และ S3 endpoints พร้อม narrow SG/route read-back เมื่อ 2026-08-10
+   Secrets Manager และ S3 endpoints พร้อม narrow SG/route read-back เมื่อ 2026-08-10. เพราะ interface
+   endpoint ใช้ private DNS ระดับ VPC bootstrap จึงต้องรักษา execution-role policy และ task SG ของทั้ง
+   UAT และ production runtime ใน boundary ด้วย; อย่าลบ allowlist เหล่านี้ขณะ endpoint ยังอยู่
    AWS CLI v2.36.15 ไม่มี waiter `vpc-endpoint-available`; bootstrap จึง poll `State` แบบ bounded
    และรับเฉพาะ `available` โดย fail ทันทีเมื่อเจอ terminal failure state
 7. **UAT Redis ตัวที่รันอยู่ยังไม่ได้เข้ารหัส** ทั้ง at-rest, in-transit และไม่มี auth token — secret

@@ -10,14 +10,22 @@ vpc=vpc-0123456789abcdef0
 endpoint_sg=sg-01111111111111111
 clone_sg=sg-02222222222222222
 reader_sg=sg-03333333333333333
+uat_app_sg=sg-04444444444444444
+uat_ai_sg=sg-05555555555555555
+uat_sgs="$uat_app_sg,$uat_ai_sg"
+production_app_sg=sg-06666666666666666
+production_ai_sg=sg-07777777777777777
+production_sgs="$production_app_sg,$production_ai_sg"
 subnets=subnet-01111111111111111,subnet-02222222222222222
 routes=rtb-01111111111111111,rtb-02222222222222222
 prefix=pl-0123456789abcdef0
 
 bash -n "$validator" "$bootstrap"
 jq -cnS --arg id "$endpoint_sg" --arg clone "$clone_sg" --arg reader "$reader_sg" \
+  --arg uatApp "$uat_app_sg" --arg uatAi "$uat_ai_sg" \
+  --arg productionApp "$production_app_sg" --arg productionAi "$production_ai_sg" \
   '{SecurityGroups:[{GroupId:$id,IpPermissions:[{IpProtocol:"tcp",FromPort:443,ToPort:443,
-    IpRanges:[],Ipv6Ranges:[],PrefixListIds:[],UserIdGroupPairs:[{GroupId:$clone},{GroupId:$reader}]}],
+    IpRanges:[],Ipv6Ranges:[],PrefixListIds:[],UserIdGroupPairs:[{GroupId:$clone},{GroupId:$reader},{GroupId:$uatApp},{GroupId:$uatAi},{GroupId:$productionApp},{GroupId:$productionAi}]}],
     IpPermissionsEgress:[]}]}' > "$work/endpoint-sg.json"
 jq -cnS --arg vpc "$vpc" --arg sg "$endpoint_sg" \
   --slurpfile ecr "$root/infra/security/production-a5-ecr-endpoint-policy.template.json" \
@@ -49,7 +57,7 @@ jq -cnS --arg prefix "$prefix" '{RouteTables:[
 
 validate() {
   bash "$validator" "$1" "$2" "$3" "$vpc" "$endpoint_sg" "$clone_sg" "$reader_sg" \
-    "$subnets" "$routes" "$prefix" "$4"
+    "$uat_sgs" "$production_sgs" "$subnets" "$routes" "$prefix" "$4"
 }
 validate "$work/endpoints.json" "$work/routes.json" "$work/endpoint-sg.json" "$work/boundary.json"
 jq -e '.natGatewayRoutePresent==true and .publicInternetGatewayRoutePresent==false

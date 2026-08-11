@@ -10,6 +10,10 @@ endpoint_sg_name=watchdog-bms-production-a5-endpoints
 clone_task_sg_name=watchdog-bms-production-a5-clone-task
 clone_db_sg_name=watchdog-bms-production-a5-clone-db
 reader_task_sg_name=watchdog-bms-production-a5-readonly-task
+uat_app_sg_name=watchdog-bms-uat-app-egress-sg
+uat_ai_sg_name=watchdog-bms-uat-ai-egress-sg
+production_app_sg_name=watchdog-bms-prod-app-egress-sg
+production_ai_sg_name=watchdog-bms-prod-ai-egress-sg
 ecr_policy="$repo_root/infra/security/production-a5-ecr-endpoint-policy.template.json"
 logs_policy="$repo_root/infra/security/production-a5-logs-endpoint-policy.template.json"
 secrets_policy="$repo_root/infra/security/production-a5-secretsmanager-endpoint-policy.template.json"
@@ -83,6 +87,19 @@ endpoint_sg="$(ensure_security_group "$endpoint_sg_name" 'PrivateLink endpoints 
 clone_task_sg="$(ensure_security_group "$clone_task_sg_name" 'Production A5 clone migration task')"
 clone_db_sg="$(ensure_security_group "$clone_db_sg_name" 'Production A5 temporary clone database')"
 reader_task_sg="$(ensure_security_group "$reader_task_sg_name" 'Production A5 read-only database task')"
+uat_app_sg="$(security_group_id "$uat_app_sg_name")"
+uat_ai_sg="$(security_group_id "$uat_ai_sg_name")"
+production_app_sg="$(security_group_id "$production_app_sg_name")"
+production_ai_sg="$(security_group_id "$production_ai_sg_name")"
+for pair in "$uat_app_sg_name:$uat_app_sg" "$uat_ai_sg_name:$uat_ai_sg" \
+  "$production_app_sg_name:$production_app_sg" "$production_ai_sg_name:$production_ai_sg"; do
+  [[ "${pair##*:}" =~ ^sg-[0-9a-f]{8,17}$ ]] || {
+    echo "ERROR: expected existing runtime task security group ${pair%%:*} in $vpc_id" >&2
+    exit 1
+  }
+done
+uat_task_sg_csv="$(printf '%s\n%s\n' "$uat_app_sg" "$uat_ai_sg" | sort | paste -sd, -)"
+production_task_sg_csv="$(printf '%s\n%s\n' "$production_app_sg" "$production_ai_sg" | sort | paste -sd, -)"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/production-a5-network.XXXXXX")"
 trap 'rm -rf -- "$tmp"' EXIT
@@ -96,14 +113,18 @@ bash "$clone_sg_validator" "$tmp/clone-task-before.json" "$tmp/clone-db-before.j
   "$clone_task_sg" "$clone_db_sg" "$endpoint_sg" "$s3_prefix_list_id" preflight
 bash "$reader_sg_validator" "$tmp/reader-task-before.json" "$tmp/production-db-before.json" \
   "$reader_task_sg" "$production_db_sg" "$endpoint_sg" "$s3_prefix_list_id" preflight
-jq -e --arg clone "$clone_task_sg" --arg reader "$reader_task_sg" '
+jq -e --arg clone "$clone_task_sg" --arg reader "$reader_task_sg" \
+  --arg uatApp "$uat_app_sg" --arg uatAi "$uat_ai_sg" \
+  --arg productionApp "$production_app_sg" --arg productionAi "$production_ai_sg" '
+  ([$clone,$reader,$uatApp,$uatAi,$productionApp,$productionAi]|sort) as $allowedGroups
+  |
   (.SecurityGroups|length==1) and (.SecurityGroups[0].IpPermissionsEgress|length<=1)
   and all(.SecurityGroups[0].IpPermissionsEgress[]; .IpProtocol=="-1" and [.IpRanges[].CidrIp]==["0.0.0.0/0"])
   and ((.SecurityGroups[0].IpPermissions==[]) or
-    ([.SecurityGroups[0].IpPermissions[]|{protocol:.IpProtocol,from:.FromPort,to:.ToPort,
-      groups:([.UserIdGroupPairs[].GroupId]|sort),cidrs:(.IpRanges//[]),ipv6:(.Ipv6Ranges//[]),
-      prefixes:(.PrefixListIds//[])}])==[{protocol:"tcp",from:443,to:443,
-        groups:([$clone,$reader]|sort),cidrs:[],ipv6:[],prefixes:[]}])
+    ((.SecurityGroups[0].IpPermissions|length)==1)
+    and (.SecurityGroups[0].IpPermissions[0] | .IpProtocol=="tcp" and .FromPort==443 and .ToPort==443
+      and (.IpRanges//[])==[] and (.Ipv6Ranges//[])==[] and (.PrefixListIds//[])==[]
+      and (([.UserIdGroupPairs[].GroupId]|sort) - $allowedGroups)==[]))
 ' "$tmp/endpoint-before.json" >/dev/null
 
 revoke_default() {
@@ -117,8 +138,11 @@ revoke_public_https() {
 for sg in "$endpoint_sg" "$clone_task_sg" "$clone_db_sg" "$reader_task_sg"; do revoke_default "$sg"; done
 revoke_public_https "$clone_task_sg"
 revoke_public_https "$reader_task_sg"
-aws ec2 authorize-security-group-ingress --region "$region" --group-id "$endpoint_sg" \
-  --ip-permissions "[{\"IpProtocol\":\"tcp\",\"FromPort\":443,\"ToPort\":443,\"UserIdGroupPairs\":[{\"GroupId\":\"$clone_task_sg\"},{\"GroupId\":\"$reader_task_sg\"}]}]" >/dev/null 2>&1 || true
+for task_sg in "$clone_task_sg" "$reader_task_sg" "$uat_app_sg" "$uat_ai_sg" \
+  "$production_app_sg" "$production_ai_sg"; do
+  aws ec2 authorize-security-group-ingress --region "$region" --group-id "$endpoint_sg" \
+    --protocol tcp --port 443 --source-group "$task_sg" >/dev/null 2>&1 || true
+done
 for tuple in "$clone_task_sg:$clone_db_sg" "$reader_task_sg:$production_db_sg"; do
   task_sg="${tuple%%:*}"
   db_sg="${tuple##*:}"
@@ -201,8 +225,9 @@ bash "$clone_sg_validator" "$tmp/clone-task.json" "$tmp/clone-db.json" \
 bash "$reader_sg_validator" "$tmp/reader-task.json" "$tmp/production-db.json" \
   "$reader_task_sg" "$production_db_sg" "$endpoint_sg" "$s3_prefix_list_id" exact
 bash "$endpoint_validator" "$tmp/endpoints.json" "$tmp/routes.json" "$tmp/endpoint.json" \
-  "$vpc_id" "$endpoint_sg" "$clone_task_sg" "$reader_task_sg" "$subnet_csv" \
-  "$route_table_csv" "$s3_prefix_list_id" "$tmp/boundary.json"
+  "$vpc_id" "$endpoint_sg" "$clone_task_sg" "$reader_task_sg" "$uat_task_sg_csv" \
+  "$production_task_sg_csv" "$subnet_csv" "$route_table_csv" "$s3_prefix_list_id" \
+  "$tmp/boundary.json"
 
 put_parameter() {
   aws ssm put-parameter --region "$region" --name "$parameter_prefix/$1" --type String \
@@ -213,6 +238,8 @@ put_parameter endpoint-security-group-id "$endpoint_sg"
 put_parameter clone-task-security-group-id "$clone_task_sg"
 put_parameter clone-db-security-group-id "$clone_db_sg"
 put_parameter reader-task-security-group-id "$reader_task_sg"
+put_parameter uat-task-security-group-ids "$uat_task_sg_csv"
+put_parameter production-task-security-group-ids "$production_task_sg_csv"
 put_parameter production-db-security-group-id "$production_db_sg"
 put_parameter task-subnet-ids "$subnet_csv"
 put_parameter task-route-table-ids "$route_table_csv"
