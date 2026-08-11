@@ -47,6 +47,12 @@ Verification:
   `verify-deploy-readiness.spec.sh`, selective workflow/target/fast-rollout specs, workflow YAML
   parsing, Bash syntax, `git diff --check`, the full `production-image-security.spec.sh`, and a live
   read-only AWS execution of `verify-deploy-readiness.sh` all pass.
+- CI push run `31473606590` exposed an exact-byte controller pin drift after commit `df89b41`
+  legitimately changed `PlatformAccessPage.tsx`: application tests passed, but the production
+  maintenance release validator still expected the previous page hash. The validator now pins the
+  current reviewed page bytes and `deploy-production.yml` pins the resulting validator hash.
+  The focused maintenance release/workflow specs, UAT early/selective specs, and the full
+  `production-image-security.spec.sh` pass with the synchronized contract.
 - AWS roles `watchdog-bms-ci-uat`, `watchdog-bms-deploy-uat`, and five UAT ECS runtime roles exist. GitHub OIDC trust readback is bound exactly to `repo:MangmeeDev/mangmeeplus:environment:uat`; inline policy apply completed from the committed templates, but the operator principal lacks `iam:GetRolePolicy` for independent readback.
 - GitHub environment `uat` exists with only `main` allowed (policy `55132941`) and has account, region, publisher/deploy role ARN, copied LINE IDs, `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com`, and disabled AI/autoreply defaults.
 - The owner approved recurring cost. `watchdog-bms-uat-db` (`db.t4g.micro`, encrypted/private), `watchdog-bms-uat-redis` (`cache.t4g.micro`), `watchdog-bms-uat-311414082667`, UAT security groups, secrets, SSM parameters, and `watchdog-bms-uat` ECS cluster are provisioned. Production LINE IDs/secrets were copied into UAT without printing secret values.
