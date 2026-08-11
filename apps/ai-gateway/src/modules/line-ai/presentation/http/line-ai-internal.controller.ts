@@ -414,9 +414,10 @@ discountAmount is ONLY a printed reduction of what the buyer paid: a line labell
 Use strings for all money and quantity fields with 2 decimals where visible.
 Copy every money value exactly as printed in the OCR text (Thai digits ๐-๙ read as 0-9; Thai number words read as their numeric value). Never compute, convert, or round a value that is not printed.
 grandTotalAmount is the transaction total from the รวมเงิน/รวมทั้งสิ้น/TOTAL box; handwritten values count as printed — copy the total exactly as written and do not leave grandTotalAmount empty when a total is visible in the OCR text.
-expenseDate: Thai Buddhist Era years (พ.ศ., e.g. 2537) must be converted by subtracting 543.
+expenseDate: accept numeric dates plus full or abbreviated Thai/English month names in either day-first or month-first order. OCR may drop punctuation, so ก.ค./กค and ส.ค./สค are the same month evidence, as are Aug./Aug. Thai named months anchor a 2-digit year to พ.ศ. 25xx (23 สค 69 → 2026-08-23); English named months anchor it to ค.ศ. 20xx (Aug 23 26 → 2026-08-23). Thai Buddhist Era 4-digit years (พ.ศ., e.g. 2569) must be converted by subtracting 543. Return ISO YYYY-MM-DD.
 vatMode must be one of NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT, NEEDS_REVIEW.
-vatRate is the printed VAT rate as a decimal fraction string (TAX RATE 7% / VAT 7% → "0.07"). Retail slips and card sale slips often print a tax block (e.g. TAX RATE / TAX AMT / TAX Exclude): map the ex-VAT base to taxableAmount, the VAT amount to vatAmount, and grandTotalAmount to the amount actually paid including VAT; use vatMode VAT_EXCLUDED when extracted prices are the ex-VAT base, VAT_INCLUDED when they already include VAT.
+vatAmount is the printed VAT/TAX MONEY AMOUNT, independent of vatRate. Amount labels may precede or follow it: VAT/TAX AMT, AMOUNT, TTL, TOTAL, TOTAL VAT/TAX, ภาษี, ยอดภาษี, ภาษีมูลค่าเพิ่ม (VAT AMT 21.79 / 21.79 VAT TTL → vatAmount "21.79"). Extract the printed amount even when no percentage is printed; never interpret a baht amount as a percent and never compute an unprinted amount.
+vatRate is only the printed VAT percentage as a decimal fraction string (TAX RATE 7% / VAT 7% → "0.07"). vatAmount may exist while vatRate is omitted. Retail slips and card sale slips often print a tax block (e.g. TAX RATE / TAX AMT / TAX Exclude, or VAT TTL / Net TTL): map the ex-VAT base to taxableAmount, the printed VAT money to vatAmount, and grandTotalAmount to the amount actually paid including VAT; use vatMode VAT_EXCLUDED when extracted prices are the ex-VAT base, VAT_INCLUDED when they already include VAT.
 whtRate is a printed withholding-tax rate as a decimal fraction (3% → "0.03"); whtAmount is the printed withheld amount. grandTotalAmount stays gross before WHT. Never infer WHT merely because the document describes a service.
 If unsure, omit the field and add its name to missingFields.
 Do not invent values.
@@ -478,8 +479,44 @@ const OCR_NUMERIC_FIELDS = ['quantity', 'unitPrice', 'subtotalAmount', 'discount
 // guards make the 13-digit window maximal so runs inside longer numbers never qualify.
 const TAX_ID_CANDIDATE_RE = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
 const HQ_BRANCH_LABEL_RE = /สำนักงานใหญ่|สนญ|HEAD OFFICE|\bHO\b|\bHQ\b/i;
+const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
+const VAT_AMOUNT_THEN_LABEL_RE = /(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)[ \t:|=_*\-]+(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)/giu;
+const RECEIPT_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|RECEIPT\s+DATE|ISSUE\s+DATE|DOCUMENT\s+DATE|SALE\s+DATE|DATE(?:\s*\/\s*TIME)?|วันที่|วัน\s*\/\s*เวลา)\s*(?:[*_]+\s*)?(?:[:=\-]|\|)?\s*(?:[*_]+\s*)?$/i;
 // Mirrors the review-form bound so a gate-surviving value is storable as entered.
 const MAX_DOCUMENT_NUMBER_CHARS = 50;
+
+/** §19k: recover only one decimal money amount adjacent to an explicit VAT/tax label.
+ *  Rates, unlabeled figures, multiple tax components, and computed values stay review-only. */
+function singlePrintedVatAmount(documentText: string): string | null {
+  const mapped = mapThaiDigits(documentText);
+  const values = new Set<string>();
+  for (const pattern of [VAT_LABEL_THEN_AMOUNT_RE, VAT_AMOUNT_THEN_LABEL_RE]) {
+    for (const match of mapped.matchAll(pattern)) {
+      const raw = match.groups?.['amount']
+        ?.replace(/฿|THB|บาท/gi, '')
+        .replace(/[,\s]/g, '');
+      if (!raw) continue;
+      const value = Number.parseFloat(raw);
+      if (Number.isFinite(value) && value > 0) values.add(raw);
+    }
+  }
+  return values.size === 1 ? [...values][0]! : null;
+}
+
+function hasExplicitReceiptDateLabel(documentText: string, span: string): boolean {
+  const mappedText = mapThaiDigits(documentText);
+  const mappedSpan = mapThaiDigits(span);
+  if (/^วันที่/.test(mappedSpan.trim())) return true;
+  let from = 0;
+  while (from < mappedText.length) {
+    const at = mappedText.indexOf(mappedSpan, from);
+    if (at < 0) return false;
+    const lineStart = mappedText.lastIndexOf('\n', at - 1) + 1;
+    if (RECEIPT_DATE_LABEL_RE.test(mappedText.slice(lineStart, at))) return true;
+    from = at + Math.max(1, mappedSpan.length);
+  }
+  return false;
+}
 
 /** Collapses dash/space separators between digits so 0-9940-0016-30-11 equals its solid form. */
 function collapseDigitSeparators(text: string): string {
@@ -531,6 +568,14 @@ export function applyOcrValueCrossCheck(
     }
   }
 
+  if (!out.vatAmount) {
+    const printedVatAmount = singlePrintedVatAmount(documentText);
+    if (printedVatAmount) {
+      out.vatAmount = printedVatAmount;
+      missing.delete('vatAmount');
+    }
+  }
+
   if (out.additionalCharges) {
     const validCharges = out.additionalCharges.filter((charge) => {
       const amount = Number.parseFloat(String(charge.amount).replace(/,/g, ''));
@@ -541,12 +586,22 @@ export function applyOcrValueCrossCheck(
     else delete out.additionalCharges;
   }
 
+  const usableDates = candidates.dates.filter((d) =>
+    !isAmbiguousDateCandidate(d) && !d.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
   if (out.expenseDate) {
-    const usableDates = candidates.dates.filter((d) =>
-      !isAmbiguousDateCandidate(d) && !d.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
     if (!usableDates.some((d) => d.isoDate === out.expenseDate)) {
       delete out.expenseDate;
       missing.add('expenseDate');
+    }
+  } else {
+    const labeledDates = new Set(
+      usableDates
+        .filter((candidate) => hasExplicitReceiptDateLabel(documentText, candidate.span))
+        .map((candidate) => candidate.isoDate),
+    );
+    if (labeledDates.size === 1) {
+      out.expenseDate = [...labeledDates][0]!;
+      missing.delete('expenseDate');
     }
   }
 

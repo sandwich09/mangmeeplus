@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
+import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
 
 const context = { displayName: 'พิม · แอดมิน', roleLabel: 'แอดมิน', branchScopeLabel: '2 สาขา', companyId: 'c 1', webBaseUrl: 'https://app.example.com/', permissions: [] };
 
@@ -12,6 +12,14 @@ describe('LINE staff menu', () => {
     const restricted = buildStaffMainMenu(context);
     assert.equal(restricted.type, 'flex');
     assert.deepEqual(restricted.quickReply?.items.map((item) => item.action.label), ['📊 ถามข้อมูล']);
+  });
+
+  it('reuses the permission-filtered main menu after a completed turn within the LINE limit', () => {
+    const allowed = { ...context, isOwner: true, permissions: ['dashboard.read', 'crm.booking.read', 'crm.inbox.read', 'expense.read', 'ledger.read', 'procurement.purchase_order.read', 'procurement.purchase_order.approve', 'expense.receipt.line_upload'] };
+    const quickReply = buildStaffCompletionQuickReply(allowed);
+    assert.deepEqual(quickReply, buildStaffMainMenu(allowed).quickReply);
+    assert.ok(quickReply.items.length <= 13);
+    assert.deepEqual(quickReply.items.slice(-3).map((item) => item.action.label), ['🏢 บริษัทของฉัน', '✅ รายการรออนุมัติ', '📷 ถ่ายใบเสร็จ']);
   });
 
   it('renders honest greeting values and derives the menu count from Quick Reply items', () => {

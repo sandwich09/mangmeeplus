@@ -14,6 +14,29 @@ const shadowProbe = {
 } as any;
 const acceptedLegal = { isRequired: async () => false } as any;
 
+function replyAssertionText(message: unknown): string {
+  if (!message || typeof message !== 'object') return '';
+  const record = message as Record<string, unknown>;
+  if (record.type === 'text' && typeof record.text === 'string') return record.text;
+
+  const strings: string[] = [];
+  const collectStrings = (value: unknown): void => {
+    if (typeof value === 'string') {
+      strings.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(collectStrings);
+      return;
+    }
+    if (value && typeof value === 'object') {
+      Object.values(value).forEach(collectStrings);
+    }
+  };
+  collectStrings(message);
+  return strings.join('\n');
+}
+
 function makePrisma() {
   const updates: any[] = [];
   const recordUpdates: any[] = [];
@@ -137,7 +160,7 @@ function makeHarness(opts: {
     } as any,
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
-      sendReply: async (_token: string, messages: Array<{ text: string }>) => { replies.push(messages[0]?.text ?? ''); return 'ok'; },
+      sendReply: async (_token: string, messages: unknown[]) => { replies.push(replyAssertionText(messages[0])); return 'ok'; },
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     { assertClean: async () => undefined } as any,

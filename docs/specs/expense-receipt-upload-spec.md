@@ -1536,6 +1536,60 @@ A full tax invoice printing two tax IDs recovers nothing when stage 2 returns ne
 do not. `สำนักงานใหญ่` and `สาขาที่ 3` normalize to `00000` and `00003`. Every gated field
 either holds a value the document provably prints or is honestly missing.
 
+## 19k. Addendum 2026-08-11 — Named-Month Dates and Printed VAT Amounts (Owner-reported)
+
+Owner report from UAT: the latest Starbucks LINE receipt was recognized as
+`ABBREVIATED_TAX_INVOICE`, `VAT_INCLUDED`, vendor Starbucks Coffee, and total 333.00,
+but `expenseDate` and `vatAmount` were absent even though both are visibly printed. The
+failure is format-family coverage, not a Starbucks-only rule: the shared date normalizer
+supports day-before-month names but not month-before-day (`Aug 23 26`) or punctuation-lost
+Thai abbreviations (`กค`, `สค`), while the stage-2 prompt describes VAT mainly through a
+printed rate/tax block and does not state that a VAT amount can stand alone without `%`.
+
+Internet research and the resulting format canon are recorded in
+`docs/research/thai-receipt-field-format-conventions.md` §§4–5. Unicode CLDR supplies the
+locale/date families and explicitly permits abbreviated symbols with or without their
+abbreviation marker. AWS Textract and Microsoft Document Intelligence both model receipt
+tax as a monetary field; Microsoft keeps amount and rate separate. RD section 86/4 also
+names the VAT amount and issue date as separate invoice fields.
+
+Decisions:
+
+1. **One shared named-month grammar covers the family.** `extractValueCandidates` accepts
+   Thai full months, standard dotted abbreviations, and OCR punctuation-stripped aliases
+   (`มค กพ มีค เมย พค มิย กค สค กย ตค พย ธค`); English full/abbreviated months with an
+   optional period; both `d MMM y` and `MMM d, y`; optional English ordinal suffix and
+   apostrophe before a two-digit year. Four-digit BE/CE behavior is unchanged. A named Thai
+   month anchors a two-digit year to BE 25xx; a named English month anchors it to CE 20xx.
+   This resolves `23 สค 69` and `Aug 23 26`, but does not weaken the guard for unanchored
+   numeric `23/08/26`, which remains ambiguous and is dropped to review. If stage 2 omits
+   the date, deterministic recovery may select it only when exactly one unambiguous candidate
+   is attached to an explicit receipt/transaction/issue/document-date label; an unlabeled or
+   multiply-labelled candidate set stays missing.
+2. **`vatAmount` is independent of `vatRate`.** The extraction prompt treats `VAT/TAX`
+   `AMT`, `AMOUNT`, `TTL`, `TOTAL`, `ภาษี`, `ยอดภาษี`, and `ภาษีมูลค่าเพิ่ม` as amount
+   labels in either direction (`VAT AMT 21.79` or `21.79 VAT TTL`). A printed decimal money
+   value maps to `vatAmount` even when no percentage is printed. A percentage maps only to
+   `vatRate`; a baht amount is never interpreted as a percent. Existing `VAT_INCLUDED` /
+   `VAT_EXCLUDED` arithmetic and review rules remain unchanged.
+3. **Narrow deterministic recovery closes model omissions.** After the existing numeric
+   membership cross-check, when `vatAmount` is absent, the gateway may recover exactly one
+   distinct decimal/currency amount immediately adjacent to a strong VAT/tax amount label.
+   The value still has to be printed in stage-1 OCR text. A rate-only line (`VAT 7.00%`),
+   multiple different tax amounts, an unlabeled number, or a value requiring arithmetic is
+   not recovered. Unknown stays in `missingFields`; the draft stays `NEEDS_REVIEW`.
+4. **No vendor template, schema change, or historical rewrite.** Starbucks is a regression
+   fixture only. Web upload and LINE share the same gateway path; records heal on
+   re-extraction or manual review. OCR still cannot confirm, post, pay, claim VAT, or mutate
+   final accounting state.
+
+Acceptance: the UAT format family keeps (or recovers from one explicit date label) an English month-first date such as `Aug 23 26` as
+ISO `2026-08-23`; `23 Aug. ’26`, `23 ส.ค. 69`, `23 สค 69`, and `23 สิงหาคม 2569` resolve
+to the same day, while `23/08/26` remains ambiguous. `21.79 VAT TTL`, `VAT AMT 21.79`, and
+`ภาษีมูลค่าเพิ่ม 21.79 บาท` yield `vatAmount: "21.79"` without inventing `vatRate`;
+`VAT 7.00%` alone yields no amount; two distinct labeled tax amounts yield no automatic
+recovery. Existing numeric, full-year, Thai-digit, and tax-block behavior remains green.
+
 ## 20. Backlog After MVP
 
 - Typhoon OCR provider implementation for receipt/tax-invoice AI capture. See [[specs/typhoon-receipt-ocr-spec|Typhoon Receipt OCR Spec]].

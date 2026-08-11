@@ -67,6 +67,16 @@ the switch is open and the deployed production serving mode is `live`.
   runtime flag off.
 - A full promotion may use only a bridge release that already contains the same validated global
   gate. The old public release cannot be used as a maintenance bridge.
+- Exact-byte policy is limited to the small enforcement and runtime-wiring boundary whose behavior
+  can open ingress, issue/refresh sessions, start queues, change signed-URL lifetime, or mutate the
+  production release path. Presentation components and broad append-only registries are not pinned
+  byte-for-byte: their required maintenance invariants are checked semantically and their journeys
+  remain covered by focused tests plus the exact UAT-attested images. This prevents an unrelated UI,
+  schema, config, or audit-taxonomy addition from making the release mechanically undeployable.
+- Intentional changes inside the exact boundary use the deterministic local pin-sync command before
+  push. CI runs the same command in check mode before expensive jobs fan out and reports that
+  remediation directly; the production controller still pins the resulting validator bytes, so
+  convenience does not create a bypass.
 
 ## Rollout ceremony
 

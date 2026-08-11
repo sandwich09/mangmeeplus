@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useConfirm } from '@/common/components/modal/use-confirm';
 import { useToast } from '@/common/components/toast';
 import { getPlatformAccess, setPlatformAccess, type PlatformAccessStatus } from './system-partners.api';
 
 export default function PlatformAccessPage() {
+  const { confirm, confirmDialog } = useConfirm();
   const toast = useToast();
   const [status, setStatus] = useState<PlatformAccessStatus | null>(null);
   const [reason, setReason] = useState('');
@@ -16,8 +18,17 @@ export default function PlatformAccessPage() {
   }, []);
 
   const change = async (state: 'OPEN' | 'CLOSED') => {
-    if (state === 'OPEN' && !window.confirm('ยืนยันเปิดระบบให้ผู้ใช้ทั่วไปเข้าสู่ระบบและใช้งานจริง?')) return;
-    if (state === 'CLOSED' && !window.confirm('ยืนยันปิดการเข้าสู่ระบบของผู้ใช้ทั่วไปทันที?')) return;
+    if (state === 'OPEN' && !(await confirm({
+      title: 'ยืนยันเปิดระบบ',
+      message: 'เปิดระบบให้ผู้ใช้ทั่วไปเข้าสู่ระบบและใช้งานจริง?',
+      confirmLabel: 'เปิดระบบ',
+      variant: 'primary',
+    }))) return;
+    if (state === 'CLOSED' && !(await confirm({
+      title: 'ยืนยันปิดระบบ',
+      message: 'ปิดการเข้าสู่ระบบของผู้ใช้ทั่วไปทันที?',
+      confirmLabel: 'ปิดระบบ',
+    }))) return;
     setSaving(true);
     try {
       const next = await setPlatformAccess(state, reason);
@@ -33,6 +44,7 @@ export default function PlatformAccessPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
+      {confirmDialog}
       <div className="mx-auto max-w-2xl space-y-5">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">เปิด–ปิดระบบ</h1>

@@ -1,6 +1,6 @@
 # UAT Fast Selective Deployment Spec
 
-Status: Implemented; awaiting first live timing evidence
+Status: Implemented; live `target=all` evidence recorded
 Owner: Platform / release owner
 Related: `docs/specs/uat-environment-spec.md`, `docs/specs/deploy-wave-rollout-and-prod-promotion-spec.md`
 
@@ -50,6 +50,23 @@ The final run before Production is always explicit `target=all`. Automatic or
 single-service runs never produce the signed all-target acceptance consumed by
 Production.
 
+## Early infrastructure preflight
+
+Before reusable CI publishes any image, the neutral `main` controller assumes
+the existing UAT deploy role and performs read-only checks for:
+
+- exact deploy-role and release-task-role inline policies;
+- stable singleton API/Web, AI Gateway and Workers revisions with the reviewed
+  canary, rollback-alarm and circuit-breaker controls;
+- every Secrets Manager record required by those three runtimes; and
+- all three ECS rollback alarms in `OK` state.
+
+This gate must finish before `build_and_publish`. The deploy job repeats the
+exact IAM readback immediately before mutation because the policy may drift
+while images are being published. The early check does not require current
+application health: a release must remain able to repair a broken or
+capacity-paused UAT service.
+
 ## Change classification
 
 Classification follows the runtime Docker build inputs, not product feature
@@ -88,7 +105,20 @@ moving or unreadable service fails before the Express application update.
   controls are preserved, invalid state blocks, and Production performs no
   rollout-configuration read or write.
 - Workflow static checks prove `auto` is resolved once and that signed
-  acceptance remains `target=all` only.
+  acceptance remains `target=all` only. They also prove the read-only
+  infrastructure preflight is a dependency of image publication while the
+  pre-mutation IAM check remains in the deploy job.
 - A live UAT run must record the resolved target, show zero-minute bake values
   in the active ECS service, pass digest/health/finalization, and record the
   observed duration.
+
+## Live evidence
+
+Run `31468653715` attempt 2 deployed source
+`5f555675271e2fc38024f11b98ed268bbeb87b37` to all three services. The deploy
+job completed in 14m51s, all ECS deployments were `SUCCESSFUL` with zero
+triggered rollback alarms, each service converged to one active revision at the
+manifest digest, public health passed, and both deployment-acceptance artifacts
+were uploaded. Attempt 1 exposed policy drift only after image publication;
+that incident is the reason the read-only infrastructure gate now precedes the
+build.

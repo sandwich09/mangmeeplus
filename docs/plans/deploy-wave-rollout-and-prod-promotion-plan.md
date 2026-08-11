@@ -96,6 +96,9 @@ C6. [x] Add bounded ORPHAN recovery from immutable stopped tasks; verify the old
 C7. [x] Separate held target SHA from recovery executor SHA; require executor
     ancestry from target and a pinned reviewed fix floor, exact successful push
     CI, signed executor digest, and persist both SHAs/digest/CI/signer evidence.
+    CI trigger override (2026-08-11): UAT now requires exact successful pull-request
+    CI and production recovery requires an explicit exact manual CI run; branch pushes
+    do not duplicate the full suite.
 C8. [x] Add focused real-DB/pure/shell/security tests for service coverage,
     orphan persistence/replay, null pointer, later/paginated/moving state,
     config hash/network proof, no-op history, workflow trust, stored-vs-fresh

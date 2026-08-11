@@ -8,15 +8,11 @@ trap 'rm -rf "$fixture"' EXIT
 api_fixture="$fixture/api-web"
 full_fixture="$fixture/full"
 
-api_files=(
+api_exact_files=(
   infra/api-web/web-api-proxy.mjs
   infra/api-web/Dockerfile.api-web
   infra/api-web/start-api-web-runtime.sh
-  packages/config/src/index.ts
-  apps/api/prisma/schema.prisma
   apps/api/prisma/migrations/20260810120000_platform_access_control/migration.sql
-  apps/api/src/common/config/app-config.service.ts
-  apps/api/src/modules/audit/domain/models/audit-action.ts
   apps/api/src/modules/auth/application/platform-access.service.ts
   apps/api/src/modules/auth/application/legal-acceptance.service.ts
   apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts
@@ -28,7 +24,6 @@ api_files=(
   apps/web/app/api/auth/login/route.ts
   apps/web/src/features/auth/login-failure-response.server.ts
   apps/web/app/login/page.tsx
-  apps/web/src/features/auth/LoginPage.tsx
   apps/web/app/maintenance/page.tsx
   apps/web/src/common/auth/session-gate.logic.ts
   apps/web/src/common/auth/server-session.ts
@@ -37,15 +32,22 @@ api_files=(
   apps/web/app/change-password/page.tsx
   apps/web/app/legal-acceptance/page.tsx
   apps/web/app/system/platform-access/page.tsx
+)
+api_semantic_files=(
+  packages/config/src/index.ts
+  apps/api/prisma/schema.prisma
+  apps/api/src/common/config/app-config.service.ts
+  apps/api/src/modules/audit/domain/models/audit-action.ts
+)
+presentation_files=(
+  apps/web/src/features/auth/LoginPage.tsx
   apps/web/src/features/system-partners/PlatformAccessPage.tsx
   apps/web/src/features/system-partners/system-partners.api.ts
   apps/web/src/common/components/app-shell/SystemHeader.tsx
 )
-full_files=(
-  "${api_files[@]}"
+full_exact_files=(
+  "${api_exact_files[@]}"
   infra/prod-ecs-express/deploy.sh
-  infra/prod-ecs-express/lib-uat-fast-rollout.sh
-  infra/uat/select-deploy-target.sh
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh
@@ -81,19 +83,47 @@ tamper_and_reject() {
   cp "$repo_root/$relative" "$root/$relative"
 }
 
+remove_invariant_and_reject() {
+  local root="$1" scope="$2" relative="$3" literal="$4" filtered
+  filtered="$root/$relative.filtered"
+  grep -Fv -- "$literal" "$root/$relative" > "$filtered"
+  mv "$filtered" "$root/$relative"
+  if bash "$validator" "$root" "$scope" >/dev/null 2>&1; then
+    echo "ERROR: maintenance release validator accepted a missing invariant in $relative" >&2
+    exit 1
+  fi
+  cp "$repo_root/$relative" "$root/$relative"
+}
+
 bash -n "$validator"
 bash "$validator" "$repo_root" full >/dev/null
 bash "$validator" "$repo_root" api-web-image >/dev/null
 
-copy_fixture "$api_fixture" "${api_files[@]}"
+copy_fixture "$api_fixture" "${api_exact_files[@]}" "${api_semantic_files[@]}" "${presentation_files[@]}"
 bash "$validator" "$api_fixture" api-web-image >/dev/null
-for relative in "${api_files[@]}"; do
+for relative in "${api_exact_files[@]}"; do
   tamper_and_reject "$api_fixture" api-web-image "$relative"
 done
+for relative in "${api_semantic_files[@]}"; do
+  printf '\n// unrelated append-only change remains deployable\n' >> "$api_fixture/$relative"
+done
+for relative in "${presentation_files[@]}"; do
+  printf '\n// presentation-only change remains deployable\n' >> "$api_fixture/$relative"
+done
+bash "$validator" "$api_fixture" api-web-image >/dev/null
+copy_fixture "$api_fixture" "${api_semantic_files[@]}"
+remove_invariant_and_reject "$api_fixture" api-web-image packages/config/src/index.ts \
+  "SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(300).default(300),"
+remove_invariant_and_reject "$api_fixture" api-web-image apps/api/prisma/schema.prisma \
+  "model PlatformAccessControl {"
+remove_invariant_and_reject "$api_fixture" api-web-image apps/api/src/common/config/app-config.service.ts \
+  "get productionServingMode(): 'live' | 'maintenance_only' | undefined"
+remove_invariant_and_reject "$api_fixture" api-web-image apps/api/src/modules/audit/domain/models/audit-action.ts \
+  "PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',"
 
-copy_fixture "$full_fixture" "${full_files[@]}"
+copy_fixture "$full_fixture" "${full_exact_files[@]}" "${api_semantic_files[@]}"
 bash "$validator" "$full_fixture" full >/dev/null
-for relative in "${full_files[@]}"; do
+for relative in "${full_exact_files[@]}"; do
   tamper_and_reject "$full_fixture" full "$relative"
 done
 

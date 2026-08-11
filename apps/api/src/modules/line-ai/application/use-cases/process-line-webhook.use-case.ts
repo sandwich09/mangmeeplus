@@ -49,8 +49,8 @@ import type { BusinessDocumentClassification, LineUserContext, LineAiTurnRequest
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
-import { buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
+import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
@@ -748,6 +748,31 @@ export class ProcessLineWebhookUseCase {
     if (result !== 'ok') throw new Error(`LINE_DELIVERY_${result.toUpperCase()}`);
   }
 
+  private withCompletionMenu(
+    message: LineReplyMessage,
+    access: { permissions: string[]; roles: string[] },
+  ): LineReplyMessage {
+    return {
+      ...message,
+      quickReply: buildStaffCompletionQuickReply({
+        permissions: access.permissions,
+        isOwner: access.roles.includes('OWNER'),
+      }),
+    };
+  }
+
+  private async deliverCompletedReply(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    text: string,
+    companyId: string,
+    access: { permissions: string[]; roles: string[] },
+  ): Promise<void> {
+    await this.deliverRequiredMessages(event, [this.withCompletionMenu(
+      buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId),
+      access,
+    )]);
+  }
+
   private async deliverMessages(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
     messages: LineReplyMessage[],
@@ -1086,7 +1111,7 @@ export class ProcessLineWebhookUseCase {
           ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
         } as ReceiptOcrFieldResult,
       });
-      await this.deliverReply(event, paypersReply);
+      await this.deliverCompletedReply(event, paypersReply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: paypersReply, intent: 'EVIDENCE_CAPTURE',
@@ -1129,7 +1154,8 @@ export class ProcessLineWebhookUseCase {
         reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
-      await this.deliverReply(event, reply);
+      if (applied.status === 'clarify') await this.deliverReply(event, reply);
+      else await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: reply, intent: 'CORRECTION',
@@ -1271,9 +1297,10 @@ export class ProcessLineWebhookUseCase {
 
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const fallbackText = formatLineReply(turnResponse, this.config.webBaseUrl);
-    const delivery = await this.deliverMessages(event, [
+    const delivery = await this.deliverMessages(event, [this.withCompletionMenu(
       buildLineBusinessAnswerMessage(turnResponse, fallbackText, this.config.webBaseUrl, companyId),
-    ]);
+      resolvedAccess,
+    )]);
     if (delivery !== 'ok') {
       await this.prisma.client.aiTurn.update({
         where: { id: turnId },
@@ -1736,7 +1763,7 @@ export class ProcessLineWebhookUseCase {
         lineMessageId: event.lineMessageId,
       });
       const ticketReply = formatSignatureTicketReply(this.config.webBaseUrl, companyId, asset.id);
-      await this.deliverReply(event, ticketReply);
+      await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
@@ -1757,7 +1784,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'MUTATION_REQUEST_REFUSAL') {
-      await this.deliverReply(event, MUTATION_REFUSAL_REPLY);
+      await this.deliverCompletedReply(event, MUTATION_REFUSAL_REPLY, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MUTATION_REFUSAL_REPLY, intent: 'MUTATION_REQUEST', refused: true,
@@ -1790,7 +1817,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return { outcome: 'done' };
       }
-      await this.deliverReply(event, MEDIA_UNSUPPORTED_REPLY);
+      await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }
@@ -1814,7 +1841,7 @@ export class ProcessLineWebhookUseCase {
       const receiptReply = formatPaypersReply(this.config.webBaseUrl, companyId, existingExpense.id, {
         sourceDocumentType: existingExpense.sourceDocumentType !== 'NEEDS_REVIEW' ? existingExpense.sourceDocumentType : undefined,
       });
-      await this.deliverReply(event, receiptReply);
+      await this.deliverCompletedReply(event, receiptReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
@@ -1831,7 +1858,7 @@ export class ProcessLineWebhookUseCase {
       const reply = decision.outcome === 'reference'
         ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId)
         : MEDIA_UNSUPPORTED_REPLY;
-      await this.deliverReply(event, reply);
+      await this.deliverCompletedReply(event, reply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
@@ -1996,7 +2023,7 @@ export class ProcessLineWebhookUseCase {
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
     });
-    await this.deliverReply(event, receiptReply);
+    await this.deliverCompletedReply(event, receiptReply, companyId, access);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
@@ -2164,7 +2191,7 @@ export class ProcessLineWebhookUseCase {
     }
     await this.prisma.client.lineIntakePendingMedia.update({ where: { id: pending.id }, data: { status: 'RESOLVED_RECEIPT' } });
     const reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
-    await this.deliverReply(event, reply);
+    await this.deliverCompletedReply(event, reply, companyId, access);
     await this.persistIntakeTurn({
       userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ยืนยันบันทึกใบเสร็จ] ${userMessagePreview}`, replyText: reply, intent: 'EVIDENCE_CAPTURE',

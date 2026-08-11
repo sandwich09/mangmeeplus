@@ -11,6 +11,7 @@ but use steps 11–18 here as the current operational state.
 
 1. [x] Parameterize the existing ECS Express deploy/release/verification scripts with a fail-closed `DEPLOY_ENV=production|uat`; keep production as the default.
 2. [x] Add a manual `UAT Deploy` workflow bound to `develop`, the GitHub `uat` environment, immutable CI artifacts, and UAT-only role variables.
+2a. [x] Run automatic full CI only for pull requests; remove duplicate branch-push runs, let UAT reuse exact successful pull-request evidence when safe, and keep reusable/manual CI as the explicit release and recovery paths.
 3. [x] Add UAT OIDC/runtime policy templates and a bootstrap path for isolated RDS, Redis, S3, SSM, Secrets Manager, security groups, and ECS roles.
 4. [x] Add focused shell/action/IAM checks proving ref and environment isolation.
 5. [x] Configure the GitHub environment and AWS roles that current authority permits. Record exact missing values or permissions rather than borrowing production configuration.

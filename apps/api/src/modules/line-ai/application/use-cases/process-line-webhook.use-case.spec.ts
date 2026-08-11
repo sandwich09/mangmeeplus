@@ -510,9 +510,10 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /เดือนนี้ยังไม่มีค่าใช้จ่าย/);
     assert.match(JSON.stringify(sentMessages[0]), /#22C55E/);
+    assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.label), ['ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล']);
   });
 
-  it('keeps a refused response text-only even if a malformed gateway response carries presentation', async () => {
+  it('keeps a refused response in a trusted fallback card even if a malformed gateway response carries presentation', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
@@ -526,8 +527,26 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-refused-card' });
 
-    assert.equal(sentMessages[0]?.type, 'text');
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.match(JSON.stringify(sentMessages[0]), /คุณไม่มีสิทธิ์/);
     assert.doesNotMatch(JSON.stringify(sentMessages[0]), /ข้อมูลลับ/);
+  });
+
+  it('keeps a clarification focused and does not attach the completion menu', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.receipt.line_upload'],
+      intakeRouteFn: () => ({
+        status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.9,
+        clarifyQuestion: 'กรุณาระบุวันที่เอกสารค่ะ',
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-clarify-no-menu', messageText: 'บันทึกใบเสร็จ' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(sentMessages[0]?.type, 'text');
+    assert.equal(sentMessages[0]?.quickReply, undefined);
   });
 
   it('preserves the same Flex payload for expired-token push fallback', async () => {
@@ -1179,7 +1198,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {
     const { prisma, updates } = makePrisma();
-    const replies: string[] = [];
+    const replies: any[] = [];
     const initInputs: any[] = [];
     const completeInputs: any[] = [];
     const useCase = new ProcessLineWebhookUseCase(
@@ -1203,8 +1222,8 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       {
         buildTextMessage: (text: string) => ({ type: 'text', text }),
-        sendReply: async (_token: string, messages: Array<{ text: string }>) => {
-          replies.push(messages[0]?.text ?? '');
+        sendReply: async (_token: string, messages: any[]) => {
+          replies.push(messages[0]);
           return 'ok';
         },
       } as any,
@@ -1246,13 +1265,17 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(initInputs[0].captureSource, 'LINE_UPLOAD');
     assert.equal(completeInputs[0].expenseId, 'expense-line-1');
-    assert.match(replies[0] ?? '', /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.equal(replies[0]?.type, 'flex');
+    assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.doesNotMatch(replies[0]?.contents?.body?.contents?.[0]?.text ?? '', /https?:\/\//);
+    assert.equal(replies[0]?.contents?.footer?.contents?.[0]?.action?.uri, 'https://app.example.com/companies/company-1/expenses/expense-line-1');
+    assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
 
   it('applies OCR fields from AI Gateway to LINE receipt draft', async () => {
     const { prisma } = makePrisma();
-    const replies: string[] = [];
+    const replies: any[] = [];
     const receiptOcrRequests: any[] = [];
     const recordUpdates: any[] = [];
     const lineCreates: any[] = [];
@@ -1314,8 +1337,8 @@ describe('ProcessLineWebhookUseCase', () => {
       } as any,
       {
         buildTextMessage: (text: string) => ({ type: 'text', text }),
-        sendReply: async (_token: string, messages: Array<{ text: string }>) => {
-          replies.push(messages[0]?.text ?? '');
+        sendReply: async (_token: string, messages: any[]) => {
+          replies.push(messages[0]);
           return 'ok';
         },
       } as any,
@@ -1381,9 +1404,10 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(lineCreates[0].data.unitPrice, '250.0000');
     assert.equal(lineCreates[0].data.expenseCategoryId, 'cat-meals');
     assert.deepEqual(receiptOcrRequests[0].activeCategories, [{ id: 'cat-meals', name: 'ค่าอาหาร' }]);
-    assert.match(replies[0] ?? '', /11,875.00/);
-    assert.match(replies[0] ?? '', /CA2025020012/);
-    assert.match(replies[0] ?? '', /ค่าอาหาร/);
+    assert.equal(replies[0]?.type, 'flex');
+    assert.match(JSON.stringify(replies[0]), /11,875.00/);
+    assert.match(JSON.stringify(replies[0]), /CA2025020012/);
+    assert.match(JSON.stringify(replies[0]), /ค่าอาหาร/);
   });
 });
 

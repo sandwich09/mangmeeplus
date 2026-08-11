@@ -526,6 +526,9 @@ Make LINE answers useful without turning LINE into a full workspace.
 - [ ] Include `asOf` or source freshness when relevant.
 - [ ] Keep messages concise for LINE.
 - [ ] Add web link only when detail/action belongs in web.
+- [x] Render every completed LINE answer through the shared Mangmee Flex-card composer, including deterministic receipt/correction/reference replies and structured-presentation fallbacks.
+- [x] Convert safe tenant links to Flex URI buttons and omit their raw URLs from the visible card body.
+- [x] Attach the existing permission-filtered staff Quick Reply menu to completed turns only, capped at 13 actions.
 - [ ] Ensure web route guards re-check permission when link opens. If no route exists yet, answer should avoid dead action links and use available dashboard route.
 
 ### Tests
@@ -534,6 +537,7 @@ Make LINE answers useful without turning LINE into a full workspace.
 - Unit tests for Thai answer templates.
 - Unit tests for stale/unavailable data wording.
 - Unit tests for forbidden answer not leaking hidden record existence.
+- Unit tests for Flex fallback, raw-link removal, safe URI buttons, Quick Reply permission filtering/cap, and no completion menu on clarification prompts.
 
 ### Exit Criteria
 

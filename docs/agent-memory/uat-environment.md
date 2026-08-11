@@ -1,10 +1,11 @@
 # Agent Memory: UAT environment
 
-Status: UAT is running source `aca76203239feac359988938768ab66132c2018a` on all three
-services as of 2026-08-11 via the normal Deploy UAT/all workflow run `31418060978`, attempt 3.
+Status: UAT is running source `5f555675271e2fc38024f11b98ed268bbeb87b37` on all three
+services as of 2026-08-11 via Deploy UAT/all run `31468653715`, attempt 2.
 The signed immutable api-web, AI Gateway and workers images are ACTIVE with one configuration each,
 capacity 1/2, matching `GIT_SHA`/`SERVICE_VERSION`; workflow digest/health verification and signed UAT
-acceptance passed. Public `/v1/health` and `/login` independently returned 200.
+acceptance passed. Public `/v1/health` independently returned 200 and all rollback/security alarms
+were `OK` after deployment.
 Owner: Platform/Security release owner
 Scope: GitHub UAT environment, OIDC roles, isolated AWS runtime/data resources, immutable deployment workflow, and verification.
 Decisions:
@@ -13,6 +14,12 @@ Decisions:
 - UAT containers keep production runtime hardening (`APP_ENV=production`) while `DEPLOY_ENV=uat` selects cloud resources.
 - Production data is never copied. The owner approved temporarily copying the production LINE values into the isolated UAT secret namespace for this acceptance cycle; production LINE credentials must be replaced after UAT acceptance.
 - The workflow is launched from `main`, while `uat-*` tags and full SHA inputs must be reachable from `develop`.
+- The neutral `main` controller must exact-read IAM and verify stable ECS/rollback controls, required
+  secret metadata and rollback alarms before reusable CI may publish images. The deploy job repeats
+  exact IAM readback immediately before mutation to close the build-time drift window.
+- Automatic full CI runs only for pull requests. Branch pushes do not duplicate the suite; UAT may
+  reuse an exact successful pull-request run for the same SHA/policy or invokes the reusable full
+  gate itself. Manual CI remains the explicit production-recovery validation path.
 - GitHub environment protection available on the current plan is branch policy only; wait timer/required-reviewer protection returned HTTP 422.
 Open questions: Employee LINE UAT still needs one real employee QR-link/message journey. CRM customer AI still needs one real inbound LINE message after the first-message hotfix.
 Artifacts:
@@ -20,6 +27,8 @@ Artifacts:
 - `.github/workflows/ci.yml`
 - `infra/prod-ecs-express/{deploy.sh,run-release-task.sh,verify-deployment.sh}`
 - `infra/uat/{README.md,setup-control-plane.sh,bootstrap-data.sh,*.json}`
+- `infra/uat/{verify-deploy-readiness.sh,verify-deploy-readiness.spec.sh}`
+- `infra/security/{validate-production-maintenance-release.sh,sync-production-maintenance-release-pins.mjs}`
 - `docs/specs/uat-environment-spec.md`
 - `docs/plans/uat-environment-plan.md`
 Verification:
@@ -27,6 +36,34 @@ Verification:
 - `actionlint` passes for CI, production deploy, and UAT deploy workflows.
 - `infra/docker/production-image-security.spec.sh` passes UAT tag/branch isolation, no-production-reference checks, UAT release-task render, wrong-secret/cluster rejection, cost gate, and existing production H-13 checks.
 - Shell syntax, IAM JSON parsing, and `git diff --check` pass.
+- UAT run `31468653715` attempt 1 reused exact successful source CI and published all three signed
+  immutable images, then stopped before release task/database/service mutation because the deploy
+  role lacked the newly required `ecs:UpdateService` / `ecs:DescribeServices` policy bytes. The
+  exact one-shot policy bridge applied the reviewed deploy and release-task policies; attempt 2
+  exact-read both policies before mutation and completed successfully. Its deploy job took 14m51s.
+- Independent post-deploy readback for attempt 2 found api-web, AI Gateway and workers `ACTIVE`,
+  singleton, at source `5f555675271e2fc38024f11b98ed268bbeb87b37` and the exact manifest
+  digests. RDS and Redis were `available`; required Secrets Manager records existed; all three
+  service health endpoints passed; five UAT rollback/security alarms were `OK`; and both
+  `uat-deployment-acceptance-*attempt-2` artifacts were present.
+- The early preflight implementation adds no IAM authority. Its fake-AWS contract rejects dual
+  active revisions, missing required secrets, non-OK rollback alarms and non-UAT environments.
+  `verify-deploy-readiness.spec.sh`, selective workflow/target/fast-rollout specs, workflow YAML
+  parsing, Bash syntax, `git diff --check`, the full `production-image-security.spec.sh`, and a live
+  read-only AWS execution of `verify-deploy-readiness.sh` all pass.
+- CI push run `31473606590` exposed an exact-byte controller pin drift after commit `df89b41`
+  legitimately changed `PlatformAccessPage.tsx`: application tests passed, but the production
+  maintenance release validator still expected the previous presentation hash. The durable fix
+  limits exact pins to enforcement/runtime wiring, checks broad config/schema/audit modules by
+  required semantics, and leaves presentation to focused journeys plus exact UAT images. Intentional
+  enforcement edits use `sync-production-maintenance-release-pins.mjs`; CI check mode detects stale
+  pins before expensive jobs fan out. The sync/validator/workflow specs, UAT early/selective specs,
+  and the full `production-image-security.spec.sh` pass with this contract.
+- Commit `8e33295` aligned the LINE intake fixture with Flex replies; focused LINE tests passed
+  151/151, API typecheck passed, and the full workspace test suite passed locally. Its duplicate
+  push CI run `31478846246` was cancelled while PR run `31478849363` remained authoritative. The
+  CI trigger contract now prevents future branch-push duplicates and UAT reuse searches exact
+  successful pull-request runs instead of obsolete push runs.
 - AWS roles `watchdog-bms-ci-uat`, `watchdog-bms-deploy-uat`, and five UAT ECS runtime roles exist. GitHub OIDC trust readback is bound exactly to `repo:MangmeeDev/mangmeeplus:environment:uat`; inline policy apply completed from the committed templates, but the operator principal lacks `iam:GetRolePolicy` for independent readback.
 - GitHub environment `uat` exists with only `main` allowed (policy `55132941`) and has account, region, publisher/deploy role ARN, copied LINE IDs, `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com`, and disabled AI/autoreply defaults.
 - The owner approved recurring cost. `watchdog-bms-uat-db` (`db.t4g.micro`, encrypted/private), `watchdog-bms-uat-redis` (`cache.t4g.micro`), `watchdog-bms-uat-311414082667`, UAT security groups, secrets, SSM parameters, and `watchdog-bms-uat` ECS cluster are provisioned. Production LINE IDs/secrets were copied into UAT without printing secret values.

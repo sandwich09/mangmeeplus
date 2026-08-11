@@ -108,7 +108,7 @@ jobs:
               exit 1
             }
           fi
-          url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=push&status=success&head_sha=$SOURCE_SHA&per_page=10"
+          url="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=pull_request&status=success&head_sha=$SOURCE_SHA&per_page=10"
           if ! response="$(curl --fail --silent --show-error \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -118,10 +118,10 @@ jobs:
             exit 0
           fi
           run_id="$(jq -r --arg sha "$SOURCE_SHA" \
-            '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "push")][0].id // empty' \
+            '[.workflow_runs[] | select(.head_sha == $sha and .conclusion == "success" and .event == "pull_request")][0].id // empty' \
             <<< "$response")"
           if [ -z "$run_id" ]; then
-            echo "::notice::No exact successful push CI found; running the full validation gate."
+            echo "::notice::No exact successful pull-request CI found; running the full validation gate."
             exit 0
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
@@ -132,7 +132,11 @@ jobs:
     needs: resolve-release
     runs-on: ubuntu-latest
     environment: uat
+    permissions:
+      contents: read
+      id-token: write
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Require isolated UAT configuration
         env:
           AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -147,6 +151,23 @@ jobs:
           for key in AWS_ACCOUNT_ID AWS_REGION AWS_ROLE_ARN AWS_DEPLOY_ROLE_ARN LINE_LOGIN_CHANNEL_ID LINE_LIFF_ID LINE_MESSAGING_CHANNEL_ID; do
             test -n "${!key}" || { echo "ERROR: missing UAT variable: $key" >&2; exit 1; }
           done
+      - name: Configure AWS UAT preflight credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-uat-preflight-${{ github.run_id }}
+      - name: Verify exact UAT controller policies before image publication
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: bash infra/uat/verify-control-plane-policies.sh
+      - name: Verify stable UAT dependencies before image publication
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          DEPLOY_ENV: uat
+          ECS_CLUSTER_NAME: watchdog-bms-uat
+        run: bash infra/uat/verify-deploy-readiness.sh
 
   build_and_publish:
     name: Test and Publish Immutable UAT Release

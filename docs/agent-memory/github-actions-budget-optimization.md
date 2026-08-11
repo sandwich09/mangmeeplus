@@ -10,6 +10,9 @@ Decisions:
 - Keep test/audit/scan/config/migration job names to avoid changing required-check contracts.
 - Remove the standalone development-push AWS OIDC smoke because every UAT/production
   publisher already obtains scoped OIDC credentials with an allowed-account check.
+- Run automatic full CI only on pull requests and check out the exact PR head. Branch pushes do
+  not start a duplicate run; UAT may reuse the exact successful PR validation, while explicit
+  reusable/manual CI remains available for release and production-recovery authority.
 Open questions:
 - Measure the next full billing cycle before considering job consolidation or self-hosted runners.
 Artifacts:
@@ -25,9 +28,12 @@ Verification:
 - Ruby YAML parsing passes all three workflows.
 - `bash infra/docker/production-image-security.spec.sh`: pass.
 - Focused workflow condition assertions and scoped `git diff --check`: pass.
+- 2026-08-11: duplicate push run `31478846246` for SHA `8e33295` was cancelled while its PR run
+  remained authoritative. The updated production image security contract rejects any future
+  top-level CI `push:` trigger and verifies PR/manual evidence routing.
 - Live GitHub run was not dispatched because the account Actions budget is currently stopped;
   merge/push remains the integration check.
 Next:
-- Merge/push the workflow change, then compare Actions usage after one normal code push, one
-  docs-only push, and the next UAT deploy. Revisit job consolidation only if a full cycle still
-  exceeds the 3,000-minute allowance.
+- Merge the workflow change, confirm one PR update creates exactly one CI run, then confirm the
+  next UAT deploy reuses its exact successful PR validation. Revisit job consolidation only if a
+  full cycle still exceeds the 3,000-minute allowance.

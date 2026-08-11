@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { LineAiTurnResponse } from '@watchdog-bms/contracts';
-import { buildLineBusinessAnswerMessage } from './line-business-card.logic';
+import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from './line-business-card.logic';
 
 const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards']): LineAiTurnResponse => ({
   requestId: 'r1', replyText: 'fallback', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -10,17 +10,44 @@ const response = (cards?: NonNullable<LineAiTurnResponse['presentation']>['cards
 });
 
 describe('LINE business answer card renderer', () => {
-  it('returns text when presentation is absent', () => {
-    assert.deepEqual(buildLineBusinessAnswerMessage(response(), 'plain fallback', 'https://app.example.com', 'c1'), {
-      type: 'text', text: 'plain fallback',
+  it('returns a fallback card when presentation is absent', () => {
+    const message = buildLineBusinessAnswerMessage(response(), 'plain fallback', 'https://app.example.com', 'c1');
+    assert.equal(message.type, 'flex');
+    assert.match(JSON.stringify(message), /plain fallback/);
+  });
+
+  it('fails closed to a trusted fallback card when a refused response unexpectedly carries cards', () => {
+    const refused = { ...response([{ text: 'ข้อมูลที่ห้ามแสดง' }]), refused: true };
+    const message = buildLineBusinessAnswerMessage(refused, 'ไม่มีสิทธิ์', 'https://app.example.com', 'c1');
+    assert.equal(message.type, 'flex');
+    assert.match(JSON.stringify(message), /ไม่มีสิทธิ์/);
+    assert.doesNotMatch(JSON.stringify(message), /ข้อมูลที่ห้ามแสดง/);
+  });
+
+  it('moves safe tenant URLs from deterministic reply text into Flex buttons', () => {
+    const message = buildLineAssistantTextCardMessage(
+      'บันทึกข้อมูลแล้ว\nตรวจสอบในเว็บ:\nhttps://app.example.com/companies/c1/expenses/e1',
+      'https://app.example.com',
+      'c1',
+    );
+    assert.equal(message.type, 'flex');
+    const bubble = message.contents as any;
+    assert.doesNotMatch(bubble.body.contents[0].text, /https?:\/\//);
+    assert.deepEqual(bubble.footer.contents[0].action, {
+      type: 'uri', label: 'เปิดดูในเว็บแอป', uri: 'https://app.example.com/companies/c1/expenses/e1',
     });
   });
 
-  it('fails closed to text when a refused response unexpectedly carries cards', () => {
-    const refused = { ...response([{ text: 'ข้อมูลที่ห้ามแสดง' }]), refused: true };
-    assert.deepEqual(buildLineBusinessAnswerMessage(refused, 'ไม่มีสิทธิ์', 'https://app.example.com', 'c1'), {
-      type: 'text', text: 'ไม่มีสิทธิ์',
-    });
+  it('never promotes cross-origin or cross-tenant text URLs to buttons', () => {
+    for (const url of [
+      'https://evil.example/companies/c1/expenses/e1',
+      'https://app.example.com/companies/c2/expenses/e1',
+    ]) {
+      const message = buildLineAssistantTextCardMessage(`ตรวจสอบ ${url}`, 'https://app.example.com', 'c1');
+      assert.equal(message.type, 'flex');
+      assert.equal((message.contents as any).footer, undefined);
+      assert.match((message.contents as any).body.contents[0].text, /https?:\/\//);
+    }
   });
 
   it('renders one answer as one Mangmee-themed bubble with a safe tenant link', () => {

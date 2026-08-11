@@ -29,7 +29,7 @@ on:
         default: production
         type: string
       validated_ci_run_id:
-        description: Exact successful push CI run that already validated source_ref
+        description: Exact successful pull-request CI run that already validated source_ref
         required: false
         default: ''
         type: string
@@ -39,17 +39,14 @@ on:
       release_artifact:
         value: production-release-${{ jobs.resolve-source.outputs.source_sha }}
   workflow_dispatch:
-  push:
-    branches: [main, develop]
-    tags: ['release-*']
   pull_request:
-    # develop is a merge target, so its PRs must be validated before merge —
-    # the push trigger above only runs after the merge has already landed.
+    # Automatic CI runs only before merge. UAT and production call this workflow
+    # explicitly for their exact release SHA instead of starting a duplicate push run.
     branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   resolve-source:
@@ -64,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.source_ref || github.sha }}
+          ref: ${{ inputs.source_ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - id: source
         env:
@@ -195,6 +192,13 @@ jobs:
             code_changed=true
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+      - name: Verify maintenance policy pins before CI fan-out
+        if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+        run: |
+          set -euo pipefail
+          if [ -f infra/security/sync-production-maintenance-release-pins.mjs ]; then
+            node infra/security/sync-production-maintenance-release-pins.mjs --check
+          fi
       - name: Verify reused CI validation
         if: inputs.validated_ci_run_id != ''
         env:
@@ -212,7 +216,7 @@ jobs:
             jq -e --arg sha "$SOURCE_SHA" '
               .head_sha == $sha
               and .conclusion == "success"
-              and .event == "push"
+              and .event == "pull_request"
               and .path == ".github/workflows/ci.yml"
             ' >/dev/null
 
@@ -295,6 +299,7 @@ jobs:
           bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
           bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
           bash infra/security/validate-production-maintenance-release.spec.sh
+          bash infra/security/sync-production-maintenance-release-pins.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
@@ -349,8 +354,7 @@ jobs:
       needs.resolve-source.outputs.code_changed == 'true' &&
       inputs.validated_ci_run_id == '' &&
       (github.event_name == 'workflow_call' ||
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/release-'))
+      github.event_name == 'workflow_dispatch')
     needs: resolve-source
     runs-on: ubuntu-latest
     strategy:
@@ -438,8 +442,7 @@ jobs:
     if: >-
       always() &&
       (github.event_name == 'workflow_call' ||
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/release-')) &&
+      github.event_name == 'workflow_dispatch') &&
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&
@@ -572,8 +575,7 @@ jobs:
       needs.resolve-source.result == 'success' &&
       needs.publish-production-images.result == 'success' &&
       (github.event_name == 'workflow_call' ||
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/release-'))
+      github.event_name == 'workflow_dispatch')
     needs:
       - resolve-source
       - publish-production-images

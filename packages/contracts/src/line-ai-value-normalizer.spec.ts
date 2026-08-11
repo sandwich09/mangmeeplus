@@ -137,6 +137,33 @@ describe('extractValueCandidates – dates (golden set)', () => {
     assert.ok(dates.some((d) => d.isoDate === '1994-12-09'));
   });
 
+  it('English month-first and day-first dates resolve a named two-digit year as CE', () => {
+    for (const text of ['Aug 23 26', '23 Aug. ’26', 'August 23rd, 2026', '23 August 2026']) {
+      const { dates } = extractValueCandidates(text, TODAY);
+      assert.ok(dates.some((d) => d.isoDate === '2026-08-23'), text);
+      assert.ok(dates.every((d) => !isAmbiguousDateCandidate(d)), text);
+    }
+    const shortYear = extractValueCandidates('Aug 23 26', TODAY).dates[0];
+    assert.ok(shortYear?.assumptions.includes(VALUE_ASSUMPTIONS.twoDigitYearResolvedEnglishMonth));
+  });
+
+  it('accepts every punctuation-stripped Thai month abbreviation and anchors yy to BE', () => {
+    const aliases = ['มค', 'กพ', 'มีค', 'เมย', 'พค', 'มิย', 'กค', 'สค', 'กย', 'ตค', 'พย', 'ธค'];
+    aliases.forEach((alias, index) => {
+      const { dates } = extractValueCandidates(`วันที่ 15 ${alias} 69`, TODAY);
+      const hit = dates.find((d) => d.isoDate === `2026-${String(index + 1).padStart(2, '0')}-15`);
+      assert.ok(hit, alias);
+      assert.ok(hit.assumptions.includes(VALUE_ASSUMPTIONS.twoDigitYearResolvedThaiMonth), alias);
+      assert.equal(isAmbiguousDateCandidate(hit), false, alias);
+    });
+  });
+
+  it('keeps a numeric two-digit date ambiguous because it has no calendar-language anchor', () => {
+    const { dates } = extractValueCandidates('23/08/26', TODAY);
+    assert.deepEqual(dates.map((d) => d.isoDate).sort(), ['1983-08-23', '2026-08-23']);
+    assert.ok(dates.every(isAmbiguousDateCandidate));
+  });
+
   it('month-year period: ธันวาคม 2537 → boundary candidates, never a day date', () => {
     const { dates } = extractValueCandidates('ค่าใช้จ่ายเดือนธันวาคม 2537', TODAY);
     const boundaries = dates.filter((d) => d.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
@@ -169,6 +196,7 @@ describe('extractValueCandidates – span property', () => {
       'บันทึกบิล 9/12/2537 หกสิบบาท แล้วยอดขายวันนี้',
       'ค่าใช้จ่าย 09/11/1994 รวม 1,234.50 บาท และวันที่เก้า เดือน11ปี2537',
       'เทียบ ธันวาคม 2537 กับ 9/11/37',
+      'Aug 23 26 / วันที่ 15 สค 69 / VAT 21.79',
     ];
     for (const text of samples) {
       const { amounts, dates } = extractValueCandidates(text, TODAY);
