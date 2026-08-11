@@ -17,6 +17,12 @@ raise 'permissions widened' unless doc.fetch('permissions') == {
 job = doc.fetch('jobs').fetch('clone')
 raise 'wrong environment' unless job.fetch('environment') == 'production'
 raise 'wrong timeout' unless job.fetch('timeout-minutes') == 120
+login = job.fetch('steps').find { |step| step['name'] == 'Log in to the dedicated ECR repository' }
+raise 'missing ECR login step' unless login
+login_run = login.fetch('run')
+export_index = login_run.index('export DOCKER_CONFIG="$docker_config"')
+login_index = login_run.index('docker login --username AWS --password-stdin')
+raise 'ECR login does not use the persisted Docker config' unless export_index && login_index && export_index < login_index
 uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
 raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(
