@@ -20,6 +20,10 @@ but use steps 11–18 here as the current operational state.
 8. After UAT acceptance, replace the production LINE credentials that were copied for the temporary UAT cycle.
 9. [x] Skip the second api-web stabilization rollout when its endpoint is unchanged and fail ECS polling immediately when AWS credentials become invalid.
 10. [x] Remove duplicate AI and final API rollouts when stable endpoints are unchanged; use one freshly assumed UAT deploy session for the shortened path, while retaining the ECS canary/rollback gate.
+10a. [x] Close the ECS dual-read race: after the Express deployment succeeds, wait for
+     the standard ECS service view to drain the previous deployment before validating
+     the zero-bake canary/rollback contract. Cover the transitional two-deployment
+     snapshot with a focused regression test.
 11. [x] Diagnose held run `30760853050`: all three services serve full SHA
     `605a52e29f67d1dea5599387dbd22919799ebfe9`, API intent is BOUND,
     workers intent is OPEN, and AI deployed after its intent task failed because

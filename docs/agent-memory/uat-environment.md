@@ -1,11 +1,11 @@
 # Agent Memory: UAT environment
 
-Status: UAT is running source `5f555675271e2fc38024f11b98ed268bbeb87b37` on all three
-services as of 2026-08-11 via Deploy UAT/all run `31468653715`, attempt 2.
+Status: UAT is running source `f2e1be0c7041c936d75cc6dec6855e49ce166c1a` on all three
+services as of 2026-08-11 via Deploy UAT/auto run `31480892459`.
 The signed immutable api-web, AI Gateway and workers images are ACTIVE with one configuration each,
-capacity 1/2, matching `GIT_SHA`/`SERVICE_VERSION`; workflow digest/health verification and signed UAT
-acceptance passed. Public `/v1/health` independently returned 200 and all rollback/security alarms
-were `OK` after deployment.
+capacity 1/2 and matching `GIT_SHA`/`SERVICE_VERSION`. The run did not issue signed UAT acceptance:
+its post-rollout fast-canary check false-failed while the standard ECS view still showed AI Gateway's
+draining previous deployment; independent readback after convergence proved all three services stable.
 Owner: Platform/Security release owner
 Scope: GitHub UAT environment, OIDC roles, isolated AWS runtime/data resources, immutable deployment workflow, and verification.
 Decisions:
@@ -64,6 +64,15 @@ Verification:
   push CI run `31478846246` was cancelled while PR run `31478849363` remained authoritative. The
   CI trigger contract now prevents future branch-push duplicates and UAT reuse searches exact
   successful pull-request runs instead of obsolete push runs.
+- UAT run `31480892459` reused exact successful pull-request CI and skipped the duplicate
+  typecheck/test/security/migration/config jobs. Its release task and all three ECS Express
+  deployments reached source `f2e1be0c7041`; the workflow then false-failed because AI Gateway's
+  Express deployment was already `SUCCESSFUL` while the standard ECS service snapshot still
+  included its draining previous deployment. Independent AWS readback found all three services
+  `ACTIVE`, desired/running/pending `1/1/0`, one `PRIMARY/COMPLETED` deployment each, and the
+  reviewed 5% canary/rollback configuration. The controller now waits for
+  `ecs wait services-stable` before its steady-state snapshot, with a focused transitional
+  two-deployment regression case.
 - AWS roles `watchdog-bms-ci-uat`, `watchdog-bms-deploy-uat`, and five UAT ECS runtime roles exist. GitHub OIDC trust readback is bound exactly to `repo:MangmeeDev/mangmeeplus:environment:uat`; inline policy apply completed from the committed templates, but the operator principal lacks `iam:GetRolePolicy` for independent readback.
 - GitHub environment `uat` exists with only `main` allowed (policy `55132941`) and has account, region, publisher/deploy role ARN, copied LINE IDs, `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com`, and disabled AI/autoreply defaults.
 - The owner approved recurring cost. `watchdog-bms-uat-db` (`db.t4g.micro`, encrypted/private), `watchdog-bms-uat-redis` (`cache.t4g.micro`), `watchdog-bms-uat-311414082667`, UAT security groups, secrets, SSM parameters, and `watchdog-bms-uat` ECS cluster are provisioned. Production LINE IDs/secrets were copied into UAT without printing secret values.

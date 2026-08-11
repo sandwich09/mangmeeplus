@@ -44,6 +44,10 @@ Provide a production-like AWS environment where releases from `develop` can be a
 - ECS Express completion remains the release gate. UAT keeps the 5% canary,
   rollback alarms and circuit breaker but uses zero-minute canary/post-shift
   bakes for fast feature feedback; Production retains its ordinary bake values.
+  After ECS Express reports the exact deployment successful, the UAT controller
+  must also wait for the standard ECS service waiter to observe one stable
+  deployment before validating the retained canary/rollback configuration; a
+  still-draining previous deployment is transitional state, not release failure.
   Stable service endpoints do not trigger a second stabilization rollout, and
   `all` refreshes API configuration only when the AI endpoint actually changes.
 - ECS Express may clear `currentDeployment` after settlement. A null pointer is acceptable only when two stable service reads and two stable exhaustive unpaginated deployment-history reads prove one ACTIVE target configuration and the bound successful deployment is the unique newest record. A mismatched non-null pointer, multiple active configurations, moving/paginated/malformed history or a newer deployment fails closed for recovery, F2 and retirement.
