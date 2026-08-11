@@ -29,6 +29,7 @@ for required in \
   'watchdog-bms-production-a5-clone-execution' \
   'validate-uat-deployment-acceptance.sh' \
   'pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma' \
+  'aws ssm get-parameter --name "$name" --output json' \
   'target: migration-tool' \
   'provenance: mode=max' \
   'sbom: true' \
@@ -51,6 +52,7 @@ for forbidden in \
   'PRODUCTION_A5_CLONE_DATABASE_URL' \
   'ecsTaskExecutionRole' \
   'aws ecs update-service' \
+  'aws ssm get-parameters --names' \
   'aws rds modify-db-instance' \
   'aws rds delete-db-snapshot'; do
   if grep -F -- "$forbidden" "$workflow" >/dev/null; then
