@@ -2066,6 +2066,7 @@ bash "$repo_root/infra/prod-ecs-express/release-safety.spec.sh"
 bash "$repo_root/infra/uat/select-deploy-target.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"
 bash "$repo_root/infra/uat/fast-selective-workflow.spec.sh"
+bash "$repo_root/infra/uat/verify-deploy-readiness.spec.sh"
 bash "$repo_root/infra/docker/production-fast-promotion.spec.sh"
 
 echo "production image security scanner: pass"

@@ -16,7 +16,7 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 | --- | --- | --- |
 | ECS cluster | `watchdog-bms-prod`, `watchdog-bms-uat` | ทั้งคู่ ACTIVE |
 | prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; api-web/AI ใช้ `eb515b9…`, workers ใช้ `0bdbe50…` ณ 2026-08-10 |
-| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว** ที่ `aca7620…` ณ 2026-08-11 |
+| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว** ที่ `5f55567…` ณ 2026-08-11 |
 | RDS | `watchdog-bms-prod-db`, `watchdog-bms-uat-db` — `db.t4g.micro`, 20 GB | encrypted, `PubliclyAccessible: false` |
 | ElastiCache | `watchdog-bms-uat-redis` — `cache.t4g.micro`, engine 7.1.0 | pg `watchdog-bms-uat-redis7`, **ไม่ได้เข้ารหัส** |
 | ALB | `ecs-express-gateway-alb-ff8c07dd` | ใช้ร่วมกันทั้ง prod และ uat, 3 ENI/EIP |
@@ -74,7 +74,8 @@ gh workflow run deploy-uat.yml --ref main \
   -f release_ref=<lowercase-40-char-sha> -f target=all -f run_m01_acceptance=false
 ```
 
-ใช้เวลา ~30 นาที ตรวจผลด้วย **digest จริง** ไม่ใช่แค่สถานะ workflow:
+warm all-target คาด 17–19 นาที; run `31468653715` attempt 2 ที่ reuse image แล้วใช้เวลา
+14m51s ใน deploy job. ตรวจผลด้วย **digest จริง** ไม่ใช่แค่สถานะ workflow:
 
 ```sh
 aws ecs describe-tasks --cluster watchdog-bms-uat --tasks <arn> \
@@ -84,6 +85,14 @@ aws ecr describe-images --repository-name watchdog-bms-workers \
 ```
 
 tag จะเป็น `git-<full-sha>` ต้องตรงกับ SHA ที่สั่ง deploy
+
+ก่อน reusable CI/build เริ่ม workflow จะใช้ deploy role เดิมทำ read-only early preflight:
+exact-read deploy/release-task policies, ตรวจสาม service ให้ stable/singleton พร้อม canary,
+rollback alarm และ circuit breaker เดิม, ตรวจ metadata ของ secret ที่ runtime ต้องใช้ และบังคับ
+rollback alarms ทั้งสามเป็น `OK`. ถ้า fail จะหยุดก่อน publish image; exact IAM readback ยังรันซ้ำ
+ใน deploy job ก่อน mutation เพื่อกัน policy drift ระหว่าง build. Script ที่ใช้จริงคือ
+`infra/uat/verify-deploy-readiness.sh`; ห้ามแก้ให้ต้อง health ผ่าน เพราะ UAT ที่ pause หรือ app เสีย
+ต้องยัง deploy ตัวแก้ได้
 
 **Release task network (พิสูจน์ 2026-08-11):** ต้นเหตุของ run `31408125154` attempts 1/2 ไม่ใช่
 subnet เสีย แต่เป็น production A5 interface endpoints ด้านบน: private DNS มีผลทั้ง VPC ขณะที่ endpoint

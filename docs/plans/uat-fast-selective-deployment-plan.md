@@ -10,6 +10,9 @@ Spec: `docs/specs/uat-fast-selective-deployment-spec.md`
 - [x] Add the UAT-only zero-bake canary helper and exact IAM permission; preserve
   all rollback controls and leave Production untouched.
 - [x] Add focused workflow/runtime checks and run local verification.
-- [ ] After GitHub billing is restored, apply the reviewed UAT deploy-role
-  policy and run one live selective UAT release.
-- [ ] Before Production, run and sign one explicit `target=all` UAT acceptance.
+- [x] Apply the reviewed UAT deploy-role policy and run the live rollout.
+- [x] Run and sign one explicit `target=all` UAT acceptance (`31468653715`,
+  attempt 2, source `5f555675271e2fc38024f11b98ed268bbeb87b37`).
+- [x] Move exact IAM, stable ECS/rollback-control, required-secret and rollback
+  alarm checks before image publication; retain the exact IAM check immediately
+  before mutation.
