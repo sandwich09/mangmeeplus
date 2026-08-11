@@ -393,9 +393,9 @@ jobs:
           observed_image="$(jq -er '.images[]|select(.service=="api-web")|.image' \
             "$root/release/production-image-manifest.json")"
           test "$observed_image" = "$BRIDGE_IMAGE"
-          test "$BRIDGE_SOURCE" != "$SOURCE_SHA"
-          test "$BRIDGE_IMAGE" != "$(jq -er '.images[]|select(.service=="api-web")|.image' \
-            release/production-image-manifest.json)"
+          # A maintenance bootstrap may intentionally make the exact final source/image the
+          # bridge. The later all-service digest + maintenance proof, immediately before any
+          # mutation, is the authority boundary; a different source is not evidence by itself.
           echo "U5_BRIDGE_ROOT=$root" >> "$GITHUB_ENV"
       - name: Validate final and bridge release artifacts before AWS
         env:
@@ -418,7 +418,7 @@ jobs:
           fi
       - name: Verify maintenance release policy and final source bytes
         env:
-          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: ee8d3a1c3967d935c0cb85bce79fc2e54e8cd2ccf5be1ed563fd2d33c60a8fe8
+          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: 14d17af9dbe3071c683448789306c9755da8cfcb92ee28ea30e776a4ed2afe1f
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/validate-production-maintenance-release.sh | awk '{print $1}')" \
@@ -528,6 +528,7 @@ jobs:
           aws ecs describe-express-gateway-service --service-arn "$ai_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/ai-env.json
           aws ecs describe-express-gateway-service --service-arn "$workers_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/workers-env.json
           resolved_target="$TARGET"
+          effective_release_mode="$RELEASE_MODE"
           if [ "$RELEASE_MODE" = fast-promotion ]; then
             test "$TARGET" = auto
             active_sha() {
@@ -537,28 +538,18 @@ jobs:
             api_active_sha="$(active_sha /tmp/api-env.json)"
             ai_active_sha="$(active_sha /tmp/ai-env.json)"
             workers_active_sha="$(active_sha /tmp/workers-env.json)"
-            resolved_target="$(bash infra/uat/select-deploy-target.sh \
-              "$SOURCE_SHA" \
-              "$api_active_sha" "$ai_active_sha" "$workers_active_sha")"
-            [[ "$api_active_sha" =~ ^[0-9a-f]{40}$ ]] \
-              && git cat-file -e "$api_active_sha^{commit}" \
-              && git merge-base --is-ancestor "$api_active_sha" "$SOURCE_SHA" || {
-                echo "ERROR: fast promotion cannot prove the Production database-code baseline; use explicit target=all" >&2
-                exit 1
-              }
-            if ! git diff --quiet --no-renames "$api_active_sha" "$SOURCE_SHA" -- apps/api/prisma; then
-              echo "ERROR: fast promotion detected Prisma/schema/migration support changes; use explicit target=all" >&2
-              exit 1
-            fi
-            if [ "$PRODUCTION_SERVING_MODE" = maintenance_only ]; then
-              echo "::notice::Maintenance promotion deploys all services so the closed state is proved globally."
-              resolved_target=all
-            fi
+            read -r resolved_target effective_release_mode < <(
+              bash infra/docker/resolve-production-fast-mode.sh "$GITHUB_WORKSPACE" \
+                "$PRODUCTION_SERVING_MODE" "$SOURCE_SHA" \
+                "$api_active_sha" "$ai_active_sha" "$workers_active_sha"
+            )
           fi
           case "$resolved_target" in api-web|ai-gateway|workers|all) ;; *) exit 2 ;; esac
           echo "target=$resolved_target" >> "$GITHUB_OUTPUT"
+          echo "release_mode=$effective_release_mode" >> "$GITHUB_OUTPUT"
           echo "PRODUCTION_DEPLOY_TARGET=$resolved_target" >> "$GITHUB_ENV"
-          echo "Resolved Production target: requested=$TARGET resolved=$resolved_target mode=$RELEASE_MODE"
+          echo "RELEASE_MODE=$effective_release_mode" >> "$GITHUB_ENV"
+          echo "Resolved Production target: requested=$TARGET resolved=$resolved_target mode=$effective_release_mode"
           preserve() {
             local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
             value="${!output:-}"
@@ -942,7 +933,7 @@ jobs:
           echo "U5_POST_MIGRATION_RUN_ID=$post_run_id" >> "$GITHUB_ENV"
       - name: Verify and run release task
         env:
-          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          RELEASE_MODE: ${{ steps.production-target.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           RELEASE_DEPLOY_TARGET: ${{ steps.production-target.outputs.target }}
@@ -971,12 +962,12 @@ jobs:
           fi
       - name: Deploy immutable manifest
         env:
-          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          RELEASE_MODE: ${{ steps.production-target.outputs.release_mode }}
           TARGET: ${{ steps.production-target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
-          MAINTENANCE_BOOTSTRAP_READONLY: ${{ needs.resolve-release.outputs.release_mode == 'maintenance-bootstrap' && 'true' || 'false' }}
+          MAINTENANCE_BOOTSTRAP_READONLY: ${{ steps.production-target.outputs.release_mode == 'maintenance-bootstrap' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           export RELEASE_TASK_IMAGE="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
@@ -1031,7 +1022,8 @@ jobs:
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
           RELEASE_DEPLOY_TARGET: all
-          MAINTENANCE_BOOTSTRAP_READONLY: ${{ needs.resolve-release.outputs.release_mode == 'maintenance-bootstrap' && 'true' || 'false' }}
+          RELEASE_MODE: ${{ steps.production-target.outputs.release_mode }}
+          MAINTENANCE_BOOTSTRAP_READONLY: ${{ steps.production-target.outputs.release_mode == 'maintenance-bootstrap' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           recover_closed_release() {
@@ -1135,13 +1127,13 @@ jobs:
       - name: Retire superseded launch builds
         if: >-
           always() &&
-          needs.resolve-release.outputs.release_mode != 'maintenance-bootstrap' &&
+          steps.production-target.outputs.release_mode != 'maintenance-bootstrap' &&
           (steps.production-target.outputs.target == 'all' || steps.production-target.outputs.target == 'api-web')
         env:
-          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          RELEASE_MODE: ${{ steps.production-target.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
-          HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' && ((inputs.maintenance_only == false && (needs.resolve-release.outputs.release_mode != 'promotion' || steps.unquiesce.outcome == 'success')) || (inputs.maintenance_only && steps.verify-maintenance.outcome == 'success')) }}
+          HEALTH_VERIFIED: ${{ steps.verify-health.outcome == 'success' && ((inputs.maintenance_only == false && (steps.production-target.outputs.release_mode != 'promotion' || steps.unquiesce.outcome == 'success')) || (inputs.maintenance_only && steps.verify-maintenance.outcome == 'success')) }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_DIGEST:-}" ]; then

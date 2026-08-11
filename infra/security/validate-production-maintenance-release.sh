@@ -39,7 +39,9 @@ expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc
 expected_deploy=e7fbd5e1dd9958f9496ec53d5d35a976c9de75975d742dfa6ea7c42577825aca
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=71104181a97f4d49321aa0ae925464aba2c5edbde3e96692a58a87f7e61eb5e4
-expected_release_task=2731df022dfb5c878477f673a9cbb3eac3e53376533f8d965b970a2ae5d7b86d
+expected_release_task=cb0deec312909dde73b5d71b22ef209374df5306074813d3b7d89246e59c07ed
+expected_fast_mode=606d424a84a400ea8f9640d74807670387616b3d4a045f9ff2c619535dfb33d2
+expected_migration_catalog=83586a0a0c81831e5d4f6b12b27364db3f4be37ca8f83caa02cb30ff8148e177
 expected_release_task_network_failure=82f37664dc2b0a19d1a5951247622004cb6fe6a6d2f951c3154942fa4c87d918
 expected_ingress_drain=c1b81490a74f53d483ef0da7d6852517d8e76b8ce7f3f48da6cc95b0fbd53773
 expected_s3_storage=f7bfea9d229db933a606e2e65b22eb6444211b061c3bdeecc8b0ca70a23066ab
@@ -108,6 +110,8 @@ if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"
+  check_file infra/docker/resolve-production-fast-mode.sh "$expected_fast_mode"
+  check_file apps/api/prisma/verify-applied-migration-catalog.ts "$expected_migration_catalog"
   check_file infra/prod-ecs-express/release-task-network-failure.jq "$expected_release_task_network_failure"
   check_file infra/prod-ecs-express/wait-production-maintenance-ingress-drain.sh "$expected_ingress_drain"
   check_file apps/api/src/modules/data-model-core/infrastructure/storage/s3-storage.adapter.ts "$expected_s3_storage"

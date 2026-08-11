@@ -630,7 +630,7 @@ case "$mode" in
     container_name="maintenance-preflight"
     log_prefix="maintenance-preflight"
     omit_task_role=true
-    direct_task_command='set -eu; REQUIRE_NO_AWS_CREDENTIALS=true ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts'
+    direct_task_command='set -eu; REQUIRE_NO_AWS_CREDENTIALS=true ALLOW_PENDING_MIGRATIONS=true ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts'
     ;;
   incident-preflight)
     container_name="incident-preflight"
