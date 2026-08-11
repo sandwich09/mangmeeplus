@@ -158,7 +158,8 @@ bash "$(dirname "$0")/validate-production-a5-private-endpoints.sh" \
   "$vpc_endpoints_raw" "$route_tables_raw" "$endpoint_sg_raw" "$vpc_id" \
   "$endpoint_security_group_id" "$task_security_group_id" \
   "$(network_parameter reader-task-security-group-id)" \
-  "$(network_parameter uat-task-security-group-ids)" "$task_subnet_csv" \
+  "$(network_parameter uat-task-security-group-ids)" \
+  "$(network_parameter production-task-security-group-ids)" "$task_subnet_csv" \
   "$task_route_table_csv" "$s3_prefix_list_id" "$endpoint_boundary"
 
 source_db_file="$OUTPUT_DIR/source-db.json"

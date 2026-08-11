@@ -492,7 +492,7 @@ def e0_a5_endpoint_boundary:
     "taskSecurityGroupsAllowNatEgress","taskSubnetIds","vpcId"])
   and (.vpcId | type=="string" and test("^vpc-[0-9a-f]{8,17}$"))
   and (.endpointSecurityGroupId | type=="string" and test("^sg-[0-9a-f]{8,17}$"))
-  and (.authorizedTaskSecurityGroupIds | e0_sorted_unique_strings and length==4
+  and (.authorizedTaskSecurityGroupIds | e0_sorted_unique_strings and length==6
     and all(.[];test("^sg-[0-9a-f]{8,17}$")))
   and (.taskSubnetIds | e0_sorted_unique_strings and length==2
     and all(.[];test("^subnet-[0-9a-f]{8,17}$")))

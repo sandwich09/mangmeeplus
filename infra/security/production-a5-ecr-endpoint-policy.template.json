@@ -68,6 +68,38 @@
           "aws:PrincipalArn": "arn:aws:iam::311414082667:role/watchdog-bms-uat-ecs-execution-role"
         }
       }
+    },
+    {
+      "Sid": "AuthenticateProductionEcsExecutionRole",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::311414082667:role/ecsTaskExecutionRole"
+        }
+      }
+    },
+    {
+      "Sid": "PullExactProductionRuntimeRepositories",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-api",
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-ai-gateway",
+        "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-workers"
+      ],
+      "Condition": {
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::311414082667:role/ecsTaskExecutionRole"
+        }
+      }
     }
   ]
 }

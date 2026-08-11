@@ -32,8 +32,11 @@ Network: subnet public 3 อัน (main route table → IGW) และ private 
 Fargate ปกติรันใน **public subnet** ออกทาง IGW ไม่ใช่ NAT แต่ production A5 สร้าง interface endpoint
 ECR API/DKR, Logs และ Secrets Manager พร้อม `PrivateDnsEnabled=true` ใน VPC เดียวกันเมื่อ 2026-08-10
 จึงทำให้ชื่อ AWS service เหล่านี้ของ UAT วิ่งเข้า private endpoint ด้วย ไม่ได้ออก IGW. Endpoint SG และ policy
-ต้อง allowlist execution role ของ UAT พร้อม SG ทั้ง `watchdog-bms-uat-app-egress-sg` และ
-`watchdog-bms-uat-ai-egress-sg`; ถ้าขาดจุดใด task จะ timeout ก่อนเริ่ม container แม้ public route ปกติ
+ต้อง allowlist execution role พร้อม SG ของทุก runtime ที่ยังใช้ VPC นี้: UAT ใช้
+`watchdog-bms-uat-app-egress-sg`/`watchdog-bms-uat-ai-egress-sg`; production ใช้
+`watchdog-bms-prod-app-egress-sg`/`watchdog-bms-prod-ai-egress-sg`. ถ้าขาด role, policy หรือ SG จุดใด
+task จะ timeout ก่อนเริ่ม container แม้ public route ปกติ. Task production เก่าที่ยังรันอยู่ไม่ใช่หลักฐานว่า
+พร้อม deploy เพราะมัน pull image/secret ก่อนสร้าง endpoint เหล่านี้
 
 ---
 
@@ -91,6 +94,12 @@ execution role ของ UAT ลง policy แบบจำกัดเฉพา�
 ผ่าน all-target, health/digest verification และ signed UAT acceptance ครบ. `run-release-task.sh` ยังมี
 subnet failover เป็น safety net เฉพาะ `TaskFailedToStart` ก่อน container เริ่มและไม่มี exit code เท่านั้น;
 ห้าม retry เมื่อ container เริ่มแล้วเพราะอาจทำ mutation ซ้ำ
+
+**Production preflight (พบ 2026-08-11):** production runtime ใช้ execution role
+`ecsTaskExecutionRole` และ SG สองตัวด้านบน แต่ endpoint policy/SG ที่แก้ UAT รอบแรกยังไม่รวมสามจุดนี้.
+ก่อน rollout production ครั้งแรกต้องเพิ่ม role แบบจำกัดเฉพาะ runtime ECR repositories,
+`watchdog-bms/production/*` secrets และ `/ecs/watchdog-bms-prod-*` log groups พร้อม SG สองตัว แล้ว
+read-back policy และ endpoint boundary ให้ตรง template; ห้ามใช้ task เก่าที่ยัง ACTIVE เป็นหลักฐานแทน
 
 ### UAT — ปิด (จอดที่ศูนย์)
 
@@ -305,8 +314,8 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
    api-web ตรง ๆ ส่วน A5 clone/audit ใช้ endpoint-only private network แยกต่างหากและไม่ต้องสร้าง NAT
    คืนแล้ว: `bootstrap-production-a5-private-network.sh` สร้าง ECR API/DKR, Logs,
    Secrets Manager และ S3 endpoints พร้อม narrow SG/route read-back เมื่อ 2026-08-10. เพราะ interface
-   endpoint ใช้ private DNS ระดับ VPC bootstrap จึงต้องรักษา UAT execution-role policy และ UAT task SG
-   ทั้งสองตัวใน boundary ด้วย; อย่าลบ allowlist เหล่านี้ขณะ endpoint ยังอยู่
+   endpoint ใช้ private DNS ระดับ VPC bootstrap จึงต้องรักษา execution-role policy และ task SG ของทั้ง
+   UAT และ production runtime ใน boundary ด้วย; อย่าลบ allowlist เหล่านี้ขณะ endpoint ยังอยู่
    AWS CLI v2.36.15 ไม่มี waiter `vpc-endpoint-available`; bootstrap จึง poll `State` แบบ bounded
    และรับเฉพาะ `available` โดย fail ทันทีเมื่อเจอ terminal failure state
 7. **UAT Redis ตัวที่รันอยู่ยังไม่ได้เข้ารหัส** ทั้ง at-rest, in-transit และไม่มี auth token — secret

@@ -9,7 +9,7 @@ def e0_fixture_ref($kind): {
 
 def e0_fixture_endpoint_boundary($clone_task_sg; $reader_task_sg; $subnets): {
   vpcId:"vpc-00000000",endpointSecurityGroupId:"sg-00000003",
-  authorizedTaskSecurityGroupIds:([$clone_task_sg,$reader_task_sg,"sg-00000004","sg-00000005"]|sort),
+  authorizedTaskSecurityGroupIds:([$clone_task_sg,$reader_task_sg,"sg-00000004","sg-00000005","sg-00000006","sg-00000007"]|sort),
   taskSubnetIds:($subnets|sort),taskRouteTableIds:["rtb-00000000"],
   s3PrefixListId:"pl-00000000",
   interfaceEndpoints:[
