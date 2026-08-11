@@ -21,6 +21,11 @@ direct-storage URLs reached their byte-pinned maximum lifetime.
 Maintenance may defer only launch-specific evidence; it does not exempt residual processing. Keep
 the controller/contact, inline security-log notice, purposes/retention, rights handling, incident
 and security controls, and protection for already-stored data in force while the product is closed.
+Exact-byte pins cover only enforcement/runtime wiring. Presentation files are changeable without a
+pin update, while broad config/schema/audit modules retain explicit semantic invariants. Intentional
+enforcement changes use `node infra/security/sync-production-maintenance-release-pins.mjs` locally;
+CI runs its check before expensive jobs fan out so stale pins fail early with the exact remediation
+command, then exercises the sync fixture in the maintenance-control suite.
 Open questions: Production Redis/security preflight and the independent owner approval must pass in
 the real promotion ceremony. Maintenance does not mean zero PDPA processing for infrastructure logs
 or any data already stored.
@@ -28,6 +33,8 @@ Artifacts: `docs/specs/production-global-maintenance-mode-spec.md`,
 `docs/plans/production-global-maintenance-mode-plan.md`, Prisma migration and singleton access
 service/controller, auth/session/legal gates, login and maintenance UI, SYSTEM_ADMIN control page,
 and production proxy/verifier/immutable-byte contracts.
+Pin lifecycle artifacts also include `sync-production-maintenance-release-pins.mjs` and its focused
+fixture spec.
 Verification: Customer-access auth/legal/platform suites 91/91 passed; web session/cookie suites
 24/24 passed; API and Web typechecks passed; Prisma validate and Nest provider boot smoke passed;
 the optimized Next production build passed and a localhost request proved that initial `/login`
@@ -41,5 +48,9 @@ external-probe fake, immutable-maintenance-byte validator, production image secu
 quiesce, YAML parse, AI typecheck, and `git diff --check` passed. Browser checks passed at
 1280×900 and 390×844 with no script, form, iframe, external stylesheet/image, or horizontal
 overflow. Full GitHub CI/UAT/production proof remains pending.
+CI run `31473606590` identified the former presentation pin as a false coupling after a legitimate
+theme-only change. The narrowed exact/semantic contract and deterministic sync spec now prove that
+presentation-only or append-only registry changes remain deployable while enforcement drift is
+still rejected until reviewed and synchronized.
 Next: Review the final scoped diff, then commit and push through protected main before UAT and the
 maintenance-only production proof. Do not stage the unrelated production-deploy memory update.

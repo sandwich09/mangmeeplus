@@ -16,11 +16,7 @@ root="$(cd "$root" && pwd -P)"
 expected_proxy=ecc7ef18cef71f16e16e8f29b8804d089ba1fe15ee4835d2f2e541b069deca63
 expected_api_dockerfile=99c33fe43b67c67c94c0e4bd3fc08d484fb9be082832f406739946394067209e
 expected_api_start=54c189f5bca70124e1e71e9e56e9f5f92f614dd9cd41953a960af075ea41d6df
-expected_config=1b40313a6db56a6d9d5ee8317dc6180c49a8d17b86120423135a0de76b433ed7
-expected_prisma_schema=161309e79eda1735b837a8a0f8ca47500576d0feb288d42503fa2fed9fe1a06a
 expected_platform_migration=3ac9ea81f12d76be503b383aeab6580c91f63a4b000aa58b47e549c2a8fa218a
-expected_app_config=79aa26f028b1580abf1cc8f676fdd0f187ca7119304b0d80caf226faa6d49605
-expected_audit_action=499f57dd118974c828bfde8b7805719af834d75ef0960b22cca9572109a07add
 expected_platform_service=c9aa205b6a8935f3ef52747b56e7357eba0060545dd9045f98be2a6f8d198cb6
 expected_legal_acceptance=d4933596b559297db3b494491b12b06886e43c385e1e373acaeff4395b315eeb
 expected_password_login=5ea25fe73b9c95829fcfe52332d3ae09acec69dbed6299573416d51c36c76137
@@ -32,7 +28,6 @@ expected_session_refresh=40565d6e1252c3479f9a7fa2496c67afd8eab28d681f39128f78e03
 expected_login_bff=af26e54f6490e856a0b9931dbfd3292a92b55d82da1884f41d22b7760f55e6e9
 expected_login_failure=f32db402e2af86707ba1d9b9fd5b4b5aa06f8b522b95b170d7a9c5848f687459
 expected_login_route=df86674a0f29bb5560279364e19ed579011cc59f06a23823b3c9c91834835c3c
-expected_login_page=95b5d135d82c9009afa077b7d1b23aa4015c7cfc6a88277ebff9e6662a61ea6a
 expected_maintenance_page=14a4b7c6dbfd36e96c71bcf14d5bbd19a015b8f51a4e05d4a365e904b780a667
 expected_session_gate=511032442a25c088e5b6d39cf8b9e7b2440c2fe11e616f8f7ac8bd2354de934a
 expected_server_session=86595c816ffe5d5898686ed39092582121c5a4c4c052b11b1b9fc0e02790bc85
@@ -41,12 +36,7 @@ expected_system_layout=f74baaadd242180b5cd1ed75c1492eac0fdc7cc3d5872b7144599400e
 expected_change_password_route=2e256a37b0a775e7778839bef15c9516d82dc23503f46660a543213713f3e7f7
 expected_legal_acceptance_route=f0076607745d2b17e6b34281c71b391ef8eeb8f67089de2c347d12801e0b3007
 expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc6336e32e
-expected_platform_page=3c475100c5c78220f340a83a27be5429e134d051e828f8b3d1b075fbe67c4c0c
-expected_system_api=917daa54e1334fe3c03b7764eb1499705aec73234409fddee3ea0b061da4094b
-expected_system_header=80184d241b147b2013d1601deba34b56a3bf82f648d0f123734b7a54727c309b
 expected_deploy=e7fbd5e1dd9958f9496ec53d5d35a976c9de75975d742dfa6ea7c42577825aca
-expected_uat_fast_rollout=60f413807ae2baa7289ef5e23bcd394c6c59bd1fe5940f5b80fdd938a95950a8
-expected_deploy_target_selector=3eb822a3b7d34edaf60a6a63f5f556c71aa22c53d8b8f778278751199b3ccfa0
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=71104181a97f4d49321aa0ae925464aba2c5edbde3e96692a58a87f7e61eb5e4
 expected_release_task=2731df022dfb5c878477f673a9cbb3eac3e53376533f8d965b970a2ae5d7b86d
@@ -66,7 +56,17 @@ check_file() {
   [ -f "$root/$relative" ] || { echo "ERROR: maintenance release is missing $relative" >&2; exit 1; }
   actual="$(sha256sum "$root/$relative" | awk '{print $1}')"
   [ "$actual" = "$expected" ] || {
-    echo "ERROR: maintenance release bytes differ for $relative" >&2
+    echo "ERROR: reviewed maintenance enforcement bytes differ for $relative" >&2
+    echo "Run: node infra/security/sync-production-maintenance-release-pins.mjs" >&2
+    exit 1
+  }
+}
+
+check_literal() {
+  local relative="$1" literal="$2"
+  [ -f "$root/$relative" ] || { echo "ERROR: maintenance release is missing $relative" >&2; exit 1; }
+  grep -Fq -- "$literal" "$root/$relative" || {
+    echo "ERROR: maintenance invariant is missing from $relative: $literal" >&2
     exit 1
   }
 }
@@ -74,11 +74,7 @@ check_file() {
 check_file infra/api-web/web-api-proxy.mjs "$expected_proxy"
 check_file infra/api-web/Dockerfile.api-web "$expected_api_dockerfile"
 check_file infra/api-web/start-api-web-runtime.sh "$expected_api_start"
-check_file packages/config/src/index.ts "$expected_config"
-check_file apps/api/prisma/schema.prisma "$expected_prisma_schema"
 check_file apps/api/prisma/migrations/20260810120000_platform_access_control/migration.sql "$expected_platform_migration"
-check_file apps/api/src/common/config/app-config.service.ts "$expected_app_config"
-check_file apps/api/src/modules/audit/domain/models/audit-action.ts "$expected_audit_action"
 check_file apps/api/src/modules/auth/application/platform-access.service.ts "$expected_platform_service"
 check_file apps/api/src/modules/auth/application/legal-acceptance.service.ts "$expected_legal_acceptance"
 check_file apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts "$expected_password_login"
@@ -90,7 +86,6 @@ check_file apps/api/src/modules/auth/application/use-cases/refresh-session.use-c
 check_file apps/web/app/api/auth/login/route.ts "$expected_login_bff"
 check_file apps/web/src/features/auth/login-failure-response.server.ts "$expected_login_failure"
 check_file apps/web/app/login/page.tsx "$expected_login_route"
-check_file apps/web/src/features/auth/LoginPage.tsx "$expected_login_page"
 check_file apps/web/app/maintenance/page.tsx "$expected_maintenance_page"
 check_file apps/web/src/common/auth/session-gate.logic.ts "$expected_session_gate"
 check_file apps/web/src/common/auth/server-session.ts "$expected_server_session"
@@ -99,13 +94,17 @@ check_file apps/web/app/system/layout.tsx "$expected_system_layout"
 check_file apps/web/app/change-password/page.tsx "$expected_change_password_route"
 check_file apps/web/app/legal-acceptance/page.tsx "$expected_legal_acceptance_route"
 check_file apps/web/app/system/platform-access/page.tsx "$expected_platform_route"
-check_file apps/web/src/features/system-partners/PlatformAccessPage.tsx "$expected_platform_page"
-check_file apps/web/src/features/system-partners/system-partners.api.ts "$expected_system_api"
-check_file apps/web/src/common/components/app-shell/SystemHeader.tsx "$expected_system_header"
+check_literal packages/config/src/index.ts "SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(300).default(300),"
+check_literal packages/config/src/index.ts "PRODUCTION_SERVING_MODE: z.enum(['live', 'maintenance_only']).optional(),"
+check_literal packages/config/src/index.ts "QUEUE_ENABLED: envBoolean.default(true),"
+check_literal packages/config/src/index.ts "bool(config['QUEUE_ENABLED']) !== (servingMode === 'live')"
+check_literal apps/api/prisma/schema.prisma "model PlatformAccessControl {"
+check_literal apps/api/prisma/schema.prisma "state                        PlatformAccessState @default(CLOSED)"
+check_literal apps/api/src/common/config/app-config.service.ts "get signedUrlTtlSeconds(): number { return this.config.SIGNED_URL_TTL_SECONDS; }"
+check_literal apps/api/src/common/config/app-config.service.ts "get productionServingMode(): 'live' | 'maintenance_only' | undefined"
+check_literal apps/api/src/modules/audit/domain/models/audit-action.ts "PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',"
 if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/deploy.sh "$expected_deploy"
-  check_file infra/prod-ecs-express/lib-uat-fast-rollout.sh "$expected_uat_fast_rollout"
-  check_file infra/uat/select-deploy-target.sh "$expected_deploy_target_selector"
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"

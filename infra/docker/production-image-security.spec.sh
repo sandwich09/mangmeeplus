@@ -88,7 +88,7 @@ grep -Fq "github.event_name == 'workflow_call'" "$ci"
 grep -Fq "github.event_name == 'workflow_dispatch'" "$ci"
 grep -Fq "startsWith(github.ref, 'refs/tags/release-')" "$ci"
 grep -Fq "inputs.validated_ci_run_id != ''" "$ci"
-test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 6
+test "$(grep -Fc "inputs.validated_ci_run_id == ''" "$ci")" -eq 7
 grep -Fq '.head_sha == $sha' "$ci"
 grep -Fq '.path == ".github/workflows/ci.yml"' "$ci"
 grep -Fq 'validationRunId:$validationRunId' "$ci"
@@ -324,6 +324,9 @@ test "$(grep -Fhc "$acceptance_validator_hash" "$deploy_workflow" "$uat_workflow
 
 bash "$repo_root/infra/docker/production-release-intent.spec.sh"
 bash "$repo_root/infra/docker/production-maintenance-workflow.spec.sh"
+bash "$repo_root/infra/security/sync-production-maintenance-release-pins.spec.sh"
+grep -Fq 'Verify maintenance policy pins before CI fan-out' "$ci"
+grep -Fq 'node infra/security/sync-production-maintenance-release-pins.mjs --check' "$ci"
 
 acceptance_source=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 acceptance_controller=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

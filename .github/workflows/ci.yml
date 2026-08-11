@@ -195,6 +195,13 @@ jobs:
             code_changed=true
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+      - name: Verify maintenance policy pins before CI fan-out
+        if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+        run: |
+          set -euo pipefail
+          if [ -f infra/security/sync-production-maintenance-release-pins.mjs ]; then
+            node infra/security/sync-production-maintenance-release-pins.mjs --check
+          fi
       - name: Verify reused CI validation
         if: inputs.validated_ci_run_id != ''
         env:
@@ -295,6 +302,7 @@ jobs:
           bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
           bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
           bash infra/security/validate-production-maintenance-release.spec.sh
+          bash infra/security/sync-production-maintenance-release-pins.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'

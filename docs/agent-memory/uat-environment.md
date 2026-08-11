@@ -25,6 +25,7 @@ Artifacts:
 - `infra/prod-ecs-express/{deploy.sh,run-release-task.sh,verify-deployment.sh}`
 - `infra/uat/{README.md,setup-control-plane.sh,bootstrap-data.sh,*.json}`
 - `infra/uat/{verify-deploy-readiness.sh,verify-deploy-readiness.spec.sh}`
+- `infra/security/{validate-production-maintenance-release.sh,sync-production-maintenance-release-pins.mjs}`
 - `docs/specs/uat-environment-spec.md`
 - `docs/plans/uat-environment-plan.md`
 Verification:
@@ -49,10 +50,12 @@ Verification:
   read-only AWS execution of `verify-deploy-readiness.sh` all pass.
 - CI push run `31473606590` exposed an exact-byte controller pin drift after commit `df89b41`
   legitimately changed `PlatformAccessPage.tsx`: application tests passed, but the production
-  maintenance release validator still expected the previous page hash. The validator now pins the
-  current reviewed page bytes and `deploy-production.yml` pins the resulting validator hash.
-  The focused maintenance release/workflow specs, UAT early/selective specs, and the full
-  `production-image-security.spec.sh` pass with the synchronized contract.
+  maintenance release validator still expected the previous presentation hash. The durable fix
+  limits exact pins to enforcement/runtime wiring, checks broad config/schema/audit modules by
+  required semantics, and leaves presentation to focused journeys plus exact UAT images. Intentional
+  enforcement edits use `sync-production-maintenance-release-pins.mjs`; CI check mode detects stale
+  pins before expensive jobs fan out. The sync/validator/workflow specs, UAT early/selective specs,
+  and the full `production-image-security.spec.sh` pass with this contract.
 - AWS roles `watchdog-bms-ci-uat`, `watchdog-bms-deploy-uat`, and five UAT ECS runtime roles exist. GitHub OIDC trust readback is bound exactly to `repo:MangmeeDev/mangmeeplus:environment:uat`; inline policy apply completed from the committed templates, but the operator principal lacks `iam:GetRolePolicy` for independent readback.
 - GitHub environment `uat` exists with only `main` allowed (policy `55132941`) and has account, region, publisher/deploy role ARN, copied LINE IDs, `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com`, and disabled AI/autoreply defaults.
 - The owner approved recurring cost. `watchdog-bms-uat-db` (`db.t4g.micro`, encrypted/private), `watchdog-bms-uat-redis` (`cache.t4g.micro`), `watchdog-bms-uat-311414082667`, UAT security groups, secrets, SSM parameters, and `watchdog-bms-uat` ECS cluster are provisioned. Production LINE IDs/secrets were copied into UAT without printing secret values.

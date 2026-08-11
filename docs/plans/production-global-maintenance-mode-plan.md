@@ -10,8 +10,10 @@ Status: In progress — customer-access switch revision authorized on 2026-08-10
    Permit opening only when the canonical production serving mode is `live`.
 4. Narrow the outer proxy maintenance gate to forward the login/system-control path while it still
    blocks LINE, uploads, callbacks, business APIs, AI, and queues before processing.
-5. Update immutable-byte, runtime, workflow, and evidence checks; run focused API/web/proxy tests,
-   Prisma generation, typechecks, YAML parsing, and local probes.
+5. Keep immutable-byte checks only on enforcement/runtime wiring; use semantic invariants for broad
+   schema/config/audit files and normal tests for presentation. Add one deterministic local pin-sync
+   command plus CI check mode so intentional boundary changes cannot leave a stale controller pin.
+   Run focused API/web/proxy tests, Prisma generation, typechecks, YAML parsing, and local probes.
 6. Create source A (all-target gate bootstrap) and source B (distinct final image), push through
    protected main and exact all-target UAT runs.
 7. Close all production services with A, prove ordinary login, custom/raw API and raw AI paths are
