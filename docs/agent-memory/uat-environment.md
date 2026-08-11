@@ -1,17 +1,10 @@
 # Agent Memory: UAT environment
 
-Status: UAT is running `develop` head `acda6327e395` on all three services
-as of 2026-08-04 18:03 ICT via the NORMAL Deploy UAT/all workflow (run 30900929858):
-signed images, SBOM, migrations through `20260804190000_expense_payee_entity_kind`,
-audit record complete. This replaces the unsigned direct images of `d94a62be4127`.
-Public health and /login verified 200. Two failed dispatches preceded it: d3404df4
-predated the U5 authority-wiring fix (image-security spec), then the a3fb68cc
-template change had never been applied to the live `watchdog-bms-uat-deploy` IAM
-policy (control-plane drift gate). Both `watchdog-bms-uat-deploy` and
-`watchdog-bms-uat-release-task-ecs-read` were re-applied 2026-08-04 by direct
-`iam put-role-policy` as `watchdog-bedrock-dev` (that principal still lacks
-`iam:GetRolePolicy`, so `setup-control-plane.sh` preflight refuses; drift is
-proven only by the workflow's own verify step).
+Status: UAT is running source `aca76203239feac359988938768ab66132c2018a` on all three
+services as of 2026-08-11 via the normal Deploy UAT/all workflow run `31418060978`, attempt 3.
+The signed immutable api-web, AI Gateway and workers images are ACTIVE with one configuration each,
+capacity 1/2, matching `GIT_SHA`/`SERVICE_VERSION`; workflow digest/health verification and signed UAT
+acceptance passed. Public `/v1/health` and `/login` independently returned 200.
 Owner: Platform/Security release owner
 Scope: GitHub UAT environment, OIDC roles, isolated AWS runtime/data resources, immutable deployment workflow, and verification.
 Decisions:
@@ -197,21 +190,13 @@ Verification:
   Gateway `/v1/health` and workers `/health` returned `status=ok`. Production was not
   changed.
 Next:
-- UAT/all run `31408125154` for source `a37430c644aa0cb8447e39a18e719e226182da25`
-  stopped before migration/deploy in attempts 1 and 2. Both one-shot release tasks landed in
-  `subnet-004898abc874821c2` (`ap-southeast-1a`) and reached `TaskFailedToStart` while retrieving
-  `watchdog-bms/uat/database-url` from Secrets Manager; container exit code remained null, so no
-  database or service mutation occurred. Live UAT tasks were independently read back in
-  `subnet-0d61fcc3def86edd3` / `subnet-05b0bb57ed2f20a39` (`1b/1c`). The release runner now tries
-  public subnets one at a time and fails over only for this proven pre-container network failure;
-  focused failover and immutable maintenance-byte validator specs pass. Commit/push/CI and a fresh
-  UAT/all dispatch remain next.
-- Run the normal UAT/all workflow for this SHA so signed, SBOM'd and ECR-scanned artifacts
-  replace the four direct images, and so the release operation gets its audit record.
+- Root cause of the repeated UAT start failures is closed: production A5 interface endpoints use
+  VPC-wide private DNS, so UAT AWS-service calls were redirected into endpoint SG/policies that only
+  allowed A5. Live endpoint policies now permit only the exact UAT ECS execution role and exact UAT
+  secrets/ECR repositories/log groups; endpoint TCP/443 ingress now includes both UAT app and AI SGs.
+  Keep the bootstrap/validator/templates and plural SSM SG parameter in sync before the next A5 rebuild.
 - Test the urgent journey on `https://uat.mangmeeplus.com`; hard-refresh any tab opened before
-  14:31 ICT so it loads the new immutable Next.js chunks.
-- Run the normal UAT/all workflow after journey testing so signed/SBOM/scanned artifacts
-  replace the temporary direct image.
+  this deployment so it loads the new immutable Next.js chunks.
 - Sign in at `https://uat.mangmeeplus.com/login` as `thawatchai.watchdog`, create the first real test company from `/system/partners`, then test owner/admin employee creation -> employee QR scan -> LINE identity link -> OA message under the assigned role.
 - Send one real customer LINE message and verify the first-message AI auto-reply path.
 - After UAT sign-off, replace/rotate the production LINE Login, LIFF, and Messaging API credentials that were copied for the temporary UAT cycle.

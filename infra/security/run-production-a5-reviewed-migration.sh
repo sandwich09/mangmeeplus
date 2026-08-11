@@ -129,7 +129,8 @@ aws ec2 describe-route-tables --region "$AWS_REGION" --route-table-ids "${task_r
 bash "$(dirname "$0")/validate-production-a5-private-endpoints.sh" \
   "$vpc_endpoints_raw" "$route_tables_raw" "$endpoint_sg_raw" "$vpc_id" \
   "$endpoint_security_group" "$(network_parameter clone-task-security-group-id)" \
-  "$task_security_group" "$task_subnet_csv" "$task_route_table_csv" \
+  "$task_security_group" "$(network_parameter uat-task-security-group-ids)" \
+  "$task_subnet_csv" "$task_route_table_csv" \
   "$s3_prefix_list" "$endpoint_boundary"
 aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "${task_subnets[@]}" --output json \
   | jq -cS . > "$subnet_raw"

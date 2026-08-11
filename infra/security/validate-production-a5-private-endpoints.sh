@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 11 ]; then
-  echo "Usage: $0 <vpc-endpoints.json> <route-tables.json> <endpoint-sg.json> <vpc-id> <endpoint-sg-id> <clone-task-sg-id> <reader-task-sg-id> <subnet-csv> <route-table-csv> <s3-prefix-list-id> <output.json>" >&2
+if [ "$#" -ne 12 ]; then
+  echo "Usage: $0 <vpc-endpoints.json> <route-tables.json> <endpoint-sg.json> <vpc-id> <endpoint-sg-id> <clone-task-sg-id> <reader-task-sg-id> <uat-task-sg-csv> <subnet-csv> <route-table-csv> <s3-prefix-list-id> <output.json>" >&2
   exit 2
 fi
 
@@ -13,12 +13,15 @@ vpc_id="$4"
 endpoint_sg_id="$5"
 clone_task_sg_id="$6"
 reader_task_sg_id="$7"
-subnet_csv="$8"
-route_table_csv="$9"
-s3_prefix_list_id="${10}"
-output="${11}"
+uat_task_sg_csv="$8"
+subnet_csv="$9"
+route_table_csv="${10}"
+s3_prefix_list_id="${11}"
+output="${12}"
 [[ "$vpc_id" =~ ^vpc-[0-9a-f]{8,17}$ ]]
-for id in "$endpoint_sg_id" "$clone_task_sg_id" "$reader_task_sg_id"; do
+IFS=, read -r -a uat_task_sg_ids <<< "$uat_task_sg_csv"
+[ "${#uat_task_sg_ids[@]}" -eq 2 ]
+for id in "$endpoint_sg_id" "$clone_task_sg_id" "$reader_task_sg_id" "${uat_task_sg_ids[@]}"; do
   [[ "$id" =~ ^sg-[0-9a-f]{8,17}$ ]]
 done
 [[ "$s3_prefix_list_id" =~ ^pl-[0-9a-f]{8,17}$ ]]
@@ -35,7 +38,9 @@ jq -e . "$endpoints" "$routes" "$endpoint_sg_file" \
 
 subnets="$(tr ',' '\n' <<< "$subnet_csv" | sort -u | jq -R . | jq -s .)"
 route_tables="$(tr ',' '\n' <<< "$route_table_csv" | sort -u | jq -R . | jq -s .)"
-task_groups="$(printf '%s\n%s\n' "$clone_task_sg_id" "$reader_task_sg_id" | sort | jq -R . | jq -s .)"
+task_groups="$(printf '%s\n%s\n%s\n%s\n' "$clone_task_sg_id" "$reader_task_sg_id" \
+  "${uat_task_sg_ids[0]}" "${uat_task_sg_ids[1]}" | sort -u | jq -R . | jq -s .)"
+[ "$(jq 'length' <<< "$task_groups")" -eq 4 ]
 
 jq -e --arg vpc "$vpc_id" --arg endpointSg "$endpoint_sg_id" \
   --argjson subnets "$subnets" --argjson routeTables "$route_tables" \
