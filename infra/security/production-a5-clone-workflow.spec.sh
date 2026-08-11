@@ -32,6 +32,9 @@ raise 'migration-tool validator is not controller-owned' unless verify_run.inclu
 raise 'candidate source controls its own image validator' if verify_run.include?(
   'candidate/infra/security/verify-production-a5-migration-tool.sh'
 )
+tsx_index = verify_run.index('--tsconfig /app/apps/api/tsconfig.json')
+hash_script_index = verify_run.index('/app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts')
+raise 'candidate hash printer does not use the API tsconfig' unless tsx_index && hash_script_index && tsx_index < hash_script_index
 uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
 raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(

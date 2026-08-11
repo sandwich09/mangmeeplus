@@ -35,6 +35,7 @@ docker run --rm --entrypoint sh "$image" -c '
   }
   require_path -x /app/apps/api/node_modules/.bin/prisma
   require_path -x /app/node_modules/.bin/tsx
+  require_path -f /app/apps/api/tsconfig.json
   require_path -f /app/apps/api/prisma/schema.prisma
   require_path -d /app/apps/api/prisma/migrations
   require_path -f /app/apps/api/prisma/production-a5/run-clone-rehearsal.ts

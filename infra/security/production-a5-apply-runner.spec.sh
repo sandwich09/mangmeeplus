@@ -12,6 +12,7 @@ for required in \
   'watchdog-bms-production-a5-apply-execution' 'taskRoleArn==null' \
   'assignPublicIp:"DISABLED"' 'validate-production-a5-private-endpoints.sh' \
   'watchdog-bms/production/database-url' ':::${writer_version}' \
+  '"--tsconfig","/app/apps/api/tsconfig.json"' \
   'run-production-apply.ts' 'reconstruct-production-a5-apply-result.sh'; do
   grep -F -- "$required" "$runner" >/dev/null
 done

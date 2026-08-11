@@ -340,6 +340,7 @@ jobs:
           tool_root="$EVIDENCE_ROOT/migration-tool"
           mkdir "$tool_root"
           docker run --rm --entrypoint /app/node_modules/.bin/tsx "$image" \
+            --tsconfig /app/apps/api/tsconfig.json \
             /app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts \
             > "$tool_root/candidate-hashes.json"
           jq -e '.candidateMigrationSetHash|test("^[0-9a-f]{64}$")' \

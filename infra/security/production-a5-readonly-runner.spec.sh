@@ -28,6 +28,7 @@ jq -cnS --arg family "$family" --arg execution arn:aws:iam::311414082667:role/wa
     runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp"}],
     containerDefinitions:[{name:"reader",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
       workingDirectory:"/app",command:["/app/node_modules/.bin/tsx",
+        "--tsconfig","/app/apps/api/tsconfig.json",
         "/app/apps/api/prisma/production-a5/run-readonly-evidence-task.ts"],
       environment:[{name:"DEPLOY_ENV",value:"production"},{name:"A5_TARGET_ENVIRONMENT",value:"production"},
         {name:"A5_SCHEMA_PROFILE",value:"LEGACY_PRE_F1"},{name:"GIT_SHA",value:$source},
@@ -65,9 +66,20 @@ jq '.taskDefinition.containerDefinitions[0].environment[] |=
   if .name=="PRODUCTION_A5_INPUT_BUNDLE_B64" then .value="H4sIinvalid" else . end' \
   "$work/good.json" > "$work/wrong-input.json"
 expect_reject wrong-input
+jq '.taskDefinition.containerDefinitions[0].command=[
+  "/app/node_modules/.bin/tsx",
+  "/app/apps/api/prisma/production-a5/run-readonly-evidence-task.ts"]' \
+  "$work/good.json" > "$work/missing-tsconfig.json"
+expect_reject missing-tsconfig
 
 bash -n "$runner" "$validator"
 rg -q 'assignPublicIp:"DISABLED"' "$runner"
+rg -q '"--tsconfig","/app/apps/api/tsconfig.json"' "$runner"
+if [ "$(grep -c "'--tsconfig', '/app/apps/api/tsconfig.json'" \
+    "$repo_root/apps/api/prisma/production-a5/run-readonly-evidence-task.ts")" -ne 2 ]; then
+  echo 'ERROR: read-only child TSX commands are not bound to the API tsconfig' >&2
+  exit 1
+fi
 rg -q 'Association//null.==null' "$runner" || rg -q 'Association//null)==null' "$runner"
 if rg -n 'assignPublicIp:"ENABLED"|ecsTaskExecutionRole|taskRoleArn[[:space:]]*:[[:space:]]*"' "$runner"; then
   echo 'ERROR: public/shared/task role path is present' >&2

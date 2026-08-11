@@ -168,7 +168,8 @@ jq -cnS --arg family "$family" --arg execution "$execution_role" --arg image "$M
    cpu:"2048",memory:"4096",runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},
    volumes:[{name:"tmp"}],containerDefinitions:[{
      name:"apply",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",workingDirectory:"/app",
-     command:["/app/node_modules/.bin/tsx","/app/apps/api/prisma/production-a5/run-production-apply.ts"],
+     command:["/app/node_modules/.bin/tsx","--tsconfig","/app/apps/api/tsconfig.json",
+       "/app/apps/api/prisma/production-a5/run-production-apply.ts"],
      environment:[{name:"SOURCE_SHA",value:$source},{name:"PRODUCTION_A5_MIGRATION_IMAGE",value:$image},
        {name:"PRODUCTION_A5_EXPECTED_DATABASE_HOST",value:$host},
        {name:"PRODUCTION_A5_SOURCE_APPLIED_MIGRATIONS_HASH",value:$ledger},
