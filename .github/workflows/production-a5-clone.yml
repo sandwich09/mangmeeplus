@@ -347,8 +347,7 @@ jobs:
             "$tool_root/candidate-hashes.json" >/dev/null
           identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/production-a5-clone.yml@refs/heads/main"
           cosign sign --yes --bundle "$tool_root/migration-tool.signature.bundle" "$image"
-          cosign verify --bundle "$tool_root/migration-tool.signature.bundle" \
-            --certificate-identity "$identity" \
+          cosign verify --certificate-identity "$identity" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$image" > "$tool_root/migration-tool.signature.verify.json"
           printf '%s\n' "MIGRATION_IMAGE=$image" "MIGRATION_DIGEST=$IMAGE_DIGEST" \
