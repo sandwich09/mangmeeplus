@@ -879,12 +879,12 @@ def e0_migration_tool_for($repository; $source_commit; $workflow_path; $run_id;
       and .subjectDigest == $tool.registryBinding.runnableDigest
       and (.sha256 | e0_hash))
   and (.signature
-    | e0_exact_keys(["bundleSha256","identity","issuer","signedDigest","verified"])
+    | e0_exact_keys(["identity","issuer","outputSha256","signedDigest","verified"])
       and .verified == true and .signedDigest == $tool.digest
       and .identity == ("https://github.com/" + $repository + "/"
         + $workflow_path + "@refs/heads/main")
       and .issuer == "https://token.actions.githubusercontent.com"
-      and (.bundleSha256 | e0_hash))
+      and (.outputSha256 | e0_hash))
   and .runtimeBoundary == {
     serviceTrafficAttached:false,taskRoleArn:null,
     executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution"

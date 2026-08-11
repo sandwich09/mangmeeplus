@@ -35,12 +35,16 @@ raise 'candidate source controls its own image validator' if verify_run.include?
 tsx_index = verify_run.index('--tsconfig /app/apps/api/tsconfig.json')
 hash_script_index = verify_run.index('/app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts')
 raise 'candidate hash printer does not use the API tsconfig' unless tsx_index && hash_script_index && tsx_index < hash_script_index
-raise 'migration-tool signing does not retain its bundle' unless verify_run.include?(
-  'cosign sign --yes --bundle "$tool_root/migration-tool.signature.bundle" "$image"'
+raise 'migration-tool signing is not uploaded to the registry' unless verify_run.include?(
+  'cosign sign --yes "$image"'
 )
+raise 'image signing incorrectly requests a local bundle' if verify_run.match?(/cosign sign .*--bundle/)
 raise 'image verification incorrectly passes a bundle flag' if verify_run.match?(/cosign verify --bundle/)
 raise 'migration-tool signature is not verified from the registry' unless verify_run.include?(
   'cosign verify --certificate-identity "$identity"'
+)
+raise 'registry verification output is not retained as evidence' unless verify_run.include?(
+  'migration-tool.signature.verify.json'
 )
 uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
@@ -61,6 +65,7 @@ for required in \
   'MIGRATION_TEMPORARY_TAG' \
   'run-production-a5-clone.sh' \
   'PRODUCTION_A5_CLONE_REHEARSAL_V1' \
+  'outputSha256:$signatureHash' \
   'signed_evidence_validate_payload_contract' \
   'cosign sign-blob --yes --bundle' \
   'contentSha256:("0"*64)' \
@@ -79,7 +84,9 @@ for forbidden in \
   'aws ecs update-service' \
   'aws ssm get-parameters --names' \
   'aws rds modify-db-instance' \
-  'aws rds delete-db-snapshot'; do
+  'aws rds delete-db-snapshot' \
+  'bundleSha256' \
+  'migration-tool.signature.bundle'; do
   if grep -F -- "$forbidden" "$workflow" >/dev/null; then
     echo "ERROR: forbidden production clone workflow capability: $forbidden" >&2
     exit 1
