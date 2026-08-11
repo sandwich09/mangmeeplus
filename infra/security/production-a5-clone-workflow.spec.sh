@@ -28,6 +28,7 @@ for required in \
   'watchdog-bms-production-a5-clone' \
   'watchdog-bms-production-a5-clone-execution' \
   'validate-uat-deployment-acceptance.sh' \
+  'pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma' \
   'target: migration-tool' \
   'provenance: mode=max' \
   'sbom: true' \
