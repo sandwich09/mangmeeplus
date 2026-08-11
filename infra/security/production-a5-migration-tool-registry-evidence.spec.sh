@@ -37,7 +37,7 @@ jq -cnS --arg provenance "$provenance_digest" --arg sbom "$sbom_digest" '
 jq -cnS --arg digest "${runnable_digest#sha256:}" --arg source "$source_sha" '
   {_type:"https://in-toto.io/Statement/v1",subject:[{name:"pkg",digest:{sha256:$digest}}],
    predicateType:"https://slsa.dev/provenance/v1",
-   predicate:{buildDefinition:{buildType:"https://mobyproject.org/buildkit@v1",
+   predicate:{buildDefinition:{buildType:"https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
      externalParameters:{args:{GIT_SHA:$source}}},runDetails:{builder:{id:"fixture"}}}}
 ' > "$fixture/provenance.json"
 jq -cnS --arg digest "${runnable_digest#sha256:}" '
@@ -77,6 +77,10 @@ jq -cS '.predicateType="https://slsa.dev/provenance/v1"' "$fixture/sbom.json" \
   > "$fixture/swapped-sbom.json"
 expect_reject swapped-predicate "$fixture/index.json" "$fixture/attestation.json" \
   "$fixture/provenance.json" "$fixture/swapped-sbom.json"
+jq -cS '.predicate.buildDefinition.buildType="https://example.com/foreign-builder"' \
+  "$fixture/provenance.json" > "$fixture/foreign-builder.json"
+expect_reject foreign-builder "$fixture/index.json" "$fixture/attestation.json" \
+  "$fixture/foreign-builder.json" "$fixture/sbom.json"
 jq -cS 'walk(if type=="string" and .==$source then "missing" else . end)' \
   --arg source "$source_sha" "$fixture/provenance.json" > "$fixture/wrong-source.json"
 expect_reject wrong-source "$fixture/index.json" "$fixture/attestation.json" \

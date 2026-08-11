@@ -67,8 +67,11 @@ registry_evidence_validate() {
     ._type == "https://in-toto.io/Statement/v1"
     and (.subject | type == "array" and length >= 1)
     and any(.subject[]; .digest.sha256 == $digest)
-    and ((.predicate.buildDefinition.buildType // .predicate.buildType)
-      == "https://mobyproject.org/buildkit@v1")
+    and ((.predicateType == "https://slsa.dev/provenance/v1"
+        and .predicate.buildDefinition.buildType
+          == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md")
+      or (.predicateType == "https://slsa.dev/provenance/v0.2"
+        and .predicate.buildType == "https://mobyproject.org/buildkit@v1"))
     and ([.. | strings] | any(. == $source))
   ' "$provenance" >/dev/null
   jq -e --arg digest "$runnable_hex" '
