@@ -336,7 +336,7 @@ jobs:
           [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           image="$ECR_REGISTRY/$MIGRATION_REPOSITORY@$IMAGE_DIGEST"
           docker pull "$image"
-          bash candidate/infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"
+          bash infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"
           tool_root="$EVIDENCE_ROOT/migration-tool"
           mkdir "$tool_root"
           docker run --rm --entrypoint /app/node_modules/.bin/tsx "$image" \

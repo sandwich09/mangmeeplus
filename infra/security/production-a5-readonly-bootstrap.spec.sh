@@ -110,6 +110,8 @@ if [ "$1 $2" = 'image inspect' ]; then
     ExposedPorts:{},Labels:{"org.opencontainers.image.revision":$source,
       "com.watchdog-bms.image-purpose":"production-a5-migration-tool"}}}]'
 elif [ "$1" = run ]; then
+  [[ "$*" == *'/app/apps/api/node_modules/.bin/prisma'* ]]
+  [[ "$*" != *'/app/node_modules/.bin/prisma'* ]]
   exit 0
 else
   exit 2
