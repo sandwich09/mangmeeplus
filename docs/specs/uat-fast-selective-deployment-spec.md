@@ -1,6 +1,6 @@
 # UAT Fast Selective Deployment Spec
 
-Status: Approved for implementation
+Status: Implemented; awaiting first live timing evidence
 Owner: Platform / release owner
 Related: `docs/specs/uat-environment-spec.md`, `docs/specs/deploy-wave-rollout-and-prod-promotion-spec.md`
 
@@ -20,9 +20,10 @@ retirement and is not removed by this change.
 - Remove the six minutes of fixed UAT bake delay while keeping ECS health,
   alarm rollback, circuit breaker, immutable image, release-operation and
   post-deploy verification gates.
-- Keep Production unchanged: Production still requires a successful signed
-  `target=all` UAT acceptance for the exact source and exact three-image
-  manifest.
+- Production still requires a successful signed `target=all` UAT acceptance for
+  the exact source and exact three-image manifest. Its optional fast promotion
+  may reuse this classifier against Production service SHAs, but only after
+  proving there is no pending database migration.
 
 Expected warm-run targets, including image publication and the existing
 release-operation fence:

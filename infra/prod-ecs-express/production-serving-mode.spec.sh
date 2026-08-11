@@ -72,6 +72,18 @@ assert_rejected deploy-bootstrap-reaches-evidence-gate \
     RELEASE_MODE=maintenance-bootstrap MAINTENANCE_BOOTSTRAP_READONLY=true \
     PRODUCTION_IMAGE_MANIFEST=manifest.json SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     REIMBURSEMENT_WRITE_QUIESCE=true bash "$deploy" all
+assert_rejected deploy-fast-maintenance-reaches-release-fence \
+  'service rollout requires RELEASE_PARENT_OPERATION_ID' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
+    RELEASE_MODE=fast-promotion PRODUCTION_IMAGE_MANIFEST=manifest.json \
+    SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa REIMBURSEMENT_WRITE_QUIESCE=true \
+    bash "$deploy" all
+assert_rejected deploy-fast-maintenance-must-be-global \
+  'maintenance_only requires an immutable quiesced all-target' \
+  env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
+    RELEASE_MODE=fast-promotion PRODUCTION_IMAGE_MANIFEST=manifest.json \
+    SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa REIMBURSEMENT_WRITE_QUIESCE=true \
+    bash "$deploy" api-web
 assert_rejected verify-missing-mode \
   'PRODUCTION_SERVING_MODE is required in production' \
   env -i PATH="$PATH" DEPLOY_ENV=production bash "$verify" manifest.json all

@@ -95,6 +95,12 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
         && [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = false ] \
         && maintenance_intent_valid=true
     fi
+  elif [ "$RELEASE_MODE_INPUT" = fast-promotion ] \
+    && [ "$TARGET" = all ] \
+    && [ "$REIMBURSEMENT_BRIDGE_INPUT" = false ] \
+    && [ "$PARTIAL_INCIDENT_READONLY_INPUT" = false ] \
+    && [ "$MAINTENANCE_BOOTSTRAP_READONLY_INPUT" = false ]; then
+    maintenance_intent_valid=true
   elif [ "$RELEASE_MODE_INPUT" = maintenance-bootstrap ] \
     && [ "$TARGET" = all ] \
     && [ "$REIMBURSEMENT_BRIDGE_INPUT" = false ] \

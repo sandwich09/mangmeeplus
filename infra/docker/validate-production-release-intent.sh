@@ -13,7 +13,7 @@ incident_ref="$4"
 incident_approval_ref="$5"
 maintenance_only="$6"
 maintenance_bootstrap="$7"
-[[ "$target" =~ ^(all|api-web|ai-gateway|workers)$ ]] || {
+[[ "$target" =~ ^(auto|all|api-web|ai-gateway|workers)$ ]] || {
   echo "ERROR: production deploy target is invalid" >&2
   exit 1
 }
@@ -46,6 +46,19 @@ emit_result() {
   fi
   printf '%s\n' "$1"
 }
+
+if [ "$target" = auto ]; then
+  [ "$maintenance_bootstrap" = false ] \
+    && [[ "$promotion_run_id" =~ ^[1-9][0-9]*$ ]] \
+    && [ "$direct_partial_incident" = false ] \
+    && [ -z "$incident_ref" ] \
+    && [ -z "$incident_approval_ref" ] || {
+      echo "ERROR: automatic production promotion requires only one exact UAT producer run ID" >&2
+      exit 1
+    }
+  emit_result fast-promotion true
+  exit 0
+fi
 
 if [ "$target" = all ]; then
   [[ "$promotion_run_id" =~ ^[1-9][0-9]*$ ]] \

@@ -291,8 +291,8 @@ grep -Fq 'git merge-base --is-ancestor "$source_sha" origin/develop' "$uat_workf
 grep -Fq 'ref: ${{ needs.resolve-release.outputs.source_sha }}' "$uat_workflow"
 grep -Fq 'test "$(git rev-parse HEAD)" = "$SOURCE_SHA"' "$uat_workflow"
 grep -Fq 'run_m01_acceptance:' "$uat_workflow"
-grep -Fq "if: inputs.run_m01_acceptance && inputs.target != 'all'" "$uat_workflow"
-grep -Fq "if: success() && inputs.run_m01_acceptance && inputs.target == 'all'" "$uat_workflow"
+grep -Fq 'M-01 acceptance requires a resolved all-target release' "$uat_workflow"
+grep -Fq "if: success() && inputs.run_m01_acceptance && steps.target.outputs.target == 'all'" "$uat_workflow"
 grep -Fq '"$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" m01-live' "$uat_workflow"
 grep -Fq 'env -u RELEASE_PARENT_OPERATION_ID -u RELEASE_DEPLOYMENT_MANIFEST_JSON \' "$uat_workflow"
 m01_step_line="$(grep -n 'name: Run UAT M-01 actor-delegation acceptance' "$uat_workflow" | cut -d: -f1)"
@@ -1778,9 +1778,9 @@ for caller in "$deploy_workflow" "$uat_workflow"; do
   grep -Fq 'held release operation remains unresolved' "$caller"
   if [ "$caller" = "$deploy_workflow" ]; then
     grep -Fq "needs.resolve-release.outputs.release_mode != 'maintenance-bootstrap'" "$caller"
-    grep -Fq "(inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
+    grep -Fq "(steps.production-target.outputs.target == 'all' || steps.production-target.outputs.target == 'api-web')" "$caller"
   else
-    grep -Fq "if: always() && (inputs.target == 'all' || inputs.target == 'api-web')" "$caller"
+    grep -Fq "if: always() && (steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web')" "$caller"
   fi
   if [ "$caller" = "$deploy_workflow" ]; then
     grep -Fq "HEALTH_VERIFIED: \${{ steps.verify-health.outcome == 'success'" "$caller"
@@ -1808,7 +1808,11 @@ for caller in "$deploy_workflow" "$uat_workflow"; do
   grep -Fq 'RELEASE_DEPLOYMENT_MANIFEST_JSON="$(jq -cs' "$caller"
   grep -Fq 'sort_by([.service, (.deploymentArn // ""), .targetRevisionArn])' "$caller"
   grep -Fq 'release-finalize' "$caller"
-  grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ inputs.target }}' "$caller"
+  if [ "$caller" = "$deploy_workflow" ]; then
+    grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ steps.production-target.outputs.target }}' "$caller"
+  else
+    grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ steps.target.outputs.target }}' "$caller"
+  fi
   if grep -Fq "flatten | unique | join" "$caller"; then
     echo "ERROR: deploy workflow still derives active builds with the lossy flatten" >&2
     exit 1
@@ -2062,5 +2066,6 @@ bash "$repo_root/infra/prod-ecs-express/release-safety.spec.sh"
 bash "$repo_root/infra/uat/select-deploy-target.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"
 bash "$repo_root/infra/uat/fast-selective-workflow.spec.sh"
+bash "$repo_root/infra/docker/production-fast-promotion.spec.sh"
 
 echo "production image security scanner: pass"

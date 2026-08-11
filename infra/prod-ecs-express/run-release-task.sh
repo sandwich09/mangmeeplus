@@ -91,6 +91,11 @@ orphan_deployment_manifest="${RELEASE_ORPHAN_DEPLOYMENT_MANIFEST_JSON:-}"
 orphan_task_evidence="${RELEASE_ORPHAN_TASK_EVIDENCE_JSON:-}"
 operation_id="${RELEASE_OPERATION_ID:-}"
 release_deploy_target="${RELEASE_DEPLOY_TARGET:-}"
+release_database_authority="${RELEASE_DATABASE_AUTHORITY:-}"
+if [ -n "$release_database_authority" ] && [ "$mode" != release-prepare ]; then
+  echo "ERROR: RELEASE_DATABASE_AUTHORITY is accepted only by release-prepare" >&2
+  exit 2
+fi
 # Explicit U1 reconciliation. The target is the ORIGINAL operation/task; the reconciliation task's
 # own ARN is read from ECS metadata by the wrapper and stored separately in the audit.
 reconcile_operation_id="${RELEASE_RECONCILE_OPERATION_ID:-}"
@@ -553,7 +558,10 @@ log_prefix="release"
 launch_gate_sync=""
 # Only an api-web rollout may attest this SHA as an API build. An AI/worker-only hotfix that
 # attested here would create launch authority for code that never serves and is never retired.
-if [ "$mode" = "release" ] && { [ "$release_deploy_target" = "all" ] || [ "$release_deploy_target" = "api-web" ]; }; then
+if { [ "$mode" = "release" ] \
+    || { [ "$mode" = "release-prepare" ] \
+      && [ "$release_database_authority" = UAT_ACCEPTED_NO_MIGRATION ]; }; } \
+  && { [ "$release_deploy_target" = "all" ] || [ "$release_deploy_target" = "api-web" ]; }; then
   launch_gate_sync='./node_modules/.bin/tsx prisma/sync-feature-launch-gates.ts --verify-specialist-closed; '
 fi
 task_command="set -eu; ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ${launch_gate_sync}./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions; echo release-task-complete sha=\$GIT_SHA"
@@ -634,11 +642,26 @@ case "$mode" in
     fi
     ;;
   release-prepare)
-    [ "${RELEASE_DATABASE_AUTHORITY:-}" = U5_REVIEWED_APPLY ] \
-      || { echo "ERROR: release-prepare is restricted to U5_REVIEWED_APPLY" >&2; exit 2; }
     container_name="release-prepare"
     log_prefix="release-prepare"
-    task_command='set -eu; ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts'
+    case "$release_database_authority" in
+      U5_REVIEWED_APPLY)
+        task_command='set -eu; ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts'
+        ;;
+      UAT_ACCEPTED_NO_MIGRATION)
+        [ "${RELEASE_MODE:-}" = fast-promotion ] \
+          && [[ "${UAT_ACCEPTANCE_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+          && [[ "${RELEASE_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "ERROR: UAT_ACCEPTED_NO_MIGRATION requires the verified fast-promotion acceptance and manifest" >&2
+            exit 2
+          }
+        task_command="set -eu; ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ${launch_gate_sync}./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions"
+        ;;
+      *)
+        echo "ERROR: release-prepare requires U5_REVIEWED_APPLY or verified UAT_ACCEPTED_NO_MIGRATION authority" >&2
+        exit 2
+        ;;
+    esac
     if [ "$release_deploy_target" = all ] || [ "$release_deploy_target" = api-web ]; then
       task_command+='; ./node_modules/.bin/tsx prisma/attest-feature-launch-build.ts'
     fi
