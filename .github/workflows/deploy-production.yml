@@ -9,17 +9,18 @@ on:
         required: true
         type: string
       target:
-        description: Production target (all=coordinated release; choose one for incident)
+        description: Production target (auto=fast UAT promotion; all=reviewed migration/full release; one service=incident)
         required: true
-        default: all
+        default: auto
         type: choice
         options:
+          - auto
           - all
           - api-web
           - ai-gateway
           - workers
       promote_from_run_id:
-        description: Required for target=all; exact successful all-target UAT run ID
+        description: Required for target=auto or all; exact successful all-target UAT run ID
         required: false
         default: ''
         type: string
@@ -174,6 +175,7 @@ jobs:
       ((needs.resolve-release.outputs.release_mode == 'partial-incident' &&
       needs.build_and_publish.result == 'success') ||
       ((needs.resolve-release.outputs.release_mode == 'promotion' ||
+      needs.resolve-release.outputs.release_mode == 'fast-promotion' ||
       needs.resolve-release.outputs.release_mode == 'maintenance-bootstrap') &&
       needs.build_and_publish.result == 'skipped'))
     needs:
@@ -416,13 +418,13 @@ jobs:
           fi
       - name: Verify maintenance release policy and final source bytes
         env:
-          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: 674f9b3907b1a54c7cca57c4fd3778bc50c43407bab62c2a3aca926167c9396b
+          EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256: d43ab4415dd6509d1577b5082e4b6e8073df9ecf5a02134b5d46443106fa4307
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/validate-production-maintenance-release.sh | awk '{print $1}')" \
             = "$EXPECTED_MAINTENANCE_RELEASE_VALIDATOR_SHA256"
           case "$RELEASE_MODE" in
-            promotion|maintenance-bootstrap)
+            promotion|fast-promotion|maintenance-bootstrap)
               bash infra/security/validate-production-maintenance-release.sh "$GITHUB_WORKSPACE" full ;;
             partial-incident)
               test "$PRODUCTION_SERVING_MODE" = live ;;
@@ -511,15 +513,52 @@ jobs:
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: watchdog-bms-rollout-${{ github.run_id }}
           unset-current-credentials: true
-      - name: Preserve active non-secret configuration
+      - name: Preserve active configuration and resolve Production target
+        id: production-target
         env:
           TARGET: ${{ inputs.target }}
+          RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
         run: |
           set -euo pipefail
           api_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-api-web-service-arn --query Parameter.Value --output text)"
           ai_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-ai-gateway-service-arn --query Parameter.Value --output text)"
+          workers_arn="$(aws ssm get-parameter --name /watchdog-bms/production/ecs-express-workers-service-arn --query Parameter.Value --output text)"
           aws ecs describe-express-gateway-service --service-arn "$api_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/api-env.json
           aws ecs describe-express-gateway-service --service-arn "$ai_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/ai-env.json
+          aws ecs describe-express-gateway-service --service-arn "$workers_arn" --query 'service.activeConfigurations[0].primaryContainer.environment' --output json > /tmp/workers-env.json
+          resolved_target="$TARGET"
+          if [ "$RELEASE_MODE" = fast-promotion ]; then
+            test "$TARGET" = auto
+            active_sha() {
+              jq -r '[.[] | select(.name == "GIT_SHA") | .value]
+                | if length == 1 then .[0] else "" end' "$1"
+            }
+            api_active_sha="$(active_sha /tmp/api-env.json)"
+            ai_active_sha="$(active_sha /tmp/ai-env.json)"
+            workers_active_sha="$(active_sha /tmp/workers-env.json)"
+            resolved_target="$(bash infra/uat/select-deploy-target.sh \
+              "$SOURCE_SHA" \
+              "$api_active_sha" "$ai_active_sha" "$workers_active_sha")"
+            [[ "$api_active_sha" =~ ^[0-9a-f]{40}$ ]] \
+              && git cat-file -e "$api_active_sha^{commit}" \
+              && git merge-base --is-ancestor "$api_active_sha" "$SOURCE_SHA" || {
+                echo "ERROR: fast promotion cannot prove the Production database-code baseline; use explicit target=all" >&2
+                exit 1
+              }
+            if ! git diff --quiet --no-renames "$api_active_sha" "$SOURCE_SHA" -- apps/api/prisma; then
+              echo "ERROR: fast promotion detected Prisma/schema/migration support changes; use explicit target=all" >&2
+              exit 1
+            fi
+            if [ "$PRODUCTION_SERVING_MODE" = maintenance_only ]; then
+              echo "::notice::Maintenance promotion deploys all services so the closed state is proved globally."
+              resolved_target=all
+            fi
+          fi
+          case "$resolved_target" in api-web|ai-gateway|workers|all) ;; *) exit 2 ;; esac
+          echo "target=$resolved_target" >> "$GITHUB_OUTPUT"
+          echo "PRODUCTION_DEPLOY_TARGET=$resolved_target" >> "$GITHUB_ENV"
+          echo "Resolved Production target: requested=$TARGET resolved=$resolved_target mode=$RELEASE_MODE"
           preserve() {
             local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
             value="${!output:-}"
@@ -906,7 +945,7 @@ jobs:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
-          RELEASE_DEPLOY_TARGET: ${{ inputs.target }}
+          RELEASE_DEPLOY_TARGET: ${{ steps.production-target.outputs.target }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -924,13 +963,16 @@ jobs:
           elif [ "$RELEASE_MODE" = promotion ]; then
             RELEASE_DATABASE_AUTHORITY=U5_REVIEWED_APPLY \
               bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA" release-prepare
+          elif [ "$RELEASE_MODE" = fast-promotion ]; then
+            RELEASE_DATABASE_AUTHORITY=UAT_ACCEPTED_NO_MIGRATION \
+              bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA" release-prepare
           else
             bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
           fi
       - name: Deploy immutable manifest
         env:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ steps.production-target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
@@ -943,7 +985,8 @@ jobs:
               "$U5_OWNER_APPROVAL_FILE" "$(date -u +%s)"
           fi
           quiesce=false
-          if [ "$RELEASE_MODE" = promotion ] || [ "$RELEASE_MODE" = maintenance-bootstrap ]; then
+          if [ "$RELEASE_MODE" = promotion ] || [ "$RELEASE_MODE" = maintenance-bootstrap ] \
+            || [ "$PRODUCTION_SERVING_MODE" = maintenance_only ]; then
             quiesce=true
           fi
           deploy_exact_manifest() {
@@ -965,7 +1008,7 @@ jobs:
       - name: Verify active digest and health
         id: verify-health
         env:
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ steps.production-target.outputs.target }}
         run: bash infra/prod-ecs-express/verify-deployment.sh release/production-image-manifest.json "$TARGET"
       - name: Expire direct-storage URLs issued before maintenance closure
         if: inputs.maintenance_only
@@ -983,6 +1026,7 @@ jobs:
         if: inputs.maintenance_only
         id: verify-maintenance
         env:
+          TARGET: ${{ steps.production-target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
@@ -996,8 +1040,8 @@ jobs:
             echo "::warning::Maintenance proof failed; redeploying the exact validated maintenance manifest before stopping"
             if REIMBURSEMENT_WRITE_QUIESCE=true \
               RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" \
-              bash infra/prod-ecs-express/deploy.sh all \
-              && bash infra/prod-ecs-express/verify-deployment.sh "$PRODUCTION_IMAGE_MANIFEST" all; then
+              bash infra/prod-ecs-express/deploy.sh "$TARGET" \
+              && bash infra/prod-ecs-express/verify-deployment.sh "$PRODUCTION_IMAGE_MANIFEST" "$TARGET"; then
               recovery="$DEPLOYMENT_EVIDENCE_DIR/recovered-maintenance"
               mkdir -m 700 -p "$recovery"
               export MAINTENANCE_CLOSED_AT_EPOCH="$(date -u +%s)"
@@ -1092,7 +1136,7 @@ jobs:
         if: >-
           always() &&
           needs.resolve-release.outputs.release_mode != 'maintenance-bootstrap' &&
-          (inputs.target == 'all' || inputs.target == 'api-web')
+          (steps.production-target.outputs.target == 'all' || steps.production-target.outputs.target == 'api-web')
         env:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
@@ -1221,7 +1265,7 @@ jobs:
             "$aggregate_root/evidence.json" "$aggregate_root/ref.json"
           echo "Verified POST chain: A5=$post_run_id aggregate=$aggregate_run_id"
       - name: Finalize non-api release operation
-        if: always() && steps.verify-health.outcome == 'success' && inputs.target != 'all' && inputs.target != 'api-web'
+        if: always() && steps.verify-health.outcome == 'success' && steps.production-target.outputs.target != 'all' && steps.production-target.outputs.target != 'api-web'
         env:
           RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}

@@ -9,11 +9,12 @@ on:
         required: true
         type: string
       target:
-        description: UAT target (all=coordinated release; choose one for hotfix)
+        description: UAT target (auto=detect from active service SHAs; all=Production acceptance)
         required: true
-        default: all
+        default: auto
         type: choice
         options:
+          - auto
           - all
           - api-web
           - ai-gateway
@@ -254,11 +255,6 @@ jobs:
             echo "ERROR: checked-out source is no longer reachable from develop" >&2
             exit 1
           }
-      - name: Validate M-01 acceptance selection
-        if: inputs.run_m01_acceptance && inputs.target != 'all'
-        run: |
-          echo "ERROR: M-01 acceptance requires target=all so the exact API and AI Gateway release is active" >&2
-          exit 1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.build_and_publish.outputs.release_artifact }}
@@ -288,11 +284,6 @@ jobs:
           role-session-name: watchdog-bms-uat-deploy-${{ github.run_id }}
       - name: Verify exact UAT controller policies before mutation
         run: bash infra/uat/verify-control-plane-policies.sh
-      - name: Install UAT security alerts
-        if: inputs.target == 'all' || inputs.target == 'api-web'
-        run: |
-          bash infra/uat/m01-actor-delegation-alert.sh install
-          bash infra/uat/m14-upload-alert.sh install
       - name: Preserve active non-secret UAT configuration
         run: |
           set -euo pipefail
@@ -307,6 +298,7 @@ jobs:
           }
           active_env /watchdog-bms/uat/ecs-express-api-web-service-arn /tmp/api-env.json
           active_env /watchdog-bms/uat/ecs-express-ai-gateway-service-arn /tmp/ai-env.json
+          active_env /watchdog-bms/uat/ecs-express-workers-service-arn /tmp/workers-env.json
           preserve() {
             local output="$1" source="$2" file="$3" required="${4:-true}" fallback="${5:-}" value
             value="${!output:-}"
@@ -357,6 +349,38 @@ jobs:
           preserve AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_ARN /tmp/ai-env.json false
           preserve AGENTCORE_RUNTIME_QUALIFIER AGENTCORE_RUNTIME_QUALIFIER /tmp/ai-env.json
           preserve AGENTCORE_INVOKE_TIMEOUT_MS AGENTCORE_INVOKE_TIMEOUT_MS /tmp/ai-env.json
+      - name: Resolve automatic UAT target
+        id: target
+        env:
+          REQUESTED_TARGET: ${{ inputs.target }}
+          RUN_M01_ACCEPTANCE: ${{ inputs.run_m01_acceptance }}
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          resolved="$REQUESTED_TARGET"
+          if [ "$REQUESTED_TARGET" = auto ]; then
+            active_sha() {
+              jq -r '[.[] | select(.name == "GIT_SHA") | .value]
+                | if length == 1 then .[0] else "" end' "$1"
+            }
+            resolved="$(bash infra/uat/select-deploy-target.sh \
+              "$SOURCE_SHA" \
+              "$(active_sha /tmp/api-env.json)" \
+              "$(active_sha /tmp/ai-env.json)" \
+              "$(active_sha /tmp/workers-env.json)")"
+          fi
+          case "$resolved" in api-web|ai-gateway|workers|all) ;; *) exit 2 ;; esac
+          if [ "$RUN_M01_ACCEPTANCE" = true ] && [ "$resolved" != all ]; then
+            echo "ERROR: M-01 acceptance requires a resolved all-target release" >&2
+            exit 1
+          fi
+          echo "target=$resolved" >> "$GITHUB_OUTPUT"
+          echo "Resolved UAT target: requested=$REQUESTED_TARGET resolved=$resolved"
+      - name: Install UAT security alerts
+        if: steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web'
+        run: |
+          bash infra/uat/m01-actor-delegation-alert.sh install
+          bash infra/uat/m14-upload-alert.sh install
       - name: Log in to ECR
         run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
       - name: Verify release image signatures
@@ -395,7 +419,7 @@ jobs:
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
-          RELEASE_DEPLOY_TARGET: ${{ inputs.target }}
+          RELEASE_DEPLOY_TARGET: ${{ steps.target.outputs.target }}
         run: |
           set -euo pipefail
           [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -413,7 +437,7 @@ jobs:
           role-session-name: watchdog-bms-uat-target-${{ github.run_id }}
       - name: Deploy immutable UAT manifest
         env:
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ steps.target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
@@ -424,7 +448,7 @@ jobs:
       - name: Verify active UAT digest and health
         id: verify-health
         env:
-          TARGET: ${{ inputs.target }}
+          TARGET: ${{ steps.target.outputs.target }}
         run: bash infra/prod-ecs-express/verify-deployment.sh release/production-image-manifest.json "$TARGET"
       # UAT r5 item 1 + r6 item 4b — retirement is a POST-deploy step that runs whether the rollout
       # SUCCEEDED or FAILED. The release task before the deploy only APPENDS acceptance of the
@@ -435,7 +459,7 @@ jobs:
       # a launch-gate build id, so an ai-gateway/workers-only deploy skips it entirely rather than
       # retiring against a list that never changed.
       - name: Retire superseded launch builds
-        if: always() && (inputs.target == 'all' || inputs.target == 'api-web')
+        if: always() && (steps.target.outputs.target == 'all' || steps.target.outputs.target == 'api-web')
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
@@ -499,7 +523,7 @@ jobs:
             bash infra/prod-ecs-express/run-release-task.sh \
             "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" "$mode"
       - name: Finalize non-api UAT release operation
-        if: always() && steps.verify-health.outcome == 'success' && inputs.target != 'all' && inputs.target != 'api-web'
+        if: always() && steps.verify-health.outcome == 'success' && steps.target.outputs.target != 'all' && steps.target.outputs.target != 'api-web'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}
@@ -513,7 +537,7 @@ jobs:
           bash infra/prod-ecs-express/run-release-task.sh \
             "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" release-finalize
       - name: Run UAT M-01 actor-delegation acceptance
-        if: success() && inputs.run_m01_acceptance && inputs.target == 'all'
+        if: success() && inputs.run_m01_acceptance && steps.target.outputs.target == 'all'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           RELEASE_DIGEST: ${{ steps.release-image.outputs.digest }}

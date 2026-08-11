@@ -42,11 +42,13 @@ stage prefix).
   cosign identity verification, manifest digest validation, release-task
   migration gate, config-preserve step all remain.
 
-## 3. Non-goals / out of scope (follow-up specs)
+## 3. Non-goals / follow-up scope
 
-- Skipping rollouts for services whose code did not change (requires per-service
-  `sourceCommit` as `SERVICE_VERSION` — today `SERVICE_VERSION=$SHA` changes
-  every deploy so ECS never no-ops — plus digest carry-forward in the manifest).
+- Automatic single-service UAT rollout is defined separately in
+  `docs/specs/uat-fast-selective-deployment-spec.md`. It deliberately keeps the
+  three-image manifest contract and requires a later explicit all-target UAT
+  acceptance before Production, so no per-service Production manifest schema is
+  introduced.
 - Publishing the release-task image from CI in the manifest (today rebuilt in
   every deploy job).
 - Trimming legacy `web` / `web-lambda` entries from the `ci.yml` docker-build

@@ -28,6 +28,15 @@ live_output="$fixture/live-output"
 test "$(validate_with_output push "$live_output" all 123 false '' '' false false)" = promotion
 test "$(cat "$live_output")" = $'serving_mode=live\nuses_uat=true'
 
+fast_output="$fixture/fast-output"
+test "$(validate_with_output push "$fast_output" auto 123 false '' '' false false)" = fast-promotion
+test "$(cat "$fast_output")" = $'serving_mode=live\nuses_uat=true'
+
+fast_maintenance_output="$fixture/fast-maintenance-output"
+test "$(validate_with_output workflow_dispatch "$fast_maintenance_output" \
+  auto 123 false '' '' true false)" = fast-promotion
+test "$(cat "$fast_maintenance_output")" = $'serving_mode=maintenance_only\nuses_uat=true'
+
 partial_output="$fixture/partial-output"
 test "$(validate_with_output push "$partial_output" api-web '' true \
   INC-1234 approval://incident/1234 false false)" = partial-incident
@@ -77,6 +86,12 @@ expect_reject maintenance-partial-incident \
 expect_reject maintenance-bootstrap-partial-incident \
   env GITHUB_EVENT_NAME=workflow_dispatch "$validator" \
     api-web '' true INC-1234 approval://incident/1234 true true
+expect_reject fast-promotion-without-uat \
+  "$validator" auto '' false '' '' false false
+expect_reject fast-promotion-with-incident-authority \
+  "$validator" auto 123 true INC-1234 approval://incident/1234 false false
+expect_reject fast-promotion-bootstrap \
+  env GITHUB_EVENT_NAME=workflow_dispatch "$validator" auto 123 false '' '' true true
 expect_reject live-promotion-with-incident-authority \
   "$validator" all 123 true INC-1234 approval://incident/1234 false false
 expect_reject live-partial-without-incident-authority \
