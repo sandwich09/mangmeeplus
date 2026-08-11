@@ -44,7 +44,8 @@ expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc
 expected_platform_page=abd9dc94693f5aef0a06b2aede4593817de6f6e8e8cde22fc0c61123e9331c67
 expected_system_api=917daa54e1334fe3c03b7764eb1499705aec73234409fddee3ea0b061da4094b
 expected_system_header=80184d241b147b2013d1601deba34b56a3bf82f648d0f123734b7a54727c309b
-expected_deploy=413096b11632eb83a860f6a76f7553e0e882fdc3032c47cdcaa9727c12a21e76
+expected_deploy=3f2c189cc520f91d8e8615b31838fa28abad7533f890a61effde632c258c9173
+expected_uat_fast_rollout=60f413807ae2baa7289ef5e23bcd394c6c59bd1fe5940f5b80fdd938a95950a8
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=71104181a97f4d49321aa0ae925464aba2c5edbde3e96692a58a87f7e61eb5e4
 expected_release_task=a4759b21f286d296cbd51150f612405aef8e55db603befb606470f814be30567
@@ -102,6 +103,7 @@ check_file apps/web/src/features/system-partners/system-partners.api.ts "$expect
 check_file apps/web/src/common/components/app-shell/SystemHeader.tsx "$expected_system_header"
 if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/deploy.sh "$expected_deploy"
+  check_file infra/prod-ecs-express/lib-uat-fast-rollout.sh "$expected_uat_fast_rollout"
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"

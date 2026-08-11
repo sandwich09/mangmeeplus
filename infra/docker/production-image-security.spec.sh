@@ -122,6 +122,14 @@ grep -Fq '"ecr:StartImageScan"' "$uat_publish_policy"
 uat_deploy_policy="$repo_root/infra/uat/github-deploy-role-policy.template.json"
 grep -Fq '"Sid": "VerifyUatReleaseImageSignatures"' "$uat_deploy_policy"
 jq -e '
+  .Statement[] | select(.Sid == "CreateOrUpdateOnlyUatExpressServices")
+  | (.Action | index("ecs:UpdateService")) != null
+' "$uat_deploy_policy" >/dev/null
+jq -e '
+  .Statement[] | select(.Sid == "UatRolloutRead")
+  | (.Action | index("ecs:DescribeServices")) != null
+' "$uat_deploy_policy" >/dev/null
+jq -e '
   .Statement[] | select(.Sid == "UatReleaseTaskImage")
   | (.Action | index("ecr:DescribeImages")) != null
     and .Resource == "arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-api"
@@ -2051,5 +2059,8 @@ if grep -Fq 'DEPLOY_ENV=production' "$capacity_wrapper"; then
 fi
 
 bash "$repo_root/infra/prod-ecs-express/release-safety.spec.sh"
+bash "$repo_root/infra/uat/select-deploy-target.spec.sh"
+bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"
+bash "$repo_root/infra/uat/fast-selective-workflow.spec.sh"
 
 echo "production image security scanner: pass"

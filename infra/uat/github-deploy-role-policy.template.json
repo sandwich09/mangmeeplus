@@ -13,6 +13,7 @@
       "Action": [
         "ecs:CreateExpressGatewayService",
         "ecs:UpdateExpressGatewayService",
+        "ecs:UpdateService",
         "ecs:DescribeExpressGatewayService"
       ],
       "Resource": "arn:aws:ecs:ap-southeast-1:<ACCOUNT_ID>:service/watchdog-bms-uat/*",
@@ -57,6 +58,7 @@
       "Action": [
         "ecs:ListTasks",
         "ecs:DescribeTasks",
+        "ecs:DescribeServices",
         "ecs:ListServiceDeployments",
         "ecs:DescribeServiceDeployments",
         "ecs:DescribeServiceRevisions"

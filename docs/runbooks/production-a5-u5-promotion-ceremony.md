@@ -32,6 +32,11 @@ bridge image ผ่าน publisher role โดยยอมรับเฉพา
 
 ## Phase 0 — Prerequisites (ทำก่อน ไม่มี time pressure)
 
+- [ ] **GitHub Actions billing/runners**: ใน `Settings → Billing & plans` ยืนยันว่า payment
+      ใช้งานได้และ Actions spending limit ยังไม่เต็มก่อนเริ่ม parent/evidence chain ที่มีอายุจำกัด.
+      ถ้า job จบภายในไม่กี่วินาทีโดย `steps: []`, `runner_id: 0` ให้เปิด check-run annotations;
+      ข้อความ `recent account payments have failed or your spending limit needs to be increased`
+      คือ account-level billing gate — ไม่มี code/AWS mutation และการ rerun จะไม่ช่วยจนแก้ billing.
 - [ ] **O1**: สร้าง `PRODUCTION_POLICY_READ_TOKEN` → env `production`
 - [ ] **O2**: ยืนยันมี independent reviewer พร้อม
 - [ ] **O5**: `legal-release-evidence.json` เป็น `VERIFIED`, หลักฐานจริงครบ 5 รายการและยังไม่หมดอายุ,

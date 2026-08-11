@@ -44,6 +44,7 @@ api_files=(
 full_files=(
   "${api_files[@]}"
   infra/prod-ecs-express/deploy.sh
+  infra/prod-ecs-express/lib-uat-fast-rollout.sh
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh
