@@ -35,6 +35,13 @@ raise 'candidate source controls its own image validator' if verify_run.include?
 tsx_index = verify_run.index('--tsconfig /app/apps/api/tsconfig.json')
 hash_script_index = verify_run.index('/app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts')
 raise 'candidate hash printer does not use the API tsconfig' unless tsx_index && hash_script_index && tsx_index < hash_script_index
+raise 'migration-tool signing does not retain its bundle' unless verify_run.include?(
+  'cosign sign --yes --bundle "$tool_root/migration-tool.signature.bundle" "$image"'
+)
+raise 'image verification incorrectly passes a bundle flag' if verify_run.match?(/cosign verify --bundle/)
+raise 'migration-tool signature is not verified from the registry' unless verify_run.include?(
+  'cosign verify --certificate-identity "$identity"'
+)
 uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
 raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(
