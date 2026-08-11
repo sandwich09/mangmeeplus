@@ -23,6 +23,15 @@ login_run = login.fetch('run')
 export_index = login_run.index('export DOCKER_CONFIG="$docker_config"')
 login_index = login_run.index('docker login --username AWS --password-stdin')
 raise 'ECR login does not use the persisted Docker config' unless export_index && login_index && export_index < login_index
+verify = job.fetch('steps').find { |step| step['name'] == 'Pull, verify, sign and record immutable migration tool' }
+raise 'missing migration-tool verification step' unless verify
+verify_run = verify.fetch('run')
+raise 'migration-tool validator is not controller-owned' unless verify_run.include?(
+  'bash infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"'
+)
+raise 'candidate source controls its own image validator' if verify_run.include?(
+  'candidate/infra/security/verify-production-a5-migration-tool.sh'
+)
 uses = job.fetch('steps').map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
 raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(
