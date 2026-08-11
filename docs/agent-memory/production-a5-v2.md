@@ -32,6 +32,8 @@ Decisions:
   workflow cannot re-arm itself; normal readiness uses the durable read-only role afterward.
 - Release-tool ECR tags include workflow run and attempt, so rerunning the same source cannot collide
   with the immutable migration-tool repository; every downstream contract still binds the digest.
+- Infra contract specs use runner-standard `grep -E`, not workstation-only `rg`; the consolidated
+  suite is verified with an exported failing `rg` shim to prevent this portability regression.
 - Consolidate into one reviewed change; do not return to a sequence of blocker-fix PRs.
 
 Open questions:
@@ -62,6 +64,8 @@ Verification:
   destructive SQL negative cases.
 - Critical workflow YAML parses, changed shell/JSON syntax and maintenance pins pass; `git diff
   --check` passes after the repeat-safe immutable ECR tag fix.
+- PR CI run `31538531091` exposed missing `rg` on GitHub Ubuntu; all four remaining infra-spec
+  dependencies were removed and the full security suite passes while `rg` is forced to exit 127.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2

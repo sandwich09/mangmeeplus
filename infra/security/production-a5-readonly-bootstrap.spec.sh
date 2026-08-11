@@ -93,31 +93,31 @@ jq -e '
 ' "$reader_bootstrap_policy" >/dev/null
 
 for file in "$bootstrap" "$database_bootstrap" "$validator"; do bash -n "$file"; done
-if rg -n 'ecsTaskExecutionRole|assignPublicIp:"ENABLED"|taskRoleArn[[:space:]]*:' \
+if grep -En 'ecsTaskExecutionRole|assignPublicIp:"ENABLED"|taskRoleArn[[:space:]]*:' \
     "$bootstrap" "$database_bootstrap" "$controller_policy" "$reader_bootstrap_policy" \
     "$reader_policy" "$bootstrap_policy"; then
   echo 'ERROR: shared/public/task role leaked into production A5 reader path' >&2
   exit 1
 fi
-if rg -n 'secretsmanager get-secret-value' "$bootstrap" "$database_bootstrap"; then
+if grep -En 'secretsmanager get-secret-value' "$bootstrap" "$database_bootstrap"; then
   echo 'ERROR: bootstrap controller reads a secret value locally' >&2
   exit 1
 fi
-if rg -n 'authorize-security-group-egress.*0\.0\.0\.0/0|--cidr 0\.0\.0\.0/0' "$bootstrap"; then
+if grep -En 'authorize-security-group-egress.*0\.0\.0\.0/0|--cidr 0\.0\.0\.0/0' "$bootstrap"; then
   echo 'ERROR: read-only bootstrap still permits public task egress' >&2
   exit 1
 fi
-rg -q 'watchdog-bms-production-a5-readonly-execution' "$bootstrap" "$reader_policy"
-rg -q 'watchdog-bms-production-a5-bootstrap-execution' "$bootstrap" "$database_bootstrap"
-rg -q 'assignPublicIp:"DISABLED"' "$database_bootstrap"
-rg -q '\$\{reader_arn\}:::\$\{reader_version\}' "$database_bootstrap"
-rg -q 'verify-production-a5-migration-tool.sh' "$database_bootstrap"
-rg -q '"--tsconfig"' "$database_bootstrap"
-rg -q '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
-rg -q 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
-rg -q 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
-rg -q 'BootstrapRevoked' "$database_bootstrap"
-rg -q 'put-role-policy.*bootstrap_controller_role_name' "$database_bootstrap"
+grep -Eq 'watchdog-bms-production-a5-readonly-execution' "$bootstrap" "$reader_policy"
+grep -Eq 'watchdog-bms-production-a5-bootstrap-execution' "$bootstrap" "$database_bootstrap"
+grep -Eq 'assignPublicIp:"DISABLED"' "$database_bootstrap"
+grep -Eq '\$\{reader_arn\}:::\$\{reader_version\}' "$database_bootstrap"
+grep -Eq 'verify-production-a5-migration-tool.sh' "$database_bootstrap"
+grep -Eq '"--tsconfig"' "$database_bootstrap"
+grep -Eq '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
+grep -Eq 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
+grep -Eq 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
+grep -Eq 'BootstrapRevoked' "$database_bootstrap"
+grep -Eq 'put-role-policy.*bootstrap_controller_role_name' "$database_bootstrap"
 grep -Fq 'role-to-assume: ${{ env.A5_READER_BOOTSTRAP_ROLE_ARN }}' "$bootstrap_workflow"
 grep -Fq 'assumed-role/watchdog-bms-production-a5-reader-bootstrap/' "$bootstrap_workflow"
 if grep -Fq 'role-to-assume: ${{ env.A5_READER_ROLE_ARN }}' "$bootstrap_workflow"; then
