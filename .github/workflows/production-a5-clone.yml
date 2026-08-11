@@ -280,17 +280,24 @@ jobs:
               [.logGroups[]|select(.logGroupName=="/ecs/watchdog-bms-production-a5-clone")]
               | length==1 and .[0].retentionInDays==7
             ' >/dev/null
-          aws ssm get-parameters --names \
-            /watchdog-bms/production/a5-clone/source-db-identifier \
-            /watchdog-bms/production/a5-clone/db-subnet-group-name \
-            /watchdog-bms/production/a5-clone/db-security-group-id \
-            /watchdog-bms/production/a5-clone/task-security-group-id \
-            /watchdog-bms/production/a5-clone/task-subnet-ids \
-            /watchdog-bms/production/a5-clone/db-instance-class \
-            /watchdog-bms/production/a5-clone/execution-role-arn \
-            /watchdog-bms/production/a5-clone/log-group-name --output json \
-            | jq -e '.InvalidParameters==[] and (.Parameters|length)==8
-              and all(.Parameters[];.Type=="String")' >/dev/null
+          parameters=(
+            /watchdog-bms/production/a5-clone/source-db-identifier
+            /watchdog-bms/production/a5-clone/db-subnet-group-name
+            /watchdog-bms/production/a5-clone/db-security-group-id
+            /watchdog-bms/production/a5-clone/task-security-group-id
+            /watchdog-bms/production/a5-clone/task-subnet-ids
+            /watchdog-bms/production/a5-clone/db-instance-class
+            /watchdog-bms/production/a5-clone/execution-role-arn
+            /watchdog-bms/production/a5-clone/log-group-name
+          )
+          test "${#parameters[@]}" -eq 8
+          for name in "${parameters[@]}"; do
+            aws ssm get-parameter --name "$name" --output json \
+              | jq -e --arg name "$name" '
+                  .Parameter.Name==$name and .Parameter.Type=="String"
+                  and (.Parameter.Value|type=="string" and length>0)
+                ' >/dev/null
+          done
 
       - name: Log in to the dedicated ECR repository
         id: registry
