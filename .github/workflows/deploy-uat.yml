@@ -576,7 +576,7 @@ jobs:
             bash infra/prod-ecs-express/run-release-task.sh \
               "$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST" "$SOURCE_SHA" m01-live
       - name: Sign exact UAT deployment acceptance
-        if: success() && inputs.target == 'all'
+        if: success() && steps.target.outputs.target == 'all'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
@@ -668,14 +668,14 @@ jobs:
           expected_entries=$'uat-deployment-acceptance.bundle:f\nuat-deployment-acceptance.json:f'
           test "$(find "$acceptance_dir" -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected_entries"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success() && inputs.target == 'all'
+        if: success() && steps.target.outputs.target == 'all'
         with:
           name: uat-accepted-release-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: release
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success() && inputs.target == 'all'
+        if: success() && steps.target.outputs.target == 'all'
         with:
           name: uat-deployment-acceptance-${{ needs.resolve-release.outputs.source_sha }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/uat-production-acceptance

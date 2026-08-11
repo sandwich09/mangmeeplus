@@ -16,7 +16,9 @@ immutable-image, release-operation and health gates.
 ## Operator journey
 
 - `target=auto` is the default coordinated promotion and requires one exact
-  successful signed `target=all` UAT run.
+  successful signed resolved-`all` UAT run. UAT may reach that result from an
+  explicit `all` request or an `auto` request that safely classified and
+  deployed all three services.
 - Production compares the requested source with the full `GIT_SHA` on each
   active Production service using the same fail-safe classifier as UAT.
 - One affected service selects that service. Multiple, shared, unknown,
