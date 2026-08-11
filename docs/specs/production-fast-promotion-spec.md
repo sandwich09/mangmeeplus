@@ -1,5 +1,10 @@
 # Production Fast Promotion Spec
 
+> **Historical V1 contract — execution frozen 2026-08-12:** ใช้เอกสารนี้อธิบาย
+> implementation เดิมเท่านั้น A5 V2 source of truth อยู่ที่
+> `docs/specs/production-a5-v2-spec.md`; ห้าม dispatch V1 promotion ใหม่ระหว่าง V2 ยังไม่ผ่าน
+> readiness exit gates
+
 Status: Maintenance-bootstrap hardening implemented; awaiting live proof
 Owner: Platform / release owner
 Related: `docs/specs/uat-fast-selective-deployment-spec.md`,

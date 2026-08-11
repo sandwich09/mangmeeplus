@@ -60,8 +60,17 @@
     {
       "Sid": "AllowExactA5TaskRun",
       "Effect": "Allow",
-      "Action": ["ecs:RunTask", "ecs:StopTask"],
+      "Action": "ecs:RunTask",
       "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-production-*:*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
+    },
+    {
+      "Sid": "AllowExactA5TaskStop",
+      "Effect": "Allow",
+      "Action": "ecs:StopTask",
+      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*",
       "Condition": {
         "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
       }

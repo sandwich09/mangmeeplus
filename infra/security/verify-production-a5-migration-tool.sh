@@ -39,9 +39,11 @@ docker run --rm --entrypoint sh "$image" -c '
   require_path -f /app/apps/api/prisma/schema.prisma
   require_path -d /app/apps/api/prisma/migrations
   require_path -f /app/apps/api/prisma/production-a5/run-clone-rehearsal.ts
+  require_path -f /app/apps/api/prisma/production-a5/run-release-readiness-clone.ts
   require_path -f /app/apps/api/prisma/production-a5/run-readonly-evidence-task.ts
   require_path -f /app/apps/api/prisma/production-a5/print-reviewed-candidate-hashes.ts
   require_path -f /app/apps/api/prisma/bootstrap-a5-readonly.ts
+  require_path -f /app/apps/api/prisma/verify-applied-migration-catalog.ts
   require_path -f /app/apps/api/src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts
   require_path -f /app/pnpm-lock.yaml
 '

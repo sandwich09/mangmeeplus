@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 <cloudwatch-get-log-events.json> <result.json>" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "Usage: $0 <cloudwatch-get-log-events.json> <result.json> [reviewed-v1|readiness-v2]" >&2
   exit 2
 fi
 
 input="$1"
 output="$2"
+profile="${3:-reviewed-v1}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/production-a5-clone-result.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 
@@ -47,6 +48,7 @@ actual="$(sha256sum "$work/result.json" | awk '{print $1}')"
 [ "$actual" = "$digest" ]
 jq -cS . "$work/result.json" > "$work/canonical.json"
 cmp -s "$work/result.json" "$work/canonical.json"
+if [ "$profile" = reviewed-v1 ]; then
 jq -e '
   (keys|sort) == ([
     "candidateMigrationSetHash","cloneRehearsalWithoutCleanup","expectedClosedWhtRouteHash",
@@ -64,4 +66,26 @@ jq -e '
   and .cloneRehearsalWithoutCleanup.engine == "PostgreSQL"
   and .reimbursementCompatibility.status == "PASSED"
 ' "$work/result.json" >/dev/null
+elif [ "$profile" = readiness-v2 ]; then
+jq -e '
+  (keys|sort)==(["compatibility","engine","engineVersion","executedMigrations","migrateDeploy",
+    "pendingCatalogHash","pendingMigrations","postAppliedMigrationsHash","postSchemaFingerprint",
+    "preSchemaFingerprint","repositoryCatalogHash","schemaValidation","schemaVersion",
+    "sourceAppliedMigrationsHash","sourceCommit","status"]|sort)
+  and .schemaVersion==2 and .status=="PASSED" and .engine=="PostgreSQL"
+  and (.engineVersion|test("^18(\\.[0-9]+){1,2}$"))
+  and (.sourceCommit|test("^[0-9a-f]{40}$"))
+  and all(.repositoryCatalogHash,.sourceAppliedMigrationsHash,.pendingCatalogHash,
+    .postAppliedMigrationsHash,.preSchemaFingerprint,.postSchemaFingerprint;
+      type=="string" and test("^[0-9a-f]{64}$"))
+  and (.pendingMigrations|type)=="array" and (.pendingMigrations|length)>=1
+  and (.executedMigrations|type)=="array"
+  and ([.pendingMigrations[].name])==([.executedMigrations[].name])
+  and .schemaValidation.status=="PASSED" and .compatibility.status=="PASSED"
+  and .migrateDeploy.durationMs>0 and .migrateDeploy.durationMs<=.migrateDeploy.maxDurationMs
+' "$work/result.json" >/dev/null
+else
+  echo 'ERROR: unknown A5 clone result profile' >&2
+  exit 2
+fi
 install -m 600 "$work/result.json" "$output"

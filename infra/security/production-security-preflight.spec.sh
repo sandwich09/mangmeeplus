@@ -443,6 +443,57 @@ printf '%s\n' extra > "$fixture/acceptance/extra"
   uat-deployment-acceptance.json uat-deployment-acceptance.bundle extra)
 expect_reject extra-archive-member security_preflight_extract_artifact acceptance "$fixture/acceptance-extra.zip"
 
+make_profile_archive() {
+  local profile="$1" directory="$2" archive="$3" member
+  mkdir -p "$directory"
+  while IFS= read -r member; do
+    mkdir -p "$(dirname "$directory/$member")"
+    printf '%s\n' '{}' > "$directory/$member"
+  done < <(security_preflight_expected_members "$profile")
+  (
+    cd "$directory"
+    find . -type f -print | sed 's#^\./##' | LC_ALL=C sort | zip -q -X "$archive" -@
+  )
+}
+
+passport_dir="$fixture/passport-v2"
+passport_archive="$fixture/passport-v2.zip"
+make_profile_archive passport-v2 "$passport_dir" "$passport_archive"
+passport_extracted="$(security_preflight_extract_artifact passport-v2 "$passport_archive")"
+test -f "$passport_extracted/release/production-image-manifest.json"
+test -f "$passport_extracted/tools/image-migration-tool.json"
+rm -rf "$passport_extracted"
+printf '%s\n' '{}' > "$passport_dir/unexpected.json"
+(
+  cd "$passport_dir"
+  find . -type f -print | sed 's#^\./##' | LC_ALL=C sort | zip -q -X "$fixture/passport-v2-extra.zip" -@
+)
+expect_reject passport-extra-member security_preflight_extract_artifact \
+  passport-v2 "$fixture/passport-v2-extra.zip"
+
+ready_quick_dir="$fixture/ready-v2-quick"
+ready_quick_archive="$fixture/ready-v2-quick.zip"
+make_profile_archive ready-v2-quick "$ready_quick_dir" "$ready_quick_archive"
+ready_quick_extracted="$(security_preflight_extract_artifact ready-v2-quick "$ready_quick_archive")"
+test -f "$ready_quick_extracted/ready.bundle"
+test ! -e "$ready_quick_extracted/clone-result.json"
+rm -rf "$ready_quick_extracted"
+
+ready_migration_dir="$fixture/ready-v2-migration"
+ready_migration_archive="$fixture/ready-v2-migration.zip"
+make_profile_archive ready-v2-migration "$ready_migration_dir" "$ready_migration_archive"
+ready_migration_extracted="$(security_preflight_extract_artifact ready-v2-migration "$ready_migration_archive")"
+test -f "$ready_migration_extracted/clone-result.json"
+test -f "$ready_migration_extracted/clone-infrastructure.json"
+rm -rf "$ready_migration_extracted"
+rm "$ready_migration_dir/clone-result.json"
+(
+  cd "$ready_migration_dir"
+  find . -type f -print | sed 's#^\./##' | LC_ALL=C sort | zip -q -X "$fixture/ready-v2-missing.zip" -@
+)
+expect_reject ready-missing-member security_preflight_extract_artifact \
+  ready-v2-migration "$fixture/ready-v2-missing.zip"
+
 bash -n "$repo_root/infra/security/signed-evidence.sh" \
   "$repo_root/infra/security/validate-production-security-preflight.sh" \
   "$repo_root/infra/security/bootstrap-production-security-readonly.sh" "$0"

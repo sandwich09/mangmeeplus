@@ -1,5 +1,15 @@
 # Production A5/U5 Promotion Ceremony — orchestration map
 
+> **EXECUTION FROZEN — 2026-08-12:** เอกสารนี้เป็นแผนที่ implementation V1 สำหรับอ้างอิง
+> และห้ามใช้ dispatch Production ceremony ใหม่จน A5 V2 ผ่าน independent review และ live
+> readiness proof
+> เพราะ V1 มี parent/child dependency และ reader-bootstrap ordering ที่ทำให้ค้น blocker กลาง
+> deploy ซ้ำ ๆ ใช้ `docs/specs/production-a5-v2-spec.md`,
+> `docs/plans/production-a5-v2-readiness-matrix.md` และ
+> `docs/plans/production-a5-v2-plan.md` เป็น source of truth สำหรับงานถัดไป การ freeze นี้ไม่
+> หมายความว่า local implementation อนุญาตให้ mutate Production; ยังคงหยุดจน V2 live exit
+> gates ผ่าน
+
 เป้า: ขึ้น production ทาง A (promotion เต็ม) ให้จบ | สร้าง 2026-08-08
 คู่กับ `feature-entitlement-u5-production-handoff.md`, `production-u5-live-prerequisites.md`
 

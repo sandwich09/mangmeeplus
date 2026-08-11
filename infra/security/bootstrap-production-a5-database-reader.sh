@@ -18,11 +18,12 @@ reader_name=watchdog-bms/production/a5-readonly-database-url
 reader_description='Production-only SELECT credential for signed A5 evidence'
 family="watchdog-a5-production-bootstrap-${source_sha:0:12}"
 bootstrap_execution_role_name=watchdog-bms-production-a5-bootstrap-execution
+bootstrap_controller_role_name=watchdog-bms-production-a5-reader-bootstrap
 task_definition_arn=''
 task_arn=''
 reader_created=false
 completed=false
-bootstrap_role_removed=false
+bootstrap_authority_revoked=false
 bootstrap_cleanup_armed=false
 secret_file=''
 docker_config=''
@@ -33,7 +34,7 @@ case "$schema_profile" in LEGACY_PRE_F1|F1_CURRENT) ;; *) exit 2 ;; esac
 
 remove_bootstrap_execution_authority() {
   $bootstrap_cleanup_armed || return 0
-  $bootstrap_role_removed && return 0
+  $bootstrap_authority_revoked && return 0
   if aws iam get-role --role-name "$bootstrap_execution_role_name" >/dev/null 2>&1; then
     test "$(aws iam list-attached-role-policies --role-name "$bootstrap_execution_role_name" \
       --output json | jq -cS '.AttachedPolicies')" = '[]'
@@ -48,7 +49,18 @@ remove_bootstrap_execution_authority() {
     echo 'ERROR: bootstrap execution role still exists after revocation' >&2
     return 1
   fi
-  bootstrap_role_removed=true
+  test "$(aws iam list-attached-role-policies --role-name "$bootstrap_controller_role_name" \
+    --output json | jq -cS '.AttachedPolicies')" = '[]'
+  test "$(aws iam list-role-policies --role-name "$bootstrap_controller_role_name" \
+    --output json | jq -cS '.PolicyNames|sort')" \
+    = "$(jq -cnS --arg name "$bootstrap_controller_role_name" '[$name]')"
+  revoked_policy="$(mktemp "${TMPDIR:-/tmp}/production-a5-bootstrap-revoked.XXXXXX")"
+  printf '%s\n' '{"Version":"2012-10-17","Statement":[{"Sid":"BootstrapRevoked","Effect":"Deny","Action":"*","Resource":"*"}]}' \
+    > "$revoked_policy"
+  aws iam put-role-policy --role-name "$bootstrap_controller_role_name" \
+    --policy-name "$bootstrap_controller_role_name" --policy-document "file://$revoked_policy"
+  rm -f -- "$revoked_policy"
+  bootstrap_authority_revoked=true
 }
 
 cleanup() {
@@ -73,13 +85,13 @@ cleanup() {
     aws ecs deregister-task-definition --region "$region" --task-definition "$task_definition_arn" \
       >/dev/null 2>&1 || status=1
   fi
-  remove_bootstrap_execution_authority || status=1
   if $reader_created && ! $completed; then
     # A failed/ambiguous first bootstrap must not leave a secret that appears usable. The DB role
     # may exist with an unreachable password; the next run creates a fresh secret and re-hardens it.
     aws secretsmanager delete-secret --region "$region" --secret-id "$reader_name" \
       --force-delete-without-recovery >/dev/null 2>&1 || status=1
   fi
+  remove_bootstrap_execution_authority || status=1
   exit "$status"
 }
 trap cleanup EXIT
@@ -96,7 +108,7 @@ aws ecr get-login-password --region "$region" \
   | DOCKER_CONFIG="$docker_config" docker login --username AWS --password-stdin \
       "$account_id.dkr.ecr.$region.amazonaws.com" >/dev/null
 DOCKER_CONFIG="$docker_config" cosign verify \
-  --certificate-identity "https://github.com/MangmeeDev/mangmeeplus/.github/workflows/production-a5-clone.yml@refs/heads/main" \
+  --certificate-identity "https://github.com/MangmeeDev/mangmeeplus/.github/workflows/ci.yml@refs/heads/main" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image" >/dev/null
 DOCKER_CONFIG="$docker_config" docker pull --platform linux/amd64 "$image" >/dev/null
 DOCKER_CONFIG="$docker_config" bash "$(dirname "$0")/verify-production-a5-migration-tool.sh" \
@@ -106,6 +118,27 @@ aws ecr describe-images --region "$region" --repository-name watchdog-bms-migrat
   --image-ids "imageDigest=$digest" --output json | jq -e --arg digest "$digest" '
     (.imageDetails|length)==1 and .imageDetails[0].imageDigest==$digest
 ' >/dev/null
+
+# The bootstrap writer is one-time authority. A retry after success must not recreate it or fail
+# merely because its execution role was deliberately deleted. Production Readiness subsequently
+# proves the credential with the dedicated read-only task before it can issue READY.
+existing_reader=''
+if existing_reader="$(aws secretsmanager describe-secret --region "$region" \
+    --secret-id "$reader_name" --output json 2>&1)"; then
+  jq -e --arg name "$reader_name" --arg description "$reader_description" '
+    .Name==$name and .Description==$description and .DeletedDate==null
+  ' <<< "$existing_reader" >/dev/null
+  reader_version="$(jq -er '[.VersionIdsToStages|to_entries[]|select(.value|index("AWSCURRENT"))|.key]
+    | select(length==1)|.[0]|select(test("^[A-Fa-f0-9-]{32,64}$"))' <<< "$existing_reader")"
+  remove_bootstrap_execution_authority
+  completed=true
+  printf '{"artifact":"production-a5-reader-bootstrap","state":"EXISTING","readerRole":"watchdog_a5_prod_ro","readerSecretVersionId":"%s"}\n' \
+    "$reader_version"
+  exit 0
+elif ! grep -F ResourceNotFoundException <<< "$existing_reader" >/dev/null; then
+  printf '%s\n' "$existing_reader" >&2
+  exit 1
+fi
 
 parameter() {
   aws ssm get-parameter --region "$region" --name "$parameter_prefix/$1" \
@@ -263,5 +296,5 @@ reader_version_after="$(jq -er '[.VersionIdsToStages|to_entries[]|select(.value|
 test "$reader_version_after" = "$reader_version"
 remove_bootstrap_execution_authority
 completed=true
-printf '{"artifact":"production-a5-reader-bootstrap","readerRole":"watchdog_a5_prod_ro","readerSecretVersionId":"%s","taskDefinitionArn":"%s","taskArn":"%s"}\n' \
+printf '{"artifact":"production-a5-reader-bootstrap","state":"CREATED","readerRole":"watchdog_a5_prod_ro","readerSecretVersionId":"%s","taskDefinitionArn":"%s","taskArn":"%s"}\n' \
   "$reader_version" "$task_definition_arn" "$task_arn"

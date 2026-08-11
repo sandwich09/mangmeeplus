@@ -14,7 +14,7 @@ security_preflight_validate_artifact_metadata() {
   local api="$1" archive="$2" name="$3" run_id="$4" head_sha="$5" digest size
   _signed_evidence_regular_file "$api" 2097152
   _signed_evidence_single_json_object "$api"
-  _signed_evidence_regular_file "$archive" 67108864
+  _signed_evidence_regular_file "$archive" 134217728
   [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]]
   [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
   [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -43,6 +43,21 @@ security_preflight_expected_members() {
       cosign-ai-gateway.json cosign-api-web.json cosign-workers.json \
       production-image-manifest.json sbom-ai-gateway.spdx.json \
       sbom-api-web.spdx.json sbom-workers.spdx.json ;;
+    passport-v2) printf '%s\n' \
+      migration-catalog.json passport.bundle passport.json \
+      release/cosign-ai-gateway.json release/cosign-api-web.json release/cosign-workers.json \
+      release/production-image-manifest.json release/sbom-ai-gateway.spdx.json \
+      release/sbom-api-web.spdx.json release/sbom-workers.spdx.json \
+      tools/cosign-migration-tool.json tools/cosign-release-task.json \
+      tools/image-migration-tool.json tools/image-release-task.json \
+      tools/sbom-migration-tool.spdx.json tools/sbom-release-task.spdx.json ;;
+    ready-v2-quick) printf '%s\n' \
+      catalog-result.json catalog-runtime.json migration-catalog.json passport.json \
+      production-health.json production-runtime.json ready.bundle ready.json ;;
+    ready-v2-migration) printf '%s\n' \
+      catalog-result.json catalog-runtime.json clone-infrastructure.json clone-result.json \
+      migration-catalog.json passport.json production-health.json production-runtime.json \
+      ready.bundle ready.json ;;
     *) echo "ERROR: unknown artifact extraction profile" >&2; return 2 ;;
   esac
 }
@@ -50,9 +65,10 @@ security_preflight_expected_members() {
 # Returns a new private directory. The caller owns cleanup of that exact path.
 security_preflight_extract_artifact() (
   trap - EXIT
-  [ "$#" -eq 2 ] || { echo "Usage: extract <acceptance|release> <archive.zip>" >&2; exit 2; }
+  [ "$#" -eq 2 ] || { echo "Usage: extract <acceptance|release|passport-v2|ready-v2-quick|ready-v2-migration> <archive.zip>" >&2; exit 2; }
   local profile="$1" source="$2" copy destination names expected metadata sorted cleanup
-  local mode size name
+  local mode size name member_limit=16777216
+  case "$profile" in passport-v2) member_limit=67108864 ;; esac
   copy="$(mktemp "${TMPDIR:-/tmp}/production-security-archive.XXXXXX")"
   destination="$(mktemp -d "${TMPDIR:-/tmp}/production-security-extracted.XXXXXX")"
   names="$(mktemp "${TMPDIR:-/tmp}/production-security-names.XXXXXX")"
@@ -62,7 +78,7 @@ security_preflight_extract_artifact() (
   printf -v cleanup 'rm -f -- %q %q %q %q %q; rm -rf -- %q' \
     "$copy" "$names" "$expected" "$metadata" "$sorted" "$destination"
   trap "$cleanup" EXIT
-  _signed_evidence_copy_file "$source" "$copy" 67108864 || exit 1
+  _signed_evidence_copy_file "$source" "$copy" 134217728 || exit 1
   security_preflight_expected_members "$profile" > "$expected"
   zipinfo -1 "$copy" > "$names" 2>/dev/null || exit 1
   LC_ALL=C sort "$names" > "$sorted"
@@ -73,10 +89,11 @@ security_preflight_extract_artifact() (
   test "$(wc -l < "$metadata" | tr -d '[:space:]')" = "$(wc -l < "$expected" | tr -d '[:space:]')"
   while IFS=$'\t' read -r mode size name; do
     [[ "$mode" == -* ]] || { echo "ERROR: artifact contains a non-regular member" >&2; exit 1; }
-    [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$size" -le 16777216 ] \
+    [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] && [ "$size" -le "$member_limit" ] \
       || { echo "ERROR: artifact member exceeds the output bound" >&2; exit 1; }
     grep -Fxq "$name" "$expected" || exit 1
-    _signed_evidence_extract_member "$copy" "$name" "$destination/$name" 16777216 || exit 1
+    mkdir -p "$(dirname "$destination/$name")"
+    _signed_evidence_extract_member "$copy" "$name" "$destination/$name" "$member_limit" || exit 1
   done < "$metadata"
   printf '%s\n' "$destination"
   trap - EXIT

@@ -1,5 +1,10 @@
 # Production Promotion Readiness Audit
 
+> **Historical V1 audit:** เก็บไว้เพื่ออธิบายที่มาของ blockers เดิม งานออกแบบปัจจุบันใช้
+> `docs/specs/production-a5-v2-spec.md` และ
+> `docs/plans/production-a5-v2-readiness-matrix.md` ซึ่งย้ายการตรวจ prerequisite ออกจาก
+> deploy parent และห้าม Production mutation ก่อนมี signed READY certificate
+
 ตรวจ 2026-08-08 (หลัง W1/W2 เสร็จ, PR #1 merge แล้ว, deploy ครั้งแรกจบที่ startup failure)
 คู่กับ: `production-golive-and-support-access-plan.md` (แผนหลัก) และ
 `docs/runbooks/production-golive-aws-commands.md` (คำสั่ง)

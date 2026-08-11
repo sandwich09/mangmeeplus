@@ -1,5 +1,9 @@
 # Production Fast Promotion Plan
 
+> **Historical V1 plan — frozen 2026-08-12:** งานถัดไปใช้
+> `docs/plans/production-a5-v2-plan.md` และห้าม execute live-proof checkbox ด้านล่างจน V2
+> readiness ผ่านครบ
+
 Spec: `docs/specs/production-fast-promotion-spec.md`
 Memory: `docs/agent-memory/production-fast-promotion.md`
 

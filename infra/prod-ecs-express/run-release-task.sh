@@ -92,8 +92,18 @@ orphan_task_evidence="${RELEASE_ORPHAN_TASK_EVIDENCE_JSON:-}"
 operation_id="${RELEASE_OPERATION_ID:-}"
 release_deploy_target="${RELEASE_DEPLOY_TARGET:-}"
 release_database_authority="${RELEASE_DATABASE_AUTHORITY:-}"
+production_ready_sha256="${PRODUCTION_READY_V2_SHA256:-}"
+production_ready_repository_hash="${PRODUCTION_READY_REPOSITORY_CATALOG_HASH:-}"
+production_ready_applied_hash="${PRODUCTION_READY_APPLIED_CATALOG_HASH:-}"
+production_ready_pending_hash="${PRODUCTION_READY_PENDING_CATALOG_HASH:-}"
+production_ready_pending_count="${PRODUCTION_READY_PENDING_COUNT:-}"
 if [ -n "$release_database_authority" ] && [ "$mode" != release-prepare ]; then
   echo "ERROR: RELEASE_DATABASE_AUTHORITY is accepted only by release-prepare" >&2
+  exit 2
+fi
+if [ "$release_database_authority" != PRODUCTION_READY_V2 ] \
+  && [ -n "$production_ready_sha256$production_ready_repository_hash$production_ready_applied_hash$production_ready_pending_hash$production_ready_pending_count" ]; then
+  echo "ERROR: PRODUCTION_READY_V2 migration authority is accepted only by release-prepare with RELEASE_DATABASE_AUTHORITY=PRODUCTION_READY_V2" >&2
   exit 2
 fi
 # Explicit U1 reconciliation. The target is the ORIGINAL operation/task; the reconciliation task's
@@ -285,6 +295,7 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover) expected_workflow="recover-release-intent.yml" ;;
     *)
       expected_workflow="deploy-production.yml"
+      [ "$deploy_env" = "production" ] && alternate_expected_workflow="deploy-production-v2.yml"
       [ "$deploy_env" = "uat" ] && expected_workflow="deploy-uat.yml"
       ;;
   esac
@@ -560,7 +571,8 @@ launch_gate_sync=""
 # attested here would create launch authority for code that never serves and is never retired.
 if { [ "$mode" = "release" ] \
     || { [ "$mode" = "release-prepare" ] \
-      && [ "$release_database_authority" = UAT_ACCEPTED_NO_MIGRATION ]; }; } \
+      && { [ "$release_database_authority" = UAT_ACCEPTED_NO_MIGRATION ] \
+        || [ "$release_database_authority" = PRODUCTION_READY_V2 ]; }; }; } \
   && { [ "$release_deploy_target" = "all" ] || [ "$release_deploy_target" = "api-web" ]; }; then
   launch_gate_sync='./node_modules/.bin/tsx prisma/sync-feature-launch-gates.ts --verify-specialist-closed; '
 fi
@@ -657,8 +669,20 @@ case "$mode" in
           }
         task_command="set -eu; ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ${launch_gate_sync}./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions"
         ;;
+      PRODUCTION_READY_V2)
+        [ "${RELEASE_MODE:-}" = passport-promotion ] \
+          && [[ "$production_ready_sha256" =~ ^[0-9a-f]{64}$ ]] \
+          && [[ "$production_ready_repository_hash" =~ ^[0-9a-f]{64}$ ]] \
+          && [[ "$production_ready_applied_hash" =~ ^[0-9a-f]{64}$ ]] \
+          && [[ "$production_ready_pending_hash" =~ ^[0-9a-f]{64}$ ]] \
+          && [[ "$production_ready_pending_count" =~ ^[0-9]+$ ]] || {
+            echo "ERROR: PRODUCTION_READY_V2 requires exact signed readiness migration authority" >&2
+            exit 2
+          }
+        task_command="set -eu; ./node_modules/.bin/tsx prisma/verify-production-ready-migration.ts; ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma; ./node_modules/.bin/tsx prisma/verify-applied-migration-catalog.ts; ./node_modules/.bin/tsx prisma/sync-permissions.ts; ${launch_gate_sync}./node_modules/.bin/tsx prisma/sync-workflow-templates.ts; ./node_modules/.bin/tsx prisma/sync-thai-address-master.ts; ./node_modules/.bin/tsx prisma/normalize-entitlements.ts --dry-run --allow-exceptions"
+        ;;
       *)
-        echo "ERROR: release-prepare requires U5_REVIEWED_APPLY or verified UAT_ACCEPTED_NO_MIGRATION authority" >&2
+        echo "ERROR: release-prepare requires U5_REVIEWED_APPLY, UAT_ACCEPTED_NO_MIGRATION or PRODUCTION_READY_V2 authority" >&2
         exit 2
         ;;
     esac
@@ -820,6 +844,11 @@ jq -n \
   --arg capacityBaselineHash "$capacity_baseline_hash" \
   --arg releaseOperationMode "$mode" \
   --arg releaseDeployTarget "$release_deploy_target" \
+  --arg productionReadySha256 "$production_ready_sha256" \
+  --arg productionReadyRepositoryHash "$production_ready_repository_hash" \
+  --arg productionReadyAppliedHash "$production_ready_applied_hash" \
+  --arg productionReadyPendingHash "$production_ready_pending_hash" \
+  --arg productionReadyPendingCount "$production_ready_pending_count" \
   --arg releaseOperationId "$operation_id" \
   --arg releaseParentOperationId "$parent_operation_id" \
   --arg releaseDeploymentManifest "$deployment_manifest" \
@@ -900,6 +929,11 @@ jq -n \
         {name:"F2_VERIFY", value:$f2Verify},
         {name:"RELEASE_OPERATION_MODE", value:$releaseOperationMode},
         {name:"RELEASE_DEPLOY_TARGET", value:$releaseDeployTarget},
+        {name:"PRODUCTION_READY_V2_SHA256", value:$productionReadySha256},
+        {name:"PRODUCTION_READY_REPOSITORY_CATALOG_HASH", value:$productionReadyRepositoryHash},
+        {name:"PRODUCTION_READY_APPLIED_CATALOG_HASH", value:$productionReadyAppliedHash},
+        {name:"PRODUCTION_READY_PENDING_CATALOG_HASH", value:$productionReadyPendingHash},
+        {name:"PRODUCTION_READY_PENDING_COUNT", value:$productionReadyPendingCount},
         {name:"RELEASE_OPERATION_ID", value:$releaseOperationId},
         {name:"RELEASE_PARENT_OPERATION_ID", value:$releaseParentOperationId},
         {name:"RELEASE_OPERATION_DEPLOYMENT_MANIFEST", value:$releaseDeploymentManifest},

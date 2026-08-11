@@ -5,7 +5,9 @@ repo_root="$(git rev-parse --show-toplevel)"
 validator="$repo_root/infra/security/validate-production-a5-readonly-security-groups.sh"
 bootstrap="$repo_root/infra/security/bootstrap-production-a5-readonly.sh"
 database_bootstrap="$repo_root/infra/security/bootstrap-production-a5-database-reader.sh"
+bootstrap_workflow="$repo_root/.github/workflows/production-a5-reader-bootstrap.yml"
 controller_policy="$repo_root/infra/security/production-a5-readonly-policy.template.json"
+reader_bootstrap_policy="$repo_root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 reader_policy="$repo_root/infra/security/production-a5-readonly-execution-policy.template.json"
 bootstrap_policy="$repo_root/infra/security/production-a5-bootstrap-execution-policy.template.json"
 migration_tool_validator="$repo_root/infra/security/verify-production-a5-migration-tool.sh"
@@ -78,10 +80,22 @@ jq -e '
   any(.Statement[]; (.Resource|tostring)|contains("watchdog-bms/production/database-url-"))
   and any(.Statement[]; (.Resource|tostring)|contains("a5-readonly-database-url-"))
 ' "$bootstrap_policy" >/dev/null
+jq -e '
+  any(.Statement[]; .Sid=="ManageExactReaderSecret"
+    and (.Action|index("secretsmanager:CreateSecret"))!=null
+    and (.Action|index("secretsmanager:GetSecretValue"))==null)
+  and any(.Statement[]; .Sid=="RunBootstrapTask" and .Action=="ecs:RunTask"
+    and (.Resource|contains("task-definition/watchdog-a5-production-bootstrap-")))
+  and any(.Statement[]; .Sid=="StopBootstrapTask" and .Action=="ecs:StopTask"
+    and (.Resource|contains("task/watchdog-bms-prod/")))
+  and any(.Statement[]; .Sid=="SelfRevokeBootstrapController"
+    and (.Action|index("iam:PutRolePolicy"))!=null)
+' "$reader_bootstrap_policy" >/dev/null
 
 for file in "$bootstrap" "$database_bootstrap" "$validator"; do bash -n "$file"; done
 if rg -n 'ecsTaskExecutionRole|assignPublicIp:"ENABLED"|taskRoleArn[[:space:]]*:' \
-    "$bootstrap" "$database_bootstrap" "$controller_policy" "$reader_policy" "$bootstrap_policy"; then
+    "$bootstrap" "$database_bootstrap" "$controller_policy" "$reader_bootstrap_policy" \
+    "$reader_policy" "$bootstrap_policy"; then
   echo 'ERROR: shared/public/task role leaked into production A5 reader path' >&2
   exit 1
 fi
@@ -102,6 +116,14 @@ rg -q '"--tsconfig"' "$database_bootstrap"
 rg -q '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
 rg -q 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
 rg -q 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
+rg -q 'BootstrapRevoked' "$database_bootstrap"
+rg -q 'put-role-policy.*bootstrap_controller_role_name' "$database_bootstrap"
+grep -Fq 'role-to-assume: ${{ env.A5_READER_BOOTSTRAP_ROLE_ARN }}' "$bootstrap_workflow"
+grep -Fq 'assumed-role/watchdog-bms-production-a5-reader-bootstrap/' "$bootstrap_workflow"
+if grep -Fq 'role-to-assume: ${{ env.A5_READER_ROLE_ARN }}' "$bootstrap_workflow"; then
+  echo 'ERROR: the mutating one-time bootstrap assumes the durable read-only controller' >&2
+  exit 1
+fi
 
 mkdir "$work/bin"
 cat > "$work/bin/docker" <<'SH'
