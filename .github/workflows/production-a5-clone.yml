@@ -215,6 +215,10 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
+      - name: Generate exact candidate Prisma client
+        working-directory: candidate
+        run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+
       - name: Validate exact candidate clone controller inputs before AWS
         run: |
           set -euo pipefail
