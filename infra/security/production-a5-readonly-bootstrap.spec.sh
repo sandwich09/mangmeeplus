@@ -98,6 +98,8 @@ rg -q 'watchdog-bms-production-a5-bootstrap-execution' "$bootstrap" "$database_b
 rg -q 'assignPublicIp:"DISABLED"' "$database_bootstrap"
 rg -q '\$\{reader_arn\}:::\$\{reader_version\}' "$database_bootstrap"
 rg -q 'verify-production-a5-migration-tool.sh' "$database_bootstrap"
+rg -q '"--tsconfig"' "$database_bootstrap"
+rg -q '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
 rg -q 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
 rg -q 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
 

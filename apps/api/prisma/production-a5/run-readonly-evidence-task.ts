@@ -140,6 +140,7 @@ function main(): void {
     PRODUCTION_A5_VERIFICATION_EVIDENCE_PATH: paths.verification,
   };
   run('/app/node_modules/.bin/tsx', [
+    '--tsconfig', '/app/apps/api/tsconfig.json',
     '/app/apps/api/prisma/production-a5/run-reviewed-invariants.ts',
   ], childEnv);
 
@@ -168,7 +169,10 @@ function main(): void {
   } else if (baselines['postMigrationRef'] != null || baselines['postMigrationPayload'] != null) {
     throw new Error('production_a5_task_post_baseline_forbidden');
   }
-  run('/app/node_modules/.bin/tsx', ['/app/apps/api/prisma/production-a5-evidence.ts'], childEnv);
+  run('/app/node_modules/.bin/tsx', [
+    '--tsconfig', '/app/apps/api/tsconfig.json',
+    '/app/apps/api/prisma/production-a5-evidence.ts',
+  ], childEnv);
   delete childEnv['A5_READONLY_DATABASE_URL'];
   delete process.env['A5_READONLY_DATABASE_URL'];
 

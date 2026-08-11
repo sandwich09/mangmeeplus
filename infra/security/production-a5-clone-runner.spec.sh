@@ -11,6 +11,7 @@ bash -n "$runner" "$reconstruct"
 for required in \
   'snapshot-type automated' '86400' '--manage-master-user-password' \
   'watchdog-bms-production-a5-clone-execution' 'migrationTaskRoleArn:null' \
+  '"--tsconfig","/app/apps/api/tsconfig.json"' \
   'name:"PGDATABASE"' 'name:"PGHOST"' 'name:"PGPASSWORD"' 'name:"PGUSER"' \
   'temporaryDatabaseSecretVersionId' \
   'DBInstanceNotFound' 'ResourceNotFoundException' 'InvalidNetworkInterfaceID.NotFound' \

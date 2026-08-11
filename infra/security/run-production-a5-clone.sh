@@ -244,6 +244,7 @@ jq -cnS --arg family "$task_family" --arg executionRole "$execution_role_arn" \
    volumes:[{name:"tmp"}],containerDefinitions:[{
      name:"clone",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
      workingDirectory:"/app",command:["/app/node_modules/.bin/tsx",
+       "--tsconfig","/app/apps/api/tsconfig.json",
        "/app/apps/api/prisma/production-a5/run-clone-rehearsal.ts"],
      environment:[{name:"PRODUCTION_A5_EXPECTED_CLONE_HOST",value:$host},
        {name:"PGPORT",value:$port},

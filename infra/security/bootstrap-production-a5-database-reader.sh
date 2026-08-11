@@ -214,7 +214,8 @@ jq -cnS --arg family "$family" --arg execution "$execution_role" --arg image "$i
    cpu:"1024",memory:"2048",runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},
    volumes:[{name:"tmp"}],containerDefinitions:[{
      name:"bootstrap",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
-     workingDirectory:"/app",command:["/app/node_modules/.bin/tsx","/app/apps/api/prisma/bootstrap-a5-readonly.ts"],
+     workingDirectory:"/app",command:["/app/node_modules/.bin/tsx","--tsconfig",
+       "/app/apps/api/tsconfig.json","/app/apps/api/prisma/bootstrap-a5-readonly.ts"],
      environment:[{name:"DEPLOY_ENV",value:"production"},{name:"A5_TARGET_ENVIRONMENT",value:"production"},
        {name:"A5_SCHEMA_PROFILE",value:$profile},{name:"GIT_SHA",value:$source},
        {name:"HOME",value:"/tmp"},{name:"TMPDIR",value:"/tmp"}],

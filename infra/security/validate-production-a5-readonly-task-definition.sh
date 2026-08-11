@@ -40,6 +40,7 @@ jq -e --arg family "$family" --arg execution "$execution" --arg image "$image" \
       and $container.readonlyRootFilesystem==true and $container.user=="node"
       and $container.workingDirectory=="/app"
       and $container.command==["/app/node_modules/.bin/tsx",
+        "--tsconfig","/app/apps/api/tsconfig.json",
         "/app/apps/api/prisma/production-a5/run-readonly-evidence-task.ts"]
       and $container.secrets==[{name:"A5_READONLY_DATABASE_URL",valueFrom:$reader}]
       and ($container.environment|map({key:.name,value:.value})|from_entries) as $env
