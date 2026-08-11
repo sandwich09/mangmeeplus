@@ -31,9 +31,10 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 2. User asks a natural-language question or chooses a rich-menu shortcut.
 3. AI Gateway resolves user/company context from linked LINE identity.
 4. AI uses permission-checked ERP tools to read source-of-truth data.
-5. LINE replies with concise answer, source/caveat, and web link when detail or action is needed.
-6. For item 09 receipt upload, AI verifies extracted fields, inserts validated draft/review data with provenance, and returns missing fields/duplicate warnings plus web link.
-7. User opens web for full records, editing, approvals, reports, and configuration.
+5. LINE replies with a concise Mangmee-themed Flex card. Web links are URI buttons, not raw URLs in the visible card body.
+6. When the turn is complete, the answer card shows the permission-filtered staff Quick Reply menu again. Clarification and upload prompts keep only the controls needed to finish the pending flow.
+7. For item 09 receipt upload, AI verifies extracted fields, inserts validated draft/review data with provenance, and returns missing fields/duplicate warnings plus a web-review button.
+8. User opens web for full records, editing, approvals, reports, and configuration.
 
 ## 5. Business Rules
 
@@ -43,6 +44,9 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - AI answers must respect user permissions and company context.
 - Accounting summaries should use ledger-backed report tools after Double-Entry Ledger item 10 is available.
 - AI answers should cite source records or include web links when possible.
+- Completed AI, capture, correction, refusal, and reference answers use Flex cards; plain text is reserved for transient errors or prompts that still need user input.
+- Safe tenant web links render as Flex URI buttons. The visible card body must not expose the same raw URL.
+- Every completed turn restores the existing permission-filtered staff Quick Reply menu, capped at the LINE platform limit of 13 actions.
 - LINE alerts must be deduplicated, rate-limited, and preference-aware.
 - Any final business mutation must happen through web or permission-checked API flow with explicit confirmation and audit.
 - LINE receipt upload must verify webhook signature, linked account, active company, permission, idempotency, media type, and size before draft creation.
@@ -71,6 +75,8 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 
 - Rich menu: Ask AI, Daily Summary, Alerts, Link Account.
 - AI chat: CFO, Inventory, Sales, CRM, Tax, Marketing, and Document/Expense helper where enabled.
+- Completed answer: one answer is one Flex bubble; multiple completed business answers are a carousel. Safe tenant links appear as footer buttons.
+- Completed answer Quick Reply: restore the staff menu filtered from current backend permissions (for example บริษัทของฉัน, รายการรออนุมัติ, ถ่ายใบเสร็จ). Do not show the completion menu while waiting for clarification or media.
 - Expense helper: user can send receipt/bill media; reply shows AI verification summary, inserted draft fields, missing fields, duplicate warnings, and web review link.
 - Alert cards: concise context, severity, quick "ask AI" prompt, and web detail link.
 - Daily summary: short owner/role-based summary with important exceptions first.
@@ -102,6 +108,9 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - [ ] LINE alert links to web detail/action page.
 - [ ] Web remains the full source-of-truth workspace.
 - [ ] AI answers include source references or web links when useful.
+- [x] Completed LINE AI and receipt/correction replies render as Mangmee-themed Flex cards.
+- [x] Safe tenant links render as tappable URI buttons and are absent as raw URLs from the visible card body.
+- [x] Every completed turn restores a permission-filtered Quick Reply menu with at most 13 actions; clarification turns do not.
 
 ## 11. Test Cases
 
@@ -113,9 +122,12 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - LINE receipt upload rejects unlinked user or user without `expense.receipt.line_upload`.
 - AI verification inserts only validated draft fields and flags missing/low-confidence fields.
 - AI Tax states uncertainty when data needs accountant confirmation.
+- Receipt completion returns a Flex card with a web-review URI button and the permission-filtered staff menu.
+- Business answer without structured presentation falls back to a Flex card, not a plain text bubble.
+- A cross-origin or cross-tenant URL never becomes a Flex URI button.
+- Clarification reply does not show the completion menu; the completed follow-up does.
 
 ## 12. Open Questions
 
 - Which LINE rich menu labels should ship first?
 - Which alert types should support simple acknowledgement in LINE?
-- What Thai answer format should be default: short bullets, compact table, or conversational prose?

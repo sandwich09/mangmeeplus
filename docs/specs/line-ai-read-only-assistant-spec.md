@@ -287,18 +287,23 @@ Evidence-capture tools are not final mutation tools. They must be permission-che
 
 ## 11. Answer Format
 
-Default LINE answer shape:
+Default LINE answer shape is a Mangmee-themed Flex bubble (or carousel when a turn contains multiple completed answers):
 
 ```text
-<direct answer in 1-3 short Thai bullets or lines>
+Header: <short answer title>
+Body: <direct answer in 1-3 short Thai bullets or lines>
+Source: <short source labels>
+Footer: <safe tenant web-link buttons when useful>
+Quick Reply: <permission-filtered staff menu after a completed turn>
 
-Sources: <short source labels>
-Open: <web deep link label>
 ```
 
 Rules:
 
 - Keep answers concise enough for LINE chat.
+- Use a Flex card for completed business, capture, correction, refusal, and reference answers. A missing structured AI presentation must fall back to a generic Flex card rather than visible plain text.
+- Render safe tenant web links as URI buttons and remove the corresponding raw URL from the visible card body.
+- Restore the existing permission-filtered staff Quick Reply menu after a completed turn, capped at 13 LINE actions. Do not attach it to a clarification or media prompt that is still waiting for input.
 - Put exception/risk first.
 - Include numbers only when returned by trusted tools.
 - Include `asOf` or period when source data is time-based.
@@ -618,6 +623,7 @@ If the repo already has a safer in-process module port or internal API conventio
 - [ ] User without permission receives a safe refusal with no hidden-record leakage.
 - [ ] Mutation requests from LINE are refused and routed to web when a safe deep link exists.
 - [ ] Answers include source references or web links for stock, alert, and dashboard answers.
+- [x] Completed answers are Flex cards; safe tenant links are buttons and terminal turns restore the permission-filtered Quick Reply menu.
 - [ ] AI/tool invocation audit records exist for sensitive reads.
 - [ ] Conversation/tool logs do not store raw secrets or auth tokens.
 - [ ] Web deep links from answers re-check permission when opened.

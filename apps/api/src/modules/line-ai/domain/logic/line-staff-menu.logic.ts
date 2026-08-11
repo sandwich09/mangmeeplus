@@ -28,7 +28,9 @@ const hasAny = (permissions: Set<string>, required: readonly string[]) => requir
 
 const messageAction = (label: string, text = label) => ({ type: 'action' as const, action: { type: 'message' as const, label, text } });
 
-export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage {
+export function buildStaffCompletionQuickReply(
+  context: Pick<StaffMenuContext, 'permissions' | 'isOwner'>,
+): NonNullable<LineReplyMessage['quickReply']> {
   const permissions = new Set(context.permissions);
   const items: LineQuickReplyItem[] = QUERY_ACTIONS
     .filter(([, , required]) => hasAny(permissions, required))
@@ -41,6 +43,12 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
   if (hasAny(permissions, ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'])) {
     items.push({ type: 'action', action: { type: 'camera', label: '📷 ถ่ายใบเสร็จ' } } as const);
   }
+  return { items: items.slice(0, 13) };
+}
+
+export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage {
+  const quickReply = buildStaffCompletionQuickReply(context);
+  const items = quickReply.items;
   const displayName = boundedLabel(context.displayName, 'พนักงาน');
   const roleLabel = boundedLabel(context.roleLabel, 'พนักงาน');
   const scopeLabel = context.branchScopeLabel;
@@ -70,7 +78,7 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
       },
       styles: { body: { backgroundColor: '#FFFFFF' } },
     },
-    quickReply: { items },
+    quickReply,
   };
 }
 
