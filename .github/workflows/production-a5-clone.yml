@@ -305,6 +305,7 @@ jobs:
           set -euo pipefail
           docker_config="$RUNNER_TEMP/production-a5-docker-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -m 700 "$docker_config"
+          export DOCKER_CONFIG="$docker_config"
           temporary_tag="u5-a5-${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-${SOURCE_SHA:0:8}"
           printf '%s\n' "DOCKER_CONFIG=$docker_config" "MIGRATION_TEMPORARY_TAG=$temporary_tag" \
             >> "$GITHUB_ENV"
