@@ -343,17 +343,35 @@ Verification:
 - UAT deep database readiness was proved separately without another Action run using the non-root
   `watchdog-bedrock` profile and the AWSCURRENT UAT worker token: the authenticated endpoint returned
   `service=api`, `status=ok`, `db=ok` at `2026-08-12T14:12:06Z`. Token value was not logged.
+- Cleanup hotfix PR `#47` merged as controller `33ed788ccc644502e572fe2d679aac9b2b98cc6e` after
+  required CI and independent approval. The owner-approved temporary ceremony then re-armed the
+  exact reader controller/execution roles under the assumed non-root principal, exact-read back all
+  durable prerequisites, retired the bridge/temporary role and independently returned
+  `NoSuchEntity` for all three temporary authority reads. Bootstrap rerun `31610040988` succeeded
+  from the existing UAT Passport without rebuilding UAT, retained sole AWSCURRENT reader version
+  `ddcfa904-43de-48d1-9169-1910058d3c87`, self-revoked and produced three independent stable reads
+  with zero running bootstrap tasks and zero ACTIVE bootstrap task definitions.
+- Valid Readiness run `31613163594` bound UAT `31600821945`, `maintenance_closed` and controller
+  `33ed788...`; its Passport, image signatures and OIDC security role passed. It failed before the
+  first A5/clone step because `require_absent_role` declared `name` and an error path containing
+  `$name` in the same `local` command under `set -u`. No clone or Production mutation occurred.
+  Local regression now executes the production function itself: the pre-fix bytes reproduce
+  `name: unbound variable`, fixed bytes accept only `NoSuchEntity`, and `AccessDenied` explicitly
+  returns nonzero without relying on contextual `errexit`. The complete runtime collector then
+  passed against live read-only AWS data and emitted valid runtime/prerequisite evidence; all focused
+  READY/deploy/signed-evidence contracts and the full production image security aggregate pass.
+- Readiness run `31611733340` is a GitHub control-plane ghost created three seconds after enabling
+  the workflow: it has no resolved inputs, jobs, check runs, pending deployment, concurrency lease or
+  billable time, and both cancel endpoints return HTTP 500. It cannot reach AWS with valid inputs;
+  do not treat it as READY or rerun it.
 
 Next:
 
-1. Open one reviewed controller-only PR for the ECS full-family cleanup semantics, pass required CI
-   once and obtain the independent approval required by main. Do not rerun UAT; its image Passport
-   remains valid because the hotfix does not change app/image inputs.
-2. Re-arm the one-time reader controller through the approved temporary non-root ceremony and rerun
-   bootstrap from UAT `31600821945`; require zero active bootstrap task definitions/tasks,
-   bootstrap execution role absent and exact metadata-only revoked controller policy afterwards.
-3. Re-enable Production Readiness and run it once from that Passport; require quick READY or A5
-   clone with computed zero residual resources.
-4. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
+1. Open one reviewed controller-only PR for the runtime-readiness nounset fix, pass required CI once
+   and obtain independent approval. Do not rerun UAT or reader bootstrap; neither app/image nor
+   reader state changed.
+2. Dispatch one valid Production Readiness from UAT `31600821945`; require quick READY or A5 clone
+   with computed zero residual resources, and reject the input-less ghost run above.
+3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
-5. Keep customer launch closed until independent legal evidence is complete.
+4. Keep customer launch closed until independent legal evidence is complete.

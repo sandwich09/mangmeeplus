@@ -4,7 +4,46 @@ root="$(git rev-parse --show-toplevel)"
 script="$root/infra/security/collect-production-runtime-readiness-v2.sh"
 environment_validator="$root/infra/security/validate-production-promotion-environment.sh"
 resource_collector="$root/infra/security/collect-production-promotion-resources.sh"
+runtime_fixture="$(mktemp -d "${TMPDIR:-/tmp}/production-runtime-readiness-spec.XXXXXX")"
+trap 'rm -rf -- "$runtime_fixture"' EXIT
 for file in "$script" "$environment_validator" "$resource_collector"; do bash -n "$file"; done
+
+# Execute the production function under nounset. Syntax/grep checks cannot detect a local variable
+# referenced in the same declaration before Bash assigns it.
+sed -n '/^require_absent_role() {$/,/^}$/p' "$script" \
+  > "$runtime_fixture/require-absent-role.sh"
+grep -F 'require_absent_role() {' "$runtime_fixture/require-absent-role.sh" >/dev/null
+(
+  set -euo pipefail
+  work="$runtime_fixture/work"
+  roles="$runtime_fixture/roles.ndjson"
+  account=311414082667
+  mkdir -p "$work"
+  : > "$roles"
+  aws() { echo 'An error occurred (NoSuchEntity) when calling the GetRole operation' >&2; return 254; }
+  source "$runtime_fixture/require-absent-role.sh"
+  require_absent_role watchdog-bms-production-a5-bootstrap-execution
+  jq -e '
+    .roleName=="watchdog-bms-production-a5-bootstrap-execution"
+    and .roleArn=="arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution"
+    and .state=="ABSENT" and .maxSessionDuration==null and .inlinePolicyName==null
+    and .trustSha256==null and .policySha256==null and .attachedPolicies==[]
+  ' "$roles" >/dev/null
+)
+if (
+  set -euo pipefail
+  work="$runtime_fixture/denied-work"
+  roles="$runtime_fixture/denied-roles.ndjson"
+  account=311414082667
+  mkdir -p "$work"
+  : > "$roles"
+  aws() { echo 'An error occurred (AccessDenied) when calling the GetRole operation' >&2; return 254; }
+  source "$runtime_fixture/require-absent-role.sh"
+  require_absent_role watchdog-bms-production-a5-bootstrap-execution
+); then
+  echo 'ERROR: AccessDenied was accepted as an absent reader-bootstrap execution role' >&2
+  exit 1
+fi
 for required in watchdog-bms-production-security-readonly watchdog-bms-prod-db \
   production-security-readonly-policy.template.json describe-replication-groups \
   AtRestEncryptionEnabled TransitEncryptionEnabled AuthTokenEnabled AutomaticFailover \
