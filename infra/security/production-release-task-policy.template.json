@@ -1,0 +1,7 @@
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {"Effect":"Allow","Action":["ecs:DescribeExpressGatewayService","ecs:DescribeServiceDeployments","ecs:ListServiceDeployments"],"Resource":"*"},
+    {"Effect":"Allow","Action":["ssm:GetParameter","ssm:PutParameter"],"Resource":"arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/ecs-express-*-service-arn"}
+  ]
+}

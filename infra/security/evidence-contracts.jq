@@ -296,6 +296,77 @@ def e0_migration_risk($manifest):
   and .manualCustomerInputCount == 0
   and .unreviewedCount == 0;
 
+def e0_env_values($active; $name):
+  [$active.primaryContainer.environment[]? | select(.name == $name) | .value];
+
+def e0_serving_controls($service; $active; $mode):
+  if $service == "api-web" then
+    e0_env_values($active; "GLOBAL_MAINTENANCE_MODE")
+        == [if $mode == "live" then "false" else "true" end]
+    and e0_env_values($active; "AI_GATEWAY_ENABLED")
+        == [if $mode == "live" then "true" else "false" end]
+    and e0_env_values($active; "LINE_AI_LEDGER_ENABLED")
+        == [if $mode == "live" then "true" else "false" end]
+    and e0_env_values($active; "REIMBURSEMENT_WRITE_QUIESCE")
+        == [if $mode == "live" then "false" else "true" end]
+    and (e0_env_values($active; "CRM_AUTO_REPLY_ENABLED") as $crm
+      | if $mode == "live" then ($crm == ["true"] or $crm == ["false"])
+        else $crm == ["false"] end)
+  elif $service == "ai-gateway" then
+    e0_env_values($active; "MODEL_PROVIDER") as $providers
+    | e0_env_values($active; "APPROVED_AI_PROVIDERS") as $approved
+    | (if $mode == "live" then (($providers == ["bedrock"] or $providers == ["openai"])
+        and ($approved | length) == 1
+        and ($approved[0] | split(",") | map(gsub("^\\s+|\\s+$"; ""))
+          | index($providers[0])) != null)
+      else $providers == ["disabled"] end)
+    and e0_env_values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVED")
+      == [if $mode == "live" then "true" else empty end]
+    and (e0_env_values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF") as $refs
+      | if $mode == "live" then ($refs | length) == 1 and ($refs[0] | length) > 0
+        else $refs == [] end)
+    and all(["LINE_AI_AGENT_ORCHESTRATION_ENABLED","LINE_AI_TOOLUSE_LOOP_ENABLED",
+      "LINE_AI_COVERAGE_CRITIC_ENABLED","AI_GATEWAY_ENABLED","AI_AGENT_REGISTRY_ENABLED",
+      "AI_TOOL_POLICY_ENFORCED","AI_TOOL_AUDIT_ENABLED"][];
+      e0_env_values($active; .) == [if $mode == "live" then "true" else "false" end])
+    and e0_env_values($active; "AI_FINAL_MUTATION_ENABLED") == ["false"]
+    and e0_env_values($active; "AI_PROMPT_LOGGING_ENABLED") == ["false"]
+  elif $service == "workers" then
+    e0_env_values($active; "QUEUE_ENABLED")
+      == [if $mode == "live" then "true" else "false" end]
+  else false end;
+
+def e0_legacy_production_live($service; $active):
+  {
+    "ai-gateway":{
+      source:"eb515b9e1e92ca970bd14c67fdeebb6f859cf838",
+      image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:8a159d8e1f3047ec0698f8b4e5209502129f2b2ebed8ba9e043abeff1bce3011",
+      controls:{
+        MODEL_PROVIDER:["bedrock"],APPROVED_AI_PROVIDERS:["bedrock,openai,typhoon"],
+        AI_GLOBAL_INFERENCE_PROFILE_APPROVED:["true"],
+        AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:["DPO-2026-07-23-bedrock-global"],
+        LINE_AI_AGENT_ORCHESTRATION_ENABLED:["true"],LINE_AI_TOOLUSE_LOOP_ENABLED:["true"],
+        LINE_AI_COVERAGE_CRITIC_ENABLED:["true"],AI_GATEWAY_ENABLED:["true"],
+        AI_AGENT_REGISTRY_ENABLED:["true"],AI_TOOL_POLICY_ENFORCED:["true"],
+        AI_TOOL_AUDIT_ENABLED:["true"],AI_FINAL_MUTATION_ENABLED:["false"],
+        AI_PROMPT_LOGGING_ENABLED:["false"]}},
+    "api-web":{
+      source:"eb515b9e1e92ca970bd14c67fdeebb6f859cf838",
+      image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:9c655e1a06ba0d4acb4bcfbd2975aac57ef5e34ef25cc455ae8e1c1f59c46e1c",
+      controls:{GLOBAL_MAINTENANCE_MODE:[],AI_GATEWAY_ENABLED:["true"],
+        CRM_AUTO_REPLY_ENABLED:["true"],LINE_AI_LEDGER_ENABLED:["true"],
+        REIMBURSEMENT_WRITE_QUIESCE:["false"]}},
+    workers:{
+      source:"0bdbe5088c2e121b74c74da9f28bf2a64e3576d7",
+      image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:e9495744a9708d04c06564f6ddb2fd66342c3ccca87efd77d7e02fdce786c23f",
+      controls:{QUEUE_ENABLED:["true"]}}
+  }[$service] as $legacy
+  | $legacy != null
+  and $active.primaryContainer.image == $legacy.image
+  and e0_env_values($active; "GIT_SHA") == [$legacy.source]
+  and all(($legacy.controls | to_entries)[];
+    . as $control | e0_env_values($active; $control.key) == $control.value);
+
 def e0_health_service($issued_at):
   . as $service
   | (if .service == "api-web" then {
@@ -311,7 +382,7 @@ def e0_health_service($issued_at):
   | .rawEvidence as $raw
   | e0_exact_keys(["containerName","containerPort","currentDeployment","healthBody","healthPath",
       "healthUrl","httpStatus","ingress","observedAtEpoch","rawEvidence","runningTaskArns","runningTaskPrivateIps",
-      "scalingTarget","service","serviceArn","serviceRevisionArn","serviceStatus",
+      "scalingTarget","service","serviceArn","serviceRevisionArn","serviceStatus","servingMode",
       "ssmUrlParameter","targetGroupArn","targetHealth","taskDefinition"])
   and $expected != null
   and .serviceArn == $expected.arn
@@ -320,6 +391,7 @@ def e0_health_service($issued_at):
       + ($expected.arn | split("/")[-1]) + "/[1-9][0-9]*$"))
   and .serviceStatus == "ACTIVE"
   and .currentDeployment == null
+  and (.servingMode == "live" or .servingMode == "maintenance_only")
   and .containerName == "Main"
   and (.containerPort | e0_positive_integer and . <= 65535)
   and (.ingress
@@ -379,27 +451,65 @@ def e0_health_service($issued_at):
           and $express.activeConfigurations[0].scalingTarget == $service.scalingTarget
           and $express.activeConfigurations[0].primaryContainer.containerPort
             == $service.containerPort
+          and (e0_env_values($express.activeConfigurations[0]; "PRODUCTION_SERVING_MODE")
+              == [$service.servingMode]
+            and e0_serving_controls($service.service;
+              $express.activeConfigurations[0]; $service.servingMode)
+            or (e0_env_values($express.activeConfigurations[0]; "PRODUCTION_SERVING_MODE") == []
+              and $service.servingMode == "live"
+              and e0_legacy_production_live($service.service;
+                $express.activeConfigurations[0])))
           and ($express.activeConfigurations[0].ingressPaths | type == "array" and length == 1)
           and $express.activeConfigurations[0].ingressPaths[0].accessType == "PUBLIC"
           and ("https://" + $express.activeConfigurations[0].ingressPaths[0].endpoint)
-            == $service.ingress.endpoint
-          and ([ $express.activeConfigurations[0].ingressPaths[0].targetGroups[].arn ]
-            | unique) == [$service.targetGroupArn]))
+            == $service.ingress.endpoint))
   and ($raw.describeServiceRevisions.raw.serviceRevisions
     | type == "array" and length == 1)
   and ($raw.describeServiceRevisions.raw.serviceRevisions[0] as $revision
     | $revision.serviceArn == $service.serviceArn
       and $revision.serviceRevisionArn == $service.serviceRevisionArn
       and $revision.taskDefinition == $service.taskDefinition.arn
-      and $revision.resolvedConfiguration.scalingTarget == $service.scalingTarget
+      and ($revision.resolvedConfiguration.loadBalancers | type == "array" and length == 1)
+      and $revision.resolvedConfiguration.loadBalancers[0].targetGroupArn
+        == $service.targetGroupArn
       and ($revision.loadBalancers | type == "array" and length == 1)
-      and $revision.loadBalancers[0].targetGroupArn == $service.targetGroupArn
       and $revision.loadBalancers[0].containerName == $service.containerName
       and $revision.loadBalancers[0].containerPort == $service.containerPort
-      and ([ $revision.ecsManagedResources.ingressPaths[]
+      and ($revision.loadBalancers[0].targetGroupArn as $primary
+        | $revision.loadBalancers[0].advancedConfiguration.alternateTargetGroupArn as $alternate
+        | $primary != $alternate
+          and ($service.targetGroupArn == $primary or $service.targetGroupArn == $alternate))
+      and ($revision.ecsManagedResources.autoScaling.scalableTarget as $target
+        | $target.minCapacity == $service.scalingTarget.minTaskCount
+          and $target.maxCapacity == $service.scalingTarget.maxTaskCount
+          and $target.status == "ACTIVE")
+      and ($revision.ecsManagedResources.autoScaling.applicationAutoScalingPolicies
+        | type == "array" and length == 1)
+      and ($revision.ecsManagedResources.autoScaling.applicationAutoScalingPolicies[0] as $policy
+        | $policy.metric == $service.scalingTarget.autoScalingMetric
+          and $policy.targetValue == $service.scalingTarget.autoScalingTargetValue
+          and $policy.policyType == "TargetTrackingScaling" and $policy.status == "ACTIVE")
+      and (([ $revision.ecsManagedResources.ingressPaths[]
         | select(.accessType == "PUBLIC"
           and ("https://" + .endpoint) == $service.ingress.endpoint)
-        | .targetGroups[].arn ] | unique) == [$service.targetGroupArn])
+        | .targetGroups[]
+        | select(.arn == $service.targetGroupArn and .healthCheckPath == $service.healthPath
+          and .healthCheckPort == $service.containerPort
+          and .port == (if $service.targetGroupArn == $revision.loadBalancers[0].targetGroupArn
+            then $service.containerPort else 0 end)
+          and .status == "ACTIVE") ] | length) == 1)
+      and (([ $revision.ecsManagedResources.ingressPaths[]
+        | select(.accessType == "PUBLIC"
+          and ("https://" + .endpoint) == $service.ingress.endpoint)
+        | .targetGroups[]
+        | select(.arn == (if $service.targetGroupArn == $revision.loadBalancers[0].targetGroupArn
+            then $revision.loadBalancers[0].advancedConfiguration.alternateTargetGroupArn
+            else $revision.loadBalancers[0].targetGroupArn end)
+          and .healthCheckPath == $service.healthPath
+          and .healthCheckPort == $service.containerPort
+          and .port == (if $service.targetGroupArn == $revision.loadBalancers[0].targetGroupArn
+            then 0 else $service.containerPort end)
+          and .status == "ACTIVE") ] | length) == 1))
   and ($raw.listTasks.raw
     | (.taskArns | type == "array" and length >= 1 and all(.[]; type == "string")
         and length == (unique | length))
@@ -426,7 +536,8 @@ def e0_health_service($issued_at):
     | type == "array" and length == 1
       and .[0].TargetGroupArn == $service.targetGroupArn
       and .[0].TargetType == "ip"
-      and .[0].Port == $service.containerPort
+      and .[0].Protocol == "HTTP" and .[0].Port == 80
+      and .[0].HealthCheckPort == ($service.containerPort | tostring)
       and .[0].HealthCheckPath == $service.healthPath)
   and ($raw.describeTargetHealth.raw.TargetHealthDescriptions
     | type == "array" and length >= 1
@@ -949,7 +1060,7 @@ def e0_h2_clone($evidence):
         and test("^arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:[A-Za-z0-9_.:-]+$"))
       and (.snapshotCreatedAtEpoch | e0_positive_integer)
       and .snapshotCreatedAtEpoch <= $evidence.issuedAtEpoch
-      and ($evidence.issuedAtEpoch - .snapshotCreatedAtEpoch) <= 86400
+      and ($evidence.issuedAtEpoch - .snapshotCreatedAtEpoch) <= 129600
       and .snapshotType == "automated"
       and .temporaryDbIdentifier
         == ("watchdog-a5-clone-" + $evidence.producer.runId + "-a"
@@ -1022,18 +1133,30 @@ def e0_h2_clone($evidence):
         | $secret.ARN == $infra.temporaryDatabaseSecretArn
           and ($secret.Name | type == "string" and test("^rds!db-[A-Za-z0-9-]+$"))
           and ($secret.DeletedDate // null) == null
+          and $secret.OwningService == "rds"
+          and any($secret.Tags[]?; .Key == "aws:rds:primaryDBInstanceArn"
+            and .Value == $infra.temporaryDbInstanceArn)
           and ([$secret.VersionIdsToStages | to_entries[]
             | select(.value | index("AWSCURRENT")) | .key]
             == [$infra.temporaryDatabaseSecretVersionId]))
       and ($infra.networkEvidence.describeDbInstances.raw.DBInstances as $dbs
         | ($dbs|type)=="array" and ($dbs|length)==1
           and $dbs[0].DBInstanceArn == $infra.temporaryDbInstanceArn
+          and $dbs[0].DBInstanceStatus == "available"
           and $dbs[0].PubliclyAccessible == false
+          and ($dbs[0].DBName | type == "string"
+            and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$"))
+          and ($dbs[0].Endpoint.Address | type == "string" and length > 0)
+          and $dbs[0].Endpoint.Port == 5432
+          and $dbs[0].MasterUserSecret == {
+            KmsKeyId:("arn:aws:kms:ap-southeast-1:311414082667:key/"
+              + "b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"),
+            SecretArn:$infra.temporaryDatabaseSecretArn,SecretStatus:"active"}
           and ([$dbs[0].DBSubnetGroup.Subnets[].SubnetIdentifier]|sort) == $infra.dbSubnetIds
           and ([$dbs[0].VpcSecurityGroups[].VpcSecurityGroupId]|sort)
             == $infra.dbSecurityGroupIds)
       and ($infra.networkEvidence.describeNetworkInterfaces.raw.NetworkInterfaces as $enis
-        | ($enis|type)=="array" and ($enis|length)>=1
+        | ($enis|type)=="array" and ($enis|length)==1
           and ([$enis[].SubnetId]|sort|unique) == $infra.migrationTaskSubnetIds
           and ([$enis[].Groups[].GroupId]|sort|unique) == $infra.migrationTaskSecurityGroupIds
           and all($enis[]; (.Association.PublicIp // null) == null))
@@ -1083,11 +1206,18 @@ def e0_h2_clone($evidence):
           and $task_definition.networkMode=="awsvpc"
           and ($task_definition.containerDefinitions|length)==1
           and ([$task_definition.containerDefinitions[].image]|unique)==[$infra.migrationImage]
+          and ([$task_definition.containerDefinitions[0].environment[]
+            | select(.name == "PGDATABASE" or .name == "PGHOST" or .name == "PGPORT")]
+            | sort_by(.name)) == [
+              {name:"PGDATABASE",value:$infra.networkEvidence.describeDbInstances.raw
+                .DBInstances[0].DBName},
+              {name:"PGHOST",value:$infra.networkEvidence.describeDbInstances.raw
+                .DBInstances[0].Endpoint.Address},
+              {name:"PGPORT",value:($infra.networkEvidence.describeDbInstances.raw
+                .DBInstances[0].Endpoint.Port|tostring)}]
+          and ([$task_definition.containerDefinitions[0].environment[]
+            | select(.name == "PGPASSWORD" or .name == "PGUSER")] | length) == 0
           and $task_definition.containerDefinitions[0].secrets == [
-            {name:"PGDATABASE",valueFrom:($infra.temporaryDatabaseSecretArn
-              + ":dbname::" + $infra.temporaryDatabaseSecretVersionId)},
-            {name:"PGHOST",valueFrom:($infra.temporaryDatabaseSecretArn
-              + ":host::" + $infra.temporaryDatabaseSecretVersionId)},
             {name:"PGPASSWORD",valueFrom:($infra.temporaryDatabaseSecretArn
               + ":password::" + $infra.temporaryDatabaseSecretVersionId)},
             {name:"PGUSER",valueFrom:($infra.temporaryDatabaseSecretArn
@@ -1341,9 +1471,14 @@ def e0_h3_read_actions: [
   "cloudwatch:DescribeAlarms","cloudwatch:GetMetricStatistics",
   "ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:DescribeImageScanFindings",
   "ecr:DescribeImages","ecr:GetAuthorizationToken","ecr:GetDownloadUrlForLayer",
+  "ec2:DescribeSecurityGroups","ec2:DescribeSubnets","ec2:DescribeVpcs",
+  "ecs:DescribeClusters",
   "elasticache:DescribeCacheClusters","elasticache:DescribeReplicationGroups",
-  "iam:GetRole","iam:GetRolePolicy","logs:DescribeLogGroups","logs:DescribeMetricFilters",
-  "rds:DescribeDBInstances","sns:GetTopicAttributes","sns:ListSubscriptionsByTopic",
+  "iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies",
+  "kms:DescribeKey","logs:DescribeLogGroups","logs:DescribeMetricFilters",
+  "rds:DescribeDBInstances","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
+  "s3:GetBucketVersioning","secretsmanager:DescribeSecret",
+  "sns:GetTopicAttributes","sns:ListSubscriptionsByTopic","ssm:GetParameters",
   "sts:GetCallerIdentity"
 ];
 
@@ -1353,7 +1488,10 @@ def e0_h3_inline_policy: {
     {Sid:"AllowGlobalRead",Effect:"Allow",Action:[
       "cloudwatch:DescribeAlarms","cloudwatch:GetMetricStatistics","ecr:GetAuthorizationToken",
       "elasticache:DescribeCacheClusters","elasticache:DescribeReplicationGroups",
-      "logs:DescribeLogGroups","logs:DescribeMetricFilters","rds:DescribeDBInstances",
+      "ec2:DescribeSecurityGroups","ec2:DescribeSubnets","ec2:DescribeVpcs",
+      "ecs:DescribeClusters","kms:DescribeKey","logs:DescribeLogGroups","logs:DescribeMetricFilters",
+      "rds:DescribeDBInstances","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
+      "s3:GetBucketVersioning","secretsmanager:DescribeSecret","ssm:GetParameters",
       "sts:GetCallerIdentity"
     ],Resource:"*"},
     {Sid:"AllowReleaseImageRead",Effect:"Allow",Action:[
@@ -1365,8 +1503,27 @@ def e0_h3_inline_policy: {
       "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-migration-tool",
       "arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-workers"
     ]},
-    {Sid:"AllowSelfInspection",Effect:"Allow",Action:["iam:GetRole","iam:GetRolePolicy"],
-      Resource:"arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"},
+    {Sid:"AllowSelfInspection",Effect:"Allow",Action:["iam:GetRole","iam:GetRolePolicy",
+      "iam:ListAttachedRolePolicies","iam:ListRolePolicies"],Resource:[
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
+        "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
+      ]},
     {Sid:"AllowOwnedAlertTopicRead",Effect:"Allow",
       Action:["sns:GetTopicAttributes","sns:ListSubscriptionsByTopic"],
       Resource:"arn:aws:sns:ap-southeast-1:311414082667:*"},

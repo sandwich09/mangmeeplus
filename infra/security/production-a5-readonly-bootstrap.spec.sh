@@ -10,6 +10,7 @@ controller_policy="$repo_root/infra/security/production-a5-readonly-policy.templ
 reader_bootstrap_policy="$repo_root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 reader_policy="$repo_root/infra/security/production-a5-readonly-execution-policy.template.json"
 bootstrap_policy="$repo_root/infra/security/production-a5-bootstrap-execution-policy.template.json"
+execution_trust="$repo_root/infra/security/production-a5-readonly-execution-trust.template.json"
 migration_tool_validator="$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 readonly_runner="$repo_root/infra/security/run-production-a5-readonly.sh"
 apply_runner="$repo_root/infra/security/run-production-a5-reviewed-migration.sh"
@@ -120,6 +121,14 @@ for execution_policy in "$reader_policy" "$bootstrap_policy" \
     and any(.Statement[]; has("NotAction") and (.NotAction|index("kms:Decrypt"))!=null)
   ' "$execution_policy" >/dev/null
 done
+jq -e '
+  .Statement==[{
+    Sid:"ExactProductionAccountEcsTasksOnly",Effect:"Allow",
+    Principal:{Service:"ecs-tasks.amazonaws.com"},Action:"sts:AssumeRole",
+    Condition:{StringEquals:{"aws:SourceAccount":"311414082667"},
+      ArnLike:{"aws:SourceArn":"arn:aws:ecs:ap-southeast-1:311414082667:*"}}
+  }]
+' "$execution_trust" >/dev/null
 
 for file in "$bootstrap" "$database_bootstrap" "$validator"; do bash -n "$file"; done
 for file in "$database_bootstrap" "$readonly_runner" "$apply_runner"; do
@@ -141,7 +150,7 @@ jq -e '
 JSON
 if grep -En 'ecsTaskExecutionRole|assignPublicIp:"ENABLED"|taskRoleArn[[:space:]]*:' \
     "$bootstrap" "$database_bootstrap" "$controller_policy" "$reader_bootstrap_policy" \
-    "$reader_policy" "$bootstrap_policy"; then
+    "$reader_policy" "$bootstrap_policy" "$execution_trust"; then
   echo 'ERROR: shared/public/task role leaked into production A5 reader path' >&2
   exit 1
 fi
@@ -162,7 +171,9 @@ grep -Eq '"--tsconfig"' "$database_bootstrap"
 grep -Eq '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
 grep -Eq 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
 grep -Eq 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
-grep -Eq 'BootstrapRevoked' "$database_bootstrap"
+grep -Fq 'production-a5-reader-bootstrap-revoked-policy.template.json' "$database_bootstrap"
+jq -e '.Statement==[{Sid:"BootstrapRevoked",Effect:"Deny",Action:"*",Resource:"*"}]' \
+  "$repo_root/infra/security/production-a5-reader-bootstrap-revoked-policy.template.json" >/dev/null
 grep -Eq 'put-role-policy.*bootstrap_controller_role_name' "$database_bootstrap"
 grep -Fq 'role-to-assume: ${{ env.A5_READER_BOOTSTRAP_ROLE_ARN }}' "$bootstrap_workflow"
 grep -Fq 'assumed-role/watchdog-bms-production-a5-reader-bootstrap/' "$bootstrap_workflow"

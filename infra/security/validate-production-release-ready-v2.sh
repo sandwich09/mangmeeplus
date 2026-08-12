@@ -110,9 +110,8 @@ jq -e --slurpfile ready "$ready" '
   and ([.services[] | . as $s
     | .rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0] as $a
     | ([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value]) as $source
-    | ([$a.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value]) as $mode
     | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
-       servingMode:$mode[0],serviceRevisionArn:$s.serviceRevisionArn,
+       servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,
        taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service))
     == ($ready[0].productionBaseline.services|sort_by(.service))
 ' "$health" >/dev/null
@@ -120,8 +119,8 @@ jq -e --slurpfile ready "$ready" '
 runtime_baseline="$(safe "$(jq -er '.runtimeBaseline.path' "$ready")" 1048576)"
 test "$(sha_file "$runtime_baseline")" = "$(jq -er '.runtimeBaseline.sha256' "$ready")"
 jq -e --slurpfile ready "$ready" '
-  (keys|sort)==(["a5PolicySha256","clonePolicySha256","observedAtEpoch","rds","redis",
-    "schemaVersion","securityPolicySha256"]|sort)
+  (keys|sort)==(["a5PolicySha256","clonePolicySha256","observedAtEpoch",
+    "promotionPrerequisitesSha256","rds","redis","schemaVersion","securityPolicySha256"]|sort)
   and .schemaVersion==2
   and (.observedAtEpoch|type)=="number" and .observedAtEpoch>=1
   and (.rds.status=="available" and .rds.storageEncrypted==true and .rds.multiAZ==true
@@ -130,11 +129,14 @@ jq -e --slurpfile ready "$ready" '
     and .redis.transitEncryptionEnabled==true and .redis.authTokenEnabled==true
     and .redis.automaticFailover=="enabled" and .redis.nodeCount>=2
     and .redis.snapshotRetentionDays>=35)
-  and all(.a5PolicySha256,.securityPolicySha256;
+  and all(.a5PolicySha256,.promotionPrerequisitesSha256,.securityPolicySha256;
     type=="string" and test("^[0-9a-f]{64}$"))
   and ((.clonePolicySha256==null and $ready[0].migration.status=="EXACT_MATCH")
     or ((.clonePolicySha256|type)=="string" and (.clonePolicySha256|test("^[0-9a-f]{64}$"))))
 ' "$runtime_baseline" >/dev/null
+promotion_prerequisites="$(safe "promotion-prerequisites.json" 1048576)"
+test "$(sha_file "$promotion_prerequisites")" = \
+  "$(jq -er '.promotionPrerequisitesSha256' "$runtime_baseline")"
 
 classification="$(safe "$(jq -er '.migration.classificationPath' "$ready")" 1048576)"
 runtime="$(safe "$(jq -er '.migration.runtimePath' "$ready")" 1048576)"

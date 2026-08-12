@@ -18,8 +18,9 @@ raise 'permissions widened' unless doc.fetch('permissions') == {
 }
 job = doc.fetch('jobs').fetch('clone')
 raise 'wrong environment' unless job.fetch('environment') == 'production'
-raise 'wrong timeout' unless job.fetch('timeout-minutes') == 120
-login = job.fetch('steps').find { |step| step['name'] == 'Log in to the dedicated ECR repository' }
+raise 'wrong timeout' unless job.fetch('timeout-minutes') == 150
+steps = job.fetch('steps')
+login = steps.find { |step| step['name'] == 'Log in to the dedicated ECR repository' }
 raise 'missing ECR login step' unless login
 login_run = login.fetch('run')
 export_index = login_run.index('export DOCKER_CONFIG="$docker_config"')
@@ -58,7 +59,20 @@ raise 'migration-tool signature is not verified from the registry' unless verify
 raise 'registry verification output is not retained as evidence' unless verify_run.include?(
   'migration-tool.signature.verify.json'
 )
-uses = job.fetch('steps').map { |step| step['uses'] }.compact
+clone_index = steps.index { |step| step['name'] == 'Restore, rehearse and destroy the isolated clone' }
+raise 'missing clone runner step' unless clone_index
+refresh = steps.fetch(clone_index - 1)
+raise 'clone credentials are not refreshed immediately before restore' unless refresh['name'] ==
+  'Refresh clone controller credentials immediately before restore'
+raise 'clone refresh action pin drifted' unless refresh['uses'] ==
+  'aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37'
+refresh_with = refresh.fetch('with')
+raise 'clone refresh role drifted' unless refresh_with['role-to-assume'] ==
+  'arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone'
+raise 'clone refresh duration is not the full role session' unless
+  refresh_with['role-duration-seconds'] == 7200
+raise 'clone refresh retains stale credentials' unless refresh_with['unset-current-credentials'] == true
+uses = steps.map { |step| step['uses'] }.compact
 raise 'floating action reference' unless uses.all? { |ref| ref.match?(/\A[^@]+@[0-9a-f]{40}\z/) }
 raise 'setup-node pin drifted from CI-proven pin' unless uses.include?(
   'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'

@@ -1,0 +1,133 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExactPromotionRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
+        "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
+        "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
+      ]
+    },
+    {
+      "Sid": "WriteExactPromotionPolicies",
+      "Effect": "Allow",
+      "Action": "iam:PutRolePolicy",
+      "Resource": [
+        "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"
+      ]
+    },
+    {
+      "Sid": "ConfigureExactPromotionTrust",
+      "Effect": "Allow",
+      "Action": "iam:UpdateAssumeRolePolicy",
+      "Resource": [
+        "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-release-task-role",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"
+      ]
+    },
+    {
+      "Sid": "AttachExactAwsManagedRuntimePolicies",
+      "Effect": "Allow",
+      "Action": "iam:AttachRolePolicy",
+      "Resource": [
+        "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
+        "arn:aws:iam::311414082667:role/ecsTaskExecutionRole"
+      ],
+      "Condition": {
+        "ArnEquals": {
+          "iam:PolicyARN": [
+            "arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices",
+            "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ConfigureExactPromotionDuration",
+      "Effect": "Allow",
+      "Action": "iam:UpdateRole",
+      "Resource": [
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
+      ]
+    },
+    {
+      "Sid": "CreateOnlyMissingA5Roles",
+      "Effect": "Allow",
+      "Action": "iam:CreateRole",
+      "Resource": [
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
+      ]
+    },
+    {
+      "Sid": "RepairExactProductionBucketLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": "arn:aws:s3:::watchdog-bms-prod-311414082667"
+    }
+  ]
+}
