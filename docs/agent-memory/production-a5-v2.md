@@ -103,6 +103,14 @@ Verification:
   audit found that the one-time reader bootstrap verified the private migration-tool image before
   assuming its already-scoped ECR-capable role; move only that image verification after role
   assumption and ECR login, and bind the order in the focused bootstrap spec before rerunning.
+- UAT run `31559662937` then passed end-to-end and minted Passport V2 for source
+  `672f7f553a6df01b13b824b9bc1dc72c43465db5`. The automatic read-only readiness attempt was
+  cancelled before its known missing reader prerequisite, and bootstrap run `31560740448` proved
+  Passport/ECR/signature authorization before failing during subnet validation. The jq predicate
+  incorrectly iterated the top-level AWS response object with `all(.[]; .State...)` instead of the
+  exact `Subnets` array. No reader secret/task/DB role was created. Fix the same malformed predicate
+  in bootstrap plus the two legacy A5 runners and bind it against a realistic describe-subnets
+  fixture before re-arming the intentionally self-revoked bootstrap roles.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
