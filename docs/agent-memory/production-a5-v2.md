@@ -66,6 +66,12 @@ Verification:
   --check` passes after the repeat-safe immutable ECR tag fix.
 - PR CI run `31538531091` exposed missing `rg` on GitHub Ubuntu; all four remaining infra-spec
   dependencies were removed and the full security suite passes while `rg` is forced to exit 127.
+- PR #37 merged as `cbd87fdef73cf1f503e0a8e70fbc22222ab1b801`; all three administrator
+  bootstrap controllers completed with exact read-back and the temporary administrator group was
+  removed. First V2 UAT run `31551394010` reused CI and published all runtime images, then stopped
+  before UAT mutation because the reusable workflow incorrectly tested `github.event_name` for
+  `workflow_call` and skipped the required release-tools artifact. The controller now binds the
+  required `source_ref` input instead, with a focused regression assertion.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
@@ -75,12 +81,8 @@ Verification:
 
 Next:
 
-1. Commit and push this single reviewed change, then stop for approval.
-2. After merge/approval, an administrator (not AWS root) applies the exact templates with:
-   `AWS_REGION=ap-southeast-1 bash infra/uat/setup-control-plane.sh`,
-   `AWS_ACCOUNT_ID=311414082667 bash infra/security/bootstrap-production-security-readonly.sh --apply`,
-   and `AWS_ACCOUNT_ID=311414082667 bash infra/security/bootstrap-production-a5-readonly.sh --apply`.
-3. Run one resolved-all UAT to mint Passport V2, then dispatch the one-time reader bootstrap.
-4. Let automatic closed-mode Production Readiness run; require quick READY or first-green A5 clone.
-5. Owner explicitly dispatches one `maintenance_closed` Production V2 promotion.
-6. Keep customer launch closed until independent legal evidence is complete.
+1. Merge the reusable-workflow event-semantics correction after focused/full controller checks.
+2. Run one resolved-all UAT to mint Passport V2, then dispatch the one-time reader bootstrap.
+3. Let automatic closed-mode Production Readiness run; require quick READY or first-green A5 clone.
+4. Owner explicitly dispatches one `maintenance_closed` Production V2 promotion.
+5. Keep customer launch closed until independent legal evidence is complete.
