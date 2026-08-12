@@ -21,11 +21,23 @@
       "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/a5-readonly-database-url-*"
     },
     {
+      "Sid": "DecryptReaderSecretThroughSecretsManagerOnly",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a",
+      "Condition": {
+        "StringEquals": {
+          "kms:CallerAccount": "311414082667",
+          "kms:ViaService": "secretsmanager.ap-southeast-1.amazonaws.com"
+        }
+      }
+    },
+    {
       "Sid": "DenyOutsideReaderTaskBootstrap",
       "Effect": "Deny",
       "NotAction": [
         "ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer",
-        "logs:CreateLogStream", "logs:PutLogEvents", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"
+        "kms:Decrypt", "logs:CreateLogStream", "logs:PutLogEvents", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"
       ],
       "Resource": "*"
     }

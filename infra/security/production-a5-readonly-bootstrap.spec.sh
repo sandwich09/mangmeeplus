@@ -93,6 +93,33 @@ jq -e '
   and any(.Statement[]; .Sid=="SelfRevokeBootstrapController"
     and (.Action|index("iam:PutRolePolicy"))!=null)
 ' "$reader_bootstrap_policy" >/dev/null
+kms_key=arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a
+jq -e --arg key "$kms_key" '
+  any(.Statement[]; .Sid=="EncryptReaderSecretThroughSecretsManagerOnly"
+    and (.Action|sort)==["kms:Decrypt","kms:GenerateDataKey"] and .Resource==$key
+    and .Condition.StringEquals=={
+      "kms:CallerAccount":"311414082667",
+      "kms:ViaService":"secretsmanager.ap-southeast-1.amazonaws.com"})
+  and ([.Statement[]|select(has("Action"))|.Action
+    |if type=="array" then .[] else . end|select(startswith("kms:"))]|sort)
+    ==["kms:Decrypt","kms:GenerateDataKey"]
+  and any(.Statement[]; .Sid=="DenyOutsideOneTimeReaderBootstrap"
+    and (.NotAction|index("kms:Decrypt"))!=null
+    and (.NotAction|index("kms:GenerateDataKey"))!=null)
+' "$reader_bootstrap_policy" >/dev/null
+for execution_policy in "$reader_policy" "$bootstrap_policy" \
+    "$repo_root/infra/security/production-a5-apply-execution-policy.template.json" \
+    "$repo_root/infra/security/production-a5-clone-execution-policy.template.json"; do
+  jq -e --arg key "$kms_key" '
+    any(.Statement[]; (.Sid|startswith("Decrypt")) and .Action=="kms:Decrypt"
+      and .Resource==$key and .Condition.StringEquals=={
+        "kms:CallerAccount":"311414082667",
+        "kms:ViaService":"secretsmanager.ap-southeast-1.amazonaws.com"})
+    and ([.Statement[]|select(has("Action"))|.Action
+      |if type=="array" then .[] else . end|select(startswith("kms:"))])==["kms:Decrypt"]
+    and any(.Statement[]; has("NotAction") and (.NotAction|index("kms:Decrypt"))!=null)
+  ' "$execution_policy" >/dev/null
+done
 
 for file in "$bootstrap" "$database_bootstrap" "$validator"; do bash -n "$file"; done
 for file in "$database_bootstrap" "$readonly_runner" "$apply_runner"; do

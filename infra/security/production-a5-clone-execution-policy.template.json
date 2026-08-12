@@ -35,6 +35,18 @@
       }
     },
     {
+      "Sid": "DecryptCloneSecretThroughSecretsManagerOnly",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a",
+      "Condition": {
+        "StringEquals": {
+          "kms:CallerAccount": "311414082667",
+          "kms:ViaService": "secretsmanager.ap-southeast-1.amazonaws.com"
+        }
+      }
+    },
+    {
       "Sid": "DenyOutsideCloneTaskBootstrap",
       "Effect": "Deny",
       "NotAction": [
@@ -44,6 +56,7 @@
         "ecr:GetDownloadUrlForLayer",
         "logs:CreateLogStream",
         "logs:PutLogEvents",
+        "kms:Decrypt",
         "secretsmanager:DescribeSecret",
         "secretsmanager:GetSecretValue"
       ],
