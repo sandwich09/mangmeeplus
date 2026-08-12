@@ -194,7 +194,11 @@ grep -Eq '"/app/apps/api/tsconfig.json"' "$database_bootstrap"
 grep -Eq 'delete-role-policy.*bootstrap_execution_role_name' "$database_bootstrap"
 grep -Eq 'delete-role.*bootstrap_execution_role_name' "$database_bootstrap"
 grep -Fq 'production-a5-reader-bootstrap-revoked-policy.template.json' "$database_bootstrap"
-grep -Fq -- '--family-prefix "$bootstrap_family_prefix" --status ACTIVE' "$database_bootstrap"
+grep -Fq -- 'list-task-definitions --region "$region"' "$database_bootstrap"
+if grep -Fq -- '--family-prefix "$bootstrap_family_prefix"' "$database_bootstrap"; then
+  echo 'ERROR: ECS family-prefix requires a full family name and cannot discover bootstrap families' >&2
+  exit 1
+fi
 grep -Fq -- '--started-by "$started_by" --query taskArns' "$database_bootstrap"
 grep -Fq -- '--desired-status RUNNING --query taskArns' "$database_bootstrap"
 grep -Fq -- '--started-by "$started_by"' "$database_bootstrap"
@@ -377,7 +381,16 @@ case "$service $operation" in
       none) ;;
       *) exit 2 ;;
     esac
-    jq -Rn '[inputs|select(length>0)]|{taskDefinitionArns:.}' "${FAKE_AWS_DEFINITIONS:?}"
+    family_filter=''
+    if [[ " $* " == *' --family-prefix '* ]]; then
+      family_filter="$(argument --family-prefix "$@")"
+    fi
+    jq -Rn --arg family "$family_filter" '
+      [inputs
+        | select(length>0)
+        | select($family=="" or test(":task-definition/"+$family+":[1-9][0-9]*$"))]
+      | {taskDefinitionArns:.}
+    ' "${FAKE_AWS_DEFINITIONS:?}"
     ;;
   'ecs deregister-task-definition')
     arn="$(argument --task-definition "$@")"

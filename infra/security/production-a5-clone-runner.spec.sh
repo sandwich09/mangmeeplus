@@ -337,6 +337,62 @@ SH
 chmod +x "$fake_aws"
 sleep() { :; }
 
+# Model ECS's eventually consistent family listing. A definition that appears on read 60 leaves
+# only one final empty read and must fail closed; appearance on read 58 leaves the required three
+# stable empty reads and must converge.
+definition_state="$fixture/task-definition-cleanup"
+export OUTPUT_DIR="$definition_state" FAKE_DEFINITION_STATE="$definition_state/state"
+export FAKE_DEFINITION_ARN='arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-clone-fixture:1'
+next_definition_read() {
+  local count=0
+  [ ! -f "$FAKE_DEFINITION_STATE/list-count" ] \
+    || count="$(<"$FAKE_DEFINITION_STATE/list-count")"
+  count=$((count+1))
+  printf '%s' "$count" > "$FAKE_DEFINITION_STATE/list-count"
+  printf '%s' "$count"
+}
+active_clone_task_definitions() {
+  local count
+  count="$(next_definition_read)"
+  case "$FAKE_DEFINITION_MODE:$count" in
+    one-final-empty:60|eventual-stable:58)
+      jq -cn --arg arn "$FAKE_DEFINITION_ARN" '[$arn]'
+      ;;
+    *) jq -cn '[]' ;;
+  esac
+}
+aws() {
+  test "$1 $2" = 'ecs deregister-task-definition'
+  printf '%s\n' "$*" >> "$FAKE_DEFINITION_STATE/deregister-calls"
+  jq -cn '{}'
+}
+reset_definition_state() {
+  rm -rf -- "$definition_state"
+  mkdir -p "$FAKE_DEFINITION_STATE"
+  clone_task_definition_residual=1
+  task_definition_requested=true
+  task_definition_arn=''
+}
+
+reset_definition_state
+export FAKE_DEFINITION_MODE=one-final-empty
+if production_a5_cleanup_clone_task_definitions >/dev/null 2>&1; then
+  echo 'ERROR: one final empty task-definition read closed cleanup' >&2
+  exit 1
+fi
+test "$clone_task_definition_residual" -eq 0
+test "$(<"$FAKE_DEFINITION_STATE/list-count")" -eq 61
+test "$(wc -l < "$FAKE_DEFINITION_STATE/deregister-calls" | tr -d ' ')" -eq 1
+
+reset_definition_state
+export FAKE_DEFINITION_MODE=eventual-stable
+production_a5_cleanup_clone_task_definitions
+test "$clone_task_definition_residual" -eq 0
+test "$(<"$FAKE_DEFINITION_STATE/list-count")" -eq 61
+test "$(wc -l < "$FAKE_DEFINITION_STATE/deregister-calls" | tr -d ' ')" -eq 1
+unset -f aws active_clone_task_definitions next_definition_read reset_definition_state
+unset FAKE_DEFINITION_MODE FAKE_DEFINITION_STATE FAKE_DEFINITION_ARN
+
 export AWS_ACCOUNT_ID=311414082667 AWS_REGION=ap-southeast-1
 export temporary_id=watchdog-a5-clone-fixture
 export FAKE_DB_ID="$temporary_id"

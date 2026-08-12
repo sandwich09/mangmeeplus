@@ -1,7 +1,7 @@
 # Agent Memory: production A5 v2
 
-Status: Local implementation/adversarial aggregate and live IAM/S3 prerequisite ceremony PASS;
-provider canary, fresh UAT Passport, reader bootstrap, READY and closed promotion remain
+Status: UAT/Passport and reader creation PASS; reader task-definition cleanup proof failed against
+live ECS semantics, Readiness is disabled, and the provider-correct cleanup hotfix is in progress
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -240,7 +240,7 @@ Verification:
 - The converged no-Action audit then found the complete deterministic chain that must be closed in
   one stabilization change: migration-tool needs Dockerfile `chmod 1777 /tmp` plus matching
   `VOLUME ["/tmp"]`; six child calls across clone/readiness/apply must use image-native Prisma/TSX
-  binaries instead of absent runtime `pnpm`; bootstrap must list/deregister exact-prefix task
+  binaries instead of absent runtime `pnpm`; bootstrap must list/deregister exact-family task
   definitions at `Resource:"*"` before self-revoke; clone restore must authorize exact subnet,
   parameter and option groups; clone `ListTasks` must use `Resource:"*"` with exact cluster
   condition; Production `LINE_AI_AGENT_RUNTIME` must be `agentcore`. The old Passport pins the
@@ -310,20 +310,50 @@ Verification:
   identity/MMDSv2/versioned artifact, S3 versioning/lifecycle matched, and all 13 secret metadata
   plus nine runtime SSM pointers validated. The ceremony scripts' no-argument “dry run” is only a
   static syntax/template check; it must never be represented as live permission/provider proof.
+- Live UAT run `31600821945` completed successfully on source/controller
+  `1e6c5f6389c9636c690bc859936999f8de5f398d` and issued the signed Passport V2. It reran full CI
+  because it was dispatched with the merge SHA rather than exact reviewed PR head
+  `81b2ac26d90b235dbca11326af80a668c71e1139`. Permanent cost rule: dispatch UAT with the exact PR
+  head SHA that owns the successful PR CI, after proving it remains an ancestor of both current
+  `main` and `develop` and its CI/UAT controller blobs equal current `main`; never substitute the
+  merge SHA merely because its tree is equivalent.
+- Reader bootstrap run `31603942687` created `watchdog_a5_prod_ro`, produced one AWSCURRENT reader
+  secret version, deleted the execution role and installed the exact revoked controller policy.
+  Independent ECS readback bound the exact evidence task/family/definition and confirmed its sole
+  `bootstrap` container stopped with exit code `0`; the reader data-plane result itself is valid.
+  Independent readback then rejected its zero-residue claim. The provider-correct account-wide query
+  found three inert ACTIVE definitions:
+  `watchdog-a5-production-bootstrap-1e6c5f6389c9:1`,
+  `watchdog-a5-production-bootstrap-672f7f553a6d:1` and
+  `watchdog-a5-production-bootstrap-672f7f553a6d:2`. AWS ECS
+  `ListTaskDefinitions --family-prefix` requires a full family name; it is not an arbitrary prefix.
+  Therefore multi-family cleanup must list the account-wide ACTIVE set and filter exact allowed ARNs
+  locally. Provider-faithful fixtures must emulate this behavior. Readiness runs `31603782882` and
+  `31605514234` were cancelled; the latter stopped during read-only baseline before A5/clone or
+  application mutation. Production Readiness stays disabled until this controller fix merges,
+  bootstrap is re-armed/rerun once, and independent readback proves zero ACTIVE bootstrap task
+  definitions and tasks.
+- The same API-semantics sweep found one sibling false proof before another paid run: clone cleanup
+  computed a stable-empty threshold for task definitions but terminal success checked only the final
+  residual count. The controller now requires both zero residual and the actual threshold. An exact
+  late-visible fixture proves that an ARN first seen at poll 60 followed by one empty poll fails
+  closed, while appearance at poll 58 followed by three stable empties succeeds. No IAM widening is
+  required; the other three `ListTaskDefinitions --family-prefix` callers already pass full family
+  names and were reviewed as provider-correct.
+- UAT deep database readiness was proved separately without another Action run using the non-root
+  `watchdog-bedrock` profile and the AWSCURRENT UAT worker token: the authenticated endpoint returned
+  `service=api`, `status=ok`, `db=ok` at `2026-08-12T14:12:06Z`. Token value was not logged.
 
 Next:
 
-1. Open one reviewed PR for all root-cause fixes, pass required CI once and obtain the independent
-   approval required by main.
-2. Run the remaining non-mutating provider/read-only canaries and exact readbacks; require every
-   live prerequisite row to be PASS and deterministic cleanup to report zero residue.
-3. After the reviewed source is on main and live prerequisites pass, run one fresh UAT all
-   and mint a new Passport; never reuse run `31559662937` for the changed image.
-4. Run the one-time reader bootstrap from the fresh Passport with `F1_CURRENT`; require zero active
-   bootstrap task definitions, bootstrap execution role absent and controller in the exact
-   metadata-only revoked recovery policy afterwards.
-5. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5
+1. Open one reviewed controller-only PR for the ECS full-family cleanup semantics, pass required CI
+   once and obtain the independent approval required by main. Do not rerun UAT; its image Passport
+   remains valid because the hotfix does not change app/image inputs.
+2. Re-arm the one-time reader controller through the approved temporary non-root ceremony and rerun
+   bootstrap from UAT `31600821945`; require zero active bootstrap task definitions/tasks,
+   bootstrap execution role absent and exact metadata-only revoked controller policy afterwards.
+3. Re-enable Production Readiness and run it once from that Passport; require quick READY or A5
    clone with computed zero residual resources.
-6. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
+4. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
-7. Keep customer launch closed until independent legal evidence is complete.
+5. Keep customer launch closed until independent legal evidence is complete.

@@ -208,8 +208,10 @@ Workflow bootstrap ต้อง:
    recovery policy; การ bootstrap ใหม่ต้องให้ administrator re-apply exact reviewed IAM template
    ก่อน ห้ามให้ workflow re-arm ตัวเอง
 7. ออก signed bootstrap evidence ที่ผูก account, region, DB resource, role policy hash และเวลา
-8. reconcile task-definition ทุก revision ที่ตรง exact family prefix ทั้งก่อน fast path และก่อน
-   self-revoke, ใช้ `ListTaskDefinitions`/`DeregisterTaskDefinition` ที่ `Resource:"*"` ตาม ECS
+8. reconcile task-definition ทุก revision ที่ตรง exact bootstrap-family ARN ทั้งก่อน fast path และ
+   ก่อน self-revoke โดย list ACTIVE definitions แบบ account-wide แล้ว filter ด้วย exact local regex;
+   AWS `family-prefix` รับ full family name ไม่ใช่ arbitrary prefix. ใช้
+   `ListTaskDefinitions`/`DeregisterTaskDefinition` ที่ `Resource:"*"` ตาม ECS
    authorization model, พิสูจน์ ACTIVE set ว่าง แล้วจึง revoke เป็นขั้นสุดท้าย
 9. ถ้า `RunTask` response หาย ต้อง reconcile ด้วย stable client token/startedBy ก่อนลบ secret หรือ
    execution authority; ห้ามปล่อย untracked task ทำงานหลัง workflow จบ

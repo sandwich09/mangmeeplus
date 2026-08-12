@@ -235,6 +235,48 @@ production_a5_cleanup_clone_database() {
   [ "$clone_secret_residual" -eq 0 ]
 }
 
+production_a5_cleanup_clone_task_definitions() {
+  local definitions='[]' empty_checks=0 required_empty_checks=3 status=0 arn=''
+  local cleanup_status=0 definition_observed=false
+  clone_task_definition_residual=1
+
+  # Registration can succeed while its response is lost. Once the exact family becomes visible,
+  # the ambiguity is resolved; deregister every ACTIVE revision and prove three stable empty reads.
+  for check in {1..61}; do
+    definitions="$(active_clone_task_definitions 2>"$OUTPUT_DIR/cleanup-task-definitions.err")"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      cat "$OUTPUT_DIR/cleanup-task-definitions.err" >&2
+      cleanup_status=1
+      break
+    fi
+    if [ "$(jq 'length' <<< "$definitions")" -eq 0 ]; then
+      empty_checks=$((empty_checks+1))
+      if $task_definition_requested && [ -z "$task_definition_arn" ] \
+          && ! $definition_observed; then
+        required_empty_checks=61
+      else
+        required_empty_checks=3
+      fi
+      [ "$empty_checks" -ge "$required_empty_checks" ] && break
+    else
+      definition_observed=true
+      empty_checks=0
+      while IFS= read -r arn; do
+        [ -n "$arn" ] || continue
+        aws ecs deregister-task-definition --region "$AWS_REGION" \
+          --task-definition "$arn" >/dev/null 2>&1 || cleanup_status=1
+      done < <(jq -r '.[]' <<< "$definitions")
+    fi
+    [ "$check" -lt 61 ] && sleep 5
+  done
+  clone_task_definition_residual="$(jq 'length' <<< "$definitions" 2>/dev/null)"
+  [[ "$clone_task_definition_residual" =~ ^[0-9]+$ ]] || clone_task_definition_residual=1
+  [ "$clone_task_definition_residual" -eq 0 ] \
+    && [ "$empty_checks" -ge "$required_empty_checks" ] || cleanup_status=1
+  return "$cleanup_status"
+}
+
 # Focused specs source only the deterministic provider state machines above with a fake AWS CLI.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then
   return 0
@@ -327,7 +369,7 @@ cleanup() {
   $cleanup_done && return 0
   $cleanup_attempted && return 1
   cleanup_attempted=true
-  local cleanup_status=0 remaining=1 tasks='[]' definitions='[]'
+  local cleanup_status=0 remaining=1 tasks='[]'
   local task_residual=1 definition_residual=1 database_residual=1 secret_residual=1 eni_residual=1
   local empty_checks=0 required_empty_checks=3 status=0 output='' arn='' eni=''
   local observed_eni_ids='' cleanup_eni_ids=''
@@ -377,39 +419,10 @@ cleanup() {
     && cleanup_task_stopped=true
   $cleanup_task_stopped || cleanup_status=1
 
-  # Registration can also succeed while its response is lost. Reconcile every ACTIVE revision of
-  # this run-specific exact family, then require three stable empty reads.
-  empty_checks=0
-  required_empty_checks=3
-  for check in {1..61}; do
-    definitions="$(active_clone_task_definitions 2>"$OUTPUT_DIR/cleanup-task-definitions.err")"
-    status=$?
-    if [ "$status" -ne 0 ]; then
-      cat "$OUTPUT_DIR/cleanup-task-definitions.err" >&2
-      cleanup_status=1
-      break
-    fi
-    if [ "$(jq 'length' <<< "$definitions")" -eq 0 ]; then
-      empty_checks=$((empty_checks+1))
-      if $task_definition_requested && [ -z "$task_definition_arn" ]; then
-        required_empty_checks=61
-      else
-        required_empty_checks=3
-      fi
-      [ "$empty_checks" -ge "$required_empty_checks" ] && break
-    else
-      empty_checks=0
-      while IFS= read -r arn; do
-        [ -n "$arn" ] || continue
-        aws ecs deregister-task-definition --region "$AWS_REGION" \
-          --task-definition "$arn" >/dev/null 2>&1 || cleanup_status=1
-      done < <(jq -r '.[]' <<< "$definitions")
-    fi
-    [ "$check" -lt 61 ] && sleep 5
-  done
-  definition_residual="$(jq 'length' <<< "$definitions" 2>/dev/null)"
-  [[ "$definition_residual" =~ ^[0-9]+$ ]] || definition_residual=1
-  [ "$definition_residual" -eq 0 ] || cleanup_status=1
+  if ! production_a5_cleanup_clone_task_definitions; then
+    cleanup_status=1
+  fi
+  definition_residual="$clone_task_definition_residual"
 
   if production_a5_cleanup_clone_database; then
     database_residual="$clone_database_residual"

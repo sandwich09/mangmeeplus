@@ -24,21 +24,21 @@ artifact/command ที่ตรวจย้อนกลับได้. Detaile
 
 | Gate | Required proof before Actions | Current status | Exact blocker / next proof |
 | --- | --- | --- | --- |
-| Fresh release unit | exact new main source + linux/amd64 images + signed Passport | BLOCKED | old run `31559662937` pin image ก่อน `/tmp`/direct-tool fixes; ต้อง UAT all ใหม่หลัง PR |
-| Migration image filesystem | OCI volume `/tmp`, root:root 1777, node write under readonly root/no network | IMPLEMENTED_LOCAL | exact linux/amd64 build + readonly-root/no-network verifier PASS; รอ fresh UAT image/provider canary |
-| Migration image tools | direct Prisma/TSX work offline; zero runtime pnpm dependency | IMPLEMENTED_LOCAL | direct image-native Prisma/TSX + negative pnpm contract PASS; รอ fresh UAT image |
+| Fresh release unit | exact new main source + linux/amd64 images + signed Passport | PASS | UAT `31600821945`, source/controller `1e6c5f6…`, signed Passport attempt 1 |
+| Migration image filesystem | OCI volume `/tmp`, root:root 1777, node write under readonly root/no network | PASS | fresh signed migration image ran the reader bootstrap task through Prisma/TSX on Fargate in `31603942687` |
+| Migration image tools | direct Prisma/TSX work offline; zero runtime pnpm dependency | PASS | fresh signed migration image completed the reader bootstrap task without runtime pnpm in `31603942687` |
 | Five task render paths | bootstrap/reader/catalog/clone/apply exact one-container contract | IMPLEMENTED_LOCAL | focused/adversarial runner suite และ full aggregate PASS |
-| Bootstrap cleanup | List/Deregister definitions `*`, global exact-prefix cleanup before revoke, no residue | IMPLEMENTED_LOCAL | exact-prefix reconciliation, cleanup-before-revoke และ collision/foreign-response fixtures PASS; รอ live zero-residue proof |
+| Bootstrap cleanup | List/Deregister definitions `*`, account-wide ACTIVE list + exact bootstrap-family ARN filter before revoke, no residue | BLOCKED_LIVE | run 31603942687 exposed AWS `family-prefix` full-family semantics; provider-correct live query found three inert ACTIVE bootstrap definitions across current/prior source families, so the local filter fix must merge and bootstrap rerun must prove zero residue |
 | Bootstrap lost response | stable RunTask identity + bounded reconcile before deleting authority | IMPLEMENTED_LOCAL | accepted-response-lost, stable-empty, replay และ metadata-only recovery fixtures PASS; รอ provider canary |
-| Reader data plane | AWSCURRENT secret + exact readonly PostgreSQL role + connectivity | BLOCKED | controller/execution role are now exact and armed; fresh-Passport bootstrap must create/prove the reader secret and PG role, then self-revoke |
+| Reader data plane | AWSCURRENT secret + exact readonly PostgreSQL role + connectivity | PASS | bootstrap `31603942687` state CREATED; independent metadata readback found sole AWSCURRENT, exact revoked controller and execution role absent |
 | Clone restore authorization | target DB + snapshot + exact subnet/parameter/option groups | IMPLEMENTED_LOCAL | exact policy/bootstrap/runner/evidence contracts + missing-resource/tag negatives PASS; รอ live restore canary |
-| Clone task reconciliation | `ListTasks Resource:*` + exact cluster condition | IMPLEMENTED_LOCAL | exact cluster-conditioned ListTasks, stable identity และ cleanup fixtures PASS; รอ live zero-residue proof |
+| Clone task reconciliation | `ListTasks Resource:*` + exact cluster condition; exact-family task-definition cleanup requires stable empty threshold | IMPLEMENTED_LOCAL | exact cluster-conditioned ListTasks, stable identity, late-visible definition and one-final-empty fail-closed fixtures PASS; รอ live zero-residue proof |
 | Clone provider capacity | PG18.3/db.t4g.medium orderability + quota/headroom + recent encrypted snapshot | PASS | read-only traversal: 4 orderable options, DB quota 2/40 (38 free), recent encrypted automated snapshot + exact AWS-managed KMS PASS |
 | GitHub policy token | exact branch protection API succeeds with workflow secret | UNKNOWN | secret presence known; token ability needs non-mutating canary |
 | Production environment | validator exact vars, AgentCore/ClamAV/runtime dependencies | IMPLEMENTED_LOCAL | `LINE_AI_AGENT_RUNTIME=agentcore` read back; exact config/AgentCore contracts PASS, active ClamAV/provider canary remains |
 | Live durable IAM/S3 | exact trusts/policies, role max 7200, workers policy, lifecycle | PASS | owner-approved ceremony applied/read back 17 durable roles + 3 clone SSM pointers + lifecycle under non-root; bridge/role-policy/role independently returned `NoSuchEntity` |
 | Forced-failure cleanup | zero task/taskdef/DB/managed-secret/ENI residue | UNKNOWN | run only non-business canary after offline/IAM gates pass |
-| PR/CI/UAT/Readiness/Prod | one paid path, no discovery retry | BLOCKED | opens only after every preceding row is PASS |
+| PR/CI/UAT/Readiness/Prod | one paid path, no discovery retry | BLOCKED | UAT PASS; fix/recover the three bootstrap task-definition residues before one new Readiness run |
 
 ## Readiness matrix
 
@@ -46,14 +46,14 @@ artifact/command ที่ตรวจย้อนกลับได้. Detaile
 | --- | --- | --- | --- | --- | --- | --- |
 | G1 | source เป็น full SHA และ reachable จาก protected history | Git/GitHub API | UAT passport | <10s | PASS สำหรับ current accepted runs | passport |
 | G2 | required CI contexts ผ่านสำหรับ exact source | GitHub Checks API, branch protection | ก่อน UAT passport | reuse existing CI | PASS เป็น policy; exact implementation commit ยังต้องผ่าน PR checks | passport |
-| G3 | UAT resolved target=`all` และ deploy/health/finalize ผ่าน | `deploy-uat.yml`, UAT active readback | passport | observed 15–20m | PASS ใน run `31503285465` | passport |
-| G4 | V2 passport รวมสาม runtime images + release-task + migration-tool | signed artifact + validator | หลัง UAT | <=2m critical-path target | IMPLEMENTED_LOCAL | all V2 readiness |
-| G5 | passport ไม่หมดอายุและ artifact unique ต่อ run/attempt | GitHub artifact API | readiness | <10s | IMPLEMENTED_LOCAL | readiness |
+| G3 | UAT resolved target=`all` และ deploy/health/finalize ผ่าน | `deploy-uat.yml`, UAT active readback | passport | observed 15–35m | PASS ใน run `31600821945` | passport |
+| G4 | V2 passport รวมสาม runtime images + release-task + migration-tool | signed artifact + validator | หลัง UAT | <=2m critical-path target | PASS ใน run `31600821945` | all V2 readiness |
+| G5 | passport ไม่หมดอายุและ artifact unique ต่อ run/attempt | GitHub artifact API | readiness | <10s | PASS สำหรับ UAT `31600821945` attempt 1 | readiness |
 | I1 | runtime image digests immutable อยู่ใน ECR | AWS ECR API | UAT/readiness | 10–20s | PASS สำหรับ current runtime repos | readiness |
 | I2 | image keyless signature/provenance verify | pinned Cosign action/binary บน runner | UAT/readiness | 10–30s parallel | PASS ใน current UAT path | readiness |
-| I3 | SBOM/scan result อยู่ใน passport | UAT publisher evidence | UAT | parallelกับ build | IMPLEMENTED_LOCAL | readiness |
-| I4 | release-task สร้าง/เซ็นใน UAT และ digest อยู่ passport | UAT buildx/ECR/Cosign | UAT | ~1–2m parallel | IMPLEMENTED_LOCAL; image-content checks รวม V2 commands | promotion |
-| I5 | migration-tool สร้าง/เซ็นในทุก Production-eligible resolved-all UAT | UAT buildx/ECR/Cosign | UAT | ~2–6m job, parallel; <=2m critical-path target | IMPLEMENTED_LOCAL; UAT publisher policy live exact-read PASS, fresh image/passport pending | migration readiness |
+| I3 | SBOM/scan result อยู่ใน passport | UAT publisher evidence | UAT | parallelกับ build | PASS ใน UAT `31600821945` | readiness |
+| I4 | release-task สร้าง/เซ็นใน UAT และ digest อยู่ passport | UAT buildx/ECR/Cosign | UAT | ~1–2m parallel | PASS ใน UAT `31600821945` | promotion |
+| I5 | migration-tool สร้าง/เซ็นในทุก Production-eligible resolved-all UAT | UAT buildx/ECR/Cosign | UAT | ~2–6m job, parallel; <=2m critical-path target | PASS ใน UAT `31600821945`; Fargate bootstrap consumed the signed digest | migration readiness |
 | C1 | controller มาจาก `github.workflow_sha` protected main | GitHub checkout/blob identity | ทุก workflow | <10s | IMPLEMENTED_LOCAL | all V2 stages |
 | C2 | candidate controller/security bytes ไม่ถูก execute | static contract spec | PR/CI | <30s | IMPLEMENTED_LOCAL | all V2 stages |
 | C3 | V2 ใช้ signed artifact/hash binding; legacy exact maintenance pins sync ด้วย script เดียว | static contract spec | PR/CI | <30s | IMPLEMENTED_LOCAL; V1 pins ยังมีเพื่อ compatibility | maintainability |
@@ -64,15 +64,15 @@ artifact/command ที่ตรวจย้อนกลับได้. Detaile
 | H4 | human confirms promotion timing | workflow dispatch/environment approval | หลัง READY | human | DECISION; spec keeps one explicit promotion action | promotion |
 | A1 | AWS account `311414082667`, region `ap-southeast-1` | STS | readiness | <5s | PASS | readiness |
 | A2 | UAT+Production deploy/security-readonly/AgentCore roles exact policy, no boundary | IAM readback vs templates | prerequisite/readiness | ceremony propagation ceiling ~55s per readback; readiness 10–20s | PASS; non-root ceremony exact-read back live roles and retired temporary authority | UAT/readiness/promotion |
-| A3 | durable A5 reader/clone roles exact; one-time bootstrap controller self-revokes to metadata-only recovery | IAM readback vs templates + executable replay fixture | readiness/bootstrap | 20–40s | durable/controller/execution IAM live exact-read PASS; bootstrap self-revoke transition waits for fresh Passport | A5 |
+| A3 | durable A5 reader/clone roles exact; one-time bootstrap controller self-revokes to metadata-only recovery | IAM readback vs templates + executable replay fixture | readiness/bootstrap | 20–40s | self-revoke live PASS and execution role absent after `31603942687`; task-definition residue hotfix still blocks readiness | A5 |
 | A4 | A5 endpoint-only network: ECR API/DKR, Logs, Secrets, S3 | SSM + EC2 endpoint validators | readiness | 20–40s | PASS | A5 |
 | A5 | clone/reader SG exact and private | EC2 validators | readiness | 10–20s | PASS | A5 |
 | A6 | A5 SSM parameter inventories complete | SSM | readiness | 10–20s | PASS: network 16, clone 10, reader 10 | A5 |
 | A7 | migration ECR immutable, scan-on-push | ECR API | readiness | <10s | PASS | A5 |
 | A8 | A5 log groups exist and retention set | CloudWatch Logs API | readiness | <10s | PASS: four groups, retention 7d | A5 audit |
 | S1 | Production runtime secrets required by API/AI/workers exist | Secrets Manager metadata only | readiness | 10–20s | PASS | promotion |
-| S2 | A5 readonly DB URL secret exists | Secrets Manager metadata | readiness | <5s | MISSING: controller/execution role are armed; fresh-Passport bootstrap must create `watchdog-bms/production/a5-readonly-database-url` | all Production DB readiness |
-| S3 | readonly PG role privilege proof exact | isolated bootstrap/readback task | one-time + readiness | 5–10m bootstrap; <1m readback | IMPLEMENTED_LOCAL; live proof blocked by S2/bootstrap | all Production DB readiness |
+| S2 | A5 readonly DB URL secret exists | Secrets Manager metadata | readiness | <5s | PASS: sole AWSCURRENT version created by `31603942687`, value not read by controller/readback | all Production DB readiness |
+| S3 | readonly PG role privilege proof exact | isolated bootstrap/readback task | one-time + readiness | 5–15m bootstrap; <1m readback | PASS: signed bootstrap state CREATED after exact Fargate data-plane task | all Production DB readiness |
 | D1 | RDS available, PostgreSQL 18.3, private/encrypted/Multi-AZ/backup35/del-protection | RDS API | readiness | 10–20s | PASS | readiness |
 | D2 | Redis available, encrypted/auth/failover/2 nodes/snapshot35 | ElastiCache API | readiness | 10–20s | PASS | readiness |
 | D3 | applied migration ledger exact/pending/drift classification | readonly ECS task + `_prisma_migrations` | readiness | 30–90s | IMPLEMENTED_LOCAL; live blocked by S2/S3 | target/A5 decision |
