@@ -1,9 +1,9 @@
 # Agent Memory: production A5 v2
 
-Status: UAT/Passport, reader bootstrap and provider prerequisites PASS; the set/checksum migration
-classifier is merged and locally proved. Fresh UAT publication stopped before deployment on an
-unbounded third-party Syft download; a bounded pinned SBOM generator fix is under review. Production
-was not mutated.
+Status: Fresh UAT/Passport, reader bootstrap and provider prerequisites PASS. Readiness proved the
+pending migration catalog and stopped before clone creation because the clone controller explicitly
+denied the RDS-integrated KMS grant required by encrypted snapshot restore. The exact key-scoped
+permission correction is in progress. Production was not mutated.
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -32,6 +32,9 @@ Decisions:
   ตั้งแต่ 2026-08-12 จนกว่าจะยกเลิก การอนุญาตนี้ไม่ลด branch/CI/proof gates: ต้องผูกการอนุมัติกับ
   exact head SHA ที่ local aggregate, provider-faithful fixture และ required CI ผ่านครบ ห้าม bypass
   failing/pending check หรือ merge commit ที่เปลี่ยนหลัง review
+- ผู้ใช้ยืนยัน standing self-approval นี้อีกครั้งเมื่อ 2026-08-13 โดยมีเป้าหมายให้ UAT และ Production
+  deploy ซ้ำได้อย่างเสถียร สิทธิ์นี้ครอบคลุมการ review/approve/merge และ prerequisite ceremony ที่ผ่าน
+  exact proof แล้วเท่านั้น ไม่ครอบคลุมการ dispatch เพื่อค้นหา error หรือการข้าม failed/pending gate
 
 ## Permanent execution contract
 
@@ -295,8 +298,11 @@ Verification:
   cloud mutation was used to obtain these results.
 - Provider read-only proof binds the latest eligible automated Production snapshot to enabled
   AWS-managed `alias/aws/rds` key
-  `52b4943e-e9d7-4fae-b71c-c13b0b157b27`; READY rejects any other snapshot KMS key because the
-  least-privilege clone controller intentionally has no customer-key `kms:CreateGrant` authority.
+  `52b4943e-e9d7-4fae-b71c-c13b0b157b27`; READY rejects any other snapshot KMS key. Even for this
+  AWS-managed RDS key, encrypted restore requires the caller to authorize `kms:CreateGrant` for the
+  RDS forward-access session. The clone controller therefore grants only that exact key, only via
+  `rds.ap-southeast-1.amazonaws.com`, and only when `kms:GrantIsForAWSResource=true`; direct user
+  grants, other keys and other services remain denied.
   AgentCore's versioned artifact read now grants both `s3:GetObject` and `s3:GetObjectVersion`.
 - GitHub Production environment variable `LINE_AI_AGENT_RUNTIME` was changed from the stale
   `strands-local` value to exact `agentcore` and read back on 2026-08-12. This config mutation does
@@ -424,15 +430,30 @@ Verification:
   SHA-256 `0d6be741...`, caps the operation at 300 seconds and retries four times for all HTTP/network
   errors before executing Syft. The executable fixture, real Linux Syft scan and complete Production
   security aggregate pass.
+- SBOM durability PR `#51` passed exact-head CI and merged as controller
+  `4cf85f1d17dfc93219ea8323068a994bda724ace`. Fresh UAT run `31627553314` reused reviewed CI,
+  passed all five bounded SBOM/image/tool publication gates, deployed and health-verified the exact
+  immutable UAT release, retired superseded builds and issued Passport V2 for source
+  `3f58ae175a7939451fd2af250b6abe9250f28c88`; the Passport expires on 2026-08-19.
+- Automatic Readiness run `31629222597` bound that Passport and `maintenance_closed`, passed all
+  image signatures, live runtime/prerequisite evidence and the corrected Production catalog. It
+  classified ten exact pending migrations and entered isolated clone rehearsal. The first
+  `RestoreDBInstanceFromDBSnapshot` failed before a clone DB existed with
+  `KMSKeyNotAccessibleFault`. CloudTrail bound the subordinate denied call to
+  `kms:CreateGrant`, `invokedBy=rds.amazonaws.com`, on exact key
+  `52b4943e-e9d7-4fae-b71c-c13b0b157b27`; the identity policy's explicit boundary omitted that
+  action. Cleanup completed its ambiguity window; no clone DB, ECS task/definition or Production
+  mutation was created. Do not rerun Readiness until the exact grant permission is merged, applied
+  through the reviewed temporary non-root ceremony and byte-read back.
 
 Next:
 
-1. Merge the bounded pinned SBOM-download fix only after exact-head CI. Then issue one fresh UAT
-   Passport from that reviewed head; do not rerun failed UAT `31624931285` again and do not reuse
-   `31600821945` for clone or the Production fence.
-2. Keep the already-proved reader state unless the fresh Passport contract explicitly requires a
-   metadata replay. Dispatch one valid Production Readiness from the fresh UAT run; require quick
-   READY or A5 clone with computed zero residual resources, and reject the input-less ghost run.
+1. Merge the exact clone KMS grant policy only after focused/adversarial/full aggregate and exact-head
+   CI. Apply it through the reviewed temporary non-root ceremony, byte-read back the live role, then
+   prove the temporary user bridge, role policy and role all return `NoSuchEntity`.
+2. Reuse UAT `31627553314`; no application/image bytes changed. Dispatch exactly one manual
+   Production Readiness in `maintenance_closed`, require clone PASS and computed zero residual
+   resources, and reject the input-less ghost run.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
 4. Keep customer launch closed until independent legal evidence is complete.
