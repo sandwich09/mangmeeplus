@@ -636,7 +636,7 @@ jobs:
     name: Publish Release Tool
     if: >-
       always() &&
-      github.event_name == 'workflow_call' &&
+      inputs.source_ref != '' &&
       needs.resolve-source.result == 'success' &&
       (inputs.validated_ci_run_id != '' ||
       (needs.typecheck-and-test.result == 'success' &&

@@ -19,6 +19,13 @@ grep -Fq 'bash infra/uat/verify-deploy-readiness.sh' "$workflow"
 test "$(grep -Fc 'bash infra/uat/verify-control-plane-policies.sh' "$workflow")" -eq 2
 grep -Fq 'uat-${{ matrix.purpose }}-${{ needs.resolve-source.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}' "$ci_workflow"
 
+release_tools_job="$(sed -n '/^  publish-release-tools:/,/^  publish-release-tools-manifest:/p' "$ci_workflow")"
+grep -Fq "inputs.source_ref != ''" <<< "$release_tools_job"
+if grep -Fq "github.event_name == 'workflow_call'" <<< "$release_tools_job"; then
+  echo "ERROR: a reusable workflow observes its caller event; release tools must bind the required source_ref input" >&2
+  exit 1
+fi
+
 preflight_line="$(grep -n '^  validate-config:' "$workflow" | cut -d: -f1)"
 build_line="$(grep -n '^  build_and_publish:' "$workflow" | cut -d: -f1)"
 test "$preflight_line" -lt "$build_line"
