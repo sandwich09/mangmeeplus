@@ -102,9 +102,6 @@ jobs:
             "$uat_attempt" "$uat_controller" "$GITHUB_REPOSITORY" "$AWS_ACCOUNT_ID" "$AWS_REGION" \
             "$(date -u +%s)"
           migration_image="$(jq -er '.tools[]|select(.purpose=="migration-tool")|.image' "$passport_root/passport.json")"
-          cosign verify \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$migration_image" >/dev/null
           printf '%s\n' "PASSPORT_ROOT=$passport_root" "SOURCE_SHA=$source_sha" \
             "MIGRATION_IMAGE=$migration_image" "UAT_RUN_ID=$UAT_RUN_ID" \
             "UAT_RUN_ATTEMPT=$uat_attempt" "UAT_CONTROLLER_SHA=$uat_controller" >> "$GITHUB_ENV"
@@ -115,6 +112,14 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
           role-session-name: production-a5-reader-bootstrap-${{ github.run_id }}
+      - name: Authenticate and verify the exact migration tool
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password | docker login --username AWS --password-stdin \
+            "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$MIGRATION_IMAGE" >/dev/null
       - name: Bootstrap reader and self-revoke temporary writer
         env:
           SCHEMA_PROFILE: ${{ inputs.schema_profile }}

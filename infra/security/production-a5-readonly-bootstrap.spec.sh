@@ -120,6 +120,12 @@ grep -Eq 'BootstrapRevoked' "$database_bootstrap"
 grep -Eq 'put-role-policy.*bootstrap_controller_role_name' "$database_bootstrap"
 grep -Fq 'role-to-assume: ${{ env.A5_READER_BOOTSTRAP_ROLE_ARN }}' "$bootstrap_workflow"
 grep -Fq 'assumed-role/watchdog-bms-production-a5-reader-bootstrap/' "$bootstrap_workflow"
+credentials_line="$(grep -nF 'name: Configure one-time A5 reader controller' "$bootstrap_workflow" | cut -d: -f1)"
+login_line="$(grep -nF 'aws ecr get-login-password' "$bootstrap_workflow" | cut -d: -f1)"
+image_verify_line="$(grep -nF -- '--certificate-oidc-issuer https://token.actions.githubusercontent.com "$MIGRATION_IMAGE"' \
+  "$bootstrap_workflow" | cut -d: -f1)"
+[[ "$credentials_line" =~ ^[0-9]+$ && "$login_line" =~ ^[0-9]+$ && "$image_verify_line" =~ ^[0-9]+$ ]]
+(( credentials_line < login_line && login_line < image_verify_line ))
 if grep -Fq 'role-to-assume: ${{ env.A5_READER_ROLE_ARN }}' "$bootstrap_workflow"; then
   echo 'ERROR: the mutating one-time bootstrap assumes the durable read-only controller' >&2
   exit 1

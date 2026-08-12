@@ -99,7 +99,10 @@ Verification:
   or service mutation because the exact UAT deploy-role template did not include
   `watchdog-bms-migration-tool` in its signature-read resources. Add that repository to the existing
   least-privilege `BatchGetImage`/layer-read statement, bind it with a regression assertion, apply
-  and read back the exact policy, then rerun UAT from the same accepted source.
+  and read back the exact policy, then rerun UAT from the same accepted source. The same forward
+  audit found that the one-time reader bootstrap verified the private migration-tool image before
+  assuming its already-scoped ECR-capable role; move only that image verification after role
+  assumption and ECR login, and bind the order in the focused bootstrap spec before rerunning.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
