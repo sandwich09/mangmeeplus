@@ -33,7 +33,6 @@ fi
 
 test "${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID is required}" = "$account_id"
 test "$(aws sts get-caller-identity --query Account --output text)" = "$account_id"
-AWS_ACCOUNT_ID="$account_id" bash "$network_bootstrap" --apply
 
 ensure_role() {
   local name="$1" trust="$2" policy_name="$3" policy_file="$4"
@@ -73,6 +72,27 @@ source_db="$(aws rds describe-db-instances --region "$region" \
   --db-instance-identifier "$source_db_identifier" --query 'DBInstances[0]' --output json)"
 vpc_id="$(jq -er '.DBSubnetGroup.VpcId|select(test("^vpc-[0-9a-f]{8,17}$"))' <<< "$source_db")"
 db_subnet_group="$(jq -er '.DBSubnetGroup.DBSubnetGroupName|select(length>0)' <<< "$source_db")"
+db_parameter_group="$(jq -er '
+  .DBParameterGroups | select(length==1) | .[0]
+  | select(.ParameterApplyStatus=="in-sync") | .DBParameterGroupName
+' <<< "$source_db")"
+option_group="$(jq -er '
+  .OptionGroupMemberships | select(length==1) | .[0]
+  | select(.Status=="in-sync") | .OptionGroupName
+' <<< "$source_db")"
+restore_resources="$(jq -cS --arg target "arn:aws:rds:$region:$account_id:db:watchdog-a5-clone-*" \
+  --arg snapshot "arn:aws:rds:$region:$account_id:snapshot:rds:$source_db_identifier-*" \
+  --arg subnet "arn:aws:rds:$region:$account_id:subgrp:$db_subnet_group" \
+  --arg parameter "arn:aws:rds:$region:$account_id:pg:$db_parameter_group" \
+  --arg option "arn:aws:rds:$region:$account_id:og:$option_group" \
+  '[$target,$snapshot,$subnet,$parameter,$option]|sort' <<< '{}')"
+test "$(jq -cS '
+  [.Statement[] | select(.Sid=="AllowTaggedCloneRestore")][0].Resource | sort
+' "$controller_policy_file")" = "$restore_resources"
+
+# Do not mutate the shared private-network prerequisites until the live source configuration and
+# the reviewed restore policy are proved to describe the same five provider resources.
+AWS_ACCOUNT_ID="$account_id" bash "$network_bootstrap" --apply
 network_parameter() {
   aws ssm get-parameter --region "$region" --name "/watchdog-bms/production/a5-network/$1" \
     --query Parameter.Value --output text
@@ -122,6 +142,8 @@ put_parameter() {
 }
 put_parameter source-db-identifier "$source_db_identifier"
 put_parameter db-subnet-group-name "$db_subnet_group"
+put_parameter db-parameter-group-name "$db_parameter_group"
+put_parameter option-group-name "$option_group"
 put_parameter db-security-group-id "$db_sg"
 put_parameter task-security-group-id "$task_sg"
 put_parameter task-subnet-ids "$subnet_csv"
@@ -150,18 +172,22 @@ jq -e --arg name "$log_group" '
 
 parameters="$(aws ssm get-parameters --region "$region" --names \
   "$parameter_prefix/source-db-identifier" "$parameter_prefix/db-subnet-group-name" \
+  "$parameter_prefix/db-parameter-group-name" "$parameter_prefix/option-group-name" \
   "$parameter_prefix/db-security-group-id" "$parameter_prefix/task-security-group-id" \
   "$parameter_prefix/task-subnet-ids" "$parameter_prefix/db-instance-class" \
   "$parameter_prefix/execution-role-arn" "$parameter_prefix/log-group-name" --output json)"
 jq -e --arg prefix "$parameter_prefix" --arg source "$source_db_identifier" \
-  --arg subnetGroup "$db_subnet_group" --arg dbSg "$db_sg" --arg taskSg "$task_sg" \
+  --arg subnetGroup "$db_subnet_group" --arg parameterGroup "$db_parameter_group" \
+  --arg optionGroup "$option_group" --arg dbSg "$db_sg" --arg taskSg "$task_sg" \
   --arg subnets "$subnet_csv" --arg execution "arn:aws:iam::$account_id:role/$execution_role" \
   --arg logGroup "$log_group" '
-  .InvalidParameters == [] and (.Parameters|length)==8
+  .InvalidParameters == [] and (.Parameters|length)==10
   and (all(.Parameters[]; .Type=="String"))
   and (.Parameters|map({key:.Name,value:.Value})|from_entries) == {
     ($prefix+"/source-db-identifier"):$source,
     ($prefix+"/db-subnet-group-name"):$subnetGroup,
+    ($prefix+"/db-parameter-group-name"):$parameterGroup,
+    ($prefix+"/option-group-name"):$optionGroup,
     ($prefix+"/db-security-group-id"):$dbSg,
     ($prefix+"/task-security-group-id"):$taskSg,
     ($prefix+"/task-subnet-ids"):$subnets,

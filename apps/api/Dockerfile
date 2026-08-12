@@ -57,6 +57,8 @@ RUN apk add --no-cache ca-certificates openssl libc6-compat
 ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem
 COPY --from=build --chown=node:node /app /app
+RUN chmod 1777 /tmp
+VOLUME ["/tmp"]
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision=$GIT_SHA \
       com.watchdog-bms.image-purpose=production-a5-migration-tool

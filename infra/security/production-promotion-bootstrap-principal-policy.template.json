@@ -13,7 +13,9 @@
       "Resource": [
         "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-uat",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
@@ -28,7 +30,9 @@
         "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
-        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+        "arn:aws:iam::311414082667:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS",
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticache.amazonaws.com/AWSServiceRoleForElastiCache"
       ]
     },
     {
@@ -37,7 +41,9 @@
       "Action": "iam:PutRolePolicy",
       "Resource": [
         "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+        "arn:aws:iam::311414082667:role/watchdog-bms-deploy-uat",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
@@ -59,6 +65,7 @@
       "Resource": [
         "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
@@ -96,6 +103,7 @@
       "Effect": "Allow",
       "Action": "iam:UpdateRole",
       "Resource": [
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
@@ -103,7 +111,8 @@
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
-        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly"
       ]
     },
     {
@@ -121,6 +130,15 @@
       ]
     },
     {
+      "Sid": "ReadExactAgentCorePolicySecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:DescribeSecret",
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/ai-gateway-internal-secret-*",
+        "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/watchdog-jwt-secret-*"
+      ]
+    },
+    {
       "Sid": "RepairExactProductionBucketLifecycle",
       "Effect": "Allow",
       "Action": [
@@ -128,6 +146,25 @@
         "s3:PutLifecycleConfiguration"
       ],
       "Resource": "arn:aws:s3:::watchdog-bms-prod-311414082667"
+    },
+    {
+      "Sid": "ReadExactProductionDatabaseConfiguration",
+      "Effect": "Allow",
+      "Action": "rds:DescribeDBInstances",
+      "Resource": "*"
+    },
+    {
+      "Sid": "RepairExactCloneDatabaseConfigurationPointers",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameters",
+        "ssm:PutParameter"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-clone/db-subnet-group-name",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-clone/db-parameter-group-name",
+        "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-clone/option-group-name"
+      ]
     }
   ]
 }

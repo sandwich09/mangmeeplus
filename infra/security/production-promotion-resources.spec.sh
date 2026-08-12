@@ -130,6 +130,15 @@ for required_call in 'secretsmanager describe-secret' 'ssm get-parameters' \
   'logs describe-log-groups' 'kms describe-key' 'sns get-topic-attributes'; do
   grep -F "$required_call" "$collector" >/dev/null
 done
+for required_call in 'rds describe-orderable-db-instance-options' \
+  'rds describe-account-attributes' 'rds describe-db-instances' \
+  'rds describe-db-subnet-groups' 'rds describe-db-parameter-groups' \
+  'rds describe-option-groups' 'rds describe-db-snapshots' \
+  'kms describe-key --region "$region" --key-id alias/aws/rds' \
+  'kms describe-key --region "$region" --key-id alias/aws/secretsmanager' \
+  'bedrock-agentcore-control get-agent-runtime'; do
+  grep -F "$required_call" "$collector" >/dev/null
+done
 if grep -F 'get-secret-value' "$collector" "$secret_validator" >/dev/null; then
   echo 'ERROR: readiness resource inventory reads a secret value' >&2; exit 1
 fi
@@ -141,6 +150,31 @@ jq -e '
     and (.Action|index("ec2:DescribeVpcs"))!=null
     and (.Action|index("s3:GetLifecycleConfiguration"))!=null
     and (.Action|index("s3:GetBucketVersioning"))!=null
-    and (.Action|index("kms:DescribeKey"))!=null)
+    and (.Action|index("kms:DescribeKey"))!=null
+    and (.Action|index("rds:DescribeOrderableDBInstanceOptions"))!=null
+    and (.Action|index("rds:DescribeAccountAttributes"))!=null
+    and (.Action|index("rds:DescribeDBParameterGroups"))!=null
+    and (.Action|index("rds:DescribeDBSnapshots"))!=null
+    and (.Action|index("rds:DescribeDBSubnetGroups"))!=null
+    and (.Action|index("rds:DescribeOptionGroups"))!=null)
+  and any(.Statement[];.Sid=="AllowExactAgentCoreRuntimeRead"
+    and .Action=="bedrock-agentcore:GetAgentRuntime"
+    and .Resource=="arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0")
 ' "$policy" >/dev/null
+for exact in '.Engine=="postgres" and .EngineVersion=="18.3"' \
+  'and .KmsKeyId==$kms' \
+  'snapshot_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27' \
+  'agentcore_runtime_id="${agentcore_runtime_arn##*/}"' \
+  '.metadataConfiguration.requireMMDSV2==true' \
+  '.environmentVariables.DEPLOY_ENVIRONMENT=="production"' \
+  '.roleArn==$role' 'entryPoint==["runtime.js"]' 'versionId|type=="string"'; do
+  grep -F "$exact" "$collector" >/dev/null
+done
+jq -nS -L "$root/infra/security" 'include "evidence-contracts"; e0_h3_inline_policy' \
+  > "$work/h3-inline-policy.json"
+jq -S . "$policy" > "$work/security-policy.json"
+cmp -s "$work/h3-inline-policy.json" "$work/security-policy.json" || {
+  echo 'ERROR: H3 hardcoded security policy differs from the applied template' >&2
+  exit 1
+}
 echo 'production promotion resource prerequisites: PASS'

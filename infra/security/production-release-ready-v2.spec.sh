@@ -40,7 +40,140 @@ jq -cnS --argjson now "$now" '
     transitEncryptionEnabled:true,authTokenEnabled:true,automaticFailover:"enabled",nodeCount:2,
     snapshotRetentionDays:35}}
 ' > "$work/production-runtime.json"
-printf '%s' '{}' > "$work/promotion-prerequisites.json"
+lifecycle_sha="$(jq -cS '{Rules:(.Rules|sort_by(.ID))}' \
+  "$root/infra/object-storage-lifecycle.json" | sha_stream)"
+api=https://wa-11111111111111111111111111111111.ecs.ap-southeast-1.on.aws
+ai=https://wa-22222222222222222222222222222222.ecs.ap-southeast-1.on.aws
+workers=https://wa-33333333333333333333333333333333.ecs.ap-southeast-1.on.aws
+jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
+  --arg workers "$workers" '
+  def names:[
+    "AWSServiceRoleForApplicationAutoScaling_ECSService","AWSServiceRoleForECS",
+    "AWSServiceRoleForElastiCache","AWSServiceRoleForElasticLoadBalancing","AWSServiceRoleForRDS",
+    "ecsInfrastructureRoleForExpressServices","ecsTaskExecutionRole",
+    "watchdog-bms-agentcore-execution-role",
+    "watchdog-bms-deploy-production","watchdog-bms-ecs-express-ai-gateway-role",
+    "watchdog-bms-ecs-express-api-role","watchdog-bms-ecs-express-workers-role",
+    "watchdog-bms-production-a5-apply-execution","watchdog-bms-production-a5-bootstrap-execution",
+    "watchdog-bms-production-a5-clone","watchdog-bms-production-a5-clone-execution",
+    "watchdog-bms-production-a5-reader-bootstrap","watchdog-bms-production-a5-readonly",
+    "watchdog-bms-production-a5-readonly-execution","watchdog-bms-production-security-readonly",
+    "watchdog-bms-release-task-role"];
+  def role_arn($name):
+    if $name=="AWSServiceRoleForApplicationAutoScaling_ECSService" then
+      "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/"+$name
+    elif $name=="AWSServiceRoleForECS" then
+      "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/"+$name
+    elif $name=="AWSServiceRoleForElastiCache" then
+      "arn:aws:iam::311414082667:role/aws-service-role/elasticache.amazonaws.com/"+$name
+    elif $name=="AWSServiceRoleForElasticLoadBalancing" then
+      "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/"+$name
+    elif $name=="AWSServiceRoleForRDS" then
+      "arn:aws:iam::311414082667:role/aws-service-role/rds.amazonaws.com/"+$name
+    else "arn:aws:iam::311414082667:role/"+$name end;
+  def inline($name):
+    if $name=="watchdog-bms-production-a5-bootstrap-execution" then null
+    elif $name=="watchdog-bms-agentcore-execution-role" then "watchdog-bms-agentcore-permissions"
+    elif $name=="watchdog-bms-deploy-production" then "watchdog-bms-production-deploy"
+    elif $name=="ecsTaskExecutionRole" then "watchdog-bms-ecs-execution-secrets"
+    elif $name=="watchdog-bms-release-task-role" then "watchdog-bms-release-task-ecs-read"
+    elif $name=="watchdog-bms-ecs-express-api-role" then "watchdog-bms-prod-api-runtime"
+    elif $name=="watchdog-bms-ecs-express-ai-gateway-role" then "watchdog-bms-ai-gateway-runtime"
+    elif $name=="watchdog-bms-ecs-express-workers-role" then
+      "watchdog-bms-prod-workers-object-version-cleanup"
+    elif $name=="watchdog-bms-production-security-readonly"
+      or ($name|startswith("watchdog-bms-production-a5-")) then $name
+    else null end;
+  def attached($name):
+    if $name=="ecsInfrastructureRoleForExpressServices" then
+      ["arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRoleforExpressGatewayServices"]
+    elif $name=="ecsTaskExecutionRole" then
+      ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"]
+    elif $name=="AWSServiceRoleForApplicationAutoScaling_ECSService" then
+      ["arn:aws:iam::aws:policy/aws-service-role/AWSApplicationAutoscalingECSServicePolicy"]
+    elif $name=="AWSServiceRoleForECS" then
+      ["arn:aws:iam::aws:policy/aws-service-role/AmazonECSServiceRolePolicy"]
+    elif $name=="AWSServiceRoleForElastiCache" then
+      ["arn:aws:iam::aws:policy/aws-service-role/ElastiCacheServiceRolePolicy"]
+    elif $name=="AWSServiceRoleForElasticLoadBalancing" then
+      ["arn:aws:iam::aws:policy/aws-service-role/AWSElasticLoadBalancingServiceRolePolicy"]
+    elif $name=="AWSServiceRoleForRDS" then
+      ["arn:aws:iam::aws:policy/aws-service-role/AmazonRDSServiceRolePolicy"]
+    else [] end;
+  def required_secrets:["ai-actor-delegation-signing-key","ai-gateway-internal-secret",
+    "credential-encryption-key","database-url","line-login-channel-secret",
+    "line-messaging-channel-access-token","line-messaging-channel-secret",
+    "pdpa-pseudonymization-key","pdpa-pseudonymization-previous-keys","redis-url",
+    "watchdog-jwt-secret","worker-internal-token"];
+  def secret($short;$required):
+    ("watchdog-bms/production/"+$short) as $name
+    |{name:$name,arn:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"+$name+"-aaaaaa"),
+      required:$required,hasCurrentVersion:true,kms:{usesDefaultAwsManagedKey:true,keyArn:null,
+        keyManager:"AWS",keyState:"Enabled"}};
+  def parameter($name;$value):
+    {name:("/watchdog-bms/production/"+$name),type:"String",value:$value,version:1};
+  {schemaVersion:1,
+   deployRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
+   github:{allConfigured:true,requiredSecrets:["PRODUCTION_POLICY_READ_TOKEN"],
+     requiredVariableValuesSha256:("1"*64),requiredVariables:["AWS_DEPLOY_ROLE_ARN",
+       "PUBLIC_DOMAIN_URL","WORKFLOW_WEBHOOK_ALLOWED_HOSTS","CLAMAV_HOST","LOG_KMS_KEY_ID",
+       "SECURITY_ALERT_TOPIC_ARN","LINE_LOGIN_CHANNEL_ID","LINE_LIFF_ID",
+       "LINE_MESSAGING_CHANNEL_ID","LINE_AI_AGENT_RUNTIME","AGENTCORE_REGION",
+       "AGENTCORE_RUNTIME_ARN","AGENTCORE_RUNTIME_QUALIFIER"],valuesExposed:false},
+   roles:(names|map(. as $name|{roleName:$name,roleArn:role_arn($name),
+     state:(if $name=="watchdog-bms-production-a5-bootstrap-execution" then "ABSENT"
+       elif $name=="watchdog-bms-production-a5-reader-bootstrap" then "REVOKED" else "READY" end),
+     maxSessionDuration:(if $name=="watchdog-bms-production-a5-bootstrap-execution" then null
+       elif ($name|startswith("watchdog-bms-production-a5-")) or $name=="watchdog-bms-deploy-production"
+       then 7200 else 3600 end),inlinePolicyName:inline($name),
+     trustSha256:(if $name=="watchdog-bms-production-a5-bootstrap-execution" then null else "2"*64 end),
+     policySha256:(if inline($name)==null then null else "3"*64 end),
+     attachedPolicies:attached($name)})),
+   resources:{secrets:((required_secrets|map(secret(.;true)))
+       +[secret("typhoon-ocr-api-key";false)]|sort_by(.name)),
+     typhoon:{enabled:true,configurationSha256:("3"*64)},
+     parameters:([parameter("ai-gateway-internal-url";$ai+"/v1"),
+       parameter("ecs-express-ai-gateway-service-arn";
+         "arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/watchdog-bms-ai-gateway-v2"),
+       parameter("ecs-express-ai-gateway-url";$ai),
+       parameter("ecs-express-api-web-service-arn";
+         "arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/watchdog-bms-api-web-pub"),
+       parameter("ecs-express-api-web-url";$api),
+       parameter("ecs-express-workers-service-arn";
+         "arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/watchdog-bms-workers"),
+       parameter("ecs-express-workers-url";$workers),parameter("erp-core-internal-url";$api+"/v1"),
+       parameter("s3-bucket";"watchdog-bms-prod-311414082667")]|sort_by(.name)),
+     ecs:{clusterArn:"arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod",status:"ACTIVE"},
+     network:{defaultVpcId:"vpc-0123456789abcdef0",
+       publicSubnetIds:["subnet-0123456789abcdef0","subnet-1123456789abcdef0"],
+       securityGroups:[{name:"watchdog-bms-prod-ai-egress-sg",id:"sg-0123456789abcdef0"},
+         {name:"watchdog-bms-prod-app-egress-sg",id:"sg-1123456789abcdef0"}]},
+     s3:{bucket:"watchdog-bms-prod-311414082667",region:"ap-southeast-1",
+       versioning:"Enabled",lifecycleSha256:$lifecycle},
+     monitoring:{logGroups:["/ecs/watchdog-bms-prod-ai-gateway","/ecs/watchdog-bms-prod-api-web",
+       "/ecs/watchdog-bms-prod-workers"],retentionDays:14,
+       kmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/11111111-1111-1111-1111-111111111111",
+       alertTopicArn:"arn:aws:sns:ap-southeast-1:311414082667:watchdog-alerts"},
+     rdsCapacity:{engine:"postgres",engineVersion:"18.3",dbInstanceClass:"db.t4g.medium",
+       orderableOptionCount:1,quotaName:"DBInstances",quotaMax:40,quotaUsed:2,quotaHeadroom:38,
+       sourceDbSubnetGroup:"watchdog-bms-prod-db-subnets",
+       sourceDbParameterGroup:"watchdog-bms-prod-pg18",sourceDbOptionGroup:"default:postgres-18",
+       recentEncryptedAutomatedSnapshotAvailable:true,snapshotMaxAgeSeconds:129600,
+       recentAutomatedSnapshotArn:"arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:watchdog-bms-prod-db-2026-08-12-00-00",
+       recentAutomatedSnapshotCreateTime:"2026-08-12T00:00:00.000+00:00",
+       recentAutomatedSnapshotAgeSeconds:3600,
+       snapshotKmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27",
+       managedSecretKmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"},
+     agentCore:{runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
+       runtimeId:"watchdog_orchestrator-6xOx1tCbz0",runtimeVersion:"14",status:"READY",
+       networkMode:"PUBLIC",artifactRuntime:"NODE_22",serverProtocol:"HTTP",appEnv:"production",
+       deployEnvironment:"production",requireMMDSV2:true,
+       executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
+       gitSha:"eaa9005a1857b3cd582ceda743977496ed955110",
+       artifactBucket:"watchdog-bms-agentcore-artifacts-311414082667",
+       artifactPrefix:("agentcore/watchdog_orchestrator-eaa9005a1857b3cd582ceda743977496ed955110-"+("4"*64)+".zip"),
+       artifactVersionId:"fixture-version-001",entryPoint:["runtime.js"]}}}
+' > "$work/promotion-prerequisites.json"
 jq -cS --arg hash "$(sha_file "$work/promotion-prerequisites.json")" \
   '.promotionPrerequisitesSha256=$hash' "$work/production-runtime.json" \
   > "$work/production-runtime.tmp"
@@ -95,6 +228,26 @@ reject changed-baseline '.productionBaseline.services[0].sourceCommit=("f"*40)'
 reject missing-clone '.migration.status="APPEND_ONLY_PENDING"|.migration.pendingMigrationCount=1'
 reject failed-check '.checks.a5Reader="FAIL"'
 
+reject_prerequisite() {
+  local name="$1" filter="$2" original_hash mutated_hash
+  cp "$work/promotion-prerequisites.json" "$work/promotion-prerequisites.valid.json"
+  jq -cS "$filter" "$work/promotion-prerequisites.valid.json" > "$work/promotion-prerequisites.json"
+  mutated_hash="$(sha_file "$work/promotion-prerequisites.json")"
+  jq -cS --arg hash "$mutated_hash" '.promotionPrerequisitesSha256=$hash' \
+    "$work/production-runtime.json" > "$work/production-runtime.mutated.json"
+  mv "$work/production-runtime.mutated.json" "$work/production-runtime.json"
+  rewrite '.runtimeBaseline.sha256=$runtime' "$work/$name-ready.json" \
+    --arg runtime "$(sha_file "$work/production-runtime.json")"
+  if bash "$validator" "$work/$name-ready.json" "$work" "$work/passport.json" "$source" \
+      8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null 2>&1; then
+    echo "ERROR: READY validator accepted $name prerequisite" >&2; exit 1
+  fi
+  mv "$work/promotion-prerequisites.valid.json" "$work/promotion-prerequisites.json"
+  original_hash="$(sha_file "$work/promotion-prerequisites.json")"
+  jq -cS --arg hash "$original_hash" '.promotionPrerequisitesSha256=$hash' \
+    "$work/production-runtime.json" > "$work/production-runtime.restored.json"
+  mv "$work/production-runtime.restored.json" "$work/production-runtime.json"
+}
 rewrite() {
   local filter="$1" output="$2" body="$work/rewrite-body.json" digest
   shift 2
@@ -102,6 +255,54 @@ rewrite() {
   digest="$(jq -cjS . "$body"|sha_stream)"
   jq -cS --arg hash "$digest" '.+{contentSha256:$hash}' "$body" > "$output"
 }
+reject_prerequisite missing-rds-capacity 'del(.resources.rdsCapacity)'
+reject_prerequisite no-rds-headroom '.resources.rdsCapacity.quotaHeadroom=0'
+reject_prerequisite string-rds-count '.resources.rdsCapacity.orderableOptionCount="1"'
+reject_prerequisite inconsistent-rds-arithmetic '.resources.rdsCapacity.quotaHeadroom=37'
+reject_prerequisite wrong-source-db-version '.resources.rdsCapacity.engineVersion="18.2"'
+reject_prerequisite stale-snapshot '.resources.rdsCapacity.recentAutomatedSnapshotAgeSeconds=129601'
+reject_prerequisite wrong-snapshot-kms '.resources.rdsCapacity.snapshotKmsKeyArn|="wrong"'
+reject_prerequisite wrong-secret-kms '.resources.rdsCapacity.managedSecretKmsKeyArn|="wrong"'
+reject_prerequisite stale-agentcore '.resources.agentCore.status="UPDATING"'
+reject_prerequisite wrong-agentcore-environment '.resources.agentCore.deployEnvironment="uat"'
+reject_prerequisite agentcore-mmds-disabled '.resources.agentCore.requireMMDSV2=false'
+reject_prerequisite wrong-agentcore-role '.resources.agentCore.executionRoleArn|="wrong"'
+reject_prerequisite wrong-agentcore-source '.resources.agentCore.gitSha=("f"*40)'
+reject_prerequisite mutable-agentcore-artifact '.resources.agentCore.artifactVersionId=""'
+reject_prerequisite wrong-agentcore-entry '.resources.agentCore.entryPoint=["other.js"]'
+reject_prerequisite typhoon-secret-while-disabled '.resources.typhoon={enabled:false,configurationSha256:null}'
+reject_prerequisite typhoon-secret-missing-while-enabled \
+  '.resources.secrets|=map(select(.name!="watchdog-bms/production/typhoon-ocr-api-key"))'
+reject_prerequisite wrong-parameter-value \
+  '(.resources.parameters[]|select(.name|endswith("s3-bucket"))).value="wrong"'
+reject_prerequisite wrong-security-group '.resources.network.securityGroups[0].name="wrong"'
+reject_prerequisite wrong-lifecycle '.resources.s3.lifecycleSha256=("f"*64)'
+reject_prerequisite wrong-role-arn '.roles[0].roleArn="arn:aws:iam::311414082667:role/wrong"'
+reject_prerequisite hidden-role-boundary \
+  '(.roles[]|select(.roleName=="watchdog-bms-agentcore-execution-role")).permissionsBoundary
+    ="arn:aws:iam::aws:policy/ReadOnlyAccess"'
+reject_prerequisite missing-rds-service-role \
+  '.roles|=map(select(.roleName!="AWSServiceRoleForRDS"))'
+
+cp "$work/promotion-prerequisites.json" "$work/promotion-prerequisites.typhoon-enabled.json"
+jq -cS '.resources.typhoon={enabled:false,configurationSha256:null}
+  |.resources.secrets|=map(select(.name!="watchdog-bms/production/typhoon-ocr-api-key"))' \
+  "$work/promotion-prerequisites.json" > "$work/promotion-prerequisites.typhoon-disabled.json"
+mv "$work/promotion-prerequisites.typhoon-disabled.json" "$work/promotion-prerequisites.json"
+jq -cS --arg hash "$(sha_file "$work/promotion-prerequisites.json")" \
+  '.promotionPrerequisitesSha256=$hash' "$work/production-runtime.json" \
+  > "$work/production-runtime.typhoon-disabled.json"
+mv "$work/production-runtime.typhoon-disabled.json" "$work/production-runtime.json"
+rewrite '.runtimeBaseline.sha256=$runtime' "$work/typhoon-disabled-ready.json" \
+  --arg runtime "$(sha_file "$work/production-runtime.json")"
+bash "$validator" "$work/typhoon-disabled-ready.json" "$work" "$work/passport.json" "$source" \
+  8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null
+mv "$work/promotion-prerequisites.typhoon-enabled.json" "$work/promotion-prerequisites.json"
+jq -cS --arg hash "$(sha_file "$work/promotion-prerequisites.json")" \
+  '.promotionPrerequisitesSha256=$hash' "$work/production-runtime.json" \
+  > "$work/production-runtime.typhoon-restored.json"
+mv "$work/production-runtime.typhoon-restored.json" "$work/production-runtime.json"
+
 cp "$work/production-health.json" "$work/production-health-closed.json"
 jq -cS '(.services[].rawEvidence.describeExpressGatewayService.raw.second.service
   .activeConfigurations[0].primaryContainer.environment[]

@@ -283,6 +283,8 @@ jobs:
           parameters=(
             /watchdog-bms/production/a5-clone/source-db-identifier
             /watchdog-bms/production/a5-clone/db-subnet-group-name
+            /watchdog-bms/production/a5-clone/db-parameter-group-name
+            /watchdog-bms/production/a5-clone/option-group-name
             /watchdog-bms/production/a5-clone/db-security-group-id
             /watchdog-bms/production/a5-clone/task-security-group-id
             /watchdog-bms/production/a5-clone/task-subnet-ids
@@ -290,7 +292,7 @@ jobs:
             /watchdog-bms/production/a5-clone/execution-role-arn
             /watchdog-bms/production/a5-clone/log-group-name
           )
-          test "${#parameters[@]}" -eq 8
+          test "${#parameters[@]}" -eq 10
           for name in "${parameters[@]}"; do
             aws ssm get-parameter --name "$name" --output json \
               | jq -e --arg name "$name" '

@@ -37,7 +37,8 @@
       "Effect": "Allow",
       "Action": [
         "ecs:RegisterTaskDefinition",
-        "ecs:DescribeTaskDefinition"
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions"
       ],
       "Resource": "*"
     },

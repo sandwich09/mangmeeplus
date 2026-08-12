@@ -19,6 +19,8 @@ for required in watchdog-bms-production-security-readonly watchdog-bms-prod-db \
   watchdog-bms-production-a5-apply-execution \
   watchdog-bms-production-a5-clone \
   watchdog-bms-production-a5-clone-execution \
+  watchdog-bms-agentcore-execution-role watchdog-bms-agentcore-permissions \
+  agentcore-execution-role-trust.template.json agentcore-execution-role-policy.json \
   production-a5-reader-bootstrap-revoked-policy.template.json NoSuchEntity require_absent_role \
   collect-production-promotion-resources.sh production-ecs-execution-policy.template.json \
   production-release-task-policy.template.json production-api-task-policy.template.json \
@@ -27,11 +29,14 @@ for required in watchdog-bms-production-security-readonly watchdog-bms-prod-db \
   watchdog-bms-ecs-express-api-role watchdog-bms-ecs-express-ai-gateway-role \
   AWSServiceRoleForECS AWSServiceRoleForElasticLoadBalancing \
   AWSServiceRoleForApplicationAutoScaling_ECSService \
+  AWSServiceRoleForRDS AWSServiceRoleForElastiCache \
   requiredVariableValuesSha256 promotion-environment.json \
   PRODUCTION_POLICY_READ_TOKEN_CONFIGURED PUBLIC_DOMAIN_URL WORKFLOW_WEBHOOK_ALLOWED_HOSTS \
   LINE_AI_AGENT_RUNTIME AGENTCORE_REGION AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_QUALIFIER; do
   grep -F -- "$required" "$script" "$environment_validator" "$resource_collector" >/dev/null
 done
+grep -F 'record_exact_role watchdog-bms-agentcore-execution-role' "$script" >/dev/null
+grep -F 'has("PermissionsBoundary")|not' "$script" >/dev/null
 for forbidden in get-secret-value put-role-policy modify-db-instance delete-db-instance; do
   if grep -F -- "$forbidden" "$script" >/dev/null; then
     echo "ERROR: runtime readiness collector contains mutation/secret path: $forbidden" >&2; exit 1
@@ -45,8 +50,13 @@ if grep -F 'record_exact_role watchdog-bms-production-a5-bootstrap-execution' "$
   echo 'ERROR: readiness re-armed the one-time reader bootstrap execution role' >&2; exit 1
 fi
 revoked="$root/infra/security/production-a5-reader-bootstrap-revoked-policy.template.json"
-jq -e '.Statement==[{Sid:"BootstrapRevoked",Effect:"Deny",Action:"*",Resource:"*"}]' \
-  "$revoked" >/dev/null
+jq -e '
+  any(.Statement[]; .Sid=="DenyOutsideRevokedBootstrapMetadataRead" and .Effect=="Deny")
+  and ([.Statement[]|select(.Effect=="Allow")|.Action
+    |if type=="array" then .[] else . end
+    |select(test("^(ecs:(RunTask|StopTask|RegisterTaskDefinition|DeregisterTaskDefinition)|iam:(Put|Delete|Create|Update|Attach|Detach)|secretsmanager:(Create|Delete|Put|Update|Restore|Tag|Untag))"))]
+    |length)==0
+' "$revoked" >/dev/null
 if jq -e --slurpfile expected "$revoked" '.==$expected[0]' \
     "$root/infra/security/production-a5-reader-bootstrap-policy.template.json" >/dev/null; then
   echo 'ERROR: active reader bootstrap policy was accepted as revoked' >&2; exit 1
@@ -56,4 +66,6 @@ jq -e . "$root/infra/security/production-security-readonly-policy.template.json"
   "$root/infra/prod-ecs-express/github-deploy-role-policy.template.json" \
   "$root/infra/prod-ecs-express/github-deploy-role-trust.template.json" \
   "$root/infra/security/object-version-cleanup-worker-policy.template.json" "$revoked" >/dev/null
+jq -e . "$root/infra/ai-gateway/agentcore-execution-role-trust.template.json" \
+  "$root/infra/ai-gateway/agentcore-execution-role-policy.json" >/dev/null
 echo 'production runtime readiness V2 collector: PASS'

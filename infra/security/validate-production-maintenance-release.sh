@@ -39,7 +39,12 @@ expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc
 expected_deploy=b8c8ac1a4375c3cdc888ff5e8647d1d2cab7a751a2c3c0d7b09d11f83d4ca639
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=c1f2675eedcd0a171f8a43b5dd3c9ab6ffcc09bf7a46e23cb0a75f6549f29ab5
-expected_release_task=3b2ae3cab1a49efe9d8f792ff66585ebeac1b4ea2da38d033c2bee99f888d987
+expected_release_task=a012f0bc32c8dd29191d4c802a79376b7629116eb6a8d096adc2b62199ed964c
+expected_register_task=c3147096188d1afbc395db8bd4bed2e79ac534bac87cf2b76aac502764f54b77
+expected_run_task=4cce82a00a3200f19503b26bb0689dfe8cbb927bbca408f6f33909c0d69e3cb5
+expected_cleanup_one_shot_task=78da71bf5e19865352bc234d96712f7dfc5e43a6fee98af27138f935199cca70
+expected_active_release_tasks=bf86c88aeb1dbcf115f355ee96ae37d766ef17780dafb2e470b494f54e02780c
+expected_active_launch_builds=8f4d3e1191f051b85106fcc7250a9887469a53d31762cffe14607e4252356f05
 expected_fast_mode=606d424a84a400ea8f9640d74807670387616b3d4a045f9ff2c619535dfb33d2
 expected_migration_catalog=39800eab86dd4a77651059b463002b3566c9be5c3f76ada08e9162439fc08f0a
 expected_release_task_network_failure=82f37664dc2b0a19d1a5951247622004cb6fe6a6d2f951c3154942fa4c87d918
@@ -110,6 +115,11 @@ if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"
+  check_file infra/prod-ecs-express/register-task-definition-with-retry.sh "$expected_register_task"
+  check_file infra/prod-ecs-express/run-task-idempotently.sh "$expected_run_task"
+  check_file infra/prod-ecs-express/cleanup-one-shot-task.sh "$expected_cleanup_one_shot_task"
+  check_file infra/prod-ecs-express/active-release-tasks.sh "$expected_active_release_tasks"
+  check_file infra/prod-ecs-express/active-launch-builds.sh "$expected_active_launch_builds"
   check_file infra/docker/resolve-production-fast-mode.sh "$expected_fast_mode"
   check_file apps/api/prisma/verify-applied-migration-catalog.ts "$expected_migration_catalog"
   check_file infra/prod-ecs-express/release-task-network-failure.jq "$expected_release_task_network_failure"

@@ -1,11 +1,62 @@
 # Agent Memory: production A5 v2
 
-Status: Local implementation complete; commit/PR review and live proof pending
+Status: Local implementation/adversarial aggregate and live IAM/S3 prerequisite ceremony PASS;
+provider canary, fresh UAT Passport, reader bootstrap, READY and closed promotion remain
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
 
 Decisions:
+
+- 2026-08-12 provider-readiness hardening: the one-time non-root ceremony exact-applies and
+  bounded-readbacks the UAT deploy policy as well as 16 Production durable roles (17 durable roles
+  total), with 12×5s propagation tolerance. READY binds exact PG 18.3 source/snapshot/KMS and the
+  approved AgentCore source `eaa9005a1857b3cd582ceda743977496ed955110` to a versioned,
+  content-addressed S3 artifact, exact execution role/no boundary, MMDSv2 and Production identity.
+
+## Owner authorization and cost boundary
+
+- เมื่อ 12 สิงหาคม 2569 ผู้ใช้อนุมัติให้ดำเนินงานที่จำเป็นทั้งหมดภายใน repository และ deployment
+  control plane เพื่อทำให้เส้นทาง UAT → Production เสถียรในระยะยาว รวมถึงการแก้ source, controller,
+  IAM/runtime contracts, tests, docs และ prerequisite automation ที่อยู่ในขอบเขตระบบนี้
+- การอนุมัตินี้ไม่ใช่สิทธิ์ให้ใช้ GitHub Actions เป็นเครื่องมือค้นหา error เนื่องจากทุก run มีต้นทุน
+  ห้าม dispatch, rerun หรือใช้ CI/deploy workflow จนกว่า proof matrix, local/offline aggregate,
+  live read-only exact readback และ non-mutating provider canary ที่จำเป็นจะผ่านครบและมีการ review
+  แบบ adversarial แล้ว
+- หลังหลักฐานครบ ให้ใช้ GitHub Actions เท่าที่จำเป็นตามเส้นทางเดียวเท่านั้น:
+  reviewed PR/CI หนึ่งรอบ → UAT หนึ่งรอบ → Passport/Readiness → Production promotion ห้ามแตกเป็น
+  blocker-fix runs หรือ retry โดยไม่มี root-cause evidence ใหม่
+
+## Permanent execution contract
+
+- ก่อนเสนอหรือรันแผนใด agent ต้องรู้เส้นทางตั้งแต่ต้นจนจบ ไม่ใช่เฉพาะขั้นถัดไป ทุกขั้นต้องระบุ
+  caller จริง, command/API จริง, input/output, state mutation, failure/cleanup path และขั้นตอนถัดไปจนถึง
+  terminal state ที่ผู้ใช้ต้องการ
+- ทุก AWS/GitHub/database/filesystem boundary ต้องมี permission matrix ที่ผูก exact
+  `principal + action + resource + condition` เข้ากับ caller ใน repository และต้องพิสูจน์ว่า live
+  policy/trust/config ตรงกับ matrix ก่อนรันจริง การมี action อยู่ใน template อย่างเดียวไม่ใช่หลักฐาน
+  ว่า API รองรับ resource scope นั้นหรือ live authority ใช้งานได้
+- สิทธิ์ในที่นี้รวม runtime semantics ด้วย: container UID/GID, volume ownership/mode, writable paths,
+  read-only root filesystem, container dependency, secret/KMS injection, endpoint/network reachability,
+  database role/transaction privilege, credential duration, provider response shape และ cleanup authority
+  ต้องถูกพิสูจน์ ไม่ใช่ตรวจเฉพาะ IAM JSON
+- หลักฐานต้องแบ่งเป็น 4 ชั้น: static contract, focused/adversarial test, live read-only exact readback และ
+  provider canary ที่ไม่มี secret/DB/customer-data mutationสำหรับสิ่งที่ read-only พิสูจน์ไม่ได้
+  ช่องใดเป็น `UNKNOWN`, `ASSUMED`, stale หรือพิสูจน์ได้แค่จาก task เก่า ให้สถานะทั้ง flow เป็น
+  `BLOCKED`; ห้าม dispatch เพื่อใช้ error จริงเป็นตัวค้นหา prerequisite ถัดไป
+- ก่อน workflow จริงต้องทำ dry traversal ของทุกขั้นตามลำดับ รวมสิทธิ์/เครื่องมือ/TTL/session budget,
+  artifact expiry, main/controller equality, retry/idempotency และ cleanup residual ทุกจุด แล้ว review
+  ผลรวมแบบ adversarial อย่างน้อยหนึ่งรอบ ต้องตอบได้ล่วงหน้าว่าแต่ละขั้นจะทำอะไร ใช้อะไร ใช้เวลาประมาณ
+  เท่าใด สำเร็จพิสูจน์จากอะไร และล้มแล้วกลับสู่ safe state อย่างไร
+- ห้ามแก้แบบเฉพาะ error ล่าสุดแล้ว retry หาก root cause หรือ contract shape ซ้ำใน sibling path ต้องกวาด
+  ทุก caller และแก้จุดร่วมใน PR เดียว ก่อน retry ต้อง rerun proof matrix ทั้งหมด ไม่ใช่เฉพาะ focused test
+  ของไฟล์ที่เพิ่งแก้
+- เป้าหมายก่อน execute คือไม่มี deterministic/configuration/permission/runtime error ที่ควบคุมได้
+  เหลืออยู่ Provider outage ที่พิสูจน์ล่วงหน้าไม่ได้ต้องมี bounded retry, idempotency, credential reserve
+  และ deterministic cleanup; ห้ามเรียก flow ว่า ready ถ้า failure นั้นอาจทิ้ง mutation หรือ residue
+  โดยไม่มี recovery ที่พิสูจน์แล้ว
+- การอนุมัติจากผู้ใช้ให้เดินต่อไม่ได้ลด contract นี้ Agent ต้องหยุดเองเมื่อหลักฐานไม่ครบ และรายงานช่อง
+  ที่ขาดก่อนขออนุมัติหรือทำ cloud mutation
 
 - UAT remains the only place that runs source CI and builds/signs application release images.
 - A resolved-all UAT emits one signed passport containing runtime, release-task and migration-tool
@@ -28,8 +79,11 @@ Decisions:
   reports the requested promotion as failed instead of silently succeeding/opening.
 - Technical closed deployment and customer-live legal approval remain separate. Keep one explicit
   owner promotion action after READY.
-- One-time A5 bootstrap authority is administrator-created and self-revokes after any attempt. The
-  workflow cannot re-arm itself; normal readiness uses the durable read-only role afterward.
+- One-time A5 bootstrap authority is administrator-created and self-revokes after any attempt to a
+  metadata-only recovery policy. That policy cannot mutate IAM, Secrets Manager, ECS, or the
+  database; it exists only so an interrupted post-success workflow can prove the sole AWSCURRENT
+  reader secret, absent execution role, zero ECS residue, and exact controller state without another
+  administrator ceremony. Normal readiness uses the durable read-only role afterward.
 - Release-tool ECR tags include workflow run and attempt, so rerunning the same source cannot collide
   with the immutable migration-tool repository; every downstream contract still binds the digest.
 - Infra contract specs use runner-standard `grep -E`, not workstation-only `rg`; the consolidated
@@ -49,6 +103,8 @@ Open questions:
 - Independent approval of the V2 trust boundaries and one-click-after-READY promotion boundary.
 - Exact first-green timings for UAT Passport, live quick readiness and A5 restore/rehearse/cleanup.
 - Counsel/privacy-owner evidence before `PROMOTED_LIVE`; current legal manifest remains blocked.
+- Provider-only proof: DB instance-class orderability/quota, exact policy-token API ability,
+  AgentCore/ClamAV active runtime and forced-failure zero-residual canary.
 
 Artifacts:
 
@@ -149,8 +205,20 @@ Verification:
   not yet expose `PRODUCTION_SERVING_MODE`. Remove this exact allowlist after the first successful
   closed rollout; every subsequent revision must carry and satisfy the explicit serving-mode
   contract.
-- No workflow dispatch, UAT/Production deploy, PR merge or cloud mutation was performed in this
-  implementation turn.
+- No workflow dispatch, UAT/Production deploy or PR merge was performed in this implementation
+  turn. After the complete local/adversarial proof passed, the owner-approved prerequisite
+  ceremony applied and exact-read back the reviewed durable IAM/SSM/S3 contracts under the
+  temporary non-root bootstrap role; it did not run application code or a deployment workflow.
+- Reader-bootstrap replay is now a closed, pre-image state machine: the controller's revoked
+  policy permits only exact secret/IAM/ECS metadata reads and explicitly denies everything else.
+  A rerun classifies the controller/secret/execution tuple before git, ECR or cosign. Only an exact
+  completed tuple may prove the tagged reader secret and sole AWSCURRENT version, execution-role
+  NoSuchEntity, exact controller role/policy, and three stable-empty task/task-definition reads,
+  then emit EXISTING without mutation. The FULL-policy completed tuple performs that same pure
+  readback before the final self-revoke; every unsafe tuple fails before image access. Any
+  incomplete normal-path attempt, including one that started with a pre-existing reader secret,
+  must delete and stable-prove that secret absent before removing execution/controller authority;
+  an unreconciled ambiguous or denied deletion preserves authority and fails closed.
 - Live read-only inventory on 2026-08-12 proved all runtime secret metadata (including Typhoon),
   nine SSM pointers, cluster/network, RDS/Redis, logs/KMS/SNS and service-linked roles. Known drift
   is finite: deploy/security/workers/A5/API/AI IAM contracts need the reviewed prerequisite
@@ -161,18 +229,101 @@ Verification:
   shared-deadline release-prepare tests directly, then finishes with
   `production image security scanner: pass`. Changed shell/JSON/YAML syntax and `git diff --check`
   also pass.
+- Reader-bootstrap run `31580117628` proved why this permanent contract is required. IAM/ECR/network
+  checks passed, but the exact Fargate task failed before application code because the bind-mounted
+  `/tmp` was `root:root 0755` while `tsx` ran as non-root `node` and attempted to create
+  `/tmp/tsx-1000`. Cleanup then left the task definition ACTIVE because
+  `ecs:DeregisterTaskDefinition` does not support resource-level scoping although the policy used a
+  task-definition ARN. These were deterministic provider/runtime contracts that should have been
+  proved before dispatch. No retry is allowed until the proof matrix covers this shape and every
+  sibling one-shot task, plus cleanup, Readiness and Production end to end.
+- The converged no-Action audit then found the complete deterministic chain that must be closed in
+  one stabilization change: migration-tool needs Dockerfile `chmod 1777 /tmp` plus matching
+  `VOLUME ["/tmp"]`; six child calls across clone/readiness/apply must use image-native Prisma/TSX
+  binaries instead of absent runtime `pnpm`; bootstrap must list/deregister exact-prefix task
+  definitions at `Resource:"*"` before self-revoke; clone restore must authorize exact subnet,
+  parameter and option groups; clone `ListTasks` must use `Resource:"*"` with exact cluster
+  condition; Production `LINE_AI_AGENT_RUNTIME` must be `agentcore`. The old Passport pins the
+  broken image and is forbidden after these source changes.
+- Provider-readiness hardening now binds the independently deployed AgentCore runtime to approved
+  source `eaa9005a1857b3cd582ceda743977496ed955110`, its exact versioned S3 artifact, runtime role,
+  exact trust/inline policy with no permission boundary or attachment, production deployment
+  identity, MMDSv2, protocol and entry point. The signed prerequisite also exact-validates the
+  normalized secret/SSM/network/S3/monitoring shapes, optional Typhoon 12/13-secret coupling,
+  PostgreSQL 18.3 source/groups/orderability, integer quota arithmetic, a recent encrypted automated
+  snapshot and the reviewed AWS-managed Secrets Manager KMS key.
+- The consolidated temporary-authority wrapper exact-proves the role and user bridge before use,
+  bounds IAM propagation retries, preserves the helper failure status, and unconditionally retires
+  bridge → role policy → role with three `NoSuchEntity` proofs after every attempted mutation,
+  including accepted-but-lost provider responses. A losing concurrent create-role ceremony does not
+  delete the winner's authority. Its same non-root session now applies and exact-reads the UAT deploy
+  policy containing `ecs:ListTaskDefinitions` before any new UAT build.
+- Promotion baseline comparison no longer treats the entire live prerequisite hash as stable:
+  quota/snapshot observations may legitimately change between READY and promotion. The current
+  prerequisite artifact is still exact-validated and capacity/headroom must remain safe, while
+  immutable runtime/IAM/RDS/Redis baselines remain drift-sensitive.
+- Focused offline proof passes for promotion resources, runtime readiness, READY positive and
+  adversarial resource shapes, baseline comparison, AgentCore trust boundary, and temporary IAM
+  ceremony. No cloud mutation or GitHub Action was run for this proof.
+- The final local aggregate passes after the runtime root-cause fixes: the linux/amd64 migration
+  image carries `/tmp` as `root:root 1777` through the matching OCI volume, runs direct Prisma/TSX
+  offline as uid 1000 with a read-only root filesystem, and has no runtime `pnpm` dependency.
+  Bootstrap, reader, catalog, clone and apply keep their exact one-container task shape.
+- Shared ECS one-shot control now closes both provider ambiguity classes. Registration and RunTask
+  reuse one stable request identity after accepted-but-lost responses; cleanup discovers exact
+  late tasks/definitions, stops tasks before deregistration, proves stable absence, rejects foreign
+  identity and reports collisions after cleaning owned residue. Release preflight task definitions
+  additionally bind mode, source, logical run/operation and the complete canonical network, so a
+  new run/attempt/network cannot consume a stale STOPPED preflight while a retry of the same request
+  remains idempotent.
+- Reader bootstrap classifies controller policy, controller trust, reader-secret state and bootstrap
+  execution role trust/inline policy/attachments before git/ECR. Exact completed state is replayable
+  under the metadata-only recovery policy without mutation; every unsafe tuple fails before image
+  access and every incomplete attempt preserves authority unless cleanup is independently proved.
+- Final frozen maintenance byte contract covers 44 controller/runtime files and syncs to validator
+  SHA-256 `1a6beafc704ad418ee0dcc301f74fa82076b3631ce8aa56d40fcb9cadfc09b6d`.
+  `infra/docker/production-image-security.spec.sh`, focused failure fixtures, changed shell/JSON/YAML
+  syntax, exact-key jq negatives and `git diff --check` all pass after that sync. No GitHub Action or
+  cloud mutation was used to obtain these results.
+- Provider read-only proof binds the latest eligible automated Production snapshot to enabled
+  AWS-managed `alias/aws/rds` key
+  `52b4943e-e9d7-4fae-b71c-c13b0b157b27`; READY rejects any other snapshot KMS key because the
+  least-privilege clone controller intentionally has no customer-key `kms:CreateGrant` authority.
+  AgentCore's versioned artifact read now grants both `s3:GetObject` and `s3:GetObjectVersion`.
+- GitHub Production environment variable `LINE_AI_AGENT_RUNTIME` was changed from the stale
+  `strands-local` value to exact `agentcore` and read back on 2026-08-12. This config mutation does
+  not dispatch a workflow or alter the currently running service; the next candidate still needs
+  normal READY/runtime verification.
+- The owner-approved prerequisite ceremony completed on 2026-08-12 with the exact root fallback
+  boundary: root created and retired only the temporary role/bridge while the assumed non-root
+  role applied and exact-read back all 17 durable IAM roles, the three clone SSM group pointers and
+  the reviewed Production S3 lifecycle. Independent post-ceremony reads returned `NoSuchEntity`
+  for the user bridge, temporary role policy and temporary role; the Production deploy role read
+  back `MaxSessionDuration=7200`, clone pointers read back
+  `watchdog-bms-prod-db-subnets` / `watchdog-bms-prod-pg18` / `default:postgres-18`, and both S3
+  lifecycle rules read back enabled with one-day noncurrent-version expiration. No GitHub Action
+  was dispatched.
+- A separate post-ceremony read-only provider traversal passed without reading secret values:
+  PostgreSQL 18.3 `db.t4g.medium` returned four orderable encrypted Multi-AZ-capable options, the
+  DB-instance quota was 2/40 (38 free), the recent encrypted automated snapshot used the exact
+  enabled AWS-managed `alias/aws/rds` key, AgentCore was `READY` version 14 with Production
+  identity/MMDSv2/versioned artifact, S3 versioning/lifecycle matched, and all 13 secret metadata
+  plus nine runtime SSM pointers validated. The ceremony scripts' no-argument “dry run” is only a
+  static syntax/template check; it must never be represented as live permission/provider proof.
 
 Next:
 
-1. Open one reviewed PR, pass required CI and obtain the independent approval required by main.
-2. Have an approved non-root platform administrator create the temporary boundary, run the
-   consolidated IAM/S3 prerequisite helper and retire that
-   authority. The owner must explicitly approve the lifecycle effect on stale noncurrent
-   `pending/` versions.
-3. Run the one-time reader bootstrap from UAT run `31559662937` with `F1_CURRENT`; require the
-   bootstrap execution role to be absent and its controller to be deny-all afterwards.
-4. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5
+1. Open one reviewed PR for all root-cause fixes, pass required CI once and obtain the independent
+   approval required by main.
+2. Run the remaining non-mutating provider/read-only canaries and exact readbacks; require every
+   live prerequisite row to be PASS and deterministic cleanup to report zero residue.
+3. After the reviewed source is on main and live prerequisites pass, run one fresh UAT all
+   and mint a new Passport; never reuse run `31559662937` for the changed image.
+4. Run the one-time reader bootstrap from the fresh Passport with `F1_CURRENT`; require zero active
+   bootstrap task definitions, bootstrap execution role absent and controller in the exact
+   metadata-only revoked recovery policy afterwards.
+5. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5
    clone with computed zero residual resources.
-5. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
+6. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
-5. Keep customer launch closed until independent legal evidence is complete.
+7. Keep customer launch closed until independent legal evidence is complete.

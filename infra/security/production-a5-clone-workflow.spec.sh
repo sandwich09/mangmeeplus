@@ -91,6 +91,9 @@ for required in \
   'validate-uat-deployment-acceptance.sh' \
   'pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma' \
   'aws ssm get-parameter --name "$name" --output json' \
+  '/watchdog-bms/production/a5-clone/db-parameter-group-name' \
+  '/watchdog-bms/production/a5-clone/option-group-name' \
+  'test "${#parameters[@]}" -eq 10' \
   'target: migration-tool' \
   'provenance: mode=max' \
   'sbom: true' \

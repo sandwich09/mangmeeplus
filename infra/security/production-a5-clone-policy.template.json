@@ -37,15 +37,46 @@
     {
       "Sid": "AllowTaggedCloneRestore",
       "Effect": "Allow",
-      "Action": ["rds:AddTagsToResource", "rds:RestoreDBInstanceFromDBSnapshot"],
+      "Action": "rds:RestoreDBInstanceFromDBSnapshot",
       "Resource": [
         "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
-        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:*"
+        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:watchdog-bms-prod-db-*",
+        "arn:aws:rds:ap-southeast-1:311414082667:subgrp:watchdog-bms-prod-db-subnets",
+        "arn:aws:rds:ap-southeast-1:311414082667:pg:watchdog-bms-prod-pg18",
+        "arn:aws:rds:ap-southeast-1:311414082667:og:default:postgres-18"
       ],
       "Condition": {
         "StringEquals": {"aws:RequestTag/purpose": "production-a5-clone"},
         "ForAllValues:StringEquals": {
           "aws:TagKeys": ["parentRunAttempt", "parentRunId", "producerRunAttempt", "producerRunId", "purpose", "sourceCommit"]
+        },
+        "Null": {
+          "aws:RequestTag/parentRunAttempt": "false",
+          "aws:RequestTag/parentRunId": "false",
+          "aws:RequestTag/producerRunAttempt": "false",
+          "aws:RequestTag/producerRunId": "false",
+          "aws:RequestTag/purpose": "false",
+          "aws:RequestTag/sourceCommit": "false"
+        }
+      }
+    },
+    {
+      "Sid": "AllowTaggedCloneInitialTags",
+      "Effect": "Allow",
+      "Action": "rds:AddTagsToResource",
+      "Resource": "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+      "Condition": {
+        "StringEquals": {"aws:RequestTag/purpose": "production-a5-clone"},
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["parentRunAttempt", "parentRunId", "producerRunAttempt", "producerRunId", "purpose", "sourceCommit"]
+        },
+        "Null": {
+          "aws:RequestTag/parentRunAttempt": "false",
+          "aws:RequestTag/parentRunId": "false",
+          "aws:RequestTag/producerRunAttempt": "false",
+          "aws:RequestTag/producerRunId": "false",
+          "aws:RequestTag/purpose": "false",
+          "aws:RequestTag/sourceCommit": "false"
         }
       }
     },
@@ -102,14 +133,31 @@
       "Resource": "*"
     },
     {
+      "Sid": "AllowExactCloneTaskList",
+      "Effect": "Allow",
+      "Action": "ecs:ListTasks",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
+    },
+    {
       "Sid": "AllowExactCloneTaskRun",
       "Effect": "Allow",
-      "Action": ["ecs:DescribeTasks", "ecs:ListTasks", "ecs:RunTask", "ecs:StopTask"],
-      "Resource": [
-        "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod",
-        "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*",
-        "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-clone-*:*"
-      ]
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-clone-*:*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
+    },
+    {
+      "Sid": "AllowExactCloneTaskDescribeStop",
+      "Effect": "Allow",
+      "Action": ["ecs:DescribeTasks", "ecs:StopTask"],
+      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
     },
     {
       "Sid": "AllowExactExecutionRolePass",

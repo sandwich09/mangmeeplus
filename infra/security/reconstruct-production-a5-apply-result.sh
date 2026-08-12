@@ -66,7 +66,7 @@ cmp -s "$work/result.json" "$work/canonical.json"
 jq -e --arg source "$source_sha" --arg image "$migration_image" \
   --arg ledger "$source_ledger_hash" --slurpfile hashes "$expected_hashes" \
   --slurpfile authority "$authority" '
-  def exact($keys): keys==($keys|sort);
+  def exact($wanted): (keys|sort)==($wanted|sort);
   def hash: type=="string" and test("^[0-9a-f]{64}$");
   exact(["executedMigrations","executionBudgetResults","executionBudgetResultsHash",
     "manifestHashes","migrationImage","postDataResults","postSchemaResults",

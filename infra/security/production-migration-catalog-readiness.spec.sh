@@ -75,9 +75,17 @@ fi
 bash -n "$runner" "$validator" "$reconstruct"
 for required in 'assignPublicIp:"DISABLED"' 'REQUIRE_NO_AWS_CREDENTIALS' \
   'validate-production-a5-private-endpoints.sh' 'BackupRetentionPeriod>=35' \
-  'repositoryCatalogHash' 'deregister-task-definition'; do
+  'repositoryCatalogHash' 'deregister-task-definition' \
+  'register-task-definition-with-retry.sh' 'run-task-idempotently.sh' 'run_client_token' \
+  'cleanup-one-shot-task.sh' 'registration_requested=true' 'run_task_requested=true'; do
   grep -F -- "$required" "$runner" >/dev/null
 done
+registration_arm_line="$(grep -n 'registration_requested=true' "$runner" | cut -d: -f1)"
+registration_call_line="$(grep -n 'register-task-definition-with-retry.sh' "$runner" | cut -d: -f1)"
+run_arm_line="$(grep -n 'run_task_requested=true' "$runner" | cut -d: -f1)"
+run_call_line="$(grep -n 'run-task-idempotently.sh' "$runner" | cut -d: -f1)"
+test "$registration_arm_line" -lt "$registration_call_line"
+test "$run_arm_line" -lt "$run_call_line"
 jq -e '
   (.Statement[]|select(.Sid=="AllowExactA5TaskRun")
     |.Action=="ecs:RunTask"

@@ -23,10 +23,16 @@ started_by="a5-catalog-${READINESS_RUN_ID}-a${READINESS_RUN_ATTEMPT}"
 [ "${#started_by}" -le 36 ]
 task_definition_arn=''
 task_arn=''
+registration_requested=false
+run_task_requested=false
 
 sha_json() {
   if command -v sha256sum >/dev/null 2>&1; then jq -cjS . "$1" | sha256sum | awk '{print $1}'
   else jq -cjS . "$1" | shasum -a 256 | awk '{print $1}'; fi
+}
+sha_text() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  else shasum -a 256 | awk '{print $1}'; fi
 }
 parameter() {
   aws ssm get-parameter --region "$AWS_REGION" --name "$parameter_prefix/$1" \
@@ -37,21 +43,11 @@ network_parameter() {
     --query Parameter.Value --output text
 }
 cleanup() {
-  local status=$? current
-  if [ -n "$task_arn" ]; then
-    current="$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$cluster" --tasks "$task_arn" \
-      --query 'tasks[0].lastStatus' --output text 2>/dev/null || true)"
-    if [ -n "$current" ] && [ "$current" != None ] && [ "$current" != STOPPED ]; then
-      aws ecs stop-task --region "$AWS_REGION" --cluster "$cluster" --task "$task_arn" \
-        --reason production-readiness-catalog-cleanup >/dev/null 2>&1 || status=1
-      aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster "$cluster" --tasks "$task_arn" \
-        >/dev/null 2>&1 || status=1
-    fi
-  fi
-  if [ -n "$task_definition_arn" ]; then
-    aws ecs deregister-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" \
-      >/dev/null 2>&1 || status=1
-  fi
+  local status=$?
+  AWS_BIN=aws bash "$root/infra/prod-ecs-express/cleanup-one-shot-task.sh" \
+    "$AWS_ACCOUNT_ID" "$AWS_REGION" "$cluster" "$family" "$started_by" \
+    "$registration_requested" "${task_definition_arn:--}" \
+    "$run_task_requested" "${task_arn:--}" production-readiness-catalog-cleanup || status=1
   exit "$status"
 }
 trap cleanup EXIT
@@ -154,9 +150,12 @@ jq -cnS --arg family "$family" --arg execution "$execution_role" --arg image "$M
       "awslogs-region":"ap-southeast-1","awslogs-stream-prefix":"production-readiness"}}}]}
 ' > "$task_input"
 registered="$OUTPUT_DIR/registered-task-definition.json"
-aws ecs register-task-definition --region "$AWS_REGION" --cli-input-json "file://$task_input" \
+registration_requested=true
+task_definition_arn="$(AWS_BIN=aws \
+  bash "$root/infra/prod-ecs-express/register-task-definition-with-retry.sh" \
+    "$task_input" "$AWS_REGION")"
+aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" \
   --output json | jq -cS . > "$registered"
-task_definition_arn="$(jq -er '.taskDefinition.taskDefinitionArn' "$registered")"
 bash "$root/infra/security/validate-production-migration-catalog-task-definition.sh" \
   "$registered" "$family" "$MIGRATION_IMAGE" "$reader_secret_arn" "$reader_version" \
   "$SOURCE_SHA" "$log_group"
@@ -164,10 +163,16 @@ bash "$root/infra/security/validate-production-migration-catalog-task-definition
 network="$(jq -cn --arg subnets "$task_subnet_csv" --arg sg "$task_security_group" '
   {awsvpcConfiguration:{subnets:($subnets|split(",")|sort),securityGroups:[$sg],assignPublicIp:"DISABLED"}}')"
 run="$OUTPUT_DIR/run-task.json"
-aws ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
+run_raw="$OUTPUT_DIR/run-task.raw.json"
+run_client_token="$(printf '%s' "catalog:$SOURCE_SHA:$family:$started_by" | sha_text)"
+run_task_requested=true
+AWS_BIN=aws bash "$root/infra/prod-ecs-express/run-task-idempotently.sh" \
+  "$run_client_token" -- ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
   --platform-version 1.4.0 --task-definition "$task_definition_arn" \
   --network-configuration "$network" --started-by "$started_by" \
-  --output json | jq -cS . > "$run"
+  --output json > "$run_raw"
+jq -cS . "$run_raw" > "$run"
+rm -f -- "$run_raw"
 jq -e '.failures==[] and (.tasks|length)==1' "$run" >/dev/null
 task_arn="$(jq -er '.tasks[0].taskArn' "$run")"
 task="$OUTPUT_DIR/task.json"
@@ -251,5 +256,8 @@ jq -cnS --arg source "$SOURCE_SHA" --arg image "$MIGRATION_IMAGE" --arg cluster 
 rm -rf -- "$pages"
 aws ecs deregister-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" >/dev/null
 task_definition_arn=''
+task_arn=''
+registration_requested=false
+run_task_requested=false
 trap - EXIT
 printf '%s\n' "$OUTPUT_DIR/catalog-result.json" "$runtime"

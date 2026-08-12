@@ -343,8 +343,8 @@ def e0_fixture_h3_migration_tool_verification($source):
        imagePushedAtEpoch:1699999000,scanCompletedAtEpoch:1699999500}};
 
 def e0_fixture_reimbursement_compatibility: {
-  command:("REIMBURSEMENT_PG_GATE_REQUIRED=true "
-    + "pnpm --filter @watchdog-bms/api exec tsx --test --test-reporter=spec "
+  command:("cd /app/apps/api && REIMBURSEMENT_PG_GATE_REQUIRED=true "
+    + "/app/node_modules/.bin/tsx --test --test-reporter=spec "
     + "src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts "
     + "src/modules/reimbursements/infrastructure/"
     + "prisma-reimbursement.repository.draft-submit-race.spec.ts"),
@@ -443,6 +443,7 @@ def e0_fixture_clone_payload($source): {
     ],engine:"postgres",engineVersion:"18.1",storageEncrypted:true,
     kmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/00000000-0000-0000-0000-000000000000",
     publiclyAccessible:false,dbSubnetGroupName:"watchdog-private",
+    dbParameterGroupName:"watchdog-pg18",optionGroupName:"default:postgres-18",
     dbSubnetIds:["subnet-00000000","subnet-00000001"],dbSecurityGroupIds:["sg-00000000"],
     migrationTaskSubnetIds:["subnet-00000002"],migrationTaskSecurityGroupIds:["sg-00000001"],
     dbSecurityGroupIngress:[{ipProtocol:"tcp",fromPort:5432,toPort:5432,
@@ -470,8 +471,10 @@ def e0_fixture_clone_payload($source): {
           SecretArn:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
             + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf"),
           SecretStatus:"active"},PubliclyAccessible:false,
-        DBSubnetGroup:{Subnets:[{SubnetIdentifier:"subnet-00000000"},
+        DBSubnetGroup:{DBSubnetGroupName:"watchdog-private",Subnets:[{SubnetIdentifier:"subnet-00000000"},
           {SubnetIdentifier:"subnet-00000001"}]},
+        DBParameterGroups:[{DBParameterGroupName:"watchdog-pg18",ParameterApplyStatus:"in-sync"}],
+        OptionGroupMemberships:[{OptionGroupName:"default:postgres-18",Status:"in-sync"}],
         VpcSecurityGroups:[{VpcSecurityGroupId:"sg-00000000"}]
       }]}},
       describeNetworkInterfaces:{sha256:e0_fixture_hash,raw:{NetworkInterfaces:[{

@@ -166,10 +166,10 @@ async function main(): Promise<void> {
     parseProductionApplyAuthority(stableJson(authority), Date.now());
 
     const migrationStartedAt = Date.now();
-    runCaptured('pnpm', [
-      '--filter', '@watchdog-bms/api', 'exec', 'prisma', 'migrate', 'deploy',
+    runCaptured('/app/apps/api/node_modules/.bin/prisma', [
+      'migrate', 'deploy',
       '--schema', 'prisma/schema.prisma',
-    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app');
+    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app/apps/api');
     if (Date.now() - migrationStartedAt > MAX_REHEARSAL_MS) {
       throw new Error('production_a5_apply_maintenance_window_exceeded');
     }

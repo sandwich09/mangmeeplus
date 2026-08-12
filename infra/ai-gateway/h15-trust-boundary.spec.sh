@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 agentcore="$repo_root/infra/ai-gateway/agentcore-deploy.sh"
 ecs="$repo_root/infra/prod-ecs-express/deploy.sh"
 template="$repo_root/infra/ai-gateway/task-definition.template.json"
+trust="$repo_root/infra/ai-gateway/agentcore-execution-role-trust.template.json"
 
 bash -n "$agentcore"
 bash -n "$ecs"
@@ -14,9 +15,17 @@ if grep -Fq '"AI_GATEWAY_INTERNAL_SECRET": "${AI_GATEWAY_INTERNAL_SECRET}"' "$ag
   echo 'AgentCore must not publish the raw internal secret in runtime metadata' >&2
   exit 1
 fi
-grep -Fq '"aws:SourceAccount":"${ACCOUNT_ID}"' "$agentcore"
-grep -Fq '"aws:SourceArn":"arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/*"' "$agentcore"
+jq -e '.Statement==[{Effect:"Allow",Principal:{Service:"bedrock-agentcore.amazonaws.com"},
+  Action:"sts:AssumeRole",Condition:{StringEquals:{"aws:SourceAccount":"<ACCOUNT_ID>"},
+    ArnLike:{"aws:SourceArn":"<AGENTCORE_RUNTIME_ARN>"}}}]' "$trust" >/dev/null
+grep -Fq 'agentcore-execution-role-trust.template.json' "$agentcore"
+grep -Fq 's|<AGENTCORE_RUNTIME_ARN>|$RUNTIME_ARN|g' "$agentcore"
 grep -Fq -- "--metadata-configuration '{\"requireMMDSV2\":true}'" "$agentcore"
+grep -Fq 'refusing a mutable runtime reference' "$agentcore"
+grep -Fq '"versionId": "${S3_VERSION}"' "$agentcore"
+jq -e '.Statement[]|select(.Sid=="BedrockAgentCoreReadArtifact")
+  |(.Action|sort)==["s3:GetObject","s3:GetObjectVersion"]' \
+  "$repo_root/infra/ai-gateway/agentcore-execution-role-policy.json" >/dev/null
 
 ai_policy="$(sed -n '/watchdog-bms-ecs-ai-task-policy.json <<EOF/,/^EOF$/p' "$ecs")"
 if grep -Eq 'secretsmanager|ssm:Get' <<<"$ai_policy"; then

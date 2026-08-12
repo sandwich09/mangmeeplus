@@ -51,6 +51,11 @@ full_exact_files=(
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh
+  infra/prod-ecs-express/register-task-definition-with-retry.sh
+  infra/prod-ecs-express/run-task-idempotently.sh
+  infra/prod-ecs-express/cleanup-one-shot-task.sh
+  infra/prod-ecs-express/active-release-tasks.sh
+  infra/prod-ecs-express/active-launch-builds.sh
   infra/docker/resolve-production-fast-mode.sh
   apps/api/prisma/verify-applied-migration-catalog.ts
   infra/prod-ecs-express/release-task-network-failure.jq

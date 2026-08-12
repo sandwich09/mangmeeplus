@@ -39,7 +39,7 @@ validate_baseline() {
     return 1
   }
   jq -e --argjson now "$now" '
-    def exact($keys): type == "object" and keys == ($keys | sort);
+    def exact($wanted): type == "object" and (keys|sort) == ($wanted | sort);
     def hash: type == "string" and test("^[0-9a-f]{64}$");
     def positive: type == "number" and . >= 1 and . <= 9007199254740991 and floor == .;
     def sha: type == "string" and test("^[0-9a-f]{40}$");

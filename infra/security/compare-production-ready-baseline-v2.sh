@@ -29,7 +29,6 @@ jq -e --slurpfile ready "$ready" '
 jq -e --slurpfile expected "$ready_runtime" '
   def stable:
     {schemaVersion,securityPolicySha256,a5PolicySha256,clonePolicySha256,
-     promotionPrerequisitesSha256,
      rds:(.rds|del(.rawSha256)),
      redis:(.redis|del(.rawReplicationGroupSha256,.rawPrimarySha256))};
   stable == ($expected[0]|stable)

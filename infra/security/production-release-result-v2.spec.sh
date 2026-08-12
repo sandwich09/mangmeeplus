@@ -39,6 +39,16 @@ reject() {
 reject wrong-ready '.readySha256=("f"*64)'
 reject live-with-closed-proof '.requestedServingMode="live"|.state="PROMOTED_LIVE"'
 reject changed-image '.images[0].digest=("sha256:"+("f"*64))'
+jq -cS '.unexpected="must-be-rejected"|del(.contentSha256)' "$work/result.json" > "$work/extra-body.json"
+extra_hash="$(jq -cjS . "$work/extra-body.json"|sha_stream)"
+jq -cS --arg hash "$extra_hash" '.+{contentSha256:$hash}' \
+  "$work/extra-body.json" > "$work/extra-key.json"
+if bash "$validator" "$work/extra-key.json" "$work/manifest.json" "$work/ready.json" "$source_sha" \
+    8001 9001 10001 1 "$controller" example/watchdog "$now" \
+    "$work/maintenance-proof.json" >/dev/null 2>&1; then
+  echo 'ERROR: result validator accepted an extra top-level key' >&2
+  exit 1
+fi
 printf '%s\n' '{"deploymentState":"DEPLOYED_NOT_LAUNCHED","target":"all","drift":true}' \
   > "$work/wrong-maintenance-proof.json"
 if bash "$validator" "$work/result.json" "$work/manifest.json" "$work/ready.json" "$source_sha" \

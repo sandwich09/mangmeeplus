@@ -1,6 +1,6 @@
 # Production A5 V2 Spec
 
-Status: Implemented locally; independent review and live proof pending
+Status: Execution frozen; deterministic runtime/IAM blockers must be fixed and proved before any workflow run
 Owner: Platform / release owner
 Last reviewed: 2026-08-12
 Related:
@@ -58,6 +58,42 @@ flowchart LR
   ออกจากกันอย่างชัดเจน
 - retry ได้โดยไม่สร้าง parent/child race และไม่ต้องตั้งใจปล่อย workflow ให้ fail เพื่อ
   ค้นหา prerequisite ชิ้นถัดไป
+
+## 2.1 Proof-before-execution contract
+
+GitHub Actions มีต้นทุนและห้ามใช้เป็นเครื่องมือค้นหา error ของ deployment. ก่อน dispatch ใด ๆ
+ทุกขั้นตั้งแต่ PR/CI, UAT, Passport, bootstrap, Readiness, clone, Production promotion, verification
+จนถึง cleanup ต้องอยู่ใน proof matrix เดียวและมีสถานะ `PASS`. ช่องที่เป็น `UNKNOWN`, `ASSUMED`,
+stale หรือพิสูจน์เฉพาะจาก template แต่ยังไม่ตรง live state ทำให้ทั้ง flow เป็น `BLOCKED`.
+
+หลักฐานขั้นต่ำมีสี่ชั้น:
+
+1. static contract ผูก caller, command/API, input/output และ state transition จริง
+2. focused/adversarial test รวม provider response shape, lost response, timeout และ cleanup
+3. live read-only exact readback ของ trust, policy, configuration, quota และ resource state
+4. non-business-mutating provider canary สำหรับ runtime semantics ที่ read-only พิสูจน์ไม่ได้
+
+ก่อน workflow จริงต้องทำ dry traversal ครบทุก action ด้วย matrix
+`principal + action + resource + condition`, credential/TTL budget, binary/filesystem/network
+prerequisite และ safe terminal state. ห้ามแก้เฉพาะ error ล่าสุดแล้ว retry; sibling path ที่ใช้ image,
+role, helper หรือ provider contract เดียวกันต้องถูกกวาดและแก้ใน change เดียว.
+
+## 2.2 One-shot image runtime contract
+
+`migration-tool` เป็น runtime ร่วมของ reader bootstrap, readonly evidence, migration catalog,
+clone/readiness clone และ reviewed Production apply. ก่อนออก Passport image ต้องพิสูจน์ว่า:
+
+- OCI config มี `VOLUME ["/tmp"]`; directory `/tmp` เป็น `root:root 1777`, container ยังเป็น
+  non-root `node`, root filesystem ยัง read-only และ exact `/tmp` bind เขียนได้
+- child process ใช้ binary ที่มีอยู่จริงใน image โดยตรง ได้แก่
+  `/app/apps/api/node_modules/.bin/prisma` และ `/app/node_modules/.bin/tsx`; ห้ามพึ่ง runtime
+  `pnpm`, Corepack download หรือ internet package registry
+- Prisma/TSX smoke ทำงานภายใต้ `--network none`, read-only root และ writable `/tmp`
+- task definitions ทั้งห้าเส้นยังเป็น one-container, no task role, exact execution role,
+  Fargate 1.4.0 และ mount `/tmp` เดียวกัน
+
+การเปลี่ยน Dockerfile หรือ one-shot source ทำให้ migration-tool/release-task digest เปลี่ยน จึงต้อง
+ออก UAT Passport ใหม่; Passport ที่ pin image เก่าใช้ต่อไม่ได้.
 
 ## 3. Non-goals
 
@@ -121,7 +157,8 @@ durable target; mutation จริงทั้งหมดต้องอยู�
 
 Temporary boundary นี้เป็น prerequisite ceremony ครั้งเดียวก่อน release และต้องครอบคลุม exact
 IAM contracts ที่ readiness/deploy/runtime ใช้ทั้งหมด รวม runtime/task roles, workers cleanup,
-A5 controller/execution roles และการซ่อม exact Production S3 lifecycle ที่ตรวจพบว่า drift แล้ว
+A5 controller/execution roles, UAT deploy policy ที่จะใช้ก่อนสร้าง Passport และการซ่อม exact
+Production S3 lifecycle ที่ตรวจพบว่า drift แล้ว
 จากนั้นลบ temporary authority ทันที รายละเอียดอยู่ใน
 `docs/runbooks/production-promotion-prerequisite-bootstrap.md`.
 
@@ -167,13 +204,21 @@ Workflow bootstrap ต้อง:
 4. พิสูจน์ `default_transaction_read_only=on`, exact SELECT scope, ไม่มี DML/DDL,
    ownership, role escalation หรือ broad inherited privilege
 5. เก็บเฉพาะ connection secret ใน Secrets Manager; ไม่เขียน credential ลง artifact/log
-6. self-revoke temporary bootstrap authority หลังสำเร็จหรือแม้ attempt ล้มเหลว; การ bootstrap
-   ใหม่ต้องให้ administrator re-apply exact reviewed IAM template ก่อน ห้ามให้ workflow re-arm ตัวเอง
+6. self-revoke mutation authority หลังสำเร็จหรือแม้ attempt ล้มเหลวเป็น exact metadata-only
+   recovery policy; การ bootstrap ใหม่ต้องให้ administrator re-apply exact reviewed IAM template
+   ก่อน ห้ามให้ workflow re-arm ตัวเอง
 7. ออก signed bootstrap evidence ที่ผูก account, region, DB resource, role policy hash และเวลา
+8. reconcile task-definition ทุก revision ที่ตรง exact family prefix ทั้งก่อน fast path และก่อน
+   self-revoke, ใช้ `ListTaskDefinitions`/`DeregisterTaskDefinition` ที่ `Resource:"*"` ตาม ECS
+   authorization model, พิสูจน์ ACTIVE set ว่าง แล้วจึง revoke เป็นขั้นสุดท้าย
+9. ถ้า `RunTask` response หาย ต้อง reconcile ด้วย stable client token/startedBy ก่อนลบ secret หรือ
+   execution authority; ห้ามปล่อย untracked task ทำงานหลัง workflow จบ
 
-Bootstrap command ต้องยอมรับ secret ที่มี metadata ตรงเป็น success ก่อน self-revoke แต่เมื่อ
-temporary role ถูก revoke แล้ว readiness เป็นผู้ read back สถานะต่อ การ bootstrap ซ้ำเป็น
-administrator ceremony ที่ตั้งใจไว้ ไม่ใช่สิทธิ์ถาวรใน GitHub workflow
+Bootstrap command ต้อง classify exact controller/secret/execution tuple ก่อน image access ทุกครั้ง
+และยอมรับเฉพาะ completed tuple หลังพิสูจน์ sole AWSCURRENT, exact tagged secret, execution role
+absent, exact recovery policy/no attachment/sole inline policy และ task/task-definition stable-empty
+ด้วย pure metadata reads แล้วออก EXISTING ได้ การ bootstrap ใหม่ที่ต้องใช้ mutation ยังคงเป็น
+administrator ceremony ไม่ใช่สิทธิ์ถาวรใน GitHub workflow
 
 ## 8. Production Readiness V2
 
@@ -186,6 +231,12 @@ administrator ceremony ที่ตั้งใจไว้ ไม่ใช่�
 ### 8.1 Cheap common checks
 
 ก่อนแตะ RDS snapshot readiness ต้องพิสูจน์:
+
+- source DB เป็น `postgres` 18.3, มี encrypted automated snapshot `available` อายุไม่เกิน 36 ชั่วโมง
+  และ AWS-managed `alias/aws/secretsmanager` resolve เป็น exact enabled KMS key ที่ review แล้ว
+- AgentCore runtime เป็น exact approved runtime/source SHA, versioned content-addressed S3 artifact,
+  entry point `runtime.js`, MMDSv2, Production deployment identity และ exact execution role ที่ไม่มี
+  permissions boundary/managed-policy attachment
 
 - passport signature/schema/source/digest/expiry ถูกต้องและ artifact ไม่หมดอายุ
 - GitHub main protection, production environment และ OIDC role bindings ตรง policy
@@ -233,6 +284,15 @@ budget 5 นาที หากเกินให้หยุดเป็น inf
 7. เก็บ tenant-anonymous evidence เท่านั้น
 8. ลบ clone DB, managed secret, task definition และ residual ENI/resource
 9. ออก READY ได้เมื่อ cleanup ยืนยัน `DESTROYED` และ residual count เป็นศูนย์เท่านั้น
+
+Clone controller ต้อง bind provider authorization จริงด้วย:
+
+- `RestoreDBInstanceFromDBSnapshot` ครอบ exact target DB, snapshot, DB subnet group,
+  parameter group และ option group ที่อ่านจาก source DB; ห้ามใช้ชื่อที่เดาเอง
+- `ecs:ListTasks` ใช้ `Resource:"*"` พร้อม exact `ecs:cluster` condition สำหรับ Fargate;
+  task/run/stop และ task-definition lifecycle คงแยก least-privilege ตาม resource type ที่รองรับ
+- source snapshot KMS, DB class/engine orderability และ service quota/headroom ต้องผ่าน live
+  read-only proof ก่อน restore
 
 Readiness timeout หรือ cleanup failure คือ `NOT_READY`; ห้ามเปลี่ยนเป็น advisory และห้าม
 เริ่ม Production deploy ในขณะที่ clone ยังเหลืออยู่
@@ -378,6 +438,12 @@ copy ไป evidence store ตาม retention policy ของบริษั�
 - retry ไม่ต้องสร้าง PR/commit ใหม่เมื่อ bytes ไม่เปลี่ยน
 - มี focused contract tests, fake-AWS tests, YAML parse และ shell syntax ก่อน merge และมี one
   live read-only readiness proof ก่อน Production mutation
+- exact linux/amd64 migration-tool ผ่าน offline image-runtime verifier โดยไม่มี network และไม่มี
+  runtime `pnpm`; ทุก five-path task render ผ่าน contract เดียวกัน
+- IAM simulator/provider authorization proof ครบ bootstrap cleanup, clone restore และ clone
+  task reconciliation; live template/readback ตรงก่อน dispatch
+- forced-failure canary พิสูจน์ residual task, task definition, clone DB, managed secret และ ENI
+  เป็นศูนย์ก่อนเรียกเส้นทาง Production ว่า stable
 
 ## 17. Explicitly forbidden
 

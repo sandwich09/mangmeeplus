@@ -13,6 +13,7 @@
         "ecs:DeleteExpressGatewayService",
         "ecs:RegisterTaskDefinition",
         "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions",
         "ecs:RunTask"
       ],
       "Resource": "*"

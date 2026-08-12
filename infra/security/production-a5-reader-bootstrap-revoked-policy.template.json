@@ -2,9 +2,73 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "BootstrapRevoked",
+      "Sid": "ReadRevokedBootstrapIdentity",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadRevokedReaderSecretMetadata",
+      "Effect": "Allow",
+      "Action": "secretsmanager:DescribeSecret",
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/a5-readonly-database-url-*"
+    },
+    {
+      "Sid": "ReadRevokedBootstrapRoleMetadata",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap"
+      ]
+    },
+    {
+      "Sid": "ListRevokedBootstrapTasks",
+      "Effect": "Allow",
+      "Action": "ecs:ListTasks",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeRevokedBootstrapTasks",
+      "Effect": "Allow",
+      "Action": "ecs:DescribeTasks",
+      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"
+        }
+      }
+    },
+    {
+      "Sid": "ReadRevokedBootstrapTaskDefinitions",
+      "Effect": "Allow",
+      "Action": "ecs:ListTaskDefinitions",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyOutsideRevokedBootstrapMetadataRead",
       "Effect": "Deny",
-      "Action": "*",
+      "NotAction": [
+        "ecs:DescribeTasks",
+        "ecs:ListTaskDefinitions",
+        "ecs:ListTasks",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "secretsmanager:DescribeSecret",
+        "sts:GetCallerIdentity"
+      ],
       "Resource": "*"
     }
   ]

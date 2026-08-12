@@ -43,7 +43,7 @@ jq -e '
     and $pass.Condition.StringEquals["iam:PassedToService"] == "ecs-tasks.amazonaws.com"
     and ([.Statement[] | select(.Sid == "DenyProductionDatabaseMutation")][0].Effect == "Deny")
     and ([.Statement[] | select(.Sid == "AllowExactCloneTaskRun")][0].Resource
-      | all(.[]; contains("watchdog-a5-clone-") or contains("watchdog-bms-prod")))
+      == "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-clone-*:*")
     and ([.Statement[] | select(.Effect=="Allow") | .Action] | tostring
       | contains("secretsmanager:GetSecretValue") | not)
     and ([.Statement[] | select(.Sid == "AllowCloneManagedSecretMetadata")][0].Action
@@ -63,6 +63,78 @@ jq -e '
     and ($boundary.NotAction|index("secretsmanager:TagResource")) != null
     and ($boundary.NotAction|index("ecs:ListTaskDefinitions")) != null
 ' "$controller_policy" >/dev/null
+
+validate_provider_resource_contract() {
+  jq -e '
+    ([.Statement[] | select(.Sid=="AllowTaggedCloneRestore")][0]) as $restore
+    | ([.Statement[] | select(.Sid=="AllowTaggedCloneInitialTags")][0]) as $tags
+    | ([.Statement[] | select(.Sid=="AllowExactCloneTaskList")][0]) as $list
+    | ([.Statement[] | select(.Sid=="AllowExactCloneTaskRun")][0]) as $run
+    | ([.Statement[] | select(.Sid=="AllowExactCloneTaskDescribeStop")][0]) as $observe
+    | {StringEquals:{"aws:RequestTag/purpose":"production-a5-clone"},
+        "ForAllValues:StringEquals":{"aws:TagKeys":["parentRunAttempt","parentRunId",
+          "producerRunAttempt","producerRunId","purpose","sourceCommit"]},
+        Null:{"aws:RequestTag/parentRunAttempt":"false","aws:RequestTag/parentRunId":"false",
+          "aws:RequestTag/producerRunAttempt":"false","aws:RequestTag/producerRunId":"false",
+          "aws:RequestTag/purpose":"false","aws:RequestTag/sourceCommit":"false"}} as $tag_condition
+    | {ArnEquals:{"ecs:cluster":
+        "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}} as $cluster
+    | $restore.Action=="rds:RestoreDBInstanceFromDBSnapshot"
+      and ($restore.Resource|sort)==([
+        "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:watchdog-bms-prod-db-*",
+        "arn:aws:rds:ap-southeast-1:311414082667:subgrp:watchdog-bms-prod-db-subnets",
+        "arn:aws:rds:ap-southeast-1:311414082667:pg:watchdog-bms-prod-pg18",
+        "arn:aws:rds:ap-southeast-1:311414082667:og:default:postgres-18"]|sort)
+      and $restore.Condition==$tag_condition
+      and $tags.Action=="rds:AddTagsToResource"
+      and $tags.Resource=="arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"
+      and $tags.Condition==$tag_condition
+      and $list.Action=="ecs:ListTasks" and $list.Resource=="*" and $list.Condition==$cluster
+      and $run.Action=="ecs:RunTask"
+      and $run.Resource==
+        "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-clone-*:*"
+      and $run.Condition==$cluster
+      and ($observe.Action|sort)==["ecs:DescribeTasks","ecs:StopTask"]
+      and $observe.Resource==
+        "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*"
+      and $observe.Condition==$cluster
+      and ([.Statement[] | select(.Effect=="Allow")
+        | select((.Action|if type=="array" then . else [.] end)|index("ecs:ListTasks"))]
+        | length)==1
+  ' "$1" >/dev/null
+}
+validate_provider_resource_contract "$controller_policy"
+
+for mutation in restore-snapshot-wildcard restore-option-wildcard restore-missing-tag \
+    list-resource list-cluster; do
+  mutated="$fixture/policy-$mutation.json"
+  case "$mutation" in
+    restore-snapshot-wildcard)
+      jq '(.Statement[]|select(.Sid=="AllowTaggedCloneRestore").Resource[]
+        | select(contains(":snapshot:")))="arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:*"' \
+        "$controller_policy" > "$mutated" ;;
+    restore-option-wildcard)
+      jq '(.Statement[]|select(.Sid=="AllowTaggedCloneRestore").Resource[]
+        | select(contains(":og:")))="arn:aws:rds:ap-southeast-1:311414082667:og:*"' \
+        "$controller_policy" > "$mutated" ;;
+    restore-missing-tag)
+      jq 'del(.Statement[]|select(.Sid=="AllowTaggedCloneRestore")
+        .Condition.Null["aws:RequestTag/sourceCommit"])' "$controller_policy" > "$mutated" ;;
+    list-resource)
+      jq '(.Statement[]|select(.Sid=="AllowExactCloneTaskList").Resource)=
+        "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"' \
+        "$controller_policy" > "$mutated" ;;
+    list-cluster)
+      jq '(.Statement[]|select(.Sid=="AllowExactCloneTaskList").Condition.ArnEquals["ecs:cluster"])=
+        "arn:aws:ecs:ap-southeast-1:311414082667:cluster/*"' \
+        "$controller_policy" > "$mutated" ;;
+  esac
+  if validate_provider_resource_contract "$mutated"; then
+    echo "ERROR: widened clone provider policy was accepted: $mutation" >&2
+    exit 1
+  fi
+done
 
 # The managed-password grant is intentionally one-way: turning management off must not match it.
 jq -e '
@@ -162,7 +234,8 @@ for required in \
   'list-role-policies' 'list-attached-role-policies' 'AssumeRolePolicyDocument' \
   'imageTagMutability == "IMMUTABLE"' 'imageScanningConfiguration.scanOnPush == true' \
   'encryptionConfiguration.encryptionType == "AES256"' 'retentionInDays==7' \
-  '.InvalidParameters == [] and (.Parameters|length)==8'; do
+  'db-parameter-group-name' 'option-group-name' \
+  '.InvalidParameters == [] and (.Parameters|length)==10'; do
   grep -F "$required" "$bootstrap" >/dev/null
 done
 

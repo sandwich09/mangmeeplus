@@ -91,6 +91,150 @@ production_a5_collect_log_events() {
   return 1
 }
 
+production_a5_validate_source_db_configuration() {
+  local input="$1" identifier="$2" subnet_group="$3" parameter_group="$4" option_group="$5"
+  jq -e --arg id "$identifier" --arg subnet "$subnet_group" \
+    --arg parameter "$parameter_group" --arg option "$option_group" '
+    .DBInstances|length==1 and .[0].DBInstanceIdentifier==$id and .[0].Engine=="postgres"
+    and (.[0].EngineVersion|test("^18(\\.[0-9]+){1,2}$"))
+    and .[0].StorageEncrypted==true and .[0].PubliclyAccessible==false
+    and .[0].DBSubnetGroup.DBSubnetGroupName==$subnet
+    and .[0].DBParameterGroups==[
+      {DBParameterGroupName:$parameter,ParameterApplyStatus:"in-sync"}]
+    and .[0].OptionGroupMemberships==[{OptionGroupName:$option,Status:"in-sync"}]
+  ' "$input" >/dev/null
+}
+
+production_a5_capture_cleanup_clone_secret() {
+  local db_json="$1" expected_db_arn secret_arn secret_prefix secret_suffix
+  expected_db_arn="arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:db:${temporary_id}"
+  if ! jq -e --arg id "$temporary_id" --arg arn "$expected_db_arn" \
+      --slurpfile expected "$OUTPUT_DIR/tags.json" '
+      .DBInstances|type=="array" and length==1
+      and .[0].DBInstanceIdentifier==$id and .[0].DBInstanceArn==$arn
+      and ([.[0].TagList[]?|{Key,Value}]|sort_by(.Key))
+        == ($expected[0]|sort_by(.Key))
+    ' <<< "$db_json" >/dev/null; then
+    echo 'ERROR: cleanup observed a clone outside the exact run ownership boundary' >&2
+    return 1
+  fi
+  secret_arn="$(jq -r '.DBInstances[0].MasterUserSecret.SecretArn // empty' <<< "$db_json")"
+  [ -n "$secret_arn" ] || return 0
+  secret_prefix="arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:rds!db-"
+  secret_suffix="${secret_arn#"$secret_prefix"}"
+  if [[ "$secret_arn" != "$secret_prefix"* ]] \
+      || [[ ! "$secret_suffix" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo 'ERROR: cleanup observed an invalid or foreign RDS managed-secret ARN' >&2
+    return 1
+  fi
+  if [ -n "$managed_secret_arn" ] && [ "$managed_secret_arn" != "$secret_arn" ]; then
+    echo 'ERROR: cleanup observed a different RDS managed secret for the exact clone' >&2
+    return 1
+  fi
+  managed_secret_arn="$secret_arn"
+}
+
+production_a5_cleanup_clone_database() {
+  local db_json='' db_status='' output='' status=0 absent_checks=0
+  clone_database_residual=1
+  clone_secret_residual=1
+
+  # An accepted restore can become visible after its response is lost. Every visible response is
+  # bound to this run before cleanup can mutate it or retain its managed-secret ARN.
+  if $restore_requested && ! $db_observed; then
+    for check in {1..61}; do
+      db_json="$(aws rds describe-db-instances --region "$AWS_REGION" \
+        --db-instance-identifier "$temporary_id" --output json 2>"$OUTPUT_DIR/cleanup-db.err")"
+      status=$?
+      if [ "$status" -eq 0 ]; then
+        production_a5_capture_cleanup_clone_secret "$db_json" || return 1
+        db_observed=true
+        break
+      fi
+      if ! grep -F DBInstanceNotFound "$OUTPUT_DIR/cleanup-db.err" >/dev/null; then
+        cat "$OUTPUT_DIR/cleanup-db.err" >&2
+        return 1
+      fi
+      [ "$check" -lt 61 ] && sleep 5
+    done
+  fi
+
+  for check in {1..61}; do
+    db_json="$(aws rds describe-db-instances --region "$AWS_REGION" \
+      --db-instance-identifier "$temporary_id" --output json 2>"$OUTPUT_DIR/cleanup-db.err")"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+      if grep -F DBInstanceNotFound "$OUTPUT_DIR/cleanup-db.err" >/dev/null; then
+        clone_database_residual=0
+        cleanup_instance_absent=true
+        delete_completed_at="$(date -u +%s)"
+      else
+        cat "$OUTPUT_DIR/cleanup-db.err" >&2
+        return 1
+      fi
+      break
+    fi
+    production_a5_capture_cleanup_clone_secret "$db_json" || return 1
+    db_observed=true
+    db_status="$(jq -r '.DBInstances[0].DBInstanceStatus // empty' <<< "$db_json")"
+
+    # Once managed-password creation may have been accepted, deleting before its ARN appears can
+    # orphan an unobservable secret. Keep the owned DB visible and fail closed if it never appears.
+    if $managed_password_requested && [ -z "$managed_secret_arn" ]; then
+      [ "$check" -lt 61 ] && sleep 15
+      continue
+    fi
+    if [ "$db_status" != deleting ]; then
+      [ "$delete_requested_at" -gt 0 ] || delete_requested_at="$(date -u +%s)"
+      output="$(aws rds delete-db-instance --region "$AWS_REGION" \
+        --db-instance-identifier "$temporary_id" --skip-final-snapshot \
+        --delete-automated-backups 2>&1)"
+      status=$?
+      if [ "$status" -ne 0 ] && ! grep -F InvalidDBInstanceState <<< "$output" >/dev/null; then
+        printf '%s\n' "$output" >&2
+        return 1
+      fi
+    fi
+    [ "$check" -lt 61 ] && sleep 15
+  done
+  $cleanup_instance_absent || return 1
+
+  if [ -n "$managed_secret_arn" ]; then
+    for check in {1..25}; do
+      output="$(aws secretsmanager describe-secret --region "$AWS_REGION" \
+        --secret-id "$managed_secret_arn" --output json 2>&1)"
+      status=$?
+      if [ "$status" -eq 0 ]; then
+        absent_checks=0
+        if ! jq -e --arg arn "$managed_secret_arn" \
+            --arg db "arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:db:${temporary_id}" '
+            .ARN==$arn and .OwningService=="rds"
+            and any(.Tags[]?; .Key=="aws:rds:primaryDBInstanceArn" and .Value==$db)
+          ' <<< "$output" >/dev/null; then
+          echo 'ERROR: cleanup observed managed-secret metadata owned by another database' >&2
+          return 1
+        fi
+      elif grep -F ResourceNotFoundException <<< "$output" >/dev/null; then
+        absent_checks=$((absent_checks+1))
+        if [ "$absent_checks" -ge 3 ]; then
+          clone_secret_residual=0
+          cleanup_secret_deleted=true
+          break
+        fi
+      else
+        printf '%s\n' "$output" >&2
+        return 1
+      fi
+      [ "$check" -lt 25 ] && sleep 5
+    done
+  elif ! $managed_password_requested; then
+    # The local arm is set before ModifyDBInstance; false proves no managed-secret request occurred.
+    clone_secret_residual=0
+    cleanup_secret_deleted=true
+  fi
+  [ "$clone_secret_residual" -eq 0 ]
+}
+
 # Focused specs source only the deterministic provider state machines above with a fake AWS CLI.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then
   return 0
@@ -134,6 +278,7 @@ managed_secret_arn=''
 managed_secret_version=''
 eni_ids=''
 restore_requested=false
+managed_password_requested=false
 db_observed=false
 task_definition_requested=false
 run_task_requested=false
@@ -182,7 +327,7 @@ cleanup() {
   $cleanup_done && return 0
   $cleanup_attempted && return 1
   cleanup_attempted=true
-  local cleanup_status=0 remaining=1 tasks='[]' definitions='[]' db_json='' db_status=''
+  local cleanup_status=0 remaining=1 tasks='[]' definitions='[]'
   local task_residual=1 definition_residual=1 database_residual=1 secret_residual=1 eni_residual=1
   local empty_checks=0 required_empty_checks=3 status=0 output='' arn='' eni=''
   local observed_eni_ids='' cleanup_eni_ids=''
@@ -266,70 +411,14 @@ cleanup() {
   [[ "$definition_residual" =~ ^[0-9]+$ ]] || definition_residual=1
   [ "$definition_residual" -eq 0 ] || cleanup_status=1
 
-  # If restore returned no response, first allow the exact deterministic identifier to become
-  # visible. Once observed, repeatedly request state-appropriate deletion and distinguish a real
-  # DBInstanceNotFound result from access or transport failures.
-  if $restore_requested && ! $db_observed; then
-    for check in {1..61}; do
-      db_json="$(aws rds describe-db-instances --region "$AWS_REGION" \
-        --db-instance-identifier "$temporary_id" --output json 2>"$OUTPUT_DIR/cleanup-db.err")"
-      status=$?
-      if [ "$status" -eq 0 ]; then db_observed=true; break; fi
-      if ! grep -F DBInstanceNotFound "$OUTPUT_DIR/cleanup-db.err" >/dev/null; then
-        cat "$OUTPUT_DIR/cleanup-db.err" >&2
-        cleanup_status=1
-        break
-      fi
-      [ "$check" -lt 61 ] && sleep 5
-    done
+  if production_a5_cleanup_clone_database; then
+    database_residual="$clone_database_residual"
+    secret_residual="$clone_secret_residual"
+  else
+    database_residual="$clone_database_residual"
+    secret_residual="$clone_secret_residual"
+    cleanup_status=1
   fi
-  for check in {1..61}; do
-    db_json="$(aws rds describe-db-instances --region "$AWS_REGION" \
-      --db-instance-identifier "$temporary_id" --output json 2>"$OUTPUT_DIR/cleanup-db.err")"
-    status=$?
-    if [ "$status" -ne 0 ]; then
-      if grep -F DBInstanceNotFound "$OUTPUT_DIR/cleanup-db.err" >/dev/null; then
-        database_residual=0
-        cleanup_instance_absent=true
-        delete_completed_at="$(date -u +%s)"
-      else
-        cat "$OUTPUT_DIR/cleanup-db.err" >&2
-        cleanup_status=1
-      fi
-      break
-    fi
-    db_observed=true
-    output="$(jq -r '.DBInstances[0].MasterUserSecret.SecretArn // empty' <<< "$db_json")"
-    [ -z "$output" ] || managed_secret_arn="$output"
-    db_status="$(jq -r '.DBInstances[0].DBInstanceStatus // empty' <<< "$db_json")"
-    if [ "$db_status" != deleting ]; then
-      [ "$delete_requested_at" -gt 0 ] || delete_requested_at="$(date -u +%s)"
-      output="$(aws rds delete-db-instance --region "$AWS_REGION" \
-        --db-instance-identifier "$temporary_id" --skip-final-snapshot \
-        --delete-automated-backups 2>&1)"
-      status=$?
-      if [ "$status" -ne 0 ] && ! grep -F InvalidDBInstanceState <<< "$output" >/dev/null; then
-        printf '%s\n' "$output" >&2
-        cleanup_status=1
-        break
-      fi
-    fi
-    [ "$check" -lt 61 ] && sleep 15
-  done
-  $cleanup_instance_absent || cleanup_status=1
-
-  if [ -n "$managed_secret_arn" ]; then
-    secret_residual=1
-    for check in {1..25}; do
-      if aws_resource_absent ResourceNotFoundException aws secretsmanager describe-secret \
-          --region "$AWS_REGION" --secret-id "$managed_secret_arn"; then secret_residual=0; break; fi
-      [ "$check" -lt 25 ] && sleep 5
-    done
-  elif $cleanup_instance_absent; then
-    # RDS owns this secret's lifecycle; AWS deletes it and its metadata with the DB instance.
-    secret_residual=0
-  fi
-  [ "$secret_residual" -eq 0 ] && cleanup_secret_deleted=true || cleanup_status=1
 
   # Only prove absence of ENIs observed on this run's reconciled tasks. A security-group-wide count
   # would incorrectly fail when another allowed clone run uses the same dedicated group.
@@ -363,6 +452,8 @@ trap 'status=$?; cleanup || status=1; exit "$status"' EXIT
 
 source_db_identifier="$(parameter source-db-identifier)"
 configured_subnet_group="$(parameter db-subnet-group-name)"
+configured_parameter_group="$(parameter db-parameter-group-name)"
+configured_option_group="$(parameter option-group-name)"
 db_security_group_id="$(parameter db-security-group-id)"
 task_security_group_id="$(parameter task-security-group-id)"
 task_subnet_csv="$(parameter task-subnet-ids)"
@@ -426,12 +517,8 @@ bash "$(dirname "$0")/validate-production-a5-private-endpoints.sh" \
 source_db_file="$OUTPUT_DIR/source-db.json"
 aws rds describe-db-instances --region "$AWS_REGION" --db-instance-identifier "$source_db_identifier" \
   --output json | jq -cS . > "$source_db_file"
-jq -e --arg id "$source_db_identifier" --arg subnet "$configured_subnet_group" '
-  .DBInstances|length==1 and .[0].DBInstanceIdentifier==$id and .[0].Engine=="postgres"
-  and (.[0].EngineVersion|test("^18(\\.[0-9]+){1,2}$"))
-  and .[0].StorageEncrypted==true and .[0].PubliclyAccessible==false
-  and .[0].DBSubnetGroup.DBSubnetGroupName==$subnet
-' "$source_db_file" >/dev/null
+production_a5_validate_source_db_configuration "$source_db_file" "$source_db_identifier" \
+  "$configured_subnet_group" "$configured_parameter_group" "$configured_option_group"
 source_db_arn="$(jq -er '.DBInstances[0].DBInstanceArn' "$source_db_file")"
 
 snapshots="$OUTPUT_DIR/snapshots.json"
@@ -459,6 +546,8 @@ restore_requested=true
 aws rds restore-db-instance-from-db-snapshot --region "$AWS_REGION" \
   --db-instance-identifier "$temporary_id" --db-snapshot-identifier "$snapshot_arn" \
   --db-instance-class "$db_instance_class" --db-subnet-group-name "$configured_subnet_group" \
+  --db-parameter-group-name "$configured_parameter_group" \
+  --option-group-name "$configured_option_group" \
   --vpc-security-group-ids "$db_security_group_id" --no-publicly-accessible --no-multi-az \
   --backup-retention-period 0 --no-auto-minor-version-upgrade --no-deletion-protection \
   --tags "file://$OUTPUT_DIR/tags.json" >/dev/null
@@ -467,11 +556,14 @@ production_a5_wait_for_restored_instance "$db_raw"
 
 # PostgreSQL snapshot restore can't create an RDS-managed master secret. Enable it only after the
 # restored instance is available, then wait for both the DB and its secret to become usable.
+managed_password_requested=true
 aws rds modify-db-instance --region "$AWS_REGION" --db-instance-identifier "$temporary_id" \
   --manage-master-user-password --apply-immediately >/dev/null
 production_a5_wait_for_managed_secret "$db_raw"
 
 jq -e --arg id "$temporary_id" --arg sg "$db_security_group_id" \
+  --arg subnet "$configured_subnet_group" --arg parameter "$configured_parameter_group" \
+  --arg option "$configured_option_group" \
   --arg secretKms "$expected_managed_secret_kms_key_arn" '
   .DBInstances|length==1 and .[0].DBInstanceIdentifier==$id and .[0].Engine=="postgres"
   and (.[0].EngineVersion|test("^18(\\.[0-9]+){1,2}$")) and .[0].StorageEncrypted==true
@@ -479,6 +571,10 @@ jq -e --arg id "$temporary_id" --arg sg "$db_security_group_id" \
   and ([.[0].VpcSecurityGroups[].VpcSecurityGroupId]|sort)==[$sg]
   and (.[0].Endpoint.Address|type=="string" and length>0)
   and (.[0].Endpoint.Port|type=="number" and .==5432)
+  and .[0].DBSubnetGroup.DBSubnetGroupName==$subnet
+  and .[0].DBParameterGroups==[
+    {DBParameterGroupName:$parameter,ParameterApplyStatus:"in-sync"}]
+  and .[0].OptionGroupMemberships==[{OptionGroupName:$option,Status:"in-sync"}]
   and (.[0].DBName|type=="string" and test("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$"))
   and .[0].MasterUserSecret.SecretStatus=="active"
   and (.[0].MasterUserSecret.SecretArn|type=="string" and contains(":secret:rds!db-"))
@@ -561,9 +657,11 @@ jq -cnS --arg family "$task_family" --arg executionRole "$execution_role_arn" \
 ' > "$task_definition"
 registered="$OUTPUT_DIR/registered-task-definition.json"
 task_definition_requested=true
-aws ecs register-task-definition --region "$AWS_REGION" --cli-input-json "file://$task_definition" \
-  --output json | jq -cS . > "$registered"
-task_definition_arn="$(jq -er '.taskDefinition.taskDefinitionArn' "$registered")"
+task_definition_arn="$(AWS_BIN=aws \
+  bash "$(dirname "$0")/../prod-ecs-express/register-task-definition-with-retry.sh" \
+    "$task_definition" "$AWS_REGION")"
+aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" \
+  --include TAGS --output json | jq -cS . > "$registered"
 jq -e --arg source "$SOURCE_SHA" --arg profile "$A5_CLONE_PROFILE" \
   --arg program "$clone_program" --arg image "$MIGRATION_IMAGE" \
   --arg database "$clone_database" --arg host "$clone_host" --arg port "$clone_port" \
@@ -594,39 +692,16 @@ network_configuration="$(jq -cn --arg subnets "$task_subnet_csv" --arg sg "$task
 ')"
 run_task="$OUTPUT_DIR/run-task.json"
 run_task_raw="$OUTPUT_DIR/run-task.raw.json"
-run_task_error="$OUTPUT_DIR/run-task.err"
 run_client_token="$window_id-${SOURCE_SHA:0:32}"
 [ "${#run_client_token}" -le 64 ]
 run_task_requested=true
-run_task_succeeded=false
-run_task_delay=2
-for attempt in {1..9}; do
-  set +e
-  aws ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
+AWS_BIN=aws bash "$(dirname "$0")/../prod-ecs-express/run-task-idempotently.sh" \
+  "$run_client_token" -- ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
     --platform-version 1.4.0 --task-definition "$task_definition_arn" \
     --network-configuration "$network_configuration" \
-    --started-by "$window_id" --client-token "$run_client_token" \
-    --output json > "$run_task_raw" 2> "$run_task_error"
-  run_task_status=$?
-  set -e
-  if [ "$run_task_status" -eq 0 ]; then
-    jq -cS . "$run_task_raw" > "$run_task"
-    run_task_succeeded=true
-    break
-  fi
-  if ! grep -Eiq 'unable to assume[^[:cntrl:]]*role' "$run_task_error"; then
-    cat "$run_task_error" >&2
-    exit "$run_task_status"
-  fi
-  [ "$attempt" -lt 9 ] || break
-  sleep "$run_task_delay"
-  run_task_delay=$((run_task_delay*2))
-  [ "$run_task_delay" -le 90 ] || run_task_delay=90
-done
-if ! $run_task_succeeded; then
-  cat "$run_task_error" >&2
-  exit 1
-fi
+    --started-by "$window_id" \
+    --output json > "$run_task_raw"
+jq -cS . "$run_task_raw" > "$run_task"
 jq -e '.failures==[] and (.tasks|length)==1' "$run_task" >/dev/null
 task_arn="$(jq -er '.tasks[0].taskArn' "$run_task")"
 
@@ -759,7 +834,8 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
   --arg temporaryArn "$temporary_db_arn" --arg temporaryId "$temporary_id" \
   --slurpfile tags "$OUTPUT_DIR/tags.json" --arg engine "$clone_engine" \
   --arg engineVersion "$clone_engine_version" --arg kms "$kms_key_arn" \
-  --arg subnetGroup "$configured_subnet_group" --arg dbSg "$db_security_group_id" \
+  --arg subnetGroup "$configured_subnet_group" --arg parameterGroup "$configured_parameter_group" \
+  --arg optionGroup "$configured_option_group" --arg dbSg "$db_security_group_id" \
   --arg taskSg "$task_security_group_id" --arg taskArn "$task_arn" \
   --arg definitionArn "$task_definition_arn" --arg image "$MIGRATION_IMAGE" \
   --arg source "$SOURCE_SHA" --arg executionRole "$execution_role_arn" \
@@ -776,7 +852,8 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
    temporaryDbInstanceArn:$temporaryArn,temporaryDbIdentifier:$temporaryId,
    requiredRunTags:($tags[0]|map({key:.Key,value:.Value})|sort_by(.key)),engine:$engine,
    engineVersion:$engineVersion,storageEncrypted:true,kmsKeyArn:$kms,publiclyAccessible:false,
-   dbSubnetGroupName:$subnetGroup,
+   dbSubnetGroupName:$subnetGroup,dbParameterGroupName:$parameterGroup,
+   optionGroupName:$optionGroup,
    dbSubnetIds:($network[0].describeDbInstances.raw.DBInstances[0].DBSubnetGroup.Subnets
      | map(.SubnetIdentifier)|unique|sort),dbSecurityGroupIds:[$dbSg],
    migrationTaskSubnetIds:($network[0].describeNetworkInterfaces.raw.NetworkInterfaces

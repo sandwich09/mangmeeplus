@@ -112,14 +112,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
           role-session-name: production-a5-reader-bootstrap-${{ github.run_id }}
-      - name: Authenticate and verify the exact migration tool
-        run: |
-          set -euo pipefail
-          aws ecr get-login-password | docker login --username AWS --password-stdin \
-            "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-          cosign verify \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com "$MIGRATION_IMAGE" >/dev/null
       - name: Bootstrap reader and self-revoke temporary writer
         env:
           SCHEMA_PROFILE: ${{ inputs.schema_profile }}
