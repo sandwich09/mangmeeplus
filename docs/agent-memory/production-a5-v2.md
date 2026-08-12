@@ -111,6 +111,15 @@ Verification:
   exact `Subnets` array. No reader secret/task/DB role was created. Fix the same malformed predicate
   in bootstrap plus the two legacy A5 runners and bind it against a realistic describe-subnets
   fixture before re-arming the intentionally self-revoked bootstrap roles.
+- PR #42 merged as `082610275cf12cac7ab7279839cbc3099294ce82`. The exact templates were
+  re-armed after proving the failed run left a deny-all bootstrap controller and no execution role,
+  reader secret, task or clone. Bootstrap run `31562759277` then passed Passport, ECR and subnet
+  validation before AWS rejected `CreateSecret` with `Access to KMS is not allowed`. The bootstrap
+  controller's explicit deny omitted the KMS calls that Secrets Manager performs on the caller's
+  behalf. Grant only `kms:GenerateDataKey`/`kms:Decrypt` for creation and `kms:Decrypt` for the four
+  secret-reading task execution roles, restricted to the account's exact `aws/secretsmanager` key
+  and `kms:ViaService=secretsmanager.ap-southeast-1.amazonaws.com`; bind those limits in the focused
+  policy spec before re-arming and retrying the same Passport.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
@@ -120,8 +129,8 @@ Verification:
 
 Next:
 
-1. Merge the reusable-workflow event-semantics correction after focused/full controller checks.
-2. Run one resolved-all UAT to mint Passport V2, then dispatch the one-time reader bootstrap.
-3. Let automatic closed-mode Production Readiness run; require quick READY or first-green A5 clone.
+1. Merge and apply the narrowly scoped Secrets Manager KMS permission correction.
+2. Retry the one-time reader bootstrap from UAT run `31559662937` with `F1_CURRENT`.
+3. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5 clone.
 4. Owner explicitly dispatches one `maintenance_closed` Production V2 promotion.
 5. Keep customer launch closed until independent legal evidence is complete.
