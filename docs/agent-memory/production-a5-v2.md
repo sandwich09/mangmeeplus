@@ -72,6 +72,16 @@ Verification:
   before UAT mutation because the reusable workflow incorrectly tested `github.event_name` for
   `workflow_call` and skipped the required release-tools artifact. The controller now binds the
   required `source_ref` input instead, with a focused regression assertion.
+- PR #38 merged as `ea0919c51585f5c1c46e2facf2ff5cdee05c8171`. UAT run `31555002308`
+  proved both release-tool matrix jobs execute, then stopped before UAT mutation because ECR
+  rejected the Bookworm migration-tool base at 3 Critical / 6 High findings (`perl`/`expat`). The
+  one-shot tool now uses an independently pinned Alpine base; API runtime bytes remain on their
+  existing base. A temporary ECR probe of the exact migration-tool target passed the repository's
+  real `verify-ecr-scan.sh` gate at index digest
+  `sha256:0896d992bd09e563ea7043d5e986a7b8a0611be0855ac0aad8ed1b4822e8e3bc`
+  and linux/amd64 child digest
+  `sha256:6bf1d96fc9d411721525ddf4b96d66498dec5c342bc841ff9798c9fcb45a9b4b`;
+  the diagnostic ECR repository was deleted after verification.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
