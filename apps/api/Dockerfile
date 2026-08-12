@@ -50,10 +50,13 @@ RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
   \( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' \) -delete
 
 # One-shot migration/rehearsal tooling. This target is never a service image: it exposes no port,
-# has no health check and fails unless an ECS task supplies an explicit reviewed command. Keeping
-# it separate preserves the small API runtime while retaining Prisma CLI, migrations, tsx and the
-# exact compatibility specs needed by the signed production A5 clone gate.
-FROM build AS migration-tool
+# has no health check and fails unless an ECS task supplies an explicit reviewed command. Its
+# independently pinned base lets security fixes land without changing the API service runtime.
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS migration-tool
+RUN apk add --no-cache ca-certificates openssl libc6-compat
+ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem
+COPY --from=build --chown=node:node /app /app
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision=$GIT_SHA \
       com.watchdog-bms.image-purpose=production-a5-migration-tool

@@ -67,6 +67,11 @@ fi
 grep -Fxq '**/.env' "$repo_root/.dockerignore"
 grep -Fxq '**/.env.*' "$repo_root/.dockerignore"
 grep -Fq 'COPY apps/api/prisma.config.ts apps/api/prisma.config.ts' "$repo_root/apps/api/Dockerfile"
+grep -Fq 'FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS migration-tool' "$repo_root/apps/api/Dockerfile"
+migration_tool_stage="$(sed -n '/ AS migration-tool$/,/^FROM system AS runner$/p' "$repo_root/apps/api/Dockerfile")"
+grep -Fq 'RUN apk add --no-cache ca-certificates openssl libc6-compat' <<< "$migration_tool_stage"
+grep -Fq 'RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem' <<< "$migration_tool_stage"
+grep -Fq 'COPY --from=build --chown=node:node /app /app' <<< "$migration_tool_stage"
 
 # ADR 0005: App Runner is closed to new AWS customers and its deploy scripts were removed
 # (2026-07-28) once ECS Express took over every production service. Clean-build, immutable
