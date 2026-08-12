@@ -400,12 +400,7 @@ jobs:
       - name: Verify final filesystem
         run: bash infra/docker/verify-production-image.sh watchdog-bms/${{ matrix.service }}:ci
       - name: Generate SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: watchdog-bms/${{ matrix.service }}:ci
-          format: spdx-json
-          output-file: sbom-${{ matrix.service }}.spdx.json
-          upload-artifact: false
+        run: bash infra/docker/generate-image-sbom.sh watchdog-bms/${{ matrix.service }}:ci sbom-${{ matrix.service }}.spdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-image-sbom-${{ matrix.service }}
@@ -548,13 +543,9 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "$IMAGE_REF" > "release/cosign-${{ matrix.service }}.json"
       - name: Generate SBOM from pushed digest
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: ${{ steps.image.outputs.ref }}
-          format: spdx-json
-          output-file: release/sbom-${{ matrix.service }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: bash infra/docker/generate-image-sbom.sh "$IMAGE_REF" "release/sbom-${{ matrix.service }}.spdx.json"
       - name: Record immutable image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -736,13 +727,9 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$IMAGE_REF" > "tool/cosign-${{ matrix.purpose }}.json"
       - name: Generate tool SBOM from pushed digest
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
-        with:
-          image: ${{ steps.image.outputs.ref }}
-          format: spdx-json
-          output-file: tool/sbom-${{ matrix.purpose }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: bash infra/docker/generate-image-sbom.sh "$IMAGE_REF" "tool/sbom-${{ matrix.purpose }}.spdx.json"
       - name: Record immutable tool
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

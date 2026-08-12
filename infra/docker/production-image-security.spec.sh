@@ -107,6 +107,18 @@ grep -Fq 'immutable_image_ref' "$repo_root/infra/prod-ecs-express/deploy.sh"
 grep -Fq 'RELEASE_TASKS_APPLIED_SHA' "$repo_root/infra/prod-ecs-express/deploy.sh"
 
 ci="$repo_root/.github/workflows/ci.yml"
+sbom_generator="$repo_root/infra/docker/generate-image-sbom.sh"
+bash -n "$sbom_generator"
+bash "$repo_root/infra/docker/generate-image-sbom.spec.sh"
+test "$(grep -Fc 'infra/docker/generate-image-sbom.sh' "$ci")" -eq 3
+if grep -Fq 'anchore/sbom-action' "$ci"; then
+  echo "ERROR: CI SBOM generation still depends on an unbounded action download" >&2
+  exit 1
+fi
+grep -Fq 'syft_version=1.42.3' "$sbom_generator"
+grep -Fq 'syft_asset_id=377338300' "$sbom_generator"
+grep -Fq 'syft_sha256=0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509' "$sbom_generator"
+grep -Fq -- '--retry 4 --retry-all-errors --retry-delay 2' "$sbom_generator"
 grep -Fq 'workflow_dispatch:' "$ci"
 grep -Fq 'workflow_call:' "$ci"
 grep -Fq 'pull_request:' "$ci"
