@@ -72,6 +72,13 @@ migration_tool_stage="$(sed -n '/ AS migration-tool$/,/^FROM system AS runner$/p
 grep -Fq 'RUN apk add --no-cache ca-certificates openssl libc6-compat' <<< "$migration_tool_stage"
 grep -Fq 'RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem' <<< "$migration_tool_stage"
 grep -Fq 'COPY --from=build --chown=node:node /app /app' <<< "$migration_tool_stage"
+grep -Fq 'FROM migration-tool AS release-task' "$repo_root/apps/api/Dockerfile"
+grep -Fq 'com.watchdog-bms.image-purpose=production-release-task' "$repo_root/apps/api/Dockerfile"
+grep -Fq '"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"' "$repo_root/.github/workflows/ci.yml"
+if grep -Fq '"purpose":"release-task","repository":"watchdog-bms-api","target":"local"' "$repo_root/.github/workflows/ci.yml"; then
+  echo "ERROR: release-task must not publish the vulnerable development-oriented local target" >&2
+  exit 1
+fi
 
 # ADR 0005: App Runner is closed to new AWS customers and its deploy scripts were removed
 # (2026-07-28) once ECS Express took over every production service. Clean-build, immutable

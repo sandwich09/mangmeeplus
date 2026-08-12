@@ -82,6 +82,17 @@ Verification:
   and linux/amd64 child digest
   `sha256:6bf1d96fc9d411721525ddf4b96d66498dec5c342bc841ff9798c9fcb45a9b4b`;
   the diagnostic ECR repository was deleted after verification.
+- PR #39 merged as `e919f42cd7f143ab46acd83eff6ea89e81eb7aa4`. UAT run `31557014597`
+  reused CI and passed UAT environment readiness, then stopped before UAT mutation because the
+  separately published release-task still selected the development-oriented Bookworm `local`
+  target and ECR rejected it at the same 3 Critical / 6 High threshold. Release orchestration now
+  has its own labelled target inheriting the scanned one-shot Alpine runtime; the local developer
+  target and API service runtime remain unchanged. The exact release-task target passed the real
+  ECR scan gate at index digest
+  `sha256:8a8634752c975f87a9a9a440145ffd316a80e857a7fa18e20741d1c5cb8bc717`
+  and linux/amd64 child digest
+  `sha256:971259b349d7710d1ab76499c34781af42b5cb4f306f41637ec7e580c147fcde`;
+  the diagnostic ECR repository was deleted after verification.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2

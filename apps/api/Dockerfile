@@ -65,6 +65,15 @@ USER node
 WORKDIR /app
 CMD ["sh", "-c", "echo 'migration-tool requires an explicit one-shot command' >&2; exit 64"]
 
+# Release orchestration needs the same Prisma/tsx source tree but remains a separately labelled,
+# signed artifact in the API repository. It deliberately inherits the scanned one-shot runtime
+# instead of the development-oriented `local` image.
+FROM migration-tool AS release-task
+ARG GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA \
+      com.watchdog-bms.image-purpose=production-release-task
+CMD ["sh", "-c", "echo 'release-task requires an explicit one-shot command' >&2; exit 64"]
+
 FROM system AS runner
 ENV NODE_ENV=production
 WORKDIR /app

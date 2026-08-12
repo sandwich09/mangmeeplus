@@ -660,7 +660,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        include: ${{ fromJSON(inputs.publish_release_tools && '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"local"},{"purpose":"migration-tool","repository":"watchdog-bms-migration-tool","target":"migration-tool"}]' || '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"local"}]') }}
+        include: ${{ fromJSON(inputs.publish_release_tools && '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"},{"purpose":"migration-tool","repository":"watchdog-bms-migration-tool","target":"migration-tool"}]' || '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"}]') }}
     env:
       ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
     steps:
@@ -710,6 +710,7 @@ jobs:
           if [ "$PURPOSE" = migration-tool ]; then
             bash infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"
           else
+            test "$(docker inspect --format '{{ index .Config.Labels "com.watchdog-bms.image-purpose" }}' "$image")" = production-release-task
             docker run --rm --entrypoint /bin/sh "$image" -lc \
               'set -eu
                test -f /app/apps/api/prisma/verify-production-ready-migration.ts
