@@ -16,10 +16,9 @@ jq -e --slurpfile ready "$ready" '
     [.services[] | . as $s
       | .rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0] as $a
       | ([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value]) as $source
-      | ([$a.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value]) as $mode
-      | select(($source|length)==1 and ($mode|length)==1)
+      | select(($source|length)==1 and ($s.servingMode=="live" or $s.servingMode=="maintenance_only"))
       | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
-         servingMode:$mode[0],serviceRevisionArn:$s.serviceRevisionArn,
+         servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,
          taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service);
   .status=="PASS" and (services == ($ready[0].productionBaseline.services|sort_by(.service)))
 ' "$current_health" >/dev/null || {
@@ -30,6 +29,7 @@ jq -e --slurpfile ready "$ready" '
 jq -e --slurpfile expected "$ready_runtime" '
   def stable:
     {schemaVersion,securityPolicySha256,a5PolicySha256,clonePolicySha256,
+     promotionPrerequisitesSha256,
      rds:(.rds|del(.rawSha256)),
      redis:(.redis|del(.rawReplicationGroupSha256,.rawPrimarySha256))};
   stable == ($expected[0]|stable)

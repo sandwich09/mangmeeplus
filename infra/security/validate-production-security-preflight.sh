@@ -53,11 +53,12 @@ security_preflight_expected_members() {
       tools/sbom-migration-tool.spdx.json tools/sbom-release-task.spdx.json ;;
     ready-v2-quick) printf '%s\n' \
       catalog-result.json catalog-runtime.json migration-catalog.json passport.json \
-      production-health.json production-runtime.json ready.bundle ready.json ;;
+      production-health.json production-runtime.json promotion-prerequisites.json \
+      ready.bundle ready.json ;;
     ready-v2-migration) printf '%s\n' \
       catalog-result.json catalog-runtime.json clone-infrastructure.json clone-result.json \
       migration-catalog.json passport.json production-health.json production-runtime.json \
-      ready.bundle ready.json ;;
+      promotion-prerequisites.json ready.bundle ready.json ;;
     *) echo "ERROR: unknown artifact extraction profile" >&2; return 2 ;;
   esac
 }

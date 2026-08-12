@@ -1,0 +1,7 @@
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {"Effect":"Allow","Action":["secretsmanager:GetSecretValue"],"Resource":"arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"},
+    {"Effect":"Allow","Action":["ssm:GetParameters"],"Resource":"arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/*"}
+  ]
+}

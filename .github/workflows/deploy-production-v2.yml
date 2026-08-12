@@ -34,11 +34,13 @@ jobs:
   promote:
     name: Promote exact UAT Passport through signed Production READY
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     environment: production
     env:
       AWS_ACCOUNT_ID: '311414082667'
       AWS_REGION: ap-southeast-1
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      DEPLOYMENT_POLL_ATTEMPTS: '75'
       DEPLOY_ENV: production
       ECS_DEPLOY_MANAGE_IAM: 'false'
       ECR_REGISTRY: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com
@@ -102,6 +104,7 @@ jobs:
       - name: Bind the protected controller and verify signed Passport/READY artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_POLICY_READ_TOKEN: ${{ secrets.PRODUCTION_POLICY_READ_TOKEN }}
           INPUT_UAT_RUN_ID: ${{ inputs.uat_run_id }}
           INPUT_READY_RUN_ID: ${{ inputs.readiness_run_id }}
           INPUT_MODE: ${{ inputs.requested_serving_mode }}
@@ -116,6 +119,19 @@ jobs:
           root="$RUNNER_TEMP/production-promotion-v2"
           evidence="$root/deployment-evidence"
           mkdir -m 700 -p "$root" "$evidence"
+
+          test -n "$GH_POLICY_READ_TOKEN"
+          echo 'PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true' >> "$GITHUB_ENV"
+          status="$(curl --silent --show-error --location --output "$root/main-protection.json" \
+            --write-out '%{http_code}' --header "Authorization: Bearer $GH_POLICY_READ_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/branches/main/protection")"
+          test "$status" = 200
+          jq -e '.required_status_checks.strict==true
+            and .required_pull_request_reviews.required_approving_review_count>=1
+            and .allow_force_pushes.enabled==false and .allow_deletions.enabled==false' \
+            "$root/main-protection.json" >/dev/null
 
           ready_run="$root/readiness-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$INPUT_READY_RUN_ID" > "$ready_run"
@@ -365,9 +381,10 @@ jobs:
       - name: Configure mutation-capable Production deploy credentials only after READY recheck
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
           role-session-name: production-v2-deploy-${{ github.run_id }}
           unset-current-credentials: true
       - name: Recheck stable service identity at the mutation boundary
@@ -380,12 +397,24 @@ jobs:
               | .rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0] as $a
               | {service:$s.service,image:$a.primaryContainer.image,
                  sourceCommit:([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value][0]),
-                 servingMode:([$a.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value][0]),
+                 servingMode:$s.servingMode,
                  serviceRevisionArn:$s.serviceRevisionArn,taskDefinitionArn:$s.taskDefinition.arn}]
               |sort_by(.service)==($ready[0].productionBaseline.services|sort_by(.service))
           ' "$health/current-health.json" >/dev/null
 
+      - name: Prove maintenance bootstrap compatibility before closing Production
+        if: env.REQUIRES_CLOSED_STAGE == 'true' && env.ALREADY_CANDIDATE_CLOSED != 'true'
+        env:
+          PRODUCTION_SERVING_MODE: maintenance_only
+          RELEASE_MODE: maintenance-bootstrap
+          RELEASE_DEPLOY_TARGET: all
+          PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
+          MAINTENANCE_BOOTSTRAP_READONLY: 'true'
+          REIMBURSEMENT_WRITE_QUIESCE: 'true'
+        run: bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_TASK_IMAGE" "$SOURCE_SHA" maintenance-preflight
+
       - name: Close the exact candidate before any Production database mutation
+        id: bootstrap-close
         if: env.REQUIRES_CLOSED_STAGE == 'true' && env.ALREADY_CANDIDATE_CLOSED != 'true'
         env:
           PRODUCTION_SERVING_MODE: maintenance_only
@@ -397,7 +426,6 @@ jobs:
         run: |
           set -euo pipefail
           closed="$DEPLOYMENT_EVIDENCE_DIR/bootstrap-closed"; mkdir -m 700 "$closed"
-          bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_TASK_IMAGE" "$SOURCE_SHA" maintenance-preflight
           DEPLOYMENT_EVIDENCE_DIR="$closed" RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" \
             bash infra/prod-ecs-express/deploy.sh all
           export WORKER_INTERNAL_TOKEN
@@ -438,7 +466,27 @@ jobs:
           bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.sh \
             "$DEPLOYMENT_EVIDENCE_DIR/maintenance-ingress-drain.json"
 
+      - name: Refresh Production deploy credentials for the durable release envelope
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: production-v2-release-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Persist the durable release operation identity before database preparation
+        run: |
+          set -euo pipefail
+          operation_id="$(tr '[:upper:]' '[:lower:]' < /proc/sys/kernel/random/uuid)"
+          [[ "$operation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+          printf '%s\n' "RELEASE_OPERATION_ID=$operation_id" >> "$GITHUB_ENV"
+          jq -cnS --arg operation "$operation_id" \
+            '{operationId:$operation,state:"ALLOCATED_BEFORE_RELEASE_PREPARE"}' \
+            > "$DEPLOYMENT_EVIDENCE_DIR/release-operation.json"
+
       - name: Recheck signed READY migration authority inside the durable database fence
+        id: release-prepare
         env:
           RELEASE_MODE: passport-promotion
           RELEASE_DEPLOY_TARGET: ${{ env.EFFECTIVE_TARGET }}
@@ -461,7 +509,21 @@ jobs:
           PRODUCTION_READY_APPLIED_CATALOG_HASH="$(jq -er '.appliedCatalogHash' "$READY_ROOT/catalog-result.json")"
           PRODUCTION_READY_PENDING_CATALOG_HASH="$(jq -er '.pendingCatalogHash' "$READY_ROOT/catalog-result.json")"
           PRODUCTION_READY_PENDING_COUNT="$(jq -er '.pendingMigrationCount' "$READY_ROOT/catalog-result.json")"
-          bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_TASK_IMAGE" "$SOURCE_SHA" release-prepare
+          log="$DEPLOYMENT_EVIDENCE_DIR/release-prepare.log"
+          set +e
+          bash infra/security/run-production-release-prepare.sh \
+            "$RELEASE_TASK_IMAGE" "$SOURCE_SHA" 2>&1 | tee "$log"
+          status="${PIPESTATUS[0]}"
+          set -e
+          task_arn="$(sed -n 's/^\[release-task\] task=\([^ ]*\) .*/\1/p' "$log" | tail -n 1)"
+          jq -cS --arg task "$task_arn" --argjson status "$status" \
+            '.+{taskArn:(if $task=="" then null else $task end),releasePrepareExitCode:$status,
+              state:(if $status==0 then "HELD_FOR_ROLLOUT" else "RECONCILIATION_MAY_BE_REQUIRED" end)}' \
+            "$DEPLOYMENT_EVIDENCE_DIR/release-operation.json" \
+            > "$DEPLOYMENT_EVIDENCE_DIR/release-operation.tmp"
+          mv "$DEPLOYMENT_EVIDENCE_DIR/release-operation.tmp" \
+            "$DEPLOYMENT_EVIDENCE_DIR/release-operation.json"
+          exit "$status"
 
       - name: Roll out the exact UAT image digests without rebuilding
         id: rollout
@@ -501,22 +563,46 @@ jobs:
           REIMBURSEMENT_WRITE_QUIESCE: 'true'
         run: bash infra/prod-ecs-express/verify-production-maintenance.sh all
 
+      - name: Refresh Production deploy credentials for bounded closed-stage recovery
+        id: refresh-recovery
+        if: >-
+          always() && env.REQUIRES_CLOSED_STAGE == 'true' &&
+          (steps.bootstrap-close.outcome == 'failure' || steps.rollout.outcome == 'failure' ||
+          steps.verify-health.outcome == 'failure' ||
+          (inputs.requested_serving_mode == 'maintenance_closed' &&
+          steps.verify-maintenance.outcome == 'failure'))
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: production-v2-recovery-${{ github.run_id }}
+          unset-current-credentials: true
       - name: Recover an unsuccessful closed-stage promotion to the exact closed candidate
         id: recover-closed
         if: >-
           always() && env.REQUIRES_CLOSED_STAGE == 'true' &&
-          (steps.rollout.outcome != 'success' || steps.verify-health.outcome != 'success' ||
+          steps.refresh-recovery.outcome == 'success' &&
+          (steps.bootstrap-close.outcome == 'failure' || steps.rollout.outcome == 'failure' ||
+          steps.verify-health.outcome == 'failure' ||
           (inputs.requested_serving_mode == 'maintenance_closed' &&
-          steps.verify-maintenance.outcome != 'success'))
+          steps.verify-maintenance.outcome == 'failure'))
         env:
           PRODUCTION_SERVING_MODE: maintenance_only
-          RELEASE_MODE: passport-promotion
           RELEASE_DEPLOY_TARGET: all
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
           REIMBURSEMENT_WRITE_QUIESCE: 'true'
         run: |
           set -euo pipefail
           echo '::warning::Final promotion proof failed; restoring the exact UAT candidate in global maintenance mode'
+          if [[ "${RELEASE_PARENT_OPERATION_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            export RELEASE_MODE=passport-promotion
+          else
+            export RELEASE_MODE=maintenance-bootstrap MAINTENANCE_BOOTSTRAP_READONLY=true
+            recovery="$DEPLOYMENT_EVIDENCE_DIR/bootstrap-recovery"; mkdir -m 700 "$recovery"
+            export DEPLOYMENT_EVIDENCE_DIR="$recovery"
+          fi
           RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" \
             bash infra/prod-ecs-express/deploy.sh all
           export WORKER_INTERNAL_TOKEN
@@ -531,8 +617,24 @@ jobs:
           bash infra/prod-ecs-express/verify-production-maintenance.sh all
           echo 'PROMOTION_SAFE_RECOVERY=true' >> "$GITHUB_ENV"
 
+      - name: Refresh Production deploy credentials for durable release finalization
+        id: refresh-finalize
+        if: >-
+          always() && steps.release-prepare.outcome == 'success' &&
+          env.RELEASE_PARENT_OPERATION_ID != '' &&
+          (env.EFFECTIVE_TARGET == 'all' || env.EFFECTIVE_TARGET == 'api-web' ||
+          ((env.EFFECTIVE_TARGET == 'ai-gateway' || env.EFFECTIVE_TARGET == 'workers') &&
+          steps.verify-health.outcome == 'success'))
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: production-v2-finalize-${{ github.run_id }}
+          unset-current-credentials: true
       - name: Retire or reconcile launch-build authority and finalize the durable release
-        if: always() && env.RELEASE_PARENT_OPERATION_ID != '' && (env.EFFECTIVE_TARGET == 'all' || env.EFFECTIVE_TARGET == 'api-web')
+        if: always() && steps.refresh-finalize.outcome == 'success' && steps.release-prepare.outcome == 'success' && env.RELEASE_PARENT_OPERATION_ID != '' && (env.EFFECTIVE_TARGET == 'all' || env.EFFECTIVE_TARGET == 'api-web')
         env:
           PRODUCTION_SERVING_MODE: ${{ env.FINAL_SERVING_MODE }}
           RELEASE_MODE: passport-promotion
@@ -574,7 +676,7 @@ jobs:
             bash infra/prod-ecs-express/run-release-task.sh "$RELEASE_TASK_IMAGE" "$SOURCE_SHA" "$mode"
 
       - name: Finalize a non-api durable release
-        if: always() && env.RELEASE_PARENT_OPERATION_ID != '' && steps.verify-health.outcome == 'success' && (env.EFFECTIVE_TARGET == 'ai-gateway' || env.EFFECTIVE_TARGET == 'workers')
+        if: always() && steps.refresh-finalize.outcome == 'success' && steps.release-prepare.outcome == 'success' && env.RELEASE_PARENT_OPERATION_ID != '' && steps.verify-health.outcome == 'success' && (env.EFFECTIVE_TARGET == 'ai-gateway' || env.EFFECTIVE_TARGET == 'workers')
         env:
           RELEASE_MODE: passport-promotion
         run: |

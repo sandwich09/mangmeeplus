@@ -142,6 +142,34 @@ def e0_fixture_reimbursement_quiesce($stage; $source): {
   failurePolicy:"LEAVE_QUIESCED"
 };
 
+def e0_fixture_live_controls($service):
+  if $service == "api-web" then [
+    {name:"PRODUCTION_SERVING_MODE",value:"live"},
+    {name:"GLOBAL_MAINTENANCE_MODE",value:"false"},
+    {name:"AI_GATEWAY_ENABLED",value:"true"},
+    {name:"LINE_AI_LEDGER_ENABLED",value:"true"},
+    {name:"REIMBURSEMENT_WRITE_QUIESCE",value:"false"},
+    {name:"CRM_AUTO_REPLY_ENABLED",value:"true"}
+  ] elif $service == "ai-gateway" then [
+    {name:"PRODUCTION_SERVING_MODE",value:"live"},
+    {name:"MODEL_PROVIDER",value:"bedrock"},
+    {name:"APPROVED_AI_PROVIDERS",value:"bedrock,openai"},
+    {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVED",value:"true"},
+    {name:"AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",value:"DPO-2026-07-23-bedrock-global"},
+    {name:"LINE_AI_AGENT_ORCHESTRATION_ENABLED",value:"true"},
+    {name:"LINE_AI_TOOLUSE_LOOP_ENABLED",value:"true"},
+    {name:"LINE_AI_COVERAGE_CRITIC_ENABLED",value:"true"},
+    {name:"AI_GATEWAY_ENABLED",value:"true"},
+    {name:"AI_AGENT_REGISTRY_ENABLED",value:"true"},
+    {name:"AI_TOOL_POLICY_ENFORCED",value:"true"},
+    {name:"AI_TOOL_AUDIT_ENABLED",value:"true"},
+    {name:"AI_FINAL_MUTATION_ENABLED",value:"false"},
+    {name:"AI_PROMPT_LOGGING_ENABLED",value:"false"}
+  ] else [
+    {name:"PRODUCTION_SERVING_MODE",value:"live"},
+    {name:"QUEUE_ENABLED",value:"true"}
+  ] end;
+
 def e0_fixture_health_service($service):
   (if $service == "api-web" then {
     name:"watchdog-bms-api-web-pub",parameter:"/watchdog-bms/production/ecs-express-api-web-url",
@@ -157,6 +185,8 @@ def e0_fixture_health_service($service):
   | ("https://" + $host) as $endpoint
   | ("arn:aws:elasticloadbalancing:ap-southeast-1:311414082667:targetgroup/"
       + $expected.name + "/aaaaaaaaaaaaaaaa") as $target_group
+  | ("arn:aws:elasticloadbalancing:ap-southeast-1:311414082667:targetgroup/"
+      + $expected.name + "-alternate/bbbbbbbbbbbbbbbb") as $alternate_target_group
   | ("arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/"
       + $expected.name + "/1") as $revision
   | ("arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/"
@@ -173,13 +203,13 @@ def e0_fixture_health_service($service):
       autoScalingTargetValue:70} as $scaling
   | {serviceArn:$service_arn,status:{statusCode:"ACTIVE"},currentDeployment:null,
       activeConfigurations:[{serviceRevisionArn:$revision,scalingTarget:$scaling,
-        primaryContainer:{containerPort:3000},
-        ingressPaths:[{accessType:"PUBLIC",endpoint:$host,
-          targetGroups:[{arn:$target_group}]}]}]} as $express
+        primaryContainer:{containerPort:3000,environment:e0_fixture_live_controls($service)},
+        healthCheckPath:$expected.path,
+        ingressPaths:[{accessType:"PUBLIC",endpoint:$host}]}]} as $express
   | {
     service:$service,
     serviceArn:$service_arn,serviceRevisionArn:$revision,serviceStatus:"ACTIVE",
-    currentDeployment:null,containerName:"Main",containerPort:3000,
+    currentDeployment:null,servingMode:"live",containerName:"Main",containerPort:3000,
     taskDefinition:{arn:$task_definition,revision:1},
     scalingTarget:$scaling,runningTaskArns:[$task_arn],runningTaskPrivateIps:[$private_ip],
     targetGroupArn:$target_group,targetHealth:[{privateIp:$private_ip,port:3000,state:"healthy"}],
@@ -191,10 +221,18 @@ def e0_fixture_health_service($service):
         raw:{first:{service:$express},second:{service:$express}}},
       describeServiceRevisions:{sha256:e0_fixture_hash,raw:{serviceRevisions:[{
         serviceArn:$service_arn,serviceRevisionArn:$revision,taskDefinition:$task_definition,
-        resolvedConfiguration:{scalingTarget:$scaling},
-        loadBalancers:[{targetGroupArn:$target_group,containerName:"Main",containerPort:3000}],
-        ecsManagedResources:{ingressPaths:[{accessType:"PUBLIC",endpoint:$host,
-          targetGroups:[{arn:$target_group}]}]}
+        resolvedConfiguration:{loadBalancers:[{productionListenerRule:"listener-rule",
+          targetGroupArn:$target_group}]},
+        loadBalancers:[{targetGroupArn:$alternate_target_group,containerName:"Main",containerPort:3000,
+          advancedConfiguration:{alternateTargetGroupArn:$target_group}}],
+        ecsManagedResources:{autoScaling:{scalableTarget:{arn:"scalable-target",minCapacity:1,
+          maxCapacity:2,status:"ACTIVE"},applicationAutoScalingPolicies:[{arn:"scaling-policy",
+          metric:"AVERAGE_CPU",policyType:"TargetTrackingScaling",status:"ACTIVE",targetValue:70}]},
+          ingressPaths:[{accessType:"PUBLIC",endpoint:$host,targetGroups:[
+            {arn:$target_group,healthCheckPath:$expected.path,healthCheckPort:3000,
+              port:0,status:"ACTIVE"},
+            {arn:$alternate_target_group,healthCheckPath:$expected.path,healthCheckPort:3000,
+              port:3000,status:"ACTIVE"}]}]}
       }]}},
       listTasks:{sha256:e0_fixture_hash,raw:{taskArns:[$task_arn]}},
       describeTasks:{sha256:e0_fixture_hash,raw:{failures:[],tasks:[{
@@ -208,7 +246,8 @@ def e0_fixture_health_service($service):
         NetworkInterfaceId:"eni-aaaaaaaaaaaaaaaaa",PrivateIpAddress:$private_ip,Status:"in-use"
       }]}},
       describeTargetGroups:{sha256:e0_fixture_hash,raw:{TargetGroups:[{
-        TargetGroupArn:$target_group,TargetType:"ip",Port:3000,HealthCheckPath:$expected.path
+        TargetGroupArn:$target_group,TargetType:"ip",Protocol:"HTTP",Port:80,
+        HealthCheckPort:"3000",HealthCheckPath:$expected.path
       }]}},
       describeTargetHealth:{sha256:e0_fixture_hash,raw:{TargetHealthDescriptions:[{
         Target:{Id:$private_ip,Port:3000},TargetHealth:{State:"healthy"}
@@ -423,7 +462,14 @@ def e0_fixture_clone_payload($source): {
     networkEvidence:{
       describeDbInstances:{sha256:e0_fixture_hash,raw:{DBInstances:[{
         DBInstanceArn:("arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-7001-a1-"
-          + $source[0:8]),PubliclyAccessible:false,
+          + $source[0:8]),DBInstanceStatus:"available",DBName:"watchdog_bms",
+        Endpoint:{Address:"watchdog-a5-clone.fixture.ap-southeast-1.rds.amazonaws.com",Port:5432},
+        MasterUserSecret:{
+          KmsKeyId:("arn:aws:kms:ap-southeast-1:311414082667:key/"
+            + "b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"),
+          SecretArn:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
+            + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf"),
+          SecretStatus:"active"},PubliclyAccessible:false,
         DBSubnetGroup:{Subnets:[{SubnetIdentifier:"subnet-00000000"},
           {SubnetIdentifier:"subnet-00000001"}]},
         VpcSecurityGroups:[{VpcSecurityGroupId:"sg-00000000"}]
@@ -436,6 +482,11 @@ def e0_fixture_clone_payload($source): {
         ARN:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
           + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf"),
         Name:"rds!db-00000000-0000-0000-0000-000000000000",
+        OwningService:"rds",Tags:[
+          {Key:"aws:secretsmanager:owningService",Value:"rds"},
+          {Key:"aws:rds:primaryDBInstanceArn",Value:(
+            "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-7001-a1-"
+              + $source[0:8])}],
         VersionIdsToStages:{"00000000-0000-0000-0000-000000000001":["AWSCURRENT"]}
       }},
       describeSubnets:{sha256:e0_fixture_hash,raw:{Subnets:[
@@ -471,13 +522,11 @@ def e0_fixture_clone_payload($source): {
         taskRoleArn:null,networkMode:"awsvpc",containerDefinitions:[{
           image:("311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/"
             + "watchdog-bms-migration-tool@sha256:"+e0_fixture_hash),
+          environment:[
+            {name:"PGDATABASE",value:"watchdog_bms"},
+            {name:"PGHOST",value:"watchdog-a5-clone.fixture.ap-southeast-1.rds.amazonaws.com"},
+            {name:"PGPORT",value:"5432"}],
           secrets:[
-            {name:"PGDATABASE",valueFrom:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
-              + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf:dbname::"
-              + "00000000-0000-0000-0000-000000000001")},
-            {name:"PGHOST",valueFrom:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
-              + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf:host::"
-              + "00000000-0000-0000-0000-000000000001")},
             {name:"PGPASSWORD",valueFrom:("arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:"
               + "rds!db-00000000-0000-0000-0000-000000000000-AbCdEf:password::"
               + "00000000-0000-0000-0000-000000000001")},

@@ -446,6 +446,51 @@ jq -cS '.payload.cloneInfrastructure.networkEvidence.describeTaskDefinition.raw.
   "$fixture/clone-adversarial.json" > "$fixture/clone-single-url-secret.json"
 expect_reject clone-single-url-secret signed_evidence_validate_payload_contract \
   "$fixture/clone-single-url-secret.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw.DBInstances[0]
+  .MasterUserSecret.KmsKeyId=("arn:aws:kms:ap-southeast-1:311414082667:key/"+("f"*36))' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-managed-secret-kms-drift.json"
+set_contract_hash "$fixture/clone-managed-secret-kms-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw'
+expect_reject clone-managed-secret-kms-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-managed-secret-kms-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeSecret.raw.OwningService="redshift"' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-secret-owner-drift.json"
+set_contract_hash "$fixture/clone-secret-owner-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeSecret.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeSecret.raw'
+expect_reject clone-secret-owner-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-secret-owner-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeSecret.raw.Tags
+  |= map(if .Key=="aws:rds:primaryDBInstanceArn" then .Value=
+    "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db" else . end)' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-secret-primary-db-drift.json"
+set_contract_hash "$fixture/clone-secret-primary-db-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeSecret.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeSecret.raw'
+expect_reject clone-secret-primary-db-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-secret-primary-db-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeTaskDefinition.raw.taskDefinition
+  .containerDefinitions[0].environment |= map(if .name=="PGHOST" then
+    .value="watchdog-bms-prod-db.fixture.rds.amazonaws.com" else . end)' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-host-drift.json"
+set_contract_hash "$fixture/clone-host-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeTaskDefinition.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeTaskDefinition.raw'
+expect_reject clone-host-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-host-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeNetworkInterfaces.raw
+  .NetworkInterfaces += [.NetworkInterfaces[0] | .NetworkInterfaceId="eni-11111111"]' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-multiple-eni.json"
+set_contract_hash "$fixture/clone-multiple-eni.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeNetworkInterfaces.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeNetworkInterfaces.raw'
+expect_reject clone-multiple-eni signed_evidence_validate_payload_contract \
+  "$fixture/clone-multiple-eni.json"
+jq -cS '.payload.cloneInfrastructure.cleanup.residualResourceCount=1' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-cleanup-residual.json"
+expect_reject clone-cleanup-residual signed_evidence_validate_payload_contract \
+  "$fixture/clone-cleanup-residual.json"
 jq -cS '.payload.reimbursementCompatibility.tests=12' \
   "$fixture/clone-adversarial.json" > "$fixture/clone-reimbursement-tests-drift.json"
 expect_reject clone-reimbursement-tests-drift signed_evidence_validate_payload_contract \

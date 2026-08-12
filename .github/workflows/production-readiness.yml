@@ -68,7 +68,7 @@ jobs:
     needs: discover
     if: needs.discover.outputs.eligible == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     environment: production
     env:
       AWS_ACCOUNT_ID: '311414082667'
@@ -79,6 +79,22 @@ jobs:
       SECURITY_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly
       A5_READER_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly
       A5_CLONE_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}
+      WORKFLOW_WEBHOOK_ALLOWED_HOSTS: ${{ vars.WORKFLOW_WEBHOOK_ALLOWED_HOSTS }}
+      CLAMAV_HOST: ${{ vars.CLAMAV_HOST }}
+      LOG_KMS_KEY_ID: ${{ vars.LOG_KMS_KEY_ID }}
+      SECURITY_ALERT_TOPIC_ARN: ${{ vars.SECURITY_ALERT_TOPIC_ARN }}
+      LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}
+      LINE_LIFF_ID: ${{ vars.LINE_LIFF_ID }}
+      LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}
+      APPROVED_AI_PROVIDERS: ${{ vars.APPROVED_AI_PROVIDERS }}
+      APPROVED_AI_REGIONS: ${{ vars.APPROVED_AI_REGIONS }}
+      TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}
+      LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}
+      AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
+      AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
+      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}
       LEGAL_READER_ROLE_ARN: ${{ vars.LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN }}
       REDIS_REPLICATION_GROUP_ID: ${{ vars.REDIS_REPLICATION_GROUP_ID }}
       LEGAL_RELEASE_EVIDENCE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_SHA256 }}
@@ -151,6 +167,7 @@ jobs:
             "UAT_CONTROLLER=$uat_controller" >> "$GITHUB_ENV"
 
           test -n "$GH_POLICY_READ_TOKEN"
+          echo 'PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true' >> "$GITHUB_ENV"
           status="$(curl --silent --show-error --location --output "$root/main-protection.json" \
             --write-out '%{http_code}' --header "Authorization: Bearer $GH_POLICY_READ_TOKEN" \
             --header 'Accept: application/vnd.github+json' \
@@ -256,10 +273,8 @@ jobs:
               |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
               |[.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value][0]]|unique|.[]' \
               "$EVIDENCE_DIR/production-health.json")
-            modes="$(jq -r '[.services[]
-              |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
-              |[.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value][0]]
-              |unique|join(",")' "$EVIDENCE_DIR/production-health.json")"
+            modes="$(jq -r '[.services[].servingMode]|unique|join(",")' \
+              "$EVIDENCE_DIR/production-health.json")"
             if [ "${#active_sources[@]}" -eq 1 ] && [ "$modes" = live ]; then
               api_sha="$(jq -er '.services[]|select(.service=="api-web")
                 |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0]
@@ -327,10 +342,9 @@ jobs:
           jq -cS '[.services[] | . as $s
             | .rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0] as $a
             | ([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value]) as $source
-            | ([$a.primaryContainer.environment[]?|select(.name=="PRODUCTION_SERVING_MODE")|.value]) as $mode
-            | select(($source|length)==1 and ($mode|length)==1)
+            | select(($source|length)==1 and ($s.servingMode=="live" or $s.servingMode=="maintenance_only"))
             | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
-               servingMode:$mode[0],serviceRevisionArn:$s.serviceRevisionArn,
+               servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,
                taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service)' \
             "$EVIDENCE_DIR/production-health.json" > "$services"
           test "$(jq 'length' "$services")" = 3

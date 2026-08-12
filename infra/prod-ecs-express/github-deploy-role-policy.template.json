@@ -133,14 +133,30 @@
       "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"
     },
     {
+      "Sid": "ReadExactWorkerHealthToken",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/worker-internal-token-*"
+    },
+    {
       "Sid": "NetworkRead",
       "Effect": "Allow",
       "Action": [
         "ec2:DescribeVpcs",
         "ec2:DescribeSubnets",
         "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
         "ec2:DescribeRouteTables",
         "ec2:DescribeVpcEndpoints"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LoadBalancerHealthRead",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth"
       ],
       "Resource": "*"
     },

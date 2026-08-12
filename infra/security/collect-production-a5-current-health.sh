@@ -76,30 +76,140 @@ for service in ai-gateway api-web workers; do
       and ($active.primaryContainer.containerPort|type=="number" and .>=1 and .<=65535)
       and ($active.ingressPaths|length)==1
       and $active.ingressPaths[0].accessType=="PUBLIC"
-      and ("https://"+$active.ingressPaths[0].endpoint)==$url
-      and ($active.ingressPaths[0].targetGroups|length)==1)
+      and ("https://"+$active.ingressPaths[0].endpoint)==$url)
   ' "$second" >/dev/null
   express="$directory/express.json"
   jq -cnS --slurpfile first "$first" --slurpfile second "$second" \
     '{first:$first[0],second:$second[0]}' > "$express"
   revision_arn="$(jq -er '.service.activeConfigurations[0].serviceRevisionArn' "$second")"
   container_port="$(jq -er '.service.activeConfigurations[0].primaryContainer.containerPort' "$second")"
-  target_group="$(jq -er '.service.activeConfigurations[0].ingressPaths[0].targetGroups[0].arn' "$second")"
   scaling="$(jq -cS '.service.activeConfigurations[0].scalingTarget' "$second")"
+  serving_mode="$(jq -er --arg service "$service" '
+    def values($active; $name):
+      [$active.primaryContainer.environment[]? | select(.name==$name) | .value];
+    def controls($active; $service; $mode):
+      if $service=="api-web" then
+        values($active; "GLOBAL_MAINTENANCE_MODE")
+            == [if $mode=="live" then "false" else "true" end]
+        and values($active; "AI_GATEWAY_ENABLED")
+            == [if $mode=="live" then "true" else "false" end]
+        and values($active; "LINE_AI_LEDGER_ENABLED")
+            == [if $mode=="live" then "true" else "false" end]
+        and values($active; "REIMBURSEMENT_WRITE_QUIESCE")
+            == [if $mode=="live" then "false" else "true" end]
+        and (values($active; "CRM_AUTO_REPLY_ENABLED") as $crm
+          | if $mode=="live" then ($crm==["true"] or $crm==["false"])
+            else $crm==["false"] end)
+      elif $service=="ai-gateway" then
+        values($active; "MODEL_PROVIDER") as $providers
+        | values($active; "APPROVED_AI_PROVIDERS") as $approved
+        | (if $mode=="live" then (($providers==["bedrock"] or $providers==["openai"])
+            and ($approved|length)==1
+            and ($approved[0]|split(",")|map(gsub("^\\s+|\\s+$";""))|index($providers[0]))!=null)
+          else $providers==["disabled"] end)
+        and values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVED")
+          == [if $mode=="live" then "true" else empty end]
+        and (values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF") as $refs
+          | if $mode=="live" then ($refs|length)==1 and ($refs[0]|length)>0 else $refs==[] end)
+        and all(["LINE_AI_AGENT_ORCHESTRATION_ENABLED","LINE_AI_TOOLUSE_LOOP_ENABLED",
+          "LINE_AI_COVERAGE_CRITIC_ENABLED","AI_GATEWAY_ENABLED","AI_AGENT_REGISTRY_ENABLED",
+          "AI_TOOL_POLICY_ENFORCED","AI_TOOL_AUDIT_ENABLED"][];
+          values($active; .)==[if $mode=="live" then "true" else "false" end])
+        and values($active; "AI_FINAL_MUTATION_ENABLED")==["false"]
+        and values($active; "AI_PROMPT_LOGGING_ENABLED")==["false"]
+      elif $service=="workers" then
+        values($active; "QUEUE_ENABLED")==[if $mode=="live" then "true" else "false" end]
+      else false end;
+    {
+      "ai-gateway":{
+        source:"eb515b9e1e92ca970bd14c67fdeebb6f859cf838",
+        image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:8a159d8e1f3047ec0698f8b4e5209502129f2b2ebed8ba9e043abeff1bce3011",
+        controls:{
+          MODEL_PROVIDER:["bedrock"],APPROVED_AI_PROVIDERS:["bedrock,openai,typhoon"],
+          AI_GLOBAL_INFERENCE_PROFILE_APPROVED:["true"],
+          AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF:["DPO-2026-07-23-bedrock-global"],
+          LINE_AI_AGENT_ORCHESTRATION_ENABLED:["true"],LINE_AI_TOOLUSE_LOOP_ENABLED:["true"],
+          LINE_AI_COVERAGE_CRITIC_ENABLED:["true"],AI_GATEWAY_ENABLED:["true"],
+          AI_AGENT_REGISTRY_ENABLED:["true"],AI_TOOL_POLICY_ENFORCED:["true"],
+          AI_TOOL_AUDIT_ENABLED:["true"],AI_FINAL_MUTATION_ENABLED:["false"],
+          AI_PROMPT_LOGGING_ENABLED:["false"]}},
+      "api-web":{
+        source:"eb515b9e1e92ca970bd14c67fdeebb6f859cf838",
+        image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:9c655e1a06ba0d4acb4bcfbd2975aac57ef5e34ef25cc455ae8e1c1f59c46e1c",
+        controls:{GLOBAL_MAINTENANCE_MODE:[],AI_GATEWAY_ENABLED:["true"],
+          CRM_AUTO_REPLY_ENABLED:["true"],LINE_AI_LEDGER_ENABLED:["true"],
+          REIMBURSEMENT_WRITE_QUIESCE:["false"]}},
+      workers:{
+        source:"0bdbe5088c2e121b74c74da9f28bf2a64e3576d7",
+        image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:e9495744a9708d04c06564f6ddb2fd66342c3ccca87efd77d7e02fdce786c23f",
+        controls:{QUEUE_ENABLED:["true"]}}
+    }[$service] as $legacy
+    | .service.activeConfigurations[0] as $active
+    | values($active; "PRODUCTION_SERVING_MODE") as $modes
+    | if ($modes|length)==1 and ($modes[0]=="live" or $modes[0]=="maintenance_only")
+        and controls($active; $service; $modes[0]) then
+        $modes[0]
+      elif $modes==[] and $active.primaryContainer.image==$legacy.image
+        and values($active; "GIT_SHA")==[$legacy.source]
+        and all(($legacy.controls|to_entries)[];
+          . as $control | values($active; $control.key)==$control.value) then
+        "live"
+      else empty end
+  ' "$second")"
 
   revision="$directory/revision.json"
   aws_cmd ecs describe-service-revisions --region "$region" \
     --service-revision-arns "$revision_arn" --output json | jq -cS . > "$revision"
+  target_group="$(jq -er --arg service "$service_arn" --arg revision "$revision_arn" '
+    .serviceRevisions
+    | select(type=="array" and length==1)
+    | .[0]
+    | select(.serviceArn==$service and .serviceRevisionArn==$revision)
+    | [.resolvedConfiguration.loadBalancers[]?.targetGroupArn]
+    | select(length==1)
+    | .[0]
+    | select(test("^arn:aws:elasticloadbalancing:ap-southeast-1:311414082667:targetgroup/[^/]+/[0-9a-f]+$"))
+  ' "$revision")"
   task_definition="$(jq -er --arg service "$service_arn" --arg revision "$revision_arn" \
-    --arg target "$target_group" --argjson port "$container_port" '
-    select((.serviceRevisions|length)==1 and .serviceRevisions[0].serviceArn==$service
+    --arg target "$target_group" --arg endpoint "${ssm_url#https://}" --arg path "$health_path" \
+    --argjson port "$container_port" --argjson scaling "$scaling" '
+    (.serviceRevisions[0].loadBalancers[0].targetGroupArn) as $primary
+    | (.serviceRevisions[0].loadBalancers[0].advancedConfiguration.alternateTargetGroupArn) as $alternate
+    | select((.serviceRevisions|length)==1 and .serviceRevisions[0].serviceArn==$service
       and .serviceRevisions[0].serviceRevisionArn==$revision
-      and .serviceRevisions[0].resolvedConfiguration.scalingTarget=={minTaskCount:1,maxTaskCount:2,
-        autoScalingMetric:"AVERAGE_CPU",autoScalingTargetValue:70}
+      and (.serviceRevisions[0].resolvedConfiguration.loadBalancers|length)==1
+      and .serviceRevisions[0].resolvedConfiguration.loadBalancers[0].targetGroupArn==$target
       and (.serviceRevisions[0].loadBalancers|length)==1
-      and .serviceRevisions[0].loadBalancers[0].targetGroupArn==$target
       and .serviceRevisions[0].loadBalancers[0].containerName=="Main"
-      and .serviceRevisions[0].loadBalancers[0].containerPort==$port)
+      and .serviceRevisions[0].loadBalancers[0].containerPort==$port
+      and $primary!=$alternate and ($target==$primary or $target==$alternate)
+      and ([.serviceRevisions[0].ecsManagedResources.ingressPaths[]?
+        | select(.accessType=="PUBLIC" and .endpoint==$endpoint)
+        | .targetGroups[]?
+        | select(.arn==$target and .healthCheckPath==$path and .healthCheckPort==$port
+          and .port==(if $target==$primary then $port else 0 end)
+          and .status=="ACTIVE")] | length)==1
+      and ([.serviceRevisions[0].ecsManagedResources.ingressPaths[]?
+        | select(.accessType=="PUBLIC" and .endpoint==$endpoint)
+        | .targetGroups[]?
+        | select(.arn==(if $target==$primary then $alternate else $primary end)
+          and .healthCheckPath==$path and .healthCheckPort==$port
+          and .port==(if $target==$primary then 0 else $port end)
+          and .status=="ACTIVE")] | length)==1
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.scalableTarget.minCapacity
+        == $scaling.minTaskCount
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.scalableTarget.maxCapacity
+        == $scaling.maxTaskCount
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.scalableTarget.status=="ACTIVE"
+      and (.serviceRevisions[0].ecsManagedResources.autoScaling.applicationAutoScalingPolicies|length)==1
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.applicationAutoScalingPolicies[0].metric
+        == $scaling.autoScalingMetric
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.applicationAutoScalingPolicies[0].targetValue
+        == $scaling.autoScalingTargetValue
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.applicationAutoScalingPolicies[0].policyType
+        == "TargetTrackingScaling"
+      and .serviceRevisions[0].ecsManagedResources.autoScaling.applicationAutoScalingPolicies[0].status
+        == "ACTIVE")
     | .serviceRevisions[0].taskDefinition
   ' "$revision")"
   [[ "$task_definition" =~ ^arn:aws:ecs:ap-southeast-1:311414082667:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]
@@ -148,7 +258,8 @@ for service in ai-gateway api-web workers; do
     --output json | jq -cS . > "$target_groups"
   jq -e --arg target "$target_group" --arg path "$health_path" --argjson port "$container_port" '
     (.TargetGroups|length)==1 and .TargetGroups[0].TargetGroupArn==$target
-    and .TargetGroups[0].TargetType=="ip" and .TargetGroups[0].Port==$port
+    and .TargetGroups[0].TargetType=="ip" and .TargetGroups[0].Protocol=="HTTP"
+    and .TargetGroups[0].Port==80 and .TargetGroups[0].HealthCheckPort==($port|tostring)
     and .TargetGroups[0].HealthCheckPath==$path
   ' "$target_groups" >/dev/null
   aws_cmd elbv2 describe-target-health --region "$region" --target-group-arn "$target_group" \
@@ -184,7 +295,8 @@ for service in ai-gateway api-web workers; do
   service_output="$directory/service.json"
   jq -cnS --arg service "$service" --arg serviceArn "$service_arn" --arg revision "$revision_arn" \
     --arg taskDefinition "$task_definition" --argjson taskRevision "$task_revision" \
-    --argjson scaling "$scaling" --argjson tasks "$(printf '%s\n' "${task_arns[@]}" | jq -R . | jq -sS .)" \
+    --arg servingMode "$serving_mode" --argjson scaling "$scaling" \
+    --argjson tasks "$(printf '%s\n' "${task_arns[@]}" | jq -R . | jq -sS .)" \
     --argjson ips "$running_ips" --arg targetGroup "$target_group" --argjson health "$normalized_health" \
     --arg endpoint "$ssm_url" --arg parameter "$url_parameter" --arg healthPath "$health_path" \
     --arg healthUrl "$health_url" --argjson port "$container_port" --argjson http "$http_status" \
@@ -199,7 +311,7 @@ for service in ai-gateway api-web workers; do
     --slurpfile ssmRaw "$ssm" --arg ssmHash "$(sha_json "$ssm")" \
     --slurpfile publicRaw "$public_health" --arg publicHash "$(sha_json "$public_health")" '
     {service:$service,serviceArn:$serviceArn,serviceRevisionArn:$revision,serviceStatus:"ACTIVE",
-     currentDeployment:null,containerName:"Main",containerPort:$port,
+     currentDeployment:null,servingMode:$servingMode,containerName:"Main",containerPort:$port,
      taskDefinition:{arn:$taskDefinition,revision:$taskRevision},scalingTarget:$scaling,
      runningTaskArns:$tasks,runningTaskPrivateIps:$ips,targetGroupArn:$targetGroup,targetHealth:$health,
      ingress:{accessType:"PUBLIC",endpoint:$endpoint},ssmUrlParameter:$parameter,

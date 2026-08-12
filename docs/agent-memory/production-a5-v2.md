@@ -34,6 +34,14 @@ Decisions:
   with the immutable migration-tool repository; every downstream contract still binds the digest.
 - Infra contract specs use runner-standard `grep -E`, not workstation-only `rg`; the consolidated
   suite is verified with an exported failing `rg` shim to prevent this portability regression.
+- Production `release-prepare` keeps the Passport-proven release-task image and runner unchanged;
+  its controller alone replaces the AWS CLI's approximately 10-minute ECS waiter with one shared
+  absolute 35-minute budget across detached reconciliation, subnet retry and the new task. Exact
+  DescribeTasks reads use 5s connect/10s read timeouts and two standard attempts.
+- Production deploy credentials refresh independently before durable preparation, closed recovery
+  and finalization. The 360-minute job ceiling adds no happy-path wait; the bounded 320-minute slow
+  failure model leaves 40 minutes for action/provider overhead while every credential phase remains
+  below its fresh 7200-second session.
 - Consolidate into one reviewed change; do not return to a sequence of blocker-fix PRs.
 
 Open questions:
@@ -64,6 +72,9 @@ Verification:
   destructive SQL negative cases.
 - Critical workflow YAML parses, changed shell/JSON syntax and maintenance pins pass; `git diff
   --check` passes after the repeat-safe immutable ECR tag fix.
+- The controller-only release-prepare waiter passes fake-AWS delayed-success, provider failure,
+  unexpected-task, one shared cross-invocation deadline, stuck-call termination, bounded-timeout,
+  stopped-nonzero/deferred-exit-check, forwarding and unchanged release-task render-boundary cases.
 - PR CI run `31538531091` exposed missing `rg` on GitHub Ubuntu; all four remaining infra-spec
   dependencies were removed and the full security suite passes while `rg` is forced to exit 127.
 - PR #37 merged as `cbd87fdef73cf1f503e0a8e70fbc22222ab1b801`; all three administrator
@@ -120,17 +131,48 @@ Verification:
   secret-reading task execution roles, restricted to the account's exact `aws/secretsmanager` key
   and `kms:ViaService=secretsmanager.ap-southeast-1.amazonaws.com`; bind those limits in the focused
   policy spec before re-arming and retrying the same Passport.
+- PR #43 merged as `9b45507df96b5093ef8a97d074ee270b1c298a00`; KMS policy simulation,
+  exact-template apply and `CreateSecret` all passed in bootstrap run `31563842280`. ECS then
+  rejected the newly registered task because it could not assume the execution role. AWS's ECS
+  task-role documentation explicitly says a specific cluster is not supported in `aws:SourceArn`;
+  the trust must use the account/region wildcard. Both A5 execution trust templates had the invalid
+  cluster task path. Replace only those two SourceArn values with
+  `arn:aws:ecs:ap-southeast-1:311414082667:*`, retain exact `SourceAccount`, and bind both focused
+  specs before re-arming and retrying the same Passport. Cleanup again proved deny-all controller,
+  deleted execution role and absent reader secret.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
   release remains all-target.
+- The current-health controller recognizes the exact pre-V2 Production source, image digests and
+  complete serving-control tuples only as a one-time live bridge because those three services do
+  not yet expose `PRODUCTION_SERVING_MODE`. Remove this exact allowlist after the first successful
+  closed rollout; every subsequent revision must carry and satisfy the explicit serving-mode
+  contract.
 - No workflow dispatch, UAT/Production deploy, PR merge or cloud mutation was performed in this
   implementation turn.
+- Live read-only inventory on 2026-08-12 proved all runtime secret metadata (including Typhoon),
+  nine SSM pointers, cluster/network, RDS/Redis, logs/KMS/SNS and service-linked roles. Known drift
+  is finite: deploy/security/workers/A5/API/AI IAM contracts need the reviewed prerequisite
+  bootstrap, and the S3 lifecycle is missing the reviewed noncurrent-version expiration rule.
+  `WORKFLOW_WEBHOOK_ALLOWED_HOSTS=none` and the exact `AGENTCORE_RUNTIME_ARN` were added to the
+  Production environment and read back successfully on 2026-08-12.
+- The consolidated security aggregate now invokes the clone network/bootstrap/runner/workflow and
+  shared-deadline release-prepare tests directly, then finishes with
+  `production image security scanner: pass`. Changed shell/JSON/YAML syntax and `git diff --check`
+  also pass.
 
 Next:
 
-1. Merge and apply the narrowly scoped Secrets Manager KMS permission correction.
-2. Retry the one-time reader bootstrap from UAT run `31559662937` with `F1_CURRENT`.
-3. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5 clone.
-4. Owner explicitly dispatches one `maintenance_closed` Production V2 promotion.
+1. Open one reviewed PR, pass required CI and obtain the independent approval required by main.
+2. Have an approved non-root platform administrator create the temporary boundary, run the
+   consolidated IAM/S3 prerequisite helper and retire that
+   authority. The owner must explicitly approve the lifecycle effect on stale noncurrent
+   `pending/` versions.
+3. Run the one-time reader bootstrap from UAT run `31559662937` with `F1_CURRENT`; require the
+   bootstrap execution role to be absent and its controller to be deny-all afterwards.
+4. Run closed-mode Production Readiness from that Passport; require quick READY or first-green A5
+   clone with computed zero residual resources.
+5. Dispatch one `maintenance_closed` Production V2 promotion and verify exact image digests,
+   global maintenance controls, health, admin-onboard access and signed release evidence.
 5. Keep customer launch closed until independent legal evidence is complete.

@@ -1,0 +1,9 @@
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    {"Effect":"Allow","Action":["secretsmanager:GetSecretValue"],"Resource":"arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/production/*"},
+    {"Effect":"Allow","Action":["ssm:GetParameter"],"Resource":"arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/production/*"},
+    {"Effect":"Allow","Action":["s3:ListBucketVersions","s3:GetBucketObjectLockConfiguration"],"Resource":"arn:aws:s3:::<S3_BUCKET>"},
+    {"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion","s3:GetObjectRetention","s3:GetObjectLegalHold","s3:PutObject","s3:DeleteObject"],"Resource":"arn:aws:s3:::<S3_BUCKET>/*"}
+  ]
+}

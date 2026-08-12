@@ -185,8 +185,28 @@ aws ce get-cost-and-usage --region us-east-1 --time-period Start=...,End=... \
 Cost Explorer คิด **$0.01 ต่อ request** และข้อมูล **ทยอย post ข้าม 24 ชม.** — ยอดที่ query ตอนเช้าอาจ
 ต่ำกว่าความจริงมาก (ใน session นี้ตัวเลขเดียวกันขยับจาก $173 เป็น $263 ระหว่าง query สองครั้ง)
 
-IAM user `watchdog-bedrock-dev` ที่ agent ใช้ **อ่าน IAM ของตัวเองไม่ได้** (`iam:List*` ไม่ได้ให้)
-ถ้าโดน AccessDenied แล้วอยากรู้ว่า policy ไหนบล็อก ต้องใช้ Policy Simulator ใน Console
+โปรไฟล์ local แยกชัดเจน: `thawatchai` คือ AWS root ส่วน `watchdog-bedrock` และ
+`watchdog-bedrock-dev` คือ IAM user `watchdog-bedrock-dev`. จาก audit 2026-08-12 ไม่มี platform
+หรือ bootstrap role ที่ user นี้ assume ได้; GitHub OIDC roles ทั้งหมดก็ไม่มีสิทธิ์แก้ IAM. User
+อ่าน `GetRole` และเขียน `PutRolePolicy/CreateRole` บางส่วนได้จาก policy เก่า แต่ขาด
+`GetRolePolicy`, `UpdateRole` และ `UpdateAssumeRolePolicy` สำหรับ promotion roles จึงห้ามใช้ root
+สร้าง boundary หรือแก้ target roles. ต้องให้ owner/provider จัด non-root platform-admin session
+ชั่วคราว แล้วใช้ temporary non-root boundary ที่สร้างและถอดได้ตาม
+`docs/runbooks/production-promotion-prerequisite-bootstrap.md`; Readiness จะ exact-readback ซ้ำ
+ก่อนออก READY. ถ้าโดน AccessDenied แล้วอยากรู้ว่า policy ไหนบล็อก ใช้ Policy Simulator แบบ
+read-only ได้
+
+Audit promotion prerequisite วันที่ 2026-08-12 พบ drift ที่ทำนายได้ก่อน rollout: deploy role
+ยังมี `MaxSessionDuration=3600`, workers cleanup policy ยังไม่มี, A5 execution trust/policies บางตัว
+ยังเป็น contract เก่า, API/AI runtime task policy ยังเป็น generated contract รุ่นเก่า และ Production
+S3 lifecycle ขาด `NoncurrentVersionExpiration` ใน rule `expire-uncompleted-uploads`. Readiness V2
+จึงต้อง exact-read ทั้ง IAM/runtime roles, secret metadata, SSM pointers, cluster/network,
+S3/log/KMS/SNS และ fail ก่อนออก READY; ห้ามไปค้นทีละ error ระหว่าง deploy. การซ่อม drift ทั้งหมด
+ใช้ consolidated non-root ceremony เดียวตาม runbook ด้านบน แล้วลบ temporary authority.
+
+Live RDS source ที่ยืนยันใน audit เดียวกันคือ `watchdog-bms-prod-db`, DB name `watchdog_bms`,
+master username `watchdog`, port `5432`; clone runner ต้อง derive `PGDATABASE`, `PGHOST` และ
+`PGPORT` จาก `DescribeDBInstances` ของ clone ห้าม hardcode หรืออ่านจาก workstation.
 
 > **A5 security-group read-back:** `describe-security-groups` อาจ canonicalize กฎ egress
 > TCP/443 ที่มี endpoint security group และ S3 prefix list เป็น `IpPermission` เดียว แม้ส่งคำสั่ง

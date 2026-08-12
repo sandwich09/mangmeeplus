@@ -57,6 +57,16 @@
       "Condition": {"StringEquals": {"rds:db-tag/purpose": "production-a5-clone"}}
     },
     {
+      "Sid": "AllowTaggedCloneManagedPassword",
+      "Effect": "Allow",
+      "Action": "rds:ModifyDBInstance",
+      "Resource": "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+      "Condition": {
+        "StringEquals": {"rds:db-tag/purpose": "production-a5-clone"},
+        "Bool": {"rds:ManageMasterUserPassword": "true"}
+      }
+    },
+    {
       "Sid": "DenyProductionDatabaseMutation",
       "Effect": "Deny",
       "Action": [
@@ -77,9 +87,18 @@
       }
     },
     {
+      "Sid": "AllowRdsManagedCloneSecretCreation",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:CreateSecret", "secretsmanager:TagResource"],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"
+    },
+    {
       "Sid": "AllowCloneTaskDefinitionLifecycle",
       "Effect": "Allow",
-      "Action": ["ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"],
+      "Action": [
+        "ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions", "ecs:RegisterTaskDefinition"
+      ],
       "Resource": "*"
     },
     {
@@ -148,15 +167,16 @@
         "ecr:GetAuthorizationToken",
         "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:ListImages",
         "ecr:PutImage", "ecr:UploadLayerPart",
-        "ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition",
+        "ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition", "ecs:ListTaskDefinitions",
         "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RegisterTaskDefinition", "ecs:RunTask", "ecs:StopTask",
         "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
         "iam:PassRole", "kms:DescribeKey",
         "logs:DescribeLogGroups", "logs:DescribeLogStreams", "logs:FilterLogEvents", "logs:GetLogEvents",
         "rds:AddTagsToResource", "rds:DeleteDBInstance", "rds:DescribeDBInstances",
         "rds:DescribeDBSnapshots", "rds:DescribeDBSubnetGroups", "rds:ListTagsForResource",
-        "rds:RestoreDBInstanceFromDBSnapshot",
-        "secretsmanager:DescribeSecret", "ssm:GetParameter",
+        "rds:ModifyDBInstance", "rds:RestoreDBInstanceFromDBSnapshot",
+        "secretsmanager:CreateSecret", "secretsmanager:DescribeSecret", "secretsmanager:TagResource",
+        "ssm:GetParameter",
         "sts:GetCallerIdentity"
       ],
       "Resource": "*"

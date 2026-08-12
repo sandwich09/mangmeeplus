@@ -114,7 +114,16 @@ authority หลัก ห้ามสร้างเครือข่าย ha
 ทุก per-release AWS access ใช้ GitHub OIDC assume role แบบ least privilege ตาม stage ไม่มี
 ขั้นตอน release ใดต้องใช้ local AWS profile, workstation root credential หรือ token ที่ส่งต่อ
 ข้ามเครื่อง ข้อยกเว้นครั้งเดียวคือ platform administrator สร้าง temporary bootstrap role จาก
-reviewed template; ไม่ต้องและห้ามใช้ AWS root
+reviewed template. หากไม่มี non-root platform administrator จริง เจ้าของอาจอนุมัติเป็นลายลักษณ์
+อักษรให้ root สร้างและลบเฉพาะ temporary role/user bridge ได้ แต่ root ห้ามรัน helper หรือแก้
+durable target; mutation จริงทั้งหมดต้องอยู่ใต้ temporary non-root role และต้องพิสูจน์
+`NoSuchEntity` ของ bridge/role หลัง ceremony
+
+Temporary boundary นี้เป็น prerequisite ceremony ครั้งเดียวก่อน release และต้องครอบคลุม exact
+IAM contracts ที่ readiness/deploy/runtime ใช้ทั้งหมด รวม runtime/task roles, workers cleanup,
+A5 controller/execution roles และการซ่อม exact Production S3 lifecycle ที่ตรวจพบว่า drift แล้ว
+จากนั้นลบ temporary authority ทันที รายละเอียดอยู่ใน
+`docs/runbooks/production-promotion-prerequisite-bootstrap.md`.
 
 ## 6. UAT Release Passport V2
 
@@ -180,9 +189,11 @@ administrator ceremony ที่ตั้งใจไว้ ไม่ใช่�
 
 - passport signature/schema/source/digest/expiry ถูกต้องและ artifact ไม่หมดอายุ
 - GitHub main protection, production environment และ OIDC role bindings ตรง policy
-- AWS account/region, ECR repositories, log groups, SSM network inventory และ IAM
-  policies ตรง controller templates
-- runtime secrets ครบ; A5 reader secret และ read-only privilege proof ผ่าน
+- AWS account/region, ECR repositories, exact SSM service pointers, cluster/default VPC/public
+  subnets/security groups, S3 versioning/lifecycle, log groups/KMS/SNS และ IAM/runtime/service-linked
+  roles ตรง controller templates
+- runtime secret metadata ครบ มี AWSCURRENT ไม่ scheduled deletion และ KMS state ใช้ได้;
+  A5 reader secret และ read-only privilege proof ผ่าน โดย readiness ห้ามอ่าน secret value
 - RDS/Redis encryption, availability, backup, failover และ deletion-protection baseline ผ่าน
 - Production services เป็น stable singleton และอ่าน exact SHA/digest/config ได้
 - current baseline เป็น ancestor ที่จำแนก change ได้; unknown/malformed/non-ancestor เป็น `all`

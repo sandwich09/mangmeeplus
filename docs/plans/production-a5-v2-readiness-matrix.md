@@ -53,9 +53,9 @@ Spec: `docs/specs/production-a5-v2-spec.md`
 | D3 | applied migration ledger exact/pending/drift classification | readonly ECS task + `_prisma_migrations` | readiness | 30–90s | IMPLEMENTED_LOCAL; live blocked by S2/S3 | target/A5 decision |
 | D4 | no pending migration selects quick path | signed classification | readiness | included in 1–2m | IMPLEMENTED_LOCAL; live unproven | READY |
 | D5 | pending suffix selects exact UAT migration-tool + target all; destructive SQL rejected | signed classification + shared A5 scanner | readiness | <10s after D3 | IMPLEMENTED_LOCAL | A5 |
-| D6 | clone restore private/encrypted from recent snapshot | RDS/Fargate A5 | conditional | 15–35m estimate | UNPROVEN; 0/11 workflow successes | READY with migration |
-| D7 | migration rehearsal/invariants/compatibility pass | exact migration-tool task | conditional | <=30m bounded | UNPROVEN end-to-end | READY with migration |
-| D8 | clone/secret/task/ENI cleanup `DESTROYED`, residual=0 | RDS/ECS/EC2 readback | conditional | 10–30m estimate | UNPROVEN end-to-end | READY with migration |
+| D6 | clone restore private/encrypted from recent snapshot | RDS/Fargate A5 | conditional | normal estimate 12–20m; poll sleep ceiling 29m45s | IMPLEMENTED_LOCAL; provider state/terminal tests pass, live first-green still pending | READY with migration |
+| D7 | migration rehearsal/invariants/compatibility pass | exact migration-tool task | conditional | normal estimate 2–5m; task poll sleep ceiling 32m | IMPLEMENTED_LOCAL; exact UAT image and result reconstruction tests pass, live first-green still pending | READY with migration |
+| D8 | clone/secret/task/ENI cleanup `DESTROYED`, residual=0 | RDS/ECS/EC2 readback | conditional | normal estimate 5–10m; successful-path poll sleep ceiling 20m20s | IMPLEMENTED_LOCAL; computed residual/ambiguous-response cleanup contracts pass, live first-green still pending | READY with migration |
 | P1 | all Production services stable singleton/capacity 1/2 | ECS Express readback | readiness/recheck | 10–20s | PASS | READY/promotion |
 | P2 | active full SHA/digest/config readable for all services | ECS revision/task definition readback | readiness | 10–20s | PASS | classifier/baseline |
 | P3 | baseline is converged or target fail-safe all | Git ancestry + service SHA map | readiness | <10s | current split baseline; first V2 target must be `all` | target |
@@ -86,13 +86,52 @@ Automation ตรวจความจริงทางเทคนิคได
 
 สิ่งเหล่านี้ต้องเป็น reference ที่ตรวจย้อนกลับได้ ไม่ใช่ free-form string ที่ workflow เชื่อทันที
 
+## Clone timing envelope
+
+Standalone clone และ conditional clone ใน Production Readiness ใช้ runner/controller เดียวกัน.
+ทั้งสอง workflow ให้ job ceiling `150m` เพื่อไม่ให้ GitHub ตัด post-run evidence หรือ cleanup เพราะ
+action/API latency; ceiling นี้ **ไม่เพิ่ม wait, retry หรือเวลา happy path**. ทันทีหน้าสั่ง restore
+workflow จะ assume clone role ใหม่เป็น session `7200s` และ runner มี fixed sleep model ดังนี้:
+
+- forward path สูงสุดตาม poll/backoff ที่กำหนด `4932s` (`82m12s`)
+- successful cleanup ที่กันไว้ `1220s` (`20m20s`)
+- รวมภายใน refreshed credential `6152s` (`102m32s`) เหลือ `1048s` (`17m28s`) สำหรับ
+  AWS/API/action overhead ก่อน credential หมด
+- รวม historical pre-run allowance `600s` และ post-run allowance `300s` เป็น `7052s`
+  (`117m32s`) จึงเหลือ `1948s` (`32m28s`) ก่อน job ceiling `150m`
+
+ค่าปกติที่คาดคือประมาณ `30–45m`; conservative planning range `55–75m` ยังเป็น estimate เพราะ
+ยังไม่มี clone run ที่ผ่าน live จนจบ. Failure paths ที่ response ของ Restore, Modify,
+RegisterTaskDefinition หรือ RunTask หายมี modeled maxima ตามลำดับ `1520s`, `3125s`, `3760s`,
+`4246s`; ทุกเส้นเรียก cleanup เพียงหนึ่งครั้งและต่ำกว่า session `7200s`. ตัวเลขนี้เป็น
+poll/backoff contract ไม่ใช่การรับรอง latency ของ AWS; live first-green ยังเป็นหลักฐานที่ต้องเก็บ.
+
+## Production promotion timing envelope
+
+`release-prepare` ใช้ deadline เดียว `35m` ตั้งแต่ก่อนเรียก runner; การรอ detached task,
+การลอง subnet ถัดไป และ task ใหม่ใช้ budget ก้อนเดียวกัน ไม่ได้เริ่ม `35m` ใหม่. ทุก
+`DescribeTasks` กำหนด connect timeout `5s`, read timeout `10s`, standard retry สูงสุด 2 attempts
+และ controller จะหยุด process เมื่อถึง absolute deadline. Production service poll ถูกจำกัดที่
+`75 x 20s = 25m` ต่อ wave; all-target มี internal/background wave แล้วจึง api-web รวมสูงสุด
+`50m` ต่อ rollout.
+
+Workflow refresh deploy role `7200s` แยกก่อน durable release, ก่อน closed recovery และก่อน
+finalization. Credential envelopes คือ initial close/drain `85m`, release-prepare + rollout +
+verification `95m`, recovery `85m` และ finalization `10m`. Job ceiling `360m` **ไม่เพิ่มเวลา
+happy path**; conservative failure model รวม controller `30m`, initial close `85m`, prepare
+`35m`, rollout `50m`, verification `10m`, recovery `85m`, finalization `10m` และ artifact/action
+allowance `15m` เป็น `320m`, เหลือ reserve `40m`. ยังไม่มี first-green Production V2 จึงไม่
+อ้าง p95 ที่ไม่มีหลักฐาน; ต้องบันทึกเวลาจริงจาก run แรกแล้วปรับเฉพาะจาก observed evidence.
+
 ## Current blocking chain
 
 1. merge/independent approval ของ implementation commit และ required PR checks
-2. administrator apply exact UAT publisher, Production security-readonly และ A5 bootstrap
-   templates; จากนั้น bootstrap workflow ต้องสร้าง A5 reader secret/PG role และ self-revokeสำเร็จ
-3. UAT resolved-all ต้องออก Passport V2 จริง แล้ว Production Readiness ต้องได้ first live proof;
-   ถ้ามี pending migration ต้องได้ first green restore→rehearse→delete residual=0
+2. approved non-root administrator ใช้ consolidated prerequisite ceremony apply+readback IAM/S3
+   contracts แล้วลบ temporary authority; จากนั้น bootstrap workflow ต้องสร้าง A5 reader
+   secret/PG role และ self-revoke สำเร็จ
+3. ใช้ Passport V2 จาก UAT resolved-all run `31559662937` (หมดอายุภายใน
+   2026-08-13 10:37:49 BKK) แล้วให้ Production Readiness ได้ first live proof; ถ้ามี pending
+   migration ต้องได้ first green restore→rehearse→delete residual=0
 4. Production baseline split จึง release แรกต้อง `all` ซึ่ง controller บังคับแล้ว
 5. customer live ยังถูก legal evidence บล็อกโดยตั้งใจ; ทำได้เฉพาะ `PROMOTED_CLOSED`
 
