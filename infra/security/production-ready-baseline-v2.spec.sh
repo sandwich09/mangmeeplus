@@ -14,12 +14,13 @@ jq -cnS --arg source "$source_sha" '
   > "$work/ready.json"
 jq -cnS --slurpfile ready "$work/ready.json" '
  {status:"PASS",services:($ready[0].productionBaseline.services|map(. as $s|{service:$s.service,
-  serviceRevisionArn:$s.serviceRevisionArn,taskDefinition:{arn:$s.taskDefinitionArn},
+  servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,taskDefinition:{arn:$s.taskDefinitionArn},
   rawEvidence:{describeExpressGatewayService:{raw:{second:{service:{activeConfigurations:[{
    primaryContainer:{image:$s.image,environment:[{name:"GIT_SHA",value:$s.sourceCommit},
     {name:"PRODUCTION_SERVING_MODE",value:$s.servingMode}]}}]}}}}}}))}' > "$work/health.json"
 jq -cnS '{schemaVersion:2,observedAtEpoch:1,securityPolicySha256:("2"*64),a5PolicySha256:("3"*64),
- clonePolicySha256:null,rds:{identifier:"db",status:"available",rawSha256:("4"*64)},
+ promotionPrerequisitesSha256:("4"*64),clonePolicySha256:null,
+ rds:{identifier:"db",status:"available",rawSha256:("4"*64)},
  redis:{replicationGroupId:"redis",status:"available",rawReplicationGroupSha256:("5"*64),
  rawPrimarySha256:("6"*64)}}' > "$work/runtime-ready.json"
 jq -cS '.observedAtEpoch=2|.rds.rawSha256=("7"*64)|.redis.rawPrimarySha256=("8"*64)' \

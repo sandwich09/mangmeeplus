@@ -476,6 +476,7 @@ ready_quick_archive="$fixture/ready-v2-quick.zip"
 make_profile_archive ready-v2-quick "$ready_quick_dir" "$ready_quick_archive"
 ready_quick_extracted="$(security_preflight_extract_artifact ready-v2-quick "$ready_quick_archive")"
 test -f "$ready_quick_extracted/ready.bundle"
+test -f "$ready_quick_extracted/promotion-prerequisites.json"
 test ! -e "$ready_quick_extracted/clone-result.json"
 rm -rf "$ready_quick_extracted"
 
@@ -485,6 +486,7 @@ make_profile_archive ready-v2-migration "$ready_migration_dir" "$ready_migration
 ready_migration_extracted="$(security_preflight_extract_artifact ready-v2-migration "$ready_migration_archive")"
 test -f "$ready_migration_extracted/clone-result.json"
 test -f "$ready_migration_extracted/clone-infrastructure.json"
+test -f "$ready_migration_extracted/promotion-prerequisites.json"
 rm -rf "$ready_migration_extracted"
 rm "$ready_migration_dir/clone-result.json"
 (

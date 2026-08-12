@@ -73,9 +73,10 @@ subsequent readiness readback <1 นาที
 - [x] redact credentials และออก signed `PRODUCTION_A5_BOOTSTRAP_V2`
 - [x] self-revoke temporary bootstrap execution/controller authority แม้ attempt fail
 - [x] re-read IAM/network/secret state ใน bootstrap/readiness controller
-- [ ] administrator apply reviewed control-plane templates หลัง merge (ไม่ใช้ root):
-  `infra/uat/setup-control-plane.sh`, `bootstrap-production-security-readonly.sh --apply`, และ
-  `bootstrap-production-a5-readonly.sh --apply`; จากนั้น dispatch bootstrap workflow หนึ่งครั้ง
+- [ ] non-root platform administrator ใช้ temporary exact boundary ตาม
+  `docs/runbooks/production-promotion-prerequisite-bootstrap.md` เพื่อ apply+readback deploy,
+  security, runtime/task/workers/A5 roles และ exact S3 lifecycle ใน ceremony เดียว แล้วลบ
+  temporary authority; จากนั้น dispatch reader-bootstrap workflow หนึ่งครั้ง
 - [ ] live bootstrap/readback ทำให้ matrix S2/S3 เป็น PASS
 
 Checks:
@@ -171,8 +172,10 @@ Exit: all predictable prerequisites are PASS and readiness artifacts can be inde
 Owner action required
 
 1. Merge the single reviewed PR after all required checks/approval pass
-2. platform administrator applies the three exact policy/bootstrap commands listed in Phase 2 and
-   confirms readback; no customer/service mutation occurs
+2. platform administrator runs the one consolidated exact prerequisite ceremony in Phase 2,
+   confirms readback, and retires the temporary authority; it does not update running services or
+   current S3 objects, but it does restore the reviewed lifecycle that expires stale noncurrent
+   `pending/` versions, so the owner must approve that retention change explicitly
 3. UAT resolved-all exact main SHA → passport
 4. one-time A5 reader bootstrap → secret/PG proof + temporary authority self-revoked
 5. automatic Production readiness → READY

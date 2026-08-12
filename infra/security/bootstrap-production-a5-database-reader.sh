@@ -19,6 +19,8 @@ reader_description='Production-only SELECT credential for signed A5 evidence'
 family="watchdog-a5-production-bootstrap-${source_sha:0:12}"
 bootstrap_execution_role_name=watchdog-bms-production-a5-bootstrap-execution
 bootstrap_controller_role_name=watchdog-bms-production-a5-reader-bootstrap
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+revoked_policy="$repo_root/infra/security/production-a5-reader-bootstrap-revoked-policy.template.json"
 task_definition_arn=''
 task_arn=''
 reader_created=false
@@ -27,6 +29,7 @@ bootstrap_authority_revoked=false
 bootstrap_cleanup_armed=false
 secret_file=''
 docker_config=''
+jq -e . "$revoked_policy" >/dev/null
 
 case "$schema_profile" in LEGACY_PRE_F1|F1_CURRENT) ;; *) exit 2 ;; esac
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -54,12 +57,8 @@ remove_bootstrap_execution_authority() {
   test "$(aws iam list-role-policies --role-name "$bootstrap_controller_role_name" \
     --output json | jq -cS '.PolicyNames|sort')" \
     = "$(jq -cnS --arg name "$bootstrap_controller_role_name" '[$name]')"
-  revoked_policy="$(mktemp "${TMPDIR:-/tmp}/production-a5-bootstrap-revoked.XXXXXX")"
-  printf '%s\n' '{"Version":"2012-10-17","Statement":[{"Sid":"BootstrapRevoked","Effect":"Deny","Action":"*","Resource":"*"}]}' \
-    > "$revoked_policy"
   aws iam put-role-policy --role-name "$bootstrap_controller_role_name" \
     --policy-name "$bootstrap_controller_role_name" --policy-document "file://$revoked_policy"
-  rm -f -- "$revoked_policy"
   bootstrap_authority_revoked=true
 }
 

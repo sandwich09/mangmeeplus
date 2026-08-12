@@ -28,17 +28,23 @@ jq -cnS --arg source "$source" '["ai-gateway","api-web","workers"]|map(. as $ser
    taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$service+":1")})' > "$services"
 jq -cnS --slurpfile services "$services" '
  {status:"PASS",services:($services[0]|map(. as $s|{service:$s.service,
-   serviceRevisionArn:$s.serviceRevisionArn,taskDefinition:{arn:$s.taskDefinitionArn},
+   servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,taskDefinition:{arn:$s.taskDefinitionArn},
    rawEvidence:{describeExpressGatewayService:{raw:{second:{service:{activeConfigurations:[{
      primaryContainer:{image:$s.image,environment:[{name:"GIT_SHA",value:$s.sourceCommit},
        {name:"PRODUCTION_SERVING_MODE",value:$s.servingMode}]}}]}}}}}}))}' > "$work/production-health.json"
 jq -cnS --argjson now "$now" '
  {schemaVersion:2,observedAtEpoch:$now,a5PolicySha256:("5"*64),clonePolicySha256:null,
-  securityPolicySha256:("7"*64),rds:{status:"available",storageEncrypted:true,multiAZ:true,
+  promotionPrerequisitesSha256:("6"*64),securityPolicySha256:("7"*64),
+  rds:{status:"available",storageEncrypted:true,multiAZ:true,
     deletionProtection:true,backupRetentionDays:35},redis:{status:"available",atRestEncryptionEnabled:true,
     transitEncryptionEnabled:true,authTokenEnabled:true,automaticFailover:"enabled",nodeCount:2,
     snapshotRetentionDays:35}}
 ' > "$work/production-runtime.json"
+printf '%s' '{}' > "$work/promotion-prerequisites.json"
+jq -cS --arg hash "$(sha_file "$work/promotion-prerequisites.json")" \
+  '.promotionPrerequisitesSha256=$hash' "$work/production-runtime.json" \
+  > "$work/production-runtime.tmp"
+mv "$work/production-runtime.tmp" "$work/production-runtime.json"
 passport_hash="$(sha_file "$work/passport.json")"
 jq -cnS --arg source "$source" --arg controller "$controller" --arg passport "$passport_hash" \
   --arg health "$(sha_file "$work/production-health.json")" \
@@ -99,7 +105,8 @@ rewrite() {
 cp "$work/production-health.json" "$work/production-health-closed.json"
 jq -cS '(.services[].rawEvidence.describeExpressGatewayService.raw.second.service
   .activeConfigurations[0].primaryContainer.environment[]
-  |select(.name=="PRODUCTION_SERVING_MODE")|.value)="live"' \
+  |select(.name=="PRODUCTION_SERVING_MODE")|.value)="live"
+  |.services[].servingMode="live"' \
   "$work/production-health.json" > "$work/production-health-live.json"
 mv "$work/production-health-live.json" "$work/production-health.json"
 rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}

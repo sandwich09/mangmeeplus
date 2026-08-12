@@ -13,7 +13,25 @@ for required in \
   'run-production-a5-clone.sh' \
   'validate-production-release-ready-v2.sh' 'PRODUCTION_RELEASE_READY_V2' \
   'production-release-ready-v2-' 'select-deploy-target.sh' \
-  'requestedMode:$mode,effectiveTarget:$target'; do
+  'requestedMode:$mode,effectiveTarget:$target' \
+  'AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}' \
+  'PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}' \
+  'WORKFLOW_WEBHOOK_ALLOWED_HOSTS: ${{ vars.WORKFLOW_WEBHOOK_ALLOWED_HOSTS }}' \
+  'CLAMAV_HOST: ${{ vars.CLAMAV_HOST }}' \
+  'LOG_KMS_KEY_ID: ${{ vars.LOG_KMS_KEY_ID }}' \
+  'SECURITY_ALERT_TOPIC_ARN: ${{ vars.SECURITY_ALERT_TOPIC_ARN }}' \
+  'LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}' \
+  'LINE_LIFF_ID: ${{ vars.LINE_LIFF_ID }}' \
+  'LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}' \
+  'APPROVED_AI_PROVIDERS: ${{ vars.APPROVED_AI_PROVIDERS }}' \
+  'APPROVED_AI_REGIONS: ${{ vars.APPROVED_AI_REGIONS }}' \
+  'TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}' \
+  'LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}' \
+  'AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}' \
+  'AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}' \
+  'AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}' \
+  'timeout-minutes: 150' \
+  'PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true'; do
   grep -F -- "$required" "$workflow" >/dev/null
 done
 

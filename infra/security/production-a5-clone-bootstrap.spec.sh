@@ -24,15 +24,19 @@ jq -e '
 ' "$controller_trust" >/dev/null
 
 jq -e '
-  .Statement[] | select(.Sid == "EcsTasksOnly")
+  .Statement[] | select(.Sid == "ExactProductionAccountEcsTasksOnly")
   | .Principal.Service == "ecs-tasks.amazonaws.com"
     and .Condition.StringEquals["aws:SourceAccount"] == "311414082667"
     and .Condition.ArnLike["aws:SourceArn"]
-      == "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/*"
+      == "arn:aws:ecs:ap-southeast-1:311414082667:*"
 ' "$execution_trust" >/dev/null
 
 jq -e '
   ([.Statement[] | select(.Sid == "AllowExactExecutionRolePass")][0]) as $pass
+  | ([.Statement[] | select(.Sid == "AllowTaggedCloneManagedPassword")][0]) as $modify
+  | ([.Statement[] | select(.Sid == "AllowRdsManagedCloneSecretCreation")][0]) as $secret_create
+  | ([.Statement[] | select(.Sid == "AllowCloneTaskDefinitionLifecycle")][0]) as $definitions
+  | ([.Statement[] | select(.Sid == "DenyOutsideCloneController")][0]) as $boundary
   | $pass.Action == "iam:PassRole"
     and $pass.Resource
       == "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution"
@@ -44,10 +48,35 @@ jq -e '
       | contains("secretsmanager:GetSecretValue") | not)
     and ([.Statement[] | select(.Sid == "AllowCloneManagedSecretMetadata")][0].Action
       == "secretsmanager:DescribeSecret")
+    and $modify.Action == "rds:ModifyDBInstance"
+    and $modify.Resource
+      == "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"
+    and $modify.Condition.StringEquals["rds:db-tag/purpose"] == "production-a5-clone"
+    and $modify.Condition.Bool["rds:ManageMasterUserPassword"] == "true"
+    and ($secret_create.Action|sort)
+      == ["secretsmanager:CreateSecret","secretsmanager:TagResource"]
+    and $secret_create.Resource
+      == "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"
+    and ($definitions.Action|index("ecs:ListTaskDefinitions")) != null
+    and ($boundary.NotAction|index("rds:ModifyDBInstance")) != null
+    and ($boundary.NotAction|index("secretsmanager:CreateSecret")) != null
+    and ($boundary.NotAction|index("secretsmanager:TagResource")) != null
+    and ($boundary.NotAction|index("ecs:ListTaskDefinitions")) != null
+' "$controller_policy" >/dev/null
+
+# The managed-password grant is intentionally one-way: turning management off must not match it.
+jq -e '
+  [.Statement[] | select(.Effect=="Allow" and
+    ((.Action|if type=="array" then .[] else . end)=="rds:ModifyDBInstance"))]
+  == [{Sid:"AllowTaggedCloneManagedPassword",Effect:"Allow",Action:"rds:ModifyDBInstance",
+    Resource:"arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+    Condition:{StringEquals:{"rds:db-tag/purpose":"production-a5-clone"},
+      Bool:{"rds:ManageMasterUserPassword":"true"}}}]
 ' "$controller_policy" >/dev/null
 
 jq -e '
   ([.Statement[] | select(.Sid == "ReadOnlyRdsManagedCloneSecret")][0]) as $secret
+  | ([.Statement[] | select(.Sid == "DecryptCloneSecretThroughSecretsManagerOnly")][0]) as $kms
   | $secret.Resource
       == "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"
     and ($secret.Action | sort) == ["secretsmanager:DescribeSecret","secretsmanager:GetSecretValue"]
@@ -58,6 +87,10 @@ jq -e '
     and ([.Statement[] | select(.Sid == "WriteOnlyCloneTaskLogs")][0].Resource
       == "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-clone:log-stream:*")
     and ([.Statement[] | select(.Sid == "DenyOutsideCloneTaskBootstrap")][0].Effect == "Deny")
+    and $kms.Resource
+      == "arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"
+    and $kms.Condition.StringEquals["kms:ViaService"]
+      == "secretsmanager.ap-southeast-1.amazonaws.com"
 ' "$execution_policy" >/dev/null
 
 if grep -En 'ecsTaskExecutionRole|watchdog-bms/production/\*|watchdog-bms-prod-db' \
