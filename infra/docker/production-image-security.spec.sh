@@ -842,6 +842,10 @@ jq -e '.Statement[] | select(.Sid == "VerifyUatReleaseTaskRolePolicy")
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role"
     ])' \
   "$repo_root/infra/uat/github-deploy-role-policy.template.json" >/dev/null
+jq -e '.Statement[] | select(.Sid == "VerifyUatReleaseImageSignatures")
+  | (.Action | index("ecr:BatchGetImage")) != null
+    and (.Resource | index("arn:aws:ecr:ap-southeast-1:<ACCOUNT_ID>:repository/watchdog-bms-migration-tool")) != null' \
+  "$repo_root/infra/uat/github-deploy-role-policy.template.json" >/dev/null
 grep -Fq 'watchdog-bms-uat-release-task-ecs-read' "$repo_root/infra/uat/setup-control-plane.sh"
 grep -Fq 'ecs:DescribeExpressGatewayService' "$repo_root/infra/uat/setup-control-plane.sh"
 grep -Fq 'ecs:DescribeServiceDeployments' "$repo_root/infra/uat/setup-control-plane.sh"
