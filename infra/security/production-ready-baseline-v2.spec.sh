@@ -33,6 +33,15 @@ cp "$work/catalog-ready.json" "$work/catalog-current.json"
 bash "$validator" "$work/ready.json" "$work/runtime-ready.json" "$work/catalog-ready.json" \
   "$work/health.json" "$work/runtime-current.json" "$work/catalog-current.json" >/dev/null
 
+# Promotion prerequisites are freshly exact-validated before this comparison. Their evidence hash
+# includes live capacity counters, so a changed hash with otherwise valid current evidence is not
+# baseline drift (for example, another DB was created while at least one quota slot remains).
+jq -cS '.promotionPrerequisitesSha256=("c"*64)' "$work/runtime-current.json" \
+  > "$work/runtime-current-capacity-changed.json"
+bash "$validator" "$work/ready.json" "$work/runtime-ready.json" "$work/catalog-ready.json" \
+  "$work/health.json" "$work/runtime-current-capacity-changed.json" \
+  "$work/catalog-current.json" >/dev/null
+
 jq -cS '.services[0].rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0].primaryContainer.image="drift"' \
   "$work/health.json" > "$work/health-drift.json"
 if bash "$validator" "$work/ready.json" "$work/runtime-ready.json" "$work/catalog-ready.json" \

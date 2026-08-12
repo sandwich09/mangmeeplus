@@ -1019,8 +1019,8 @@ def e0_clone_migration_tool($evidence; $clone_ref; $candidate_hash):
 def e0_reimbursement_compatibility:
   e0_exact_keys(["combinedOutputSha256","command","commandSha256","databaseUrlBinding",
     "pass","requiredGate","skipped","status","suites","tests"])
-  and .command == ("REIMBURSEMENT_PG_GATE_REQUIRED=true "
-    + "pnpm --filter @watchdog-bms/api exec tsx --test --test-reporter=spec "
+  and .command == ("cd /app/apps/api && REIMBURSEMENT_PG_GATE_REQUIRED=true "
+    + "/app/node_modules/.bin/tsx --test --test-reporter=spec "
     + "src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts "
     + "src/modules/reimbursements/infrastructure/"
     + "prisma-reimbursement.repository.draft-submit-race.spec.ts")
@@ -1045,11 +1045,11 @@ def e0_h2_clone($evidence):
     isolatedNetwork:true,publiclyAccessible:false,cloneDestroyed:true}
   and (.cloneInfrastructure as $infra
     | $infra
-    | e0_exact_keys(["cleanup","dbSecurityGroupIds","dbSecurityGroupIngress",
-        "dbSubnetGroupName","dbSubnetIds","engine","engineVersion","kmsKeyArn",
+      | e0_exact_keys(["cleanup","dbParameterGroupName","dbSecurityGroupIds",
+        "dbSecurityGroupIngress","dbSubnetGroupName","dbSubnetIds","engine","engineVersion","kmsKeyArn",
         "migrationExecutionRoleArn","migrationImage","migrationSourceCommit","migrationTaskArn",
         "migrationTaskDefinitionArn","migrationTaskRoleArn","migrationTaskSecurityGroupIds",
-        "migrationTaskSubnetIds","networkBoundary","networkEvidence","publiclyAccessible",
+        "migrationTaskSubnetIds","networkBoundary","networkEvidence","optionGroupName","publiclyAccessible",
         "requiredRunTags","snapshotArn","temporaryDatabaseSecretArn",
         "temporaryDatabaseSecretVersionId",
         "snapshotCreatedAtEpoch","snapshotType","sourceDbIdentifier","sourceDbInstanceArn",
@@ -1083,6 +1083,8 @@ def e0_h2_clone($evidence):
         and test("^arn:aws:kms:ap-southeast-1:311414082667:key/[0-9a-f-]{36}$"))
       and .publiclyAccessible == false
       and (.dbSubnetGroupName | type == "string" and test("^[A-Za-z0-9_.-]+$"))
+      and (.dbParameterGroupName | type == "string" and test("^[A-Za-z][A-Za-z0-9-]{0,254}$"))
+      and (.optionGroupName | type == "string" and test("^[A-Za-z0-9_.:-]+$"))
       and (.dbSubnetIds | e0_sorted_unique_strings and length >= 2
         and all(.[]; test("^subnet-[0-9a-f]{8,17}$")))
       and (.dbSecurityGroupIds | type == "array" and length == 1 and . == sort
@@ -1152,7 +1154,12 @@ def e0_h2_clone($evidence):
             KmsKeyId:("arn:aws:kms:ap-southeast-1:311414082667:key/"
               + "b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"),
             SecretArn:$infra.temporaryDatabaseSecretArn,SecretStatus:"active"}
+          and $dbs[0].DBSubnetGroup.DBSubnetGroupName == $infra.dbSubnetGroupName
           and ([$dbs[0].DBSubnetGroup.Subnets[].SubnetIdentifier]|sort) == $infra.dbSubnetIds
+          and $dbs[0].DBParameterGroups == [{
+            DBParameterGroupName:$infra.dbParameterGroupName,ParameterApplyStatus:"in-sync"}]
+          and $dbs[0].OptionGroupMemberships == [
+            {OptionGroupName:$infra.optionGroupName,Status:"in-sync"}]
           and ([$dbs[0].VpcSecurityGroups[].VpcSecurityGroupId]|sort)
             == $infra.dbSecurityGroupIds)
       and ($infra.networkEvidence.describeNetworkInterfaces.raw.NetworkInterfaces as $enis
@@ -1468,6 +1475,7 @@ def e0_h3_environment_evidence:
   and .lastConfigurationHttpStatus == null;
 
 def e0_h3_read_actions: [
+  "bedrock-agentcore:GetAgentRuntime",
   "cloudwatch:DescribeAlarms","cloudwatch:GetMetricStatistics",
   "ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:DescribeImageScanFindings",
   "ecr:DescribeImages","ecr:GetAuthorizationToken","ecr:GetDownloadUrlForLayer",
@@ -1476,7 +1484,10 @@ def e0_h3_read_actions: [
   "elasticache:DescribeCacheClusters","elasticache:DescribeReplicationGroups",
   "iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies",
   "kms:DescribeKey","logs:DescribeLogGroups","logs:DescribeMetricFilters",
-  "rds:DescribeDBInstances","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
+  "rds:DescribeAccountAttributes","rds:DescribeDBParameterGroups","rds:DescribeDBInstances",
+  "rds:DescribeDBSnapshots",
+  "rds:DescribeDBSubnetGroups","rds:DescribeOptionGroups",
+  "rds:DescribeOrderableDBInstanceOptions","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
   "s3:GetBucketVersioning","secretsmanager:DescribeSecret",
   "sns:GetTopicAttributes","sns:ListSubscriptionsByTopic","ssm:GetParameters",
   "sts:GetCallerIdentity"
@@ -1490,10 +1501,16 @@ def e0_h3_inline_policy: {
       "elasticache:DescribeCacheClusters","elasticache:DescribeReplicationGroups",
       "ec2:DescribeSecurityGroups","ec2:DescribeSubnets","ec2:DescribeVpcs",
       "ecs:DescribeClusters","kms:DescribeKey","logs:DescribeLogGroups","logs:DescribeMetricFilters",
-      "rds:DescribeDBInstances","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
+      "rds:DescribeAccountAttributes","rds:DescribeDBParameterGroups","rds:DescribeDBInstances",
+      "rds:DescribeDBSnapshots",
+      "rds:DescribeDBSubnetGroups","rds:DescribeOptionGroups",
+      "rds:DescribeOrderableDBInstanceOptions","s3:GetLifecycleConfiguration","s3:GetBucketLocation",
       "s3:GetBucketVersioning","secretsmanager:DescribeSecret","ssm:GetParameters",
       "sts:GetCallerIdentity"
     ],Resource:"*"},
+    {Sid:"AllowExactAgentCoreRuntimeRead",Effect:"Allow",
+      Action:"bedrock-agentcore:GetAgentRuntime",
+      Resource:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0"},
     {Sid:"AllowReleaseImageRead",Effect:"Allow",Action:[
       "ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:DescribeImageScanFindings",
       "ecr:DescribeImages","ecr:GetDownloadUrlForLayer"
@@ -1508,6 +1525,7 @@ def e0_h3_inline_policy: {
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
         "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
@@ -1522,7 +1540,9 @@ def e0_h3_inline_policy: {
         "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
-        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+        "arn:aws:iam::311414082667:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS",
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticache.amazonaws.com/AWSServiceRoleForElastiCache"
       ]},
     {Sid:"AllowOwnedAlertTopicRead",Effect:"Allow",
       Action:["sns:GetTopicAttributes","sns:ListSubscriptionsByTopic"],

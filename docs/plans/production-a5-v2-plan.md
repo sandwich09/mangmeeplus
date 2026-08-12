@@ -1,15 +1,17 @@
 # Production A5 V2 Implementation Plan
 
-Status: Local implementation complete; independent approval and live evidence pending
+Status: Stabilization in progress; GitHub Actions frozen until the proof matrix is all PASS
 Spec: `docs/specs/production-a5-v2-spec.md`
 Matrix: `docs/plans/production-a5-v2-readiness-matrix.md`
 Memory: `docs/agent-memory/production-a5-v2.md`
 
 ## Delivery rule
 
-ใช้ consolidation PR เดียวหลัง owner รับรองเอกสารชุดนี้ ห้ามเริ่ม PR ถัดไปเพื่อแก้ blocker
-ทีละจุด และห้าม dispatch UAT/Readiness/Production จากงานนี้จน local verification, independent
-approval และ one-time bootstrap authority พร้อม
+ใช้ consolidation PR เดียวหลัง root-cause implementation และ proof matrix ผ่านครบ ห้ามเริ่ม PR
+ถัดไปเพื่อแก้ blocker ทีละจุด และห้าม dispatch CI/UAT/Readiness/Production เพื่อค้นหา error.
+Actions เริ่มได้เมื่อ local/offline aggregate, exact image proof, IAM/provider read-only proof,
+non-business-mutating canary และ independent review ผ่านเท่านั้น จากนั้นใช้เส้นทางเดียว
+PR/CI หนึ่งรอบ → UAT all หนึ่งรอบ → fresh Passport → bootstrap/Readiness → Production.
 
 Implementation ใช้ GitHub-hosted runners, pinned actions, GitHub OIDC และ AWS roles ที่มี
 อยู่จริงเท่านั้น ไม่มี workstation ceremony, local upload/signature หรือ root AWS credential
@@ -32,6 +34,25 @@ Estimate: 1–2 ชั่วโมง (docs/review; no cloud)
 Exit: ทุกคนใช้คำเดียวกันว่า `UAT_ACCEPTED`, `PROD_READY`, `PROMOTED_CLOSED`,
 `PROMOTED_LIVE`; ไม่มี workflow mutation
 
+## Phase 0A — Stabilization audit and root-cause closure
+
+Estimate: 6–10 ชั่วโมง engineering + local image build; no GitHub Actions
+
+- [x] freeze workflow dispatch และบันทึก owner cost boundary ใน agent memory
+- [x] audit ทุก one-shot task จาก image/filesystem/binary → IAM → network/secret/DB → cleanup
+- [x] ยืนยัน `/tmp` EACCES และ runtime `pnpm` absence กับ exact Alpine image shape
+- [x] เทียบ bootstrap/clone actions กับ official ECS/RDS authorization resource types
+- [ ] เพิ่ม Dockerfile `/tmp` volume contract และเปลี่ยน child commands เป็น direct binaries
+- [ ] แก้ bootstrap definition reconciliation ก่อน self-revoke และ lost-response boundary
+- [ ] แก้ clone restore resource set และ Fargate `ListTasks` authorization
+- [ ] เพิ่ม exact-image offline verifier และ aggregate ที่ครอบ readonly/apply runners
+- [ ] พิสูจน์ IAM simulation, DB class orderability/quota, branch-policy token capability,
+  AgentCore/ClamAV prerequisites และ provider canary โดยไม่แตะ business data
+- [ ] independent adversarial review ของ combined diff และ matrix
+
+Exit: authoritative matrix ทุกแถวที่อยู่ก่อน Actions เป็น `PASS`; ไม่มี deterministic P0/P1 ที่
+ควบคุมได้ค้างอยู่ และยังไม่มี workflow dispatch
+
 ## Phase 1 — UAT Release Passport V2
 
 Engineering estimate: 3–4 ชั่วโมง
@@ -48,7 +69,8 @@ Runtime impact: migration-tool job ประมาณ 2–6 นาทีแต�
 - [x] ใช้ controller validator จาก protected main ไม่ใช้ candidate security scripts
 - [x] ทดสอบ missing/tampered/duplicate/expired/wrong-run/wrong-attempt ทุก field สำคัญ
 - [x] treat requested `auto` as Production-eligible for controller trust checks ก่อนจะรู้ resolved target
-- [ ] รัน UAT resolved-`all` จริงและบันทึกเวลา Passport/tool build หลัง merge+approval
+- [ ] รัน UAT resolved-`all` ใหม่หลัง stabilization PR และบันทึกเวลา Passport/tool build;
+  ห้าม reuse run `31559662937` เพราะ pin migration-tool ที่ไม่มี `/tmp` volume contract
 
 Checks:
 
@@ -72,11 +94,17 @@ subsequent readiness readback <1 นาที
 - [x] พิสูจน์ exact grants, role default, no DML/DDL/ownership/escalation ใน task contract/tests
 - [x] redact credentials และออก signed `PRODUCTION_A5_BOOTSTRAP_V2`
 - [x] self-revoke temporary bootstrap execution/controller authority แม้ attempt fail
+- [x] revoked rerun classify exact state tuple ก่อน ECR/cosign และ emit EXISTING ด้วย stable
+  metadata-only readback โดยไม่มี AWS mutation
 - [x] re-read IAM/network/secret state ใน bootstrap/readiness controller
 - [ ] non-root platform administrator ใช้ temporary exact boundary ตาม
   `docs/runbooks/production-promotion-prerequisite-bootstrap.md` เพื่อ apply+readback deploy,
   security, runtime/task/workers/A5 roles และ exact S3 lifecycle ใน ceremony เดียว แล้วลบ
-  temporary authority; จากนั้น dispatch reader-bootstrap workflow หนึ่งครั้ง
+  temporary authority; apply เฉพาะ templates ที่ผ่าน provider/IAM proof แล้ว จากนั้น dispatch
+  reader-bootstrap workflowหนึ่งครั้งจาก fresh Passport
+- [x] ceremony exact-applies/readbacks UAT deploy policy ก่อน UAT และ bounded-retries durable
+  IAM/SSM/lifecycle propagation; readiness bind PG 18.3 snapshot/KMS และ immutable approved
+  AgentCore runtime artifact
 - [ ] live bootstrap/readback ทำให้ matrix S2/S3 เป็น PASS
 
 Checks:
@@ -173,10 +201,11 @@ Owner action required
 
 1. Merge the single reviewed PR after all required checks/approval pass
 2. platform administrator runs the one consolidated exact prerequisite ceremony in Phase 2,
-   confirms readback, and retires the temporary authority; it does not update running services or
+   applies and exact-reads the UAT deploy policy plus Production prerequisites, then retires the
+   temporary authority; it does not update running services or
    current S3 objects, but it does restore the reviewed lifecycle that expires stale noncurrent
    `pending/` versions, so the owner must approve that retention change explicitly
-3. UAT resolved-all exact main SHA → passport
+3. UAT resolved-all exact main SHA → fresh passport; old Passport `31559662937` forbidden
 4. one-time A5 reader bootstrap → secret/PG proof + temporary authority self-revoked
 5. automatic Production readiness → READY
 6. owner confirms one `maintenance_closed` promotion

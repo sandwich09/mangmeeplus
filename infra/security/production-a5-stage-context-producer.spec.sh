@@ -115,6 +115,11 @@ jq -cS 'del(.cloneRehearsalRef)' "$work/inputs/invariant-pre.json" > "$work/bad-
 expect_reject missing-clone build "$work/reject-clone" PRE_MUTATION \
   "$work/inputs/quiesce-pre.json" "$work/bad-invariant.json" \
   "$work/inputs/null.json" "$work/inputs/null.json"
+jq -cS '.unexpected="must-be-rejected"' "$work/inputs/invariant-pre.json" \
+  > "$work/extra-invariant.json"
+expect_reject extra-invariant build "$work/reject-extra-invariant" PRE_MUTATION \
+  "$work/inputs/quiesce-pre.json" "$work/extra-invariant.json" \
+  "$work/inputs/null.json" "$work/inputs/null.json"
 jq -cS 'del(.productionApplyAuthority)' "$work/inputs/invariant-post-migration.json" \
   > "$work/bad-authority.json"
 expect_reject missing-authority build "$work/reject-authority" POST_MIGRATION \
@@ -122,6 +127,14 @@ expect_reject missing-authority build "$work/reject-authority" POST_MIGRATION \
   "$pre_ref" "$work/inputs/null.json"
 expect_reject wrong-stage-ref build "$work/reject-ref" PRE_MUTATION \
   "$work/inputs/quiesce-pre.json" "$work/inputs/invariant-pre.json" "$pre_ref" "$work/inputs/null.json"
+jq -cS '.unexpected="must-be-rejected"' "$pre_ref" > "$work/extra-pre-ref.json"
+expect_reject extra-pre-ref build "$work/reject-extra-pre-ref" POST_MIGRATION \
+  "$work/inputs/quiesce-post-migration.json" "$work/inputs/invariant-post-migration.json" \
+  "$work/extra-pre-ref.json" "$work/inputs/null.json"
+jq -cS '.unexpected="must-be-rejected"' "$post_ref" > "$work/extra-post-ref.json"
+expect_reject extra-post-ref build "$work/reject-extra-post-ref" POST_DEPLOYMENT \
+  "$work/inputs/quiesce-post-deployment.json" "$work/inputs/invariant-post-deployment.json" \
+  "$pre_ref" "$work/extra-post-ref.json"
 printf ' {"schemaVersion":3}\n' > "$work/noncanonical.json"
 expect_reject noncanonical build "$work/reject-canonical" PRE_MUTATION \
   "$work/inputs/quiesce-pre.json" "$work/inputs/invariant-pre.json" \

@@ -1393,7 +1393,7 @@ Open questions:
   `watchdog-bms-production-a5-clone`, and
   `watchdog-bms-production-a5-clone-execution`; immutable/scan-on-push ECR repository
   `watchdog-bms-migration-tool`; 7-day clone log group; reviewed clone task/DB security groups; and
-  the eight `/watchdog-bms/production/a5-clone/*` SSM parameters. Provisioning must be performed by
+  the ten `/watchdog-bms/production/a5-clone/*` SSM parameters. Provisioning must be performed by
   reviewed bootstrap/controller code, not an operator's broad root session.
 
 Artifacts:

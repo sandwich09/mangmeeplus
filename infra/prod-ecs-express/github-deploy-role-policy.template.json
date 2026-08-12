@@ -17,6 +17,7 @@
         "ecs:RegisterTaskDefinition",
         "ecs:DeregisterTaskDefinition",
         "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions",
         "ecs:RunTask",
         "ecs:StopTask",
         "ecs:ListTasks",

@@ -72,8 +72,27 @@ migration_tool_stage="$(sed -n '/ AS migration-tool$/,/^FROM system AS runner$/p
 grep -Fq 'RUN apk add --no-cache ca-certificates openssl libc6-compat' <<< "$migration_tool_stage"
 grep -Fq 'RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem' <<< "$migration_tool_stage"
 grep -Fq 'COPY --from=build --chown=node:node /app /app' <<< "$migration_tool_stage"
+grep -Fq 'RUN chmod 1777 /tmp' <<< "$migration_tool_stage"
+grep -Fq 'VOLUME ["/tmp"]' <<< "$migration_tool_stage"
 grep -Fq 'FROM migration-tool AS release-task' "$repo_root/apps/api/Dockerfile"
 grep -Fq 'com.watchdog-bms.image-purpose=production-release-task' "$repo_root/apps/api/Dockerfile"
+grep -Fq 'docker run --rm --read-only --network none' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+grep -Fq 'Config.Volumes | keys) == ["/tmp"]' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+a5_migration_sources=(
+  "$repo_root/apps/api/prisma/production-a5/run-clone-rehearsal.ts"
+  "$repo_root/apps/api/prisma/production-a5/run-release-readiness-clone.ts"
+  "$repo_root/apps/api/prisma/production-a5/run-production-apply.ts"
+)
+if grep -En "runCaptured\('pnpm'" "${a5_migration_sources[@]}"; then
+  echo 'ERROR: production A5 runtime still depends on pnpm' >&2
+  exit 1
+fi
+test "$(grep -hF "runCaptured('/app/apps/api/node_modules/.bin/prisma'" \
+  "${a5_migration_sources[@]}" | wc -l | tr -d ' ')" -eq 4
+test "$(grep -hF "'/app/node_modules/.bin/tsx'" \
+  "${a5_migration_sources[@]}" | wc -l | tr -d ' ')" -eq 2
 grep -Fq '"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"' "$repo_root/.github/workflows/ci.yml"
 if grep -Fq '"purpose":"release-task","repository":"watchdog-bms-api","target":"local"' "$repo_root/.github/workflows/ci.yml"; then
   echo "ERROR: release-task must not publish the vulnerable development-oriented local target" >&2
@@ -2001,7 +2020,9 @@ fi
 bash -n "$resolver"
 bash -n "$repo_root/infra/prod-ecs-express/deploy.sh"
 bash -n "$repo_root/infra/prod-ecs-express/run-release-task.sh"
+bash "$repo_root/infra/prod-ecs-express/run-task-idempotently.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/register-task-definition-with-retry.spec.sh"
+bash "$repo_root/infra/prod-ecs-express/cleanup-one-shot-task.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-task-network-failover.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/production-ready-release-task.spec.sh"
 bash -n "$repo_root/infra/prod-ecs-express/active-release-tasks.sh"
@@ -2119,14 +2140,22 @@ bash "$repo_root/infra/security/production-migration-catalog-readiness.spec.sh"
 bash "$repo_root/infra/security/production-runtime-readiness-v2.spec.sh"
 bash "$repo_root/infra/security/production-release-ready-v2.spec.sh"
 bash "$repo_root/infra/security/production-ready-baseline-v2.spec.sh"
+bash "$repo_root/infra/security/production-a5-stage-context-producer.spec.sh"
+bash "$repo_root/infra/security/signed-evidence.spec.sh"
+bash "$repo_root/infra/ai-gateway/h15-trust-boundary.spec.sh"
 bash "$repo_root/infra/security/production-a5-private-network.spec.sh"
 bash "$repo_root/infra/security/production-a5-clone-bootstrap.spec.sh"
 bash "$repo_root/infra/security/production-a5-clone-runner.spec.sh"
+bash "$repo_root/infra/security/production-a5-readonly-runner.spec.sh"
+bash "$repo_root/infra/security/production-a5-apply-runner.spec.sh"
 bash "$repo_root/infra/security/production-a5-clone-workflow.spec.sh"
 bash "$repo_root/infra/security/production-readiness-workflow-v2.spec.sh"
 bash "$repo_root/infra/security/production-release-prepare-wait.spec.sh"
 bash "$repo_root/infra/security/production-deploy-workflow-v2.spec.sh"
 bash "$repo_root/infra/security/production-release-result-v2.spec.sh"
 bash "$repo_root/infra/security/production-security-preflight.spec.sh"
+pnpm --filter @watchdog-bms/api exec tsx --test \
+  prisma/production-a5/run-clone-rehearsal.spec.ts \
+  prisma/production-a5/run-production-apply.spec.ts
 
 echo "production image security scanner: pass"

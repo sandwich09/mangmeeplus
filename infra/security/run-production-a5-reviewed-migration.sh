@@ -33,24 +33,16 @@ started_by="a5apply-${PARENT_RUN_ID}-a${PARENT_RUN_ATTEMPT}"
 [ "${#started_by}" -le 36 ]
 task_definition_arn=''
 task_arn=''
+registration_requested=false
+run_task_requested=false
 
 cleanup() {
   local status=$?
   unset expected_hashes apply_authority
-  if [ -n "$task_arn" ]; then
-    current="$(aws ecs describe-tasks --region "$AWS_REGION" --cluster "$cluster" --tasks "$task_arn" \
-      --query 'tasks[0].lastStatus' --output text 2>/dev/null || true)"
-    if [ "$current" != STOPPED ] && [ "$current" != None ] && [ -n "$current" ]; then
-      aws ecs stop-task --region "$AWS_REGION" --cluster "$cluster" --task "$task_arn" \
-        --reason production-a5-reviewed-apply-cleanup >/dev/null 2>&1 || status=1
-      aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster "$cluster" --tasks "$task_arn" \
-        >/dev/null 2>&1 || status=1
-    fi
-  fi
-  if [ -n "$task_definition_arn" ]; then
-    aws ecs deregister-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" \
-      >/dev/null 2>&1 || status=1
-  fi
+  AWS_BIN=aws bash "$(dirname "$0")/../prod-ecs-express/cleanup-one-shot-task.sh" \
+    "$AWS_ACCOUNT_ID" "$AWS_REGION" "$cluster" "$family" "$started_by" \
+    "$registration_requested" "${task_definition_arn:--}" \
+    "$run_task_requested" "${task_arn:--}" production-a5-reviewed-apply-cleanup || status=1
   exit "$status"
 }
 trap cleanup EXIT
@@ -184,9 +176,12 @@ jq -cnS --arg family "$family" --arg execution "$execution_role" --arg image "$M
    }]}
 ' > "$task_definition"
 registered="$OUTPUT_DIR/register-task-definition.json"
-aws ecs register-task-definition --region "$AWS_REGION" --cli-input-json "file://$task_definition" \
+registration_requested=true
+task_definition_arn="$(AWS_BIN=aws \
+  bash "$(dirname "$0")/../prod-ecs-express/register-task-definition-with-retry.sh" \
+    "$task_definition" "$AWS_REGION")"
+aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_definition_arn" \
   --output json | jq -cS . > "$registered"
-task_definition_arn="$(jq -er '.taskDefinition.taskDefinitionArn' "$registered")"
 jq -e --arg family "$family" --arg execution "$execution_role" --arg image "$MIGRATION_IMAGE" \
   --arg writerVersion "$writer_version" --arg source "$SOURCE_SHA" '
   .taskDefinition.family==$family and .taskDefinition.executionRoleArn==$execution
@@ -206,10 +201,15 @@ network="$(jq -cn --arg subnets "$task_subnet_csv" --arg sg "$task_security_grou
   {awsvpcConfiguration:{subnets:($subnets|split(",")|sort),securityGroups:[$sg],assignPublicIp:"DISABLED"}}
 ')"
 run_task="$OUTPUT_DIR/run-task.json"
-aws ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
+run_task_raw="$OUTPUT_DIR/run-task.raw.json"
+run_client_token="$(printf '%s' "apply:$SOURCE_SHA:$family:$started_by" | sha256sum | awk '{print $1}')"
+run_task_requested=true
+AWS_BIN=aws bash "$(dirname "$0")/../prod-ecs-express/run-task-idempotently.sh" \
+  "$run_client_token" -- ecs run-task --region "$AWS_REGION" --cluster "$cluster" --launch-type FARGATE \
   --platform-version 1.4.0 --task-definition "$task_definition_arn" \
-  --network-configuration "$network" --started-by "$started_by" --output json \
-  | jq -cS . > "$run_task"
+  --network-configuration "$network" --started-by "$started_by" --output json > "$run_task_raw"
+jq -cS . "$run_task_raw" > "$run_task"
+rm -f -- "$run_task_raw"
 jq -e '.failures==[] and (.tasks|length)==1' "$run_task" >/dev/null
 task_arn="$(jq -er '.tasks[0].taskArn' "$run_task")"
 aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster "$cluster" --tasks "$task_arn"

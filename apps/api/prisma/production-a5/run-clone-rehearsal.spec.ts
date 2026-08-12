@@ -9,6 +9,18 @@ import {
 } from './run-clone-rehearsal';
 
 describe('production A5 clone rehearsal runner boundary', () => {
+  it('records the exact offline direct-binary reimbursement command', () => {
+    assert.equal(
+      PRODUCTION_A5_REIMBURSEMENT_COMMAND,
+      'cd /app/apps/api && REIMBURSEMENT_PG_GATE_REQUIRED=true '
+      + '/app/node_modules/.bin/tsx --test --test-reporter=spec '
+      + 'src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts '
+      + 'src/modules/reimbursements/infrastructure/'
+      + 'prisma-reimbursement.repository.draft-submit-race.spec.ts',
+    );
+    assert.doesNotMatch(PRODUCTION_A5_REIMBURSEMENT_COMMAND, /\bpnpm\b/);
+  });
+
   it('binds only the exact isolated RDS clone host and forces TLS/timeouts', () => {
     const host = 'watchdog-a5-clone-7001-a1-abcdef12.cpqecgikiwrq.ap-southeast-1.rds.amazonaws.com';
     const result = new URL(strictCloneUrlFromPgEnvironment({

@@ -807,6 +807,53 @@ if [ "$mode" = "operation-reconcile" ]; then
   task_command=""
 fi
 
+# Bind task-definition recovery to the exact controller request and complete reviewed network.
+# This preserves the stable release startedBy provenance while preventing a later run from reusing
+# an old STOPPED task that happened to use the same image/command and one overlapping subnet.
+if [ "$render_only" = "true" ]; then
+  network_boundary="${RELEASE_TASK_RENDER_NETWORK_JSON:-}"
+  if [ -z "$network_boundary" ]; then
+    network_boundary='{"awsvpcConfiguration":{"subnets":["subnet-11111111"],"securityGroups":["sg-11111111"],"assignPublicIp":"ENABLED"}}'
+  fi
+else
+  vpc_id="$(aws_cmd ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text --region "$region")"
+  security_group="$(aws_cmd ec2 describe-security-groups \
+    --filters Name=group-name,Values="${resource_prefix}-app-egress-sg" Name=vpc-id,Values="$vpc_id" \
+    --query 'SecurityGroups[0].GroupId' --output text --region "$region")"
+  subnets="$(aws_cmd ec2 describe-subnets --filters Name=vpc-id,Values="$vpc_id" \
+    --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output json --region "$region")"
+  if [ "$vpc_id" = None ] || [ "$security_group" = None ] || [ "$subnets" = '[]' ]; then
+    echo 'ERROR: release task network is incomplete' >&2
+    exit 1
+  fi
+  network_boundary="$(jq -cn --argjson subnets "$subnets" --arg sg "$security_group" '
+    {awsvpcConfiguration:{subnets:($subnets|sort|unique),securityGroups:[$sg],assignPublicIp:"ENABLED"}}
+  ')"
+fi
+network_boundary="$(jq -ceS '
+  .awsvpcConfiguration as $network
+  |select(($network|keys|sort)==["assignPublicIp","securityGroups","subnets"])
+  |select($network.assignPublicIp=="ENABLED")
+  |select(($network.securityGroups|type)=="array" and ($network.securityGroups|length)==1
+    and all($network.securityGroups[];test("^sg-[0-9a-f]{8,17}$")))
+  |select(($network.subnets|type)=="array" and ($network.subnets|length)>=1
+    and ($network.subnets|length)<=16 and all($network.subnets[];test("^subnet-[0-9a-f]{8,17}$")))
+  |{awsvpcConfiguration:{subnets:($network.subnets|sort|unique),
+    securityGroups:($network.securityGroups|sort|unique),assignPublicIp:$network.assignPublicIp}}
+' <<< "$network_boundary")"
+security_group="$(jq -er '.awsvpcConfiguration.securityGroups[0]' <<< "$network_boundary")"
+subnets="$(jq -c '.awsvpcConfiguration.subnets' <<< "$network_boundary")"
+if [ "$mode" = "operation-reconcile" ]; then
+  run_identity="$reconcile_operation_id"
+else
+  run_identity="${mutation_intent_id:-${operation_id:-${parent_operation_id:-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}}}}"
+fi
+sha256_text() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+  else shasum -a 256 | awk '{print $1}'; fi
+}
+release_task_request_id="$(printf '%s' "$deploy_env:$mode:$commit:$run_identity:$network_boundary" | sha256_text)"
+
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-bms-release-task.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 task_definition="$tmp_dir/task-definition.json"
@@ -877,6 +924,7 @@ jq -n \
   --arg reconcileReason "$reconcile_reason" \
   --arg reconcileActorRef "$reconcile_actor_ref" \
   --arg directTaskCommand "$direct_task_command" \
+  --arg releaseTaskRequestId "$release_task_request_id" \
   --argjson omitTaskRole "$omit_task_role" \
   --argjson readonlyDatabaseMode "$readonly_database_mode" \
   --argjson taskSecrets "$task_secrets" \
@@ -891,6 +939,7 @@ jq -n \
       user: "node",
       workingDirectory: "/app/apps/api",
       essential: true,
+      dockerLabels: {"com.watchdog-bms.release-request":$releaseTaskRequestId},
       command: ["/bin/sh", "-lc", (if $directTaskCommand == ""
         then "./node_modules/.bin/tsx prisma/run-exclusive-release-operation.ts"
         else $directTaskCommand end)],
@@ -987,18 +1036,6 @@ aws_cmd logs create-log-group --log-group-name "$log_group" --region "$region" >
 task_definition_arn="$(AWS_BIN="$aws_bin" \
   bash "$(dirname "$0")/register-task-definition-with-retry.sh" "$task_definition" "$region")"
 
-vpc_id="$(aws_cmd ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text --region "$region")"
-security_group="$(aws_cmd ec2 describe-security-groups \
-  --filters Name=group-name,Values="${resource_prefix}-app-egress-sg" Name=vpc-id,Values="$vpc_id" \
-  --query 'SecurityGroups[0].GroupId' --output text --region "$region")"
-subnets="$(aws_cmd ec2 describe-subnets \
-  --filters Name=vpc-id,Values="$vpc_id" \
-  --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' --output json --region "$region")"
-if [ "$vpc_id" = "None" ] || [ "$security_group" = "None" ] || [ "$subnets" = "[]" ]; then
-  echo "ERROR: release task network is incomplete" >&2
-  exit 1
-fi
-
 # A cancelled GitHub runner releases its workflow concurrency lock but does not stop the Fargate
 # task. Reconcile that detached task before starting another one. The PostgreSQL lock in the task is
 # the atomic fence; this ECS check is the friendly recovery path that waits and reports its outcome.
@@ -1064,24 +1101,18 @@ for subnet_index in "${!release_subnets[@]}"; do
   subnet="${release_subnets[$subnet_index]}"
   network="$(jq -cn --arg sg "$security_group" --arg subnet "$subnet" \
     '{awsvpcConfiguration:{subnets:[$subnet],securityGroups:[$sg],assignPublicIp:"ENABLED"}}')"
+  # Concurrent release-intent/release-bind siblings share one parent but own different mutation
+  # intents. The intent must therefore win the idempotency identity while remaining stable on retry.
+  run_client_token="$(printf '%s' "$release_task_request_id:$task_definition_arn:$network" | sha256_text)"
+  run_args=(ecs run-task --cluster "$cluster" --task-definition "$task_definition_arn"
+    --started-by "$started_by" --launch-type FARGATE --network-configuration "$network"
+    --region "$region")
   if [ "$capacity_task" = "true" ]; then
-    aws_cmd ecs run-task \
-      --cluster "$cluster" \
-      --task-definition "$task_definition_arn" \
-      --started-by "$started_by" \
-      --tags key=WatchdogOperation,value=U5Capacity key=U5CapacityMarker,value="${capacity_marker#U5C-}" \
-      --launch-type FARGATE \
-      --network-configuration "$network" \
-      --region "$region" > "$run_result"
-  else
-    aws_cmd ecs run-task \
-      --cluster "$cluster" \
-      --task-definition "$task_definition_arn" \
-      --started-by "$started_by" \
-      --launch-type FARGATE \
-      --network-configuration "$network" \
-      --region "$region" > "$run_result"
+    run_args+=(--tags key=WatchdogOperation,value=U5Capacity
+      key=U5CapacityMarker,value="${capacity_marker#U5C-}")
   fi
+  AWS_BIN="$aws_bin" bash "$(dirname "$0")/run-task-idempotently.sh" \
+    "$run_client_token" -- "${run_args[@]}" > "$run_result"
   if ! jq -e '(.failures | length) == 0 and (.tasks | length) == 1' "$run_result" >/dev/null; then
     jq '{failures}' "$run_result" >&2
     exit 1

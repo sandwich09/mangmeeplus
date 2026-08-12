@@ -17,7 +17,13 @@
         "kms:DescribeKey",
         "logs:DescribeLogGroups",
         "logs:DescribeMetricFilters",
+        "rds:DescribeAccountAttributes",
+        "rds:DescribeDBParameterGroups",
         "rds:DescribeDBInstances",
+        "rds:DescribeDBSnapshots",
+        "rds:DescribeDBSubnetGroups",
+        "rds:DescribeOptionGroups",
+        "rds:DescribeOrderableDBInstanceOptions",
         "s3:GetLifecycleConfiguration",
         "s3:GetBucketLocation",
         "s3:GetBucketVersioning",
@@ -26,6 +32,12 @@
         "sts:GetCallerIdentity"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "AllowExactAgentCoreRuntimeRead",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:GetAgentRuntime",
+      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0"
     },
     {
       "Sid": "AllowReleaseImageRead",
@@ -57,6 +69,7 @@
         "arn:aws:iam::311414082667:role/watchdog-bms-deploy-production",
         "arn:aws:iam::311414082667:role/ecsInfrastructureRoleForExpressServices",
         "arn:aws:iam::311414082667:role/ecsTaskExecutionRole",
+        "arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-ai-gateway-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-api-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role",
@@ -71,7 +84,9 @@
         "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
-        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing",
+        "arn:aws:iam::311414082667:role/aws-service-role/rds.amazonaws.com/AWSServiceRoleForRDS",
+        "arn:aws:iam::311414082667:role/aws-service-role/elasticache.amazonaws.com/AWSServiceRoleForElastiCache"
       ]
     },
     {
@@ -87,6 +102,7 @@
       "Sid": "DenyOutsideReadOnly",
       "Effect": "Deny",
       "NotAction": [
+        "bedrock-agentcore:GetAgentRuntime",
         "cloudwatch:DescribeAlarms",
         "cloudwatch:GetMetricStatistics",
         "ecr:BatchCheckLayerAvailability",
@@ -108,7 +124,13 @@
         "kms:DescribeKey",
         "logs:DescribeLogGroups",
         "logs:DescribeMetricFilters",
+        "rds:DescribeAccountAttributes",
+        "rds:DescribeDBParameterGroups",
         "rds:DescribeDBInstances",
+        "rds:DescribeDBSnapshots",
+        "rds:DescribeDBSubnetGroups",
+        "rds:DescribeOptionGroups",
+        "rds:DescribeOrderableDBInstanceOptions",
         "s3:GetLifecycleConfiguration",
         "s3:GetBucketLocation",
         "s3:GetBucketVersioning",

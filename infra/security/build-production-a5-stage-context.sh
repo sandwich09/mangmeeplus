@@ -66,7 +66,7 @@ jq -e -L "$library" --arg stage "$stage" --arg source "$source_sha" '
 
 jq -e -L "$library" --arg stage "$stage" '
   include "evidence-contracts";
-  def exact($keys): keys == ($keys|sort);
+  def exact($wanted): (keys|sort) == ($wanted|sort);
   def hash64: type=="string" and test("^[0-9a-f]{64}$");
   def child($kind):
     exact(["artifactDigest","artifactKind","artifactName","contentSha256",
@@ -96,7 +96,7 @@ jq -e -L "$library" --arg stage "$stage" '
 ' "$invariant" >/dev/null || fail "stage invariant context is invalid"
 
 jq -e --arg stage "$stage" '
-  def exact($keys): keys == ($keys|sort);
+  def exact($wanted): (keys|sort) == ($wanted|sort);
   def child:
     exact(["artifactDigest","artifactKind","artifactName","contentSha256",
       "producerRunAttempt","producerRunId"])
@@ -110,7 +110,7 @@ jq -e --arg stage "$stage" '
   else child end
 ' "$pre_ref" >/dev/null || fail "PRE reference does not match stage"
 jq -e --arg stage "$stage" '
-  def exact($keys): keys == ($keys|sort);
+  def exact($wanted): (keys|sort) == ($wanted|sort);
   def child:
     exact(["artifactDigest","artifactKind","artifactName","contentSha256",
       "producerRunAttempt","producerRunId"])

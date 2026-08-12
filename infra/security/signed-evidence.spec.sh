@@ -454,6 +454,22 @@ set_contract_hash "$fixture/clone-managed-secret-kms-drift.json" \
   '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw'
 expect_reject clone-managed-secret-kms-drift signed_evidence_validate_payload_contract \
   "$fixture/clone-managed-secret-kms-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw.DBInstances[0]
+  .DBParameterGroups[0].DBParameterGroupName="other-pg"' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-parameter-group-drift.json"
+set_contract_hash "$fixture/clone-parameter-group-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw'
+expect_reject clone-parameter-group-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-parameter-group-drift.json"
+jq -cS '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw.DBInstances[0]
+  .OptionGroupMemberships[0].OptionGroupName="other-og"' \
+  "$fixture/clone-adversarial.json" > "$fixture/clone-option-group-drift.json"
+set_contract_hash "$fixture/clone-option-group-drift.json" \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.sha256' \
+  '.payload.cloneInfrastructure.networkEvidence.describeDbInstances.raw'
+expect_reject clone-option-group-drift signed_evidence_validate_payload_contract \
+  "$fixture/clone-option-group-drift.json"
 jq -cS '.payload.cloneInfrastructure.networkEvidence.describeSecret.raw.OwningService="redshift"' \
   "$fixture/clone-adversarial.json" > "$fixture/clone-secret-owner-drift.json"
 set_contract_hash "$fixture/clone-secret-owner-drift.json" \

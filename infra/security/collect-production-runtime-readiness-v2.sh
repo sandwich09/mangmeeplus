@@ -41,6 +41,17 @@ render "$root/infra/security/production-ecs-execution-policy.template.json" "$wo
 render "$root/infra/security/production-release-task-policy.template.json" "$work/release-policy.json"
 render "$root/infra/security/production-api-task-policy.template.json" "$work/api-policy.json"
 render "$root/infra/security/production-ai-task-policy.template.json" "$work/ai-policy.json"
+render "$root/infra/ai-gateway/agentcore-execution-role-trust.template.json" \
+  "$work/agentcore-trust.json"
+agentcore_ai_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
+  --secret-id watchdog-bms/production/ai-gateway-internal-secret --query ARN --output text)"
+agentcore_jwt_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
+  --secret-id watchdog-bms/production/watchdog-jwt-secret --query ARN --output text)"
+sed -e "s|<ACCOUNT_ID>|$account|g" \
+  -e "s|<AI_GATEWAY_SECRET_ARN>|$agentcore_ai_secret_arn|g" \
+  -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|$agentcore_jwt_secret_arn|g" \
+  "$root/infra/ai-gateway/agentcore-execution-role-policy.json" \
+  > "$work/agentcore-policy.json"
 roles="$work/promotion-roles.ndjson"
 : > "$roles"
 record_exact_role() {
@@ -51,7 +62,8 @@ record_exact_role() {
   aws iam get-role-policy --role-name "$name" --policy-name "$policy_name" --output json \
     | jq -cS . > "$policy_state"
   jq -e --arg arn "arn:aws:iam::$account:role/$name" --slurpfile expected "$trust" '
-    .Role.Arn==$arn and .Role.AssumeRolePolicyDocument==$expected[0]' "$role_state" >/dev/null
+    .Role.Arn==$arn and (.Role|has("PermissionsBoundary")|not)
+    and .Role.AssumeRolePolicyDocument==$expected[0]' "$role_state" >/dev/null
   [ -z "$expected_max" ] || test "$(jq -r '.Role.MaxSessionDuration' "$role_state")" = "$expected_max"
   jq -e --arg name "$policy_name" --slurpfile expected "$policy" '
     .PolicyName==$name and .PolicyDocument==$expected[0]' "$policy_state" >/dev/null
@@ -82,7 +94,8 @@ record_runtime_role() {
   local role_state="$work/$name-role.json" policy_state="$work/$name-policy.json"
   aws iam get-role --role-name "$name" --output json | jq -cS . > "$role_state"
   jq -e --arg arn "arn:aws:iam::$account:role/$name" --slurpfile expected "$trust" '
-    .Role.Arn==$arn and .Role.AssumeRolePolicyDocument==$expected[0]' "$role_state" >/dev/null
+    .Role.Arn==$arn and (.Role|has("PermissionsBoundary")|not)
+    and .Role.AssumeRolePolicyDocument==$expected[0]' "$role_state" >/dev/null
   if [ -n "$policy_name" ]; then
     aws iam get-role-policy --role-name "$name" --policy-name "$policy_name" --output json \
       | jq -cS . > "$policy_state"
@@ -115,6 +128,7 @@ record_service_linked_role() {
   jq -e --arg arn "arn:aws:iam::$account:role/aws-service-role/$path/$name" \
     --arg path "/aws-service-role/$path/" --arg service "$service" '
     .Role.Arn==$arn and .Role.Path==$path
+    and (.Role|has("PermissionsBoundary")|not)
     and .Role.AssumeRolePolicyDocument=={Version:"2012-10-17",Statement:[{
       Effect:"Allow",Principal:{Service:$service},Action:"sts:AssumeRole"}]}' "$role_state" >/dev/null
   test "$(aws iam list-role-policies --role-name "$name" --output json | jq -cS '.PolicyNames')" = '[]'
@@ -132,9 +146,11 @@ record_service_linked_role() {
 
 record_exact_role watchdog-bms-deploy-production watchdog-bms-production-deploy \
   "$work/deploy-trust.json" "$work/deploy-policy.json" 7200
+record_exact_role watchdog-bms-agentcore-execution-role watchdog-bms-agentcore-permissions \
+  "$work/agentcore-trust.json" "$work/agentcore-policy.json" 3600
 record_exact_role watchdog-bms-production-security-readonly watchdog-bms-production-security-readonly \
   "$root/infra/security/production-security-readonly-trust.template.json" \
-  "$root/infra/security/production-security-readonly-policy.template.json" ''
+  "$root/infra/security/production-security-readonly-policy.template.json" 3600
 record_exact_role watchdog-bms-production-a5-readonly watchdog-bms-production-a5-readonly \
   "$root/infra/security/production-a5-readonly-trust.template.json" \
   "$root/infra/security/production-a5-readonly-policy.template.json" 7200
@@ -179,6 +195,11 @@ record_service_linked_role AWSServiceRoleForElasticLoadBalancing elasticloadbala
 record_service_linked_role AWSServiceRoleForApplicationAutoScaling_ECSService \
   ecs.application-autoscaling.amazonaws.com ecs.application-autoscaling.amazonaws.com \
   arn:aws:iam::aws:policy/aws-service-role/AWSApplicationAutoscalingECSServicePolicy
+record_service_linked_role AWSServiceRoleForRDS rds.amazonaws.com rds.amazonaws.com \
+  arn:aws:iam::aws:policy/aws-service-role/AmazonRDSServiceRolePolicy
+record_service_linked_role AWSServiceRoleForElastiCache elasticache.amazonaws.com \
+  elasticache.amazonaws.com \
+  arn:aws:iam::aws:policy/aws-service-role/ElastiCacheServiceRolePolicy
 
 workers_role="$work/workers-role.json"; workers_policy="$work/workers-role-policy.json"
 aws iam get-role --role-name watchdog-bms-ecs-express-workers-role --output json | jq -cS . > "$workers_role"
@@ -186,6 +207,7 @@ aws iam get-role-policy --role-name watchdog-bms-ecs-express-workers-role \
   --policy-name watchdog-bms-prod-workers-object-version-cleanup --output json | jq -cS . > "$workers_policy"
 jq -e '
   .Role.Arn=="arn:aws:iam::311414082667:role/watchdog-bms-ecs-express-workers-role"
+  and (.Role|has("PermissionsBoundary")|not)
   and .Role.AssumeRolePolicyDocument=={Version:"2012-10-17",Statement:[{Effect:"Allow",
     Principal:{Service:"ecs-tasks.amazonaws.com"},Action:"sts:AssumeRole"}]}' "$workers_role" >/dev/null
 jq -e --slurpfile expected "$work/workers-policy.json" '

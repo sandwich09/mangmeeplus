@@ -237,6 +237,7 @@ baseline_mutate_reject clamav-eicar-clean '.clamavCandidate.eicarVerdict="CLEAN"
 baseline_mutate_reject clamav-wrong-image '.clamavCandidate.apiImage=("evil.invalid/api@"+.clamavCandidate.apiDigest)'
 baseline_mutate_reject log-retention-short '.logMonitoring.groups[0].retentionDays=7'
 baseline_mutate_reject log-no-filter '.logMonitoring.groups[0].metricFilterCount=0'
+baseline_mutate_reject extra-key '.unexpected="must-be-rejected"'
 clone="$fixture/clone.json"
 jq -cnS -L "$repo_root/infra/security" --arg source "$source_sha" --arg zero "$zero" '
   include "evidence-contracts.fixtures";
@@ -502,7 +503,10 @@ bash -n "$repo_root/infra/security/signed-evidence.sh" \
 jq -e . "$repo_root/infra/security/production-security-readonly-trust.template.json" \
   "$repo_root/infra/security/production-security-readonly-policy.template.json" >/dev/null
 grep -Fq 'DenyOutsideReadOnly' "$repo_root/infra/security/production-security-readonly-policy.template.json"
-for read_action in rds:DescribeDBInstances elasticache:DescribeReplicationGroups \
+for read_action in rds:DescribeDBInstances rds:DescribeAccountAttributes \
+  rds:DescribeDBParameterGroups rds:DescribeDBSubnetGroups rds:DescribeOptionGroups \
+  rds:DescribeOrderableDBInstanceOptions bedrock-agentcore:GetAgentRuntime \
+  elasticache:DescribeReplicationGroups \
   elasticache:DescribeCacheClusters sns:GetTopicAttributes sns:ListSubscriptionsByTopic \
   cloudwatch:DescribeAlarms cloudwatch:GetMetricStatistics logs:DescribeLogGroups \
   logs:DescribeMetricFilters; do

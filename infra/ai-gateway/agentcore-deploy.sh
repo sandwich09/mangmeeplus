@@ -88,32 +88,24 @@ S3_VERSION=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
 if [ "$S3_VERSION" = "None" ] || [ "$S3_VERSION" = "null" ]; then
   S3_VERSION=""
 fi
+if [ -z "$S3_VERSION" ]; then
+  echo "ERROR: AgentCore artifact has no S3 version ID; refusing a mutable runtime reference" >&2
+  exit 1
+fi
 
 # ── 3. Execution role (create if missing) ─────────────────────────────────────
 echo "[agentcore-deploy] ensuring execution role..."
-TRUST_POLICY=$(cat <<EOF
-{
-  "Version":"2012-10-17",
-  "Statement":[{
-    "Effect":"Allow",
-    "Principal":{"Service":"bedrock-agentcore.amazonaws.com"},
-    "Action":"sts:AssumeRole",
-    "Condition":{
-      "StringEquals":{"aws:SourceAccount":"${ACCOUNT_ID}"},
-      "ArnLike":{"aws:SourceArn":"arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/*"}
-    }
-  }]
-}
-EOF
-)
+sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
+  -e "s|<AGENTCORE_RUNTIME_ARN>|arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-*|g" \
+  infra/ai-gateway/agentcore-execution-role-trust.template.json > "$STAGING/trust.json"
 if ! aws iam get-role --role-name watchdog-bms-agentcore-execution-role 2>/dev/null; then
   aws iam create-role \
     --role-name watchdog-bms-agentcore-execution-role \
-    --assume-role-policy-document "$TRUST_POLICY"
+    --assume-role-policy-document "file://$STAGING/trust.json"
 fi
 aws iam update-assume-role-policy \
   --role-name watchdog-bms-agentcore-execution-role \
-  --policy-document "$TRUST_POLICY"
+  --policy-document "file://$STAGING/trust.json"
 # Replace placeholder before applying
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
   -e "s|<AI_GATEWAY_SECRET_ARN>|$AI_GATEWAY_SECRET_ARN|g" \
@@ -136,7 +128,8 @@ ARTIFACT_JSON=$(cat <<EOF
     "code": {
       "s3": {
         "bucket": "${BUCKET}",
-        "prefix": "${DEPLOY_KEY}"$([ -n "${S3_VERSION:-}" ] && echo ",\"versionId\":\"$S3_VERSION\"" || echo "")
+        "prefix": "${DEPLOY_KEY}",
+        "versionId": "${S3_VERSION}"
       }
     },
     "runtime": "NODE_22",
@@ -228,6 +221,12 @@ fi
 
 RUNTIME_ARN="arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/${RUNTIME_ID}"
 echo "[agentcore-deploy] ARN: $RUNTIME_ARN"
+sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
+  -e "s|<AGENTCORE_RUNTIME_ARN>|$RUNTIME_ARN|g" \
+  infra/ai-gateway/agentcore-execution-role-trust.template.json > "$STAGING/trust.json"
+aws iam update-assume-role-policy \
+  --role-name watchdog-bms-agentcore-execution-role \
+  --policy-document "file://$STAGING/trust.json"
 
 # ── 6. Wait for READY status ───────────────────────────────────────────────────
 echo "[agentcore-deploy] waiting for READY status (up to 5 min)..."

@@ -43,7 +43,7 @@ jq -e --arg source "$source" --arg uat "$uat_run" --arg readyRun "$ready_run" \
   --arg repository "$repository" --arg readyHash "$ready_hash" --arg manifestHash "$manifest_hash" \
   --arg content "$content" --argjson now "$now" --slurpfile ready "$ready" \
   --slurpfile manifest "$manifest" '
-  def exact($keys):(keys|sort)==($keys|sort);
+  def exact($wanted):(keys|sort)==($wanted|sort);
   def hash:type=="string" and test("^[0-9a-f]{64}$");
   exact(["artifactKind","completedAtEpoch","contentSha256","controllerCommit","effectiveTarget",
     "environment","images","maintenanceProofSha256","manifestSha256","productionRunAttempt",

@@ -84,10 +84,10 @@ async function main(): Promise<void> {
     ));
 
     const startedAtEpochMs = Date.now();
-    runCaptured('pnpm', [
-      '--filter', '@watchdog-bms/api', 'exec', 'prisma', 'migrate', 'deploy',
+    runCaptured('/app/apps/api/node_modules/.bin/prisma', [
+      'migrate', 'deploy',
       '--schema', 'prisma/schema.prisma',
-    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app');
+    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app/apps/api');
     const finishedAtEpochMs = Date.now();
     if (finishedAtEpochMs <= startedAtEpochMs
       || finishedAtEpochMs - startedAtEpochMs > MAX_REHEARSAL_MS) {
@@ -115,18 +115,18 @@ async function main(): Promise<void> {
     if (migrationDurations.some((row) => row.durationMs <= 0 || row.durationMs > 300_000)) {
       throw new Error('production_readiness_clone_statement_budget_exceeded');
     }
-    runCaptured('pnpm', [
-      '--filter', '@watchdog-bms/api', 'exec', 'prisma', 'validate',
+    runCaptured('/app/apps/api/node_modules/.bin/prisma', [
+      'validate',
       '--schema', 'prisma/schema.prisma',
-    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app');
+    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app/apps/api');
     const compatibility = runCaptured(
-      'pnpm', [
-        '--filter', '@watchdog-bms/api', 'exec', 'tsx', '--test', '--test-reporter=spec',
+      '/app/node_modules/.bin/tsx', [
+        '--test', '--test-reporter=spec',
         'src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts',
         'src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.draft-submit-race.spec.ts',
       ],
       { ...process.env, DATABASE_URL: databaseUrl, REIMBURSEMENT_PG_GATE_REQUIRED: 'true' },
-      '/app',
+      '/app/apps/api',
     );
     const postSchemaFingerprint = sha256(stableJson(
       await readProductionA5SchemaObjects(client, 'public'),

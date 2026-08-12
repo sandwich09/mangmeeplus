@@ -79,7 +79,7 @@
     {
       "Sid": "RegisterBootstrapTask",
       "Effect": "Allow",
-      "Action": "ecs:RegisterTaskDefinition",
+      "Action": ["ecs:DescribeTaskDefinition", "ecs:RegisterTaskDefinition"],
       "Resource": "*"
     },
     {
@@ -101,10 +101,23 @@
       }
     },
     {
-      "Sid": "RetireBootstrapTaskDefinition",
+      "Sid": "ListBootstrapTasksInExactCluster",
       "Effect": "Allow",
-      "Action": "ecs:DeregisterTaskDefinition",
-      "Resource": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-a5-production-bootstrap-*:*"
+      "Action": "ecs:ListTasks",
+      "Resource": "*",
+      "Condition": {
+        "ArnEquals": {"ecs:cluster": "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}
+      }
+    },
+    {
+      "Sid": "ReconcileBootstrapTaskDefinitions",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DeregisterTaskDefinition",
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListTaskDefinitions"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "PassBootstrapExecutionRole",
@@ -120,6 +133,7 @@
         "iam:DeleteRole",
         "iam:DeleteRolePolicy",
         "iam:GetRole",
+        "iam:GetRolePolicy",
         "iam:ListAttachedRolePolicies",
         "iam:ListRolePolicies",
         "iam:PutRolePolicy"
@@ -133,6 +147,7 @@
       "Effect": "Allow",
       "Action": [
         "iam:GetRole",
+        "iam:GetRolePolicy",
         "iam:ListAttachedRolePolicies",
         "iam:ListRolePolicies",
         "iam:PutRolePolicy"
@@ -151,13 +166,17 @@
         "ecr:GetAuthorizationToken",
         "ecr:GetDownloadUrlForLayer",
         "ecs:DeregisterTaskDefinition",
+        "ecs:DescribeTaskDefinition",
         "ecs:DescribeTasks",
+        "ecs:ListTaskDefinitions",
+        "ecs:ListTasks",
         "ecs:RegisterTaskDefinition",
         "ecs:RunTask",
         "ecs:StopTask",
         "iam:DeleteRole",
         "iam:DeleteRolePolicy",
         "iam:GetRole",
+        "iam:GetRolePolicy",
         "iam:ListAttachedRolePolicies",
         "iam:ListRolePolicies",
         "iam:PassRole",

@@ -13,9 +13,17 @@ for required in \
   'assignPublicIp:"DISABLED"' 'validate-production-a5-private-endpoints.sh' \
   'watchdog-bms/production/database-url' ':::${writer_version}' \
   '"--tsconfig","/app/apps/api/tsconfig.json"' \
-  'run-production-apply.ts' 'reconstruct-production-a5-apply-result.sh'; do
+  'run-production-apply.ts' 'reconstruct-production-a5-apply-result.sh' \
+  'register-task-definition-with-retry.sh' 'run-task-idempotently.sh' 'run_client_token=' \
+  'cleanup-one-shot-task.sh' 'registration_requested=true' 'run_task_requested=true'; do
   grep -F -- "$required" "$runner" >/dev/null
 done
+registration_arm_line="$(grep -n 'registration_requested=true' "$runner" | cut -d: -f1)"
+registration_call_line="$(grep -n 'register-task-definition-with-retry.sh' "$runner" | cut -d: -f1)"
+run_arm_line="$(grep -n 'run_task_requested=true' "$runner" | cut -d: -f1)"
+run_call_line="$(grep -n 'run-task-idempotently.sh' "$runner" | cut -d: -f1)"
+test "$registration_arm_line" -lt "$registration_call_line"
+test "$run_arm_line" -lt "$run_call_line"
 for forbidden in \
   'prisma migrate deploy' 'sync-permissions' 'sync-feature-launch-gates' \
   'attest-feature-launch-build' 'get-secret-value' 'taskRoleArn:$execution'; do
@@ -59,6 +67,24 @@ jq -cnS --arg message "A5_PRODUCTION_APPLY_RESULT 1/1 $digest $(tr -d '\n' < "$f
 bash "$reconstruct" "$fixture/logs.json" "$source_sha" "$image" "$hash" \
   "$fixture/hashes.json" "$fixture/authority.json" "$fixture/reconstructed.json"
 cmp -s "$fixture/result.json" "$fixture/reconstructed.json"
+
+reconstruct_rejects_result() {
+  local label="$1" filter="$2" digest
+  jq -cS "$filter" "$fixture/result.json" > "$fixture/$label-result.json"
+  digest="$(sha256sum "$fixture/$label-result.json" | awk '{print $1}')"
+  if base64 -w 0 "$fixture/$label-result.json" > "$fixture/$label.base64" 2>/dev/null; then :
+  else base64 < "$fixture/$label-result.json" | tr -d '\n' > "$fixture/$label.base64"; fi
+  jq -cnS --arg message "A5_PRODUCTION_APPLY_RESULT 1/1 $digest $(tr -d '\n' < "$fixture/$label.base64")" \
+    '{events:[{message:$message}]}' > "$fixture/$label-logs.json"
+  if bash "$reconstruct" "$fixture/$label-logs.json" "$source_sha" "$image" "$hash" \
+      "$fixture/hashes.json" "$fixture/authority.json" "$fixture/$label-output.json" \
+      >/dev/null 2>&1; then
+    echo "ERROR: production apply reconstruction accepted $label" >&2
+    exit 1
+  fi
+}
+reconstruct_rejects_result extra-top '.unexpected="must-be-rejected"'
+reconstruct_rejects_result extra-executed '.executedMigrations.unexpected="must-be-rejected"'
 
 jq '.events += [.events[0]]' "$fixture/logs.json" > "$fixture/duplicate.json"
 if bash "$reconstruct" "$fixture/duplicate.json" "$source_sha" "$image" "$hash" \

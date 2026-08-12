@@ -9,6 +9,11 @@ output="$1"
 [ ! -e "$output" ]
 region=ap-southeast-1
 account=311414082667
+agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0
+agentcore_execution_role_arn=arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role
+agentcore_approved_source=eaa9005a1857b3cd582ceda743977496ed955110
+managed_secret_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a
+snapshot_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27
 parameter_prefix=/watchdog-bms/production
 secret_prefix=watchdog-bms/production
 root="$(cd "$(dirname "$0")/../.." && pwd -P)"
@@ -125,6 +130,106 @@ topic="$(aws sns get-topic-attributes --region "$region" --topic-arn "$SECURITY_
 jq -e --arg arn "$SECURITY_ALERT_TOPIC_ARN" --arg account "$account" \
   '.Attributes.TopicArn==$arn and .Attributes.Owner==$account' <<< "$topic" >/dev/null
 
+aws rds describe-orderable-db-instance-options --region "$region" --engine postgres \
+  --engine-version 18.3 --db-instance-class db.t4g.medium --output json \
+  > "$work/orderable-db-options.json"
+jq -e '[.OrderableDBInstanceOptions[]|select(
+  .Engine=="postgres" and .EngineVersion=="18.3" and .DBInstanceClass=="db.t4g.medium"
+  and .Vpc==true and .SupportsStorageEncryption==true and .MultiAZCapable==true)]|length>=1' \
+  "$work/orderable-db-options.json" >/dev/null
+aws rds describe-account-attributes --region "$region" --output json \
+  > "$work/rds-account-attributes.json"
+jq -e '[.AccountQuotas[]|select(.AccountQuotaName=="DBInstances")]
+  |length==1 and .[0].Max>0 and .[0].Used>=0 and (.[0].Used+1)<=.[0].Max' \
+  "$work/rds-account-attributes.json" >/dev/null
+
+aws rds describe-db-instances --region "$region" --db-instance-identifier watchdog-bms-prod-db \
+  --output json > "$work/source-db.json"
+source_db_groups="$(jq -cer '.DBInstances|select(length==1)|.[0]
+  |select(.DBInstanceIdentifier=="watchdog-bms-prod-db"
+    and .DBInstanceArn=="arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db"
+    and .Engine=="postgres" and .EngineVersion=="18.3")
+  | {subnet:.DBSubnetGroup.DBSubnetGroupName,
+     parameter:(.DBParameterGroups|select(length==1)|.[0]
+       |select(.ParameterApplyStatus=="in-sync")|.DBParameterGroupName),
+     option:(.OptionGroupMemberships|select(length==1)|.[0]
+       |select(.Status=="in-sync")|.OptionGroupName)}
+  |select(all(.[];type=="string" and length>0))' "$work/source-db.json")"
+source_subnet_group="$(jq -r .subnet <<< "$source_db_groups")"
+source_parameter_group="$(jq -r .parameter <<< "$source_db_groups")"
+source_option_group="$(jq -r .option <<< "$source_db_groups")"
+aws rds describe-db-subnet-groups --region "$region" \
+  --db-subnet-group-name "$source_subnet_group" --output json > "$work/source-subnet-group.json"
+aws rds describe-db-parameter-groups --region "$region" \
+  --db-parameter-group-name "$source_parameter_group" --output json > "$work/source-parameter-group.json"
+aws rds describe-option-groups --region "$region" \
+  --option-group-name "$source_option_group" --output json > "$work/source-option-group.json"
+jq -e --arg name "$source_subnet_group" --arg account "$account" '
+  .DBSubnetGroups|length==1 and .[0].DBSubnetGroupName==$name and .[0].SubnetGroupStatus=="Complete"
+  and .[0].DBSubnetGroupArn==("arn:aws:rds:ap-southeast-1:"+$account+":subgrp:"+$name)' \
+  "$work/source-subnet-group.json" >/dev/null
+jq -e --arg name "$source_parameter_group" --arg account "$account" '
+  .DBParameterGroups|length==1 and .[0].DBParameterGroupName==$name
+  and .[0].DBParameterGroupFamily=="postgres18"
+  and .[0].DBParameterGroupArn==("arn:aws:rds:ap-southeast-1:"+$account+":pg:"+$name)' \
+  "$work/source-parameter-group.json" >/dev/null
+jq -e --arg name "$source_option_group" --arg account "$account" '
+  .OptionGroupsList|length==1 and .[0].OptionGroupName==$name
+  and .[0].EngineName=="postgres" and .[0].MajorEngineVersion=="18"
+  and .[0].OptionGroupArn==("arn:aws:rds:ap-southeast-1:"+$account+":og:"+$name)' \
+  "$work/source-option-group.json" >/dev/null
+
+aws rds describe-db-snapshots --region "$region" --db-instance-identifier watchdog-bms-prod-db \
+  --snapshot-type automated --output json > "$work/source-snapshots.json"
+recent_snapshot="$(jq -cer --arg kms "$snapshot_kms_key_arn" '[.DBSnapshots[]|select(
+  .DBInstanceIdentifier=="watchdog-bms-prod-db" and .SnapshotType=="automated"
+  and (.DBSnapshotArn
+    |startswith("arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:watchdog-bms-prod-db-"))
+  and .Status=="available" and .Encrypted==true and .KmsKeyId==$kms)]
+  |sort_by(.SnapshotCreateTime)|last' \
+  "$work/source-snapshots.json")"
+recent_snapshot_epoch="$(jq -er '.SnapshotCreateTime
+  |sub("\\.[0-9]+\\+00:00$";"Z")|sub("\\+00:00$";"Z")|sub("\\.[0-9]+Z$";"Z")
+  |fromdateiso8601' <<< "$recent_snapshot")"
+snapshot_age_seconds="$(( $(date -u +%s) - recent_snapshot_epoch ))"
+[ "$snapshot_age_seconds" -ge 0 ] && [ "$snapshot_age_seconds" -le 129600 ]
+aws kms describe-key --region "$region" --key-id alias/aws/rds --output json \
+  > "$work/snapshot-kms-key.json"
+jq -e --arg arn "$snapshot_kms_key_arn" '
+  .KeyMetadata.Arn==$arn and .KeyMetadata.Enabled==true and .KeyMetadata.KeyState=="Enabled"
+  and .KeyMetadata.KeyManager=="AWS" and .KeyMetadata.KeyUsage=="ENCRYPT_DECRYPT"
+  and .KeyMetadata.Origin=="AWS_KMS"' "$work/snapshot-kms-key.json" >/dev/null
+aws kms describe-key --region "$region" --key-id alias/aws/secretsmanager --output json \
+  > "$work/managed-secret-kms-key.json"
+jq -e --arg arn "$managed_secret_kms_key_arn" '
+  .KeyMetadata.Arn==$arn and .KeyMetadata.Enabled==true and .KeyMetadata.KeyState=="Enabled"
+  and .KeyMetadata.KeyManager=="AWS" and .KeyMetadata.KeyUsage=="ENCRYPT_DECRYPT"' \
+  "$work/managed-secret-kms-key.json" >/dev/null
+
+agentcore_runtime_id="${agentcore_runtime_arn##*/}"
+[[ "$agentcore_runtime_id" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,99}-[a-zA-Z0-9]{10}$ ]]
+aws bedrock-agentcore-control get-agent-runtime --region "$region" \
+  --agent-runtime-id "$agentcore_runtime_id" --output json > "$work/agentcore-runtime.json"
+jq -e --arg arn "$agentcore_runtime_arn" --arg id "$agentcore_runtime_id" \
+  --arg role "$agentcore_execution_role_arn" --arg source "$agentcore_approved_source" \
+  --arg bucket "watchdog-bms-agentcore-artifacts-$account" '
+  .agentRuntimeArn==$arn and .agentRuntimeId==$id and .status=="READY"
+  and (.agentRuntimeVersion|test("^[1-9][0-9]{0,4}$"))
+  and .networkConfiguration.networkMode=="PUBLIC"
+  and (.agentRuntimeArtifact.codeConfiguration as $code
+    | $code.runtime=="NODE_22" and $code.entryPoint==["runtime.js"]
+    and $code.code.s3.bucket==$bucket
+    and ($code.code.s3.prefix
+      |test("^agentcore/watchdog_orchestrator-"+$source+"-[0-9a-f]{64}\\.zip$"))
+    and ($code.code.s3.versionId|type=="string" and length>0))
+  and .protocolConfiguration.serverProtocol=="HTTP"
+  and .metadataConfiguration.requireMMDSV2==true
+  and .roleArn==$role
+  and .environmentVariables.APP_ENV=="production"
+  and .environmentVariables.DEPLOY_ENVIRONMENT=="production"
+  and .environmentVariables.GIT_SHA==$source' \
+  "$work/agentcore-runtime.json" >/dev/null
+
 if command -v sha256sum >/dev/null 2>&1; then
   lifecycle_sha="$(sha256sum "$work/lifecycle.json" | awk '{print $1}')"
 else
@@ -138,8 +243,21 @@ jq -cnS \
   --slurpfile groups "$work/security-groups.json" \
   --arg bucket "$bucket" --arg lifecycleSha "$lifecycle_sha" \
   --arg logKms "$LOG_KMS_KEY_ID" --arg topic "$SECURITY_ALERT_TOPIC_ARN" \
+  --arg agentcoreArn "$agentcore_runtime_arn" --arg agentcoreRole "$agentcore_execution_role_arn" \
+  --arg agentcoreSource "$agentcore_approved_source" --arg managedSecretKms "$managed_secret_kms_key_arn" \
+  --arg snapshotKms "$snapshot_kms_key_arn" \
+  --arg snapshotArn "$(jq -er .DBSnapshotArn <<< "$recent_snapshot")" \
+  --arg snapshotTime "$(jq -er .SnapshotCreateTime <<< "$recent_snapshot")" \
+  --argjson snapshotAge "$snapshot_age_seconds" \
+  --slurpfile agentcore "$work/agentcore-runtime.json" \
+  --slurpfile rdsOptions "$work/orderable-db-options.json" \
+  --slurpfile rdsQuotas "$work/rds-account-attributes.json" \
+  --arg sourceSubnetGroup "$source_subnet_group" \
+  --arg sourceParameterGroup "$source_parameter_group" \
+  --arg sourceOptionGroup "$source_option_group" \
   --argjson typhoonEnabled "$typhoon_enabled" --arg typhoonHash "$typhoon_configuration_sha" '
-  {secrets:$secrets[0],
+  ($rdsQuotas[0].AccountQuotas[]|select(.AccountQuotaName=="DBInstances")) as $dbQuota
+  | {secrets:$secrets[0],
    typhoon:{enabled:$typhoonEnabled,
      configurationSha256:(if $typhoonEnabled then $typhoonHash else null end)},
    parameters:$parameters[0],
@@ -148,5 +266,26 @@ jq -cnS \
      publicSubnetIds:([$subnets[0].Subnets[]|select(.State=="available" and .MapPublicIpOnLaunch==true)|.SubnetId]|sort),
      securityGroups:([$groups[0].SecurityGroups[]|{name:.GroupName,id:.GroupId}]|sort_by(.name))},
    s3:{bucket:$bucket,region:"ap-southeast-1",versioning:"Enabled",lifecycleSha256:$lifecycleSha},
+   rdsCapacity:{engine:"postgres",engineVersion:"18.3",dbInstanceClass:"db.t4g.medium",
+     orderableOptionCount:([$rdsOptions[0].OrderableDBInstanceOptions[]|select(
+       .Engine=="postgres" and .EngineVersion=="18.3" and .DBInstanceClass=="db.t4g.medium"
+       and .Vpc==true and .SupportsStorageEncryption==true and .MultiAZCapable==true)]|length),
+     quotaName:"DBInstances",quotaMax:$dbQuota.Max,quotaUsed:$dbQuota.Used,
+     quotaHeadroom:($dbQuota.Max-$dbQuota.Used),sourceDbSubnetGroup:$sourceSubnetGroup,
+     sourceDbParameterGroup:$sourceParameterGroup,sourceDbOptionGroup:$sourceOptionGroup,
+     recentEncryptedAutomatedSnapshotAvailable:true,snapshotMaxAgeSeconds:129600,
+     recentAutomatedSnapshotArn:$snapshotArn,recentAutomatedSnapshotCreateTime:$snapshotTime,
+     recentAutomatedSnapshotAgeSeconds:$snapshotAge,
+     snapshotKmsKeyArn:$snapshotKms,
+     managedSecretKmsKeyArn:$managedSecretKms},
+   agentCore:{runtimeArn:$agentcoreArn,runtimeId:$agentcore[0].agentRuntimeId,
+     runtimeVersion:$agentcore[0].agentRuntimeVersion,status:"READY",
+     networkMode:"PUBLIC",artifactRuntime:"NODE_22",serverProtocol:"HTTP",
+     appEnv:"production",deployEnvironment:"production",requireMMDSV2:true,
+     executionRoleArn:$agentcoreRole,gitSha:$agentcoreSource,
+     artifactBucket:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.bucket,
+     artifactPrefix:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.prefix,
+     artifactVersionId:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.versionId,
+     entryPoint:$agentcore[0].agentRuntimeArtifact.codeConfiguration.entryPoint},
    monitoring:{logGroups:["/ecs/watchdog-bms-prod-ai-gateway","/ecs/watchdog-bms-prod-api-web","/ecs/watchdog-bms-prod-workers"],
      retentionDays:14,kmsKeyArn:$logKms,alertTopicArn:$topic}}' > "$output"

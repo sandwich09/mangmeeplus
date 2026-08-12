@@ -75,6 +75,16 @@ expect_reject missing-tsconfig
 bash -n "$runner" "$validator"
 grep -Eq 'assignPublicIp:"DISABLED"' "$runner"
 grep -Eq '"--tsconfig","/app/apps/api/tsconfig.json"' "$runner"
+grep -Fq 'register-task-definition-with-retry.sh' "$runner"
+grep -Fq 'run-task-idempotently.sh' "$runner"
+grep -Fq 'run_client_token=' "$runner"
+grep -Fq 'cleanup-one-shot-task.sh' "$runner"
+registration_arm_line="$(grep -n 'registration_requested=true' "$runner" | cut -d: -f1)"
+registration_call_line="$(grep -n 'register-task-definition-with-retry.sh' "$runner" | cut -d: -f1)"
+run_arm_line="$(grep -n 'run_task_requested=true' "$runner" | cut -d: -f1)"
+run_call_line="$(grep -n 'run-task-idempotently.sh' "$runner" | cut -d: -f1)"
+test "$registration_arm_line" -lt "$registration_call_line"
+test "$run_arm_line" -lt "$run_call_line"
 if [ "$(grep -c "'--tsconfig', '/app/apps/api/tsconfig.json'" \
     "$repo_root/apps/api/prisma/production-a5/run-readonly-evidence-task.ts")" -ne 2 ]; then
   echo 'ERROR: read-only child TSX commands are not bound to the API tsconfig' >&2

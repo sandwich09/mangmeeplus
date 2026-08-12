@@ -27,12 +27,13 @@ const CHILD_MAX_BUFFER = 16 * 1024 * 1024;
 const RESULT_CHUNK_BYTES = 18_000;
 
 export const PRODUCTION_A5_REIMBURSEMENT_COMMAND =
-  'REIMBURSEMENT_PG_GATE_REQUIRED=true pnpm --filter @watchdog-bms/api exec tsx --test '
+  'cd /app/apps/api && REIMBURSEMENT_PG_GATE_REQUIRED=true '
+  + '/app/node_modules/.bin/tsx --test '
   + '--test-reporter=spec src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts '
   + 'src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.draft-submit-race.spec.ts';
 
 const PRODUCTION_A5_REIMBURSEMENT_ARGS = [
-  '--filter', '@watchdog-bms/api', 'exec', 'tsx', '--test', '--test-reporter=spec',
+  '--test', '--test-reporter=spec',
   'src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts',
   'src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.draft-submit-race.spec.ts',
 ] as const;
@@ -279,10 +280,10 @@ async function main(): Promise<void> {
     const preconditionResults = await reviewedPhase(client, provisionalManifest, 'PRE');
 
     const migrationStart = Date.now();
-    runCaptured('pnpm', [
-      '--filter', '@watchdog-bms/api', 'exec', 'prisma', 'migrate', 'deploy',
+    runCaptured('/app/apps/api/node_modules/.bin/prisma', [
+      'migrate', 'deploy',
       '--schema', 'prisma/schema.prisma',
-    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app');
+    ], { ...process.env, DATABASE_URL: databaseUrl }, '/app/apps/api');
     const migrationFinish = Date.now();
     if (migrationFinish - migrationStart > MAX_REHEARSAL_MS) {
       throw new Error('production_a5_clone_rehearsal_window_exceeded');
@@ -302,13 +303,13 @@ async function main(): Promise<void> {
     }
 
     const reimbursementRun = runCaptured(
-      'pnpm', [...PRODUCTION_A5_REIMBURSEMENT_ARGS],
+      '/app/node_modules/.bin/tsx', [...PRODUCTION_A5_REIMBURSEMENT_ARGS],
       {
         ...process.env,
         DATABASE_URL: databaseUrl,
         REIMBURSEMENT_PG_GATE_REQUIRED: 'true',
       },
-      '/app',
+      '/app/apps/api',
     );
     const reimbursementCompatibility = reimbursementCompatibilityFromOutput(
       reimbursementRun.stdout,

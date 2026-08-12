@@ -54,7 +54,7 @@
     {
       "Sid": "AllowExactA5TaskDefinitionLifecycle",
       "Effect": "Allow",
-      "Action": ["ecs:DeregisterTaskDefinition", "ecs:RegisterTaskDefinition"],
+      "Action": ["ecs:DeregisterTaskDefinition", "ecs:ListTaskDefinitions", "ecs:RegisterTaskDefinition"],
       "Resource": "*"
     },
     {
@@ -98,7 +98,7 @@
         "ec2:DescribeNetworkInterfaces", "ec2:DescribeRouteTables", "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets", "ec2:DescribeVpcEndpoints",
         "ecs:DeregisterTaskDefinition", "ecs:DescribeExpressGatewayService", "ecs:DescribeServiceRevisions",
-        "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RegisterTaskDefinition",
+        "ecs:DescribeTaskDefinition", "ecs:DescribeTasks", "ecs:ListTaskDefinitions", "ecs:ListTasks", "ecs:RegisterTaskDefinition",
         "ecs:RunTask", "ecs:StopTask",
         "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth",
         "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:PassRole",
