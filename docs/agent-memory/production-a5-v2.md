@@ -1,8 +1,9 @@
 # Agent Memory: production A5 v2
 
-Status: UAT/Passport, reader bootstrap and provider prerequisites PASS; Readiness reached the live
-Production catalog task and exposed an ordered-prefix classifier defect. Production was not mutated;
-one set/checksum-model fix is in progress before any further paid workflow.
+Status: UAT/Passport, reader bootstrap and provider prerequisites PASS; the set/checksum migration
+classifier is merged and locally proved. Fresh UAT publication stopped before deployment on an
+unbounded third-party Syft download; a bounded pinned SBOM generator fix is under review. Production
+was not mutated.
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -411,13 +412,24 @@ Verification:
   applied the 121 migration files from Production source `b6eccc8...`, applied only the ten current
   repository-minus-applied migrations to reach 131, passed the corrected exact catalog verifier,
   and returned `No pending migrations to apply` on an idempotent third deploy.
+- Set/checksum PR `#50` passed exact-head CI `31623712999`, was approved on commit
+  `5b81d16dca762a7df2b79c5bece346fb7837973b`, and merged as controller
+  `d75e06b5cb93420dfa718a8e8c570803af83dc62`. Fresh UAT run `31624931285` correctly reused that CI;
+  Resolve, environment policy, all image/tool builds, filesystem verification, Prisma validation,
+  ECR vulnerability scans and cosign signatures passed. It stopped before UAT deployment because
+  `anchore/sbom-action` tried to fetch Syft `v1.42.3` once from a GitHub release page and received
+  HTTP `503`; one failed-job retry received status `000` at the same download. No additional retry
+  was dispatched. The durable fix replaces all three action calls with one local generator that
+  downloads the exact official Linux asset through its immutable GitHub API asset ID, verifies
+  SHA-256 `0d6be741...`, caps the operation at 300 seconds and retries four times for all HTTP/network
+  errors before executing Syft. The executable fixture, real Linux Syft scan and complete Production
+  security aggregate pass.
 
 Next:
 
-1. Merge one application/controller fix for set/checksum migration classification only after
-   focused adversarial cases, typecheck and the full offline Production security aggregate pass.
-   Migration-tool bytes change, so issue one fresh UAT Passport from the exact reviewed head after
-   CI reuse instead of reusing `31600821945` for clone or the Production fence.
+1. Merge the bounded pinned SBOM-download fix only after exact-head CI. Then issue one fresh UAT
+   Passport from that reviewed head; do not rerun failed UAT `31624931285` again and do not reuse
+   `31600821945` for clone or the Production fence.
 2. Keep the already-proved reader state unless the fresh Passport contract explicitly requires a
    metadata replay. Dispatch one valid Production Readiness from the fresh UAT run; require quick
    READY or A5 clone with computed zero residual resources, and reject the input-less ghost run.
