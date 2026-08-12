@@ -10,6 +10,7 @@ import { assertProductionA5NoDestructiveSql } from '../src/scripts/production-a5
 import { readProductionA5RepositoryMigrationFiles } from './production-a5/reviewed-manifest';
 
 type MigrationIdentity = { name: string; checksum: string; appliedOrder: number };
+type RepositoryMigration = { name: string; fileSha256: string };
 
 function expectedMigrationCatalog(repository: readonly { name: string; fileSha256: string }[]) {
   return repository.map((row, index) => ({
@@ -17,6 +18,41 @@ function expectedMigrationCatalog(repository: readonly { name: string; fileSha25
     checksum: row.fileSha256,
     appliedOrder: index + 1,
   }));
+}
+
+export function pendingRepositoryMigrations<T extends RepositoryMigration>(
+  repository: readonly T[],
+  applied: readonly MigrationIdentity[],
+): T[] {
+  const repositoryNames = new Set<string>();
+  const repositoryByName = new Map<string, string>();
+  for (const row of repository) {
+    if (repositoryNames.has(row.name)) {
+      throw new Error('release_catalog_repository_duplicate');
+    }
+    repositoryNames.add(row.name);
+    repositoryByName.set(row.name, row.fileSha256);
+  }
+  const appliedNames = new Set<string>();
+  for (const [index, row] of applied.entries()) {
+    if (row.appliedOrder !== index + 1 || appliedNames.has(row.name)
+      || repositoryByName.get(row.name) !== row.checksum) {
+      throw new Error('release_catalog_applied_set_invalid');
+    }
+    appliedNames.add(row.name);
+  }
+  return repository.filter((row) => !appliedNames.has(row.name));
+}
+
+export function completedMigrationLedger(
+  repository: readonly RepositoryMigration[],
+  applied: readonly MigrationIdentity[],
+): MigrationIdentity[] {
+  return [...applied, ...pendingRepositoryMigrations(repository, applied).map((row, index) => ({
+    name: row.name,
+    checksum: row.fileSha256,
+    appliedOrder: applied.length + index + 1,
+  }))];
 }
 
 export function exactAppliedMigrationCatalog(input: {
@@ -28,7 +64,13 @@ export function exactAppliedMigrationCatalog(input: {
     throw new Error('release_catalog_source_commit_invalid');
   }
   const expected = expectedMigrationCatalog(input.repository);
-  if (stableJson(input.applied) !== stableJson(expected)) {
+  let pending: readonly RepositoryMigration[];
+  try {
+    pending = pendingRepositoryMigrations(input.repository, input.applied);
+  } catch {
+    throw new Error('release_catalog_not_exactly_applied');
+  }
+  if (pending.length !== 0 || input.applied.length !== expected.length) {
     throw new Error('release_catalog_not_exactly_applied');
   }
   return {
@@ -41,7 +83,7 @@ export function exactAppliedMigrationCatalog(input: {
   };
 }
 
-/** Allow pending append-only migrations while still rejecting any applied-catalog drift. */
+/** Allow checksum-valid historical execution order while rejecting any applied-catalog drift. */
 export function compatibleAppliedMigrationCatalog(input: {
   repository: readonly { name: string; fileSha256: string }[];
   applied: readonly MigrationIdentity[];
@@ -51,12 +93,17 @@ export function compatibleAppliedMigrationCatalog(input: {
     throw new Error('release_catalog_source_commit_invalid');
   }
   const expected = expectedMigrationCatalog(input.repository);
-  const expectedAppliedPrefix = expected.slice(0, input.applied.length);
-  if (input.applied.length > expected.length
-    || stableJson(input.applied) !== stableJson(expectedAppliedPrefix)) {
-    throw new Error('release_catalog_not_compatible_applied_prefix');
+  let pendingFiles: readonly RepositoryMigration[];
+  try {
+    pendingFiles = pendingRepositoryMigrations(input.repository, input.applied);
+  } catch {
+    throw new Error('release_catalog_not_compatible_applied_set');
   }
-  const pending = expected.slice(input.applied.length);
+  const pending = pendingFiles.map((row, index) => ({
+    name: row.name,
+    checksum: row.fileSha256,
+    appliedOrder: input.applied.length + index + 1,
+  }));
   return {
     schemaVersion: 1,
     sourceCommit: input.sourceCommit,
@@ -72,14 +119,9 @@ export function compatibleAppliedMigrationCatalog(input: {
 
 export function assertAutomaticPendingMigrationSafety(input: {
   repository: readonly { name: string; fileSha256: string; sqlBytes: string }[];
-  appliedMigrationCount: number;
+  applied: readonly MigrationIdentity[];
 }): void {
-  if (!Number.isSafeInteger(input.appliedMigrationCount)
-    || input.appliedMigrationCount < 0
-    || input.appliedMigrationCount > input.repository.length) {
-    throw new Error('release_catalog_applied_count_invalid');
-  }
-  for (const migration of input.repository.slice(input.appliedMigrationCount)) {
+  for (const migration of pendingRepositoryMigrations(input.repository, input.applied)) {
     assertProductionA5NoDestructiveSql(migration.sqlBytes);
   }
 }
@@ -112,7 +154,7 @@ async function main(): Promise<void> {
         const compatible = compatibleAppliedMigrationCatalog(input);
         assertAutomaticPendingMigrationSafety({
           repository,
-          appliedMigrationCount: applied.length,
+          applied,
         });
         return compatible;
       }

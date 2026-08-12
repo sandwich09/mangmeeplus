@@ -52,7 +52,7 @@ async function main(): Promise<void> {
       const classification = compatibleAppliedMigrationCatalog({ repository, applied, sourceCommit });
       assertAutomaticPendingMigrationSafety({
         repository,
-        appliedMigrationCount: applied.length,
+        applied,
       });
       return classification;
     }, { maxWait: 10_000, timeout: 320_000 });

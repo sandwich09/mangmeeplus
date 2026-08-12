@@ -126,7 +126,8 @@ Runtime: quick 1–2 นาที (hard 5 นาที); migration 45–90 น�
 - [x] common preflight อ่าน GitHub/AWS/IAM/network/secrets/RDS/Redis/service baseline
 - [x] รัน readonly migration catalog classification
 - [x] quick path ออก READY เมื่อ exact catalog ไม่มี pending migration
-- [x] migration path ใช้ exact UAT migration-tool restore→rehearse→delete
+- [x] migration path ใช้ exact UAT migration-tool restore→rehearse→delete; classifier ใช้ exact
+  applied name/checksum set และ repository-minus-applied pending set โดยไม่สมมติ global lexical prefix
 - [x] bind source/controller/images/baseline/ledger/target/mode/policy/A5 evidence เข้า
   `PRODUCTION_RELEASE_READY_V2`
 - [x] cleanup always-run; READY only after `DESTROYED` and residual=0
@@ -139,7 +140,8 @@ Checks:
 
 - intent/state-machine matrix: quick, pending, drift, expired, baseline change, cleanup failure
 - fake AWS fixtures: role/network/secret/service zero/multi/moving states
-- readonly ledger test: exact, append-only pending, edited, unknown, missing-middle, reorder, failed
+- readonly ledger test: exact, pending set, edited, unknown, duplicate, failed/unfinished และ
+  historical out-of-order/missing-middle ที่ checksum ตรง
 - full A5 dry fixtures
 - one live quick readiness read-only run
 - one live A5 restore→rehearse→delete first green before Phase 4
