@@ -33,7 +33,7 @@ jq -e --arg family "$family" --arg execution "$execution" --arg image "$image" \
   and $definition.requiresCompatibilities==["FARGATE"] and $definition.cpu=="2048"
   and $definition.memory=="4096" and $definition.runtimePlatform=={
     cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"}
-  and $definition.volumes==[{name:"tmp"}]
+  and $definition.volumes==[{name:"tmp",host:{}}]
   and ($definition.containerDefinitions|length)==1
   and ($definition.containerDefinitions[0] as $container
     | $container.name=="reader" and $container.image==$image and $container.essential==true

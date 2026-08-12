@@ -25,7 +25,7 @@ jq -cnS --arg family "$family" --arg execution arn:aws:iam::311414082667:role/wa
   --arg source "$source_sha" --arg marker "$marker" '{taskDefinition:{family:$family,
     taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$family+":1"),revision:1,
     executionRoleArn:$execution,networkMode:"awsvpc",requiresCompatibilities:["FARGATE"],cpu:"2048",memory:"4096",
-    runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp"}],
+    runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp",host:{}}],
     containerDefinitions:[{name:"reader",image:$image,essential:true,readonlyRootFilesystem:true,user:"node",
       workingDirectory:"/app",command:["/app/node_modules/.bin/tsx",
         "--tsconfig","/app/apps/api/tsconfig.json",
@@ -71,6 +71,9 @@ jq '.taskDefinition.containerDefinitions[0].command=[
   "/app/apps/api/prisma/production-a5/run-readonly-evidence-task.ts"]' \
   "$work/good.json" > "$work/missing-tsconfig.json"
 expect_reject missing-tsconfig
+jq '.taskDefinition.volumes[0].host.sourcePath="/tmp"' "$work/good.json" \
+  > "$work/host-source-path.json"
+expect_reject host-source-path
 
 bash -n "$runner" "$validator"
 grep -Eq 'assignPublicIp:"DISABLED"' "$runner"

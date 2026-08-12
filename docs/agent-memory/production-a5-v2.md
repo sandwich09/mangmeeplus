@@ -26,6 +26,10 @@ Decisions:
 - หลังหลักฐานครบ ให้ใช้ GitHub Actions เท่าที่จำเป็นตามเส้นทางเดียวเท่านั้น:
   reviewed PR/CI หนึ่งรอบ → UAT หนึ่งรอบ → Passport/Readiness → Production promotion ห้ามแตกเป็น
   blocker-fix runs หรือ retry โดยไม่มี root-cause evidence ใหม่
+- ผู้ใช้อนุญาตให้ Codex self-review และ self-approve/admin-merge exact reviewed commit ได้ต่อเนื่อง
+  ตั้งแต่ 2026-08-12 จนกว่าจะยกเลิก การอนุญาตนี้ไม่ลด branch/CI/proof gates: ต้องผูกการอนุมัติกับ
+  exact head SHA ที่ local aggregate, provider-faithful fixture และ required CI ผ่านครบ ห้าม bypass
+  failing/pending check หรือ merge commit ที่เปลี่ยนหลัง review
 
 ## Permanent execution contract
 
@@ -364,12 +368,23 @@ Verification:
   the workflow: it has no resolved inputs, jobs, check runs, pending deployment, concurrency lease or
   billable time, and both cancel endpoints return HTTP 500. It cannot reach AWS with valid inputs;
   do not treat it as READY or rerun it.
+- Runtime-readiness fix PR `#48` merged as controller
+  `d3e60cb3beaf0963621a275e69309eee13f67763` after all required CI and exact-head approval.
+  Readiness run `31617623221` then passed the previously failing runtime baseline and configured the
+  A5 read-only controller, proving that fix on GitHub/OIDC. The catalog step stopped before RunTask:
+  AWS registered `watchdog-a5-production-catalog-31617623221-a1:1` and returned the documented
+  DescribeTaskDefinition volume normalization `{name:"tmp",host:{}}`, while both catalog and legacy
+  A5 read-only validators still expected the unnormalized registration input `{name:"tmp"}`.
+  CloudTrail independently proves RegisterTaskDefinition succeeded, no RunTask occurred, and the
+  EXIT cleanup deregistered the exact revision before three stable absence reads. The provider-shape
+  fix requires exact empty `host:{}` in both validators and rejects any `host.sourcePath`; focused
+  fixtures and the actual inactive provider definition pass that contract without another Action.
 
 Next:
 
-1. Open one reviewed controller-only PR for the runtime-readiness nounset fix, pass required CI once
-   and obtain independent approval. Do not rerun UAT or reader bootstrap; neither app/image nor
-   reader state changed.
+1. Merge one controller-only provider-shape fix for the catalog and A5 read-only task-definition
+   validators after local aggregate proof. Do not rerun UAT or reader bootstrap; app/image, IAM and
+   reader state did not change.
 2. Dispatch one valid Production Readiness from UAT `31600821945`; require quick READY or A5 clone
    with computed zero residual resources, and reject the input-less ghost run above.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,

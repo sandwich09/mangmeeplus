@@ -21,7 +21,7 @@ jq -cnS --arg family "$family" --arg image "$image" --arg secret "${secret}:::${
    taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$family+":1"),revision:1,
    executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
    networkMode:"awsvpc",requiresCompatibilities:["FARGATE"],cpu:"1024",memory:"2048",
-   runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp"}],
+   runtimePlatform:{cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"},volumes:[{name:"tmp",host:{}}],
    containerDefinitions:[{name:"catalog",image:$image,essential:true,readonlyRootFilesystem:true,
     user:"node",workingDirectory:"/app",command:["/app/node_modules/.bin/tsx","--tsconfig",
       "/app/apps/api/tsconfig.json","/app/apps/api/prisma/verify-applied-migration-catalog.ts"],
@@ -52,6 +52,9 @@ reject no-pending
 jq '.taskDefinition.containerDefinitions[0].secrets[0].valueFrom |= sub("12345678";"87654321")' \
   "$work/good.json" > "$work/version.json"
 reject version
+jq '.taskDefinition.volumes[0].host.sourcePath="/tmp"' "$work/good.json" \
+  > "$work/host-source-path.json"
+reject host-source-path
 
 result="$work/result.json"
 jq -cnS --arg source "$source" '

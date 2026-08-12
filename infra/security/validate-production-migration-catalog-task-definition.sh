@@ -20,7 +20,7 @@ jq -e --arg family "$family" --arg image "$image" --arg secret "${secret}:::${ve
   and ($t.taskRoleArn//null)==null and $t.networkMode=="awsvpc"
   and $t.requiresCompatibilities==["FARGATE"] and $t.cpu=="1024" and $t.memory=="2048"
   and $t.runtimePlatform=={cpuArchitecture:"X86_64",operatingSystemFamily:"LINUX"}
-  and $t.volumes==[{name:"tmp"}] and ($t.containerDefinitions|length)==1
+  and $t.volumes==[{name:"tmp",host:{}}] and ($t.containerDefinitions|length)==1
   and ($t.containerDefinitions[0] as $c
     | $c.name=="catalog" and $c.image==$image and $c.essential==true
     and $c.readonlyRootFilesystem==true and $c.user=="node" and $c.workingDirectory=="/app"
