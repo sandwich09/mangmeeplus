@@ -79,12 +79,13 @@ record_exact_role() {
       trustSha256:$trustHash,policySha256:$policyHash,attachedPolicies:[]}' >> "$roles"
 }
 require_absent_role() {
-  local name="$1" error="$work/$name-absent.err"
+  local name="$1"
+  local error="$work/$name-absent.err"
   if aws iam get-role --role-name "$name" >/dev/null 2> "$error"; then
     echo "ERROR: one-time role $name still exists after reader bootstrap" >&2
     exit 1
   fi
-  grep -F NoSuchEntity "$error" >/dev/null
+  grep -F NoSuchEntity "$error" >/dev/null || return 1
   jq -cnS --arg name "$name" --arg arn "arn:aws:iam::$account:role/$name" \
     '{roleName:$name,roleArn:$arn,state:"ABSENT",maxSessionDuration:null,
       inlinePolicyName:null,trustSha256:null,policySha256:null,attachedPolicies:[]}' >> "$roles"
