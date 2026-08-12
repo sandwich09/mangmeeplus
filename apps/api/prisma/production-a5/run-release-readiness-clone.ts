@@ -9,7 +9,9 @@ import {
 } from '../../src/scripts/production-a5-evidence.pg';
 import {
   assertAutomaticPendingMigrationSafety,
+  completedMigrationLedger,
   compatibleAppliedMigrationCatalog,
+  pendingRepositoryMigrations,
 } from '../verify-applied-migration-catalog';
 import { readProductionA5RepositoryMigrationFiles } from './reviewed-manifest';
 import {
@@ -75,9 +77,9 @@ async function main(): Promise<void> {
     }
     assertAutomaticPendingMigrationSafety({
       repository: files,
-      appliedMigrationCount: sourceAppliedMigrations.length,
+      applied: sourceAppliedMigrations,
     });
-    const pendingMigrations = repository.slice(sourceAppliedMigrations.length)
+    const pendingMigrations = pendingRepositoryMigrations(repository, sourceAppliedMigrations)
       .map(({ name, fileSha256 }) => ({ name, checksum: fileSha256 }));
     const preSchemaFingerprint = sha256(stableJson(
       await readProductionA5SchemaObjects(client, 'public'),
@@ -95,11 +97,7 @@ async function main(): Promise<void> {
     }
 
     const postAppliedMigrations = await readProductionA5AppliedMigrations(client);
-    const expectedPost = repository.map(({ name, fileSha256 }, index) => ({
-      name,
-      checksum: fileSha256,
-      appliedOrder: index + 1,
-    }));
+    const expectedPost = completedMigrationLedger(repository, sourceAppliedMigrations);
     if (stableJson(postAppliedMigrations) !== stableJson(expectedPost)) {
       throw new Error('production_readiness_clone_post_ledger_mismatch');
     }

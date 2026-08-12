@@ -2155,6 +2155,8 @@ bash "$repo_root/infra/security/production-deploy-workflow-v2.spec.sh"
 bash "$repo_root/infra/security/production-release-result-v2.spec.sh"
 bash "$repo_root/infra/security/production-security-preflight.spec.sh"
 pnpm --filter @watchdog-bms/api exec tsx --test \
+  prisma/verify-applied-migration-catalog.spec.ts \
+  prisma/verify-production-ready-migration.spec.ts \
   prisma/production-a5/run-clone-rehearsal.spec.ts \
   prisma/production-a5/run-production-apply.spec.ts
 

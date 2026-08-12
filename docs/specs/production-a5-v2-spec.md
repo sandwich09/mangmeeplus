@@ -254,13 +254,22 @@ administrator ceremony ไม่ใช่สิทธิ์ถาวรใน Gi
 
 ### 8.2 Migration classification
 
-Reader task อ่านเฉพาะ `_prisma_migrations` แล้วเทียบ ordered name/checksum กับ passport:
+Reader task อ่านเฉพาะ `_prisma_migrations` แล้วเทียบ exact name/checksum set กับ catalog ใน
+candidate image โดยคงลำดับ `started_at,id` ของ Production เป็นหลักฐานประวัติจริง แต่ไม่บังคับให้
+ประวัตินั้นเท่ากับลำดับชื่อ directory ปัจจุบัน เพราะ migration ที่มี timestamp เก่ากว่าอาจถูกเพิ่มและ
+apply ใน release หลังได้:
 
 - exact catalog: `pendingMigrationCount=0` → quick readiness
-- valid applied prefix + pending suffix: ต้อง A5 clone, effective target=`all`
-- edited checksum, unknown migration, missing middle, reorder, failed migration หรืออ่านไม่ได้:
+- valid checksum-matching applied subset + exact repository set difference: ต้อง A5 clone,
+  effective target=`all`; pending set เรียงตาม repository เพื่อผูกกับลำดับที่ Prisma จะ apply
+- edited checksum, unknown/duplicate migration, duplicate/invalid applied order, failed/unfinished
+  migration หรืออ่านไม่ได้:
   `NOT_READY`; ห้ามซ่อมหรือ apply ระหว่าง readiness
-- pending suffix ที่มี known destructive SQL เช่น `DROP TABLE/COLUMN/TYPE`, `TRUNCATE` หรือ
+- historical reorder หรือ migration ชื่อเก่าที่ยังไม่ applied ไม่ใช่ drift เมื่อทุก applied checksum
+  ตรง exact repository file; migration ที่ยังไม่ applied ต้องอยู่ใน pending set และผ่าน clone เหมือนกัน
+- ค่า schema เดิม `status=APPEND_ONLY_PENDING` คงไว้เพื่อ compatibility ของ signed artifacts แต่มี
+  ความหมายเป็น checksum-compatible pending set ตามกติกาข้างต้น ไม่ใช่ positional suffix
+- pending set ที่มี known destructive SQL เช่น `DROP TABLE/COLUMN/TYPE`, `TRUNCATE` หรือ
   `DELETE FROM` ไม่เข้า automatic promotion แม้ UAT ผ่าน ต้องใช้ reviewed migration path แยก
 - destructive guard ใช้ parser/scanner เดียวกับ A5 เดิมและรันซ้ำตอน classify, ใน clone และ
   ภายใน durable Production DB fence ก่อน `prisma migrate deploy`
@@ -280,8 +289,8 @@ budget 5 นาที หากเกินให้หยุดเป็น inf
 1. เลือก encrypted automated snapshot ของ Production ที่อายุอยู่ใน policy
 2. restore ไป isolated private subnet/SG แบบ endpoint-only, `PubliclyAccessible=false`
 3. ใช้ exact signed migration-tool digest จาก passport; ห้าม build ใน A5
-4. ตรวจ PRE invariants และ applied-prefix checksum
-5. apply exact pending suffix ภายใต้ lock/statement/overall timeout ที่กำหนด
+4. ตรวจ PRE invariants และ exact applied name/checksum set พร้อม historical execution order
+5. apply exact pending repository set ภายใต้ lock/statement/overall timeout ที่กำหนด
 6. ตรวจ POST schema/data invariants และ compatibility suites
 7. เก็บ tenant-anonymous evidence เท่านั้น
 8. ลบ clone DB, managed secret, task definition และ residual ENI/resource
@@ -307,7 +316,7 @@ Signed `PRODUCTION_RELEASE_READY_V2` ต้องผูกอย่างน้�
 - controller SHA และ contract version
 - requested/effective target และ serving mode
 - active Production SHA/digest/config ของทั้งสาม service ณ readiness
-- Production migration ledger hash และ exact pending suffix
+- Production migration ledger hash (รวม historical execution order) และ exact pending set
 - AWS account/region, role-policy hash, network/secret/readiness inventory hash
 - A5 rehearsal evidence hash เมื่อมี pending migration
 - legal readiness reference ที่ mode ต้องใช้
@@ -428,7 +437,8 @@ copy ไป evidence store ตาม retention policy ของบริษั�
 - UAT passport มี exact images/tools/evidence ครบและ validator ปฏิเสธ missing/tampered bytes
 - Production workflow ไม่มี typecheck/test/application build/SBOM/signing step
 - readiness quick path ผ่านใน fixture; live read-only proof ต้องผ่านหลัง approval โดยไม่ mutate service/DB
-- migration classification ครบ exact/pending/edited/unknown/missing/reordered/failed cases
+- migration classification ครบ exact/pending/edited/unknown/duplicate/failed cases และพิสูจน์ว่า
+  historical reorder/missing-middle ที่ checksum ตรงถูกจำแนกเป็น exact pending set โดยไม่เกิด false drift
 - A5 full path restore→rehearse→delete ผ่านหนึ่งครั้งและ residual เป็นศูนย์ก่อนเปิดใช้
 - automatic path ปฏิเสธ destructive pending SQL ทั้ง classify, clone และ pre-mutation recheck
 - candidate security/controller path ไม่ถูก execute; controller มาจาก protected main เท่านั้น

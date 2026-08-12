@@ -15,6 +15,10 @@ import {
   readProductionA5SchemaObjects,
 } from '../../src/scripts/production-a5-evidence.pg';
 import {
+  completedMigrationLedger,
+  pendingRepositoryMigrations,
+} from '../verify-applied-migration-catalog';
+import {
   buildProductionA5ReviewedManifestArtifact,
   readProductionA5RepositoryMigrationFiles,
 } from './reviewed-manifest';
@@ -89,15 +93,12 @@ export function exactCandidateSet(
   files: ReturnType<typeof readProductionA5RepositoryMigrationFiles>,
   candidateNames: readonly string[],
 ): void {
-  const repository = new Map(files.map((file) => [file.name, file.fileSha256]));
-  const sourceNames = new Set<string>();
-  for (const row of source) {
-    if (sourceNames.has(row.name) || repository.get(row.name) !== row.checksum) {
-      throw new Error('production_a5_clone_source_migration_ledger_mismatch');
-    }
-    sourceNames.add(row.name);
+  let pending: string[];
+  try {
+    pending = pendingRepositoryMigrations(files, source).map((file) => file.name);
+  } catch {
+    throw new Error('production_a5_clone_source_migration_ledger_mismatch');
   }
-  const pending = files.filter((file) => !sourceNames.has(file.name)).map((file) => file.name);
   if (stableJson(pending) !== stableJson(candidateNames)) {
     throw new Error('production_a5_clone_pending_set_not_exactly_reviewed');
   }
@@ -290,14 +291,7 @@ async function main(): Promise<void> {
     }
 
     const postAppliedMigrations = await readProductionA5AppliedMigrations(client);
-    const expectedPost = [
-      ...sourceAppliedMigrations,
-      ...provisionalManifest.reviewedMigrationManifest.map((row, index) => ({
-        name: row.migrationName,
-        checksum: row.checksumSha256,
-        appliedOrder: sourceAppliedMigrations.length + index + 1,
-      })),
-    ];
+    const expectedPost = completedMigrationLedger(files, sourceAppliedMigrations);
     if (stableJson(postAppliedMigrations) !== stableJson(expectedPost)) {
       throw new Error('production_a5_clone_post_migration_ledger_mismatch');
     }

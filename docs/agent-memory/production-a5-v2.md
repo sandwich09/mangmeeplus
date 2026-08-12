@@ -1,7 +1,8 @@
 # Agent Memory: production A5 v2
 
-Status: UAT/Passport and reader creation PASS; reader task-definition cleanup proof failed against
-live ECS semantics, Readiness is disabled, and the provider-correct cleanup hotfix is in progress
+Status: UAT/Passport, reader bootstrap and provider prerequisites PASS; Readiness reached the live
+Production catalog task and exposed an ordered-prefix classifier defect. Production was not mutated;
+one set/checksum-model fix is in progress before any further paid workflow.
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -68,7 +69,9 @@ Decisions:
 - Requested `auto` uses the strict Production-eligible controller checks before target resolution;
   only the later resolved target controls selective image publication/deployment.
 - Production readiness is read-only against live Production. No pending migration is the quick
-  path; a pending append-only suffix uses the exact UAT migration-tool on a private clone.
+  path; a checksum-valid applied subset uses repository-minus-applied as the exact pending set on a
+  private clone. The Production ledger's historical execution order remains hash-bound evidence but
+  is not required to equal the current repository directory order.
 - Known destructive pending SQL is forbidden from automatic promotion and is checked when
   classifying the ledger, in clone rehearsal and inside the durable Production DB fence.
 - Production deploy accepts only an unexpired signed READY whose controller and active baseline
@@ -379,14 +382,45 @@ Verification:
   EXIT cleanup deregistered the exact revision before three stable absence reads. The provider-shape
   fix requires exact empty `host:{}` in both validators and rejects any `host.sourcePath`; focused
   fixtures and the actual inactive provider definition pass that contract without another Action.
+- Provider-shape PR `#49` merged as controller
+  `cce08acca8e918db259f707a663ee655fdf9dced`. Valid Readiness run `31620271256`
+  then passed Passport, signatures, complete runtime/prerequisite collection and A5 controller
+  configuration. Its Production catalog task launched exact task
+  `c8abd5684f974da982b703cb448c3d5d`, exited `1`, and was fully cleaned with the task definition
+  `INACTIVE`; clone and Production mutation did not start. A read-only UAT ledger diagnostic proved
+  the systemic classifier defect: several older-named migration directories were introduced and
+  applied during later releases, but the code required database execution history to equal one
+  global lexical repository prefix. The correction validates a unique applied name/checksum subset,
+  computes pending as the exact repository set difference, preserves real `started_at,id` order in
+  the evidence hash, and shares that pending set with readiness clone and the durable Production
+  fence. Unknown/duplicate names, checksum drift and failed/unfinished rows remain fatal. The UAT
+  diagnostic also found one historical checksum drift for
+  `20260804130000_remote_release_operation_lease`; it does not weaken the Production gate.
+  Production's Aug-8 reconciliation/source history binds that migration to the current checksum,
+  and the next corrected Production catalog task must still fail closed if live bytes differ.
+  Prisma 7.8's official contract says `migrate deploy` applies all pending migrations without a
+  drift reset. A local PostgreSQL canary then proved the exact non-prefix case: after applying
+  `20260102000000_second`, adding the older-named `20260101000000_first` caused the next deploy to
+  apply only `first`; the database ledger correctly remained `second → first` and both tables
+  existed. This executable proof is why the classifier preserves DB order while deriving pending by
+  set difference.
+- Offline verification for the set/checksum correction passed before any further Action: focused
+  catalog/READY/clone/apply tests `25/25`, the complete API test suite, workspace `pnpm typecheck`,
+  maintenance pin sync/check, and `bash infra/docker/production-image-security.spec.sh` through its
+  final `production image security scanner: pass` gate. An exact PostgreSQL 18 upgrade canary then
+  applied the 121 migration files from Production source `b6eccc8...`, applied only the ten current
+  repository-minus-applied migrations to reach 131, passed the corrected exact catalog verifier,
+  and returned `No pending migrations to apply` on an idempotent third deploy.
 
 Next:
 
-1. Merge one controller-only provider-shape fix for the catalog and A5 read-only task-definition
-   validators after local aggregate proof. Do not rerun UAT or reader bootstrap; app/image, IAM and
-   reader state did not change.
-2. Dispatch one valid Production Readiness from UAT `31600821945`; require quick READY or A5 clone
-   with computed zero residual resources, and reject the input-less ghost run above.
+1. Merge one application/controller fix for set/checksum migration classification only after
+   focused adversarial cases, typecheck and the full offline Production security aggregate pass.
+   Migration-tool bytes change, so issue one fresh UAT Passport from the exact reviewed head after
+   CI reuse instead of reusing `31600821945` for clone or the Production fence.
+2. Keep the already-proved reader state unless the fresh Passport contract explicitly requires a
+   metadata replay. Dispatch one valid Production Readiness from the fresh UAT run; require quick
+   READY or A5 clone with computed zero residual resources, and reject the input-less ghost run.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
 4. Keep customer launch closed until independent legal evidence is complete.

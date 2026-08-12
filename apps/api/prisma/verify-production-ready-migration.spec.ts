@@ -40,10 +40,10 @@ describe('Production READY migration authority', () => {
   it('allows non-destructive pending SQL and ignores already-applied historical SQL', () => {
     assert.doesNotThrow(() => assertAutomaticPendingMigrationSafety({
       repository: [
-        { name: 'applied', fileSha256: hash('1'), sqlBytes: 'DROP TABLE historical;' },
         { name: 'pending', fileSha256: hash('2'), sqlBytes: 'ALTER TABLE "Company" ADD COLUMN "code" TEXT;' },
+        { name: 'applied', fileSha256: hash('1'), sqlBytes: 'DROP TABLE historical;' },
       ],
-      appliedMigrationCount: 1,
+      applied: [{ name: 'applied', checksum: hash('1'), appliedOrder: 1 }],
     }));
   });
 
@@ -52,13 +52,13 @@ describe('Production READY migration authority', () => {
       repository: [
         { name: 'pending', fileSha256: hash('1'), sqlBytes: 'DROP COLUMN "taxId";' },
       ],
-      appliedMigrationCount: 0,
+      applied: [],
     }), /production_a5_destructive_data_loss_operation/);
     assert.throws(() => assertAutomaticPendingMigrationSafety({
       repository: [
         { name: 'pending', fileSha256: hash('1'), sqlBytes: "DO $$ BEGIN EXECUTE 'TRUNCATE TABLE receipts'; END $$;" },
       ],
-      appliedMigrationCount: 0,
+      applied: [],
     }), /production_a5_destructive_data_loss_operation/);
   });
 });

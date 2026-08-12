@@ -4,11 +4,31 @@ import { sha256, stableJson } from '../../src/scripts/a5-readonly-evidence.logic
 import {
   PRODUCTION_A5_REIMBURSEMENT_COMMAND,
   chunkCloneResult,
+  exactCandidateSet,
   reimbursementCompatibilityFromOutput,
   strictCloneUrlFromPgEnvironment,
 } from './run-clone-rehearsal';
 
 describe('production A5 clone rehearsal runner boundary', () => {
+  it('derives the reviewed candidate from repository-minus-applied, not ledger position', () => {
+    const files = [
+      { name: '20260101000000_first', fileSha256: '1'.repeat(64), sqlBytes: 'SELECT 1' },
+      { name: '20260102000000_second', fileSha256: '2'.repeat(64), sqlBytes: 'SELECT 2' },
+      { name: '20260103000000_third', fileSha256: '3'.repeat(64), sqlBytes: 'SELECT 3' },
+    ];
+    const source = [{
+      name: files[1]!.name, checksum: files[1]!.fileSha256, appliedOrder: 1,
+    }];
+    assert.doesNotThrow(() => exactCandidateSet(
+      source, files, [files[0]!.name, files[2]!.name],
+    ));
+    assert.throws(() => exactCandidateSet(source, files, [files[2]!.name, files[0]!.name]),
+      /pending_set_not_exactly_reviewed/);
+    assert.throws(() => exactCandidateSet(
+      [{ ...source[0]!, checksum: 'f'.repeat(64) }], files, [files[0]!.name, files[2]!.name],
+    ), /source_migration_ledger_mismatch/);
+  });
+
   it('records the exact offline direct-binary reimbursement command', () => {
     assert.equal(
       PRODUCTION_A5_REIMBURSEMENT_COMMAND,

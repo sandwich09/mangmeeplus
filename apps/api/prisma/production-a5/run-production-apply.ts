@@ -13,6 +13,7 @@ import {
   readProductionA5AppliedMigrations,
   readProductionA5SchemaObjects,
 } from '../../src/scripts/production-a5-evidence.pg';
+import { completedMigrationLedger } from '../verify-applied-migration-catalog';
 import { buildProductionA5ReviewedManifestArtifact, readProductionA5RepositoryMigrationFiles } from './reviewed-manifest';
 import {
   exactCandidateSet,
@@ -175,10 +176,7 @@ async function main(): Promise<void> {
     }
 
     const postApplied = await readProductionA5AppliedMigrations(client);
-    const expectedPost = [...sourceApplied, ...provisional.reviewedMigrationManifest.map((row, index) => ({
-      name: row.migrationName, checksum: row.checksumSha256,
-      appliedOrder: sourceApplied.length + index + 1,
-    }))];
+    const expectedPost = completedMigrationLedger(files, sourceApplied);
     if (stableJson(postApplied) !== stableJson(expectedPost)) {
       throw new Error('production_a5_apply_post_migration_ledger_mismatch');
     }
