@@ -93,6 +93,13 @@ Verification:
   and linux/amd64 child digest
   `sha256:971259b349d7710d1ab76499c34781af42b5cb4f306f41637ec7e580c147fcde`;
   the diagnostic ECR repository was deleted after verification.
+- PR #40 merged as `3155d57053df441d1ddf1a5f88fc197e6f01e75a`. UAT run `31558387102`
+  reused exact PR CI and proved all three runtime images plus both one-shot tools through build,
+  ECR scan, keyless signing and SBOM generation. It then stopped before the release task, database
+  or service mutation because the exact UAT deploy-role template did not include
+  `watchdog-bms-migration-tool` in its signature-read resources. Add that repository to the existing
+  least-privilege `BatchGetImage`/layer-read statement, bind it with a regression assertion, apply
+  and read back the exact policy, then rerun UAT from the same accepted source.
 - Read-only audit from the design phase found existing A5 network/clone resources and Production
   RDS/Redis baselines, but the A5 read-only DB secret is still absent.
 - Production active source was split between API/AI and workers at audit time, so the first V2
