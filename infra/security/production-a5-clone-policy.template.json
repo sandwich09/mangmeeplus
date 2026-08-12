@@ -176,6 +176,16 @@
       ]
     },
     {
+      "Sid": "AllowRdsGrantOnSnapshotKey",
+      "Effect": "Allow",
+      "Action": "kms:CreateGrant",
+      "Resource": "arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27",
+      "Condition": {
+        "StringEquals": {"kms:ViaService": "rds.ap-southeast-1.amazonaws.com"},
+        "Bool": {"kms:GrantIsForAWSResource": "true"}
+      }
+    },
+    {
       "Sid": "AllowNetworkAndKeyInspection",
       "Effect": "Allow",
       "Action": [
@@ -218,7 +228,7 @@
         "ecs:DeregisterTaskDefinition", "ecs:DescribeTaskDefinition", "ecs:ListTaskDefinitions",
         "ecs:DescribeTasks", "ecs:ListTasks", "ecs:RegisterTaskDefinition", "ecs:RunTask", "ecs:StopTask",
         "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
-        "iam:PassRole", "kms:DescribeKey",
+        "iam:PassRole", "kms:CreateGrant", "kms:DescribeKey",
         "logs:DescribeLogGroups", "logs:DescribeLogStreams", "logs:FilterLogEvents", "logs:GetLogEvents",
         "rds:AddTagsToResource", "rds:DeleteDBInstance", "rds:DescribeDBInstances",
         "rds:DescribeDBSnapshots", "rds:DescribeDBSubnetGroups", "rds:ListTagsForResource",

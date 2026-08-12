@@ -36,6 +36,7 @@ jq -e '
   | ([.Statement[] | select(.Sid == "AllowTaggedCloneManagedPassword")][0]) as $modify
   | ([.Statement[] | select(.Sid == "AllowRdsManagedCloneSecretCreation")][0]) as $secret_create
   | ([.Statement[] | select(.Sid == "AllowCloneTaskDefinitionLifecycle")][0]) as $definitions
+  | ([.Statement[] | select(.Sid == "AllowRdsGrantOnSnapshotKey")][0]) as $rds_grant
   | ([.Statement[] | select(.Sid == "DenyOutsideCloneController")][0]) as $boundary
   | $pass.Action == "iam:PassRole"
     and $pass.Resource
@@ -58,11 +59,58 @@ jq -e '
     and $secret_create.Resource
       == "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"
     and ($definitions.Action|index("ecs:ListTaskDefinitions")) != null
+    and $rds_grant.Action == "kms:CreateGrant"
+    and $rds_grant.Resource
+      == "arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27"
+    and $rds_grant.Condition.StringEquals["kms:ViaService"]
+      == "rds.ap-southeast-1.amazonaws.com"
+    and $rds_grant.Condition.Bool["kms:GrantIsForAWSResource"] == "true"
+    and ($boundary.NotAction|index("kms:CreateGrant")) != null
     and ($boundary.NotAction|index("rds:ModifyDBInstance")) != null
     and ($boundary.NotAction|index("secretsmanager:CreateSecret")) != null
     and ($boundary.NotAction|index("secretsmanager:TagResource")) != null
     and ($boundary.NotAction|index("ecs:ListTaskDefinitions")) != null
 ' "$controller_policy" >/dev/null
+
+validate_rds_grant_contract() {
+  jq -e '
+    [.Statement[] | select(.Sid=="AllowRdsGrantOnSnapshotKey")]
+    == [{Sid:"AllowRdsGrantOnSnapshotKey",Effect:"Allow",Action:"kms:CreateGrant",
+      Resource:"arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27",
+      Condition:{StringEquals:{"kms:ViaService":"rds.ap-southeast-1.amazonaws.com"},
+        Bool:{"kms:GrantIsForAWSResource":"true"}}}]
+    and ([.Statement[] | select(.Sid=="DenyOutsideCloneController")][0].NotAction
+      | index("kms:CreateGrant")) != null
+  ' "$1" >/dev/null
+}
+validate_rds_grant_contract "$controller_policy"
+
+for mutation in grant-key-wildcard grant-missing-service grant-wrong-service \
+    grant-missing-aws-resource grant-direct-user; do
+  mutated="$fixture/policy-$mutation.json"
+  case "$mutation" in
+    grant-key-wildcard)
+      jq '(.Statement[]|select(.Sid=="AllowRdsGrantOnSnapshotKey").Resource)=
+        "arn:aws:kms:ap-southeast-1:311414082667:key/*"' "$controller_policy" > "$mutated" ;;
+    grant-missing-service)
+      jq 'del(.Statement[]|select(.Sid=="AllowRdsGrantOnSnapshotKey")
+        .Condition.StringEquals["kms:ViaService"])' "$controller_policy" > "$mutated" ;;
+    grant-wrong-service)
+      jq '(.Statement[]|select(.Sid=="AllowRdsGrantOnSnapshotKey")
+        .Condition.StringEquals["kms:ViaService"])="ec2.ap-southeast-1.amazonaws.com"' \
+        "$controller_policy" > "$mutated" ;;
+    grant-missing-aws-resource)
+      jq 'del(.Statement[]|select(.Sid=="AllowRdsGrantOnSnapshotKey")
+        .Condition.Bool["kms:GrantIsForAWSResource"])' "$controller_policy" > "$mutated" ;;
+    grant-direct-user)
+      jq '(.Statement[]|select(.Sid=="AllowRdsGrantOnSnapshotKey")
+        .Condition.Bool["kms:GrantIsForAWSResource"])="false"' "$controller_policy" > "$mutated" ;;
+  esac
+  if validate_rds_grant_contract "$mutated"; then
+    echo "ERROR: unsafe RDS KMS grant policy was accepted: $mutation" >&2
+    exit 1
+  fi
+done
 
 validate_provider_resource_contract() {
   jq -e '
