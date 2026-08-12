@@ -45,8 +45,10 @@ case "$schema_profile" in LEGACY_PRE_F1|F1_CURRENT) ;; *) exit 2 ;; esac
 active_bootstrap_task_definitions() {
   local response pattern
   pattern="^arn:aws:ecs:${region}:${account_id}:task-definition/${bootstrap_family_prefix}[0-9a-f]{12}:[1-9][0-9]*$"
+  # ECS family-prefix is a full family name, not an arbitrary string prefix. List the account-wide
+  # ACTIVE set and keep only the exact bootstrap-family ARN shape locally.
   response="$(aws ecs list-task-definitions --region "$region" \
-    --family-prefix "$bootstrap_family_prefix" --status ACTIVE --output json)" || return 1
+    --status ACTIVE --output json)" || return 1
   jq -e '.taskDefinitionArns|type=="array" and all(.[];type=="string")' \
     <<< "$response" >/dev/null || return 1
   jq -c --arg pattern "$pattern" '[.taskDefinitionArns[]|select(test($pattern))]' \
