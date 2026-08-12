@@ -176,7 +176,7 @@ bash "$(dirname "$0")/validate-production-a5-readonly-security-groups.sh" \
   "$endpoint_security_group" "$s3_prefix_list" exact
 aws ec2 describe-subnets --region "$region" --subnet-ids "${task_subnets[@]}" --output json \
   | jq -e --argjson expected "$(printf '%s\n' "${task_subnets[@]}" | jq -R . | jq -sS .)" '
-      (.Subnets|length)==2 and all(.[];.State=="available" and .MapPublicIpOnLaunch==false)
+      (.Subnets|length)==2 and all(.Subnets[];.State=="available" and .MapPublicIpOnLaunch==false)
       and ([.Subnets[].SubnetId]|sort)==$expected
     ' >/dev/null
 rm -rf -- "$network_work"

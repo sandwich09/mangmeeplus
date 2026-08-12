@@ -134,7 +134,7 @@ bash "$(dirname "$0")/validate-production-a5-private-endpoints.sh" \
 aws ec2 describe-subnets --region "$AWS_REGION" --subnet-ids "${task_subnets[@]}" \
   --output json | jq -cS . > "$subnet_raw"
 jq -e --argjson expected "$(printf '%s\n' "${task_subnets[@]}" | sort | jq -R . | jq -s .)" '
-  (.Subnets|length)==2 and all(.[];.State=="available" and .MapPublicIpOnLaunch==false)
+  (.Subnets|length)==2 and all(.Subnets[];.State=="available" and .MapPublicIpOnLaunch==false)
   and ([.Subnets[].SubnetId]|sort)==$expected
 ' "$subnet_raw" >/dev/null
 aws rds describe-db-instances --region "$AWS_REGION" --db-instance-identifier "$db_identifier" \

@@ -11,6 +11,8 @@ reader_bootstrap_policy="$repo_root/infra/security/production-a5-reader-bootstra
 reader_policy="$repo_root/infra/security/production-a5-readonly-execution-policy.template.json"
 bootstrap_policy="$repo_root/infra/security/production-a5-bootstrap-execution-policy.template.json"
 migration_tool_validator="$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+readonly_runner="$repo_root/infra/security/run-production-a5-readonly.sh"
+apply_runner="$repo_root/infra/security/run-production-a5-reviewed-migration.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/production-a5-readonly-bootstrap-spec.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 task_sg=sg-0123456789abcdef0
@@ -93,6 +95,23 @@ jq -e '
 ' "$reader_bootstrap_policy" >/dev/null
 
 for file in "$bootstrap" "$database_bootstrap" "$validator"; do bash -n "$file"; done
+for file in "$database_bootstrap" "$readonly_runner" "$apply_runner"; do
+  grep -Fq 'all(.Subnets[];.State=="available" and .MapPublicIpOnLaunch==false)' "$file"
+  if grep -Fq 'all(.[];.State=="available"' "$file"; then
+    echo "ERROR: subnet validator iterates the AWS response object instead of .Subnets[]: $file" >&2
+    exit 1
+  fi
+done
+jq -e '
+  (.Subnets|length)==2
+  and all(.Subnets[];.State=="available" and .MapPublicIpOnLaunch==false)
+  and ([.Subnets[].SubnetId]|sort)==["subnet-0123456789abcdef0","subnet-0fedcba9876543210"]
+' <<'JSON' >/dev/null
+{"Subnets":[
+  {"SubnetId":"subnet-0fedcba9876543210","State":"available","MapPublicIpOnLaunch":false},
+  {"SubnetId":"subnet-0123456789abcdef0","State":"available","MapPublicIpOnLaunch":false}
+]}
+JSON
 if grep -En 'ecsTaskExecutionRole|assignPublicIp:"ENABLED"|taskRoleArn[[:space:]]*:' \
     "$bootstrap" "$database_bootstrap" "$controller_policy" "$reader_bootstrap_policy" \
     "$reader_policy" "$bootstrap_policy"; then
