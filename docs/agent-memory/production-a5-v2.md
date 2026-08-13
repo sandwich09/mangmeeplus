@@ -613,3 +613,32 @@ Next:
 3. Require signed `PROMOTED_CLOSED`, exact health/digest evidence, global maintenance proof and the
    secret-safe admin/API acceptance journey before calling the deployment stable.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- Cloudflare Worker PRs `#61`/`#62` passed exact-head CI/review and produced controller
+  `5d9a6fb3...`. UAT Worker version `8d8181ba` and Production version `3c85a888` now omit request
+  bodies for GET/HEAD; exact body-carrying GET probes no longer return Worker 1101, POST forwarding
+  still reaches the upstream, both roots redirect to `/login`, and the authoritative Production
+  maintenance verifier passed `custom-and-raw-ingress=closed` for target `all`.
+- Readiness `31712934773` verified the Passport, controller, images, runtime and IAM, then stopped
+  before catalog/clone configuration because the current-health collector rejected two real
+  provider shapes. Recovery correctly retains the nonempty legal approval reference while disabling
+  the approval flag in maintenance mode, and ECS Express service-revision identifiers are opaque
+  decimal strings that may begin with zero. The focused contract now requires the legal reference in
+  both serving modes, still requires the approval flag only in live mode, accepts decimal revision
+  identifiers including leading zero, and rejects missing references or alphabetic identifiers.
+  The exact live collector wrote `/tmp/a5health-exact2.mktbOH/current-health.json`; all three services
+  were ACTIVE, maintenance-only, quiescent, one-task/one-healthy-target, HTTP 200, and the signed
+  `e0_current_health` predicate returned true. The failed readiness created no clone/catalog task,
+  artifact or Production mutation. The prior successful readiness `31702328225` already proved the
+  unchanged catalog/clone path for the same UAT source, and Production `31704114803` never entered
+  release preparation or database migration.
+
+Next:
+
+1. Merge the scoped current-health provider-contract correction after local aggregate, exact-head CI
+   and review; UAT images and Passport `31692876261` remain unchanged.
+2. Dispatch exactly one `maintenance_closed` Readiness against that Passport and require signed READY
+   plus zero clone residue.
+3. Freeze `main`, dispatch exactly one `maintenance_closed` Production V2 promotion, and require the
+   signed `PROMOTED_CLOSED` result, exact health/digests, maintenance proof and admin/API acceptance.
+4. Keep customer launch closed until independent legal evidence is complete.
