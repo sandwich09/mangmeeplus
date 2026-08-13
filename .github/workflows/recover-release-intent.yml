@@ -610,13 +610,26 @@ jobs:
           [[ "$image" =~ ^${ECR_REGISTRY}/watchdog-bms-api@sha256:[0-9a-f]{64}$ ]]
           test "$(jq -r '.taskDefinition.containerDefinitions[0].image' <<< "$intent_def")" = "$image"
           test "$(jq -r '.taskDefinition.containerDefinitions[0].image' <<< "$binder_def")" = "$image"
-          deploy_workflow=deploy-production.yml
-          source_branch=main
-          [ "$DEPLOY_ENV" = uat ] && deploy_workflow=deploy-uat.yml
-          [ "$DEPLOY_ENV" = uat ] && source_branch=develop
+          deploy_workflow=deploy-uat.yml
+          image_signer_workflow=deploy-uat.yml
+          source_branch=develop
+          if [ "$DEPLOY_ENV" = production ]; then
+            source_branch=main
+            case "$(jq -r '.RELEASE_GITHUB_WORKFLOW_REF' <<< "$parent_env")" in
+              "${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main")
+                deploy_workflow=deploy-production.yml
+                image_signer_workflow=deploy-production.yml
+                ;;
+              "${GITHUB_REPOSITORY}/.github/workflows/deploy-production-v2.yml@refs/heads/main")
+                deploy_workflow=deploy-production-v2.yml
+                image_signer_workflow=deploy-uat.yml
+                ;;
+              *) echo 'ERROR: historical Production task has an unapproved controller workflow' >&2; exit 1 ;;
+            esac
+          fi
           expected_workflow_ref="${GITHUB_REPOSITORY}/.github/workflows/${deploy_workflow}@refs/heads/main"
           cosign verify \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${deploy_workflow}@refs/heads/main" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${image_signer_workflow}@refs/heads/main" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$image" >/dev/null
           docker pull --platform linux/amd64 "$image" >/dev/null

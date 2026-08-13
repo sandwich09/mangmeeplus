@@ -7,6 +7,7 @@ ready_workflow="$root/.github/workflows/production-readiness.yml"
 runner="$root/infra/prod-ecs-express/run-release-task.sh"
 deploy="$root/infra/prod-ecs-express/deploy.sh"
 maintenance="$root/infra/prod-ecs-express/verify-production-maintenance.sh"
+recovery="$root/.github/workflows/recover-release-intent.yml"
 
 for required in \
   'UAT Release Passport V2' 'Production Readiness V2 run' \
@@ -103,6 +104,9 @@ grep -Fq 'alternate_expected_workflow="deploy-production-v2.yml"' "$runner"
 grep -Fq 'RELEASE_MODE_INPUT" = passport-promotion' "$deploy"
 grep -Fq 'deploy-production-v2.yml@refs/heads/main' "$maintenance"
 grep -Fq 'promotion|maintenance-bootstrap|passport-promotion' "$maintenance"
+grep -Fq 'deploy_workflow=deploy-production-v2.yml' "$recovery"
+grep -Fq 'image_signer_workflow=deploy-uat.yml' "$recovery"
+grep -Fq '.RELEASE_GITHUB_WORKFLOW_REF' "$recovery"
 
 # The 360-minute job ceiling adds no happy-path wait. It reserves 40 minutes beyond the modeled
 # slow failure path while each credential phase stays below its own fresh 120-minute STS session.
@@ -129,6 +133,6 @@ test "$finalization" -lt "$credential_budget"
 
 test "$(grep -Ec 'uses: [^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)' "$workflow")" = \
   "$(grep -Ec '^[[:space:]]+(- )?uses:' "$workflow")"
-ruby -e 'require "yaml"; YAML.load(File.read(ARGV[0]))' "$workflow"
+ruby -e 'require "yaml"; ARGV.each { |path| YAML.load(File.read(path)) }' "$workflow" "$recovery"
 bash -n "$runner" "$deploy" "$maintenance"
 echo 'Production deploy workflow V2 contract: PASS'
