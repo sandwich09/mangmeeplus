@@ -1507,7 +1507,7 @@ Decisions:
   winner; the loser remains an intact draft. The earlier non-locking lookup is advisory UX only.
 - The production clone runs the two explicit reimbursement spec files with the spec reporter in
   required mode through only its in-container `DATABASE_URL`; the artifact binds exactly 2 suites /
-  13 tests / 13 pass / 0 skipped. Required mode cannot read a repository `.env` file or silently
+  11 tests / 11 pass / 0 skipped. Required mode cannot read a repository `.env` file or silently
   skip.
 - The new forward-only reimbursement compatibility migration changes the candidate manifest to
   40 rows (`16/12/6/6`) and invalidates all earlier 39-row hashes/evidence. Applied
@@ -1654,11 +1654,11 @@ Decisions:
   category/Thai multi-category label and every deterministic fallback field. Corrupt date, category,
   label, fallback mapping, tenant, amount, line absence or line density fails closed.
 - Clone reimbursement evidence binds the explicit spec-reporter command and exactly 2 suites /
-  13 tests / 13 pass / 0 skipped; aliases or stale counts are rejected.
+  11 tests / 11 pass / 0 skipped; aliases or stale counts are rejected.
 
 Verification:
 
-- Required real PostgreSQL gate: 13/13 PASS, 2 suites, 0 skipped after the final fallback/invariant
+- Required real PostgreSQL gate: 11/11 PASS, 2 suites, 0 skipped after the final fallback/invariant
   change. Untouched exact-v1 approval and current-writer fallback replacement both pass; all named
   corruption probes fail then roll back to PASS.
 - PASS: clone runner TypeScript 3/3, aggregate H2 logic/collector 20/20, reader/bootstrap logic 12/12,

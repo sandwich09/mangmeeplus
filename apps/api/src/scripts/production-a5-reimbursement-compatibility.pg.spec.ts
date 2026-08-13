@@ -243,10 +243,16 @@ describe('production A5 reimbursement dual-build compatibility (real PostgreSQL)
       INSERT INTO "Company" (id,name,status,"createdAt","updatedAt")
       VALUES ($1,'Other fixture','ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
     `, [otherCompanyId]);
-    await client.query(`UPDATE "ReimbursementLine" SET "companyId"=$1 WHERE "reimbursementRequestId"=$2`, [
-      otherCompanyId, `${marker}_legacy_insert`,
-    ]);
-    assert.equal(await invariant(), 'FAIL');
+    await assert.rejects(
+      client.query(`UPDATE "ReimbursementLine" SET "companyId"=$1 WHERE "reimbursementRequestId"=$2`, [
+        otherCompanyId, `${marker}_legacy_insert`,
+      ]),
+      (error: unknown) => {
+        const postgres = error as { code?: string; constraint?: string };
+        return postgres.code === '23503'
+          && postgres.constraint === 'ReimbursementLine_companyId_reimbursementRequestId_fkey';
+      },
+    );
     await client.query('ROLLBACK TO SAVEPOINT tenant_corruption');
 
     await client.query('SAVEPOINT date_corruption');
