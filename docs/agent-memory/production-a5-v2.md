@@ -720,3 +720,27 @@ Next:
    V2 once; require signed `PROMOTED_CLOSED`, exact migration/finalization evidence, global
    maintenance proof and the secret-safe admin/API acceptance.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- Recovery prerequisite CI `31736001098` completed successfully on exact
+  `main@9a9f6ab19ae473485002fc2301d3ecefed5d4959`. The first recovery dispatch
+  `31737268451` then failed before its first provider read or mutation because the bootstrap-closed
+  evidence step referenced `RECOVERY_REF` under `set -u` without binding the workflow input into
+  that step's environment. Identity, checkout, exact CI and OIDC credentials had succeeded; image
+  build/signing, ECS task launch and database recovery were all skipped.
+- The scoped correction adds only the missing exact input binding and an executable workflow
+  regression that parses the named step, requires its complete six-key input/environment map and
+  exercises the `set -u` boundary. A whole-workflow dataflow sweep found no other missing input
+  binding. The exact YAML step was re-extracted and executed read-only against failed run
+  `31727367323`, its live artifact and all current ECS/deployment, deep database and custom/raw
+  maintenance proofs; it passed without build, task launch or database mutation. Focused recovery,
+  RunTask/register/failover contracts, the current 44-file pin check and the full Production image
+  security aggregate all pass.
+
+Next:
+
+1. Merge the exact recovery input-binding correction after exact-head CI/review.
+2. Dispatch one `BOOTSTRAP_CLOSED` recovery and require the old parent to become
+   `RECONCILED_FAILED_CONFIRMED` with zero intents while all services remain closed.
+3. Reissue one `maintenance_closed` READY for controller `main`, freeze `main`, then retry Production
+   V2 once and require signed `PROMOTED_CLOSED` plus secret-safe admin/API acceptance.
+4. Keep customer launch closed until independent legal evidence is complete.
