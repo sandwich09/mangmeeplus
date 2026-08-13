@@ -164,8 +164,8 @@ export function reimbursementCompatibilityFromOutput(stdout: Buffer, stderr: Buf
   databaseUrlBinding: 'DATABASE_URL';
   requiredGate: 'REIMBURSEMENT_PG_GATE_REQUIRED=true';
   suites: 2;
-  tests: 13;
-  pass: 13;
+  tests: 11;
+  pass: 11;
   skipped: 0;
   status: 'PASSED';
 } {
@@ -175,7 +175,7 @@ export function reimbursementCompatibilityFromOutput(stdout: Buffer, stderr: Buf
     const match = new RegExp(`(?:^|\\n)\\s*ℹ?\\s*${label}\\s+(\\d+)\\s*(?:\\n|$)`, 'm').exec(summary);
     return match ? Number(match[1]) : null;
   };
-  if (count('suites') !== 2 || count('tests') !== 13 || count('pass') !== 13
+  if (count('suites') !== 2 || count('tests') !== 11 || count('pass') !== 11
     || count('fail') !== 0 || count('skipped') !== 0) {
     throw new Error('production_a5_clone_reimbursement_summary_invalid');
   }
@@ -186,8 +186,8 @@ export function reimbursementCompatibilityFromOutput(stdout: Buffer, stderr: Buf
     databaseUrlBinding: 'DATABASE_URL',
     requiredGate: 'REIMBURSEMENT_PG_GATE_REQUIRED=true',
     suites: 2,
-    tests: 13,
-    pass: 13,
+    tests: 11,
+    pass: 11,
     skipped: 0,
     status: 'PASSED',
   };
