@@ -74,7 +74,9 @@ if grep -Fq 'node:22-alpine' <<< "$migration_tool_stage"; then
   exit 1
 fi
 grep -Fq 'COPY --from=build --chown=node:node /app /app' <<< "$migration_tool_stage"
-grep -Fq 'RUN chmod 1777 /tmp' <<< "$migration_tool_stage"
+grep -Fq 'apt-get purge -y --auto-remove fontconfig fonts-noto-core' <<< "$migration_tool_stage"
+grep -Fq 'apt-get purge -y --allow-remove-essential perl-base' <<< "$migration_tool_stage"
+grep -Fq '&& chmod 1777 /tmp' <<< "$migration_tool_stage"
 grep -Fq 'VOLUME ["/tmp"]' <<< "$migration_tool_stage"
 grep -Fq 'FROM migration-tool AS release-task' "$repo_root/apps/api/Dockerfile"
 grep -Fq 'com.watchdog-bms.image-purpose=production-release-task' "$repo_root/apps/api/Dockerfile"
@@ -86,6 +88,8 @@ grep -Fq -- '--from-empty --to-schema prisma/schema.prisma --script' \
   "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 grep -Fq 'if ! [[ "$image" =~' "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 grep -Fq 'test ! -e /sys/class/net/eth0' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+grep -Fq 'for package in perl-base libexpat1 fontconfig fontconfig-config' \
   "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 a5_migration_sources=(
   "$repo_root/apps/api/prisma/production-a5/run-clone-rehearsal.ts"
