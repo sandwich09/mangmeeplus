@@ -69,18 +69,24 @@ if [ "$mode" = explicit ] || [ "$mode" = explicit-bad-control ] \
     controls="$(jq -c 'map(if .name=="MODEL_PROVIDER" then .value="disabled" else . end)' <<< "$controls")"
   fi
 fi
-if [ "$mode" = quiesced ]; then
+if [ "$mode" = quiesced ] || [ "$mode" = quiesced-missing-approval-ref ]; then
   mode_environment='[{"name":"PRODUCTION_SERVING_MODE","value":"maintenance_only"}]'
   case "$key" in
     api-web) controls='[{"name":"GLOBAL_MAINTENANCE_MODE","value":"true"},{"name":"AI_GATEWAY_ENABLED","value":"false"},{"name":"LINE_AI_LEDGER_ENABLED","value":"false"},{"name":"REIMBURSEMENT_WRITE_QUIESCE","value":"true"},{"name":"CRM_AUTO_REPLY_ENABLED","value":"false"}]' ;;
-    ai-gateway) controls='[{"name":"MODEL_PROVIDER","value":"disabled"},{"name":"APPROVED_AI_PROVIDERS","value":"bedrock,openai"},{"name":"LINE_AI_AGENT_ORCHESTRATION_ENABLED","value":"false"},{"name":"LINE_AI_TOOLUSE_LOOP_ENABLED","value":"false"},{"name":"LINE_AI_COVERAGE_CRITIC_ENABLED","value":"false"},{"name":"AI_GATEWAY_ENABLED","value":"false"},{"name":"AI_AGENT_REGISTRY_ENABLED","value":"false"},{"name":"AI_TOOL_POLICY_ENFORCED","value":"false"},{"name":"AI_TOOL_AUDIT_ENABLED","value":"false"},{"name":"AI_FINAL_MUTATION_ENABLED","value":"false"},{"name":"AI_PROMPT_LOGGING_ENABLED","value":"false"}]' ;;
+    ai-gateway) controls='[{"name":"MODEL_PROVIDER","value":"disabled"},{"name":"APPROVED_AI_PROVIDERS","value":"bedrock,openai"},{"name":"AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF","value":"DPO-2026-07-23-bedrock-global"},{"name":"LINE_AI_AGENT_ORCHESTRATION_ENABLED","value":"false"},{"name":"LINE_AI_TOOLUSE_LOOP_ENABLED","value":"false"},{"name":"LINE_AI_COVERAGE_CRITIC_ENABLED","value":"false"},{"name":"AI_GATEWAY_ENABLED","value":"false"},{"name":"AI_AGENT_REGISTRY_ENABLED","value":"false"},{"name":"AI_TOOL_POLICY_ENFORCED","value":"false"},{"name":"AI_TOOL_AUDIT_ENABLED","value":"false"},{"name":"AI_FINAL_MUTATION_ENABLED","value":"false"},{"name":"AI_PROMPT_LOGGING_ENABLED","value":"false"}]' ;;
     workers) controls='[{"name":"QUEUE_ENABLED","value":"false"}]' ;;
   esac
+  if [ "$mode" = quiesced-missing-approval-ref ] && [ "$key" = ai-gateway ]; then
+    controls="$(jq -c 'map(select(.name!="AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF"))' <<< "$controls")"
+  fi
 fi
 host="${name}.example.com"
 endpoint="https://${host}"
 service_arn="arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/${name}"
-revision="arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/${name}/1"
+revision_id=1
+if [ "$mode" = quiesced ] && [ "$key" = workers ]; then revision_id=0604148482324959430; fi
+if [ "$mode" = revision-alpha ] && [ "$key" = workers ]; then revision_id=a1; fi
+revision="arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/${name}/${revision_id}"
 definition="arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-prod-${key}:1"
 task="arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}"
 eni="eni-${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}${digit}"
@@ -213,7 +219,8 @@ explicit_path="$(run_case explicit "$explicit" "$work/state-explicit")"
 jq -e 'all(.services[];.servingMode=="live")' "$explicit_path" >/dev/null
 
 for mode in unstable scale target-ip group http legacy-source legacy-image legacy-control \
-    legacy-omitted-control-drift duplicate-mode explicit-bad-control explicit-disabled-live; do
+    legacy-omitted-control-drift duplicate-mode explicit-bad-control explicit-disabled-live \
+    quiesced-missing-approval-ref revision-alpha; do
   if run_case "$mode" "$work/out-$mode" "$work/state-$mode" >/dev/null 2>&1; then
     echo "ERROR: current-health collector accepted adversarial mode $mode" >&2
     exit 1

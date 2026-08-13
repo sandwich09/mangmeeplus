@@ -323,8 +323,7 @@ def e0_serving_controls($service; $active; $mode):
     and e0_env_values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVED")
       == [if $mode == "live" then "true" else empty end]
     and (e0_env_values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF") as $refs
-      | if $mode == "live" then ($refs | length) == 1 and ($refs[0] | length) > 0
-        else $refs == [] end)
+      | ($refs | length) == 1 and ($refs[0] | length) > 0)
     and all(["LINE_AI_AGENT_ORCHESTRATION_ENABLED","LINE_AI_TOOLUSE_LOOP_ENABLED",
       "LINE_AI_COVERAGE_CRITIC_ENABLED","AI_GATEWAY_ENABLED","AI_AGENT_REGISTRY_ENABLED",
       "AI_TOOL_POLICY_ENFORCED","AI_TOOL_AUDIT_ENABLED"][];
@@ -388,7 +387,7 @@ def e0_health_service($issued_at):
   and .serviceArn == $expected.arn
   and (.serviceRevisionArn | type == "string"
     and test("^arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/"
-      + ($expected.arn | split("/")[-1]) + "/[1-9][0-9]*$"))
+      + ($expected.arn | split("/")[-1]) + "/[0-9]+$"))
   and .serviceStatus == "ACTIVE"
   and .currentDeployment == null
   and (.servingMode == "live" or .servingMode == "maintenance_only")

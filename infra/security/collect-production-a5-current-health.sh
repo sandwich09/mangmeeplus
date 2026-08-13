@@ -110,7 +110,7 @@ for service in ai-gateway api-web workers; do
         and values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVED")
           == [if $mode=="live" then "true" else empty end]
         and (values($active; "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF") as $refs
-          | if $mode=="live" then ($refs|length)==1 and ($refs[0]|length)>0 else $refs==[] end)
+          | ($refs|length)==1 and ($refs[0]|length)>0)
         and all(["LINE_AI_AGENT_ORCHESTRATION_ENABLED","LINE_AI_TOOLUSE_LOOP_ENABLED",
           "LINE_AI_COVERAGE_CRITIC_ENABLED","AI_GATEWAY_ENABLED","AI_AGENT_REGISTRY_ENABLED",
           "AI_TOOL_POLICY_ENFORCED","AI_TOOL_AUDIT_ENABLED"][];
