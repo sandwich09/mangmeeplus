@@ -560,6 +560,10 @@ grep -Fq 'select(.name == "Typecheck and test durable release recovery against P
 grep -Fq 'release-intent-recover' "$recovery_workflow"
 grep -Fq 'release-orphan-intent-recover' "$recovery_workflow"
 grep -Fq 'release-pre-intent-recover' "$recovery_workflow"
+grep -Fq 'release-bootstrap-closed-recover' "$recovery_workflow"
+grep -Fq "inputs.intent_id == 'BOOTSTRAP_CLOSED'" "$recovery_workflow"
+grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON: ${{ steps.bootstrap_closed.outputs.evidence }}' "$recovery_workflow"
+grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery_workflow"
 grep -Fq 'inputs.intent_id }}" = PRE_INTENT' "$recovery_workflow"
 grep -Fq 'group: watchdog-bms-${{ inputs.environment }}-deploy' "$recovery_workflow"
 grep -Fq 'cancel-in-progress: false' "$recovery_workflow"
@@ -1403,7 +1407,7 @@ render_release_task() {
       deploy_env="uat"
       database_secret="arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/uat/database-url-aaaaaa"
       ;;
-    release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover) controller_workflow="recover-release-intent.yml" ;;
+    release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover) controller_workflow="recover-release-intent.yml" ;;
   esac
   env GITHUB_WORKFLOW_REF="example/watchdog/.github/workflows/${controller_workflow}@refs/heads/main" \
     AWS_ACCOUNT_ID=311414082667 \
@@ -1449,6 +1453,32 @@ held_record_two="$(jq -cn \
 held_one="$(jq -cn --argjson row "$held_record_one" '[$row]')"
 held_full="$(jq -cn --argjson first "$held_record_one" --argjson second "$held_record_two" '[$first,$second]')"
 held_task="$fixture/held-task.json"
+bootstrap_closed_recovery="$(jq -cn \
+  --arg operation "$parent_operation_id" --arg source "$allowed_sha" \
+  '{schemaVersion:1,artifactDigest:("sha256:"+("1"*64)),maintenanceProofSha256:("2"*64),
+    failedPromotionRunId:"31727367323",failedPromotionRunAttempt:1,controllerCommit:("d"*40),
+    sourceCommit:$source,operationId:$operation,
+    parentTaskArn:"arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/parent",
+    manifestSha256:("3"*64),services:[{},{},{}]}')"
+bootstrap_closed_task="$fixture/bootstrap-closed-task.json"
+render_release_task 'the exact V2 bootstrap-closed recovery' release-bootstrap-closed-recover \
+  "RELEASE_PARENT_OPERATION_ID=$parent_operation_id" \
+  "RELEASE_RECOVERY_BUILD_RELEASE_ID=$allowed_sha" \
+  RELEASE_RECOVERY_VALIDATED_CI_RUN_ID=31730000001 \
+  "RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON=$bootstrap_closed_recovery" > "$bootstrap_closed_task"
+jq -e --arg parent "$parent_operation_id" --argjson evidence "$bootstrap_closed_recovery" '
+  .containerDefinitions[0].name=="release-bootstrap-closed-recover"
+  and ([.containerDefinitions[0].environment[]|select(.name=="RELEASE_PARENT_OPERATION_ID")|.value]==[$parent])
+  and ([.containerDefinitions[0].environment[]|select(.name=="RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON")|.value][0]|fromjson)==$evidence
+' "$bootstrap_closed_task" >/dev/null
+assert_release_task_rejected 'bootstrap-closed evidence on an ordinary intent' release-intent \
+  "RELEASE_PARENT_OPERATION_ID=$parent_operation_id" \
+  "RELEASE_MUTATION_INTENT_JSON=$(jq -cn --arg id "$mutation_intent_id" '{id:$id,serviceKey:"api-web",mutationKind:"UPDATE",requestHash:("1"*64),desiredConfigHash:("2"*64),beforeDeploymentArns:[],beforeActiveConfigurations:[]}')" \
+  "RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON=$bootstrap_closed_recovery"
+assert_release_task_rejected 'an inherited deploy target on release-intent' release-intent \
+  "RELEASE_PARENT_OPERATION_ID=$parent_operation_id" \
+  "RELEASE_MUTATION_INTENT_JSON=$(jq -cn --arg id "$mutation_intent_id" '{id:$id,serviceKey:"api-web",mutationKind:"UPDATE",requestHash:("1"*64),desiredConfigHash:("2"*64),beforeDeploymentArns:[],beforeActiveConfigurations:[]}')" \
+  RELEASE_DEPLOY_TARGET=all
 
 # The recovery controller pins the exact environment names emitted by these three historical
 # modes. An extra NODE_OPTIONS/BASH_ENV/DATABASE_URL name is executable input, not harmless metadata.
