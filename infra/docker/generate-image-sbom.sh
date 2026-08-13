@@ -9,7 +9,7 @@ test "$(uname -s)" = Linux
 test "$(uname -m)" = x86_64
 
 syft_version=1.42.3
-syft_asset_id=377338300
+syft_url=https://github.com/anchore/syft/releases/download/v1.42.3/syft_1.42.3_linux_amd64.tar.gz
 syft_sha256=0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/watchdog-syft.XXXXXX")"
 partial="$output.partial"
@@ -22,9 +22,7 @@ trap cleanup EXIT
 timeout 300 curl --fail --silent --show-error --location \
   --connect-timeout 10 --max-time 60 \
   --retry 4 --retry-all-errors --retry-delay 2 \
-  -H 'Accept: application/octet-stream' \
-  -H 'X-GitHub-Api-Version: 2022-11-28' \
-  "https://api.github.com/repos/anchore/syft/releases/assets/$syft_asset_id" \
+  "$syft_url" \
   --output "$work/syft.tar.gz"
 printf '%s  %s\n' "$syft_sha256" "$work/syft.tar.gz" | sha256sum --check --status
 tar -xzf "$work/syft.tar.gz" -C "$work" syft

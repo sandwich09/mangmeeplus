@@ -127,7 +127,7 @@ if grep -Fq 'anchore/sbom-action' "$ci"; then
   exit 1
 fi
 grep -Fq 'syft_version=1.42.3' "$sbom_generator"
-grep -Fq 'syft_asset_id=377338300' "$sbom_generator"
+grep -Fq 'syft_url=https://github.com/anchore/syft/releases/download/v1.42.3/syft_1.42.3_linux_amd64.tar.gz' "$sbom_generator"
 grep -Fq 'syft_sha256=0d6be741479eddd2c8644a288990c04f3df0d609bbc1599a005532a9dff63509' "$sbom_generator"
 grep -Fq -- '--retry 4 --retry-all-errors --retry-delay 2' "$sbom_generator"
 grep -Fq 'workflow_dispatch:' "$ci"
