@@ -40,7 +40,7 @@ Verification:
 - Pure mapping/approval/domain tests: 90/90 PASS, including exact deterministic-id fallback and
   adversarial mutation rejection.
 - Local required PostgreSQL compatibility gate: PASS against the Docker PostgreSQL database; final
-  registered shape is 2 suites / 13 tests / 13 pass / 0 skipped. New cases prove duplicate approval
+  registered shape is 2 suites / 11 tests / 11 pass / 0 skipped. New cases prove duplicate approval
   and approve-versus-reject have one winner, invalid approval/rejection final transitions roll all
   their step/status/materialization writes back then permit retry, and an untouched exact fallback
   with a v1 hash remains approvable.

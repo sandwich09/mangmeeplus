@@ -536,3 +536,25 @@ Next:
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- PR `#56` passed exact-head CI and independent approval, then merged as controller
+  `b6b8489fd5db1f7bd8f5342a9b76a5fdb56b8838`. Fresh UAT `31682462366` reused that CI and passed
+  every service/tool build, ECR scan, signature, migration/release task, immutable deployment,
+  digest/health check, finalization and Passport V2 publication. Automatic Readiness `31683966766`
+  bound the exact Passport, passed the complete runtime/catalog/IAM gates, restored PostgreSQL 18.3,
+  applied the ten pending migrations and then failed only at the reimbursement compatibility stage.
+  The exact stopped ECS task exited 1 and CloudWatch emitted
+  `production_readiness_clone_compatibility_failed`; cleanup independently proved the clone DB
+  absent and no RUNNING clone task remained, so Production was not mutated. Local reproduction on a
+  clean PostgreSQL 18 database proved the test was stale after
+  `20260804170000_reimbursement_cc2_projection_source`: it attempted a cross-company line update
+  that the new composite foreign key correctly rejects with exact PostgreSQL `23503`, before the
+  older SQL invariant could observe corrupt data. The production gate also still registered the
+  historical 13-test count although the two current source suites contain exactly 11 tests. The
+  scoped correction now asserts the exact FK rejection and binds 11/11 in code/docs. A clean
+  PostgreSQL 18 instance applied all 131 migrations, then the exact linux/amd64 migration image ran
+  as uid 1000 with a read-only root and passed the two required suites 11/11 under the clone timeout
+  settings. The image also passed its no-network Prisma native-engine validation/diff, API typecheck
+  passed, maintenance pins remained current, and the full Production security/image/workflow
+  aggregate reached `production image security scanner: pass`. No Readiness retry against the old
+  image is allowed; the correction requires one new UAT Passport because migration-tool bytes change.

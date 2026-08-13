@@ -190,7 +190,7 @@ mix.
 8. Production migration cannot start before bridge-only/quiesced proof, and unquiesce cannot occur
    before final-only/post-invariant proof.
 9. The production clone invokes the two explicit spec-reporter files in required mode against its
-   isolated in-container DB and accepts exactly 2 suites / 13 tests / 13 pass / 0 skipped. Required
+   isolated in-container DB and accepts exactly 2 suites / 11 tests / 11 pass / 0 skipped. Required
    mode without that DB fails; ordinary developer runs may skip only when required mode is absent.
 10. No customer migration, data entry, entitlement flip, enforcement flip or WHT OPEN occurs.
 11. A legacy pending approval with an exact deterministic fallback remains approvable without

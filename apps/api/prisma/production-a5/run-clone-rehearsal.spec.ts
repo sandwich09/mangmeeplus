@@ -104,8 +104,8 @@ describe('production A5 clone rehearsal runner boundary', () => {
     );
   });
 
-  it('accepts only the exact required thirteen-test/two-suite reimbursement summary', () => {
-    const stdout = Buffer.from('ℹ tests 13\nℹ suites 2\nℹ pass 13\nℹ fail 0\nℹ skipped 0\n');
+  it('accepts only the exact required eleven-test/two-suite reimbursement summary', () => {
+    const stdout = Buffer.from('ℹ tests 11\nℹ suites 2\nℹ pass 11\nℹ fail 0\nℹ skipped 0\n');
     const stderr = Buffer.from('');
     assert.deepEqual(reimbursementCompatibilityFromOutput(stdout, stderr), {
       command: PRODUCTION_A5_REIMBURSEMENT_COMMAND,
@@ -114,8 +114,8 @@ describe('production A5 clone rehearsal runner boundary', () => {
       databaseUrlBinding: 'DATABASE_URL',
       requiredGate: 'REIMBURSEMENT_PG_GATE_REQUIRED=true',
       suites: 2,
-      tests: 13,
-      pass: 13,
+      tests: 11,
+      pass: 11,
       skipped: 0,
       status: 'PASSED',
     });
@@ -124,7 +124,7 @@ describe('production A5 clone rehearsal runner boundary', () => {
       Buffer.alloc(0),
     ), /summary_invalid/);
     assert.throws(() => reimbursementCompatibilityFromOutput(
-      Buffer.from('ℹ tests 13\nℹ suites 2\nℹ pass 12\nℹ fail 0\nℹ skipped 1\n'),
+      Buffer.from('ℹ tests 11\nℹ suites 2\nℹ pass 10\nℹ fail 0\nℹ skipped 1\n'),
       Buffer.alloc(0),
     ), /summary_invalid/);
   });
