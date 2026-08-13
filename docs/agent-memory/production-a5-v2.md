@@ -642,3 +642,35 @@ Next:
 3. Freeze `main`, dispatch exactly one `maintenance_closed` Production V2 promotion, and require the
    signed `PROMOTED_CLOSED` result, exact health/digests, maintenance proof and admin/API acceptance.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- Current-health PRs `#63`/`#64` passed exact-head CI/review and produced controller
+  `0c8ff74c...`. Readiness `31716802827` then passed the previously failing provider-shaped health
+  contract, applied all ten pending migrations plus compatibility tests to an isolated PostgreSQL
+  18.3 clone, and issued signed `maintenance_closed` READY after proving clone DB, managed secret,
+  task and ENI cleanup with `residualResourceCount=0`.
+- Production V2 `31719327358` verified the signed Passport/READY, images, runtime, IAM, migration and
+  service baselines at both read-only and mutation boundaries and proved the already-deployed exact
+  candidate remained closed across custom and raw ingress. Its release-prepare task then exited 1
+  before launching its migration command because the immutable application guard accepted only
+  `deploy-production.yml`, while both the shell controller and maintenance proof correctly carried
+  `deploy-production-v2.yml`. The guard runs after taking the advisory fence but before
+  `beginRemoteReleaseOperation`; the task log contains no `release operation started` line or child
+  migration output, so operation `c2ab5085-ccbd-4404-80a2-b95c1a5c6008` has no durable row or DB
+  side effect despite the controller artifact's conservative `RECONCILIATION_MAY_BE_REQUIRED`
+  classification. No rollout/recovery/finalization ran and the exact candidate remains closed.
+- The scoped correction accepts only the two exact Production controller workflows for every
+  release lifecycle mode, keeps UAT exact to `deploy-uat.yml`, and carries the same exact distinction
+  into retained-task/orphan recovery. Production V2 recovery binds historical controller identity
+  to `deploy-production-v2.yml` while independently binding its immutable candidate image signer to
+  `deploy-uat.yml`; legacy Production recovery remains unchanged. The executable controller suite
+  passed 32/32 against a real temporary PostgreSQL 18 database, including all durable writer,
+  UNKNOWN/reconcile, intent/bind/finalize and orphan-recovery state machines.
+
+Next:
+
+1. Merge the V2 controller-provenance correction after full local aggregate and exact-head CI/review.
+2. Run a fresh UAT `all` and require a new Passport because the release-task application bytes and
+   digest change; do not reuse UAT `31692876261` or READY `31716802827`.
+3. Run exactly one `maintenance_closed` Readiness, freeze `main`, then one Production V2 promotion.
+4. Require signed `PROMOTED_CLOSED`, exact migration/finalization evidence, maintenance proof and the
+   secret-safe admin/API acceptance before calling the repeatable deployment stable.

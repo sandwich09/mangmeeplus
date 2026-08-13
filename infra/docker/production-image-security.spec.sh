@@ -630,9 +630,11 @@ jq -e '
   and all(.auditMetadata.cloudTrailRunTaskEvents[]; .requestOverridesPresent == false)
 ' "$expired_evidence" >/dev/null
 grep -Fq 'sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6' "$recovery_workflow"
+grep -Fq 'deploy_workflow=deploy-uat.yml' "$recovery_workflow"
 grep -Fq 'deploy_workflow=deploy-production.yml' "$recovery_workflow"
-grep -Fq '[ "$DEPLOY_ENV" = uat ] && deploy_workflow=deploy-uat.yml' "$recovery_workflow"
-grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${deploy_workflow}@refs/heads/main"' "$recovery_workflow"
+grep -Fq 'deploy_workflow=deploy-production-v2.yml' "$recovery_workflow"
+grep -Fq 'image_signer_workflow=deploy-uat.yml' "$recovery_workflow"
+grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/${image_signer_workflow}@refs/heads/main"' "$recovery_workflow"
 grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/recover-release-intent.yml@refs/heads/main"' "$recovery_workflow"
 grep -Fq 'org.opencontainers.image.revision' "$recovery_workflow"
 grep -Fq 'RELEASE_RECOVERY_VALIDATED_CI_RUN_ID' "$recovery_workflow"
