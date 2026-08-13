@@ -2114,7 +2114,7 @@ export function validateBootstrapClosedRecoveryPlatform(
     const expected = evidence.services.find((item) => item.service === read.service)!;
     const service = read.serviceResponse.service as Record<string, any> | undefined;
     if (!service || service.serviceArn !== expected.serviceArn || service.status?.statusCode !== 'ACTIVE'
-      || service.currentDeployment !== null || !Array.isArray(service.activeConfigurations)
+      || service.currentDeployment != null || !Array.isArray(service.activeConfigurations)
       || service.activeConfigurations.length !== 1) {
       throw new RemoteReleaseOperationBlocked(`${read.service} is not the exact settled bootstrap-closed service`);
     }
