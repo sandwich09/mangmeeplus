@@ -23,7 +23,7 @@ export default {
       new Request(url, {
         method: request.method,
         headers,
-        body: request.body,
+        body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
         redirect: 'manual',
       }),
     );

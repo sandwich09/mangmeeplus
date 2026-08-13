@@ -585,3 +585,31 @@ Next:
 3. Run one manual Readiness against UAT `31692876261`, freeze `main`, then dispatch one
    `maintenance_closed` Production V2 promotion and verify signed result plus admin/API controls.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- Endpoint-contract PRs `#59`/`#60` passed exact-head CI/review and produced controller
+  `a101a7f5...`. The scoped non-root ceremony exact-applied/read back all four endpoint policies and
+  independently proved the temporary bridge, policy and role `NoSuchEntity`. Readiness
+  `31702328225` then passed runtime/catalog checks, rehearsed all ten migrations with task exit 0,
+  proved clone DB/managed-secret/ENI absence plus an INACTIVE task definition, and issued signed
+  zero-residual READY. Production V2 `31704114803` passed the previously failing release-task
+  preflight with a RUNNING task and exit 0, then rolled the exact closed candidate to all three
+  services before post-rollout maintenance verification failed. Direct provider probes isolated the
+  remaining boundary: raw ECS maintenance GET/POST routes and custom-domain POST routes passed, but
+  Cloudflare returned Worker exception `1101` for custom-domain GET routes. The exact verifier sends
+  `--request GET` together with `--data-binary '{}'`, so the incoming Worker request has a body. Both
+  checked-in host proxies then supplied that body to `new Request(..., {method:'GET'})`, which the
+  Fetch contract rejects. Ordinary bodyless browser/UAT GETs pass, explaining the apparently
+  contradictory live probes. The scoped correction omits the body only for GET/HEAD, preserves POST
+  bodies, and binds both UAT and Production workers with one executable request-method contract that
+  reproduces the body-carrying GET. Production database preparation never started; bounded
+  closed-stage recovery remained active on the exact candidate.
+
+Next:
+
+1. Merge the two-worker edge correction only after exact-head CI/review, then deploy and exact-probe
+   both Worker routes without rebuilding UAT images.
+2. Reissue READY for the new controller against UAT `31692876261`, freeze `main`, and dispatch one
+   `maintenance_closed` Production V2 attempt.
+3. Require signed `PROMOTED_CLOSED`, exact health/digest evidence, global maintenance proof and the
+   secret-safe admin/API acceptance journey before calling the deployment stable.
+4. Keep customer launch closed until independent legal evidence is complete.
