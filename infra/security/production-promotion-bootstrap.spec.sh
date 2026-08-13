@@ -5,6 +5,7 @@ root="$(git rev-parse --show-toplevel)"
 bootstrap="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 ceremony="$root/infra/security/run-production-promotion-prerequisite-ceremony.sh"
 principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
+clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
 user_bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 deploy="$root/infra/prod-ecs-express/github-deploy-role-policy.template.json"
@@ -13,7 +14,7 @@ security="$root/infra/security/production-security-readonly-policy.template.json
 reader_bootstrap="$root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 
 bash -n "$bootstrap" "$ceremony"
-jq -e . "$principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
+jq -e . "$principal" "$clone_principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
   >/dev/null
 
 jq -e '
@@ -43,6 +44,12 @@ jq -e '
       "arn:aws:ssm:ap-southeast-1:311414082667:parameter/watchdog-bms/production/a5-clone/option-group-name"])
   and ([.Statement[]|select(has("NotAction") or has("NotResource"))]|length)==0
 ' "$principal" >/dev/null
+
+jq -e '.Statement==[{Sid:"RepairExactCloneControllerPolicy",Effect:"Allow",
+  Action:["iam:GetRole","iam:GetRolePolicy","iam:ListAttachedRolePolicies",
+    "iam:ListRolePolicies","iam:PutRolePolicy"],
+  Resource:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone"}]' \
+  "$clone_principal" >/dev/null
 
 jq -e '.Statement==[{Sid:"ExactNonRootBootstrapOperator",Effect:"Allow",
   Principal:{AWS:"arn:aws:iam::311414082667:user/watchdog-bedrock-dev"},Action:"sts:AssumeRole"}]' \
@@ -143,6 +150,13 @@ grep -Fq 'retry_exact assert_exact_policy_role "$uat_deploy_role"' "$bootstrap"
 grep -Fq 'PROMOTION_IAM_RETRY_SECONDS:-5' "$bootstrap"
 grep -Fq 'retry_mutation()' "$bootstrap"
 grep -Fq 'retry_admin_mutation()' "$ceremony"
+grep -Fq -- '--apply-clone-controller) principal="$clone_principal"' "$ceremony"
+grep -Fq 'retry_exact assert_clone_controller_shape' "$bootstrap"
+grep -Fq 'retry_mutation aws iam put-role-policy --role-name watchdog-bms-production-a5-clone' "$bootstrap"
+grep -Fq 'retry_exact assert_clone_controller_exact' "$bootstrap"
+grep -Fq 'retry_exact read_secret_metadata watchdog-bms/production/ai-gateway-internal-secret' "$bootstrap"
+grep -Fq 'retry_exact preflight_clone_parameters' "$bootstrap"
+grep -Fq 'retry_exact preflight_bucket_lifecycle' "$bootstrap"
 grep -Fq 'has("PermissionsBoundary")|not' "$bootstrap"
 grep -Fq 'attach-role-policy --role-name ecsTaskExecutionRole' "$bootstrap"
 grep -Fq 'attach-role-policy --role-name ecsInfrastructureRoleForExpressServices' "$bootstrap"
@@ -156,7 +170,7 @@ grep -Fq 'trap cleanup EXIT' "$ceremony"
 grep -Fq 'wait_absent bridge' "$ceremony"
 grep -Fq 'wait_absent role-policy' "$ceremony"
 grep -Fq 'wait_absent role iam get-role' "$ceremony"
-grep -Fq 'env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE bash "$helper" --apply' "$ceremony"
+grep -Fq 'env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE bash "$helper" "$helper_mode"' "$ceremony"
 
 dry="$("$bootstrap")"
 grep -Fq 'Dry run only.' <<< "$dry"
@@ -170,11 +184,12 @@ mkdir -p "$fixture/repo/infra/security" "$fixture/bin" "$fixture/state"
 cp "$ceremony" "$fixture/repo/infra/security/run-production-promotion-prerequisite-ceremony.sh"
 cp "$trust" "$fixture/repo/infra/security/production-promotion-bootstrap-trust.template.json"
 cp "$principal" "$fixture/repo/infra/security/production-promotion-bootstrap-principal-policy.template.json"
+cp "$clone_principal" "$fixture/repo/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 cp "$user_bridge" "$fixture/repo/infra/security/production-promotion-bootstrap-user-policy.template.json"
 cat > "$fixture/repo/infra/security/bootstrap-production-promotion-prerequisites.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-test "${1:-}" = --apply
+case "${1:-}" in --apply|--apply-clone-controller) ;; *) exit 2 ;; esac
 test "${AWS_ACCOUNT_ID:-}" = 311414082667
 test -z "${AWS_PROFILE:-}"
 test -z "${AWS_DEFAULT_PROFILE:-}"
@@ -184,6 +199,7 @@ test -n "${AWS_SESSION_TOKEN:-}"
 test "${PROMOTION_IAM_MAX_ATTEMPTS:-}" = 8
 test "${PROMOTION_IAM_RETRY_SECONDS:-}" = 0
 : > "$FAKE_AWS_STATE/helper-ran"
+printf '%s\n' "$1" > "$FAKE_AWS_STATE/helper-mode"
 exit "${FAKE_HELPER_STATUS:-0}"
 SH
 chmod +x "$fixture/repo/infra/security/bootstrap-production-promotion-prerequisites.sh"
@@ -330,12 +346,14 @@ reset_fake() {
   : > "$fixture/state/calls"
 }
 run_ceremony() {
+  local mode="${CEREMONY_MODE:---apply}" selected_principal="$principal"
+  [ "$mode" != --apply-clone-controller ] || selected_principal="$clone_principal"
   PATH="$fixture/bin:$PATH" FAKE_AWS_STATE="$fixture/state" \
-    FAKE_TRUST="$trust" FAKE_PRINCIPAL="$principal" FAKE_BRIDGE="$user_bridge" \
+    FAKE_TRUST="$trust" FAKE_PRINCIPAL="$selected_principal" FAKE_BRIDGE="$user_bridge" \
     AWS_ACCOUNT_ID=311414082667 PROMOTION_ADMIN_PROFILE=platform-admin \
     PROMOTION_CEREMONY_ID=fixture-ceremony \
     PROMOTION_IAM_MAX_ATTEMPTS=8 PROMOTION_IAM_RETRY_SECONDS=0 \
-    bash "$fixture/repo/infra/security/run-production-promotion-prerequisite-ceremony.sh" --apply
+    bash "$fixture/repo/infra/security/run-production-promotion-prerequisite-ceremony.sh" "$mode"
 }
 assert_mutation_order() {
   test "$(awk '$2=="iam" && $3 ~ /^(create-role|put-role-policy|put-user-policy|delete-user-policy|delete-role-policy|delete-role)$/ {print $3}' \
@@ -346,7 +364,13 @@ assert_mutation_order() {
 reset_fake
 FAKE_CREATE_STALE_READS=1 FAKE_DELETE_STALE_READS=1 FAKE_ASSUME_FAILURES=1 run_ceremony
 test -f "$fixture/state/helper-ran"
+test "$(<"$fixture/state/helper-mode")" = --apply
 test "$(grep -Fc 'watchdog-bedrock sts assume-role' "$fixture/state/calls")" -eq 2
+assert_mutation_order
+
+reset_fake
+CEREMONY_MODE=--apply-clone-controller run_ceremony
+test "$(<"$fixture/state/helper-mode")" = --apply-clone-controller
 assert_mutation_order
 
 reset_fake
@@ -427,5 +451,56 @@ if grep -Eq ' iam delete-(user-policy|role-policy|role)' "$fixture/state/calls";
   echo 'ERROR: losing ceremony deleted authority owned by the create-role race winner' >&2
   exit 1
 fi
+
+mkdir -p "$fixture/helper-bin" "$fixture/helper-state"
+cat > "$fixture/helper-bin/aws" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+service="$1" operation="$2"; shift 2
+printf '%s %s\n' "$service" "$operation" >> "$HELPER_STATE/calls"
+case "$service $operation" in
+  'sts get-caller-identity')
+    printf '%s\n' 'arn:aws:sts::311414082667:assumed-role/watchdog-bms-production-promotion-bootstrap/production-promotion-prerequisites' ;;
+  'iam get-role')
+    jq -cn --slurpfile trust "$HELPER_TRUST" '{Role:{
+      Arn:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone",
+      RoleName:"watchdog-bms-production-a5-clone",Path:"/",MaxSessionDuration:7200,
+      AssumeRolePolicyDocument:$trust[0]}}' ;;
+  'iam get-role-policy')
+    if [ -f "$HELPER_STATE/applied" ]; then policy="$HELPER_POLICY"; else policy="$HELPER_STALE_POLICY"; fi
+    jq -cn --slurpfile policy "$policy" '{RoleName:"watchdog-bms-production-a5-clone",
+      PolicyName:"watchdog-bms-production-a5-clone",PolicyDocument:$policy[0]}' ;;
+  'iam list-role-policies') jq -cn '{PolicyNames:["watchdog-bms-production-a5-clone"]}' ;;
+  'iam list-attached-role-policies') jq -cn '{AttachedPolicies:[]}' ;;
+  'iam put-role-policy')
+    count=0; [ ! -f "$HELPER_STATE/put-count" ] || count="$(<"$HELPER_STATE/put-count")"
+    count=$((count+1)); printf '%s\n' "$count" > "$HELPER_STATE/put-count"
+    policy_path=''
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --policy-document ]; then policy_path="${2#file://}"; break; fi
+      shift
+    done
+    cmp -s "$policy_path" "$HELPER_POLICY"
+    if [ "$count" -le "${HELPER_PUT_FAILURES:-0}" ]; then
+      echo 'An error occurred (AccessDenied) while the scoped policy propagates' >&2
+      exit 254
+    fi
+    : > "$HELPER_STATE/applied" ;;
+  *) echo "unexpected scoped-helper AWS call: $service $operation" >&2; exit 90 ;;
+esac
+SH
+chmod +x "$fixture/helper-bin/aws"
+jq -cn '{Version:"2012-10-17",Statement:[]}' > "$fixture/helper-state/stale-policy.json"
+: > "$fixture/helper-state/calls"
+scoped_output="$(PATH="$fixture/helper-bin:$PATH" HELPER_STATE="$fixture/helper-state" \
+  HELPER_TRUST="$root/infra/security/production-a5-clone-trust.template.json" \
+  HELPER_POLICY="$root/infra/security/production-a5-clone-policy.template.json" \
+  HELPER_STALE_POLICY="$fixture/helper-state/stale-policy.json" HELPER_PUT_FAILURES=1 \
+  AWS_ACCOUNT_ID=311414082667 PROMOTION_IAM_MAX_ATTEMPTS=3 PROMOTION_IAM_RETRY_SECONDS=0 \
+  bash "$bootstrap" --apply-clone-controller)"
+grep -Fq 'clone controller policy applied and exact-read back' <<< "$scoped_output"
+test "$(<"$fixture/helper-state/put-count")" -eq 2
+test "$(awk '$1!="sts" && $1!="iam" {count++} END {print count+0}' \
+  "$fixture/helper-state/calls")" -eq 0
 
 echo 'production promotion bootstrap contract: PASS'

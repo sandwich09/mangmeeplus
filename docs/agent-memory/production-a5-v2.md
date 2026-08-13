@@ -1,9 +1,9 @@
 # Agent Memory: production A5 v2
 
-Status: Fresh UAT/Passport, reader bootstrap and provider prerequisites PASS. Readiness proved the
-pending migration catalog and stopped before clone creation because the clone controller explicitly
-denied the RDS-integrated KMS grant required by encrypted snapshot restore. The exact key-scoped
-permission correction is in progress. Production was not mutated.
+Status: Fresh UAT/Passport and reader bootstrap PASS. The exact RDS-integrated KMS grant policy is
+merged; its first full prerequisite ceremony failed safely before durable mutation on service-
+specific IAM propagation. A clone-controller-only temporary ceremony is under review so the policy
+can be applied without re-arming the completed reader bootstrap. Production was not mutated.
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -445,11 +445,23 @@ Verification:
   action. Cleanup completed its ambiguity window; no clone DB, ECS task/definition or Production
   mutation was created. Do not rerun Readiness until the exact grant permission is merged, applied
   through the reviewed temporary non-root ceremony and byte-read back.
+- Clone KMS permission PR `#52` passed local adversarial/full aggregate and exact-head PR CI
+  `31631336935`, was approved on `a1e314a3b6d6463ab38538678f85c6ac77cd740a` under the standing
+  owner authorization, and merged as controller `0e1a18cb6b02b909371891ffa7c5ac8f70e7930d`.
+  The first full prerequisite ceremony then stopped before its first durable write: RDS metadata
+  read succeeded, but Secrets Manager still returned implicit deny while the newly created role
+  policy propagated. The wrapper nevertheless proved temporary bridge, role policy and role
+  `NoSuchEntity`; live clone policy remained at the prior bytes. A full retry is forbidden because
+  that mode also re-arms the already-complete reader-bootstrap controller/execution tuple. The
+  durable correction is a scoped clone-controller mode whose temporary policy can only inspect and
+  replace the exact clone role inline policy, with bounded transient retry and executable proof that
+  it calls no RDS/Secrets/SSM/S3 or reader-bootstrap API.
 
 Next:
 
-1. Merge the exact clone KMS grant policy only after focused/adversarial/full aggregate and exact-head
-   CI. Apply it through the reviewed temporary non-root ceremony, byte-read back the live role, then
+1. Merge the scoped clone-controller ceremony only after focused/adversarial/full aggregate and
+   exact-head CI. Apply PR #52's policy through that scoped non-root ceremony, byte-read back the
+   live role, then
    prove the temporary user bridge, role policy and role all return `NoSuchEntity`.
 2. Reuse UAT `31627553314`; no application/image bytes changed. Dispatch exactly one manual
    Production Readiness in `maintenance_closed`, require clone PASS and computed zero residual
