@@ -772,3 +772,26 @@ Next:
    once.
 4. Require signed `PROMOTED_CLOSED`, global maintenance proof and secret-safe admin/API acceptance;
    keep customer launch closed.
+
+- PRs `#71`/`#72` merged the provider-normalization fix as
+  `main@56f185174367c421b3bab7b09aac7e88db2ea11b`. Exact-main workflow-dispatch CI
+  `31744700212` passed every source, typecheck, PostgreSQL recovery, aggregate, image build/push and
+  signing boundary, but the `api-web` publish job failed only while downloading Syft for its SBOM.
+  The unauthenticated GitHub REST asset endpoint returned HTTP 403 five times; the workers and
+  AI-gateway jobs downloaded the same asset successfully seconds earlier. The image digest
+  `sha256:cc22eaa1...` was already pushed and signed, so no service or database mutation occurred.
+- The scoped stability fix downloads the same versioned Syft asset from its direct GitHub release
+  URL instead of the 60-requests/hour unauthenticated REST endpoint, while retaining the exact
+  pinned version and SHA-256. The focused executable fixture, a live direct download/hash readback,
+  shell syntax/diff checks and the complete Production image-security aggregate pass.
+
+Next:
+
+1. Merge the scoped SBOM downloader fix after exact-head review/CI, then require one successful
+   workflow-dispatch CI on the resulting exact `main` SHA.
+2. Dispatch exactly one `BOOTSTRAP_CLOSED` recovery and require operation
+   `91794761-7661-468c-8e9c-91f5a69b1f06` to become `RECONCILED_FAILED_CONFIRMED` with zero intents.
+3. Issue one controller-current `maintenance_closed` READY, freeze `main`, then retry Production V2
+   once.
+4. Require signed `PROMOTED_CLOSED`, global maintenance proof and secret-safe admin/API acceptance;
+   keep customer launch closed.
