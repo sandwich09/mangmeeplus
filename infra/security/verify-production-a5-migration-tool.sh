@@ -67,6 +67,11 @@ docker run --rm --read-only --network none --entrypoint sh "$image" -c '
     exit 1
   fi
   test ! -e /sys/class/net/eth0
+  test ! -e /usr/bin/perl
+  for package in perl-base libexpat1 fontconfig fontconfig-config; do
+    status="$(dpkg-query -W -f="\${Status}" "$package" 2>/dev/null || true)"
+    test "$status" != "install ok installed"
+  done
 
   export HOME=/tmp TMPDIR=/tmp XDG_CACHE_HOME=/tmp/cache
   cd /app/apps/api

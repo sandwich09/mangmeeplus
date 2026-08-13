@@ -510,12 +510,27 @@ Verification:
   The existing executable verifier fixture now also rejects a mutable image reference and truncated
   source SHA before Docker is called, closing the Bash `set -e` regression rather than relying on a
   static grep.
+- PR `#55` passed exact-head CI `31677083645`, was approved on
+  `d40ac03e99eb38ce7b416fd6f5a434de0b024653`, and merged as controller
+  `ed9fae5608630b99a89406df3230a463d2abb030`. Fresh UAT `31678176013` reused that exact CI: all
+  validation fan-out was skipped, the UAT environment preflight passed, all three service images
+  published successfully, and the fixed migration-tool image passed its immutable filesystem,
+  non-root, read-only/no-network and native Prisma schema-engine checks. Its ECR vulnerability gate
+  then stopped the run before UAT deployment. Read-only inspection of the exact scanned amd64 child
+  digest bound all three Critical and five High findings to unused `perl-base`, and the remaining
+  High to `libexpat1` pulled only by the unused fontconfig stack. The migration-tool stage now purges
+  the font stack before `perl-base` (so package post-removal scripts remain executable) and its
+  executable image verifier rejects all four installed-package residues. Exact local linux/amd64
+  migration-tool and inherited release-task builds then passed as uid 1000 with read-only roots,
+  no network, writable `/tmp`, Prisma validation/native schema diff and zero target packages. The
+  focused clone/bootstrap gates, maintenance pins and full Production security aggregate through
+  `production image security scanner: pass` also passed; service runtimes are unchanged. No UAT
+  deployment, Passport, Readiness or Production mutation occurred in the failed run.
 
 Next:
 
-1. Complete the final local aggregate/pin/diff gates, open one scoped PR, and require exact-head CI
-   before one fresh UAT `all`; the prior Passport cannot be reused because both tool image digests
-   change.
+1. Open one scoped PR for the locally proved scan remediation and require exact-head CI before one
+   fresh UAT `all`; the prior Passport cannot be reused because both tool image digests change.
 2. Allow only the automatic Readiness bound to that fresh UAT Passport. Require clone migration PASS,
    computed zero residual resources and signed READY; do not dispatch a duplicate manual run.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,

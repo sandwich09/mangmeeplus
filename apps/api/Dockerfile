@@ -54,7 +54,10 @@ RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
 # base must match the native Prisma schema engine installed in the Debian build stage.
 FROM system AS migration-tool
 COPY --from=build --chown=node:node /app /app
-RUN chmod 1777 /tmp
+RUN apt-get purge -y --auto-remove fontconfig fonts-noto-core \
+  && apt-get purge -y --allow-remove-essential perl-base \
+  && rm -rf /var/lib/apt/lists/* \
+  && chmod 1777 /tmp
 VOLUME ["/tmp"]
 ARG GIT_SHA
 LABEL org.opencontainers.image.revision=$GIT_SHA \
