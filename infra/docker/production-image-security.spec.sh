@@ -67,10 +67,12 @@ fi
 grep -Fxq '**/.env' "$repo_root/.dockerignore"
 grep -Fxq '**/.env.*' "$repo_root/.dockerignore"
 grep -Fq 'COPY apps/api/prisma.config.ts apps/api/prisma.config.ts' "$repo_root/apps/api/Dockerfile"
-grep -Fq 'FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS migration-tool' "$repo_root/apps/api/Dockerfile"
+grep -Fq 'FROM system AS migration-tool' "$repo_root/apps/api/Dockerfile"
 migration_tool_stage="$(sed -n '/ AS migration-tool$/,/^FROM system AS runner$/p' "$repo_root/apps/api/Dockerfile")"
-grep -Fq 'RUN apk add --no-cache ca-certificates openssl libc6-compat' <<< "$migration_tool_stage"
-grep -Fq 'RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem' <<< "$migration_tool_stage"
+if grep -Fq 'node:22-alpine' <<< "$migration_tool_stage"; then
+  echo 'ERROR: migration-tool libc differs from its Debian Prisma schema engine' >&2
+  exit 1
+fi
 grep -Fq 'COPY --from=build --chown=node:node /app /app' <<< "$migration_tool_stage"
 grep -Fq 'RUN chmod 1777 /tmp' <<< "$migration_tool_stage"
 grep -Fq 'VOLUME ["/tmp"]' <<< "$migration_tool_stage"
@@ -79,6 +81,11 @@ grep -Fq 'com.watchdog-bms.image-purpose=production-release-task' "$repo_root/ap
 grep -Fq 'docker run --rm --read-only --network none' \
   "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 grep -Fq 'Config.Volumes | keys) == ["/tmp"]' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+grep -Fq -- '--from-empty --to-schema prisma/schema.prisma --script' \
+  "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+grep -Fq 'if ! [[ "$image" =~' "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
+grep -Fq 'test ! -e /sys/class/net/eth0' \
   "$repo_root/infra/security/verify-production-a5-migration-tool.sh"
 a5_migration_sources=(
   "$repo_root/apps/api/prisma/production-a5/run-clone-rehearsal.ts"

@@ -8,8 +8,14 @@ fi
 
 image="$1"
 source_sha="$2"
-[[ "$image" =~ ^[0-9]{12}\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/watchdog-bms-migration-tool@sha256:[0-9a-f]{64}$ ]]
-[[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+if ! [[ "$image" =~ ^[0-9]{12}\.dkr\.ecr\.ap-southeast-1\.amazonaws\.com/watchdog-bms-migration-tool@sha256:[0-9a-f]{64}$ ]]; then
+  echo 'ERROR: migration-tool image must be an immutable Production ECR digest' >&2
+  exit 2
+fi
+if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+  echo 'ERROR: migration-tool source revision must be a full Git SHA' >&2
+  exit 2
+fi
 
 inspect="$(docker image inspect "$image")"
 jq -e --arg source "$source_sha" '
@@ -60,11 +66,14 @@ docker run --rm --read-only --network none --entrypoint sh "$image" -c '
     echo "ERROR: migration-tool root filesystem is writable" >&2
     exit 1
   fi
-  test "$(ls /sys/class/net)" = lo
+  test ! -e /sys/class/net/eth0
 
   export HOME=/tmp TMPDIR=/tmp XDG_CACHE_HOME=/tmp/cache
   cd /app/apps/api
   /app/apps/api/node_modules/.bin/prisma validate --schema prisma/schema.prisma
+  /app/apps/api/node_modules/.bin/prisma migrate diff \
+    --from-empty --to-schema prisma/schema.prisma --script > "$probe/schema.sql"
+  test -s "$probe/schema.sql"
   /app/node_modules/.bin/tsx --tsconfig tsconfig.json --eval \
     "if (process.cwd() !== \"/app/apps/api\") process.exit(1)"
 '
