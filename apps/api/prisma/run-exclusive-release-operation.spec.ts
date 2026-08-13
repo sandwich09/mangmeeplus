@@ -153,6 +153,23 @@ it('keeps retained evidence separate from the exact reviewed expired-task incide
   assert.equal(retained.evidenceKind, 'RETAINED_ECS_TASK');
   assert.equal(retained.reviewedEvidenceManifestPath, null);
   assert.equal(retained.reviewedAuditMetadata, null);
+  const productionV2 = parseOrphanTaskEvidence('production', JSON.stringify({
+    ...base,
+    parentTaskArn: base.parentTaskArn.replace('watchdog-bms-uat/', 'watchdog-bms-prod/'),
+    intentTaskArn: base.intentTaskArn.replace('watchdog-bms-uat/', 'watchdog-bms-prod/'),
+    binderTaskArn: base.binderTaskArn.replace('watchdog-bms-uat/', 'watchdog-bms-prod/'),
+    parentTaskDefinitionArn: base.parentTaskDefinitionArn.replace('watchdog-bms-uat-release-task', 'watchdog-bms-release-task'),
+    intentTaskDefinitionArn: base.intentTaskDefinitionArn.replace('watchdog-bms-uat-release-task', 'watchdog-bms-release-task'),
+    binderTaskDefinitionArn: base.binderTaskDefinitionArn.replace('watchdog-bms-uat-release-task', 'watchdog-bms-release-task'),
+    originalController: {
+      ...base.originalController,
+      sourceBranch: 'main',
+      githubWorkflowRef: 'example/watchdog/.github/workflows/deploy-production-v2.yml@refs/heads/main',
+    },
+    evidenceKind: 'RETAINED_ECS_TASK',
+  }));
+  assert.equal(productionV2.originalController.githubWorkflowRef,
+    'example/watchdog/.github/workflows/deploy-production-v2.yml@refs/heads/main');
   assert.throws(() => parseOrphanTaskEvidence('uat', JSON.stringify({
     ...base,
     evidenceKind: 'RETAINED_ECS_TASK',
@@ -2110,6 +2127,23 @@ describe('child outcome classification', () => {
       'example/watchdog/.github/workflows/f2-normalize-apply.yml@refs/heads/main',
       'uat',
       'f2-plan',
+    ), /must be controlled by/);
+    for (const mode of ['release', 'release-prepare', 'release-intent', 'release-bind',
+      'release-finalize', 'retire', 'reconcile', 'm01-live', 'operation-reconcile']) {
+      for (const workflow of ['deploy-production.yml', 'deploy-production-v2.yml']) {
+        assert.doesNotThrow(() => validateGithubControllerWorkflow(
+          'example/watchdog',
+          `example/watchdog/.github/workflows/${workflow}@refs/heads/main`,
+          'production',
+          mode,
+        ), `${mode}:${workflow}`);
+      }
+    }
+    assert.throws(() => validateGithubControllerWorkflow(
+      'example/watchdog',
+      'example/watchdog/.github/workflows/deploy-production-v2.yml@refs/heads/main',
+      'uat',
+      'release-prepare',
     ), /must be controlled by/);
     assert.throws(() => validateManualControllerMode('release'), /only for audited operation-reconcile/);
     assert.doesNotThrow(() => validateManualControllerMode('operation-reconcile'));

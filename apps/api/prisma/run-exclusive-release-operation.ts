@@ -1404,13 +1404,15 @@ export function parseOrphanTaskEvidence(environment: Environment, serialized?: s
     manualActorRef: null,
   };
   const expectedBranch = environment === 'uat' ? 'develop' : 'main';
+  const expectedWorkflowRefs = expectedGithubWorkflows(environment, 'release')
+    .map((workflow) => `${originalController.githubRepository}/.github/workflows/${workflow}@refs/heads/main`);
   if (originalController.controllerKind !== 'GITHUB_ACTIONS'
     || originalController.sourceBranch !== expectedBranch
     || !originalController.githubRunId?.match(/^[0-9]+$/)
     || !originalController.githubRunAttempt
     || !originalController.githubActor
     || !originalController.githubActorId?.match(/^[0-9]+$/)
-    || originalController.githubWorkflowRef !== `${originalController.githubRepository}/.github/workflows/${environment === 'uat' ? 'deploy-uat.yml' : 'deploy-production.yml'}@refs/heads/main`) {
+    || !expectedWorkflowRefs.includes(originalController.githubWorkflowRef ?? '')) {
     throw new Error('orphan task controller provenance is not the exact original release controller');
   }
   return {
@@ -3179,15 +3181,17 @@ function requiredText(name: string, max: number): string {
   return value;
 }
 
-function expectedGithubWorkflow(environment: Environment, mode: string): string {
-  if (mode === 'f2-plan') return 'f2-normalize.yml';
-  if (mode === 'f2-apply' || mode === 'f2-verify') return 'f2-normalize-apply.yml';
+function expectedGithubWorkflows(environment: Environment, mode: string): string[] {
+  if (mode === 'f2-plan') return ['f2-normalize.yml'];
+  if (mode === 'f2-apply' || mode === 'f2-verify') return ['f2-normalize-apply.yml'];
   if (mode === 'release-intent-recover' || mode === 'release-orphan-intent-recover'
     || mode === 'release-pre-intent-recover') {
-    return 'recover-release-intent.yml';
+    return ['recover-release-intent.yml'];
   }
   if (['release', 'release-prepare', 'release-intent', 'release-bind', 'release-finalize', 'retire', 'reconcile', 'm01-live', 'operation-reconcile'].includes(mode)) {
-    return environment === 'uat' ? 'deploy-uat.yml' : 'deploy-production.yml';
+    return environment === 'uat'
+      ? ['deploy-uat.yml']
+      : ['deploy-production.yml', 'deploy-production-v2.yml'];
   }
   throw new Error(`release operation mode ${mode} has no approved GitHub controller`);
 }
@@ -3198,9 +3202,10 @@ export function validateGithubControllerWorkflow(
   environment: Environment,
   mode: string,
 ): void {
-  const expected = `${repository}/.github/workflows/${expectedGithubWorkflow(environment, mode)}@refs/heads/main`;
-  if (workflowRef !== expected) {
-    throw new Error(`${environment} ${mode} must be controlled by ${expected}`);
+  const expected = expectedGithubWorkflows(environment, mode)
+    .map((workflow) => `${repository}/.github/workflows/${workflow}@refs/heads/main`);
+  if (!expected.includes(workflowRef)) {
+    throw new Error(`${environment} ${mode} must be controlled by ${expected.join(' or ')}`);
   }
 }
 
