@@ -119,6 +119,27 @@ grep -Fq 'test "$(wc -l < "$names"|tr -d '\''[:space:]'\'')" = 11' "$recovery"
 grep -Fq 'release-prepare.log > "$expected"' "$recovery"
 grep -Fq 'artifact_parent_task="$(jq -er' "$recovery"
 grep -Fq 'test -z "$PARENT_TASK_ARN" || test "$PARENT_TASK_ARN" = "$artifact_parent_task"' "$recovery"
+ruby - "$recovery" <<'RUBY'
+require "yaml"
+
+workflow = YAML.load_file(ARGV.fetch(0))
+step = workflow.fetch("jobs").fetch("recover").fetch("steps").find do |candidate|
+  candidate["name"] == "Derive and live-prove exact V2 bootstrap-closed recovery evidence"
+end
+abort "missing bootstrap-closed recovery evidence step" unless step
+expected = {
+  "GH_TOKEN" => "${{ github.token }}",
+  "RELEASE_REF" => "${{ inputs.release_ref }}",
+  "RECOVERY_REF" => "${{ inputs.recovery_ref }}",
+  "PARENT_ID" => "${{ inputs.parent_operation_id }}",
+  "PARENT_TASK_ARN" => "${{ inputs.parent_task_arn }}",
+  "FAILED_PROMOTION_RUN_ID" => "${{ inputs.failed_promotion_run_id }}",
+}
+abort "bootstrap-closed recovery input/env binding drift" unless step["env"] == expected
+abort "bootstrap-closed recovery no longer fails on missing shell inputs" unless step.fetch("run").include?("set -euo pipefail")
+RUBY
+RECOVERY_REF=0123456789abcdef0123456789abcdef01234567 \
+  bash -uec 'test "${#RECOVERY_REF}" = 40'
 
 # The 360-minute job ceiling adds no happy-path wait. It reserves 40 minutes beyond the modeled
 # slow failure path while each credential phase stays below its own fresh 120-minute STS session.

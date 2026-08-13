@@ -279,6 +279,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REF: ${{ inputs.release_ref }}
+          RECOVERY_REF: ${{ inputs.recovery_ref }}
           PARENT_ID: ${{ inputs.parent_operation_id }}
           PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
           FAILED_PROMOTION_RUN_ID: ${{ inputs.failed_promotion_run_id }}
