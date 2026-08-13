@@ -76,8 +76,11 @@ test "$retire_line" -lt "$result_line"
 grep -Fq "if: env.REQUIRES_CLOSED_STAGE == 'true'" "$workflow"
 grep -Fq "if: inputs.requested_serving_mode == 'live'" "$workflow"
 grep -Fq 'EFFECTIVE_TARGET=$effective_target' "$workflow"
-grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ env.EFFECTIVE_TARGET }}' "$workflow"
-grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$RELEASE_DEPLOY_TARGET"' "$workflow"
+grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$EFFECTIVE_TARGET"' "$workflow"
+grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ env.EFFECTIVE_TARGET }}' \
+  <(sed -n "${prepare_line},${rollout_line}p" "$workflow")
+! sed -n "${rollout_line},${verify_line}p" "$workflow" | grep -Fq 'RELEASE_DEPLOY_TARGET:'
+! sed -n "${recovery_line},${finalize_refresh_line}p" "$workflow" | grep -Fq 'RELEASE_DEPLOY_TARGET:'
 grep -Fq 'DEPLOYMENT_EVIDENCE_DIR="$closed" RELEASE_TASKS_APPLIED_SHA=' "$workflow"
 grep -Fq 'id: bootstrap-close' "$workflow"
 grep -Fq 'id: release-prepare' "$workflow"
@@ -107,6 +110,15 @@ grep -Fq 'promotion|maintenance-bootstrap|passport-promotion' "$maintenance"
 grep -Fq 'deploy_workflow=deploy-production-v2.yml' "$recovery"
 grep -Fq 'image_signer_workflow=deploy-uat.yml' "$recovery"
 grep -Fq '.RELEASE_GITHUB_WORKFLOW_REF' "$recovery"
+grep -Fq "inputs.intent_id == 'BOOTSTRAP_CLOSED'" "$recovery"
+grep -Fq 'release-bootstrap-closed-recover' "$recovery"
+grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON:' "$recovery"
+grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery"
+grep -Fq 'Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' "$recovery"
+grep -Fq 'test "$(wc -l < "$names"|tr -d '\''[:space:]'\'')" = 11' "$recovery"
+grep -Fq 'release-prepare.log > "$expected"' "$recovery"
+grep -Fq 'artifact_parent_task="$(jq -er' "$recovery"
+grep -Fq 'test -z "$PARENT_TASK_ARN" || test "$PARENT_TASK_ARN" = "$artifact_parent_task"' "$recovery"
 
 # The 360-minute job ceiling adds no happy-path wait. It reserves 40 minutes beyond the modeled
 # slow failure path while each credential phase stays below its own fresh 120-minute STS session.

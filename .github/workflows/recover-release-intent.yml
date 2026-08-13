@@ -23,7 +23,7 @@ on:
         required: true
         type: string
       intent_id:
-        description: OPEN intent UUID, PRE_INTENT for missing api-web intent, or ORPHAN for bounded historical evidence
+        description: OPEN intent UUID, PRE_INTENT, ORPHAN, or BOOTSTRAP_CLOSED for the exact V2 zero-intent controller failure
         required: true
         type: string
       service_name:
@@ -44,6 +44,10 @@ on:
         type: string
       binder_task_arn:
         description: Failed release-bind task ARN (required only for ORPHAN)
+        required: false
+        type: string
+      failed_promotion_run_id:
+        description: Failed Production V2 run that owns BOOTSTRAP_CLOSED evidence (empty otherwise)
         required: false
         type: string
 
@@ -68,6 +72,7 @@ jobs:
       AWS_REGION: ${{ vars.AWS_REGION }}
       DEPLOY_ENV: ${{ inputs.environment }}
       ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+      PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL || 'https://mangmeeplus.com' }}
       # The repository was imported with the reviewed UAT recovery implementation already present;
       # pin the first reachable commit in this repository, not its pre-import historical SHA.
       RECOVERY_FIX_BASELINE_UAT: 668a2d0827921257d6412a5edc0598d5aeb9a0fa
@@ -93,6 +98,7 @@ jobs:
           PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
           INTENT_TASK_ARN: ${{ inputs.intent_task_arn }}
           BINDER_TASK_ARN: ${{ inputs.binder_task_arn }}
+          FAILED_PROMOTION_RUN_ID: ${{ inputs.failed_promotion_run_id }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
@@ -101,7 +107,15 @@ jobs:
           [[ "$PARENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f-]{27}$ ]]
           cluster=watchdog-bms-prod
           [ "$DEPLOY_ENV" = uat ] && cluster=watchdog-bms-uat
-          if [ "$INTENT_ID" = PRE_INTENT ]; then
+          if [ "$INTENT_ID" = BOOTSTRAP_CLOSED ]; then
+            test "$DEPLOY_ENV" = production
+            test -z "$SERVICE_NAME$SSM_PARAMETER$INTENT_TASK_ARN$BINDER_TASK_ARN"
+            [[ "$FAILED_PROMOTION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            if [ -n "$PARENT_TASK_ARN" ]; then
+              [[ "$PARENT_TASK_ARN" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
+            fi
+          elif [ "$INTENT_ID" = PRE_INTENT ]; then
+            test -z "$FAILED_PROMOTION_RUN_ID"
             test -z "$SERVICE_NAME"
             test -z "$SSM_PARAMETER"
             test -z "$INTENT_TASK_ARN$BINDER_TASK_ARN"
@@ -109,12 +123,14 @@ jobs:
               [[ "$PARENT_TASK_ARN" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
             fi
           elif [ "$INTENT_ID" = ORPHAN ]; then
+            test -z "$FAILED_PROMOTION_RUN_ID"
             [[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_-]{1,255}$ ]]
             [[ "$SSM_PARAMETER" =~ ^/watchdog-bms/${DEPLOY_ENV}/ecs-express-[A-Za-z0-9_-]+-service-arn$ ]]
             for task in "$PARENT_TASK_ARN" "$INTENT_TASK_ARN" "$BINDER_TASK_ARN"; do
               [[ "$task" =~ ^arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task/${cluster}/[A-Za-z0-9_-]+$ ]]
             done
           else
+            test -z "$FAILED_PROMOTION_RUN_ID"
             [[ "$INTENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f-]{27}$ ]]
             [[ "$SERVICE_NAME" =~ ^[A-Za-z0-9_-]{1,255}$ ]]
             [[ "$SSM_PARAMETER" =~ ^/watchdog-bms/${DEPLOY_ENV}/ecs-express-[A-Za-z0-9_-]+-service-arn$ ]]
@@ -257,6 +273,157 @@ jobs:
             exit 1
           }
           echo "evidence=$second" >> "$GITHUB_OUTPUT"
+      - name: Derive and live-prove exact V2 bootstrap-closed recovery evidence
+        if: inputs.intent_id == 'BOOTSTRAP_CLOSED'
+        id: bootstrap_closed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.release_ref }}
+          PARENT_ID: ${{ inputs.parent_operation_id }}
+          PARENT_TASK_ARN: ${{ inputs.parent_task_arn }}
+          FAILED_PROMOTION_RUN_ID: ${{ inputs.failed_promotion_run_id }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/bootstrap-closed-recovery"; mkdir -m 700 "$root"
+          run="$root/run.json"; jobs="$root/jobs.json"; artifacts="$root/artifacts.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_PROMOTION_RUN_ID" > "$run"
+          jq -e --arg run "$FAILED_PROMOTION_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
+            (.id|tostring)==$run and .status=="completed" and .conclusion=="failure"
+            and .event=="workflow_dispatch" and .path==".github/workflows/deploy-production-v2.yml"
+            and .head_branch=="main" and (.head_sha|test("^[0-9a-f]{40}$"))
+            and .repository.full_name==$repository
+          ' "$run" >/dev/null
+          attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$run")"
+          original_controller="$(jq -er '.head_sha' "$run")"
+          git merge-base --is-ancestor "$original_controller" "$RECOVERY_REF"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_PROMOTION_RUN_ID/jobs?per_page=100" > "$jobs"
+          jq -e '
+            .total_count == (.jobs|length) and (.jobs|length)==1
+            and ([.jobs[0].steps[]|select(.name=="Recheck signed READY migration authority inside the durable database fence" and .conclusion=="success")]|length)==1
+            and ([.jobs[0].steps[]|select(.name=="Roll out the exact UAT image digests without rebuilding" and .conclusion=="failure")]|length)==1
+            and ([.jobs[0].steps[]|select(.name=="Recover an unsuccessful closed-stage promotion to the exact closed candidate" and .conclusion=="failure")]|length)==1
+            and ([.jobs[0].steps[]|select(.name=="Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" and .conclusion=="success")]|length)==1
+          ' "$jobs" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_PROMOTION_RUN_ID/artifacts?per_page=100" > "$artifacts"
+          name="production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}"
+          artifact_id="$(jq -er --arg name "$name" '
+            [.artifacts[]|select(.name==$name and .expired==false)]|select(length==1)|.[0].id
+          ' "$artifacts")"
+          archive="$root/controller.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$archive"
+          jq -cS --arg name "$name" '.artifacts=[.artifacts[]|select(.name==$name)]|.total_count=1' \
+            "$artifacts" > "$root/artifact-exact.json"
+          source infra/security/validate-production-security-preflight.sh
+          artifact_digest="$(security_preflight_validate_artifact_metadata \
+            "$root/artifact-exact.json" "$archive" "$name" "$FAILED_PROMOTION_RUN_ID" "$original_controller")"
+          names="$root/names"; expected="$root/expected"; metadata="$root/metadata"; extracted="$root/extracted"
+          mkdir -m 700 "$extracted"
+          zipinfo -1 "$archive" > "$names"
+          test "$(wc -l < "$names"|tr -d '[:space:]')" = 11
+          test "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '[:space:]')" = 11
+          printf '%s\n' bootstrap-closed/ai-gateway.json bootstrap-closed/api-web.json \
+            bootstrap-closed/maintenance-proof.json bootstrap-closed/workers.json \
+            bootstrap-maintenance-proof.json controller.json release-operation.json \
+            release-prepare.log > "$expected"
+          grep -Ev '^bootstrap-closed/history/(ai-gateway|api-web|workers)-[A-Za-z0-9_-]+-false\.json$' "$names" \
+            | LC_ALL=C sort > "$root/stable"
+          LC_ALL=C sort "$expected" > "$root/expected-sorted"
+          cmp -s "$root/stable" "$root/expected-sorted"
+          for service in ai-gateway api-web workers; do
+            test "$(grep -Ec "^bootstrap-closed/history/${service}-[A-Za-z0-9_-]+-false\\.json$" "$names")" = 1
+          done
+          zipinfo -l "$archive" | awk '$1 ~ /^[-dlcbps?]/ {print $1 "\t" $4 "\t" $NF}' > "$metadata"
+          test "$(wc -l < "$metadata"|tr -d '[:space:]')" = 11
+          while IFS=$'\t' read -r mode size member; do
+            [[ "$mode" == -* && "$size" =~ ^[1-9][0-9]*$ && "$size" -le 1048576 ]]
+            grep -Fxq "$member" "$names"
+            mkdir -p "$extracted/$(dirname "$member")"
+            _signed_evidence_extract_member "$archive" "$member" "$extracted/$member" 1048576
+          done < "$metadata"
+          controller="$extracted/controller.json"; operation="$extracted/release-operation.json"
+          proof="$extracted/bootstrap-maintenance-proof.json"
+          jq -e --arg source "$RELEASE_REF" --arg run "$FAILED_PROMOTION_RUN_ID" \
+            --argjson attempt "$attempt" --arg controller "$original_controller" '
+            (keys|sort)==["controllerCommit","promotionRunAttempt","promotionRunId","readinessRunId","readySha256","requestedServingMode","schemaVersion","sourceCommit","state","uatRunId"]
+            and .schemaVersion==2 and .sourceCommit==$source and .promotionRunId==$run
+            and .promotionRunAttempt==$attempt and .controllerCommit==$controller
+            and .requestedServingMode=="maintenance_closed" and .state=="PRE_MUTATION"
+          ' "$controller" >/dev/null
+          artifact_parent_task="$(jq -er '.taskArn|select(type=="string" and test("^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task/watchdog-bms-prod/[A-Za-z0-9_-]+$"))' "$operation")"
+          test -z "$PARENT_TASK_ARN" || test "$PARENT_TASK_ARN" = "$artifact_parent_task"
+          jq -e --arg operation "$PARENT_ID" --arg task "$artifact_parent_task" '
+            (keys|sort)==["operationId","releasePrepareExitCode","state","taskArn"]
+            and .operationId==$operation and .taskArn==$task and .releasePrepareExitCode==0
+            and .state=="HELD_FOR_ROLLOUT"
+          ' "$operation" >/dev/null
+          maintenance_sha="$(sha256sum "$proof"|awk '{print $1}')"
+          jq -e --arg source "$RELEASE_REF" --arg run "$FAILED_PROMOTION_RUN_ID" \
+            --argjson attempt "$attempt" --arg controller "$original_controller" '
+            .artifact=="production-maintenance-proof" and .schemaVersion==1
+            and .attestationKind=="runtime-observation" and .sourceSha==$source
+            and .mode=="maintenance_only" and .releaseMode=="maintenance-bootstrap"
+            and .deploymentState=="DEPLOYED_NOT_LAUNCHED" and .target=="all"
+            and .notZeroProcessing==true and .controller.runId==$run
+            and .controller.runAttempt==($attempt|tostring) and .controller.sha==$controller
+            and .controller.workflowRef==("MangmeeDev/mangmeeplus/.github/workflows/deploy-production-v2.yml@refs/heads/main")
+            and ([.services[].service]|sort)==["ai-gateway","api-web","workers"]
+            and (.probes|length)==8 and all(.probes[];.status==200 and .marker=="active" and .setCookieAbsent==true)
+          ' "$proof" >/dev/null
+          histories="$(jq -cs 'sort_by(.service)' "$extracted"/bootstrap-closed/history/*.json)"
+          jq -e --argjson histories "$histories" '
+            [.services[]|{service,serviceArn,sourceSha:.gitSha,targetRevisionArn:.serviceRevisionArn}]
+              |sort_by(.service)
+              == ($histories|map({service,serviceArn,sourceSha,targetRevisionArn})|sort_by(.service))
+            and all($histories[];.noOp==false and (.deploymentArn|type)=="string")
+          ' "$proof" >/dev/null
+          compact="$(jq -cnS --arg digest "$artifact_digest" --arg maintenance "$maintenance_sha" \
+            --arg run "$FAILED_PROMOTION_RUN_ID" --argjson attempt "$attempt" \
+            --arg controller "$original_controller" --arg source "$RELEASE_REF" \
+            --arg operation "$PARENT_ID" --arg task "$artifact_parent_task" \
+            --slurpfile proof "$proof" --argjson histories "$histories" '
+            {schemaVersion:1,artifactDigest:$digest,maintenanceProofSha256:$maintenance,
+             failedPromotionRunId:$run,failedPromotionRunAttempt:$attempt,controllerCommit:$controller,
+             sourceCommit:$source,operationId:$operation,parentTaskArn:$task,
+             manifestSha256:$proof[0].manifestSha256,
+             services:([$proof[0].services[] as $service
+               | $histories[]|select(.service==$service.service)
+               | . + {image:$service.image,maintenanceControls:$service.maintenanceControls}]|sort_by(.service))}
+          ')"
+          # Cheap, read-only provider proof before the recovery executor build.
+          while IFS= read -r service; do
+            arn="$(jq -r '.serviceArn' <<< "$service")"; deployment="$(jq -r '.deploymentArn' <<< "$service")"
+            state="$(aws ecs describe-express-gateway-service --service-arn "$arn" --output json)"
+            jq -e --argjson expected "$service" '
+              .service as $s | def one($name):[$s.activeConfigurations[0].primaryContainer.environment[]?|select(.name==$name)|.value]|select(length==1)|.[0];
+              $s.serviceArn==$expected.serviceArn and $s.status.statusCode=="ACTIVE" and $s.currentDeployment==null
+              and ($s.activeConfigurations|length)==1
+              and $s.activeConfigurations[0].serviceRevisionArn==$expected.targetRevisionArn
+              and $s.activeConfigurations[0].primaryContainer.image==$expected.image
+              and one("GIT_SHA")==$expected.sourceSha and one("PRODUCTION_SERVING_MODE")=="maintenance_only"
+            ' <<< "$state" >/dev/null
+            aws ecs describe-service-deployments --service-deployment-arns "$deployment" --output json \
+              | jq -e --argjson expected "$service" '
+                (.serviceDeployments|length)==1 and .serviceDeployments[0].serviceDeploymentArn==$expected.deploymentArn
+                and .serviceDeployments[0].serviceArn==$expected.serviceArn and .serviceDeployments[0].status=="SUCCESSFUL"
+                and .serviceDeployments[0].targetServiceRevision.arn==$expected.targetRevisionArn
+              ' >/dev/null
+          done < <(jq -c '.services[]' <<< "$compact")
+          api_origin="$(jq -er '.services[]|select(.service=="api-web")|.rawOrigin' "$proof")"
+          worker_token="$(aws secretsmanager get-secret-value --secret-id watchdog-bms/production/worker-internal-token \
+            --version-stage AWSCURRENT --query SecretString --output text)"
+          body="$(printf 'header = "X-Worker-Token: %s"\n' "$worker_token" | curl --config - \
+            --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error --max-time 20 \
+            "${api_origin%/}/v1/internal/health/readiness")"
+          unset worker_token
+          jq -e '.service=="api" and .status=="ok" and .db=="ok"' <<< "$body" >/dev/null
+          for url in "${PUBLIC_DOMAIN_URL%/}/login" "${api_origin%/}/login"; do
+            headers="$root/headers"; body_file="$root/body"
+            test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
+              --dump-header "$headers" --output "$body_file" --write-out '%{http_code}' "$url")" = 200
+            grep -Eiq '^X-Mangmee-Maintenance:[[:space:]]*active' "$headers"
+            grep -Fq 'data-platform-access="closed"' "$body_file"
+          done
+          echo "evidence=$compact" >> "$GITHUB_OUTPUT"
       - name: Log in to ECR
         run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -304,7 +471,8 @@ jobs:
           expected=""
           observed=""
           network=''
-          if [ "${{ inputs.intent_id }}" != PRE_INTENT ]; then
+          if [ "${{ inputs.intent_id }}" != PRE_INTENT ] \
+            && [ "${{ inputs.intent_id }}" != BOOTSTRAP_CLOSED ]; then
             expected="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${cluster}/${SERVICE_NAME}"
             error_file="$RUNNER_TEMP/recovery-ssm.err"
             if observed="$(aws ssm get-parameter --name "$SSM_PARAMETER" --query Parameter.Value --output text 2>"$error_file")"; then
@@ -745,11 +913,13 @@ jobs:
           RELEASE_ORPHAN_MUTATION_INTENT_JSON: ${{ steps.orphan.outputs.intent_json }}
           RELEASE_ORPHAN_DEPLOYMENT_MANIFEST_JSON: ${{ steps.orphan.outputs.manifest }}
           RELEASE_ORPHAN_TASK_EVIDENCE_JSON: ${{ steps.orphan.outputs.task_evidence }}
+          RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON: ${{ steps.bootstrap_closed.outputs.evidence }}
         run: |
           set +e
           recovery_mode=release-intent-recover
           [ "${{ inputs.intent_id }}" = PRE_INTENT ] && recovery_mode=release-pre-intent-recover
           [ "${{ inputs.intent_id }}" = ORPHAN ] && recovery_mode=release-orphan-intent-recover
+          [ "${{ inputs.intent_id }}" = BOOTSTRAP_CLOSED ] && recovery_mode=release-bootstrap-closed-recover
           bash infra/prod-ecs-express/run-release-task.sh \
             "${{ steps.executor.outputs.recovery_image }}" "$RECOVERY_REF" "$recovery_mode"
           code=$?
