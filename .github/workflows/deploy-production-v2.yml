@@ -530,7 +530,6 @@ jobs:
         env:
           PRODUCTION_SERVING_MODE: ${{ env.FINAL_SERVING_MODE }}
           RELEASE_MODE: passport-promotion
-          RELEASE_DEPLOY_TARGET: ${{ env.EFFECTIVE_TARGET }}
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
         run: |
           set -euo pipefail
@@ -538,7 +537,7 @@ jobs:
           [ "$PRODUCTION_SERVING_MODE" != maintenance_only ] || quiesce=true
           REIMBURSEMENT_WRITE_QUIESCE="$quiesce" \
             RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" \
-            bash infra/prod-ecs-express/deploy.sh "$RELEASE_DEPLOY_TARGET"
+            bash infra/prod-ecs-express/deploy.sh "$EFFECTIVE_TARGET"
 
       - name: Verify exact digest, source, serving mode, health and deep DB readiness
         id: verify-health
@@ -590,7 +589,6 @@ jobs:
           steps.verify-maintenance.outcome == 'failure'))
         env:
           PRODUCTION_SERVING_MODE: maintenance_only
-          RELEASE_DEPLOY_TARGET: all
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
           REIMBURSEMENT_WRITE_QUIESCE: 'true'
         run: |

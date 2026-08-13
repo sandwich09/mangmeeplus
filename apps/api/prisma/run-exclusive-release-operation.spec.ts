@@ -21,8 +21,10 @@ import {
   needsRemoteWriterFence,
   parseOrphanTaskEvidence,
   parseStoppedParentTaskEvidence,
+  parseBootstrapClosedRecoveryEvidence,
   prepareRemoteReleaseMutationIntent,
   recoverOrphanReleaseMutationIntent,
+  recoverBootstrapClosedPreIntentRelease,
   recoverPreIntentApiRelease,
   recoverRemoteReleaseMutationIntent,
   reconcileRemoteReleaseOperation,
@@ -31,6 +33,7 @@ import {
   runChild,
   terminalizeRecoveredReleaseIfReady,
   validateCurrentApiBuildState,
+  validateBootstrapClosedRecoveryPlatform,
   validateGithubControllerWorkflow,
   validateManualControllerMode,
   validateOrphanMutationPlatform,
@@ -1587,6 +1590,64 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     assert.deepEqual(await recoverOrphanReleaseMutationIntent(first, recoveryInput), { replay: true });
     assert.equal(platformReads, 4, 'initial recovery and replay each require two fresh platform reads');
   });
+
+  it('terminalizes only the exact Production V2 zero-intent bootstrap-closed hold', async (t) => {
+    if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
+    await beginRemoteReleaseOperation(first, {
+      id: bootstrapEvidence.operationId, targetEnvironment: 'production', mode: 'release',
+      releaseDeployTarget: 'all', buildReleaseId: PROD_SOURCE, ecsTaskArn: PROD_PARENT_TASK,
+      ecsServiceArn: null, serviceDeploymentArn: null, targetServiceRevisionArn: null,
+      activeBuilds: null, deploymentManifest: null, ...PROD_ORIGINAL_CONTROLLER, leaseSeconds: 30,
+    });
+    await holdRemoteReleaseOperation(first, bootstrapEvidence.operationId, PROD_PARENT_TASK);
+    await first.query(`UPDATE "RemoteReleaseOperation" SET "leaseExpiresAt"=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE "id"=$1`,
+      [bootstrapEvidence.operationId]);
+    let reads = 0;
+    const input = {
+      operationId: bootstrapEvidence.operationId, targetEnvironment: 'production' as const,
+      buildReleaseId: PROD_SOURCE, recoveryExecutorBuildReleaseId: SHA_B,
+      recoveryExecutorImage: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:${'f'.repeat(64)}`,
+      recoveryValidatedCiRunId: '31730000001', recovererTaskArn: PROD_RECOVERY_TASK,
+      controller: PROD_RECOVERY_CONTROLLER, region: 'ap-southeast-1', evidence: bootstrapEvidence,
+      readPlatform: async () => { reads += 1; return bootstrapPlatformReads(); },
+    };
+    const unexpectedIntentId = randomUUID();
+    await first.query(`
+      INSERT INTO "RemoteReleaseMutationIntent" (
+        "id", "operationId", "targetEnvironment", "buildReleaseId", "serviceKey", "mutationKind",
+        "expectedServiceArn", "clusterName", "serviceName", "ssmParameterName", "requestHash",
+        "desiredConfigHash", "beforeDeploymentArnsJson", "beforeActiveConfigurationsJson",
+        "preparedByTaskArn", "status", "requestDeadlineAt", "createdAt", "updatedAt"
+      ) VALUES ($1,$2,'production',$3,'workers','UPDATE',$4,'watchdog-bms-prod','watchdog-bms-workers',
+                '/watchdog-bms/production/ecs-express-workers-service-arn',$5,$6,'[]'::jsonb,'[]'::jsonb,
+                $7,'OPEN',CURRENT_TIMESTAMP + INTERVAL '10 minutes',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    `, [unexpectedIntentId, bootstrapEvidence.operationId, PROD_SOURCE,
+      bootstrapEvidence.services.find((service) => service.service === 'workers')!.serviceArn,
+      '1'.repeat(64), '2'.repeat(64), PROD_RECOVERY_TASK]);
+    await assert.rejects(() => recoverBootstrapClosedPreIntentRelease(first!, input), /requires zero durable service intents/);
+    await first.query('DELETE FROM "RemoteReleaseMutationIntent" WHERE "id"=$1', [unexpectedIntentId]);
+    assert.deepEqual(await recoverBootstrapClosedPreIntentRelease(first, input), {
+      replay: false,
+      services: bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)),
+    });
+    const parent = (await first.query(`
+      SELECT "status","reconciliationEvidenceRef" FROM "RemoteReleaseOperation" WHERE "id"=$1
+    `, [bootstrapEvidence.operationId])).rows[0];
+    assert.equal(parent.status, 'RECONCILED_FAILED_CONFIRMED');
+    assert.equal(parent.reconciliationEvidenceRef,
+      `ProductionV2ControllerEvidence:${bootstrapEvidence.failedPromotionRunId}:1:${bootstrapEvidence.artifactDigest}`);
+    assert.deepEqual(await recoverBootstrapClosedPreIntentRelease(first, input), {
+      replay: true,
+      services: bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)),
+    });
+    assert.equal(reads, 6, 'blocked, initial and replay attempts each require two live platform reads');
+    const audit = (await first.query(`
+      SELECT "metadataJson" FROM "AuditLog"
+       WHERE "action"='system.release_operation.recover_bootstrap_closed_pre_intent' AND "targetId"=$1
+    `, [bootstrapEvidence.operationId])).rows[0].metadataJson;
+    assert.equal(audit.evidence.artifactDigest, bootstrapEvidence.artifactDigest);
+    assert.equal(audit.recoveryValidatedCiRunId, input.recoveryValidatedCiRunId);
+  });
 });
 
 function activeConfiguration(revision: string, sha: string) {
@@ -1717,6 +1778,105 @@ function recoveryDeployment(serviceArn: string, revisionArn: string, status = 'S
     createdAt: new Date().toISOString(),
   };
 }
+
+const PROD_SOURCE = 'c'.repeat(40);
+const PROD_PARENT_TASK = 'arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/parent-task';
+const PROD_RECOVERY_TASK = 'arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/recovery-task';
+const PROD_ORIGINAL_CONTROLLER = {
+  ...GITHUB_CONTROLLER,
+  sourceBranch: 'main',
+  githubRunId: '31727367323',
+  githubRunAttempt: 1,
+  githubWorkflowRef: 'example/watchdog/.github/workflows/deploy-production-v2.yml@refs/heads/main',
+};
+const PROD_RECOVERY_CONTROLLER = {
+  ...GITHUB_CONTROLLER,
+  sourceBranch: 'main',
+  githubRunId: '31730000000',
+  githubRunAttempt: 1,
+  githubWorkflowRef: 'example/watchdog/.github/workflows/recover-release-intent.yml@refs/heads/main',
+};
+const bootstrapServices = [
+  {
+    service: 'ai-gateway', name: 'watchdog-bms-ai-gateway-v2', repository: 'watchdog-bms-ai-gateway',
+    controls: { modelProvider: 'disabled', aiGatewayEnabled: 'false', aiAgentRegistryEnabled: 'false', aiToolPolicyEnforced: 'false', aiToolAuditEnabled: 'false' },
+    environment: [
+      { name: 'MODEL_PROVIDER', value: 'disabled' }, { name: 'AI_GATEWAY_ENABLED', value: 'false' },
+      { name: 'AI_AGENT_REGISTRY_ENABLED', value: 'false' }, { name: 'AI_TOOL_POLICY_ENFORCED', value: 'false' },
+      { name: 'AI_TOOL_AUDIT_ENABLED', value: 'false' },
+    ],
+  },
+  {
+    service: 'api-web', name: 'watchdog-bms-api-web-pub', repository: 'watchdog-bms-api',
+    controls: { globalMaintenanceMode: 'true', reimbursementWriteQuiesce: 'true', crmAutoReplyEnabled: 'false', aiGatewayEnabled: 'false', lineAiLedgerEnabled: 'false' },
+    environment: [
+      { name: 'GLOBAL_MAINTENANCE_MODE', value: 'true' }, { name: 'REIMBURSEMENT_WRITE_QUIESCE', value: 'true' },
+      { name: 'CRM_AUTO_REPLY_ENABLED', value: 'false' }, { name: 'AI_GATEWAY_ENABLED', value: 'false' },
+      { name: 'LINE_AI_LEDGER_ENABLED', value: 'false' },
+    ],
+  },
+  {
+    service: 'workers', name: 'watchdog-bms-workers', repository: 'watchdog-bms-workers',
+    controls: { queueEnabled: 'false' }, environment: [{ name: 'QUEUE_ENABLED', value: 'false' }],
+  },
+] as const;
+const bootstrapEvidence = {
+  schemaVersion: 1 as const,
+  artifactDigest: `sha256:${'1'.repeat(64)}`,
+  maintenanceProofSha256: '2'.repeat(64),
+  failedPromotionRunId: PROD_ORIGINAL_CONTROLLER.githubRunId,
+  failedPromotionRunAttempt: PROD_ORIGINAL_CONTROLLER.githubRunAttempt,
+  controllerCommit: 'd'.repeat(40), sourceCommit: PROD_SOURCE,
+  operationId: '91794761-7661-468c-8e9c-91f5a69b1f06', parentTaskArn: PROD_PARENT_TASK,
+  manifestSha256: '3'.repeat(64),
+  services: bootstrapServices.map((item, index) => ({
+    service: item.service,
+    serviceArn: `arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/${item.name}`,
+    deploymentArn: `arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/${item.name}/deployment-${index}`,
+    targetRevisionArn: `arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/${item.name}/revision-${index}`,
+    sourceSha: PROD_SOURCE, noOp: false,
+    image: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/${item.repository}@sha256:${String(index + 4).repeat(64)}`,
+    maintenanceControls: item.controls,
+  })),
+};
+const bootstrapPlatformReads = () => bootstrapServices.map((item) => {
+  const expected = bootstrapEvidence.services.find((service) => service.service === item.service)!;
+  return {
+    service: item.service,
+    serviceResponse: { service: {
+      serviceArn: expected.serviceArn, status: { statusCode: 'ACTIVE' }, currentDeployment: null,
+      activeConfigurations: [{
+        serviceRevisionArn: expected.targetRevisionArn,
+        primaryContainer: { image: expected.image, environment: [
+          { name: 'GIT_SHA', value: PROD_SOURCE }, { name: 'PRODUCTION_SERVING_MODE', value: 'maintenance_only' },
+          ...item.environment,
+        ] },
+      }],
+    } },
+    deploymentResponse: { serviceDeployments: [{
+      serviceDeploymentArn: expected.deploymentArn, serviceArn: expected.serviceArn, status: 'SUCCESSFUL',
+      targetServiceRevision: { arn: expected.targetRevisionArn }, createdAt: '2026-08-13T18:17:00.000Z',
+    }] },
+  };
+});
+
+describe('bootstrap-closed zero-intent recovery decision', () => {
+  it('accepts only the stable exact closed candidate and successful bootstrap deployments', () => {
+    assert.deepEqual(parseBootstrapClosedRecoveryEvidence(JSON.stringify(bootstrapEvidence)), bootstrapEvidence);
+    const swappedImage = structuredClone(bootstrapEvidence);
+    swappedImage.services[0]!.image = bootstrapEvidence.services[1]!.image;
+    assert.throws(() => parseBootstrapClosedRecoveryEvidence(JSON.stringify(swappedImage)), /service evidence is invalid/);
+    assert.deepEqual(validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, bootstrapPlatformReads()),
+      bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)));
+    const live = bootstrapPlatformReads();
+    Object.assign(live[1]!.serviceResponse.service.activeConfigurations[0]!.primaryContainer.environment
+      .find((item) => item.name === 'PRODUCTION_SERVING_MODE')!, { value: 'live' });
+    assert.throws(() => validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, live), /bootstrap maintenance controls/);
+    const moved = bootstrapPlatformReads();
+    moved[0]!.deploymentResponse.serviceDeployments[0]!.status = 'ROLLBACK_SUCCESSFUL';
+    assert.throws(() => validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, moved), /not exact and successful/);
+  });
+});
 
 describe('remote mutation recovery decision', () => {
   const oldConfiguration = activeConfiguration(REVISION.replace('rev-1', 'rev-old'), SHA_A);

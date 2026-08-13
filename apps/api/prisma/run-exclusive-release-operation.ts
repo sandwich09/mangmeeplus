@@ -129,6 +129,26 @@ type DeploymentEvidence = {
   noOp: boolean;
 };
 
+type BootstrapClosedRecoveryService = DeploymentEvidence & {
+  deploymentArn: string;
+  image: string;
+  maintenanceControls: Record<string, string>;
+};
+
+type BootstrapClosedRecoveryEvidence = {
+  schemaVersion: 1;
+  artifactDigest: string;
+  maintenanceProofSha256: string;
+  failedPromotionRunId: string;
+  failedPromotionRunAttempt: number;
+  controllerCommit: string;
+  sourceCommit: string;
+  operationId: string;
+  parentTaskArn: string;
+  manifestSha256: string;
+  services: BootstrapClosedRecoveryService[];
+};
+
 type MutationIntent = {
   id: string;
   serviceKey: 'api-web' | 'ai-gateway' | 'workers';
@@ -2017,6 +2037,129 @@ function normalizedDeploymentRows(response: Record<string, unknown>): Array<Reco
   return normalized;
 }
 
+function exactObjectKeys(value: unknown, wanted: readonly string[]): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && canonicalJson(Object.keys(value).sort()) === canonicalJson([...wanted].sort());
+}
+
+export function parseBootstrapClosedRecoveryEvidence(serialized: string): BootstrapClosedRecoveryEvidence {
+  if (!serialized || serialized.length > 32_768) {
+    throw new Error('RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON must be one bounded evidence object');
+  }
+  let value: unknown;
+  try { value = JSON.parse(serialized); } catch { throw new Error('bootstrap-closed recovery evidence must be valid JSON'); }
+  const keys = [
+    'artifactDigest', 'controllerCommit', 'failedPromotionRunAttempt', 'failedPromotionRunId',
+    'maintenanceProofSha256', 'manifestSha256', 'operationId', 'parentTaskArn', 'schemaVersion',
+    'services', 'sourceCommit',
+  ];
+  if (!exactObjectKeys(value, keys)) throw new Error('bootstrap-closed recovery evidence has an unexpected shape');
+  const evidence = value as unknown as BootstrapClosedRecoveryEvidence;
+  if (evidence.schemaVersion !== 1
+    || !/^sha256:[0-9a-f]{64}$/.test(evidence.artifactDigest)
+    || !/^[0-9a-f]{64}$/.test(evidence.maintenanceProofSha256)
+    || !/^[1-9][0-9]*$/.test(evidence.failedPromotionRunId)
+    || !Number.isInteger(evidence.failedPromotionRunAttempt) || evidence.failedPromotionRunAttempt < 1
+    || !/^[0-9a-f]{40}$/.test(evidence.controllerCommit)
+    || !/^[0-9a-f]{40}$/.test(evidence.sourceCommit)
+    || !UUID_PATTERN.test(evidence.operationId)
+    || !/^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task\/watchdog-bms-prod\/[A-Za-z0-9_-]+$/.test(evidence.parentTaskArn)
+    || !/^[0-9a-f]{64}$/.test(evidence.manifestSha256)
+    || !Array.isArray(evidence.services) || evidence.services.length !== 3) {
+    throw new Error('bootstrap-closed recovery evidence identity is invalid');
+  }
+  const serviceKeys = ['deploymentArn', 'image', 'maintenanceControls', 'noOp', 'service',
+    'serviceArn', 'sourceSha', 'targetRevisionArn'];
+  const [, , , region, accountId] = evidence.parentTaskArn.split(':');
+  const identities: Record<string, { serviceName: string; repository: string }> = {
+    'api-web': { serviceName: 'watchdog-bms-api-web-pub', repository: 'watchdog-bms-api' },
+    'ai-gateway': { serviceName: 'watchdog-bms-ai-gateway-v2', repository: 'watchdog-bms-ai-gateway' },
+    workers: { serviceName: 'watchdog-bms-workers', repository: 'watchdog-bms-workers' },
+  };
+  if (canonicalJson(evidence.services.map((item) => item.service).sort())
+      !== canonicalJson(['ai-gateway', 'api-web', 'workers'])
+    || evidence.services.some((item) => {
+      const identity = identities[item.service];
+      const serviceArn = `arn:aws:ecs:${region}:${accountId}:service/watchdog-bms-prod/${identity?.serviceName}`;
+      return !identity || !exactObjectKeys(item, serviceKeys)
+        || item.noOp !== false || item.sourceSha !== evidence.sourceCommit
+        || item.serviceArn !== serviceArn
+        || !item.deploymentArn.startsWith(serviceArn.replace(':service/', ':service-deployment/') + '/')
+        || !item.targetRevisionArn.startsWith(serviceArn.replace(':service/', ':service-revision/') + '/')
+        || !new RegExp(`^${accountId}\\.dkr\\.ecr\\.${region}\\.amazonaws\\.com/${identity.repository}@sha256:[0-9a-f]{64}$`).test(item.image)
+        || item.maintenanceControls === null || typeof item.maintenanceControls !== 'object'
+        || Array.isArray(item.maintenanceControls);
+    })) {
+    throw new Error('bootstrap-closed recovery service evidence is invalid');
+  }
+  return evidence;
+}
+
+type BootstrapClosedPlatformRead = {
+  service: string;
+  serviceResponse: Record<string, unknown>;
+  deploymentResponse: Record<string, unknown>;
+};
+
+/** Proves the exact candidate remains a stable, globally closed singleton after the failed controller. */
+export function validateBootstrapClosedRecoveryPlatform(
+  evidence: BootstrapClosedRecoveryEvidence,
+  reads: readonly BootstrapClosedPlatformRead[],
+): BootstrapClosedRecoveryService[] {
+  if (reads.length !== 3 || canonicalJson(reads.map((item) => item.service).sort())
+      !== canonicalJson(['ai-gateway', 'api-web', 'workers'])) {
+    throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery did not read all three exact services');
+  }
+  return reads.map((read) => {
+    const expected = evidence.services.find((item) => item.service === read.service)!;
+    const service = read.serviceResponse.service as Record<string, any> | undefined;
+    if (!service || service.serviceArn !== expected.serviceArn || service.status?.statusCode !== 'ACTIVE'
+      || service.currentDeployment !== null || !Array.isArray(service.activeConfigurations)
+      || service.activeConfigurations.length !== 1) {
+      throw new RemoteReleaseOperationBlocked(`${read.service} is not the exact settled bootstrap-closed service`);
+    }
+    const configuration = service.activeConfigurations[0] as Record<string, any>;
+    if (configuration.serviceRevisionArn !== expected.targetRevisionArn
+      || configuration.primaryContainer?.image !== expected.image) {
+      throw new RemoteReleaseOperationBlocked(`${read.service} image or revision moved after bootstrap closure`);
+    }
+    const values = new Map<string, string[]>();
+    for (const item of configuration.primaryContainer?.environment ?? []) {
+      if (typeof item?.name !== 'string' || typeof item?.value !== 'string') continue;
+      values.set(item.name, [...(values.get(item.name) ?? []), item.value]);
+    }
+    const one = (name: string): string => {
+      const found = values.get(name) ?? [];
+      if (found.length !== 1) throw new RemoteReleaseOperationBlocked(`${read.service} ${name} is not singular`);
+      return found[0]!;
+    };
+    const controls = read.service === 'api-web' ? {
+      globalMaintenanceMode: one('GLOBAL_MAINTENANCE_MODE'),
+      reimbursementWriteQuiesce: one('REIMBURSEMENT_WRITE_QUIESCE'),
+      crmAutoReplyEnabled: one('CRM_AUTO_REPLY_ENABLED'),
+      aiGatewayEnabled: one('AI_GATEWAY_ENABLED'),
+      lineAiLedgerEnabled: one('LINE_AI_LEDGER_ENABLED'),
+    } : read.service === 'ai-gateway' ? {
+      modelProvider: one('MODEL_PROVIDER'),
+      aiGatewayEnabled: one('AI_GATEWAY_ENABLED'),
+      aiAgentRegistryEnabled: one('AI_AGENT_REGISTRY_ENABLED'),
+      aiToolPolicyEnforced: one('AI_TOOL_POLICY_ENFORCED'),
+      aiToolAuditEnabled: one('AI_TOOL_AUDIT_ENABLED'),
+    } : { queueEnabled: one('QUEUE_ENABLED') };
+    if (one('GIT_SHA') !== evidence.sourceCommit || one('PRODUCTION_SERVING_MODE') !== 'maintenance_only'
+      || canonicalJson(controls) !== canonicalJson(expected.maintenanceControls)) {
+      throw new RemoteReleaseOperationBlocked(`${read.service} no longer has the exact bootstrap maintenance controls`);
+    }
+    const deployments = normalizedDeploymentRows(read.deploymentResponse);
+    if (deployments.length !== 1 || deployments[0]!.serviceDeploymentArn !== expected.deploymentArn
+      || deployments[0]!.serviceArn !== expected.serviceArn || deployments[0]!.status !== 'SUCCESSFUL'
+      || deployments[0]!.targetRevisionArn !== expected.targetRevisionArn) {
+      throw new RemoteReleaseOperationBlocked(`${read.service} bootstrap deployment is not exact and successful`);
+    }
+    return expected;
+  }).sort((left, right) => left.service.localeCompare(right.service));
+}
+
 /** Pure, adversarially testable decision. Anything beyond one exact causal result remains blocked. */
 export function decideMutationIntentRecovery(
   intent: MutationIntentRow,
@@ -2911,6 +3054,140 @@ export async function recoverPreIntentApiRelease(
   }
 }
 
+/**
+ * Recover the narrow V2 controller crash where maintenance-bootstrap deployed the exact candidate,
+ * release-prepare succeeded, and the controller failed before deploy.sh could persist any intent.
+ * This records FAILED_CONFIRMED only; the next ordinary release repeats preparation and creates the
+ * normal per-service intent/bind/finalizer chain.
+ */
+export async function recoverBootstrapClosedPreIntentRelease(
+  client: Client,
+  input: {
+    operationId: string;
+    targetEnvironment: Environment;
+    buildReleaseId: string;
+    recoveryExecutorBuildReleaseId: string;
+    recoveryExecutorImage: string;
+    recoveryValidatedCiRunId: string;
+    recovererTaskArn: string;
+    controller: ControllerProvenance;
+    region: string;
+    evidence: BootstrapClosedRecoveryEvidence;
+    stoppedParentTaskEvidence?: StoppedParentTaskEvidence | null;
+    readPlatform?: () => Promise<BootstrapClosedPlatformRead[]>;
+  },
+): Promise<{ replay: boolean; services: BootstrapClosedRecoveryService[] }> {
+  if (input.targetEnvironment !== 'production' || input.evidence.operationId !== input.operationId
+    || input.evidence.sourceCommit !== input.buildReleaseId
+    || input.evidence.parentTaskArn !== (input.stoppedParentTaskEvidence?.taskArn ?? input.evidence.parentTaskArn)) {
+    throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery evidence does not name the exact production hold');
+  }
+  await markExpiredTargetUnknown(client, input.operationId, input.targetEnvironment, {
+    buildReleaseId: input.buildReleaseId,
+    recovererTaskArn: input.recovererTaskArn,
+    controller: input.controller,
+    stoppedParentTaskEvidence: input.stoppedParentTaskEvidence ?? null,
+  });
+  const read = input.readPlatform ?? (async () => {
+    const credentials = await readTaskCredentials();
+    return Promise.all(input.evidence.services.map(async (expected) => ({
+      service: expected.service,
+      serviceResponse: await ecsJsonRequest(input.region, 'DescribeExpressGatewayService', {
+        serviceArn: expected.serviceArn,
+      }, credentials),
+      deploymentResponse: await ecsJsonRequest(input.region, 'DescribeServiceDeployments', {
+        serviceDeploymentArns: [expected.deploymentArn],
+      }, credentials),
+    })));
+  });
+  const first = await read();
+  const firstServices = validateBootstrapClosedRecoveryPlatform(input.evidence, first);
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  const second = await read();
+  const services = validateBootstrapClosedRecoveryPlatform(input.evidence, second);
+  if (canonicalJson(firstServices) !== canonicalJson(services)) {
+    throw new RemoteReleaseOperationBlocked('bootstrap-closed production state moved between recovery reads');
+  }
+  const evidenceRef = `ProductionV2ControllerEvidence:${input.evidence.failedPromotionRunId}:${input.evidence.failedPromotionRunAttempt}:${input.evidence.artifactDigest}`;
+  await client.query('BEGIN');
+  try {
+    const parent = await client.query<Omit<ParentOperationRow, 'status'> & {
+      status: 'UNKNOWN' | 'RECONCILED_FAILED_CONFIRMED';
+      ecsServiceArn: string | null; serviceDeploymentArn: string | null;
+      targetServiceRevisionArn: string | null; activeBuildsJson: unknown;
+      reconciledByTaskArn: string | null; reconciliationEvidenceRef: string | null;
+    }>(`
+      SELECT *, ("leaseExpiresAt" <= CURRENT_TIMESTAMP) AS "leaseExpired"
+        FROM "RemoteReleaseOperation"
+       WHERE "id" = $1 AND "targetEnvironment" = $2 FOR UPDATE
+    `, [input.operationId, input.targetEnvironment]);
+    const row = parent.rows[0];
+    const expectedWorkflow = `${input.controller.githubRepository}/.github/workflows/deploy-production-v2.yml@refs/heads/main`;
+    const exactParent = row && row.mode === 'release' && row.releaseDeployTarget === 'all'
+      && row.buildReleaseId === input.buildReleaseId && row.ecsTaskArn === input.evidence.parentTaskArn
+      && row.sourceBranch === 'main' && row.controllerKind === 'GITHUB_ACTIONS'
+      && row.githubRunId === input.evidence.failedPromotionRunId
+      && row.githubRunAttempt === input.evidence.failedPromotionRunAttempt
+      && row.githubWorkflowRef === expectedWorkflow
+      && row.githubRepository === input.controller.githubRepository
+      && row.leaseOwner === row.ecsTaskArn
+      && (row.deploymentManifestJson === null
+        || (Array.isArray(row.deploymentManifestJson) && row.deploymentManifestJson.length === 0))
+      && row.preIntentApiCleanupCompletedAt === null && row.preIntentApiCleanupEvidenceJson === null
+      && row.ecsServiceArn === null && row.serviceDeploymentArn === null
+      && row.targetServiceRevisionArn === null && row.activeBuildsJson === null;
+    if (!exactParent || !['UNKNOWN', 'RECONCILED_FAILED_CONFIRMED'].includes(row.status)) {
+      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery parent is not the exact zero-intent V2 hold');
+    }
+    const intents = await client.query<{ count: number }>(`
+      SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1
+    `, [input.operationId]);
+    if ((intents.rows[0]?.count ?? 0) !== 0) {
+      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery requires zero durable service intents');
+    }
+    if (row.status === 'RECONCILED_FAILED_CONFIRMED') {
+      if (row.reconciliationEvidenceRef !== evidenceRef) {
+        throw new RemoteReleaseOperationBlocked('bootstrap-closed parent was reconciled with different evidence');
+      }
+      await client.query('COMMIT');
+      return { replay: true, services };
+    }
+    const actorRef = `github:${input.controller.githubRepository}:${input.controller.githubRunId}:${input.controller.githubRunAttempt}`;
+    const updated = await client.query(`
+      UPDATE "RemoteReleaseOperation"
+         SET "status" = 'RECONCILED_FAILED_CONFIRMED', "completedAt" = CURRENT_TIMESTAMP,
+             "reconciledAt" = CURRENT_TIMESTAMP, "reconciledByActorRef" = $2,
+             "reconciledByTaskArn" = $3, "reconciliationEvidenceRef" = $4,
+             "reconciliationReason" = 'V2 controller failed before the first rollout intent; exact bootstrap-closed candidate remained stable',
+             "outcomeReason" = 'FAILED_CONFIRMED after exact bootstrap-closed zero-intent recovery; clean release retry required',
+             "updatedAt" = CURRENT_TIMESTAMP
+       WHERE "id" = $1 AND "status" = 'UNKNOWN'
+    `, [input.operationId, actorRef, input.recovererTaskArn, evidenceRef]);
+    if (updated.rowCount !== 1) throw new RemoteReleaseOperationBlocked('bootstrap-closed parent moved during recovery');
+    await client.query(`
+      INSERT INTO "AuditLog" (
+        "id", "companyId", "actorType", "actorUserId", "actorRefId", "action", "targetType",
+        "targetId", "requestId", "result", "riskLevel", "metadataJson", "createdAt"
+      ) VALUES ($1,NULL,'SERVICE',NULL,$2,'system.release_operation.recover_bootstrap_closed_pre_intent',
+                'RemoteReleaseOperation',$3,$4,'SUCCESS','CRITICAL',$5::jsonb,CURRENT_TIMESTAMP)
+    `, [randomUUID(), input.recovererTaskArn, input.operationId,
+      `release-bootstrap-closed-recovery:${input.operationId}`,
+      JSON.stringify({
+        evidence: input.evidence,
+        observedServices: services,
+        recoveryExecutorBuildReleaseId: input.recoveryExecutorBuildReleaseId,
+        recoveryExecutorImage: input.recoveryExecutorImage,
+        recoveryValidatedCiRunId: input.recoveryValidatedCiRunId,
+        controller: input.controller,
+      })]);
+    await client.query('COMMIT');
+    return { replay: false, services };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function terminalizeRecoveredReleaseIfReady(
   client: Client,
   input: {
@@ -3185,7 +3462,7 @@ function expectedGithubWorkflows(environment: Environment, mode: string): string
   if (mode === 'f2-plan') return ['f2-normalize.yml'];
   if (mode === 'f2-apply' || mode === 'f2-verify') return ['f2-normalize-apply.yml'];
   if (mode === 'release-intent-recover' || mode === 'release-orphan-intent-recover'
-    || mode === 'release-pre-intent-recover') {
+    || mode === 'release-pre-intent-recover' || mode === 'release-bootstrap-closed-recover') {
     return ['recover-release-intent.yml'];
   }
   if (['release', 'release-prepare', 'release-intent', 'release-bind', 'release-finalize', 'retire', 'reconcile', 'm01-live', 'operation-reconcile'].includes(mode)) {
@@ -3333,8 +3610,9 @@ async function main(): Promise<number> {
   const recoveryExecutorImage = process.env.RELEASE_RECOVERY_EXECUTOR_IMAGE ?? '';
   const recoveryValidatedCiRunId = process.env.RELEASE_RECOVERY_VALIDATED_CI_RUN_ID ?? '';
   const recoveryParentTaskEvidenceText = process.env.RELEASE_RECOVERY_PARENT_TASK_EVIDENCE_JSON ?? '';
+  const bootstrapClosedRecoveryText = process.env.RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON ?? '';
   const recoveryMode = mode === 'release-intent-recover' || mode === 'release-orphan-intent-recover'
-    || mode === 'release-pre-intent-recover';
+    || mode === 'release-pre-intent-recover' || mode === 'release-bootstrap-closed-recover';
   if (recoveryMode && !/^[0-9a-f]{40}$/.test(recoveryBuildReleaseId)) {
     throw new Error('exact recovery requires a full RELEASE_RECOVERY_BUILD_RELEASE_ID target');
   }
@@ -3346,6 +3624,9 @@ async function main(): Promise<number> {
   }
   if (!recoveryMode && recoveryParentTaskEvidenceText) {
     throw new Error('stopped parent-task evidence is accepted only by exact recovery modes');
+  }
+  if (mode !== 'release-bootstrap-closed-recover' && bootstrapClosedRecoveryText) {
+    throw new Error('bootstrap-closed evidence is accepted only by its exact recovery mode');
   }
   const stoppedParentTaskEvidence = recoveryParentTaskEvidenceText
     ? parseStoppedParentTaskEvidence(environment, recoveryParentTaskEvidenceText)
@@ -3449,6 +3730,26 @@ async function main(): Promise<number> {
         throw new RemoteReleaseOperationBlocked('pre-intent cleanup completed but another release intent still needs exact recovery');
       }
       console.log(`pre-intent api-web release recovered: parent=${parentId} replay=${result.replay} serving=${result.state.sourceSha ?? 'absent'}`);
+      return 0;
+    }
+
+    if (mode === 'release-bootstrap-closed-recover') {
+      if (!parentId) throw new Error('release-bootstrap-closed-recover requires RELEASE_PARENT_OPERATION_ID');
+      const evidence = parseBootstrapClosedRecoveryEvidence(bootstrapClosedRecoveryText);
+      const result = await recoverBootstrapClosedPreIntentRelease(client, {
+        operationId: parentId,
+        targetEnvironment: environment,
+        buildReleaseId,
+        recoveryExecutorBuildReleaseId: executorBuildReleaseId,
+        recoveryExecutorImage,
+        recoveryValidatedCiRunId,
+        recovererTaskArn: taskArn,
+        controller: provenance,
+        region: process.env.AWS_REGION ?? '',
+        evidence,
+        stoppedParentTaskEvidence,
+      });
+      console.log(`bootstrap-closed pre-intent release recovered: parent=${parentId} replay=${result.replay} services=${result.services.map((item) => item.service).join(',')}`);
       return 0;
     }
 

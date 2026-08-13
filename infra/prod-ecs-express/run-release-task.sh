@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile]" >&2
+  echo "Usage: $0 <watchdog-bms-api@sha256:digest> <full-commit-sha> [release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile]" >&2
   exit 2
 fi
 
@@ -10,7 +10,7 @@ image="$1"
 commit="$2"
 mode="${3:-release}"
 case "$mode" in
-  release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile) ;;
+  release|release-prepare|maintenance-preflight|incident-preflight|release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize|retire|reconcile|m01-live|a5-bootstrap|a5-ro|a5-capacity-preflight|a5-capacity|a5-capacity-cleanup|f2-plan|f2-apply|f2-verify|operation-reconcile) ;;
   *) echo "ERROR: unsupported release-task mode: $mode" >&2; exit 2 ;;
 esac
 region="${AWS_REGION:-ap-southeast-1}"
@@ -86,6 +86,7 @@ recovery_validated_ci_run_id="${RELEASE_RECOVERY_VALIDATED_CI_RUN_ID:-}"
 recovery_executor_image=""
 recovery_network_evidence="${RELEASE_RECOVERY_NETWORK_EVIDENCE_JSON:-}"
 recovery_parent_task_evidence="${RELEASE_RECOVERY_PARENT_TASK_EVIDENCE_JSON:-}"
+bootstrap_closed_recovery="${RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON:-}"
 orphan_intent_json="${RELEASE_ORPHAN_MUTATION_INTENT_JSON:-}"
 orphan_deployment_manifest="${RELEASE_ORPHAN_DEPLOYMENT_MANIFEST_JSON:-}"
 orphan_task_evidence="${RELEASE_ORPHAN_TASK_EVIDENCE_JSON:-}"
@@ -218,7 +219,7 @@ if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 case "$mode" in
-  release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover)
+  release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover)
     if [[ ! "$recovery_build_release_id" =~ ^[0-9a-f]{40}$ ]]; then
       echo "ERROR: ${mode} requires RELEASE_RECOVERY_BUILD_RELEASE_ID for the held target release" >&2
       exit 2
@@ -233,9 +234,28 @@ case "$mode" in
       exit 2
     fi
     recovery_executor_image="$image"
+    if [ "$mode" = release-bootstrap-closed-recover ]; then
+      [ "$deploy_env" = production ] || {
+        echo "ERROR: release-bootstrap-closed-recover is Production-only" >&2
+        exit 2
+      }
+      if [ "${#bootstrap_closed_recovery}" -gt 32768 ] || ! jq -e '
+        type == "object" and .schemaVersion == 1
+        and (.artifactDigest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+        and (.operationId | type == "string" and test("^[0-9a-f-]{36}$"))
+        and (.sourceCommit | type == "string" and test("^[0-9a-f]{40}$"))
+        and (.services | type == "array" and length == 3)
+      ' <<< "$bootstrap_closed_recovery" >/dev/null 2>&1; then
+        echo "ERROR: release-bootstrap-closed-recover requires bounded controller-derived evidence" >&2
+        exit 2
+      fi
+    elif [ -n "$bootstrap_closed_recovery" ]; then
+      echo "ERROR: bootstrap-closed evidence is accepted only by its exact recovery mode" >&2
+      exit 2
+    fi
     ;;
   *)
-    if [ -n "$recovery_build_release_id$recovery_validated_ci_run_id$recovery_parent_task_evidence" ]; then
+    if [ -n "$recovery_build_release_id$recovery_validated_ci_run_id$recovery_parent_task_evidence$bootstrap_closed_recovery" ]; then
       echo "ERROR: recovery target/CI evidence is accepted only by exact recovery modes" >&2
       exit 2
     fi
@@ -292,7 +312,7 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     f2-plan) expected_workflow="f2-normalize.yml" ;;
     f2-apply|f2-verify) expected_workflow="f2-normalize-apply.yml" ;;
     a5-capacity-preflight|a5-capacity|a5-capacity-cleanup) expected_workflow="a5-capacity-uat.yml" ;;
-    release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover) expected_workflow="recover-release-intent.yml" ;;
+    release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover) expected_workflow="recover-release-intent.yml" ;;
     *)
       expected_workflow="deploy-production.yml"
       [ "$deploy_env" = "production" ] && alternate_expected_workflow="deploy-production-v2.yml"
@@ -390,7 +410,7 @@ if [ -n "$operation_id" ] && [[ ! "$operation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0
   exit 2
 fi
 case "$mode" in
-  release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-finalize)
+  release-intent|release-bind|release-intent-recover|release-orphan-intent-recover|release-pre-intent-recover|release-bootstrap-closed-recover|release-finalize)
     [[ "$parent_operation_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
       echo "ERROR: ${mode} requires RELEASE_PARENT_OPERATION_ID from this workflow's pre-deploy release task" >&2
       exit 2
@@ -471,6 +491,8 @@ elif [ "$mode" = "release-orphan-intent-recover" ]; then
 elif [ "$mode" = "release-pre-intent-recover" ]; then
   # The exact api-web service and SSM parameter are derived from DEPLOY_ENV inside the fenced task;
   # this mode deliberately accepts no caller-supplied remote identity or deployment manifest.
+  :
+elif [ "$mode" = "release-bootstrap-closed-recover" ]; then
   :
 elif [ -n "$parent_operation_id" ]; then
   if [ "${#deployment_manifest}" -gt 16384 ] || ! jq -e '
@@ -745,7 +767,7 @@ esac
 
 if [ "$mode" = "release-intent" ] || [ "$mode" = "release-bind" ] \
   || [ "$mode" = "release-intent-recover" ] || [ "$mode" = "release-orphan-intent-recover" ] \
-  || [ "$mode" = "release-pre-intent-recover" ] \
+  || [ "$mode" = "release-pre-intent-recover" ] || [ "$mode" = "release-bootstrap-closed-recover" ] \
   || [ "$mode" = "release-finalize" ]; then
   container_name="$mode"
   log_prefix="$mode"
@@ -909,6 +931,7 @@ jq -n \
   --arg releaseRecoveryValidatedCiRunId "$recovery_validated_ci_run_id" \
   --arg releaseRecoveryNetworkEvidence "$recovery_network_evidence" \
   --arg releaseRecoveryParentTaskEvidence "$recovery_parent_task_evidence" \
+  --arg releaseBootstrapClosedRecovery "$bootstrap_closed_recovery" \
   --arg releaseOrphanMutationIntent "$orphan_intent_json" \
   --arg releaseOrphanDeploymentManifest "$orphan_deployment_manifest" \
   --arg releaseOrphanTaskEvidence "$orphan_task_evidence" \
@@ -996,6 +1019,7 @@ jq -n \
         {name:"RELEASE_RECOVERY_VALIDATED_CI_RUN_ID", value:$releaseRecoveryValidatedCiRunId},
         {name:"RELEASE_RECOVERY_NETWORK_EVIDENCE_JSON", value:$releaseRecoveryNetworkEvidence},
         {name:"RELEASE_RECOVERY_PARENT_TASK_EVIDENCE_JSON", value:$releaseRecoveryParentTaskEvidence},
+        {name:"RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON", value:$releaseBootstrapClosedRecovery},
         {name:"RELEASE_ORPHAN_MUTATION_INTENT_JSON", value:$releaseOrphanMutationIntent},
         {name:"RELEASE_ORPHAN_DEPLOYMENT_MANIFEST_JSON", value:$releaseOrphanDeploymentManifest},
         {name:"RELEASE_ORPHAN_TASK_EVIDENCE_JSON", value:$releaseOrphanTaskEvidence},

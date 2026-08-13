@@ -674,3 +674,49 @@ Next:
 3. Run exactly one `maintenance_closed` Readiness, freeze `main`, then one Production V2 promotion.
 4. Require signed `PROMOTED_CLOSED`, exact migration/finalization evidence, maintenance proof and the
    secret-safe admin/API acceptance before calling the repeatable deployment stable.
+
+- Fresh UAT `31723608941` issued a signed Passport for source `cacdc4a9...`; Readiness
+  `31725392101` passed the complete runtime/catalog/clone path and issued zero-residual signed
+  `maintenance_closed` READY. Production V2 `31727367323` then passed every read-only and mutation
+  boundary, deployed that exact candidate closed to all three services and completed release-prepare
+  task `706db707...` with exit 0. The durable parent operation
+  `91794761-7661-468c-8e9c-91f5a69b1f06` was held before rollout. Rollout and its closed recovery
+  both failed before creating any service intent because the workflow supplied
+  `RELEASE_DEPLOY_TARGET=all` to `release-intent`/`release-bind`, even though that variable belongs
+  only to the pre-deploy release task. Independent reads prove all three exact candidate services
+  remain ACTIVE, singleton, settled, globally `maintenance_only`, with the three bootstrap
+  deployments SUCCESSFUL and no durable mutation intent.
+- The scoped correction removes that inherited variable from normal rollout and closed recovery.
+  The existing recovery workflow gains one fail-closed `BOOTSTRAP_CLOSED` mode for this exact
+  zero-intent V2 controller failure: it exact-validates the failed run and its 11-member controller
+  artifact, derives the parent task from `release-operation.json`, proves all three service/image/
+  revision/deployment/maintenance identities plus deep DB readiness and custom/raw maintenance,
+  then runs an immutable recovery executor. The executor double-reads the platform, row-locks the
+  exact Production parent, requires the original V2 controller, target `all`, empty manifest and
+  zero intents, and records only `RECONCILED_FAILED_CONFIRMED`; it never labels the failed release
+  successful or mutates an ECS service. Replay is exact and idempotent.
+- Look-forward verification caught and fixed two controller assumptions before PR: the Jobs API
+  exposes the unnamed artifact step as its pinned `Run actions/upload-artifact@...` action name,
+  and the real archive contains `release-prepare.log` for 11 exact members, not ten. The exact YAML
+  step was extracted and executed locally against failed run `31727367323`, artifact digest
+  `ecfff6b0...`, current AWS service/deployment state, the production worker-token readiness probe
+  and both maintenance ingress paths; it passed and emitted the exact parent task from the artifact
+  without relying on ECS stopped-task retention. The durable recovery suite passed 34/34 against a
+  temporary real PostgreSQL 16 instance, including rejection when even one unexpected intent
+  exists, successful terminalization, exact replay and adversarial service/image/platform drift.
+  Both workspace and the CI-specific two-file TypeScript compiles, focused workflow/release-task
+  contracts, YAML/shell syntax and diff checks pass. The final synchronized 44-file maintenance
+  pin contract is current and the full `infra/docker/production-image-security.spec.sh` aggregate
+  reached `production image security scanner: pass`. No recovery task or further Production
+  mutation has been dispatched yet.
+
+Next:
+
+1. Freeze the correction, sync the maintenance release pins and require the full local Production
+   security/image aggregate plus exact-head CI/review before merge.
+2. Run one exact production `BOOTSTRAP_CLOSED` recovery against failed run `31727367323` and prove
+   the old parent is `RECONCILED_FAILED_CONFIRMED` with zero intents while all services remain closed.
+3. Reissue one `maintenance_closed` READY for controller `main`, freeze `main`, then retry Production
+   V2 once; require signed `PROMOTED_CLOSED`, exact migration/finalization evidence, global
+   maintenance proof and the secret-safe admin/API acceptance.
+4. Keep customer launch closed until independent legal evidence is complete.
