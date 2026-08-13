@@ -257,8 +257,10 @@ perform the required operation
 - [x] no per-release local tool/root credential prerequisite remains; one-time administrator
   provisioning is explicitly separated and least-privilege reviewed
 - [x] all known missing resources are checked before deploy mutation
-- [ ] interface endpoint policies cover and exact-read release preflight plus Production apply
+- [x] interface endpoint policies cover and exact-read release preflight plus Production apply
   execution before another Production attempt
+- [ ] UAT/Production Cloudflare host proxies forward GET/HEAD without a request body and live
+  custom-domain maintenance probes pass
 - [x] first current split release resolves target all
 - [x] quick and migration readiness both bind exact baseline
 - [ ] A5 first green and zero-residual cleanup recorded

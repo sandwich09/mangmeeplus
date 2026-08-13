@@ -382,6 +382,8 @@ test, clone หรือ discovery chain ใน deploy workflow
 - `admin_onboard` เป็น internal operational role จึงไม่ต้องผ่าน customer Terms/Privacy
   clickwrap ระหว่าง maintenance แต่ไม่ได้ถูกยกเว้น PDPA, access logging หรือ internal privacy
   controls
+- Cloudflare host-proxy ของ UAT และ Production ต้องไม่แนบ body เมื่อ forward `GET`/`HEAD` แต่
+  ต้องรักษา body ของ mutation methods; custom-domain maintenance probes ต้องผ่านก่อนรับรอง closed
 
 OPEN → CLOSED ต้องปิด ingress/background processing และรอ signed URL drain 900 วินาที
 หนึ่งครั้งก่อนรับรอง closed state ส่วน CLOSED → CLOSED ต้องพิสูจน์ว่าปิดต่อเนื่องและ reuse
