@@ -558,3 +558,30 @@ Next:
   passed, maintenance pins remained current, and the full Production security/image/workflow
   aggregate reached `production image security scanner: pass`. No Readiness retry against the old
   image is allowed; the correction requires one new UAT Passport because migration-tool bytes change.
+- Compatibility PR `#57` and develop-to-main PR `#58` passed exact-head CI/review and produced
+  controller `670a81c2...`. Fresh UAT `31692876261` issued a signed Passport for source
+  `fd8a503a...`. Automatic Readiness `31694622810` restored PostgreSQL 18.3, applied the exact ten
+  pending migrations, passed schema and compatibility checks, stopped its task with exit 0, proved
+  DB/managed-secret/ENI absence plus an INACTIVE task definition, and issued signed
+  `maintenance_closed` READY with residual count zero.
+- Production V2 run `31696302063` exact-verified that Passport/READY and all service/IAM/migration
+  baselines, then failed before ingress closure or database mutation while starting the read-only
+  maintenance preflight. ECS stopped task `7544e194...` during resource initialization because the
+  Logs interface endpoint allowed `ecsTaskExecutionRole` only on `/ecs/watchdog-bms-prod-*`, not
+  `/ecs/watchdog-bms-release-task`. Forward audit found the next deterministic boundary in the same
+  contract: the apply execution role was absent from ECR and Secrets Manager endpoint policies and
+  its exact apply log group was absent from Logs. The scoped correction covers all three endpoint
+  policies together. Its negative fixture also exposed that the endpoint validator's jq argument
+  `$policy` shadowed its zero-argument `policy` decoder, making every policy comparison true; the
+  renamed argument now rejects the actual missing release ARN. The correction adds executable drift
+  rejection and a temporary non-root repair mode
+  restricted to the four existing interface endpoint ARNs. UAT image bytes are unchanged.
+
+Next:
+
+1. Merge the endpoint-contract PR after exact-head CI and review; do not rebuild UAT.
+2. Apply/read back the four endpoint policies with the scoped non-root ceremony and prove temporary
+   bridge, policy and role `NoSuchEntity`.
+3. Run one manual Readiness against UAT `31692876261`, freeze `main`, then dispatch one
+   `maintenance_closed` Production V2 promotion and verify signed result plus admin/API controls.
+4. Keep customer launch closed until independent legal evidence is complete.

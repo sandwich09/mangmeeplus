@@ -6,6 +6,7 @@ bootstrap="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 ceremony="$root/infra/security/run-production-promotion-prerequisite-ceremony.sh"
 principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
+endpoint_principal="$root/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
 trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
 user_bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 deploy="$root/infra/prod-ecs-express/github-deploy-role-policy.template.json"
@@ -14,7 +15,7 @@ security="$root/infra/security/production-security-readonly-policy.template.json
 reader_bootstrap="$root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 
 bash -n "$bootstrap" "$ceremony"
-jq -e . "$principal" "$clone_principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
+jq -e . "$principal" "$clone_principal" "$endpoint_principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
   >/dev/null
 
 jq -e '
@@ -50,6 +51,17 @@ jq -e '.Statement==[{Sid:"RepairExactCloneControllerPolicy",Effect:"Allow",
     "iam:ListRolePolicies","iam:PutRolePolicy"],
   Resource:"arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone"}]' \
   "$clone_principal" >/dev/null
+jq -e '.Statement==[
+  {Sid:"ReadExactProductionInterfaceEndpoints",Effect:"Allow",
+    Action:"ec2:DescribeVpcEndpoints",Resource:"*",
+    Condition:{StringEquals:{"ec2:Region":"ap-southeast-1"}}},
+  {Sid:"RepairExactProductionInterfaceEndpointPolicies",Effect:"Allow",
+    Action:"ec2:ModifyVpcEndpoint",Resource:[
+      "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-044085e7ad8749ca4",
+      "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-07f6ed4632f468c4b",
+      "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-098bd832f02b47922",
+      "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-0b9af85905e446695"]}
+]' "$endpoint_principal" >/dev/null
 
 jq -e '.Statement==[{Sid:"ExactNonRootBootstrapOperator",Effect:"Allow",
   Principal:{AWS:"arn:aws:iam::311414082667:user/watchdog-bedrock-dev"},Action:"sts:AssumeRole"}]' \
@@ -151,6 +163,7 @@ grep -Fq 'PROMOTION_IAM_RETRY_SECONDS:-5' "$bootstrap"
 grep -Fq 'retry_mutation()' "$bootstrap"
 grep -Fq 'retry_admin_mutation()' "$ceremony"
 grep -Fq -- '--apply-clone-controller) principal="$clone_principal"' "$ceremony"
+grep -Fq -- '--apply-private-endpoints) principal="$endpoint_principal"' "$ceremony"
 grep -Fq 'retry_exact assert_clone_controller_shape' "$bootstrap"
 grep -Fq 'retry_mutation aws iam put-role-policy --role-name watchdog-bms-production-a5-clone' "$bootstrap"
 grep -Fq 'retry_exact assert_clone_controller_exact' "$bootstrap"
@@ -185,11 +198,12 @@ cp "$ceremony" "$fixture/repo/infra/security/run-production-promotion-prerequisi
 cp "$trust" "$fixture/repo/infra/security/production-promotion-bootstrap-trust.template.json"
 cp "$principal" "$fixture/repo/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 cp "$clone_principal" "$fixture/repo/infra/security/production-promotion-clone-controller-principal-policy.template.json"
+cp "$endpoint_principal" "$fixture/repo/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
 cp "$user_bridge" "$fixture/repo/infra/security/production-promotion-bootstrap-user-policy.template.json"
 cat > "$fixture/repo/infra/security/bootstrap-production-promotion-prerequisites.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-}" in --apply|--apply-clone-controller) ;; *) exit 2 ;; esac
+case "${1:-}" in --apply|--apply-clone-controller|--apply-private-endpoints) ;; *) exit 2 ;; esac
 test "${AWS_ACCOUNT_ID:-}" = 311414082667
 test -z "${AWS_PROFILE:-}"
 test -z "${AWS_DEFAULT_PROFILE:-}"
@@ -348,6 +362,7 @@ reset_fake() {
 run_ceremony() {
   local mode="${CEREMONY_MODE:---apply}" selected_principal="$principal"
   [ "$mode" != --apply-clone-controller ] || selected_principal="$clone_principal"
+  [ "$mode" != --apply-private-endpoints ] || selected_principal="$endpoint_principal"
   PATH="$fixture/bin:$PATH" FAKE_AWS_STATE="$fixture/state" \
     FAKE_TRUST="$trust" FAKE_PRINCIPAL="$selected_principal" FAKE_BRIDGE="$user_bridge" \
     AWS_ACCOUNT_ID=311414082667 PROMOTION_ADMIN_PROFILE=platform-admin \
@@ -371,6 +386,11 @@ assert_mutation_order
 reset_fake
 CEREMONY_MODE=--apply-clone-controller run_ceremony
 test "$(<"$fixture/state/helper-mode")" = --apply-clone-controller
+assert_mutation_order
+
+reset_fake
+CEREMONY_MODE=--apply-private-endpoints run_ceremony
+test "$(<"$fixture/state/helper-mode")" = --apply-private-endpoints
 assert_mutation_order
 
 reset_fake
@@ -458,6 +478,14 @@ cat > "$fixture/helper-bin/aws" <<'SH'
 set -euo pipefail
 service="$1" operation="$2"; shift 2
 printf '%s %s\n' "$service" "$operation" >> "$HELPER_STATE/calls"
+argument() {
+  local wanted="$1"; shift
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "$wanted" ]; then printf '%s' "$2"; return 0; fi
+    shift
+  done
+  return 1
+}
 case "$service $operation" in
   'sts get-caller-identity')
     printf '%s\n' 'arn:aws:sts::311414082667:assumed-role/watchdog-bms-production-promotion-bootstrap/production-promotion-prerequisites' ;;
@@ -486,6 +514,37 @@ case "$service $operation" in
       exit 254
     fi
     : > "$HELPER_STATE/applied" ;;
+  'ec2 describe-vpc-endpoints')
+    id="$(argument --vpc-endpoint-ids "$@")"
+    case "$id" in
+      vpce-044085e7ad8749ca4) suffix=ecr.api; policy="$HELPER_ECR_POLICY" ;;
+      vpce-0b9af85905e446695) suffix=ecr.dkr; policy="$HELPER_ECR_POLICY" ;;
+      vpce-098bd832f02b47922) suffix=logs; policy="$HELPER_LOGS_POLICY" ;;
+      vpce-07f6ed4632f468c4b) suffix=secretsmanager; policy="$HELPER_SECRETS_POLICY" ;;
+      *) exit 91 ;;
+    esac
+    [ -f "$HELPER_STATE/$id.applied" ] || policy="$HELPER_STALE_POLICY"
+    jq -cn --arg id "$id" --arg service "com.amazonaws.ap-southeast-1.$suffix" \
+      --slurpfile policy "$policy" '{VpcEndpoints:[{VpcEndpointId:$id,
+        VpcId:"vpc-0da727984eee92f96",ServiceName:$service,VpcEndpointType:"Interface",
+        State:"available",PrivateDnsEnabled:true,PolicyDocument:$policy[0]}]}' ;;
+  'ec2 modify-vpc-endpoint')
+    id="$(argument --vpc-endpoint-id "$@")"
+    policy_path="$(argument --policy-document "$@")"; policy_path="${policy_path#file://}"
+    case "$id" in
+      vpce-044085e7ad8749ca4|vpce-0b9af85905e446695) expected="$HELPER_ECR_POLICY" ;;
+      vpce-098bd832f02b47922) expected="$HELPER_LOGS_POLICY" ;;
+      vpce-07f6ed4632f468c4b) expected="$HELPER_SECRETS_POLICY" ;;
+      *) exit 92 ;;
+    esac
+    cmp -s "$policy_path" "$expected"
+    count=0; [ ! -f "$HELPER_STATE/$id.modify-count" ] || count="$(<"$HELPER_STATE/$id.modify-count")"
+    count=$((count+1)); printf '%s\n' "$count" > "$HELPER_STATE/$id.modify-count"
+    if [ "${HELPER_ENDPOINT_FAILURE_ID:-}" = "$id" ] && [ "$count" -eq 1 ]; then
+      echo 'An error occurred (RequestLimitExceeded) while the endpoint policy propagates' >&2
+      exit 254
+    fi
+    : > "$HELPER_STATE/$id.applied" ;;
   *) echo "unexpected scoped-helper AWS call: $service $operation" >&2; exit 90 ;;
 esac
 SH
@@ -501,6 +560,27 @@ scoped_output="$(PATH="$fixture/helper-bin:$PATH" HELPER_STATE="$fixture/helper-
 grep -Fq 'clone controller policy applied and exact-read back' <<< "$scoped_output"
 test "$(<"$fixture/helper-state/put-count")" -eq 2
 test "$(awk '$1!="sts" && $1!="iam" {count++} END {print count+0}' \
+  "$fixture/helper-state/calls")" -eq 0
+
+rm -rf -- "$fixture/helper-state"
+mkdir -p "$fixture/helper-state"
+jq -cn '{Version:"2012-10-17",Statement:[]}' > "$fixture/helper-state/stale-policy.json"
+: > "$fixture/helper-state/calls"
+endpoint_output="$(PATH="$fixture/helper-bin:$PATH" HELPER_STATE="$fixture/helper-state" \
+  HELPER_STALE_POLICY="$fixture/helper-state/stale-policy.json" \
+  HELPER_ECR_POLICY="$root/infra/security/production-a5-ecr-endpoint-policy.template.json" \
+  HELPER_LOGS_POLICY="$root/infra/security/production-a5-logs-endpoint-policy.template.json" \
+  HELPER_SECRETS_POLICY="$root/infra/security/production-a5-secretsmanager-endpoint-policy.template.json" \
+  HELPER_ENDPOINT_FAILURE_ID=vpce-098bd832f02b47922 \
+  AWS_ACCOUNT_ID=311414082667 PROMOTION_IAM_MAX_ATTEMPTS=3 PROMOTION_IAM_RETRY_SECONDS=0 \
+  bash "$bootstrap" --apply-private-endpoints)"
+grep -Fq 'interface endpoint policies applied and exact-read back' <<< "$endpoint_output"
+for endpoint in vpce-044085e7ad8749ca4 vpce-0b9af85905e446695 \
+  vpce-098bd832f02b47922 vpce-07f6ed4632f468c4b; do
+  test -f "$fixture/helper-state/$endpoint.applied"
+done
+test "$(<"$fixture/helper-state/vpce-098bd832f02b47922.modify-count")" -eq 2
+test "$(awk '$1!="sts" && $1!="ec2" {count++} END {print count+0}' \
   "$fixture/helper-state/calls")" -eq 0
 
 echo 'production promotion bootstrap contract: PASS'
