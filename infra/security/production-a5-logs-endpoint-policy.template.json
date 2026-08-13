@@ -22,6 +22,18 @@
       }
     },
     {
+      "Sid": "WriteExactApplyLogGroupOnly",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-apply:log-stream:*",
+      "Condition": {
+        "ArnEquals": {
+          "aws:PrincipalArn": "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution"
+        }
+      }
+    },
+    {
       "Sid": "WriteUatLogGroupsOnly",
       "Effect": "Allow",
       "Principal": "*",
@@ -38,7 +50,10 @@
       "Effect": "Allow",
       "Principal": "*",
       "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
-      "Resource": "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-prod-*:log-stream:*",
+      "Resource": [
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-prod-*:log-stream:*",
+        "arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-release-task:log-stream:*"
+      ],
       "Condition": {
         "ArnEquals": {
           "aws:PrincipalArn": "arn:aws:iam::311414082667:role/ecsTaskExecutionRole"

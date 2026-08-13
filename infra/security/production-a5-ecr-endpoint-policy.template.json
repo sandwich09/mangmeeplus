@@ -11,6 +11,7 @@
         "ArnEquals": {
           "aws:PrincipalArn": [
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+            "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
           ]
@@ -31,6 +32,7 @@
         "ArnEquals": {
           "aws:PrincipalArn": [
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-bootstrap-execution",
+            "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution",
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone-execution",
             "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution"
           ]

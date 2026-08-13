@@ -80,6 +80,13 @@ expect_reject s3-write "$work/s3-write.json" "$work/routes.json" "$work/endpoint
 jq '.RouteTables[0].Routes[0]={DestinationCidrBlock:"0.0.0.0/0",
   GatewayId:"igw-01111111111111111",State:"active"}' "$work/routes.json" > "$work/public-route.json"
 expect_reject public-route "$work/endpoints.json" "$work/public-route.json" "$work/endpoint-sg.json"
+jq '(.VpcEndpoints[]|select(.ServiceName=="com.amazonaws.ap-southeast-1.logs")
+  |.PolicyDocument) |= (fromjson
+    |(.Statement[]|select(.Sid=="WriteProductionLogGroupsOnly")|.Resource)
+      = ["arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-prod-*:log-stream:*"]
+    |tojson)' "$work/endpoints.json" > "$work/missing-release-log.json"
+expect_reject missing-release-log "$work/missing-release-log.json" "$work/routes.json" \
+  "$work/endpoint-sg.json"
 
 if grep -En 'authorize-security-group-egress.*(--cidr|CidrIp).*0\.0\.0\.0/0' "$bootstrap"; then
   echo 'ERROR: shared bootstrap authorizes public task egress' >&2
@@ -89,5 +96,30 @@ fi
 grep -Fq 'failed|rejected|deleted|deleting|expired)' "$bootstrap"
 jq -e 'all(.Statement[];.Action!="s3:PutObject" and (.Action|tostring|contains("PutObject")|not))' \
   "$root/infra/security/production-a5-s3-endpoint-policy.template.json" >/dev/null
+jq -e '
+  any(.Statement[];.Sid=="AuthenticateExactA5ExecutionRoles"
+    and (.Condition.ArnEquals["aws:PrincipalArn"]
+      |index("arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution"))!=null)
+  and any(.Statement[];.Sid=="PullExactMigrationToolOnly"
+    and .Resource=="arn:aws:ecr:ap-southeast-1:311414082667:repository/watchdog-bms-migration-tool"
+    and (.Condition.ArnEquals["aws:PrincipalArn"]
+      |index("arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution"))!=null)
+' "$root/infra/security/production-a5-ecr-endpoint-policy.template.json" >/dev/null
+jq -e '
+  any(.Statement[];.Sid=="ReadExactApplyWriterSecret"
+    and .Resource=="arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/production/database-url-*"
+    and .Condition.ArnEquals["aws:PrincipalArn"]
+      =="arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution")
+' "$root/infra/security/production-a5-secretsmanager-endpoint-policy.template.json" >/dev/null
+jq -e '
+  any(.Statement[];.Sid=="WriteExactApplyLogGroupOnly"
+    and .Resource=="arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-production-a5-apply:log-stream:*"
+    and .Condition.ArnEquals["aws:PrincipalArn"]
+      =="arn:aws:iam::311414082667:role/watchdog-bms-production-a5-apply-execution")
+  and any(.Statement[];.Sid=="WriteProductionLogGroupsOnly"
+    and (.Resource|index("arn:aws:logs:ap-southeast-1:311414082667:log-group:/ecs/watchdog-bms-release-task:log-stream:*"))!=null
+    and .Condition.ArnEquals["aws:PrincipalArn"]
+      =="arn:aws:iam::311414082667:role/ecsTaskExecutionRole")
+' "$root/infra/security/production-a5-logs-endpoint-policy.template.json" >/dev/null
 
 echo 'production A5 private endpoint network spec: PASS'

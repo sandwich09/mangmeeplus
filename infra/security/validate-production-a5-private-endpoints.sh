@@ -52,11 +52,11 @@ jq -e --arg vpc "$vpc_id" --arg endpointSg "$endpoint_sg_id" \
   --slurpfile ecr "$ecr_policy" --slurpfile logs "$logs_policy" \
   --slurpfile secrets "$secrets_policy" --slurpfile s3 "$s3_policy" '
   def policy: (.PolicyDocument | if type=="string" then fromjson else . end);
-  def exact_interface($service; $policy):
+  def exact_interface($service; $expectedPolicy):
     .VpcId==$vpc and .ServiceName==$service and .VpcEndpointType=="Interface"
     and .State=="available" and .PrivateDnsEnabled==true
     and ([.Groups[].GroupId]|sort)==[$endpointSg]
-    and (.SubnetIds|sort)==$subnets and policy==$policy;
+    and (.SubnetIds|sort)==$subnets and policy==$expectedPolicy;
   (.VpcEndpoints|length)==5
   and ([.VpcEndpoints[].ServiceName]|sort)==[
     "com.amazonaws.ap-southeast-1.ecr.api","com.amazonaws.ap-southeast-1.ecr.dkr",
