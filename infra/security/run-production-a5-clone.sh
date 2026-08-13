@@ -209,7 +209,8 @@ production_a5_cleanup_clone_database() {
         if ! jq -e --arg arn "$managed_secret_arn" \
             --arg db "arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:db:${temporary_id}" '
             .ARN==$arn and .OwningService=="rds"
-            and any(.Tags[]?; .Key=="aws:rds:primaryDBInstanceArn" and .Value==$db)
+            and (([.Tags[]?|select(.Key=="aws:rds:primaryDBInstanceArn")|.Value]) as $owners
+              | (($owners|length)==0 or $owners==[$db]))
           ' <<< "$output" >/dev/null; then
           echo 'ERROR: cleanup observed managed-secret metadata owned by another database' >&2
           return 1

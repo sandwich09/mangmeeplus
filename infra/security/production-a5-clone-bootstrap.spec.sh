@@ -49,6 +49,10 @@ jq -e '
       | contains("secretsmanager:GetSecretValue") | not)
     and ([.Statement[] | select(.Sid == "AllowCloneManagedSecretMetadata")][0].Action
       == "secretsmanager:DescribeSecret")
+    and ([.Statement[] | select(.Sid == "AllowCloneManagedSecretMetadata")][0]
+      == {Sid:"AllowCloneManagedSecretMetadata",Effect:"Allow",
+        Action:"secretsmanager:DescribeSecret",
+        Resource:"arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"})
     and $modify.Action == "rds:ModifyDBInstance"
     and $modify.Resource
       == "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"
@@ -84,6 +88,27 @@ validate_rds_grant_contract() {
   ' "$1" >/dev/null
 }
 validate_rds_grant_contract "$controller_policy"
+
+validate_managed_secret_cleanup_contract() {
+  jq -e '
+    [.Statement[] | select(.Sid=="AllowCloneManagedSecretMetadata")]
+      == [{Sid:"AllowCloneManagedSecretMetadata",Effect:"Allow",
+        Action:"secretsmanager:DescribeSecret",
+        Resource:"arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"}]
+    and ([.Statement[] | select(.Effect=="Allow") | .Action] | tostring
+      | contains("secretsmanager:GetSecretValue") | not)
+  ' "$1" >/dev/null
+}
+validate_managed_secret_cleanup_contract "$controller_policy"
+
+jq '(.Statement[]|select(.Sid=="AllowCloneManagedSecretMetadata")).Condition={
+  StringLike:{"secretsmanager:ResourceTag/aws:rds:primaryDBInstanceArn":
+    "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"}}' \
+  "$controller_policy" > "$fixture/policy-stale-secret-tag-condition.json"
+if validate_managed_secret_cleanup_contract "$fixture/policy-stale-secret-tag-condition.json"; then
+  echo 'ERROR: managed-secret cleanup policy still depends on the tag RDS removes during delete' >&2
+  exit 1
+fi
 
 for mutation in grant-key-wildcard grant-missing-service grant-wrong-service \
     grant-missing-aws-resource grant-direct-user; do

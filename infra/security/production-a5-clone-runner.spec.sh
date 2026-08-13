@@ -304,6 +304,9 @@ case "$1 $2" in
       foreign-secret)
         [ "$count" -eq 1 ] && clone_response available "$FAKE_SECRET_ARN" \
           || not_found DBInstanceNotFound ;;
+      tag-removed)
+        [ "$count" -eq 1 ] && clone_response available "$FAKE_SECRET_ARN" \
+          || not_found DBInstanceNotFound ;;
       armed-without-secret) clone_response creating ;;
       *) exit 99 ;;
     esac
@@ -328,6 +331,10 @@ case "$1 $2" in
           {ARN:$arn,OwningService:"rds",
            Tags:[{Key:"aws:rds:primaryDBInstanceArn",Value:
              "arn:aws:rds:ap-southeast-1:311414082667:db:foreign"}]}' ;;
+      tag-removed)
+        [ "$count" -eq 1 ] && jq -cn --arg arn "$FAKE_SECRET_ARN" \
+          '{ARN:$arn,OwningService:"rds",Tags:[]}' \
+          || not_found ResourceNotFoundException ;;
       *) exit 99 ;;
     esac
     ;;
@@ -431,6 +438,24 @@ test "$cleanup_instance_absent" = true
 test "$cleanup_secret_deleted" = true
 test -f "$FAKE_AWS_STATE/delete-called"
 test "$(<"$FAKE_AWS_STATE/secret-describe")" -eq 6
+
+# RDS removes its primaryDBInstanceArn tag as the owned DB is deleted. The controller has already
+# captured this exact secret ARN from the exact tagged DB, so tag absence after DBInstanceNotFound
+# must not prevent three stable ResourceNotFound observations.
+reset_cleanup_state
+export FAKE_CLEANUP_MODE=tag-removed
+restore_requested=true
+db_observed=true
+managed_password_requested=true
+if ! production_a5_cleanup_clone_database; then
+  echo 'ERROR: cleanup did not converge after RDS removed its owner tag' >&2
+  exit 1
+fi
+test "$managed_secret_arn" = "$FAKE_SECRET_ARN"
+test "$clone_database_residual" -eq 0
+test "$clone_secret_residual" -eq 0
+test "$cleanup_secret_deleted" = true
+test "$(<"$FAKE_AWS_STATE/secret-describe")" -eq 4
 
 # A possible accepted ModifyDBInstance response keeps the exact DB visible until its secret ARN is
 # observable. Exhausting that window leaves a non-zero residual and never deletes the DB.

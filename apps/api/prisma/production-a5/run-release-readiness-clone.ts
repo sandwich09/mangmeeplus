@@ -23,6 +23,51 @@ import {
   timedCandidateMigrations,
 } from './run-clone-rehearsal';
 
+export const CLONE_DATABASE_CONNECTION_TIMEOUT_MS = 5_000;
+export const CLONE_DATABASE_READY_MAX_ATTEMPTS = 31;
+export const CLONE_DATABASE_READY_RETRY_MS = 5_000;
+
+export const READINESS_CLONE_FAILURE_STAGES = [
+  'environment',
+  'repository',
+  'database_connect',
+  'engine_contract',
+  'source_catalog',
+  'migration_safety',
+  'migrate_deploy',
+  'post_ledger',
+  'migration_timing',
+  'schema_validation',
+  'compatibility',
+  'evidence',
+] as const;
+type ReadinessCloneFailureStage = typeof READINESS_CLONE_FAILURE_STAGES[number];
+
+let failureStage: ReadinessCloneFailureStage = 'environment';
+
+export async function waitForCloneDatabaseDataPlane<T>(
+  read: () => Promise<T>,
+  maxAttempts = CLONE_DATABASE_READY_MAX_ATTEMPTS,
+  wait: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  }),
+): Promise<T> {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error('production_readiness_clone_database_attempts_invalid');
+  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await read();
+    } catch {
+      if (attempt === maxAttempts) {
+        throw new Error('production_readiness_clone_database_unavailable');
+      }
+      await wait(CLONE_DATABASE_READY_RETRY_MS);
+    }
+  }
+  throw new Error('production_readiness_clone_database_unavailable');
+}
+
 function required(name: string): string {
   const value = process.env[name]?.trim() ?? '';
   if (value === '') throw new Error(`production_readiness_clone_${name.toLowerCase()}_required`);
@@ -30,6 +75,7 @@ function required(name: string): string {
 }
 
 async function main(): Promise<void> {
+  failureStage = 'environment';
   if (process.env['DATABASE_URL'] || process.env['PRODUCTION_A5_CLONE_DATABASE_URL']) {
     throw new Error('production_readiness_clone_unbound_database_url_present');
   }
@@ -49,20 +95,29 @@ async function main(): Promise<void> {
   for (const name of ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) {
     delete process.env[name];
   }
+  failureStage = 'repository';
   const files = readProductionA5RepositoryMigrationFiles();
   const repository = files.map((file) => ({ name: file.name, fileSha256: file.fileSha256 }));
   const repositoryCatalogHash = sha256(stableJson(
     repository.map(({ name, fileSha256 }) => ({ name, checksum: fileSha256 })),
   ));
-  const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+  failureStage = 'database_connect';
+  const client = new PrismaClient({ adapter: new PrismaPg({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: CLONE_DATABASE_CONNECTION_TIMEOUT_MS,
+  }) });
   try {
-    const engineRows = await client.$queryRawUnsafe<Array<{ version: string }>>(
-      "SELECT current_setting('server_version') AS version",
+    const engineRows = await waitForCloneDatabaseDataPlane(
+      () => client.$queryRawUnsafe<Array<{ version: string }>>(
+        "SELECT current_setting('server_version') AS version",
+      ),
     );
+    failureStage = 'engine_contract';
     const engineVersion = engineRows[0]?.version ?? '';
     if (!/^18(?:\.[0-9]+){1,2}$/.test(engineVersion)) {
       throw new Error('production_readiness_clone_postgresql_18_required');
     }
+    failureStage = 'source_catalog';
     const sourceAppliedMigrations = await readProductionA5AppliedMigrations(client);
     const classification = compatibleAppliedMigrationCatalog({
       repository,
@@ -75,6 +130,7 @@ async function main(): Promise<void> {
       || classification.repositoryCatalogHash !== repositoryCatalogHash) {
       throw new Error('production_readiness_clone_catalog_drift');
     }
+    failureStage = 'migration_safety';
     assertAutomaticPendingMigrationSafety({
       repository: files,
       applied: sourceAppliedMigrations,
@@ -85,6 +141,7 @@ async function main(): Promise<void> {
       await readProductionA5SchemaObjects(client, 'public'),
     ));
 
+    failureStage = 'migrate_deploy';
     const startedAtEpochMs = Date.now();
     runCaptured('/app/apps/api/node_modules/.bin/prisma', [
       'migrate', 'deploy',
@@ -96,11 +153,13 @@ async function main(): Promise<void> {
       throw new Error('production_readiness_clone_migration_window_invalid');
     }
 
+    failureStage = 'post_ledger';
     const postAppliedMigrations = await readProductionA5AppliedMigrations(client);
     const expectedPost = completedMigrationLedger(repository, sourceAppliedMigrations);
     if (stableJson(postAppliedMigrations) !== stableJson(expectedPost)) {
       throw new Error('production_readiness_clone_post_ledger_mismatch');
     }
+    failureStage = 'migration_timing';
     const timed = await timedCandidateMigrations(
       client,
       pendingMigrations.map(({ name }) => name),
@@ -113,10 +172,12 @@ async function main(): Promise<void> {
     if (migrationDurations.some((row) => row.durationMs <= 0 || row.durationMs > 300_000)) {
       throw new Error('production_readiness_clone_statement_budget_exceeded');
     }
+    failureStage = 'schema_validation';
     runCaptured('/app/apps/api/node_modules/.bin/prisma', [
       'validate',
       '--schema', 'prisma/schema.prisma',
     ], { ...process.env, DATABASE_URL: databaseUrl }, '/app/apps/api');
+    failureStage = 'compatibility';
     const compatibility = runCaptured(
       '/app/node_modules/.bin/tsx', [
         '--test', '--test-reporter=spec',
@@ -129,6 +190,7 @@ async function main(): Promise<void> {
     const postSchemaFingerprint = sha256(stableJson(
       await readProductionA5SchemaObjects(client, 'public'),
     ));
+    failureStage = 'evidence';
     const result = {
       schemaVersion: 2,
       sourceCommit,
@@ -164,7 +226,7 @@ async function main(): Promise<void> {
 
 if (require.main === module) {
   main().catch(() => {
-    console.error('Production release readiness clone failed: production_readiness_clone_failed');
+    console.error(`Production release readiness clone failed: production_readiness_clone_${failureStage}_failed`);
     process.exitCode = 1;
   });
 }
