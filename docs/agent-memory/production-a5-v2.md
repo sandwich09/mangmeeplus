@@ -456,16 +456,37 @@ Verification:
   durable correction is a scoped clone-controller mode whose temporary policy can only inspect and
   replace the exact clone role inline policy, with bounded transient retry and executable proof that
   it calls no RDS/Secrets/SSM/S3 or reader-bootstrap API.
+- Scoped ceremony PR `#53` passed all exact-head required checks and merged as controller
+  `37f9ccf8f1bf89f476c755fd4f0c3efa3bd870ce`. The scoped non-root ceremony applied and exact-read
+  the clone controller policy; independent readback proved the reader controller remained in its
+  metadata-only recovery state and the bootstrap execution role plus all three temporary authority
+  objects returned `NoSuchEntity`. Manual Readiness `31662579595` then proved the complete runtime
+  baseline and Production catalog, restored an encrypted PostgreSQL 18.3 isolated clone and reached
+  an active RDS-managed secret. Its task failed before establishing a measured DB connection, and
+  cleanup exposed a separate exact permission defect: after RDS deleted the clone it removed the
+  ownership tag used by the controller's `DescribeSecret` condition, so stable secret-absence proof
+  was denied. READY/signing/upload were skipped, the clone DB was deleted, and Production was not
+  mutated. The next correction must remove that stale metadata tag dependency, add bounded
+  data-plane convergence inside the isolated task, and emit only a finite safe failure-stage code;
+  no further Readiness run is allowed until the exact image/policy contracts pass a fresh UAT.
+  Independent post-failure readback proved the exact clone DB, RDS-managed secret, ACTIVE task
+  definitions, RUNNING tasks and observed ENI were all absent. IAM simulation of the correction
+  permits only `DescribeSecret` on `rds!db-*`; `GetSecretValue` and application-secret metadata
+  remain implicit-deny. Cleanup accepts a missing primary-DB tag only after the exact secret ARN was
+  captured from the exact run-owned DB and that DB reached stable `DBInstanceNotFound`; a conflicting
+  owner tag remains fatal. Focused clone/policy/evidence/workflow tests, API typecheck and the full
+  Production security aggregate pass. A real linux/amd64 migration-tool build also passes its
+  non-root, read-only-root, writable `/tmp`, no-network, Prisma validate and direct TSX import probes.
 
 Next:
 
-1. Merge the scoped clone-controller ceremony only after focused/adversarial/full aggregate and
-   exact-head CI. Apply PR #52's policy through that scoped non-root ceremony, byte-read back the
-   live role, then
-   prove the temporary user bridge, role policy and role all return `NoSuchEntity`.
-2. Reuse UAT `31627553314`; no application/image bytes changed. Dispatch exactly one manual
-   Production Readiness in `maintenance_closed`, require clone PASS and computed zero residual
-   resources, and reject the input-less ghost run.
+1. Merge the clone data-plane/cleanup correction only after focused/adversarial/full aggregate and
+   exact-head CI. Because the task source changes, run one fresh UAT `all` and use only its new
+   Passport; do not reuse UAT `31627553314` for the corrected image.
+2. Apply the corrected clone controller policy through the scoped non-root ceremony, byte-read back
+   the live role, prove the temporary user bridge/role policy/role all return `NoSuchEntity`, then
+   dispatch exactly one manual Production Readiness in `maintenance_closed`. Require clone PASS and
+   computed zero residual resources, and reject the input-less ghost run.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
 4. Keep customer launch closed until independent legal evidence is complete.

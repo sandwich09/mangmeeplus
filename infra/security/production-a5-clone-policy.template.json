@@ -110,12 +110,7 @@
       "Sid": "AllowCloneManagedSecretMetadata",
       "Effect": "Allow",
       "Action": "secretsmanager:DescribeSecret",
-      "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*",
-      "Condition": {
-        "StringLike": {
-          "secretsmanager:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"
-        }
-      }
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:rds!db-*"
     },
     {
       "Sid": "AllowRdsManagedCloneSecretCreation",

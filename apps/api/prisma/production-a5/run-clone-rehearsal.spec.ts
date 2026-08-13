@@ -8,6 +8,13 @@ import {
   reimbursementCompatibilityFromOutput,
   strictCloneUrlFromPgEnvironment,
 } from './run-clone-rehearsal';
+import {
+  CLONE_DATABASE_CONNECTION_TIMEOUT_MS,
+  CLONE_DATABASE_READY_MAX_ATTEMPTS,
+  CLONE_DATABASE_READY_RETRY_MS,
+  READINESS_CLONE_FAILURE_STAGES,
+  waitForCloneDatabaseDataPlane,
+} from './run-release-readiness-clone';
 
 describe('production A5 clone rehearsal runner boundary', () => {
   it('derives the reviewed candidate from repository-minus-applied, not ledger position', () => {
@@ -59,6 +66,42 @@ describe('production A5 clone rehearsal runner boundary', () => {
       PGHOST: host, PGPORT: '5432', PGUSER: 'clone_user', PGPASSWORD: 'secret',
       PGDATABASE: 'watchdog?host=prod',
     }, host), /database_identity_invalid/);
+  });
+
+  it('bounds the clone data-plane readiness race and exposes only finite safe stages', async () => {
+    assert.equal(CLONE_DATABASE_CONNECTION_TIMEOUT_MS, 5_000);
+    assert.equal(CLONE_DATABASE_READY_MAX_ATTEMPTS, 31);
+    assert.equal(CLONE_DATABASE_READY_RETRY_MS, 5_000);
+    assert.deepEqual(READINESS_CLONE_FAILURE_STAGES, [
+      'environment', 'repository', 'database_connect', 'engine_contract', 'source_catalog',
+      'migration_safety', 'migrate_deploy', 'post_ledger', 'migration_timing',
+      'schema_validation', 'compatibility', 'evidence',
+    ]);
+
+    let reads = 0;
+    const waits: number[] = [];
+    const version = await waitForCloneDatabaseDataPlane(async () => {
+      reads += 1;
+      if (reads < 3) throw new Error('provider data plane is still converging');
+      return '18.3';
+    }, 3, async (milliseconds) => { waits.push(milliseconds); });
+    assert.equal(version, '18.3');
+    assert.equal(reads, 3);
+    assert.deepEqual(waits, [5_000, 5_000]);
+
+    reads = 0;
+    await assert.rejects(
+      waitForCloneDatabaseDataPlane(async () => {
+        reads += 1;
+        throw new Error('credential/data-plane race');
+      }, 3, async () => undefined),
+      /production_readiness_clone_database_unavailable/,
+    );
+    assert.equal(reads, 3);
+    await assert.rejects(
+      waitForCloneDatabaseDataPlane(async () => 'never', 0, async () => undefined),
+      /production_readiness_clone_database_attempts_invalid/,
+    );
   });
 
   it('accepts only the exact required thirteen-test/two-suite reimbursement summary', () => {
