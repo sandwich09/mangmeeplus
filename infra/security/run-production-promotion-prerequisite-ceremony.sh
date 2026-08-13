@@ -8,15 +8,20 @@ role_policy=watchdog-bms-production-promotion-bootstrap
 user=watchdog-bedrock-dev
 user_policy=watchdog-bms-production-promotion-bootstrap-assume
 trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
-principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
+full_principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
+clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 helper="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 
-jq -e . "$trust" "$principal" "$bridge" >/dev/null
-if [ "${1:-}" != --apply ]; then
-  echo 'Dry run only. This wrapper creates, proves, uses, retires, and proves absence of the exact temporary promotion authority.'
-  exit 0
-fi
+jq -e . "$trust" "$full_principal" "$clone_principal" "$bridge" >/dev/null
+case "${1:-}" in
+  --apply) principal="$full_principal"; helper_mode=--apply ;;
+  --apply-clone-controller) principal="$clone_principal"; helper_mode=--apply-clone-controller ;;
+  *)
+    echo 'Dry run only. This wrapper creates, proves, uses, retires, and proves absence of the exact temporary promotion authority.'
+    echo 'Use --apply-clone-controller when only the reviewed clone controller policy changed.'
+    exit 0 ;;
+esac
 
 test "${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID is required}" = "$account"
 admin_profile="${PROMOTION_ADMIN_PROFILE:?PROMOTION_ADMIN_PROFILE is required}"
@@ -221,4 +226,4 @@ AWS_SESSION_TOKEN="$(jq -er '.Credentials.SessionToken' <<< "$session")" \
 AWS_ACCOUNT_ID="$account" \
 PROMOTION_IAM_MAX_ATTEMPTS="$attempts" \
 PROMOTION_IAM_RETRY_SECONDS="$retry_seconds" \
-  env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE bash "$helper" --apply
+  env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE bash "$helper" "$helper_mode"

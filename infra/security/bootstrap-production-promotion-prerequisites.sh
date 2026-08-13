@@ -64,9 +64,11 @@ jq -e . "$deploy_trust" "$deploy_policy" "$uat_deploy_policy" "$security_trust" 
   "$root/infra/security/production-release-task-policy.template.json" \
   "$root/infra/security/production-api-task-policy.template.json" \
   "$root/infra/security/production-ai-task-policy.template.json" >/dev/null
-if [ "${1:-}" != --apply ]; then
+mode="${1:-}"
+if [ "$mode" != --apply ] && [ "$mode" != --apply-clone-controller ]; then
   echo 'Dry run only. An owner must create the temporary exact bootstrap role and assume-role bridge; then rerun with --apply under AWS_PROFILE=watchdog-bedrock.'
   echo 'This helper rejects the AWS root principal, changes only seventeen durable IAM roles, and read-checks five service-linked roles.'
+  echo 'Use --apply-clone-controller to update and exact-read only the existing clone controller policy.'
   exit 0
 fi
 
@@ -78,7 +80,7 @@ if [ "$caller" = "arn:aws:iam::$account:user/watchdog-bedrock-dev" ]; then
   AWS_ACCESS_KEY_ID="$(jq -er '.Credentials.AccessKeyId' <<< "$session")" \
   AWS_SECRET_ACCESS_KEY="$(jq -er '.Credentials.SecretAccessKey' <<< "$session")" \
   AWS_SESSION_TOKEN="$(jq -er '.Credentials.SessionToken' <<< "$session")" \
-    exec "$0" --apply
+    exec "$0" "$mode"
 fi
 [[ "$caller" =~ ^arn:aws:sts::311414082667:assumed-role/watchdog-bms-production-promotion-bootstrap/ ]] || {
   echo 'ERROR: promotion prerequisite bootstrap requires the temporary non-root bootstrap role' >&2
@@ -107,8 +109,55 @@ retry_mutation() {
   echo "ERROR: idempotent prerequisite mutation did not converge after $max attempts: $*" >&2
   return 1
 }
-source_db="$(aws rds describe-db-instances --region "$region" \
-  --db-instance-identifier watchdog-bms-prod-db --query 'DBInstances[0]' --output json)"
+
+assert_clone_controller_shape() {
+  local role=watchdog-bms-production-a5-clone
+  local role_json="$work/clone-controller-role.json"
+  local policy_json="$work/clone-controller-policy.json"
+  aws iam get-role --role-name "$role" --output json > "$role_json" || return 1
+  aws iam get-role-policy --role-name "$role" --policy-name "$role" \
+    --output json > "$policy_json" || return 1
+  jq -e --slurpfile trust "$root/infra/security/production-a5-clone-trust.template.json" '
+    .Role.Arn=="arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone"
+    and .Role.Path=="/" and .Role.MaxSessionDuration==7200
+    and (.Role|has("PermissionsBoundary")|not)
+    and .Role.AssumeRolePolicyDocument==$trust[0]
+  ' "$role_json" >/dev/null || return 1
+  jq -e --arg role "$role" '.RoleName==$role and .PolicyName==$role' \
+    "$policy_json" >/dev/null || return 1
+  test "$(aws iam list-role-policies --role-name "$role" --output json | jq -cS '.PolicyNames|sort')" \
+    = '["watchdog-bms-production-a5-clone"]' || return 1
+  test "$(aws iam list-attached-role-policies --role-name "$role" --output json \
+    | jq -cS '.AttachedPolicies')" = '[]'
+}
+
+assert_clone_controller_exact() {
+  assert_clone_controller_shape || return 1
+  jq -e --slurpfile expected "$root/infra/security/production-a5-clone-policy.template.json" \
+    '.PolicyDocument==$expected[0]' "$work/clone-controller-policy.json" >/dev/null
+}
+
+if [ "$mode" = --apply-clone-controller ]; then
+  retry_exact assert_clone_controller_shape
+  retry_mutation aws iam put-role-policy --role-name watchdog-bms-production-a5-clone \
+    --policy-name watchdog-bms-production-a5-clone \
+    --policy-document "file://$root/infra/security/production-a5-clone-policy.template.json"
+  retry_exact assert_clone_controller_exact
+  echo 'Production A5 clone controller policy applied and exact-read back under a scoped non-root principal.'
+  exit 0
+fi
+
+read_source_db_configuration() {
+  aws rds describe-db-instances --region "$region" \
+    --db-instance-identifier watchdog-bms-prod-db --query 'DBInstances[0]' --output json \
+    > "$work/source-db.json" || return 1
+  jq -e 'type=="object" and .DBInstanceIdentifier=="watchdog-bms-prod-db"
+    and (.DBSubnetGroup.DBSubnetGroupName|type)=="string"
+    and (.DBParameterGroups|length)==1 and (.OptionGroupMemberships|length)==1' \
+    "$work/source-db.json" >/dev/null
+}
+retry_exact read_source_db_configuration
+source_db="$(<"$work/source-db.json")"
 clone_subnet_group="$(jq -er '.DBSubnetGroup.DBSubnetGroupName|select(length>0)' <<< "$source_db")"
 clone_parameter_group="$(jq -er '
   .DBParameterGroups|select(length==1)|.[0]
@@ -139,14 +188,77 @@ render "$root/infra/security/production-release-task-policy.template.json" "$wor
 render "$root/infra/security/production-api-task-policy.template.json" "$work/api-policy.json"
 render "$root/infra/security/production-ai-task-policy.template.json" "$work/ai-policy.json"
 render "$agentcore_trust" "$work/agentcore-trust.json"
-agentcore_ai_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
-  --secret-id watchdog-bms/production/ai-gateway-internal-secret --query ARN --output text)"
-agentcore_jwt_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
-  --secret-id watchdog-bms/production/watchdog-jwt-secret --query ARN --output text)"
+read_secret_metadata() {
+  local name="$1" output="$2"
+  aws secretsmanager describe-secret --region "$region" --secret-id "$name" --output json \
+    > "$output" || return 1
+  jq -e --arg name "$name" --arg prefix "arn:aws:secretsmanager:$region:$account:secret:$name-" '
+    .Name==$name and (.ARN|startswith($prefix)) and (.ARN|length)==($prefix|length)+6
+    and (has("DeletedDate")|not)
+  ' "$output" >/dev/null
+}
+retry_exact read_secret_metadata watchdog-bms/production/ai-gateway-internal-secret \
+  "$work/agentcore-ai-secret.json"
+retry_exact read_secret_metadata watchdog-bms/production/watchdog-jwt-secret \
+  "$work/agentcore-jwt-secret.json"
+agentcore_ai_secret_arn="$(jq -er .ARN "$work/agentcore-ai-secret.json")"
+agentcore_jwt_secret_arn="$(jq -er .ARN "$work/agentcore-jwt-secret.json")"
 sed -e "s|<ACCOUNT_ID>|$account|g" \
   -e "s|<AI_GATEWAY_SECRET_ARN>|$agentcore_ai_secret_arn|g" \
   -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|$agentcore_jwt_secret_arn|g" \
   "$agentcore_policy" > "$work/agentcore-policy.json"
+
+is_creatable_a5_role() {
+  case "$1" in
+    watchdog-bms-production-a5-readonly|watchdog-bms-production-a5-reader-bootstrap|\
+    watchdog-bms-production-a5-clone|watchdog-bms-production-a5-readonly-execution|\
+    watchdog-bms-production-a5-bootstrap-execution|watchdog-bms-production-a5-apply-execution|\
+    watchdog-bms-production-a5-clone-execution) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+preflight_role_metadata() {
+  local role="$1" error="$work/preflight-$1.err"
+  if ! aws iam get-role --role-name "$role" > /dev/null 2> "$error"; then
+    is_creatable_a5_role "$role" && grep -Fq NoSuchEntity "$error" && return 0
+    return 1
+  fi
+  aws iam list-role-policies --role-name "$role" > /dev/null \
+    && aws iam list-attached-role-policies --role-name "$role" > /dev/null
+}
+
+for preflight_role in \
+  "$deploy_role" "$uat_deploy_role" "$security_role" "$agentcore_role" "$workers_role" \
+  ecsTaskExecutionRole watchdog-bms-release-task-role ecsInfrastructureRoleForExpressServices \
+  watchdog-bms-ecs-express-api-role watchdog-bms-ecs-express-ai-gateway-role \
+  "${controller_roles[@]}" "${execution_roles[@]}" \
+  AWSServiceRoleForECS AWSServiceRoleForElasticLoadBalancing \
+  AWSServiceRoleForApplicationAutoScaling_ECSService AWSServiceRoleForRDS \
+  AWSServiceRoleForElastiCache; do
+  retry_exact preflight_role_metadata "$preflight_role"
+done
+
+preflight_clone_parameters() {
+  aws ssm get-parameters --region "$region" --names \
+    /watchdog-bms/production/a5-clone/db-subnet-group-name \
+    /watchdog-bms/production/a5-clone/db-parameter-group-name \
+    /watchdog-bms/production/a5-clone/option-group-name --output json \
+    > "$work/preflight-clone-parameters.json" || return 1
+  jq -e '((.Parameters|length)+(.InvalidParameters|length))==3' \
+    "$work/preflight-clone-parameters.json" >/dev/null
+}
+retry_exact preflight_clone_parameters
+
+preflight_bucket_lifecycle() {
+  local error="$work/preflight-lifecycle.err"
+  if aws s3api get-bucket-lifecycle-configuration --region "$region" \
+      --bucket watchdog-bms-prod-$account > /dev/null 2> "$error"; then
+    return 0
+  fi
+  grep -Fq NoSuchLifecycleConfiguration "$error"
+}
+retry_exact preflight_bucket_lifecycle
 
 ensure_existing_role() {
   local role="$1"

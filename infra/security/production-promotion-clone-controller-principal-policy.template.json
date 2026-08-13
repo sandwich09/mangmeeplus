@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RepairExactCloneControllerPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:PutRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone"
+    }
+  ]
+}

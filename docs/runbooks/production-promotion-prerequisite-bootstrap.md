@@ -65,6 +65,26 @@ readback before UAT is allowed to run. All durable IAM, clone-pointer and lifecy
 for up to 12 attempts at 5-second intervals so normal IAM/provider propagation is not reported as
 contract drift.
 
+When the only changed durable contract is
+`watchdog-bms-production-a5-clone`'s inline controller policy, do not run the full ceremony: it
+would intentionally re-arm the one-time reader-bootstrap controller and execution role. Use the
+scoped mode below with the same approved administrator boundary:
+
+```sh
+PROMOTION_ADMIN_PROFILE=thawatchai \
+PROMOTION_ROOT_EXCEPTION_APPROVAL_REF=<current-written-approval-reference> \
+AWS_ACCOUNT_ID=311414082667 \
+  bash infra/security/run-production-promotion-prerequisite-ceremony.sh \
+    --apply-clone-controller
+```
+
+This mode installs a different temporary principal policy containing only `iam:GetRole`,
+`iam:GetRolePolicy`, `iam:ListRolePolicies`, `iam:ListAttachedRolePolicies` and
+`iam:PutRolePolicy` on that one exact role. The non-root helper verifies the unchanged trust,
+two-hour duration, absent permission boundary/attachments and sole inline policy before mutation,
+then byte-compares the applied policy. It never calls RDS, Secrets Manager, SSM, S3 or any reader
+bootstrap role. The wrapper still retires and proves absence of all temporary authority.
+
 Next run the one-time A5 reader-bootstrap workflow. On every outcome it deletes
 `watchdog-bms-production-a5-bootstrap-execution` and replaces the reader-bootstrap controller policy
 with the exact metadata-only recovery policy. Do not dispatch Production Readiness until that cleanup has
