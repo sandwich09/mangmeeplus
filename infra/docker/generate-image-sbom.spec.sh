@@ -41,7 +41,7 @@ joined=" $* "
 [[ "$joined" == *' --max-time 60 '* ]]
 [[ "$joined" == *' --retry 4 '* ]]
 [[ "$joined" == *' --retry-all-errors '* ]]
-[[ "$joined" == *' https://api.github.com/repos/anchore/syft/releases/assets/377338300 '* ]]
+[[ "$joined" == *' https://github.com/anchore/syft/releases/download/v1.42.3/syft_1.42.3_linux_amd64.tar.gz '* ]]
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --output ]; then
     cp "$SBOM_TEST_ARCHIVE" "$2"
