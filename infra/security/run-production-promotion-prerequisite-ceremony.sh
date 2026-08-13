@@ -10,16 +10,19 @@ user_policy=watchdog-bms-production-promotion-bootstrap-assume
 trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
 full_principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
+endpoint_principal="$root/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
 bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 helper="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 
-jq -e . "$trust" "$full_principal" "$clone_principal" "$bridge" >/dev/null
+jq -e . "$trust" "$full_principal" "$clone_principal" "$endpoint_principal" "$bridge" >/dev/null
 case "${1:-}" in
   --apply) principal="$full_principal"; helper_mode=--apply ;;
   --apply-clone-controller) principal="$clone_principal"; helper_mode=--apply-clone-controller ;;
+  --apply-private-endpoints) principal="$endpoint_principal"; helper_mode=--apply-private-endpoints ;;
   *)
     echo 'Dry run only. This wrapper creates, proves, uses, retires, and proves absence of the exact temporary promotion authority.'
     echo 'Use --apply-clone-controller when only the reviewed clone controller policy changed.'
+    echo 'Use --apply-private-endpoints when only the reviewed interface endpoint policies changed.'
     exit 0 ;;
 esac
 

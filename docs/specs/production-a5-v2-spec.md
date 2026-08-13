@@ -308,6 +308,13 @@ Clone controller ต้อง bind provider authorization จริงด้ว�
 Readiness timeout หรือ cleanup failure คือ `NOT_READY`; ห้ามเปลี่ยนเป็น advisory และห้าม
 เริ่ม Production deploy ในขณะที่ clone ยังเหลืออยู่
 
+Private endpoint policies are part of the same fail-closed runtime contract, not a provisioning
+detail. The apply execution role must be able to pull the exact migration tool, read only the
+Production writer secret and write only `/ecs/watchdog-bms-production-a5-apply`. The shared
+Production execution role must be able to write both the three `/ecs/watchdog-bms-prod-*` service
+groups and `/ecs/watchdog-bms-release-task`. Readiness and the deploy boundary exact-compare these
+policies before any release task or database mutation.
+
 ## 9. Production Release Ready certificate
 
 Signed `PRODUCTION_RELEASE_READY_V2` ต้องผูกอย่างน้อย:

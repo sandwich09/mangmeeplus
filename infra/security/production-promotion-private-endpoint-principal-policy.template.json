@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExactProductionInterfaceEndpoints",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeVpcEndpoints",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:Region": "ap-southeast-1"
+        }
+      }
+    },
+    {
+      "Sid": "RepairExactProductionInterfaceEndpointPolicies",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVpcEndpoint",
+      "Resource": [
+        "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-044085e7ad8749ca4",
+        "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-07f6ed4632f468c4b",
+        "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-098bd832f02b47922",
+        "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-0b9af85905e446695"
+      ]
+    }
+  ]
+}

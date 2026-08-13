@@ -25,6 +25,9 @@ task_trust="$root/infra/security/production-ecs-task-trust.template.json"
 infra_trust="$root/infra/security/production-ecs-infrastructure-trust.template.json"
 agentcore_trust="$root/infra/ai-gateway/agentcore-execution-role-trust.template.json"
 agentcore_policy="$root/infra/ai-gateway/agentcore-execution-role-policy.json"
+ecr_endpoint_policy="$root/infra/security/production-a5-ecr-endpoint-policy.template.json"
+logs_endpoint_policy="$root/infra/security/production-a5-logs-endpoint-policy.template.json"
+secrets_endpoint_policy="$root/infra/security/production-a5-secretsmanager-endpoint-policy.template.json"
 bootstrap_role=watchdog-bms-production-promotion-bootstrap
 agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0
 
@@ -59,16 +62,19 @@ execution_policies=(
 jq -e . "$deploy_trust" "$deploy_policy" "$uat_deploy_policy" "$security_trust" "$security_policy" \
   "$execution_trust" "$clone_trust" "$workers_policy" "${controller_trusts[@]}" \
   "${controller_policies[@]}" "${execution_policies[@]}" "$task_trust" "$infra_trust" \
-  "$agentcore_trust" "$agentcore_policy" \
+  "$agentcore_trust" "$agentcore_policy" "$ecr_endpoint_policy" "$logs_endpoint_policy" \
+  "$secrets_endpoint_policy" \
   "$root/infra/security/production-ecs-execution-policy.template.json" \
   "$root/infra/security/production-release-task-policy.template.json" \
   "$root/infra/security/production-api-task-policy.template.json" \
   "$root/infra/security/production-ai-task-policy.template.json" >/dev/null
 mode="${1:-}"
-if [ "$mode" != --apply ] && [ "$mode" != --apply-clone-controller ]; then
+if [ "$mode" != --apply ] && [ "$mode" != --apply-clone-controller ] \
+    && [ "$mode" != --apply-private-endpoints ]; then
   echo 'Dry run only. An owner must create the temporary exact bootstrap role and assume-role bridge; then rerun with --apply under AWS_PROFILE=watchdog-bedrock.'
   echo 'This helper rejects the AWS root principal, changes only seventeen durable IAM roles, and read-checks five service-linked roles.'
   echo 'Use --apply-clone-controller to update and exact-read only the existing clone controller policy.'
+  echo 'Use --apply-private-endpoints to update and exact-read only the four existing interface endpoint policies.'
   exit 0
 fi
 
@@ -109,6 +115,55 @@ retry_mutation() {
   echo "ERROR: idempotent prerequisite mutation did not converge after $max attempts: $*" >&2
   return 1
 }
+
+if [ "$mode" = --apply-private-endpoints ]; then
+  endpoint_ids=(
+    vpce-044085e7ad8749ca4
+    vpce-0b9af85905e446695
+    vpce-098bd832f02b47922
+    vpce-07f6ed4632f468c4b
+  )
+  endpoint_services=(ecr.api ecr.dkr logs secretsmanager)
+  endpoint_policies=(
+    "$ecr_endpoint_policy"
+    "$ecr_endpoint_policy"
+    "$logs_endpoint_policy"
+    "$secrets_endpoint_policy"
+  )
+  assert_endpoint_identity() {
+    local id="$1" service="$2" output="$work/$1.json"
+    aws ec2 describe-vpc-endpoints --region "$region" --vpc-endpoint-ids "$id" \
+      --output json > "$output" || return 1
+    jq -e --arg id "$id" --arg service "com.amazonaws.$region.$service" '
+      .VpcEndpoints|length==1 and .[0].VpcEndpointId==$id
+      and .[0].VpcId=="vpc-0da727984eee92f96" and .[0].ServiceName==$service
+      and .[0].VpcEndpointType=="Interface" and .[0].State=="available"
+      and .[0].PrivateDnsEnabled==true
+    ' "$output" >/dev/null
+  }
+  assert_endpoint_policy() {
+    local id="$1" service="$2" policy="$3" output="$work/$1.json"
+    assert_endpoint_identity "$id" "$service" || return 1
+    jq -e --slurpfile expected "$policy" '
+      .VpcEndpoints[0].PolicyDocument
+      |(if type=="string" then fromjson else . end)==$expected[0]
+    ' "$output" >/dev/null
+  }
+  for index in "${!endpoint_ids[@]}"; do
+    retry_exact assert_endpoint_identity "${endpoint_ids[$index]}" "${endpoint_services[$index]}"
+  done
+  for index in "${!endpoint_ids[@]}"; do
+    retry_mutation aws ec2 modify-vpc-endpoint --region "$region" \
+      --vpc-endpoint-id "${endpoint_ids[$index]}" \
+      --policy-document "file://${endpoint_policies[$index]}" >/dev/null
+  done
+  for index in "${!endpoint_ids[@]}"; do
+    retry_exact assert_endpoint_policy "${endpoint_ids[$index]}" "${endpoint_services[$index]}" \
+      "${endpoint_policies[$index]}"
+  done
+  echo 'Production interface endpoint policies applied and exact-read back under a scoped non-root principal.'
+  exit 0
+fi
 
 assert_clone_controller_shape() {
   local role=watchdog-bms-production-a5-clone

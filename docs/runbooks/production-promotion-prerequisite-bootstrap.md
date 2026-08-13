@@ -85,6 +85,20 @@ two-hour duration, absent permission boundary/attachments and sole inline policy
 then byte-compares the applied policy. It never calls RDS, Secrets Manager, SSM, S3 or any reader
 bootstrap role. The wrapper still retires and proves absence of all temporary authority.
 
+When only the four existing Production interface endpoint policies changed, use the scoped mode
+below. It can only describe endpoints and replace policies on the exact ECR API, ECR DKR, Logs and
+Secrets Manager endpoint ARNs; it cannot create/delete endpoints, change subnets/security groups,
+or mutate IAM, SSM, RDS, S3 or services. The helper verifies each endpoint's exact VPC, service,
+type, state and private-DNS boundary before mutation and exact-reads every policy afterwards:
+
+```sh
+PROMOTION_ADMIN_PROFILE=thawatchai \
+PROMOTION_ROOT_EXCEPTION_APPROVAL_REF=<current-written-approval-reference> \
+AWS_ACCOUNT_ID=311414082667 \
+  bash infra/security/run-production-promotion-prerequisite-ceremony.sh \
+    --apply-private-endpoints
+```
+
 Next run the one-time A5 reader-bootstrap workflow. On every outcome it deletes
 `watchdog-bms-production-a5-bootstrap-execution` and replaces the reader-bootstrap controller policy
 with the exact metadata-only recovery policy. Do not dispatch Production Readiness until that cleanup has
