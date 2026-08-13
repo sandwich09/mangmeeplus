@@ -276,6 +276,17 @@ source_sha="$(printf 'a%.0s' {1..40})"
 image="311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-migration-tool@sha256:$(printf 'b%.0s' {1..64})"
 PATH="$work/bin:$PATH" MOCK_IMAGE_SOURCE="$source_sha" \
   bash "$migration_tool_validator" "$image" "$source_sha" >/dev/null
+if PATH="$work/bin:$PATH" MOCK_IMAGE_SOURCE="$source_sha" \
+    bash "$migration_tool_validator" "watchdog-bms-migration-tool:latest" \
+      "$source_sha" >/dev/null 2>&1; then
+  echo 'ERROR: mutable migration-tool image reference was accepted' >&2
+  exit 1
+fi
+if PATH="$work/bin:$PATH" MOCK_IMAGE_SOURCE="$source_sha" \
+    bash "$migration_tool_validator" "$image" "${source_sha:0:39}" >/dev/null 2>&1; then
+  echo 'ERROR: truncated migration-tool source revision was accepted' >&2
+  exit 1
+fi
 if PATH="$work/bin:$PATH" MOCK_IMAGE_SOURCE="$(printf 'c%.0s' {1..40})" \
     bash "$migration_tool_validator" "$image" "$source_sha" >/dev/null 2>&1; then
   echo 'ERROR: signed migration-tool with the wrong source revision was accepted' >&2

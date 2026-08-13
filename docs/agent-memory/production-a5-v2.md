@@ -477,16 +477,47 @@ Verification:
   owner tag remains fatal. Focused clone/policy/evidence/workflow tests, API typecheck and the full
   Production security aggregate pass. A real linux/amd64 migration-tool build also passes its
   non-root, read-only-root, writable `/tmp`, no-network, Prisma validate and direct TSX import probes.
+- Fresh UAT `31666726359` for source `578ad7a6...` reused exact reviewed CI, published and signed all
+  immutable images/tools, deployed UAT `all`, passed digest/health verification, retired superseded
+  builds and issued Passport V2. Automatic Readiness `31667908525` bound that exact Passport and
+  controller `08e2786...`, passed the complete read-only runtime/catalog gates and restored an exact
+  encrypted private PostgreSQL 18.3 clone. The clone connected to the database but failed at the
+  `migrate_deploy` stage; cleanup independently left no DB. Reproduction with the exact signed
+  migration-tool digest against a temporary PostgreSQL 18 instance proved the image contains only
+  `schema-engine-debian-openssl-3.0.x` while its Alpine runtime searches for
+  `schema-engine-linux-musl-openssl-3.0.x`. The failure therefore occurs before any candidate SQL,
+  not from Production data. The smallest fix reuses the existing Debian `system` stage for the
+  one-shot image and makes the image verifier execute an offline `prisma migrate diff`, which the
+  broken signed image deterministically fails. Independent post-run reads proved the exact clone DB,
+  managed-secret tag set, ACTIVE task definitions, RUNNING tasks and task ENI private address all
+  absent. A real linux/amd64 fixed image then passed non-root/read-only/no-network schema-engine
+  execution, applied all 131 migrations to PostgreSQL 18 and returned `No pending migrations to
+  apply` on a second deploy. The exact four API migration suites passed 26/26 and the full Production
+  security aggregate reached `production image security scanner: pass`.
+- Forward review before the fix PR uses exact linux/amd64 images labelled with the reviewed branch
+  commit.
+  The migration-tool ran as uid 1000 with a read-only root and no network, and its in-image
+  reader/catalog/READY/clone/apply suites passed 28/28. Against PostgreSQL 18.3 it first applied the
+  exact 121-migration Production baseline, then the full image applied only the ten migrations
+  classified pending by Readiness, and a third deploy returned `No pending migrations to apply`.
+  The inherited release-task image has the same exact source label/user/workdir/`/tmp` contract and
+  its Prisma native-engine validation passed under the same read-only/no-network boundary. Its one
+  in-image unit mismatch is test-only: that spec reads a repository incident fixture never consumed
+  by production runtime; the host release-task suites remain in the full aggregate. No migration,
+  release or controller runtime command depends on Alpine/musl. The Debian image is about 47 MB
+  (16%) larger than the failed Alpine image, with no repository size ceiling and ample existing ECS
+  task/job wait budgets; the same pinned Debian base is already used by the UAT-scanned API image.
+  The existing executable verifier fixture now also rejects a mutable image reference and truncated
+  source SHA before Docker is called, closing the Bash `set -e` regression rather than relying on a
+  static grep.
 
 Next:
 
-1. Merge the clone data-plane/cleanup correction only after focused/adversarial/full aggregate and
-   exact-head CI. Because the task source changes, run one fresh UAT `all` and use only its new
-   Passport; do not reuse UAT `31627553314` for the corrected image.
-2. Apply the corrected clone controller policy through the scoped non-root ceremony, byte-read back
-   the live role, prove the temporary user bridge/role policy/role all return `NoSuchEntity`, then
-   dispatch exactly one manual Production Readiness in `maintenance_closed`. Require clone PASS and
-   computed zero residual resources, and reject the input-less ghost run.
+1. Complete the final local aggregate/pin/diff gates, open one scoped PR, and require exact-head CI
+   before one fresh UAT `all`; the prior Passport cannot be reused because both tool image digests
+   change.
+2. Allow only the automatic Readiness bound to that fresh UAT Passport. Require clone migration PASS,
+   computed zero residual resources and signed READY; do not dispatch a duplicate manual run.
 3. Freeze `main`, dispatch one `maintenance_closed` Production V2 promotion and verify exact digests,
    global maintenance controls, health, admin-onboard access and signed release evidence.
 4. Keep customer launch closed until independent legal evidence is complete.
