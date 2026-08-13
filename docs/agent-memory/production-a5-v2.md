@@ -744,3 +744,31 @@ Next:
 3. Reissue one `maintenance_closed` READY for controller `main`, freeze `main`, then retry Production
    V2 once and require signed `PROMOTED_CLOSED` plus secret-safe admin/API acceptance.
 4. Keep customer launch closed until independent legal evidence is complete.
+
+- PRs `#69`/`#70` merged the recovery input binding as
+  `main@78d1792708bc07e882d8b3ddc0bbaaea1b7a7a20` after exact-head approval and required CI.
+  Main workflow-dispatch CI `31740166671` passed. Recovery `31741442579` then passed the exact
+  failed-run artifact and live pre-mutation proof, built/signed the one-shot executor and launched
+  task `6f79b450bdcf43adafe74bba51111579`. The task exited 75 before its database transaction because
+  the application required `service.currentDeployment === null`; the settled live ECS Express
+  response omits that key. The controller's jq check correctly treated missing as null, so all real
+  service evidence had already passed. No operation row or ECS service was changed.
+- The scoped provider-normalization fix uses the same nullish settled-state rule already used
+  elsewhere in the recovery controller and adds an executable missing-key fixture. A repository
+  sweep found no second strict-null instance on this platform field. CI-specific two-file TypeScript
+  compilation and the recovery suite pass 34/34 against local PostgreSQL 18.3 with no skips. Most
+  importantly, the exact failed-run evidence was passed through
+  `validateBootstrapClosedRecoveryPlatform` against fresh real AWS JSON for all three Production
+  services and bootstrap deployments; the application validator returned all three exact services.
+  The exact pre-mutation YAML step, deep database readiness and custom/raw maintenance controls
+  still pass; services remain closed.
+
+Next:
+
+1. Merge the scoped provider-normalization fix after full local aggregate and exact-head CI/review.
+2. Dispatch exactly one `BOOTSTRAP_CLOSED` recovery and require operation
+   `91794761-7661-468c-8e9c-91f5a69b1f06` to become `RECONCILED_FAILED_CONFIRMED` with zero intents.
+3. Issue one controller-current `maintenance_closed` READY, freeze `main`, then retry Production V2
+   once.
+4. Require signed `PROMOTED_CLOSED`, global maintenance proof and secret-safe admin/API acceptance;
+   keep customer launch closed.

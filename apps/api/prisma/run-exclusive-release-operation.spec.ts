@@ -1868,6 +1868,11 @@ describe('bootstrap-closed zero-intent recovery decision', () => {
     assert.throws(() => parseBootstrapClosedRecoveryEvidence(JSON.stringify(swappedImage)), /service evidence is invalid/);
     assert.deepEqual(validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, bootstrapPlatformReads()),
       bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)));
+    const providerSettled = bootstrapPlatformReads();
+    for (const read of providerSettled) delete read.serviceResponse.service.currentDeployment;
+    assert.deepEqual(validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, providerSettled),
+      bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)),
+      'ECS Express omits currentDeployment after a service settles instead of returning null');
     const live = bootstrapPlatformReads();
     Object.assign(live[1]!.serviceResponse.service.activeConfigurations[0]!.primaryContainer.environment
       .find((item) => item.name === 'PRODUCTION_SERVING_MODE')!, { value: 'live' });
