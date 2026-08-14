@@ -1,9 +1,10 @@
 # Production A5 V2 Implementation Plan
 
-Status: Stabilization in progress; GitHub Actions frozen until the proof matrix is all PASS
+Status: COMPLETE through repeatable `PROMOTED_CLOSED`; use the operator runbook for future releases
 Spec: `docs/specs/production-a5-v2-spec.md`
 Matrix: `docs/plans/production-a5-v2-readiness-matrix.md`
 Memory: `docs/agent-memory/production-a5-v2.md`
+Runbook: `docs/runbooks/uat-production-v2-deployment.md`
 
 ## Delivery rule
 

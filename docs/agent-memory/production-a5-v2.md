@@ -1,9 +1,8 @@
 # Agent Memory: production A5 v2
 
-Status: Fresh UAT/Passport and reader bootstrap PASS. The exact RDS-integrated KMS grant policy is
-merged; its first full prerequisite ceremony failed safely before durable mutation on service-
-specific IAM propagation. A clone-controller-only temporary ceremony is under review so the policy
-can be applied without re-arming the completed reader bootstrap. Production was not mutated.
+Status: COMPLETE for repeatable technical deployment through `PROMOTED_CLOSED`. Fresh UAT Passport,
+Production READY, exact-image Production V2 promotion, global maintenance proof and secret-safe
+SYSTEM_ADMIN acceptance passed on 2026-08-14. Customer launch remains intentionally closed.
 Owner: Codex / release owner
 Scope: Replace the circular A5/U5 Production ceremony with a signed UAT Release Passport V2,
 precomputed Production Readiness V2 and a minimal exact-image promotion.
@@ -129,6 +128,7 @@ Artifacts:
 - `infra/security/validate-production-release-ready-v2.sh`
 - `infra/security/validate-production-release-result-v2.sh`
 - `docs/runbooks/production-a5-u5-promotion-ceremony.md` (V1 frozen reference)
+- `docs/runbooks/uat-production-v2-deployment.md` (current operator runbook)
 
 Verification:
 
@@ -795,3 +795,22 @@ Next:
    once.
 4. Require signed `PROMOTED_CLOSED`, global maintenance proof and secret-safe admin/API acceptance;
    keep customer launch closed.
+
+## Final closure — 2026-08-14
+
+- PRs `#73` and `#74` merged the pinned direct Syft download as final
+  `main@854cc362f25fabc2d4346813d6351631ff4f4eae`. Exact-main CI `31748250413` passed every
+  required context and all six Production image jobs, including the previously failing api-web SBOM.
+- `BOOTSTRAP_CLOSED` recovery `31749393268` reconciled parent operation
+  `91794761-7661-468c-8e9c-91f5a69b1f06` with zero intents while all services remained closed.
+- Readiness `31749841233` bound UAT Passport `31723608941`, source
+  `cacdc4a91aa6bb3e5512f529991bd42b6a3f2580` and controller `854cc362...`; migration was
+  `EXACT_MATCH` and it issued signed `maintenance_closed` READY.
+- Production V2 `31750329856` completed successfully with signed state `PROMOTED_CLOSED`, target
+  `all` and maintenance state `DEPLOYED_NOT_LAUNCHED`. Exact digest/source/health/deep database,
+  global maintenance and durable finalization proofs passed.
+- Secret-safe Production acceptance passed: SYSTEM_ADMIN login and `/me`, platform-access CLOSED,
+  page access, logout and post-logout rejection. No secret value was printed or persisted.
+- Customer traffic remains intentionally closed. Future release operators use
+  `docs/runbooks/uat-production-v2-deployment.md`; historical `Next:` blocks above describe prior
+  incident checkpoints and are not current instructions.

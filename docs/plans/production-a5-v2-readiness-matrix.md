@@ -1,8 +1,9 @@
 # Production A5 V2 Readiness Matrix
 
-Status: BLOCKED; Actions frozen until the authoritative stabilization gate below is all PASS
-Audit date: 2026-08-12
+Status: Historical first-green matrix passed through `PROMOTED_CLOSED`; re-prove live rows per release
+Audit date: 2026-08-14
 Spec: `docs/specs/production-a5-v2-spec.md`
+Runbook: `docs/runbooks/uat-production-v2-deployment.md`
 
 ## Status legend
 
