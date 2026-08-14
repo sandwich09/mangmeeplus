@@ -72,6 +72,26 @@ const PRIVACY_ACTION = {
   documentVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
 };
 
+function currentLegalContentWhere(userId: string) {
+  // Acceptance validity is content-based. scopeRef and statementVersion remain evidence/stale-form
+  // controls; filtering on them here would make an unchanged artifact pair require acceptance again.
+  return {
+    acceptedByUserId: userId,
+    OR: [
+      {
+        documentType: TERMS_ACTION.documentType,
+        action: TERMS_ACTION.action,
+        releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
+      },
+      {
+        documentType: PRIVACY_ACTION.documentType,
+        action: PRIVACY_ACTION.action,
+        releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
+      },
+    ],
+  };
+}
+
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -119,42 +139,20 @@ export function legalDisplayChallenge(context: DisplayChallengeContext): string 
   ]));
 }
 
-/**
- * One acceptance scope belongs to one user and one exact released document pair. Company,
- * membership and capacity are captured as evidence at acceptance time, but switching context does
- * not ask the same user again. Immutable URLs and byte hashes still fail closed on any copy change.
- */
+/** One acceptance scope belongs to one user and one exact immutable legal-content hash pair. */
 export function legalReleaseScopeRef(
   userId: string,
   release: {
-    statementVersion: string;
-    termsVersion: string;
-    termsArtifactUrl: string;
     termsFingerprint: string;
-    privacyVersion: string;
-    privacyArtifactUrl: string;
     privacyFingerprint: string;
-    statementTemplateFingerprint: string;
   } = {
-    statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
-    termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
-    termsArtifactUrl: CURRENT_LEGAL_DOCUMENTS.terms.href,
     termsFingerprint: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
-    privacyVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
-    privacyArtifactUrl: CURRENT_LEGAL_DOCUMENTS.privacy.href,
     privacyFingerprint: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
-    statementTemplateFingerprint: legalStatementTemplateFingerprint(),
   },
 ): string {
   const releaseHash = sha256(JSON.stringify([
-    release.statementVersion,
-    release.termsVersion,
-    release.termsArtifactUrl,
     release.termsFingerprint,
-    release.privacyVersion,
-    release.privacyArtifactUrl,
     release.privacyFingerprint,
-    release.statementTemplateFingerprint,
   ]));
   return `user:${userId}:release:${releaseHash}`;
 }
@@ -177,9 +175,8 @@ export class LegalAcceptanceService {
     const capacity = legalAcceptanceCapacity(roles);
     const systemOperator = roles.includes('SYSTEM_ADMIN');
     const records = systemOperator ? [] : await this.loadCurrentRecords(locator.userId);
-    const acceptedAt = this.isCoherentCurrentPair(records, locator.userId)
-      ? latestAcceptedAt(records)
-      : null;
+    const currentPair = this.findCoherentCurrentPair(records, locator.userId);
+    const acceptedAt = latestAcceptedAt(currentPair);
 
     return {
       required: !systemOperator && acceptedAt === null,
@@ -267,20 +264,7 @@ export class LegalAcceptanceService {
     try {
       return await this.prisma.client.$transaction(async (tx) => {
         const existing = await tx.legalDocumentActionRecord.findMany({
-          where: {
-            scopeRef: acceptanceScope,
-            statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
-            OR: [
-              {
-                ...TERMS_ACTION,
-                releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
-              },
-              {
-                ...PRIVACY_ACTION,
-                releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
-              },
-            ],
-          },
+          where: currentLegalContentWhere(actor.userId),
           select: {
             batchId: true,
             documentType: true,
@@ -301,8 +285,9 @@ export class LegalAcceptanceService {
           },
         }) as CurrentAcceptanceRecord[];
 
-        if (this.isCoherentCurrentPair(existing, actor.userId)) {
-          return this.response(existing, membership.companyId);
+        const currentPair = this.findCoherentCurrentPair(existing, actor.userId);
+        if (currentPair.length === 2) {
+          return this.response(currentPair, membership.companyId);
         }
         if (existing.length !== 0) {
           throw new ConflictException({
@@ -312,8 +297,8 @@ export class LegalAcceptanceService {
         }
 
         const hasPriorAcceptance = await tx.legalDocumentActionRecord.count({
-          // Acceptance is once per user and released document pair. Company, membership and
-          // capacity remain immutable evidence snapshots but do not make the same user re-accept.
+          // Acceptance is once per user and immutable content-hash pair. Context and UI statement
+          // changes remain evidence snapshots but do not make the same user re-accept.
           where: { acceptedByUserId: actor.userId },
         }) > 0;
         const surface = hasPriorAcceptance ? 'MATERIAL_UPDATE' as const : 'FIRST_ACCEPTANCE' as const;
@@ -404,8 +389,9 @@ export class LegalAcceptanceService {
         const current = await this.loadCurrentRecords(
           actor.userId,
         );
-        if (this.isCoherentCurrentPair(current, actor.userId)) {
-          return this.response(current, membership.companyId);
+        const currentPair = this.findCoherentCurrentPair(current, actor.userId);
+        if (currentPair.length === 2) {
+          return this.response(currentPair, membership.companyId);
         }
       }
       throw error;
@@ -477,20 +463,7 @@ export class LegalAcceptanceService {
     userId: string,
   ): Promise<CurrentAcceptanceRecord[]> {
     return this.prisma.client.legalDocumentActionRecord.findMany({
-      where: {
-        scopeRef: legalReleaseScopeRef(userId),
-        statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
-        OR: [
-          {
-            ...TERMS_ACTION,
-            releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
-          },
-          {
-            ...PRIVACY_ACTION,
-            releaseFingerprintSha256: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
-          },
-        ],
-      },
+      where: currentLegalContentWhere(userId),
       select: {
         batchId: true,
         documentType: true,
@@ -512,6 +485,24 @@ export class LegalAcceptanceService {
     }) as Promise<CurrentAcceptanceRecord[]>;
   }
 
+  private findCoherentCurrentPair(
+    records: CurrentAcceptanceRecord[],
+    expectedUserId: string,
+  ): CurrentAcceptanceRecord[] {
+    const batches = new Map<string, CurrentAcceptanceRecord[]>();
+    for (const record of records) {
+      const batch = batches.get(record.batchId) ?? [];
+      batch.push(record);
+      batches.set(record.batchId, batch);
+    }
+    return [...batches.values()]
+      .filter((batch) => this.isCoherentCurrentPair(batch, expectedUserId))
+      .sort((left, right) => (
+        Math.max(...right.map((record) => record.acceptedAt.getTime()))
+        - Math.max(...left.map((record) => record.acceptedAt.getTime()))
+      ))[0] ?? [];
+  }
+
   private isCoherentCurrentPair(
     records: CurrentAcceptanceRecord[],
     expectedUserId: string,
@@ -519,13 +510,11 @@ export class LegalAcceptanceService {
     if (records.length !== 2) return false;
     const terms = records.find((record) =>
       record.documentType === TERMS_ACTION.documentType
-      && record.action === TERMS_ACTION.action
-      && record.documentVersion === TERMS_ACTION.documentVersion,
+      && record.action === TERMS_ACTION.action,
     );
     const privacy = records.find((record) =>
       record.documentType === PRIVACY_ACTION.documentType
-      && record.action === PRIVACY_ACTION.action
-      && record.documentVersion === PRIVACY_ACTION.documentVersion,
+      && record.action === PRIVACY_ACTION.action,
     );
     if (!terms || !privacy || !terms.batchId || terms.batchId !== privacy.batchId) return false;
     if (terms.acceptedAt.getTime() !== privacy.acceptedAt.getTime() || terms.locale !== privacy.locale) return false;
@@ -539,7 +528,7 @@ export class LegalAcceptanceService {
     for (const record of records) {
       if (
         record.acceptedByUserId !== expectedUserId
-        || record.statementVersion !== LEGAL_ACCEPTANCE_STATEMENT_VERSION
+        || !record.statementVersion
         || (record.locale !== 'th' && record.locale !== 'en')
         || record.statementSha256 !== sha256(record.statementText)
       ) return false;
@@ -548,10 +537,11 @@ export class LegalAcceptanceService {
         ? CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256
         : CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256;
       const expectedArtifactUrl = record.documentType === 'TERMS_OF_USE'
-        ? CURRENT_LEGAL_DOCUMENTS.terms.href
-        : CURRENT_LEGAL_DOCUMENTS.privacy.href;
+        ? `/legal/releases/${record.documentVersion}/terms-th.html`
+        : `/legal/releases/${record.documentVersion}/privacy-th.html`;
       if (
-        record.artifactUrl !== expectedArtifactUrl
+        !/^v\d+$/.test(record.documentVersion)
+        || record.artifactUrl !== expectedArtifactUrl
         || record.releaseFingerprintSha256 !== expectedFingerprint
       ) {
         return false;
