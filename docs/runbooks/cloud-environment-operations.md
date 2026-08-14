@@ -295,8 +295,9 @@ SNS accepted a sanitized canary publish with MessageId
 delivery; only screenshot SHA-256 `f524646240c97510a4a500e1bcfecedf064e2549f620081dbd586605d09451bb`
 is retained because the image exposes the mailbox and unsubscribe endpoint.
 
-Alarm Redis เดิม `watchdog-bms-prod-redis-memory-high` ที่ใช้ `ReplicationGroupId` ยังอยู่และยัง
-ไม่มี datapoint; ห้ามลบด้วย workstation ปัจจุบันเพราะยังไม่มีหลักฐาน `DeleteAlarms` allow.
+Alarm Redis เดิม `watchdog-bms-prod-redis-memory-high` ที่ใช้ `ReplicationGroupId` และไม่มี datapoint
+ถูก retire แล้วเมื่อ 2026-08-15 02:54:25 UTC+7 หลัง valid per-node alarms verify ผ่าน; CloudTrail event
+`b7ab5aed-5fda-43e0-ba26-ea15da175ce1` และ post-delete `DescribeAlarms=0` เป็นหลักฐาน.
 **UAT ยังไม่มี alarm ชุดใหม่** เพราะ encrypted Redis v2 ยังไม่ถูกสร้าง. เหตุการณ์ UAT workers
 วันที่ 6 ส.ค. ingest 214,075,786,774 bytes ในวันเดียว แต่ 24 ชั่วโมงก่อน audit เหลือประมาณ
 2,984,094 bytes แปลว่า incident หยุดแล้วแต่ UAT preventive control ยังต้องเพิ่มตาม
@@ -326,8 +327,8 @@ UAT เปิดอยู่ที่ capacity 1/2 ในรอบตรวจ�
 **อย่าเชื่อ Redis alarm เดิมแม้ state เป็น `OK`:** `watchdog-bms-prod-redis-memory-high` ใช้
 dimension `ReplicationGroupId=watchdog-bms-prod-redis`, แต่ `DatabaseMemoryUsagePercentage` ของก้อนนี้
 ออกด้วย `CacheClusterId`/`CacheNodeId`. Query 24 ชั่วโมงด้วย dimension ของ alarm ได้ 0 datapoints และ
-state reason ระบุชัดว่า missing 2 จุดถูกนับเป็น non-breaching. ต้องสร้าง per-node alarms ให้เห็น datapoint
-จริงก่อน retire ตัวเดิม ตาม remediation plan Phase 3
+state reason ระบุชัดว่า missing 2 จุดถูกนับเป็น non-breaching. ตอนนี้ per-node alarms มี datapointจริง
+และตัวเดิมถูก retire แล้วตาม remediation plan Phase 3; ห้ามสร้าง alarm แบบ `ReplicationGroupId` กลับมา
 
 **crash ถูกจำกัดขนาด log แล้ว** `fatalDetail()` ใน `apps/workers/src/common/log.ts` ตัดที่ 2,000 chars
 และ `main.ts` ดักทั้ง `unhandledRejection` / `uncaughtException` ก่อน parse config — ถ้าไม่มีตัวนี้
@@ -346,10 +347,15 @@ AWS Budget มีอยู่แล้วชื่อ `WatchDog-BMS Monthly Cost
 forecast $787.792 พร้อม email subscriber สำหรับ actual 85%/100% และ forecast 100%. ไม่ต้องสร้างซ้ำ;
 ให้ปรับ baseline/threshold หลังแยก tag และมีเดือนที่ไม่มี incident ตาม remediation plan
 
-Cost Explorer group by cost-allocation tag `Environment` ยังรวมยอดทั้งหมดไว้ในช่องไม่มีค่า tag
-จึงยังตอบไม่ได้จาก billing ว่า UAT/Production/shared ใช้เท่าไรย้อนหลัง. Current IAM อ่าน
-cost-allocation/resource tags และ Cost Anomaly Detection ไม่ได้; ให้ platform admin ทำ read-back/
-activation แทนการขยาย workstation IAM
+Platform-admin pass วันที่ 2026-08-15 tag live cost-bearing inventory 49 resources ครบ
+`Environment`/`Component`/`ManagedBy`: production 21, shared 16, UAT 12 และ aggregate read-back
+มี invalid contract ศูนย์. `Environment` cost-allocation tag เป็น `Active`; `Component` ยังรอ Billing
+discover key ก่อน activate. ค่าใช้จ่ายเดิม $387.397 ยังอยู่ช่อง blank เพราะ tag ไม่ย้อนหลัง และต้องรอ
+ค่าใช้จ่ายใหม่ post ก่อนยืนยัน Cost Explorer แยกสาม environment ได้จริง.
+
+Cost Anomaly Detection มีอยู่แล้ว: SERVICE monitor หนึ่งตัวและ DAILY confirmed email subscription
+หนึ่งตัว ไม่ต้องสร้างซ้ำ. Threshold live เป็น absolute impact >= $100 **AND** percentage impact >= 40%;
+จะลด threshold หรือไม่เป็น tuning decision แยกจากการพิสูจน์ว่า control มีอยู่จริง.
 
 Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั้งเดือน แม้ IAM user จะชื่อ `watchdog-bedrock-dev`
 

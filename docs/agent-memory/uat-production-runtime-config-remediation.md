@@ -1,6 +1,6 @@
 # Agent Memory: UAT / Production runtime config remediation
 
-Status: PARTIAL LIVE — Production alarms and mailbox delivery verified; controller PR CI-green and awaiting independent approval; remaining cloud mutations await non-root platform-admin
+Status: PARTIAL LIVE — Production alarms/mailbox and first cost-control pass verified; controller PR awaits independent approval; UAT Redis and billing propagation remain
 Owner: thawatchai
 Scope: Redis/memory, BullMQ/cache configuration, CloudWatch logs, RDS observability,
 database audit retention and AWS cost controls across UAT/Production/shared infrastructure.
@@ -24,8 +24,9 @@ Decisions:
 - Remove unused permission/generic cache config instead of building a speculative permission cache.
 - Shared alert delivery is acceptable for sanitized operational alarms when alarm names carry the
   environment; data-plane stores remain isolated.
-- Existing AWS Budget should be recalibrated, not duplicated. Cost Anomaly Detection remains unknown
-  until a platform-admin read-back is available.
+- Existing AWS Budget should be recalibrated, not duplicated. Cost Anomaly Detection is active with
+  one SERVICE monitor and one DAILY confirmed email subscription; its live threshold is $100 AND 40%,
+  so changing sensitivity is a separate owner decision rather than a missing-control remediation.
 - UAT Redis migration and service deploy use one no-overwrite SSM mutex. A read-only lock check was
   found to have a TOCTOU race and was replaced before handoff.
 - The migration operator policy enforces v2 identity, encryption/auth, node class, engine/parameter
@@ -34,8 +35,8 @@ Decisions:
   changed; category/hold/end-action approval remains open.
 - Production runtime alarms were installed from the reviewed local script only after exact account,
   region, live node, confirmed subscription and historical `PutMetricAlarm` authority checks passed.
-  The invalid replication-group alarm remains because current non-root authority cannot prove
-  `DeleteAlarms`; no delete probe was made.
+  The invalid replication-group alarm was later retired through the owner-approved exact authority;
+  no Redis, metric, valid alarm or application resource was changed.
 - UAT was deliberately left running at 1/2. Parking it before Redis operator authority exists would
   create avoidable downtime with no safe path to complete prepare/cutover.
 - UAT deploy workflows load the deploy controller and policy verification from `main`, while candidate
@@ -49,13 +50,15 @@ Decisions:
 - Owner confirmed the sanitized Production SNS canary reached the real inbox on 2026-08-15. Do not
   retain the supplied screenshot in the repository because it exposes the mailbox and unsubscribe
   endpoint; the screenshot hash, subject and SNS MessageId are sufficient for this operational gate.
-- Owner authorized exact retirement of the invalid alarm and Phase 6 cost-control work. Authority is
-  still fail-closed: the active non-root principal cannot grant itself IAM access, and an expired root
-  profile is not a substitute for the required temporary non-root platform-admin session.
+- Owner authorized exact retirement of the invalid alarm and Phase 6 cost-control work under approval
+  reference `owner-chat-2026-08-15-alarm-cost-controls`. Root was used only to create/revoke temporary
+  no-console IAM identities; target mutations ran through those scoped identities and final IAM
+  read-back found no `codex-*` user or `codex-runtime-*` role remaining.
 
 Open questions:
 - Privacy/Legal + Accounting approval for AuditLog/AiUsageEvent retention classes and legal holds.
-- Platform admin must prove current Cost Anomaly Detection state and activate cost-allocation tags.
+- Billing must discover the new `Component` key; then activate it and verify new Cost Explorer usage
+  no longer flows to the blank `Environment` bucket.
 - Owner should confirm the recommended $350 monthly baseline after one clean, incident-free billing month.
 
 Artifacts:
@@ -106,10 +109,24 @@ Verification:
   `12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`: 3 log-ingest, 2 per-node
   Redis memory and 4 RDS alarms. Exact contract read-back showed the expected dimensions,
   thresholds, `notBreaching`, one SNS action, confirmed subscription and real datapoints for all 9.
-- The invalid `watchdog-bms-prod-redis-memory-high` remains. CloudTrail event
-  `644160fa-cd71-4e6b-8027-dcad13fc3b12` proves the latest workstation monitoring bootstrap policy
-  allowed only `PutMetricAlarm`/`DescribeAlarms`, not `DeleteAlarms`; no successful historical delete
-  existed and `SimulatePrincipalPolicy` was denied. Retirement was therefore not attempted.
+- The invalid `watchdog-bms-prod-redis-memory-high` was deleted at 02:54:25 UTC+7. CloudTrail event
+  `b7ab5aed-5fda-43e0-ba26-ea15da175ce1` identifies temporary operator
+  `codex-alarm-retirement-20260815`; `DescribeAlarms` returned zero afterwards and the surviving nine
+  alarms passed full contract/datapoint/subscription verification again.
+- Platform-admin cost read-back found one SERVICE anomaly monitor and one DAILY confirmed email
+  subscription. Its threshold expression requires absolute impact >= $100 AND percentage impact >= 40%.
+- Cost tagging applied and individually read back `Environment`, `Component` and
+  `ManagedBy=mangmeeplus-infra` on 49 resources: production 21, shared 16 and UAT 12. Aggregate
+  Resource Groups Tagging API verification returned 49 and zero invalid contracts. Components were
+  ai-gateway 7, api-web 7, workers 7, database 2, redis 4, load-balancer 1, vpc-endpoint 5,
+  bastion 1, network/EIP 4, container-registry 5, release 2 and production-readiness 4.
+- `Environment` cost-allocation activation was accepted and read back `Active` at
+  `2026-08-14T20:06:39Z`. `Component` had not appeared in Billing immediately after tagging, matching
+  AWS's documented propagation delay; activation and new-cost Cost Explorer proof remain pending.
+- A failed CloudWatch Logs shorthand call left one temporary cost access key active after its shell
+  cleanup trap did not execute. Exact read-back detected it immediately; the key was disabled/deleted,
+  then its policy and user were deleted before continuation. Final root inventory returned no
+  `codex-*` users or `codex-runtime-*` roles. No delete/data/service action was present in that policy.
 - UAT Redis migration role `watchdog-bms-uat-redis-migration-operator` does not exist. Current
   workstation calls to `DescribeReplicationGroups`, `DescribeCacheParameters`, deploy-policy exact
   read-back and policy simulation were denied. Historical write events do not authorize self-created
@@ -158,6 +175,6 @@ Next:
    dedicated Redis migration operator role/policy; do not use root.
 3. Re-run read-only preflight, park UAT, execute prepare/cutover, reopen, install/verify UAT alarms,
    run acceptance and retain the legacy node through soak.
-4. Give the monitoring operator exact `DeleteAlarms`, re-run Production verify and retire only the
-   zero-datapoint legacy alarm. SNS mailbox delivery is already verified.
-5. Obtain the audit retention decision and platform-admin cost-control read-back.
+4. After Billing propagation, activate `Component` and verify new Cost Explorer usage across
+   UAT/Production/shared; separately decide whether the existing $100 AND 40% anomaly threshold should change.
+5. Obtain the audit retention/legal-hold decision before adding any purge implementation.

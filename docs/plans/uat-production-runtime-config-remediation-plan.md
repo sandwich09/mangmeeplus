@@ -1,6 +1,6 @@
 # UAT / Production Runtime Configuration Remediation Plan
 
-Status: **PARTIAL LIVE — Production alarms installed/verified; UAT Redis and alarms await exact non-root authority**
+Status: **PARTIAL LIVE — Production alarms/mailbox and first cost-control pass verified; UAT Redis and alarms remain**
 
 Evidence cut-off: 2026-08-15, account `311414082667`, region `ap-southeast-1`
 
@@ -31,11 +31,11 @@ database observability และ cost controls ของ UAT/Production โด�
 | --- | --- | --- |
 | Production Redis | CloudTrail `CreateReplicationGroup` 2026-08-08: Redis 7.1, 2 nodes, Multi-AZ/failover, encryption at rest/in transit, auth, snapshot 35 วัน; successful readiness run `31789220329` ยืนยันค่าเดียวกันและผูก source `748f1fa…`; live nodes `available` | **CLOSED เฉพาะ topology/hardening — M-17 รวมยังเปิดเรื่อง restore/rotation** |
 | UAT Redis confidentiality | live `watchdog-bms-uat-redis`: standalone 1 node, `AtRest=false`, `Transit=false`, `Auth=false`; secret ใช้ scheme `redis://` | **OPEN P0** |
-| Redis memory | 2026-08-15: UAT ~18.3 MB / 4.54%, Prod node 1 ~17.3 MB / 4.30%, node 2 ~17.1 MB / 4.24%; eviction ทุก node = 0; parameter-group change ใน CloudTrail ตั้ง `maxmemory-policy=noeviction` สำเร็จ | **HEALTHY NOW**, แต่ Production alarm ใช้ dimension ผิด |
+| Redis memory | 2026-08-15: UAT ~18.3 MB / 4.54%, Prod node 1 ~17.3 MB / 4.30%, node 2 ~17.1 MB / 4.24%; eviction ทุก node = 0; parameter-group change ใน CloudTrail ตั้ง `maxmemory-policy=noeviction` สำเร็จ | **HEALTHY NOW** |
 | BullMQ retention | ทุก queue ผ่าน `apps/workers/src/common/queue.ts`: completed 48, failed 100, DLQ 500; worker fatal logging ถูกจำกัดขนาดแล้ว | **CLOSED IN CODE** |
 | CloudWatch retention | UAT app/release 3 วัน; Production app/support 14 วัน; Production app groups ใช้ KMS | **CLOSED** |
 | Log-ingest guard | Production มี alarm `IncomingBytes` 3 กลุ่มที่ 512 MiB/ชั่วโมงและส่ง SNS; UAT ไม่มี (`describe-alarms` ได้ `[]`) | **OPEN P0 — UAT only** |
-| Redis memory alarm | `watchdog-bms-prod-redis-memory-high` เป็น `OK` เพราะ missing data ถูกนับ non-breaching; query 24 ชั่วโมงด้วย `ReplicationGroupId` ได้ 0 datapoints ขณะที่ metric จริงออกด้วย `CacheClusterId`/`CacheNodeId` | **OPEN P0 — alarm เดิมไม่ทำงาน** |
+| Redis memory alarm | Production per-node alarms สองตัวใช้ `CacheClusterId`/`CacheNodeId` และมี datapoint จริง; invalid `ReplicationGroupId` alarm ถูก retire ด้วย exact `DeleteAlarms` และ read-back เหลือศูนย์ | **CLOSED — Production** |
 | Historical log spike | `/ecs/watchdog-bms-uat-workers` รับ 280.4 GB ระหว่าง 1–14 ส.ค.; 214.1 GB วันที่ 6 ส.ค. แต่ 24 ชั่วโมงล่าสุดเหลือ ~3.0 MB | **INCIDENT STOPPED**; control gap ยังเปิด |
 | RDS capacity alarms | ทั้ง UAT/Prod เหลือ storage ~18.25 GB; free memory UAT ~151 MB, Prod ~758 MB; ไม่มี `FreeStorageSpace`/`FreeableMemory` alarm ทั้งคู่ | **OPEN P1** |
 | RDS diagnostics | Production/UAT ไม่มี Performance Insights, enhanced monitoring, log exports หรือ storage autoscaling | **OPEN P2**, ไม่ใช่ capacity incident ปัจจุบัน |
@@ -44,8 +44,8 @@ database observability และ cost controls ของ UAT/Production โด�
 | Permission cache | `PERMISSION_CACHE_TTL_SECONDS=60` อยู่ใน config/example/compose แต่ service มีเพียง TODO และ query DB ทุกครั้ง | **CONFIG DRIFT — ไม่มี cache จริง** |
 | Other generic cache config | `CACHE_TTL_SECONDS`, `IDEMPOTENCY_TTL_SECONDS`, `RATE_LIMIT_REDIS_PREFIX`, `QUEUE_REDIS_PREFIX` มีเฉพาะ broad spec; runtime ใช้ TTL/prefix เฉพาะ use case ใน code | **SPEC DRIFT** |
 | Cost budget | มี `WatchDog-BMS Monthly Cost Budget` $100, actual 85/100% และ forecast 100% พร้อม email subscriber อย่างละ 1; actual เดือน ส.ค. ถึงวันที่ 14 = $387.397, forecast = $787.792 | **ACTIVE BUT MIS-CALIBRATED** |
-| Cost anomaly detection | IAM ปัจจุบันอ่าน `ce:GetAnomalyMonitors` ไม่ได้; CloudTrail ไม่พบ create event ในช่วงที่ค้น | **UNKNOWN — ห้ามสรุปว่าไม่มี** |
-| Cost allocation | Cost Explorer group by `Environment` รวมค่าใช้จ่ายทั้งหมด $387.397 ไว้ในช่องไม่มีค่า tag; current IAM อ่าน resource/cost-allocation tags ไม่ได้ | **OPEN P1** |
+| Cost anomaly detection | Platform-admin read-back พบ `Default-Services-Monitor` แบบ SERVICE และ `Default-Services-Subscription` แบบ DAILY พร้อม confirmed email; threshold คือ impact อย่างน้อย $100 **และ** 40% | **ACTIVE — threshold tuning เป็นคนละ decision** |
+| Cost allocation | 49 live resources มี `Environment`/`Component`/`ManagedBy` ครบ: production 21, shared 16, UAT 12; `Environment` cost-allocation tag เป็น Active แล้ว ส่วน `Component` ยังรอ Billing discover key | **PARTIAL LIVE — รอ propagation/Cost Explorer evidence** |
 | ECR lifecycle | runtime repos API/AI/workers/web เก็บ 20 images; `watchdog-bms-migration-tool` ไม่มี policy | **OPEN P2** |
 | Environment isolation | RDS, Redis, S3 bucket, Secrets Manager/SSM paths แยก UAT/Prod; ALB, VPC/endpoints, ECR repos และ bastion ใช้ร่วมกัน | **INTENTIONAL**, ต้อง tag shared ให้ชัด |
 | Production serving mode | ทั้ง 3 services รันที่ capacity 1/2 แต่เป็น `maintenance_only`; queue และ LINE ledger ปิด | **INTENTIONAL — ไม่ใช่ remediation item** |
@@ -124,8 +124,8 @@ Exit:
       และข้อความไม่มี tenant data
 - [x] ยืนยัน SNS canary delivery ที่ mailbox: owner ส่งภาพ inbox วันที่ 2026-08-15 ซึ่งเห็น subject
       `[TEST] production runtime alarm pipeline` และข้อความ sanitized canary ตรงกับ publish ที่ AWS รับ
-- [ ] retire `watchdog-bms-prod-redis-memory-high` หลัง non-root operator ได้ exact
-      `cloudwatch:DeleteAlarms`; workstation ปัจจุบันไม่มีหลักฐาน allow จึงไม่ลองลบเพื่อหา error
+- [x] retire `watchdog-bms-prod-redis-memory-high` ผ่าน owner-approved temporary exact authority;
+      valid alarms verify ผ่านทั้งก่อนและหลัง และ `describe-alarms` ของชื่อเดิมเหลือศูนย์
 
 64 MiB/hour สูงกว่าค่า UAT ล่าสุดหลายเท่าแต่ต่ำพอจับเหตุการณ์ 214 GB/day ภายในชั่วโมงแรก
 โดยไม่ต้องสร้าง synthetic log volume
@@ -136,8 +136,9 @@ Exit: `describe-alarms` เห็นทุก alarm, action count = 1, SNS canar
 
 Live evidence 2026-08-15 01:10 UTC+7: Production install และ verify ผ่านครบ 9 alarms, ทุก
 dimension มี datapoint และ SNS subscription confirmed. Script SHA-256
-`12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`. Invalid alarm เดิมยังคงอยู่
-จนกว่าจะมี exact delete authority; UAT install ยังไม่เริ่มเพราะ v2 node ยังไม่มีตามลำดับที่กำหนด.
+`12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`. Invalid alarm เดิมถูกลบเวลา
+02:54:25 UTC+7 ผ่าน CloudTrail event `b7ab5aed-5fda-43e0-ba26-ea15da175ce1`; post-delete
+read-back เหลือศูนย์และ valid 9-alarm contract ยังผ่าน. UAT install ยังไม่เริ่มเพราะ v2 node ยังไม่มี.
 เวลาเดียวกัน owner ยืนยัน mailbox delivery ด้วยภาพ inbox; เก็บเฉพาะ SHA-256 ของภาพ
 `f524646240c97510a4a500e1bcfecedf064e2549f620081dbd586605d09451bb` และ SNS MessageId
 `198e9125-6a84-5124-866b-f3dc35bfe21e` ในหลักฐาน ไม่ copy ภาพที่มี mailbox/unsubscribe endpoint
@@ -178,15 +179,18 @@ Exit: `rg` ไม่พบ config ที่ประกาศว่า active �
 
 ### Phase 6 — Make cost controls actionable (P1/P2)
 
-- [ ] Platform admin tag existing and newly created resources ด้วย `Environment=uat|production|shared`,
-      `Component=<name>`, `ManagedBy=mangmeeplus-infra`
-- [ ] ALB, VPC endpoints, ECR repos และ bastion ใช้ `Environment=shared`; ห้ามโยน shared cost ให้ Prod เงียบ ๆ
-- [ ] Activate `Environment` และ `Component` เป็น cost-allocation tags ใน Billing
+- [x] Platform admin tag live cost-bearing inventory 49 resources ด้วย `Environment=uat|production|shared`,
+      `Component=<name>`, `ManagedBy=mangmeeplus-infra`; aggregate read-back พบ invalid contract ศูนย์
+- [ ] Pin creation-time tags ใน resource creation paths เพื่อไม่ให้ resource ใหม่กลับไป untagged
+- [x] ALB, VPC endpoints, ECR repos, bastion และ attached EIP ใช้ `Environment=shared`;
+      shared 16 resources ไม่ถูกโยนเข้า Production
+- [x] Activate `Environment` เป็น cost-allocation tag; API read-back เป็น `Active`
+- [ ] Activate `Component` หลัง Billing discover key ซึ่ง AWS ระบุว่าอาจใช้เวลาสูงสุด 24 ชั่วโมง
 - [ ] รอ billing propagation แล้ว verify Cost Explorer ไม่มีค่าใหม่ไหลเข้า blank tag bucket
 - [ ] ปรับ budget เดิม ไม่สร้างชื่อซ้ำ: baseline แนะนำ $350/month, actual 80%/100%, forecast 100%; owner
       ปรับตัวเลขอีกครั้งหลังมี 30 วันซึ่งไม่มี incident spike
-- [ ] ให้ platform admin ตรวจ Cost Anomaly Detection; ถ้ายังไม่มี ให้สร้าง AWS-services monitor และ
-      daily subscription threshold $10
+- [x] Platform admin ยืนยันว่ามี AWS-services monitor และ daily confirmed email subscription อยู่แล้ว;
+      ไม่สร้างซ้ำ. Threshold live คือ absolute $100 AND percentage 40%; การลด threshold เป็น decision แยก
 - [ ] ใส่ ECR lifecycle keep-last-20 ให้ `watchdog-bms-migration-tool` เท่ากับ runtime repos
 - [ ] จอด UAT หลัง acceptance ทุกครั้ง; ห้ามทำเป็น cron จน workflow รู้ owner/test state
 
