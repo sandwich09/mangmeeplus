@@ -72,7 +72,16 @@ Optional variables include `PUBLIC_DOMAIN_URL`, LINE links/images, and AI provid
 
 ## Isolated data services
 
-This creates a dedicated `db.t4g.micro` RDS instance (encrypted at rest via `--storage-encrypted`), a `cache.t4g.micro` Redis node (**not** encrypted — `bootstrap-data.sh` passes no at-rest, in-transit, or auth-token flags, and the stored URL is `redis://`, not `rediss://`), S3 bucket, UAT-only security groups, secrets, and ECS cluster. It reuses the existing subnets and adds recurring AWS cost. The RDS and Redis nodes sit in the two private subnets; the Fargate tasks run in the public ones and egress through the internet gateway, which is why the NAT gateway was removed on 2026-08-07 after a month of billing $43.90 for 0.4 GB of traffic. Recreate it before running anything in `ECS_EXPRESS_SUBNET_MODE=private` or the A5 clone/audit path. Export UAT LINE secrets without putting them on the command line; temporary production values require explicit owner approval and mandatory production rotation after acceptance:
+This creates a dedicated `db.t4g.micro` RDS instance (encrypted at rest via `--storage-encrypted`),
+an encrypted single-node `cache.t4g.micro` Redis replication group, S3 bucket, UAT-only security groups,
+secrets, and ECS cluster. The live legacy Redis node predates this bootstrap shape and is still
+unencrypted; do not confuse a corrected creation script with live migration evidence. It reuses the
+existing subnets and adds recurring AWS cost. The RDS and Redis nodes sit in the two private subnets;
+the Fargate tasks run in the public ones and egress through the internet gateway, which is why the
+NAT gateway was removed on 2026-08-07 after a month of billing $43.90 for 0.4 GB of traffic. Recreate
+it before running anything in `ECS_EXPRESS_SUBNET_MODE=private` or the A5 clone/audit path. Export UAT
+LINE secrets without putting them on the command line; temporary production values require explicit
+owner approval and mandatory production rotation after acceptance:
 
 ```sh
 export LINE_LOGIN_CHANNEL_SECRET='...'
@@ -88,9 +97,18 @@ Secrets are stored only under `watchdog-bms/uat/*`. The deployment runs containe
 
 ## Redis parameter group (`noeviction`)
 
-`bootstrap-data.sh` creates the node on `default.redis7`, which ships `maxmemory-policy=volatile-lru` and cannot be edited. That default is actively wrong here: `volatile-lru` evicts only keys that carry a TTL — the rate-limit counters and the actor-delegation replay store — while the untagged BullMQ job records that actually fill the cache are never eviction candidates. The cache sheds security state and then hits OOM anyway, which is what took every UAT worker down on 2026-08-05. BullMQ wants `noeviction` so the failure is loud instead of silent.
+The legacy node was originally created on `default.redis7`, which ships
+`maxmemory-policy=volatile-lru` and cannot be edited. That default is actively wrong here:
+`volatile-lru` evicts only keys that carry a TTL — the rate-limit counters and the actor-delegation
+replay store — while the untagged BullMQ job records that actually fill the cache are never eviction
+candidates. The cache sheds security state and then hits OOM anyway, which is what took every UAT
+worker down on 2026-08-05. The legacy live node has since been attached to custom
+`watchdog-bms-uat-redis7` with `noeviction`; fresh bootstrap creates and attaches that group before
+the node starts.
 
-Applied to UAT on 2026-08-07. Run the same three steps for any new node, including the production Redis when it is rebuilt — substitute `prod` for `uat` in both names:
+Applied to the legacy UAT node on 2026-08-07. Production Redis was later rebuilt with its own custom
+`noeviction` group and proven on 2026-08-14; do not rerun these standalone-node commands against it.
+Fresh UAT nodes get the parameter group from bootstrap at create time:
 
 ```sh
 aws elasticache create-cache-parameter-group \
@@ -121,7 +139,7 @@ Doing this at zero capacity (see below) means nothing is connected while the gro
 
 `bootstrap-data.sh` now creates the parameter group and attaches it at create time, so a fresh bootstrap never passes through `volatile-lru`. The three commands above remain the procedure for a node that already exists.
 
-## Redis encryption and the pending migration
+## Redis encryption blue/green migration
 
 The live UAT node is **not encrypted** — `AtRestEncryptionEnabled`, `TransitEncryptionEnabled` and `AuthTokenEnabled` all read false, and the stored URL is `redis://`. It predates the bootstrap change below.
 
@@ -129,22 +147,88 @@ The live UAT node is **not encrypted** — `AtRestEncryptionEnabled`, `TransitEn
 
 No application change is needed: `REDIS_URL` is an unconstrained string, and ioredis turns on TLS from the `rediss://` scheme and reads the password from the userinfo field, which covers both BullMQ (`connection: { url }`) and the API rate limiter (`new Redis(url, …)`).
 
-Encryption cannot be toggled on an existing node, so the live one has to be replaced. Its contents are disposable — BullMQ jobs and rate-limit counters, no durable state. Run this while UAT is parked at zero:
+Encryption cannot be toggled on the live standalone node, so it has to be replaced. Its contents are
+operational state — BullMQ jobs, rate-limit counters and LINE ledger entries — not the durable audit
+source of truth, but two runtimes must never consume the old and new queues at the same time.
+
+> **Superseded 2026-08-15:** do not run the old delete-node +
+> `delete-secret --force-delete-without-recovery` procedure. It destroyed the rollback target first,
+> changed the secret ARN and forced a deploy for an avoidable reason.
+
+The repository implementation is `infra/uat/redis-blue-green.sh`. It has three explicit operations:
+`prepare`, `cutover`, and `rollback`. All require exact account/region/resource checks, exact capacity
+`0/0`, zero running/pending tasks, and a mode-specific confirmation. Migration and UAT deploy acquire
+the same no-overwrite SSM mutex, closing the race where a deploy starts after the parked-state check.
+Neither operation prints the URL/token, deletes a cache, or changes ECS capacity.
+
+Before the first run, a platform admin must apply the updated
+`infra/uat/github-deploy-role-policy.template.json`; the GitHub deploy preflight compares that policy
+exactly and will fail until the role can delete only the mutex parameter. Bind the rendered
+`infra/uat/redis-blue-green-operator-policy.template.json` to the migration operator. Its create grant
+is limited to v2 and enforces encryption/auth, node type, parameter group and required tags; it has no
+ElastiCache delete action.
+
+Run from a reviewed migration window. First park UAT and prove tasks drained, then prepare and cut
+over while the old node remains intact:
 
 ```sh
-aws elasticache delete-cache-cluster --cache-cluster-id watchdog-bms-uat-redis
+ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 DEPLOY_ENV=uat \
+  bash infra/prod-ecs-express/deploy.sh all
 
-aws secretsmanager delete-secret --secret-id watchdog-bms/uat/redis-url \
-  --force-delete-without-recovery
+CONFIRM_UAT_REDIS_PREPARE=CREATE_ENCRYPTED_CANDIDATE \
+AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  bash infra/uat/redis-blue-green.sh prepare
 
-CONFIRM_UAT_COST=CREATE_ISOLATED_UAT bash infra/uat/bootstrap-data.sh
+CONFIRM_UAT_REDIS_CUTOVER=MOVE_CURRENT_TO_ENCRYPTED_V2 \
+AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  bash infra/uat/redis-blue-green.sh cutover
+
+ECS_EXPRESS_MIN_TASKS=1 ECS_EXPRESS_MAX_TASKS=2 DEPLOY_ENV=uat \
+  bash infra/prod-ecs-express/deploy.sh all
 ```
 
-`--force-delete-without-recovery` is not optional: an ordinary `delete-secret` holds the name for 7–30 days, and `bootstrap-data.sh` refuses to run when the secret exists without a node. Everything else in the bootstrap is idempotent and will skip.
+The existing `watchdog-bms/uat/redis-url` ARN stays unchanged. `AWSCURRENT` becomes the v2
+`rediss://` version and the legacy URL remains `AWSPREVIOUS`. After reopening, run the normal UAT
+health/worker/queue/rate-limit/LINE acceptance paths and soak for at least 24 hours or one acceptance
+cycle. Keep the legacy node until owner sign-off; its deletion is intentionally not implemented.
 
-Recreating the secret produces a **new ARN**, and `deploy.sh` embeds that ARN in `valueFrom` rather than the name, so the task definitions must be rewritten. Bringing UAT back up does exactly that, so no extra step is needed — just deploy rather than only raising capacity.
+If smoke fails, park UAT again before rollback, restore the legacy version, then reopen:
+
+```sh
+ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 DEPLOY_ENV=uat \
+  bash infra/prod-ecs-express/deploy.sh all
+
+CONFIRM_UAT_REDIS_ROLLBACK=RESTORE_LEGACY_CURRENT \
+AWS_PROFILE=watchdog-bedrock AWS_SDK_LOAD_CONFIG=1 \
+  bash infra/uat/redis-blue-green.sh rollback
+
+ECS_EXPRESS_MIN_TASKS=1 ECS_EXPRESS_MAX_TASKS=2 DEPLOY_ENV=uat \
+  bash infra/prod-ecs-express/deploy.sh all
+```
+
+An ungraceful process kill may leave `/watchdog-bms/uat/redis-migration-lock`. Read its non-secret
+owner/mode/time value and prove no deploy or migration process/workflow is active. Only then may an
+operator delete that exact SSM parameter; never delete it merely because a later command is blocked.
 
 `infra/uat/redis-encryption.spec.sh` guards the bootstrap: it fails if the standalone `create-cache-cluster` returns, if any encryption flag is dropped, if the secret reverts to `redis://`, or if the generated auth token leaves the 16–128 character range or contains a character ElastiCache rejects.
+
+## Runtime alarms
+
+After `prepare` has created v2, install UAT alarms using the confirmed shared operations SNS topic.
+The verifier rejects a pending/missing subscription and rejects every dimension with zero datapoints,
+even when an alarm appears `OK` because missing data is non-breaching:
+
+```sh
+SECURITY_ALERT_TOPIC_ARN='arn:aws:sns:ap-southeast-1:311414082667:<confirmed-topic>' \
+  bash infra/monitoring/runtime-alarms.sh install uat
+SECURITY_ALERT_TOPIC_ARN='arn:aws:sns:ap-southeast-1:311414082667:<confirmed-topic>' \
+  bash infra/monitoring/runtime-alarms.sh verify uat
+```
+
+UAT gets per-log-group 64 MiB/hour guards, per-node Redis memory at 75%, RDS free storage at 4 GB,
+and free memory at 64 MB. Production uses the same script with its documented thresholds; retire the
+old invalid Production Redis alarm only through the guarded Production-only mode in
+`docs/runbooks/production-golive-aws-commands.md`.
 
 ## Parking UAT between cycles
 

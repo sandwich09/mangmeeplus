@@ -1,0 +1,117 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AccountProbe",
+      "Effect": "Allow",
+      "Action": "sts:GetCallerIdentity",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadUatParkedState",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeExpressGatewayService",
+        "ecs:ListTasks"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-1"
+        }
+      }
+    },
+    {
+      "Sid": "ReadUatServicePointers",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/uat/ecs-express-*-service-arn"
+    },
+    {
+      "Sid": "OwnUatRedisMigrationLock",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter"
+      ],
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/uat/redis-migration-lock"
+    },
+    {
+      "Sid": "ReadUatRedis",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:DescribeCacheClusters",
+        "elasticache:DescribeCacheParameters",
+        "elasticache:DescribeReplicationGroups"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-southeast-1"
+        }
+      }
+    },
+    {
+      "Sid": "CreateOnlyEncryptedUatRedisV2",
+      "Effect": "Allow",
+      "Action": "elasticache:CreateReplicationGroup",
+      "Resource": [
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:replicationgroup:watchdog-bms-uat-redis-v2",
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:cluster:watchdog-bms-uat-redis-v2-*",
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:parametergroup:watchdog-bms-uat-redis7",
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:subnetgroup:watchdog-bms-uat-redis-subnets"
+      ],
+      "Condition": {
+        "Bool": {
+          "elasticache:AtRestEncryptionEnabled": "true",
+          "elasticache:TransitEncryptionEnabled": "true",
+          "elasticache:AuthTokenEnabled": "true"
+        },
+        "StringEquals": {
+          "elasticache:CacheNodeType": "cache.t4g.micro",
+          "elasticache:CacheParameterGroupName": "watchdog-bms-uat-redis7",
+          "elasticache:EngineType": "redis",
+          "elasticache:EngineVersion": "7.1",
+          "aws:RequestTag/Environment": "uat",
+          "aws:RequestTag/Component": "redis",
+          "aws:RequestTag/ManagedBy": "mangmeeplus-infra"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Environment", "Component", "ManagedBy"]
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyEncryptedUatRedisV2",
+      "Effect": "Allow",
+      "Action": "elasticache:AddTagsToResource",
+      "Resource": [
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:replicationgroup:watchdog-bms-uat-redis-v2",
+        "arn:aws:elasticache:ap-southeast-1:<ACCOUNT_ID>:cluster:watchdog-bms-uat-redis-v2-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "uat",
+          "aws:RequestTag/Component": "redis",
+          "aws:RequestTag/ManagedBy": "mangmeeplus-infra"
+        },
+        "ForAllValues:StringEquals": {
+          "aws:TagKeys": ["Environment", "Component", "ManagedBy"]
+        }
+      }
+    },
+    {
+      "Sid": "VersionOnlyUatRedisSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:ListSecretVersionIds",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecretVersionStage"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-1:<ACCOUNT_ID>:secret:watchdog-bms/uat/redis-url-*"
+    }
+  ]
+}

@@ -20,6 +20,10 @@ assert_present() {
 # --- the node itself -------------------------------------------------------------------------
 assert_present 'the Redis node must be a replication group, the only shape that can be encrypted at rest' \
   'elasticache create-replication-group'
+assert_present 'the encrypted group must not collide with the legacy standalone cache id' \
+  'redis_id="${prefix}-redis-v2"'
+assert_present 'the legacy id must remain explicit for migration detection' \
+  'legacy_redis_id="${prefix}-redis"'
 assert_present 'at-rest encryption must be requested' '--at-rest-encryption-enabled'
 assert_present 'in-transit encryption must be requested' '--transit-encryption-enabled'
 assert_present 'an auth token must be set' '--auth-token'

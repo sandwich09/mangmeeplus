@@ -39,8 +39,19 @@
       "Effect": "Allow",
       "Action": [
         "cloudwatch:PutMetricAlarm",
-        "cloudwatch:DescribeAlarms"
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:DeleteAlarms"
       ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "ap-southeast-1" }
+      }
+    },
+    {
+      "Sid": "DiscoverRedisMetricDimensions",
+      "Effect": "Allow",
+      "Action": "elasticache:DescribeCacheClusters",
       "Resource": "*",
       "Condition": {
         "StringEquals": { "aws:RequestedRegion": "ap-southeast-1" }

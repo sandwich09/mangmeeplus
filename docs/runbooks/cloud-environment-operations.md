@@ -1,6 +1,6 @@
 # Cloud Environment Operations — start, stop, inspect, and what it costs
 
-สร้าง 2026-08-07; ตรวจ live เพิ่ม 2026-08-11 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ไม่ได้อ่านจากโค้ด
+สร้าง 2026-08-07; ตรวจ live ล่าสุด 2026-08-15 | ทุกตัวเลขและสถานะในเอกสารนี้ **อ่านจาก AWS จริง** ไม่ได้อ่านจากโค้ด
 บริบทเต็มของเหตุการณ์ที่ทำให้เกิดเอกสารนี้: `docs/agent-memory/aws-cost-spike-2026-08.md`
 
 เอกสารนี้มีไว้ให้ agent ตัวถัดไป **ไม่ต้องไล่โค้ดซ้ำ** เพื่อตอบคำถามว่า "ตอนนี้อะไรรันอยู่ ปิดยังไง
@@ -10,22 +10,25 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## 1. อะไรรันอยู่ (2026-08-07)
+## 1. อะไรรันอยู่ (live read-back 2026-08-15)
 
 | Resource | ตัวตน | สถานะ |
 | --- | --- | --- |
 | ECS cluster | `watchdog-bms-prod`, `watchdog-bms-uat` | ทั้งคู่ ACTIVE |
-| prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; api-web/AI ใช้ `eb515b9…`, workers ใช้ `0bdbe50…` ณ 2026-08-10 |
-| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว** ที่ `5f55567…` ณ 2026-08-11 |
-| RDS | `watchdog-bms-prod-db`, `watchdog-bms-uat-db` — `db.t4g.micro`, 20 GB | encrypted, `PubliclyAccessible: false` |
-| ElastiCache | `watchdog-bms-uat-redis` — `cache.t4g.micro`, engine 7.1.0 | pg `watchdog-bms-uat-redis7`, **ไม่ได้เข้ารหัส** |
+| prod services | `watchdog-bms-api-web-pub`, `watchdog-bms-ai-gateway-v2`, `watchdog-bms-workers` | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; source `748f1fa…`; serving mode `maintenance_only` ทั้งหมด |
+| uat services | `watchdog-bms-uat-api-web` (2 vCPU/6 GB), `-ai-gateway` (1/2), `-workers` (0.5/1) | **ACTIVE, capacity 1/2 และมี task รันครบ 3 ตัว**; serving mode `live` |
+| RDS UAT | `watchdog-bms-uat-db` — `db.t4g.micro`, 20 GB, Single-AZ, backup 1 วัน | encrypted, `PubliclyAccessible: false` |
+| RDS Production | `watchdog-bms-prod-db` — `db.t4g.small`, 20 GB, Multi-AZ, backup 35 วัน, deletion protection | encrypted, `PubliclyAccessible: false` |
+| ElastiCache UAT | `watchdog-bms-uat-redis` — standalone `cache.t4g.micro`, engine 7.1 | pg `watchdog-bms-uat-redis7`, **ไม่ได้เข้ารหัส/ไม่มี auth** |
+| ElastiCache Production | replication group `watchdog-bms-prod-redis` — 2× `cache.t4g.micro` | available, encrypted at rest/in transit, auth, automatic failover, snapshot 35 วัน |
 | ALB | `ecs-express-gateway-alb-ff8c07dd` | ใช้ร่วมกันทั้ง prod และ uat, 3 ENI/EIP |
 | EC2 | `i-0f3b3881690dcf874` `watchdog-bms-ssm-bastion` `t3.nano` | เปิดค้าง มี public IP |
-| ECR | `watchdog-bms-api` / `-ai-gateway` / `-workers` / `-web` | ไม่มี lifecycle policy สักตัว |
+| ECR | `watchdog-bms-api` / `-ai-gateway` / `-workers` / `-web` | lifecycle เก็บ 20 images; `watchdog-bms-migration-tool` ยังไม่มี policy |
 | AgentCore | runtime `watchdog_orchestrator` | READY |
 | App Runner | 2 service legacy | PAUSED — pause หยุดคิดเงินจริง ($11.95 → $0) |
 
-**ถูกลบไปเมื่อ 2026-08-07:** NAT gateway `nat-06303bcc18968c82d` และ ElastiCache `watchdog-bms-prod-redis`
+**ถูกลบไปเมื่อ 2026-08-07:** NAT gateway `nat-06303bcc18968c82d` และ Production Redis ก้อนเดิม;
+Production Redis ถูกสร้างใหม่เป็น replication group ตาม M-17 เมื่อ 2026-08-08
 
 Network: subnet public 3 อัน (main route table → IGW) และ private 2 อัน (`rtb-07f3ced2ad683cd23`) ซึ่งตอนนี้
 เหลือ route `local` อย่างเดียวหลังลบ NAT — ในนั้นมีแค่ ENI ของ UAT RDS กับ UAT Redis ซึ่งไม่ออกอินเทอร์เน็ต
@@ -144,22 +147,18 @@ Production release ใหม่ต้องผ่าน signed UAT Passport แ�
 `deploy-production-v2.yml` ตาม `uat-production-v2-deployment.md`; ห้ามเรียก `deploy.sh` จาก
 workstation เพื่อทำ promotion. ค่า capacity/status ด้านล่างเป็น inventory/diagnostic context เท่านั้น.
 
-ณ 2026-08-10 ทั้งสาม service มี capacity `1/2` และมี task รันครบ แต่เป็นคนละ source SHA เพราะ
-ถูกเปิดด้วย single-service incident deploy หลายรอบ; App Runner legacy ทั้งคู่ยัง PAUSED
+ณ 2026-08-15 ทั้งสาม service มี capacity `1/2`, source SHA เดียวกัน `748f1fa…` และมี task รันครบ
+แต่จงใจอยู่ใน `maintenance_only`; App Runner legacy ทั้งคู่ยัง PAUSED
 
-> **สถานะ Redis ต้องพิสูจน์ใหม่ก่อน full promotion:** เมื่อ 2026-08-07 secret
-> `watchdog-bms/production/redis-url` ยังชี้ endpoint ที่ถูกลบ แต่ production tasks กลับมารันได้แล้ว
-> ในวันที่ 2026-08-10. IAM user ฝั่ง workstation ไม่มี `elasticache:DescribeReplicationGroups` จึงห้าม
-> สรุปว่า M-17 ปิดจากการเห็น task รัน; ให้ `production-security-preflight.yml` กับ dedicated role
-> พิสูจน์ topology/encryption/auth/failover/snapshot retention ภายใน promotion ceremony
->
-> production **ต้องเป็น replication group** ไม่ใช่ standalone node เพราะ
-> `infra/security/verify-production-security-baseline.sh` อ่าน `describe-replication-groups` และ
-> fail closed ถ้าไม่ครบ: `atRestEncryptionEnabled`, `transitEncryptionEnabled`, `authTokenEnabled`,
-> `automaticFailover == "enabled"`, `nodeCount >= 2`, `snapshotRetentionDays >= 35`
-> นี่คือ **M-17** ใน `docs/security-remediation-checklist-merged-2026-07-17.md` ซึ่งยังเปิดอยู่ที่
-> ช่อง "Live closure" และกำหนดว่า "ก่อน production release ถัดไป" — ก้อนเดิมที่ลบไป
-> (standalone, `SnapshotRetentionLimit: 0`) ไม่เคยผ่านเกณฑ์นี้ การสร้างคืนคือจังหวะปิด M-17
+> **Production Redis topology/hardening ของ M-17 พิสูจน์แล้ว:** CloudTrail `CreateReplicationGroup` วันที่ 2026-08-08
+> บันทึก 2 nodes, Multi-AZ/automatic failover, encryption at rest/in transit, auth token และ snapshot
+> retention 35 วันโดยไม่มี error. Production readiness run `31789220329` วันที่ 2026-08-14
+> (`sourceCommit=748f1fa87f57e4c7b899e7dfec5bd62ea2d8c916`) ผ่าน
+> `productionRuntime=PASS` และ artifact integrity; `production-runtime.json` SHA-256
+> `17148172d4157d19333684c3b84d362c3de53e4de053c76e4f4e62bf8798f8f7` อ่านค่าครบตรงกับ
+> live cache nodes ที่ `available`. Workstation ยังไม่มี `DescribeReplicationGroups` โดยตั้งใจ;
+> ไม่ต้องขยายสิทธิ์หรือ rebuild ก้อนนี้ ให้ใช้ dedicated readiness role เป็น canonical read-back ต่อไป
+> แต่ M-17 รวมยังห้ามปิดจน restore/RTO/RPO, post-restore re-erasure และ secret rotation/revocation ผ่าน
 
 ---
 
@@ -286,6 +285,19 @@ AWS read-back วันที่ 2026-08-09 ยืนยันแล้วว่
 14 วัน ส่วน `/probe/invalid/xyz-does-not-matter-if-denied` เป็นกลุ่มทดสอบที่ยัง `None`
 โดยตั้งใจและไม่อยู่ใน service log retention baseline
 
+Alarm install/read-back วันที่ 2026-08-15 เวลา 01:10 น. (UTC+7): Production มี contract ที่
+verify กับ datapoint จริงผ่านแล้วครบ 9 alarms จาก `infra/monitoring/runtime-alarms.sh` ได้แก่
+`IncomingBytes` 3 app groups, Redis memory แบบ per-node 2 nodes, RDS storage/memory/connections/
+CPU credit และทุก alarm ชี้ไป confirmed SNS subscription. Script SHA-256 ที่ใช้คือ
+`12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`.
+
+Alarm Redis เดิม `watchdog-bms-prod-redis-memory-high` ที่ใช้ `ReplicationGroupId` ยังอยู่และยัง
+ไม่มี datapoint; ห้ามลบด้วย workstation ปัจจุบันเพราะยังไม่มีหลักฐาน `DeleteAlarms` allow.
+**UAT ยังไม่มี alarm ชุดใหม่** เพราะ encrypted Redis v2 ยังไม่ถูกสร้าง. เหตุการณ์ UAT workers
+วันที่ 6 ส.ค. ingest 214,075,786,774 bytes ในวันเดียว แต่ 24 ชั่วโมงก่อน audit เหลือประมาณ
+2,984,094 bytes แปลว่า incident หยุดแล้วแต่ UAT preventive control ยังต้องเพิ่มตาม
+`docs/plans/uat-production-runtime-config-remediation-plan.md` Phase 3
+
 ---
 
 ## 5. Redis / BullMQ — memory
@@ -302,8 +314,16 @@ AWS read-back วันที่ 2026-08-09 ยืนยันแล้วว่
 **rate-limit counters กับ actor-delegation replay store** ส่วน job record ของ BullMQ ที่ไม่มี TTL
 และเป็นตัวที่ทำให้เต็มจริงกลับไม่เคยเป็นเป้า — cache จะทิ้ง security state เงียบ ๆ ก่อนแล้วค่อย OOM อยู่ดี
 
-**อัตราเติมกลับ ~17 key/นาที** เมื่อ UAT รันอยู่ จากศูนย์ถึงระดับที่เคยทำให้เต็มใช้เวลาราว 11 วัน
-ตอนนี้ UAT จอดที่ 0 นาฬิกาเรือนนี้จึงหยุดเดิน
+Live metric วันที่ 2026-08-15 หลังแก้ retention: UAT ใช้ ~18.3 MB (`DatabaseMemoryUsagePercentage`
+~4.54%); Production สอง node ใช้ ~17.3/~17.1 MB (~4.30/~4.24%); eviction เป็นศูนย์ทุก node.
+UAT เปิดอยู่ที่ capacity 1/2 ในรอบตรวจนี้ จึงต้องจอดกลับเมื่อ acceptance จบ ไม่ใช่อาศัยสมมติฐานว่า
+ยังจอดอยู่
+
+**อย่าเชื่อ Redis alarm เดิมแม้ state เป็น `OK`:** `watchdog-bms-prod-redis-memory-high` ใช้
+dimension `ReplicationGroupId=watchdog-bms-prod-redis`, แต่ `DatabaseMemoryUsagePercentage` ของก้อนนี้
+ออกด้วย `CacheClusterId`/`CacheNodeId`. Query 24 ชั่วโมงด้วย dimension ของ alarm ได้ 0 datapoints และ
+state reason ระบุชัดว่า missing 2 จุดถูกนับเป็น non-breaching. ต้องสร้าง per-node alarms ให้เห็น datapoint
+จริงก่อน retire ตัวเดิม ตาม remediation plan Phase 3
 
 **crash ถูกจำกัดขนาด log แล้ว** `fatalDetail()` ใน `apps/workers/src/common/log.ts` ตัดที่ 2,000 chars
 และ `main.ts` ดักทั้ง `unhandledRejection` / `uncaughtException` ก่อน parse config — ถ้าไม่มีตัวนี้
@@ -313,16 +333,19 @@ Node จะ inspect error object ทั้งก้อนซึ่งมี Lua 
 
 ## 6. ค่าใช้จ่าย
 
-Steady state เดือนกรกฎาคม **~$220/เดือน** หลังจัดการทั้งหมดเหลือ **~$47/เดือน**
+Cost Explorer วันที่ 2026-08-15 สำหรับ 1–14 ส.ค. ได้ pre-tax **$362.08**, tax **$25.32**,
+รวม **$387.397**. รายการใหญ่คือ CloudWatch $180.83, ECS $81.32, RDS $30.07, VPC $22.95,
+ElastiCache $18.53 และ ELB $8.10. CloudWatch ส่วนใหญ่เป็น incident log ingest วันที่ 5–7 ส.ค.;
+ไม่ใช่ steady-state ใหม่ทั้งหมด
 
-| ที่ทำ | ประหยัด/เดือน |
-| --- | --- |
-| จอด UAT ที่ศูนย์ (Fargate + public IP 3 ตัว) | ~$113 |
-| ลบ NAT gateway ที่ไม่มีใครใช้ | $47.55 |
-| ลบ production Redis | ~$13 |
+AWS Budget มีอยู่แล้วชื่อ `WatchDog-BMS Monthly Cost Budget`, limit $100, actual $387.397,
+forecast $787.792 พร้อม email subscriber สำหรับ actual 85%/100% และ forecast 100%. ไม่ต้องสร้างซ้ำ;
+ให้ปรับ baseline/threshold หลังแยก tag และมีเดือนที่ไม่มี incident ตาม remediation plan
 
-ที่เหลือคือ RDS 2 ตัว (~$27), UAT Redis (~$13), ALB + EIP 3 ตัว (~$30), Secrets Manager 30 ตัว (~$7.78),
-bastion (~$7.43), Bedrock (~$3.20), ECR (~$1.14)
+Cost Explorer group by cost-allocation tag `Environment` ยังรวมยอดทั้งหมดไว้ในช่องไม่มีค่า tag
+จึงยังตอบไม่ได้จาก billing ว่า UAT/Production/shared ใช้เท่าไรย้อนหลัง. Current IAM อ่าน
+cost-allocation/resource tags และ Cost Anomaly Detection ไม่ได้; ให้ platform admin ทำ read-back/
+activation แทนการขยาย workstation IAM
 
 Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั้งเดือน แม้ IAM user จะชื่อ `watchdog-bedrock-dev`
 
@@ -356,13 +379,11 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
    AWS CLI v2.36.15 ไม่มี waiter `vpc-endpoint-available`; bootstrap จึง poll `State` แบบ bounded
    และรับเฉพาะ `available` โดย fail ทันทีเมื่อเจอ terminal failure state
 7. **UAT Redis ตัวที่รันอยู่ยังไม่ได้เข้ารหัส** ทั้ง at-rest, in-transit และไม่มี auth token — secret
-   เก็บเป็น `redis://` ต่างจาก RDS ที่สร้างด้วย `--storage-encrypted` `bootstrap-data.sh` แก้แล้ว
-   (สร้างเป็น single-node replication group ที่เข้ารหัสครบ เพราะ `create-cache-cluster` ไม่มี
-   at-rest encryption ให้เลย) แต่ **node ที่มีอยู่ต้องถูกแทนที่** เปิดทีหลังไม่ได้ —
-   ขั้นตอน migration อยู่ใน `infra/uat/README.md` จุดที่พลาดง่ายคือ `delete-secret` ต้องใส่
-   `--force-delete-without-recovery` ไม่งั้นชื่อถูกจองอีก 7–30 วัน และ secret ใหม่ได้ ARN ใหม่
-   ซึ่ง `deploy.sh` ฝังไว้ใน `valueFrom` จึงต้อง deploy ไม่ใช่แค่ปรับ capacity กลับ
-8. **ไม่มี CloudWatch alarm บน `IncomingBytes`** ถ้ามีตั้งแต่แรก เหตุการณ์ 6 ส.ค. จะจบที่ $7 แทน $179
+   เก็บเป็น `redis://`. ห้ามใช้ขั้นตอนเก่าที่ลบ node และ force-delete secret ก่อนสร้างใหม่;
+   helper `infra/uat/redis-blue-green.sh` ทำ blue/green แบบรักษา secret ARN/version rollback และใช้
+   mutex ร่วมกับ deploy แล้ว แต่ยังไม่ได้ run กับ AWS; ลบ node เก่าหลัง soak เท่านั้น
+8. **Production มี `IncomingBytes` alarm แล้ว แต่ UAT ยังไม่มี**. เพิ่ม UAT per-log-group alarm ก่อน
+   acceptance รอบยาว; อย่าใช้ข้อความเก่าว่าไม่มี alarm ทั้ง account
 
 ### โค้ดกับ AWS sync กันแล้ว (2026-08-09)
 
