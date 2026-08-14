@@ -26,11 +26,19 @@ Return only valid JSON with this shape:
 }
 Allowed agents: general, accounting, tax, cfo, inventory, notifications, sales, crm.
 Allowed subjects: ${LINE_AI_BUSINESS_SUBJECTS.join(', ')}.
+Two zero-tool intents are allowed only for a pure non-business turn:
+- casual_conversation: greetings, thanks, light banter, feelings, or a question about Nong Mangmee's identity/personality. Use subject="unknown", agent="general", requiredTools=[].
+- capability_help: the user asks what Nong Mangmee can do or how to use the assistant (for example "ทำอะไรได้บ้าง", "ช่วยอะไรได้บ้าง", "how can you help"). Use subject="unknown", agent="general", requiredTools=[].
+Safety crisis overrides every other request. If the user directly expresses wanting to die, suicide, self-harm, or not wanting to live, return UNROUTABLE with intents=[], refusal reason="safety_crisis", and requiresHumanReview=true. Do this even when the same message also asks for business data.
+Harmless office banter may be casual_conversation. Do not guess, repeat, or expand rumours about an identifiable person's private relationship, health, or other sensitive private life. Refuse that clause with reason="privacy_rumor"; preserve any permitted business clause as PARTIAL.
+Refusal reasons must use stable codes: mutation_blocked, safety_crisis, privacy_rumor, feature_disabled, unsupported_module, forbidden, or tool_unavailable. Never write a natural-language refusal reason.
+If any clause asks to read, search, summarize, compare, explain, suggest, capture, or change business data, business intent wins: route every business request with tools and do not add a zero-tool intent. A social phrase around a business request does not make the turn casual.
+Do not use casual_conversation for current facts, news, weather, professional advice, or general knowledge questions; those remain unsupported unless an enabled business feature matches.
 Use the feature/tool catalog from the user payload as the source of truth. Read each feature description before choosing.
 Pick the best matching enabled feature before choosing tools.
 If the best matching feature is disabled, return UNROUTABLE with reason feature_disabled.
 If no enabled or disabled feature matches, return UNROUTABLE with reason unsupported_module.
-For every ROUTABLE intent, set requiredTools to the smallest matching enabled tool list. Do not leave requiredTools empty.
+For every business ROUTABLE intent, set requiredTools to the smallest matching enabled tool list and do not leave it empty. Only casual_conversation and capability_help may use requiredTools=[].
 Set subject to the user's business entity or meaning. Choose tools only when their businessSubjects include that subject.
 Never substitute a nearby subject: customer is not employee; sale/payment is not ledger/accounting_document; booking is not customer/employee.
 Do not choose disabled tools.
@@ -199,6 +207,7 @@ export class IntentRouterAgent {
   constructor(private readonly provider: IModelProvider) {}
 
   async route(messageText: string, hasAttachment = false, conversationContext?: LineAiConversationContext, openClarifications?: LineAiOpenClarification[]): Promise<AgentIntentPlan> {
+    if (isCrisisMessage(messageText)) return crisisPlan(messageText);
     const providerPlan = await this.modelRoute(messageText, hasAttachment, conversationContext, openClarifications);
     return providerPlan ?? unavailablePlan(messageText);
   }
@@ -295,7 +304,7 @@ export class IntentRouterAgent {
 
       try {
         const parsed = JSON.parse(extractJson(result.text)) as AgentIntentPlan;
-        const normalized = normalizeToolAvailability(parsed, messageText);
+        const normalized = normalizeToolAvailability(normalizeRefusalReasons(parsed), messageText);
         if (!normalized) continue;
         if (!isPlan(normalized)) return null;
         return normalized;
@@ -310,20 +319,66 @@ export class IntentRouterAgent {
 
 function isPlan(value: unknown): value is AgentIntentPlan {
   const plan = value as AgentIntentPlan;
-  const hasRequiredTools = plan.status === 'UNROUTABLE'
-    || plan.intents.every((intent) =>
-      Array.isArray(intent.requiredTools) &&
-      intent.requiredTools.length > 0 &&
-      LINE_AI_BUSINESS_SUBJECTS.includes(intent.subject) &&
-      intent.requiredTools.every((tool) => ROUTER_ENABLED_TOOLS.has(tool) && isSubjectCompatible(intent.subject, tool)),
-    );
+  const zeroToolIntents = plan?.intents?.filter((intent) => isZeroToolIntent(intent.intent)) ?? [];
+  const hasValidIntents = plan.status === 'UNROUTABLE'
+    || (zeroToolIntents.length > 0
+      ? plan.intents.length === 1 && isValidZeroToolIntent(plan.intents[0])
+      : plan.intents.every((intent) =>
+        Array.isArray(intent.requiredTools) &&
+        intent.requiredTools.length > 0 &&
+        LINE_AI_BUSINESS_SUBJECTS.includes(intent.subject) &&
+        intent.requiredTools.every((tool) => ROUTER_ENABLED_TOOLS.has(tool) && isSubjectCompatible(intent.subject, tool)),
+      ));
   return !!plan
     && ['ROUTABLE', 'PARTIAL', 'UNROUTABLE'].includes(plan.status)
     && typeof plan.language === 'string'
     && Array.isArray(plan.intents)
     && Array.isArray(plan.refusals)
     && typeof plan.requiresHumanReview === 'boolean'
-    && hasRequiredTools;
+    && hasValidIntents;
+}
+
+export function isZeroToolIntent(intent: unknown): intent is 'casual_conversation' | 'capability_help' {
+  return intent === 'casual_conversation' || intent === 'capability_help';
+}
+
+const CRISIS_PATTERNS = [
+  /ไม่อยาก(?:มีชีวิตอยู่|อยู่ต่อ(?:ไป)?|อยู่แล้ว)/u,
+  /อยาก(?:จะ)?ตาย/u,
+  /(?:ฉัน|ผม|หนู|กู|เรา|อยาก|คิดจะ|กำลังจะ|จะ).{0,20}(?:ฆ่าตัวตาย|ทำร้ายตัวเอง|จบชีวิต(?:ตัวเอง)?|ลาโลก)/u,
+  /^(?:ฆ่าตัวตาย|ทำร้ายตัวเอง|จบชีวิต|ลาโลก)(?:ดีไหม|ดีกว่า|แล้ว)?[.!?…]*$/u,
+  /\b(?:i\s+)?want\s+to\s+die\b/i,
+  /\b(?:i\s+)?(?:do\s+not|don't)\s+want\s+to\s+(?:live|be\s+alive)\b/i,
+  /\b(?:kill|hurt)\s+myself\b/i,
+  /\bend\s+my\s+life\b/i,
+  /\b(?:i(?:'m|\s+am|\s+feel)?|feeling)\s+suicidal\b/i,
+  /\b(?:thinking\s+about|considering|going\s+to|might|want\s+to)\s+(?:commit\s+)?suicide\b/i,
+  /^suicidal[.!?…]*$/i,
+] as const;
+
+export function isCrisisMessage(messageText: string): boolean {
+  return CRISIS_PATTERNS.some((pattern) => pattern.test(messageText));
+}
+
+const PRIVACY_RUMOR_PATTERN = /(?:ข่าวลือ|ซุบซิบ|นินทา|เม้าท์|ชีวิตส่วนตัว|ความสัมพันธ์|แอบคบ|เป็นชู้|rumou?r|gossip|private\s+life|relationship|dating)/iu;
+
+function normalizeRefusalReasons(plan: AgentIntentPlan): AgentIntentPlan {
+  if (!Array.isArray(plan?.refusals)) return plan;
+  return {
+    ...plan,
+    refusals: plan.refusals.map((refusal) => PRIVACY_RUMOR_PATTERN.test(`${refusal.request} ${String(refusal.reason)}`)
+      ? { ...refusal, reason: 'privacy_rumor' }
+      : refusal),
+  };
+}
+
+function isValidZeroToolIntent(intent: AgentIntentPlan['intents'][number] | undefined): boolean {
+  return !!intent
+    && isZeroToolIntent(intent.intent)
+    && intent.subject === 'unknown'
+    && intent.agent === 'general'
+    && Array.isArray(intent.requiredTools)
+    && intent.requiredTools.length === 0;
 }
 
 function buildFeatureCatalog(): {
@@ -344,6 +399,9 @@ function buildFeatureCatalog(): {
 
 function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string): AgentIntentPlan | null {
   if (!plan || !Array.isArray(plan.intents) || !Array.isArray(plan.refusals)) return null;
+  if (plan.intents.some((intent) => isZeroToolIntent(intent.intent))) {
+    return plan.intents.length === 1 && isValidZeroToolIntent(plan.intents[0]) ? plan : null;
+  }
   const enabledIntents = [] as AgentIntentPlan['intents'];
   let disabledCount = 0;
   for (const intent of plan.intents) {
@@ -378,6 +436,16 @@ function unavailablePlan(messageText: string): AgentIntentPlan {
     intents: [],
     refusals: [{ request: messageText, reason: 'tool_unavailable' }],
     requiresHumanReview: false,
+  };
+}
+
+function crisisPlan(messageText: string): AgentIntentPlan {
+  return {
+    status: 'UNROUTABLE',
+    language: /[\u0E00-\u0E7F]/.test(messageText) ? 'th' : 'en',
+    intents: [],
+    refusals: [{ request: messageText, reason: 'safety_crisis' }],
+    requiresHumanReview: true,
   };
 }
 

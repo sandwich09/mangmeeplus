@@ -50,6 +50,9 @@ beforeEach(() => {
     if (typeof payload.reply === 'string') {
       return { ok: true, json: async () => ({ output_text: payload.reply }) } as Response;
     }
+    if (typeof payload.messageText === 'string' && typeof payload.language === 'string') {
+      return { ok: true, json: async () => ({ output_text: 'วันนี้เหนื่อยมานิดหน่อยสินะคะ น้องมั่งมีอยู่เป็นเพื่อนค่ะ 😊' }) } as Response;
+    }
     return {
       ok: true,
       json: async () => ({ output_text: JSON.stringify(planFor(payload.messageText ?? '')) }),
@@ -70,6 +73,19 @@ function planFor(messageText: string) {
   }
   if (/ภาษี|อากาศ/.test(messageText)) {
     return { status: 'UNROUTABLE', language: 'th', intents: [], refusals: [{ request: messageText, reason: 'unsupported_module' }], requiresHumanReview: false };
+  }
+  if (/พี่เอแอบคบ/.test(messageText)) {
+    return {
+      status: 'PARTIAL', language: 'th',
+      intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_breakdown'], missingContext: [] }],
+      refusals: [{ request: 'เม้าท์ว่าพี่เอแอบคบใคร', reason: 'privacy_rumor' }], requiresHumanReview: false,
+    };
+  }
+  if (/ทำอะไรได้บ้าง|ช่วยอะไรได้บ้าง/.test(messageText)) {
+    return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'capability_help', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
+  }
+  if (/^สวัสดี|^วันนี้เหนื่อย/.test(messageText) && !/ยอดขาย|รายได้|สต็อก|ค่าใช้จ่าย/.test(messageText)) {
+    return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
   if (/ค่าใช้จ่าย/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'read_detail', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }], refusals: [], requiresHumanReview: false };
@@ -148,6 +164,45 @@ describe('buildAnswerPresentation', () => {
 });
 
 describe('OrchestratorAgent', () => {
+  it('answers capability help without reading company or dashboard data', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    const result = await orchestrator.run(makeReq('ทำอะไรได้บ้าง'));
+    assert.equal(result.plan.intents[0]?.intent, 'capability_help');
+    assert.equal(called, false);
+    assert.deepEqual(result.outputs, []);
+    assert.equal(result.presentation, undefined);
+    assert.match(result.replyText, /ยอดขาย/);
+    assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
+  });
+
+  it('lets Nong Mangmee handle pure casual conversation without ERP tools', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    const result = await orchestrator.run(makeReq('วันนี้เหนื่อยนิดหน่อย'));
+    assert.equal(result.plan.intents[0]?.intent, 'casual_conversation');
+    assert.equal(called, false);
+    assert.deepEqual(result.outputs, []);
+    assert.equal(result.presentation, undefined);
+    assert.match(result.replyText, /น้องมั่งมี/);
+  });
+
+  it('gives deterministic crisis support and never calls ERP tools, even beside a business request', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    for (const message of [
+      'ฉันไม่อยากอยู่แล้ว ทุกอย่างมันหนักไปหมด',
+      'ฉันไม่อยากอยู่แล้ว แต่ก่อนอื่นช่วยบอกค่าใช้จ่ายเดือนนี้ที',
+    ]) {
+      const result = await orchestrator.run(makeReq(message));
+      assert.equal(result.plan.refusals[0]?.reason, 'safety_crisis');
+      assert.match(result.replyText, /1323/);
+      assert.match(result.replyText, /1669/);
+      assert.ok(!result.replyText.includes('ค่าใช้จ่าย:'));
+    }
+    assert.equal(called, false);
+  });
+
   it('mutation request returns UNROUTABLE plan and safe reply', async () => {
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
     const result = await orchestrator.run(makeReq('ชำระเงิน'));
@@ -197,7 +252,7 @@ describe('OrchestratorAgent', () => {
     assert.ok(okCalls.every((call) => call.status === 'ok' && call.errorCode === undefined), 'success must not invent an errorCode');
   });
 
-  it('expense query invokes expense read tool and replies with source-backed amount', async () => {
+  it('expense query invokes expense read tool and preserves source-backed item names and amounts', async () => {
     const calledTools: string[] = [];
     const erpTools = {
       invoke: async (tool: any) => {
@@ -238,6 +293,8 @@ describe('OrchestratorAgent', () => {
     assert.ok(result.replyText.includes('ยืนยันแล้ว'));
     assert.ok(result.replyText.includes('จ่ายแล้ว'));
     assert.ok(result.replyText.includes('ยังไม่จ่าย'));
+    assert.ok(result.replyText.includes('บริษัท โฟลว์แอคเคาท์ ทดสอบ จำกัด'));
+    assert.ok(result.replyText.includes('11,875.00'));
     assert.ok(!result.replyText.includes('expense-draft-empty'));
     assert.deepEqual(result.webLinks, [{ label: 'รายการค่าใช้จ่าย', path: '/companies/company-1/expenses' }]);
     assert.equal(result.sourceRefs[0]?.permissionChecked, true);
@@ -264,7 +321,7 @@ describe('OrchestratorAgent', () => {
     assert.equal(result.presentation, undefined);
   });
 
-  it('sales query invokes the permission-checked sales summary tool', async () => {
+  it('sales query invokes the permission-checked sales summary tool and includes its transaction count', async () => {
     const calledTools: string[] = [];
     const erpTools = {
       invoke: async (tool: any) => {
@@ -272,26 +329,41 @@ describe('OrchestratorAgent', () => {
         return {
           toolName: tool.name,
           status: tool.name === 'sales.get_sales_summary' ? 'ok' : 'unsupported_module',
-          data: tool.name === 'sales.get_sales_summary' ? { totalSales: '42000.00', period: 'เดือนนี้' } : null,
+          data: tool.name === 'sales.get_sales_summary' ? { totalSales: '42000.00', transactionCount: 7, period: 'เดือนนี้' } : null,
           sourceRefs: [],
           asOf: new Date().toISOString(),
         };
       },
     } as any;
     const orchestrator = new OrchestratorAgent(erpTools, makeConfig());
-    const req = makeReq('ยอดขายเดือนนี้เท่าไหร่');
+    const req = makeReq('ยอดขายเดือนนี้เท่าไหร่ มีกี่รายการ');
     req.userContext.permissions.push('crm.report.read');
     const result = await orchestrator.run(req);
     assert.deepEqual(calledTools, ['sales.get_sales_summary']);
     assert.ok(result.replyText.includes('42000.00'));
+    assert.ok(result.replyText.includes('7 รายการ'));
     assert.ok(!result.replyText.includes('ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งาน'));
   });
 
-  it('disabled provider says feature is not enabled', async () => {
+  it('disabled provider says the assistant is temporarily unavailable, not that a feature is disabled', async () => {
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ modelProvider: 'disabled', openAiApiKey: undefined }));
     const result = await orchestrator.run(makeReq('ยอดขาย'));
     assert.equal(result.plan.status, 'UNROUTABLE');
-    assert.ok(result.replyText.includes('ยังไม่ได้เปิดใช้งาน'));
+    assert.ok(result.replyText.includes('ชั่วคราว'));
+    assert.ok(!result.replyText.includes('ฟีเจอร์'));
+  });
+
+  it('states the privacy boundary once while still answering the permitted business part', async () => {
+    const erpTools = { invoke: async (tool: any) => ({
+      toolName: tool.name, status: 'ok', data: { totalCount: 2, totalAmount: '1130' },
+      sourceRefs: [], asOf: new Date().toISOString(),
+    }) } as any;
+    const req = makeReq('เม้าท์หน่อยว่าพี่เอแอบคบใคร แล้วช่วยดูค่าใช้จ่ายเดือนนี้ให้ด้วย');
+    req.userContext.permissions.push('expense.read');
+    const result = await new OrchestratorAgent(erpTools, makeConfig()).run(req);
+    assert.match(result.replyText, /ไม่ขอเดาหรือขยายข่าวลือ/);
+    assert.match(result.replyText, /1,130.00/);
+    assert.ok(!result.replyText.includes('ลองถามแยกอีกครั้ง'));
   });
 
   it('PERMISSION_DENIED from all tools produces safe refused reply with no hidden data leak', async () => {

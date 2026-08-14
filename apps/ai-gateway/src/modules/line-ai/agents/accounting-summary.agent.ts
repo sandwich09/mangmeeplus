@@ -224,6 +224,9 @@ export class AccountingSummaryAgent {
       } else if (tool.name === 'sales.get_sales_summary') {
         if (data['totalSales'] === undefined) { readFailed = true; toolData.pop(); continue; }
         pushFacts({ label: data['basis'] === 'recorded_received_payments' ? 'ยอดรับเงินจริง' : 'ยอดขาย', value: `${String(data['totalSales'])} บาท` });
+        if (typeof data['transactionCount'] === 'number' || typeof data['transactionCount'] === 'string') {
+          pushFacts({ label: 'จำนวนรายการ', value: `${String(data['transactionCount'])} รายการ` });
+        }
       } else if (tool.name === 'crm.suggest_sales_followups') {
         pushFacts({ label: 'ลูกค้าที่ควรติดตาม', value: `${String(data['count'] ?? 0)} รายการ` });
       } else if (tool.name === 'company.get_current_context') {
@@ -246,6 +249,7 @@ export class AccountingSummaryAgent {
         pushFacts({ label: 'แดชบอร์ด', value: `${widgets.length} ตัวชี้วัด` });
       } else if (tool.name === 'expense.list_recent') {
         const summary = data['summary'] as Record<string, unknown> | undefined;
+        const items = Array.isArray(data['items']) ? data['items'] as Array<Record<string, unknown>> : [];
         if (summary) {
           pushFacts(
             { label: 'ยอดทั้งหมด', value: `${formatMoney(summary['totalAmount'])} บาท` },
@@ -256,9 +260,12 @@ export class AccountingSummaryAgent {
             { label: 'จ่ายแล้ว', value: `${formatMoney(summary['paidAmount'])} บาท` },
             { label: 'ยังไม่จ่าย', value: `${formatMoney(summary['unpaidAmount'])} บาท` },
           );
+          for (const item of items.slice(0, 5)) {
+            const vendor = String(item['vendorNameSnapshot'] ?? item['vendorName'] ?? '').trim();
+            if (vendor) pushFacts({ label: 'รายการค่าใช้จ่ายล่าสุด', value: `${vendor} ${formatMoney(item['grandTotalAmount'])} บาท` });
+          }
           continue;
         }
-        const items = Array.isArray(data['items']) ? data['items'] as Array<Record<string, unknown>> : [];
         if (items.length === 0) {
           pushFacts({ label: 'ค่าใช้จ่าย', value: 'ยังไม่มีรายการ' });
         } else {

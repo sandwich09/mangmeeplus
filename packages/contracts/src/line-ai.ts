@@ -42,6 +42,8 @@ export const LINE_AI_AGENT_REGISTRY: LineAiAgentDefinition[] = [
 ];
 
 export type LineAiIntent =
+  | 'casual_conversation'
+  | 'capability_help'
   | 'read_summary'
   | 'read_detail'
   | 'report_request'
@@ -64,6 +66,8 @@ export type LineAiBusinessSubject = (typeof LINE_AI_BUSINESS_SUBJECTS)[number];
 
 export type LineAiRefusalReason =
   | 'mutation_blocked'
+  | 'safety_crisis'
+  | 'privacy_rumor'
   | 'unsupported_module'
   | 'forbidden'
   | 'unlinked_user'
