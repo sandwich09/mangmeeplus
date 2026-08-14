@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { WorkspaceShell } from '@/common/components/app-shell/WorkspaceShell';
+import { stripThaiTitlePrefix } from '@/common/components/mangmee';
 import { BrandedState } from '@/common/components/state';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { WORKSPACE_ICON_NODES as ICON_MAP } from './design-icons';
@@ -161,7 +162,10 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
           </div>
         }
         headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
-        userName={session.displayName ?? undefined}
+        // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
+        // shell boundary so the sidebar name and both avatar initials agree — the session name is
+        // the global User row, which a company-scoped rename does not always reach.
+        userName={stripThaiTitlePrefix(session.displayName) || undefined}
         userRole={session.roles[0]}
         showAccountSecurity={[
           'account.password.change',

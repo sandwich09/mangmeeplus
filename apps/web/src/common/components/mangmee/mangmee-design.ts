@@ -110,6 +110,23 @@ export function getMangmeeMenuTone(key: string, group?: MangmeeNavGroup): Mangme
   return mangmeeMenuToneByKey[key] ?? (group ? mangmeeMenuToneByGroup[group] : undefined) ?? 'brand';
 }
 
+/**
+ * Employee display names are stored as `${คำนำหน้า}${ชื่อ นามสกุล}` with no separator, so the shell
+ * would otherwise greet someone by a title they may have since corrected. The title is a profile
+ * field, not part of who the person is, and the shell's copy of it goes stale on its own — the
+ * session name comes from the global User row, which a rename cannot always update.
+ *
+ * นางสาว is tested before นาง because it starts with it. Without a separator this is a heuristic:
+ * a first name that itself begins with a title (e.g. นายก) loses those characters. That is the same
+ * trade the edit form already makes when it reads a stored name back into the title chips.
+ */
+export function stripThaiTitlePrefix(label?: string | null): string {
+  const normalized = (label ?? '').trim();
+  const stripped = normalized.replace(/^(นางสาว|นาง|นาย)/, '').trim();
+  // Never blank out a name that is nothing but a title.
+  return stripped || normalized;
+}
+
 export function getInitials(label?: string | null, fallback = '?') {
   const normalized = (label ?? '').trim();
   if (!normalized) return fallback;
