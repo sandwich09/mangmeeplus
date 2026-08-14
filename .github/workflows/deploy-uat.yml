@@ -510,7 +510,7 @@ jobs:
         run: |
           set -euo pipefail
           export RELEASE_TASK_IMAGE="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
-          RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" bash infra/prod-ecs-express/deploy.sh "$TARGET"
+          RELEASE_TASKS_APPLIED_SHA="${SOURCE_SHA:0:12}" bash infra/uat/deploy-with-runtime-mutex.sh "$TARGET"
       - name: Verify active UAT digest and health
         id: verify-health
         env:

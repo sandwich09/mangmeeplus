@@ -122,8 +122,8 @@ read-back policy และ endpoint boundary ให้ตรง template; ห้
 วิธีที่ถูกต้องคือผ่าน deploy script ซึ่งรองรับตั้งแต่ commit `333e711`:
 
 ```sh
-ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 DEPLOY_ENV=uat \
-  bash infra/prod-ecs-express/deploy.sh all
+ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 \
+  bash infra/uat/deploy-with-runtime-mutex.sh all
 ```
 
 default คือ `1`/`2` และ **production ปฏิเสธค่าอื่นทันที** เพราะ
