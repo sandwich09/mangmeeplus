@@ -53,6 +53,8 @@ if [ "$deploy_env" = production ] && [ "$serving_mode" = live ] \
 fi
 param_prefix="/watchdog-bms/${deploy_env}"
 aws_bin="${AWS_BIN:-aws}"
+curl_bin="${CURL_BIN:-curl}"
+curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
 account_id="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY "$aws_bin" sts get-caller-identity --query Account --output text --region "$region")"
 commit="$(bash infra/docker/validate-production-manifest.sh "$manifest" "$account_id" "$region")"
 
@@ -69,7 +71,7 @@ verify_api_readiness() {
     echo "[verify-deployment] SKIPPED db readiness: WORKER_INTERNAL_TOKEN not set in this environment" >&2
     return 0
   fi
-  readiness="$(curl --fail --silent --show-error --max-time 20 \
+  readiness="$("$curl_bin" --fail --silent --show-error --max-time 20 "${curl_retry[@]}" \
     -H "X-Worker-Token: ${WORKER_INTERNAL_TOKEN}" "${url%/}/v1/internal/health/readiness")"
   jq -e '.status == "ok" and .db == "ok"' <<< "$readiness" >/dev/null
   echo "[verify-deployment] service=api-web db=ok (internal readiness)"
@@ -134,7 +136,8 @@ verify_service() {
     '.status == "ACTIVE" and .activeCount == 1 and .image == $image and .gitSha == $sha and (.environment | type == "array")' <<< "$state" >/dev/null
   verify_service_environment "$service" "$state"
   url="$(aws_cmd ssm get-parameter --name "$url_parameter" --query Parameter.Value --output text --region "$region")"
-  health="$(curl --fail --silent --show-error --max-time 20 "${url%/}${health_path}")"
+  health="$("$curl_bin" --fail --silent --show-error --max-time 20 "${curl_retry[@]}" \
+    "${url%/}${health_path}")"
   jq -e '.status == "ok"' <<< "$health" >/dev/null
   if [ "$service" = "api-web" ]; then
     verify_api_readiness "$url"

@@ -23,7 +23,7 @@ on:
         required: true
         type: string
       intent_id:
-        description: OPEN intent UUID, PRE_INTENT, ORPHAN, or BOOTSTRAP_CLOSED for the exact V2 zero-intent controller failure
+        description: OPEN intent UUID, PRE_INTENT, ORPHAN, or BOOTSTRAP_CLOSED for an exact V2 no-api-intent controller failure
         required: true
         type: string
       service_name:
@@ -169,10 +169,11 @@ jobs:
         run: |
           set -euo pipefail
           branch=main
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
           [ "$DEPLOY_ENV" = uat ] && branch=develop
           ci_event=workflow_dispatch
           [ "$DEPLOY_ENV" = uat ] && ci_event=pull_request
-          response="$(curl --fail --silent --show-error \
+          response="$(curl --fail --silent --show-error "${curl_retry[@]}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -184,7 +185,7 @@ jobs:
             )][0].id // empty
           ' <<< "$response")"
           [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
-          jobs="$(curl --fail --silent --show-error \
+          jobs="$(curl --fail --silent --show-error "${curl_retry[@]}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -286,6 +287,7 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/bootstrap-closed-recovery"; mkdir -m 700 "$root"
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
           run="$root/run.json"; jobs="$root/jobs.json"; artifacts="$root/artifacts.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_PROMOTION_RUN_ID" > "$run"
           jq -e --arg run "$FAILED_PROMOTION_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
@@ -320,21 +322,32 @@ jobs:
           names="$root/names"; expected="$root/expected"; metadata="$root/metadata"; extracted="$root/extracted"
           mkdir -m 700 "$extracted"
           zipinfo -1 "$archive" > "$names"
-          test "$(wc -l < "$names"|tr -d '[:space:]')" = 11
-          test "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '[:space:]')" = 11
+          member_count="$(wc -l < "$names"|tr -d '[:space:]')"
+          test "$member_count" = "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '[:space:]')"
           printf '%s\n' bootstrap-closed/ai-gateway.json bootstrap-closed/api-web.json \
             bootstrap-closed/maintenance-proof.json bootstrap-closed/workers.json \
             bootstrap-maintenance-proof.json controller.json release-operation.json \
             release-prepare.log > "$expected"
-          grep -Ev '^bootstrap-closed/history/(ai-gateway|api-web|workers)-[A-Za-z0-9_-]+-false\.json$' "$names" \
+          grep -Ev '^(bootstrap-closed/history/(ai-gateway|api-web|workers)|history/(ai-gateway|workers))-[A-Za-z0-9_-]+-(true|false)\.json$|^(ai-gateway|workers)\.json$' "$names" \
             | LC_ALL=C sort > "$root/stable"
           LC_ALL=C sort "$expected" > "$root/expected-sorted"
           cmp -s "$root/stable" "$root/expected-sorted"
           for service in ai-gateway api-web workers; do
             test "$(grep -Ec "^bootstrap-closed/history/${service}-[A-Za-z0-9_-]+-false\\.json$" "$names")" = 1
           done
+          bound_count=0
+          for service in ai-gateway workers; do
+            history_count="$(grep -Ec "^history/${service}-[A-Za-z0-9_-]+-(true|false)\\.json$" "$names" || true)"
+            root_count="$(grep -Ec "^${service}\\.json$" "$names" || true)"
+            if [ "$history_count" -eq 0 ]; then test "$root_count" -eq 0
+            else test "$root_count" -eq 1; fi
+            bound_count=$((bound_count + history_count))
+          done
+          test "$bound_count" -le 8
+          partial_roots="$(grep -Ec '^(ai-gateway|workers)\.json$' "$names" || true)"
+          test "$member_count" -eq $((11 + bound_count + partial_roots))
           zipinfo -l "$archive" | awk '$1 ~ /^[-dlcbps?]/ {print $1 "\t" $4 "\t" $NF}' > "$metadata"
-          test "$(wc -l < "$metadata"|tr -d '[:space:]')" = 11
+          test "$(wc -l < "$metadata"|tr -d '[:space:]')" = "$member_count"
           while IFS=$'\t' read -r mode size member; do
             [[ "$mode" == -* && "$size" =~ ^[1-9][0-9]*$ && "$size" -le 1048576 ]]
             grep -Fxq "$member" "$names"
@@ -377,18 +390,47 @@ jobs:
               == ($histories|map({service,serviceArn,sourceSha,targetRevisionArn})|sort_by(.service))
             and all($histories[];.noOp==false and (.deploymentArn|type)=="string")
           ' "$proof" >/dev/null
+          shopt -s nullglob
+          bound_files=("$extracted"/history/*.json)
+          if [ "${#bound_files[@]}" -eq 0 ]; then bound_histories='[]'
+          else bound_histories="$(jq -cs 'sort_by([.service,(.deploymentArn//""),.targetRevisionArn])' "${bound_files[@]}")"; fi
+          jq -e --arg source "$RELEASE_REF" '
+            length <= 8
+            and ([.[]|tojson]|unique|length)==length
+            and all(.[];
+              (keys|sort)==["deploymentArn","noOp","service","serviceArn","sourceSha","targetRevisionArn"]
+              and ({"ai-gateway":"watchdog-bms-ai-gateway-v2",workers:"watchdog-bms-workers"}[.service]) as $name
+              | ($name|type)=="string" and .sourceSha==$source
+              and .serviceArn==("arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/"+$name)
+              and (.targetRevisionArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/"+$name+"/[^/]+$"))
+              and .noOp==false and (.deploymentArn|type)=="string"
+              and (.deploymentArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/"+$name+"/[^/]+$")))
+          ' <<< "$bound_histories" >/dev/null
+          selected_files=()
+          for service in ai-gateway api-web workers; do
+            selected="$extracted/bootstrap-closed/${service}.json"
+            if [ -f "$extracted/${service}.json" ]; then
+              selected="$extracted/${service}.json"
+              jq -e --argjson histories "$bound_histories" '. as $current|any($histories[];.==$current)' \
+                "$selected" >/dev/null
+            fi
+            selected_files+=("$selected")
+          done
+          selected_histories="$(jq -cs 'sort_by(.service)' "${selected_files[@]}")"
           compact="$(jq -cnS --arg digest "$artifact_digest" --arg maintenance "$maintenance_sha" \
             --arg run "$FAILED_PROMOTION_RUN_ID" --argjson attempt "$attempt" \
             --arg controller "$original_controller" --arg source "$RELEASE_REF" \
             --arg operation "$PARENT_ID" --arg task "$artifact_parent_task" \
-            --slurpfile proof "$proof" --argjson histories "$histories" '
-            {schemaVersion:1,artifactDigest:$digest,maintenanceProofSha256:$maintenance,
+            --slurpfile proof "$proof" --argjson selected "$selected_histories" \
+            --argjson bound "$bound_histories" '
+            {schemaVersion:2,artifactDigest:$digest,maintenanceProofSha256:$maintenance,
              failedPromotionRunId:$run,failedPromotionRunAttempt:$attempt,controllerCommit:$controller,
              sourceCommit:$source,operationId:$operation,parentTaskArn:$task,
              manifestSha256:$proof[0].manifestSha256,
              services:([$proof[0].services[] as $service
-               | $histories[]|select(.service==$service.service)
-               | . + {image:$service.image,maintenanceControls:$service.maintenanceControls}]|sort_by(.service))}
+               | $selected[]|select(.service==$service.service)
+               | . + {image:$service.image,maintenanceControls:$service.maintenanceControls}]|sort_by(.service)),
+             boundHistory:$bound}
           ')"
           # Cheap, read-only provider proof before the recovery executor build.
           while IFS= read -r service; do
@@ -412,15 +454,20 @@ jobs:
           api_origin="$(jq -er '.services[]|select(.service=="api-web")|.rawOrigin' "$proof")"
           worker_token="$(aws secretsmanager get-secret-value --secret-id watchdog-bms/production/worker-internal-token \
             --version-stage AWSCURRENT --query SecretString --output text)"
-          body="$(printf 'header = "X-Worker-Token: %s"\n' "$worker_token" | curl --config - \
-            --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error --max-time 20 \
+          readiness="$root/readiness.json"
+          status="$(printf 'header = "X-Worker-Token: %s"\n' "$worker_token" | curl --config - \
+            "${curl_retry[@]}" --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
+            --max-filesize 16384 --output "$readiness" --write-out '%{http_code}' \
             "${api_origin%/}/v1/internal/health/readiness")"
           unset worker_token
-          jq -e '.service=="api" and .status=="ok" and .db=="ok"' <<< "$body" >/dev/null
+          test "$status" = 200
+          jq -e '.service=="api" and .status=="ok" and .db=="ok"' "$readiness" >/dev/null
           for url in "${PUBLIC_DOMAIN_URL%/}/login" "${api_origin%/}/login"; do
             headers="$root/headers"; body_file="$root/body"
-            test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
-              --dump-header "$headers" --output "$body_file" --write-out '%{http_code}' "$url")" = 200
+            test "$(curl "${curl_retry[@]}" \
+              --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
+              --max-filesize 65536 --dump-header "$headers" --output "$body_file" \
+              --write-out '%{http_code}' "$url")" = 200
             grep -Eiq '^X-Mangmee-Maintenance:[[:space:]]*active' "$headers"
             grep -Fq 'data-platform-access="closed"' "$body_file"
           done

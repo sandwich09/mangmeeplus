@@ -54,7 +54,10 @@ aws_cmd() {
 
 page_token=""
 pages=0
-deployments='[]'
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-list-service-deployments.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+deployments_file="$tmp_dir/deployments.jsonl"
+: > "$deployments_file"
 while :; do
   pages=$((pages + 1))
   if [ "$pages" -gt "$max_pages" ]; then
@@ -70,13 +73,11 @@ while :; do
     args=("${args[@]}" --next-token "$page_token")
   fi
   response="$(aws_cmd "${args[@]}")"
-  deployments="$(jq -c --argjson accumulated "$deployments" \
-    '$accumulated + (.serviceDeployments // [])' <<< "$response")"
+  jq -c '.serviceDeployments[]?' <<< "$response" >> "$deployments_file"
   page_token="$(jq -r '.nextToken // empty' <<< "$response")"
   if [ -z "$page_token" ]; then
     break
   fi
 done
 
-jq -cn --argjson serviceDeployments "$deployments" \
-  '{nextToken:null,serviceDeployments:$serviceDeployments}'
+jq -sc '{nextToken:null,serviceDeployments:.}' "$deployments_file"

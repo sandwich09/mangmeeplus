@@ -564,6 +564,12 @@ grep -Fq 'release-bootstrap-closed-recover' "$recovery_workflow"
 grep -Fq "inputs.intent_id == 'BOOTSTRAP_CLOSED'" "$recovery_workflow"
 grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON: ${{ steps.bootstrap_closed.outputs.evidence }}' "$recovery_workflow"
 grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery_workflow"
+grep -Fq 'boundHistory:$bound' "$recovery_workflow"
+grep -Fq 'test "$bound_count" -le 8' "$recovery_workflow"
+test "$(grep -Fc 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$recovery_workflow")" -eq 2
+test "$(grep -Fc '"${curl_retry[@]}"' "$recovery_workflow")" -eq 4
+grep -Fq -- '--max-filesize 16384 --output "$readiness" --write-out' "$recovery_workflow"
+grep -Fq -- '--max-filesize 65536 --dump-header "$headers" --output "$body_file"' "$recovery_workflow"
 grep -Fq 'inputs.intent_id }}" = PRE_INTENT' "$recovery_workflow"
 grep -Fq 'group: watchdog-bms-${{ inputs.environment }}-deploy' "$recovery_workflow"
 grep -Fq 'cancel-in-progress: false' "$recovery_workflow"
@@ -668,6 +674,8 @@ test "$(grep -Fc 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/p
 grep -Fq 'source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'caller_ci="$(git rev-parse "$GITHUB_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'head_sha=$SOURCE_SHA' "$uat_workflow"
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$uat_workflow"
+grep -Fq 'curl --fail --silent --show-error "${curl_retry[@]}"' "$uat_workflow"
 grep -Fq 'event=pull_request&status=success&head_sha=$SOURCE_SHA' "$uat_workflow"
 grep -Fq '.event == "pull_request"' "$uat_workflow"
 grep -Fq 'validated_ci_run_id: ${{ needs.resolve-release.outputs.validated_ci_run_id }}' "$uat_workflow"
@@ -1455,11 +1463,11 @@ held_full="$(jq -cn --argjson first "$held_record_one" --argjson second "$held_r
 held_task="$fixture/held-task.json"
 bootstrap_closed_recovery="$(jq -cn \
   --arg operation "$parent_operation_id" --arg source "$allowed_sha" \
-  '{schemaVersion:1,artifactDigest:("sha256:"+("1"*64)),maintenanceProofSha256:("2"*64),
+  '{schemaVersion:2,artifactDigest:("sha256:"+("1"*64)),maintenanceProofSha256:("2"*64),
     failedPromotionRunId:"31727367323",failedPromotionRunAttempt:1,controllerCommit:("d"*40),
     sourceCommit:$source,operationId:$operation,
     parentTaskArn:"arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/parent",
-    manifestSha256:("3"*64),services:[{},{},{}]}')"
+    manifestSha256:("3"*64),services:[{},{},{}],boundHistory:[]}')"
 bootstrap_closed_task="$fixture/bootstrap-closed-task.json"
 render_release_task 'the exact V2 bootstrap-closed recovery' release-bootstrap-closed-recover \
   "RELEASE_PARENT_OPERATION_ID=$parent_operation_id" \
@@ -2080,6 +2088,7 @@ bash "$repo_root/infra/prod-ecs-express/register-task-definition-with-retry.spec
 bash "$repo_root/infra/prod-ecs-express/cleanup-one-shot-task.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-task-network-failover.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/production-ready-release-task.spec.sh"
+bash "$repo_root/infra/prod-ecs-express/bounded-http-retry.spec.sh"
 bash -n "$repo_root/infra/prod-ecs-express/active-release-tasks.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-create.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-deployment.sh"
@@ -2181,6 +2190,7 @@ if grep -Fq 'DEPLOY_ENV=production' "$capacity_wrapper"; then
   exit 1
 fi
 
+bash "$repo_root/infra/prod-ecs-express/list-service-deployments-all.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-safety.spec.sh"
 bash "$repo_root/infra/uat/select-deploy-target.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"

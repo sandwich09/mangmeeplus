@@ -130,5 +130,7 @@ test('keeps login and acceptance links aligned with the current public and immut
   assert.match(acceptancePage, /status\.privacy\.href/);
   assert.match(acceptancePage, /ใช้กับบัญชีของคุณทุกกิจการ/);
   assert.match(acceptancePage, /เฉพาะเมื่อเอกสารออกฉบับใหม่/);
+  assert.match(acceptancePage, /await refreshSessionSilently\(\)[\s\S]*window\.location\.assign\(returnTo\)/);
+  assert.doesNotMatch(acceptancePage, /void refreshSessionSilently\(\)/);
   assert.doesNotMatch(acceptancePage, /Business &amp; Accounting Assistant/);
 });

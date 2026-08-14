@@ -9,6 +9,9 @@ deploy="$root/infra/prod-ecs-express/deploy.sh"
 maintenance="$root/infra/prod-ecs-express/verify-production-maintenance.sh"
 recovery="$root/.github/workflows/recover-release-intent.yml"
 
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$workflow"
+grep -Fq 'curl --silent --show-error --location "${curl_retry[@]}"' "$workflow"
+
 for required in \
   'UAT Release Passport V2' 'Production Readiness V2 run' \
   'validate-production-release-ready-v2.sh' 'validate-uat-release-passport-v2.sh' \
@@ -115,8 +118,13 @@ grep -Fq 'release-bootstrap-closed-recover' "$recovery"
 grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON:' "$recovery"
 grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery"
 grep -Fq 'Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' "$recovery"
-grep -Fq 'test "$(wc -l < "$names"|tr -d '\''[:space:]'\'')" = 11' "$recovery"
+grep -Fq 'test "$member_count" = "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '\''[:space:]'\'')"' "$recovery"
 grep -Fq 'release-prepare.log > "$expected"' "$recovery"
+grep -Fq 'boundHistory:$bound' "$recovery"
+grep -Fq 'test "$bound_count" -le 8' "$recovery"
+grep -Fq 'partial_roots="$(grep -Ec' "$recovery"
+grep -Fq '"ai-gateway":"watchdog-bms-ai-gateway-v2"' "$recovery"
+grep -Fq 'any($histories[];.==$current)' "$recovery"
 grep -Fq 'artifact_parent_task="$(jq -er' "$recovery"
 grep -Fq 'test -z "$PARENT_TASK_ARN" || test "$PARENT_TASK_ARN" = "$artifact_parent_task"' "$recovery"
 ruby - "$recovery" <<'RUBY'
