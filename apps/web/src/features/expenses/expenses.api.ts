@@ -60,6 +60,19 @@ async function readErrorMessage(res: Response): Promise<string> {
   return text || `API error ${res.status}`;
 }
 
+async function responseError(res: Response): Promise<Error> {
+  const body = await res.clone().json().catch(() => null) as Record<string, unknown> | null;
+  const requestId = res.headers.get('x-request-id');
+  const details = requestId && typeof body?.['requestId'] !== 'string'
+    ? { ...body, requestId }
+    : body;
+  return Object.assign(new Error(await readErrorMessage(res)), {
+    status: res.status,
+    ...(details && { details }),
+    ...(typeof body?.['code'] === 'string' && { code: body['code'] }),
+  });
+}
+
 export async function uploadReceiptFile(
   uploadUrl: string,
   uploadMethod: string,
@@ -351,7 +364,7 @@ export async function fetchSubstituteReceiptPdfBlob(
   evidenceId: string,
 ): Promise<Blob> {
   const response = await authedFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/artifact.pdf`);
-  if (!response.ok) throw new Error(await readErrorMessage(response));
+  if (!response.ok) throw await responseError(response);
   return checkedPreviewBlob(response, 'application/pdf');
 }
 
@@ -362,7 +375,7 @@ export async function downloadPaymentVoucherPdf(
   params: { paymentDate?: string; payeeName?: string; payeeAddress?: string; payeeTaxId?: string },
 ): Promise<void> {
   const res = await authedFetch(`/v1/companies/${companyId}/expenses/${expenseId}/payment-voucher.pdf${qs(params)}`);
-  if (!res.ok) throw new Error(await readErrorMessage(res));
+  if (!res.ok) throw await responseError(res);
   downloadBlob(await res.blob(), `ใบสำคัญรับเงิน-${expenseNumber ?? expenseId}.pdf`);
 }
 
@@ -407,7 +420,7 @@ export async function initPersonalSignatureUpload(
     assertAllowedUploadFile(file, 'image');
     return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/signature-upload-intent`, {
       method: 'POST',
-      body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size, visibility: 'INTERNAL' }),
+      body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size }),
     });
   });
 }

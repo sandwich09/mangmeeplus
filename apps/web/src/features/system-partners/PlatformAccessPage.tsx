@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useConfirm } from '@/common/components/modal/use-confirm';
 import { useToast } from '@/common/components/toast';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { getPlatformAccess, setPlatformAccess, type PlatformAccessStatus } from './system-partners.api';
 
 export default function PlatformAccessPage() {
@@ -14,7 +15,7 @@ export default function PlatformAccessPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    void getPlatformAccess().then(setStatus).catch((nextError: Error) => setError(nextError.message));
+    void getPlatformAccess().then(setStatus).catch((nextError: unknown) => setError(apiErrorMessage(nextError)));
   }, []);
 
   const change = async (state: 'OPEN' | 'CLOSED') => {
@@ -36,7 +37,7 @@ export default function PlatformAccessPage() {
       setReason('');
       toast.success(state === 'OPEN' ? 'เปิดระบบให้ผู้ใช้ทั่วไปแล้ว' : 'ปิดระบบสำหรับผู้ใช้ทั่วไปแล้ว');
     } catch (nextError) {
-      toast.error((nextError as Error).message || 'เปลี่ยนสถานะระบบไม่สำเร็จ');
+      toast.error(apiErrorMessage(nextError));
     } finally {
       setSaving(false);
     }

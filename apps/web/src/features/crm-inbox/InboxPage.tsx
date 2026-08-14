@@ -15,6 +15,7 @@ import type {
   CrmMessageTemplateSummary,
 } from '@watchdog-bms/contracts';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ForbiddenState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -72,6 +73,19 @@ type Props = {
   userId: string;
   permissions: string[];
 };
+
+function inboxSendApiErrorMessage(error: unknown): string {
+  const candidate = error as { code?: unknown; message?: unknown } | null | undefined;
+  const diagnostic = typeof candidate?.code === 'string'
+    ? candidate.code
+    : typeof candidate?.message === 'string'
+      ? candidate.message
+      : '';
+  if (/(text_too_long|channel_disabled|customer_unfollowed|invalid_access_token)/.test(diagnostic)) {
+    return sendErrorMessage(diagnostic);
+  }
+  return apiErrorMessage(error);
+}
 
 function StatusPill({ status, className = '' }: { status: CrmConversationStatus; className?: string }) {
   const meta = CONVERSATION_STATUS_META[status];
@@ -196,7 +210,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
       setTemplateForm({ title: '', bodyText: '' });
       setTemplates(await listMessageTemplates(companyId));
     } catch (e) {
-      setTemplateError(e instanceof Error ? e.message : t('inbox.template_save_failed', locale));
+      setTemplateError(apiErrorMessage(e));
     } finally {
       setTemplateBusy(false);
     }
@@ -209,7 +223,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
       await archiveMessageTemplate(companyId, templateId);
       setTemplates(await listMessageTemplates(companyId));
     } catch (e) {
-      setTemplateError(e instanceof Error ? e.message : t('inbox.template_delete_failed', locale));
+      setTemplateError(apiErrorMessage(e));
     } finally {
       setTemplateBusy(false);
     }
@@ -222,7 +236,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
       await approveMessageTemplateForAi(companyId, templateId);
       setTemplates(await listMessageTemplates(companyId));
     } catch (e) {
-      setTemplateError(e instanceof Error ? e.message : t('inbox.template_approve_failed', locale));
+      setTemplateError(apiErrorMessage(e));
     } finally {
       setTemplateBusy(false);
     }
@@ -362,7 +376,7 @@ export function InboxPage({ companyId, userId, permissions }: Props) {
         setSendError(sendErrorMessage(result.message.deliveryError ?? ''));
       }
     } catch (e) {
-      setSendError(sendErrorMessage((e as Error).message ?? ''));
+      setSendError(inboxSendApiErrorMessage(e));
     } finally {
       setSending(false);
     }
@@ -1049,7 +1063,7 @@ function QuickActions({ companyId, conversationId, customerName, permissions, lo
   const run = async (kind: string, fn: () => Promise<unknown>) => {
     setBusy(kind); setMsg(null);
     try { await fn(); setMsg(t('inbox.create_success', locale)); }
-    catch (e) { setMsg(e instanceof Error ? e.message : t('inbox.create_failed', locale)); }
+    catch (e) { setMsg(apiErrorMessage(e)); }
     finally { setBusy(null); }
   };
 

@@ -26,10 +26,10 @@ export async function mapResponseToApiError(response: Response): Promise<ApiErro
     return new ApiError({ kind: 'forbidden', message, statusCode: 403, requestId, code });
   }
   if (response.status === 404) {
-    return new ApiError({ kind: 'not_found', message: 'Resource not found.', statusCode: 404, requestId });
+    return new ApiError({ kind: 'not_found', message: 'Resource not found.', statusCode: 404, requestId, code });
   }
   if (response.status === 429) {
-    return new ApiError({ kind: 'rate_limited', message, statusCode: 429, requestId });
+    return new ApiError({ kind: 'rate_limited', message, statusCode: 429, requestId, code });
   }
   if (response.status === 422 || response.status === 400) {
     // Parse NestJS validation error format: { message: string[], error: string }
@@ -44,7 +44,7 @@ export async function mapResponseToApiError(response: Response): Promise<ApiErro
     return new ApiError({ kind: 'validation', message: 'Validation failed.', statusCode: response.status, requestId, fieldErrors, code });
   }
   if (response.status >= 500) {
-    return new ApiError({ kind: 'server_error', message, statusCode: response.status, requestId });
+    return new ApiError({ kind: 'server_error', message, statusCode: response.status, requestId, code });
   }
   // `code` is carried through here too. 409 lands on this branch, and a conflict is exactly the
   // case where the server's machine-readable code matters most — `localizedErrorMessage` already

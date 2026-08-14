@@ -9,7 +9,7 @@ import type {
   NotificationChannel,
   NotificationItem,
 } from './dashboard-notifications.model';
-import { authedApiFetch } from '@/common/api/authed-fetch';
+import { authedApiFetch, type AuthedInit } from '@/common/api/authed-fetch';
 
 type RawNotificationItem = Omit<NotificationItem, 'sourceModule' | 'status' | 'read' | 'deliveryChannels'> & {
   sourceRefs?: Array<{ module?: string }>;
@@ -41,7 +41,7 @@ function qs(params?: Record<string, unknown>): string {
   return s ? `?${s}` : '';
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, init?: AuthedInit): Promise<T> {
   try {
     return await authedApiFetch<T>(path, init);
   } catch (error) {
@@ -112,7 +112,11 @@ export function listRules(companyId: string): Promise<{ items: NotificationRule[
 }
 
 export function updateRule(companyId: string, ruleId: string, body: Partial<NotificationRule>): Promise<NotificationRule> {
-  return apiFetch<RawRule>(`/v1/companies/${companyId}/notification-rules/${ruleId}`, { method: 'PUT', body: JSON.stringify(body) })
+  return apiFetch<RawRule>(`/v1/companies/${companyId}/notification-rules/${ruleId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+    suppressErrorToast: true,
+  })
     .then(normalizeRule);
 }
 

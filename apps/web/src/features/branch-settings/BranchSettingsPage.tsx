@@ -1,6 +1,7 @@
 'use client';
 // 10D: Settings > สาขา — manage branches used as the in-page data scope dimension.
 import { useCallback, useEffect, useState } from 'react';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
 import {
@@ -26,7 +27,7 @@ const STATUS_LABELS: Record<Branch['status'], string> = {
 };
 
 function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : 'เกิดข้อผิดพลาด';
+  return apiErrorMessage(e);
 }
 
 const EMPTY_FORM: CreateBranchInput = { code: '', name: '', type: 'BRANCH', taxBranchCode: '' };

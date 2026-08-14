@@ -83,6 +83,7 @@ export function setPlatformAccess(
   return apiFetch<PlatformAccessStatus>('/v1/system/platform-access', {
     method: 'PUT',
     body: JSON.stringify({ state, reason }),
+    suppressErrorToast: true,
   });
 }
 
@@ -110,6 +111,7 @@ export async function updatePartnerProfile(
   return apiFetch<PartnerCompanyDetailDto>(`/v1/system/partners/${companyId}`, {
     method: 'PATCH',
     body: JSON.stringify(dto),
+    suppressErrorToast: true,
   });
 }
 
@@ -120,6 +122,7 @@ export async function partnerLifecycleTransition(
   return apiFetch<PartnerLifecycleResultDto>(`/v1/system/partners/${companyId}/lifecycle`, {
     method: 'POST',
     body: JSON.stringify(dto),
+    suppressErrorToast: true,
   });
 }
 
@@ -130,6 +133,7 @@ export async function setPartnerFeatures(
   return apiFetch<SetPartnerFeaturesResultDto>(`/v1/system/partners/${companyId}/features`, {
     method: 'PUT',
     body: JSON.stringify(dto),
+    suppressErrorToast: true,
   });
 }
 
@@ -141,6 +145,7 @@ export async function setPartnerAiModel(
   return apiFetch(`/v1/system/partners/${companyId}/ai-model`, {
     method: 'PUT',
     body: JSON.stringify(dto),
+    suppressErrorToast: true,
   });
 }
 
@@ -153,7 +158,11 @@ export async function getPlatformAiBudget(): Promise<PlatformAiBudgetDto> {
 }
 
 export async function setPlatformAiBudget(dto: SetPlatformAiBudgetDto): Promise<PlatformAiBudgetDto> {
-  return apiFetch<PlatformAiBudgetDto>('/v1/system/ai-budget', { method: 'PUT', body: JSON.stringify(dto) });
+  return apiFetch<PlatformAiBudgetDto>('/v1/system/ai-budget', {
+    method: 'PUT',
+    body: JSON.stringify(dto),
+    suppressErrorToast: true,
+  });
 }
 
 export async function getPartnerMembers(companyId: string): Promise<PartnerMembersDto> {
@@ -163,6 +172,7 @@ export async function getPartnerMembers(companyId: string): Promise<PartnerMembe
 export async function unlinkPartnerMemberLine(companyId: string, memberUserId: string): Promise<{ unlinked: true }> {
   return apiFetch<{ unlinked: true }>(`/v1/system/partners/${companyId}/members/${memberUserId}/line-unlink`, {
     method: 'POST',
+    suppressErrorToast: true,
   });
 }
 
@@ -172,7 +182,7 @@ export async function resetPartnerMemberPassword(
 ): Promise<PartnerMemberPasswordResetDto> {
   return apiFetch<PartnerMemberPasswordResetDto>(
     `/v1/system/partners/${companyId}/members/${memberUserId}/password/reset`,
-    { method: 'POST' },
+    { method: 'POST', suppressErrorToast: true },
   );
 }
 
@@ -182,7 +192,7 @@ export async function revealPartnerMemberTempPassword(
 ): Promise<PartnerMemberTempPasswordDto> {
   return apiFetch<PartnerMemberTempPasswordDto>(
     `/v1/system/partners/${companyId}/members/${memberUserId}/password/reveal`,
-    { method: 'POST' },
+    { method: 'POST', suppressErrorToast: true },
   );
 }
 
@@ -205,5 +215,6 @@ export async function setPartnerVatRegistration(
   return apiFetch(`/v1/system/partners/${companyId}/vat-registration`, {
     method: 'PUT',
     body: JSON.stringify({ ...dto, commandId: crypto.randomUUID() }),
+    suppressErrorToast: true,
   });
 }

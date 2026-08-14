@@ -5,6 +5,7 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import type {
   MessagingChannelSummary,
   RevealMessagingChannelCredentialResult,
@@ -51,6 +52,14 @@ function toneClass(tone: 'green' | 'amber' | 'red' | 'gray'): string {
   }
 }
 
+function displayedChannelError(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code === 'invalid_access_token' || code === 'line_api_unreachable') {
+    return channelErrorMessage(code);
+  }
+  return apiErrorMessage({ code });
+}
+
 function TwoOaWarningCard() {
   return (
     <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
@@ -89,7 +98,7 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
         const status = (e as { status?: number }).status;
         setOptionsError(status === 403
           ? 'คุณไม่มีสิทธิ์ดูรายชื่อพนักงานหรือสาขา กรุณาติดต่อ Admin'
-          : (e as Error).message || 'โหลดรายชื่อพนักงานและสาขาไม่สำเร็จ');
+          : apiErrorMessage(e));
       });
     return () => { alive = false; };
   }, [companyId]);
@@ -117,7 +126,7 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
       setBranchId(updated.defaultBookingBranchId ?? '');
       toast.success('บันทึกการตั้งค่าระบบตอบอัตโนมัติแล้ว');
     } catch (e) {
-      setError((e as Error).message || 'บันทึกการตั้งค่าไม่สำเร็จ');
+      setError(apiErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -193,7 +202,7 @@ function ConnectWizard({ companyId, onConnected }: { companyId: string; onConnec
       setForm(EMPTY_FORM);
       onConnected();
     } catch (e) {
-      setError((e as Error).message || 'เชื่อมต่อไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองใหม่');
+      setError(apiErrorMessage(e));
     } finally {
       setSubmitting(false);
     }
@@ -252,7 +261,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
   const [copied, setCopied] = useState(false);
 
   const status = channelStatusLabel(channel.status);
-  const lastError = channelErrorMessage(channel.lastErrorCode);
+  const lastError = displayedChannelError(channel.lastErrorCode);
   const webhookUrl = webhookDisplayUrl(channel);
 
   const run = async (key: string, action: () => Promise<void>) => {
@@ -262,7 +271,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
     try {
       await action();
     } catch (e) {
-      setError((e as Error).message || 'ดำเนินการไม่สำเร็จ');
+      setError(apiErrorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -323,7 +332,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
             onClick={() => run('test', async () => {
               const result = await testChannel(companyId, channel.id);
               if (result.ok) setNotice(`เชื่อมต่อสำเร็จ — บอท "${result.botDisplayName}" พร้อมใช้งาน`);
-              else setError(channelErrorMessage(result.error) ?? 'ทดสอบไม่สำเร็จ');
+              else setError(displayedChannelError(result.error) ?? 'ทดสอบไม่สำเร็จ');
               onChanged();
             })}
           >
@@ -445,7 +454,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
       } catch (e) {
         if (!alive) return;
         if ((e as { status?: number }).status === 403) setHidden(true);
-        else setError((e as Error).message || 'โหลดการตั้งค่า SLA ไม่สำเร็จ');
+        else setError(apiErrorMessage(e));
       }
     })();
     return () => { alive = false; };
@@ -467,7 +476,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
       setPolicy(updated);
       toast.success('บันทึกการตั้งค่า SLA แล้ว — มีผลกับแชทใหม่ตั้งแต่ตอนนี้');
     } catch (e) {
-      setError((e as Error).message || 'บันทึกไม่สำเร็จ กรุณาลองใหม่');
+      setError(apiErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -546,7 +555,7 @@ export function LineOaSettingsPage({ companyId }: { companyId: string }) {
       setLoadError(
         status === 403
           ? 'คุณไม่มีสิทธิ์เข้าถึงการตั้งค่านี้ กรุณาติดต่อ Admin ของบริษัท'
-          : (e as Error).message || 'โหลดข้อมูลไม่สำเร็จ',
+          : apiErrorMessage(e),
       );
     }
   }, [companyId]);

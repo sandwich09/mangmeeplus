@@ -203,6 +203,16 @@ export function extractErrorMessage(code: string): string {
   return map[code] ?? code;
 }
 
+const STATEMENT_ROW_ERROR_MESSAGES: Record<string, string> = {
+  'Missing posted date': 'ไม่พบวันที่ทำรายการ กรุณาระบุวันที่',
+  'Missing amount': 'ไม่พบจำนวนเงิน กรุณาระบุยอดถอน ยอดฝาก หรือจำนวนเงิน',
+};
+
+/** Row diagnostics come from a successful preview response and are not presentation copy. */
+export function statementRowErrorMessage(diagnostic: string): string {
+  return STATEMENT_ROW_ERROR_MESSAGES[diagnostic] ?? 'ข้อมูลแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบวันที่และจำนวนเงิน';
+}
+
 export const SOURCE_KIND_LABELS: Record<string, string> = {
   pdf_text: 'อ่านจากชั้นข้อความ PDF (ไม่ใช้ AI)',
   ocr: 'อ่านด้วย AI OCR — ตรวจทานตัวเลขก่อนยืนยัน',
