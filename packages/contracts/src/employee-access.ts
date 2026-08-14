@@ -22,11 +22,34 @@ export type ThaiAddressOption = {
   subdistrictTh: string;
 };
 
+/**
+ * คำนำหน้า, stored as its own field since 2026-08-15.
+ *
+ * It used to be concatenated into `displayName` with no separator, which forced every reader to
+ * guess it back out with `startsWith` and silently ate the first characters of anyone whose given
+ * name begins with a title. `displayName` now carries the name alone; compose the two with
+ * `employeeFullName` wherever the title should be shown.
+ * See docs/agent-memory/employee-title-prefix-field.md.
+ */
+export const EMPLOYEE_TITLE_PREFIXES = ['นาย', 'นาง', 'นางสาว'] as const;
+export type EmployeeTitlePrefix = (typeof EMPLOYEE_TITLE_PREFIXES)[number];
+
+/**
+ * The name as a document or an employee record should show it. Absent on rows written before the
+ * split — and on owners, who have no employee profile at all — so the title is simply omitted
+ * rather than guessed.
+ */
+export function employeeFullName(employee: { titlePrefix?: string; displayName: string }): string {
+  return `${employee.titlePrefix ?? ''}${employee.displayName}`;
+}
+
 export type EmployeeSummary = {
   id: string;
   userId: string;
   membershipId: string;
+  /** The name WITHOUT คำนำหน้า. Use `employeeFullName` to render it with the title. */
   displayName: string;
+  titlePrefix?: EmployeeTitlePrefix;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -56,7 +79,9 @@ export type EmployeeDetail = EmployeeSummary;
 
 export type CreateEmployeeInput = {
   username: string;
+  /** The name WITHOUT คำนำหน้า; send the title in `titlePrefix`. */
   displayName: string;
+  titlePrefix?: EmployeeTitlePrefix;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -78,7 +103,9 @@ export type CreateEmployeeInput = {
 };
 
 export type UpdateEmployeeInput = {
+  /** The name WITHOUT คำนำหน้า; send the title in `titlePrefix`. */
   displayName?: string;
+  titlePrefix?: EmployeeTitlePrefix;
   legalName?: string;
   email?: string;
   firstName?: string;

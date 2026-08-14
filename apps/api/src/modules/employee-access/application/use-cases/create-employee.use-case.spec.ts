@@ -400,3 +400,31 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(state.profiles[0].postalCode, '10110');
   });
 });
+
+// UAT 2026-08-15: คำนำหน้า is now its own column instead of being concatenated into displayName.
+describe('CreateEmployeeUseCase title prefix', () => {
+  it('stores the title beside the name, leaving displayName free of it', async () => {
+    const { useCase, state } = makeUseCase();
+    await useCase.execute({ ...baseCommand, displayName: 'มีนา ใจงาม', titlePrefix: 'นางสาว' });
+
+    assert.equal(state.profiles[0].titlePrefix, 'นางสาว');
+    assert.equal(state.profiles[0].displayName, 'มีนา ใจงาม');
+    // The account name is the person's name; the title is a profile field and never reaches User.
+    assert.equal(state.users[0].displayName, 'มีนา ใจงาม');
+  });
+
+  it('carries a corrected title through a resumed draft', async () => {
+    const { useCase, state } = makeUseCase();
+    await useCase.execute({ ...baseCommand, displayName: 'มีนา ใจงาม', titlePrefix: 'นาย' });
+    await useCase.execute({ ...baseCommand, displayName: 'มีนา ใจงาม', titlePrefix: 'นางสาว' });
+
+    assert.equal(state.profiles.length, 1);
+    assert.equal(state.profiles[0].titlePrefix, 'นางสาว');
+  });
+
+  it('leaves the column empty when no title is sent, rather than inventing one', async () => {
+    const { useCase, state } = makeUseCase();
+    await useCase.execute(baseCommand);
+    assert.equal(state.profiles[0].titlePrefix, undefined);
+  });
+});

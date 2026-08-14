@@ -18,7 +18,9 @@ import { encryptCredential } from '../../../system-partner-management/domain/log
 export type CreateEmployeeCommand = {
   companyId: string;
   username: string;
+  /** The name WITHOUT คำนำหน้า; the title travels in `titlePrefix`. */
   displayName: string;
+  titlePrefix?: string;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -176,6 +178,7 @@ export class CreateEmployeeUseCase {
             where: { id: duplicateIdentity.id },
             data: {
               displayName: cmd.displayName,
+              titlePrefix: cmd.titlePrefix,
               legalName: cmd.legalName,
               firstName: cmd.firstName,
               lastName: cmd.lastName,
@@ -307,6 +310,7 @@ export class CreateEmployeeUseCase {
               userId: user.id,
               membershipId: membership.id,
               displayName: cmd.displayName,
+              titlePrefix: cmd.titlePrefix,
               legalName: cmd.legalName,
               firstName: cmd.firstName,
               lastName: cmd.lastName,
@@ -423,6 +427,7 @@ export class CreateEmployeeUseCase {
             userId: ctx.userId,
             membershipId: membership.id,
             displayName: cmd.displayName,
+            titlePrefix: cmd.titlePrefix,
             legalName: cmd.legalName,
             firstName: cmd.firstName,
             lastName: cmd.lastName,

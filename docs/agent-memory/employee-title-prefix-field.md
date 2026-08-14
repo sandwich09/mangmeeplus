@@ -1,6 +1,6 @@
 # Agent Memory: Employee title prefix as its own field
 
-Status: BLOCKED, not started — waiting for another session to commit two files this work must edit. Owner decisions below are final; only the edit window is missing.
+Status: HALF LANDED 2026-08-15 — the six non-conflicting files are done and green; the two held files are still waiting on another session, so **update and the employee form do not carry the title yet**. Creating an employee stores it correctly; editing one silently drops it. Owner decisions below are final.
 Owner: develop
 Scope: Give `EmployeeAccessProfile` a real `titlePrefix` field instead of concatenating คำนำหน้า into `displayName`, and remove the two places that reverse-engineer it by `startsWith`.
 
@@ -31,9 +31,30 @@ Artifacts (planned — 8 files, 2 currently held by another session):
 - ✋ `apps/web/src/features/employee-access/AddEmployeePrototypePage.tsx` — held; composes at line 389 (`${title}${fullName}`) and reverse-engineers at lines 52-56
 - `apps/web/src/features/employee-access/EmployeeAccessPages.tsx`, `IndividualPermissionsPrototypePage.tsx` — render `displayName`
 
-Verification: not started. When it runs: focused specs for create/update carrying `titlePrefix`, a case proving `displayName` no longer contains a title, `tsc --noEmit` across api/web/contracts, and the api + web suites.
+Landed 2026-08-15 (six files, no conflicts):
+- `schema.prisma` + migration `20260815000000_employee_title_prefix` — `titlePrefix TEXT` nullable, no backfill.
+- `employee-access.ts` — `EMPLOYEE_TITLE_PREFIXES`, `EmployeeTitlePrefix`, `employeeFullName`, and `titlePrefix` on all three shapes. `displayName` is documented as the name WITHOUT the title.
+- `employee-access.dtos.ts` — `@IsIn(EMPLOYEE_TITLE_PREFIXES)` on create and update, so the column can only ever hold a real คำนำหน้า. The update DTO accepts it already even though the use case cannot store it yet.
+- `employee-access.mapper.ts` — surfaces `titlePrefix`, null on pre-split rows.
+- `create-employee.use-case.ts` — persists it on both profile creates and on the resumed-draft update. `User.displayName` deliberately keeps the bare name: the account name is the person, the title is a profile field.
+- `EmployeeAccessPages.tsx` — the two employee lists render `employeeFullName`; `InitialAvatar` stays on the bare `displayName`, because initials must never start at the title.
+- The controller needed no change: it spreads `...body`, so `titlePrefix` reaches the create command on its own.
+
+Known incomplete while the two files are held — this is the state a reader will find:
+- `UpdateEmployeeUseCase` has no `titlePrefix` in its command, so the update controller's `...body` spread drops it silently. TypeScript does not catch this (a spread is not an object-literal excess-property check). Editing an employee cannot change the title yet.
+- `AddEmployeePrototypePage.tsx` still composes `${title}${fullName}` into `displayName` and still reverse-engineers the title with `startsWith` at lines 52-56. So in practice every row still gets its title inside `displayName` and `titlePrefix` stays null until that form is updated.
+- Net effect today: the plumbing is in place and proven by tests, but no real record uses it yet. Nothing regressed — `employeeFullName` returns `displayName` unchanged when `titlePrefix` is absent.
+
+Verification (2026-08-15, six-file slice):
+- `CI=true corepack pnpm --filter @watchdog-bms/contracts test`: pass 125/125 — 4 new `employeeFullName` cases including "นายก" surviving intact, which the old concatenation could not do.
+- `node_modules/.bin/tsx --test src/modules/employee-access/application/use-cases/create-employee.use-case.spec.ts`: pass 23/23 — 3 new: title stored beside a title-free `displayName` and never written to `User`, a corrected title carried through a resumed draft, and no title invented when none is sent.
+- `CI=true corepack pnpm --filter @watchdog-bms/api test`: pass, exit 0 · `--filter @watchdog-bms/web test`: pass 901/901
+- `prisma:validate` pass, `prisma generate` pass, `tsc --noEmit` pass across api and web.
+- NOT verified: no migration was applied to a running database (no local stack up), so the column exists in schema and migration only.
 
 Next:
 1. Wait for the other session to commit `update-employee.use-case.ts`, `update-employee-branch-scope.spec.ts`, and `AddEmployeePrototypePage.tsx`. A background watch is armed on exactly those paths.
    - Note: the first watch was wrong and fired immediately — zsh does not word-split an unquoted variable, so the pathspec became one nonexistent path and `git status` was trivially empty. Literal paths, not a variable.
-2. Then implement in the order above, API before web, so the web form has a field to send.
+2. Add `titlePrefix` to `UpdateEmployeeCommand` and its profile update, mirroring create.
+3. Change the form to send `titlePrefix` and a title-free `displayName`, and to read the title back from the field instead of `startsWith` — deleting `employeeTitle()` at lines 52-56.
+4. Then `stripThaiTitlePrefix` in the shell has nothing left to strip except pre-split rows; keep it as a safety net.
