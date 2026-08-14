@@ -201,6 +201,7 @@ done
 
 deploy_workflow="$repo_root/.github/workflows/deploy-production.yml"
 uat_workflow="$repo_root/.github/workflows/deploy-uat.yml"
+uat_deploy="$repo_root/infra/uat/deploy-with-runtime-mutex.sh"
 for caller in "$deploy_workflow" "$uat_workflow"; do
   build_permissions="$(awk '/^  build_and_publish:/{found=1; next} found && /^  [[:alnum:]_-]+:/{exit} found{print}' "$caller")"
   grep -Fq 'id-token: write' <<< "$build_permissions"
@@ -668,7 +669,15 @@ grep -Fq 'ref: ${{ inputs.source_ref || github.event.pull_request.head.sha || gi
 grep -Fq 'sha="$(git rev-parse HEAD)"' "$ci"
 test "$(grep -Fc 'ref: ${{ needs.resolve-source.outputs.source_sha }}' "$ci")" -ge 1
 grep -Fq '.head_sha == $sha' "$ci"
-test "$(grep -Fc 'bash infra/prod-ecs-express/deploy.sh "$TARGET"' "$uat_workflow")" -eq 1
+test "$(grep -Fc 'bash infra/uat/deploy-with-runtime-mutex.sh "$TARGET"' "$uat_workflow")" -eq 1
+if grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$TARGET"' "$uat_workflow"; then
+  echo "ERROR: UAT workflow bypasses the reviewed runtime mutex wrapper" >&2
+  exit 1
+fi
+grep -Fq '. "$(dirname "$0")/lib-runtime-mutex.sh"' "$uat_deploy"
+grep -Fq 'trap uat_runtime_mutex_release EXIT' "$uat_deploy"
+grep -Fq 'uat_runtime_mutex_acquire "deploy-${target}-${GITHUB_RUN_ID:-manual}"' "$uat_deploy"
+grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$target"' "$uat_deploy"
 grep -Fq 'AI Gateway endpoint unchanged; skipping redundant api-web rollout' "$repo_root/infra/prod-ecs-express/deploy.sh"
 test "$(grep -Fc 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/prod-ecs-express/deploy.sh")" -eq 2
 grep -Fq 'source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
@@ -2081,6 +2090,8 @@ if grep -Eq 'hash|release_ref|release_image|apply:' <<< "$f2_apply_inputs"; then
 fi
 
 bash -n "$resolver"
+bash -n "$uat_deploy"
+bash -n "$repo_root/infra/uat/lib-runtime-mutex.sh"
 bash -n "$repo_root/infra/prod-ecs-express/deploy.sh"
 bash -n "$repo_root/infra/prod-ecs-express/run-release-task.sh"
 bash "$repo_root/infra/prod-ecs-express/run-task-idempotently.spec.sh"

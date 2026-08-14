@@ -151,7 +151,7 @@ Recreating the secret produces a **new ARN**, and `deploy.sh` embeds that ARN in
 UAT Fargate is the largest recurring line in the account (~$113/month including the three public IPv4 addresses its tasks hold). Park it at zero when no acceptance cycle is running:
 
 ```sh
-ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 DEPLOY_ENV=uat bash infra/prod-ecs-express/deploy.sh all
+ECS_EXPRESS_MIN_TASKS=0 ECS_EXPRESS_MAX_TASKS=0 bash infra/uat/deploy-with-runtime-mutex.sh all
 ```
 
 Both default to `1`/`2`. Production rejects any other value, because `infra/security/collect-production-a5-current-health.sh` asserts the live service still reads exactly `{minTaskCount:1,maxTaskCount:2,AVERAGE_CPU,70}` when it collects signed evidence.
