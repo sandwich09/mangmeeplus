@@ -41,8 +41,8 @@ export default function PrivacyPage() {
   return (
     <LegalPageShell
       active="privacy"
-      eyebrow="Privacy notice · PDPA · v2"
-      title="ประกาศความเป็นส่วนตัว"
+      eyebrow="Privacy notice · PDPA · ฉบับที่ 1"
+      title="ประกาศความเป็นส่วนตัว MangmeePlus"
       summary="ประกาศนี้ครอบคลุมบัญชีและสิทธิ์พนักงาน ใบเสร็จ ค่าใช้จ่ายและการเบิก การรับรูปใบเสร็จและคำถามผ่าน LINE การใช้ OCR หรือ AI ช่วยอ่านเอกสาร ตลอดจนความปลอดภัย การสนับสนุน และหลักฐานการปฏิบัติตามกฎหมาย"
       toc={TOC}
     >

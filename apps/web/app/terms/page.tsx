@@ -37,9 +37,9 @@ export default function TermsPage() {
   return (
     <LegalPageShell
       active="terms"
-      eyebrow="Terms of service · v2"
+      eyebrow="Terms of service · ฉบับที่ 1"
       title="ข้อกำหนดการใช้งาน MangmeePlus"
-      summary={`ข้อกำหนดนี้เป็นข้อตกลงระหว่างคุณหรือกิจการของคุณกับ ${LEGAL_OPERATOR.legalName} และใช้เฉพาะบริการที่แสดงว่าเปิดให้ใช้ในบัญชีของคุณ`}
+      summary="ข้อกำหนดนี้ใช้กับผู้ใช้และกิจการที่เข้าถึงหรือใช้ MangmeePlus และให้อ่านร่วมกับแผนบริการ ใบเสนอราคา คำสั่งซื้อ ข้อตกลงประมวลผลข้อมูล หรือสัญญาเฉพาะที่คู่สัญญายอมรับ"
       toc={TOC}
     >
       <LegalSection
@@ -71,7 +71,7 @@ export default function TermsPage() {
       <LegalSection
         id="agreement"
         title="1. คู่สัญญา คุณสมบัติ และการยอมรับ"
-        lead={`ข้อกำหนดนี้มีผลตั้งแต่ ${LEGAL_EFFECTIVE_DATE}`}
+        lead={`ข้อกำหนดนี้มีผลใช้บังคับตั้งแต่ ${LEGAL_EFFECTIVE_DATE}`}
       >
         <p>
           “MangmeePlus”, “เรา” หรือ “บริษัท” หมายถึง {LEGAL_OPERATOR.legalName} เลขทะเบียนนิติบุคคล{' '}
@@ -81,7 +81,7 @@ export default function TermsPage() {
         <LegalBulletList>
           <li>คุณต้องมีความสามารถตามกฎหมาย และหากดำเนินการแทนกิจการ คุณยืนยันว่ามีอำนาจดำเนินการในขอบเขตนั้น</li>
           <li>
-            เมื่อเข้าเว็บครั้งแรกหลังเข้าสู่ระบบ เราจะแสดงข้อกำหนดและประกาศความเป็นส่วนตัว v2
+            เมื่อเข้าเว็บครั้งแรกหลังเข้าสู่ระบบ เราจะแสดงข้อกำหนดและประกาศความเป็นส่วนตัวฉบับที่ 1
             ให้คุณอ่านและยืนยันด้วยตนเอง โดยไม่ทำเครื่องหมายไว้ล่วงหน้า
           </li>
           <li>

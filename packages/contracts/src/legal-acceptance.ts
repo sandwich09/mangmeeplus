@@ -1,33 +1,33 @@
 export const CURRENT_LEGAL_DOCUMENTS = {
   terms: {
     type: 'TERMS_OF_USE',
-    version: 'v2',
-    displayVersionTh: 'เวอร์ชัน 2 (v2)',
-    displayVersionEn: 'Version 2 (v2)',
-    effectiveDate: '2026-08-10',
-    href: '/legal/releases/v2/terms-th.html',
+    version: 'v3',
+    displayVersionTh: 'ฉบับที่ 1 (1.0)',
+    displayVersionEn: 'Official version 1 (1.0)',
+    effectiveDate: '2026-08-14',
+    href: '/legal/releases/v3/terms-th.html',
     latestHref: '/terms',
     titleTh: 'ข้อกำหนดการใช้งาน MangmeePlus',
     titleEn: 'MangmeePlus Terms of Use',
     // SHA-256 of the exact UTF-8 bytes served from `href`. The release file is append-only:
     // changing it requires a new version, URL and hash rather than overwriting this artifact.
-    artifactSha256: '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
+    artifactSha256: '67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
+    releaseFingerprintSha256: '67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a',
   },
   privacy: {
     type: 'PRIVACY_NOTICE',
-    version: 'v2',
-    displayVersionTh: 'เวอร์ชัน 2 (v2)',
-    displayVersionEn: 'Version 2 (v2)',
-    effectiveDate: '2026-08-10',
-    href: '/legal/releases/v2/privacy-th.html',
+    version: 'v3',
+    displayVersionTh: 'ฉบับที่ 1 (1.0)',
+    displayVersionEn: 'Official version 1 (1.0)',
+    effectiveDate: '2026-08-14',
+    href: '/legal/releases/v3/privacy-th.html',
     latestHref: '/privacy',
     titleTh: 'ประกาศความเป็นส่วนตัว MangmeePlus',
     titleEn: 'MangmeePlus Privacy Notice',
-    artifactSha256: '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
+    artifactSha256: '1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
+    releaseFingerprintSha256: '1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d',
   },
 } as const;
 
