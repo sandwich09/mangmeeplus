@@ -125,7 +125,8 @@ elif ! secret_exists "$database_secret"; then
   exit 1
 fi
 
-redis_id="${prefix}-redis"
+redis_id="${prefix}-redis-v2"
+legacy_redis_id="${prefix}-redis"
 redis_secret="${secret_prefix}/redis-url"
 redis_param_group="${prefix}-redis7"
 
@@ -147,7 +148,11 @@ fi
 
 if ! aws_cmd elasticache describe-replication-groups --replication-group-id "$redis_id" --region "$region" >/dev/null 2>&1; then
   if secret_exists "$redis_secret"; then
-    echo "ERROR: ${redis_secret} exists but UAT Redis does not; remove or reconcile the stale secret explicitly" >&2
+    if aws_cmd elasticache describe-cache-clusters --cache-cluster-id "$legacy_redis_id" --region "$region" >/dev/null 2>&1; then
+      echo "ERROR: legacy UAT Redis is still current; run infra/uat/redis-blue-green.sh prepare after parking UAT" >&2
+    else
+      echo "ERROR: ${redis_secret} exists but encrypted UAT Redis v2 does not; reconcile the staged migration explicitly" >&2
+    fi
     exit 1
   fi
   # A replication group rather than a standalone cache cluster: `create-cache-cluster` has no
@@ -164,7 +169,7 @@ if ! aws_cmd elasticache describe-replication-groups --replication-group-id "$re
   [ "${#redis_auth}" -ge 32 ] || { echo "ERROR: generated Redis auth token is too short" >&2; exit 1; }
   aws_cmd elasticache create-replication-group \
     --replication-group-id "$redis_id" \
-    --replication-group-description 'WatchDog BMS UAT Redis' \
+    --replication-group-description 'WatchDog BMS UAT Redis v2 encrypted' \
     --engine redis \
     --engine-version 7.1 \
     --cache-node-type cache.t4g.micro \
@@ -175,6 +180,7 @@ if ! aws_cmd elasticache describe-replication-groups --replication-group-id "$re
     --at-rest-encryption-enabled \
     --transit-encryption-enabled \
     --auth-token "$redis_auth" \
+    --tags Key=Environment,Value=uat Key=Component,Value=redis Key=ManagedBy,Value=mangmeeplus-infra \
     --region "$region" >/dev/null
   aws_cmd elasticache wait replication-group-available --replication-group-id "$redis_id" --region "$region"
   redis_host="$(aws_cmd elasticache describe-replication-groups --replication-group-id "$redis_id" --query 'ReplicationGroups[0].NodeGroups[0].PrimaryEndpoint.Address' --output text --region "$region")"

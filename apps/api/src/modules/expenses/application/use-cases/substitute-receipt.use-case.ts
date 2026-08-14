@@ -239,23 +239,44 @@ function isEligibleSubstituteReceiptApprover(
     && (approvalMode === 'OWNER_SELF' || Boolean(configuredApproverUserIds?.includes(userId)));
 }
 
+// One triggerKey per stage, and that is load-bearing: buildDedupKey is
+// (companyId, triggerKey, sourceModule, sourceType, sourceId, periodKey), and every other part is
+// identical for both stages of the same certificate. Sharing one key made prepare and certify
+// collide on a single alert state, so prepare's 60-minute cooldown swallowed the approver
+// notification whenever the payer signed within the hour — the normal case. The approver never got
+// a recipient or delivery row at all.
+const SIGNATURE_STAGES = {
+  PAYER: {
+    triggerKey: 'expense.substitute_receipt_signature_pending',
+    title: (documentNumber: string) => `ใบรับรองแทนใบเสร็จรอการลงลายมือชื่อ เลขที่ ${documentNumber}`,
+    body: 'เปิดระบบเพื่อตรวจสอบเอกสารและลงลายมือชื่อ',
+  },
+  APPROVER: {
+    triggerKey: 'expense.substitute_receipt_approval_pending',
+    title: (documentNumber: string) => `ใบรับรองแทนใบเสร็จรออนุมัติ เลขที่ ${documentNumber}`,
+    body: 'ผู้จ่ายเงินลงลายมือชื่อแล้ว เปิดระบบเพื่อตรวจสอบและอนุมัติ',
+  },
+} as const;
+
 async function notifySignaturePending(
   notify: CreateOrUpdateNotificationEventUseCase,
   ctx: RequestContext,
   evidence: Pick<SubstituteReceiptEvidenceRecord, 'id' | 'documentNumber'>,
   candidateUserIds: string[],
+  stage: keyof typeof SIGNATURE_STAGES,
 ): Promise<void> {
   const recipientUserIds = candidateUserIds.filter((userId) => userId !== ctx.userId);
   if (recipientUserIds.length === 0) return;
+  const copy = SIGNATURE_STAGES[stage];
   await notify.execute({
     companyId: ctx.companyId,
-    triggerKey: 'expense.substitute_receipt_signature_pending',
+    triggerKey: copy.triggerKey,
     sourceModule: 'expenses',
     sourceType: 'substitute_receipt_evidence',
     sourceId: evidence.id,
     severity: 'action',
-    title: `ใบรับรองแทนใบเสร็จรอการลงลายมือชื่อ เลขที่ ${evidence.documentNumber}`,
-    body: 'เปิดระบบเพื่อตรวจสอบเอกสารและลงลายมือชื่อ',
+    title: copy.title(evidence.documentNumber),
+    body: copy.body,
     deepLinkHref: `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`,
     recipientUserIds,
   });
@@ -424,7 +445,7 @@ export class PrepareSubstituteReceiptUseCase {
         result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, version: evidence.version, payerUserId },
       });
       try {
-        await notifySignaturePending(this.notify, ctx, evidence, [payer.userId]);
+        await notifySignaturePending(this.notify, ctx, evidence, [payer.userId], 'PAYER');
       } catch (error) {
         this.logger.warn({
           msg: 'Substitute receipt payer notification failed',
@@ -622,7 +643,7 @@ export class CertifySubstituteReceiptUseCase {
             eligibleApproverIds,
           ))
           .map((approver) => approver.userId);
-        await notifySignaturePending(this.notify, ctx, evidence, candidateUserIds);
+        await notifySignaturePending(this.notify, ctx, evidence, candidateUserIds, 'APPROVER');
       } catch (error) {
         this.logger.warn({
           msg: 'Substitute receipt approver notification failed',

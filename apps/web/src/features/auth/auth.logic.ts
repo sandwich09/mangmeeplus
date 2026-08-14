@@ -1,5 +1,6 @@
 'use client';
 
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import type { ApiError } from '@/common/models/api-error.model';
 import type { LoginSessionResponse } from './auth.api';
 
@@ -79,8 +80,13 @@ export function buildQrCells(seed: number, size = 25): boolean[] {
 }
 
 export function authErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message;
+  if (error instanceof Error && error.message) return apiErrorMessage(error);
   const apiError = error as ApiError | null | undefined;
-  if (typeof apiError?.message === 'string' && apiError.message.length > 0) return apiError.message;
+  if (typeof apiError?.message === 'string' && apiError.message.length > 0) {
+    return apiErrorMessage(Object.assign(new Error(apiError.message), {
+      status: apiError.statusCode,
+      code: apiError.code,
+    }));
+  }
   return fallback;
 }

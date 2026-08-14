@@ -125,6 +125,9 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',
   'expense.substitute_receipt_signature_pending',
+  // Separate key from the payer stage on purpose — a shared key put both stages on one dedup/alert
+  // state and the payer notification's cooldown suppressed this one. See SIGNATURE_STAGES.
+  'expense.substitute_receipt_approval_pending',
   // Reports emits this on every completed export (report.use-cases.ts). While it sat in the future
   // list below, the preference gate — which defaults to exactly this array — dropped the LINE push
   // every time, and the preferences screen offers only implemented keys so nobody could opt in

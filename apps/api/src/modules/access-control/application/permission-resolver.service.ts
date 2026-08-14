@@ -9,7 +9,6 @@ export class PermissionResolverService {
     private readonly resolver: IPermissionResolverPort,
   ) {}
 
-  // TODO: Add Redis cache with PERMISSION_CACHE_TTL_SECONDS when Redis client is wired
   async resolveAccess(userId: string, companyId?: string): Promise<ResolvedAccess> {
     return this.resolver.resolveForUser({ userId, companyId });
   }

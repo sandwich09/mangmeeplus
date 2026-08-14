@@ -1,7 +1,20 @@
 import { attachmentMimeTypeForFileName } from '@/common/files/upload-file.logic';
 
-export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+// The budget a re-encoded photo is compressed into. Every server-side limit on this path is
+// 10 MB — `UPLOAD_MAX_BYTES` (packages/config), the attachment gate, and `MAX_EXTRACTION_BYTES`
+// in expense-extraction.use-case.ts — so the old 2 MB was a client-only ceiling five times
+// tighter than anything that required it, and a phone photo is the only input that ever meets
+// it (a PDF returns early, uncompressed, which is why desktop scans were never affected).
+// A receipt's เลขประจำตัวผู้เสียภาษี is its smallest print, so it is the first thing lost when
+// this budget forces the quality floor — and the OCR grounding check then drops an unverifiable
+// tax id rather than guessing, which is why it came back empty instead of wrong.
+export const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
+// Long edge of a re-encoded photo, and the floor the JPEG quality ladder stops at. Both are set
+// for reading 13 small digits, not for looking at a picture: below ~0.7 the artefacts close the
+// counters of 6/8/9 and merge adjacent digits.
+const MAX_IMAGE_EDGE_PX = 3200;
+const MIN_IMAGE_QUALITY = 0.72;
 export const RECEIPT_UPLOAD_ACCEPT =
   '.pdf,.png,.jpg,.jpeg,.heic,.heif,application/pdf,image/png,image/jpeg,image/heic,image/heif';
 
@@ -88,7 +101,7 @@ export async function prepareReceiptFile(file: File): Promise<{ file: File; resi
 
   const sourceWidth = 'naturalWidth' in image ? image.naturalWidth : image.width;
   const sourceHeight = 'naturalHeight' in image ? image.naturalHeight : image.height;
-  const initialScale = Math.min(1, 2560 / Math.max(sourceWidth, sourceHeight));
+  const initialScale = Math.min(1, MAX_IMAGE_EDGE_PX / Math.max(sourceWidth, sourceHeight));
   let width = Math.max(1, Math.round(sourceWidth * initialScale));
   let height = Math.max(1, Math.round(sourceHeight * initialScale));
   const canvas = document.createElement('canvas');
@@ -100,7 +113,7 @@ export async function prepareReceiptFile(file: File): Promise<{ file: File; resi
     canvas.width = width;
     canvas.height = height;
     context.drawImage(image, 0, 0, width, height);
-    for (let quality = 0.92; quality >= 0.5; quality -= 0.07) {
+    for (let quality = 0.92; quality >= MIN_IMAGE_QUALITY; quality -= 0.05) {
       blob = await canvasBlob(canvas, quality);
       if (blob.size <= MAX_IMAGE_BYTES) break;
     }

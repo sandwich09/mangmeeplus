@@ -264,7 +264,6 @@ export const apiConfigSchema = baseConfigSchema.extend({
   // RBAC / tenant
   REQUIRE_COMPANY_CONTEXT: envBoolean.default(true),
   COMPANY_CONTEXT_HEADER: z.string().default('X-Company-Id'),
-  PERMISSION_CACHE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   // Logging
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   LOG_FORMAT: z.enum(['text', 'json']).default('json'),

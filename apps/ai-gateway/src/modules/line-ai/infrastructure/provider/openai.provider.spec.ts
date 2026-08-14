@@ -8,6 +8,20 @@ function makeProvider(timeoutMs = 10000) {
 }
 
 describe('OpenAiProvider', () => {
+  it('exposes max_tokens on incomplete text generation', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output_text: 'partial',
+    }), { status: 200 }) as any;
+    try {
+      const result = await makeProvider().generateText({ messages: [{ role: 'user', text: 'hello' }] });
+      assert.equal(result.ok, true);
+      if (result.ok) assert.equal(result.stopReason, 'max_tokens');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('returns ok=true with output_text', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ output_text: 'ตอบไทย OK' }), { status: 200 }) as any;

@@ -14,5 +14,6 @@ export {
   mangmeeMenuToneByGroup,
   mangmeeMenuToneByKey,
   mangmeeToneClass,
+  stripThaiTitlePrefix,
 } from './mangmee-design';
 export type { MangmeeNavGroup, MangmeeTone } from './mangmee-design';

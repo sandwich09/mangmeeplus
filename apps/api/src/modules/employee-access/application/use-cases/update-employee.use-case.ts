@@ -83,11 +83,13 @@ export class UpdateEmployeeUseCase {
     // email on User; this company's email lives on the profile instead, must differ from that login
     // email, and is not globally unique. A company-local user keeps the original email-on-User rules.
     let sharedUser = false;
-    if (cmd.email) {
+    if (cmd.email || cmd.displayName) {
       sharedUser =
         (await this.prisma.client.companyMembership.count({
           where: { userId: existing.userId, companyId: { not: cmd.companyId } },
         })) > 0;
+    }
+    if (cmd.email) {
       if (sharedUser) {
         const account = await this.prisma.client.user.findUnique({
           where: { id: existing.userId },
@@ -158,6 +160,7 @@ export class UpdateEmployeeUseCase {
         where: { id: cmd.employeeId },
         data: {
           displayName: cmd.displayName,
+          titlePrefix: cmd.titlePrefix,
           legalName: cmd.legalName,
           firstName: cmd.firstName,
           lastName: cmd.lastName,
@@ -181,6 +184,13 @@ export class UpdateEmployeeUseCase {
         } else {
           await tx.user.update({ where: { id: existing.userId }, data: { email: cmd.email } });
         }
+      }
+
+      // The sidebar/header name comes from User via /auth/me, so a profile-only rename (e.g. a changed
+      // title prefix) would stay stale everywhere outside this page. A shared login keeps its own
+      // account name, same rule as email above.
+      if (cmd.displayName && !sharedUser) {
+        await tx.user.update({ where: { id: existing.userId }, data: { displayName: cmd.displayName } });
       }
 
       if (roles) {

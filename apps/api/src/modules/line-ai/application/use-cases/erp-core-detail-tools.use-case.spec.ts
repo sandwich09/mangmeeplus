@@ -117,7 +117,7 @@ describe('LINE ERP core detail tools', () => {
       { execute: async () => ({}) }, { execute: async () => ({}) },
     ];
     const controller = new (InternalToolsController as any)(
-      {}, {}, {}, {}, ...oldDependencies, ...adapters,
+      {}, {}, {}, {}, {}, ...oldDependencies, ...adapters,
     );
     const map = (controller as any).toolMap as Map<string, unknown>;
     assert.equal(map.get('inventory.get_product_detail'), adapters[0]);

@@ -37,7 +37,7 @@ type LegalAcceptanceInput = {
   statementVersion: string;
   termsAccepted: true;
   privacyAcknowledged: true;
-  capacityConfirmed: true;
+  deletionAcknowledged: true;
   locale: 'th' | 'en';
   displayChallenge: string;
 };
@@ -62,7 +62,7 @@ function acceptanceInput(status: LegalAcceptanceStatus): LegalAcceptanceInput {
     statementVersion: status.statementVersion,
     termsAccepted: true,
     privacyAcknowledged: true,
-    capacityConfirmed: true,
+    deletionAcknowledged: true,
     locale: 'th',
     displayChallenge: status.displayChallenges.th,
   };

@@ -7,9 +7,21 @@ import {
   suggestedAllocation,
   confirmedMatchedTotal,
   sha256Hex,
+  statementRowErrorMessage,
   visibleBankingTabs,
   parseBankingTab,
 } from './banking.logic';
+
+describe('statement preview diagnostics', () => {
+  it('maps known row errors and never exposes an unknown diagnostic', () => {
+    assert.equal(statementRowErrorMessage('Missing posted date'), 'ไม่พบวันที่ทำรายการ กรุณาระบุวันที่');
+    assert.equal(statementRowErrorMessage('Missing amount'), 'ไม่พบจำนวนเงิน กรุณาระบุยอดถอน ยอดฝาก หรือจำนวนเงิน');
+    assert.equal(
+      statementRowErrorMessage('database column secret'),
+      'ข้อมูลแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบวันที่และจำนวนเงิน',
+    );
+  });
+});
 
 describe('banking tab access', () => {
   it('shows only the cash tab to a cash-only session', () => {

@@ -52,11 +52,65 @@ export type ToolMeta = {
   requiredInputFields?: readonly string[];
   /** Optional input fields the model may pass (whitelisted; anything else is dropped). */
   optionalInputFields?: readonly string[];
+  /** Company features that own this tool's data, when the module-level default is not precise
+   *  enough. Any one of them entitles the tool. Defaults to `TOOL_MODULE_FEATURE_KEYS[sourceModule]`. */
+  featureKeys?: readonly string[];
 };
 
 export function hasToolPermissions(tool: Pick<ToolMeta, 'requiredPermissions' | 'anyOfPermissions'>, permissions: readonly string[]): boolean {
   return tool.requiredPermissions.every((permission) => permissions.includes(permission))
     && (!tool.anyOfPermissions?.length || tool.anyOfPermissions.some((permission) => permissions.includes(permission)));
+}
+
+/**
+ * Source module → the company features that own the data its tools read.
+ *
+ * Mirrors the LINE staff menu mapping in `line-staff-menu.logic.ts`, so a button the menu hides and
+ * the same question typed as free text are refused for the same reason. A module absent from this
+ * map is deliberately ungated: `data-model-core` is the tenant context every answer needs, and
+ * `employee-access` / `hr` have no sellable feature of their own.
+ *
+ * Modules are mapped to the PARENT feature. Tools that belong to one submenu name it through
+ * `ToolMeta.featureKeys` instead — `evaluateEntitledFeatureKeys` expands a parent's submenus, so a
+ * submenu key is the precise gate rather than a stricter one.
+ */
+export const TOOL_MODULE_FEATURE_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'dashboard-notifications': ['dashboard_notifications'],
+  inventory: ['inventory'],
+  ledger: ['double_entry_ledger'],
+  expenses: ['expenses'],
+  'accounting-documents': ['sales_documents'],
+  crm: ['crm'],
+  'crm-inbox': ['crm'],
+  'crm-sales': ['crm'],
+  procurement: ['procurement'],
+  banking: ['bank_reconciliation'],
+  // `reimbursements` is deliberately ABSENT. Owner decision 2026-08-10 (launch matrix §6.3 r5):
+  // disabling reimbursement blocks NEW claims but in-flight work keeps flowing — reads, approve,
+  // reject, finance review and payout stay alive, which is why RETAINED_REIMBURSEMENT_PERMISSIONS
+  // survives entitlement stripping. Gating the read tools here would silently reverse that and
+  // strand an approver who is still expected to clear the queue.
+  reports: ['reports'],
+  tax: ['thai_tax'],
+  workflow: ['workflow_automation'],
+};
+
+/** The features that entitle this tool. Empty means the tool is not feature-gated. */
+export function toolFeatureKeys(tool: Pick<ToolMeta, 'featureKeys' | 'sourceModule'>): readonly string[] {
+  return tool.featureKeys ?? TOOL_MODULE_FEATURE_KEYS[tool.sourceModule] ?? [];
+}
+
+/**
+ * `entitled === null` is the legacy fail-open company (no entitlement rows at all) and passes, the
+ * same convention `loadEntitledFeatureKeys` and every other entitlement read in the repo use.
+ */
+export function hasToolFeature(
+  tool: Pick<ToolMeta, 'featureKeys' | 'sourceModule'>,
+  entitled: ReadonlySet<string> | null,
+): boolean {
+  if (entitled === null) return true;
+  const required = toolFeatureKeys(tool);
+  return required.length === 0 || required.some((key) => entitled.has(key));
 }
 
 export const ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS = [
@@ -141,6 +195,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_detail',
     requiredPermissions: ['inventory.product.read'],
     sourceModule: 'inventory',
+    featureKeys: ['product_catalog'],
     supportedAgents: ['general', 'inventory'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
@@ -154,6 +209,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_detail',
     requiredPermissions: ['inventory.product.read'],
     sourceModule: 'inventory',
+    featureKeys: ['product_catalog'],
     supportedAgents: ['inventory', 'general'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
@@ -335,6 +391,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_summary',
     requiredPermissions: ['crm.booking.read'],
     sourceModule: 'crm',
+    featureKeys: ['crm.bookings'],
     supportedAgents: ['crm', 'sales'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
@@ -348,6 +405,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_detail',
     requiredPermissions: ['crm.booking.read'],
     sourceModule: 'crm',
+    featureKeys: ['crm.bookings'],
     supportedAgents: ['crm', 'sales'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
@@ -361,6 +419,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_summary',
     requiredPermissions: ['crm.inbox.read'],
     sourceModule: 'crm-inbox',
+    featureKeys: ['crm.inbox'],
     supportedAgents: ['crm', 'sales'],
     sensitiveAudit: false,
     requiresErpPermissionCheck: true,
@@ -373,6 +432,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_detail',
     requiredPermissions: ['crm.inbox.read'],
     sourceModule: 'crm-inbox',
+    featureKeys: ['crm.inbox'],
     supportedAgents: ['crm', 'sales'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
@@ -386,6 +446,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'read_detail',
     requiredPermissions: ['crm.inbox.read'],
     sourceModule: 'crm-inbox',
+    featureKeys: ['crm.inbox'],
     supportedAgents: ['crm', 'sales'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,
@@ -411,6 +472,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     category: 'evidence_capture',
     requiredPermissions: ['expense.receipt.upload'],
     sourceModule: 'expenses',
+    featureKeys: ['expenses.upload'],
     supportedAgents: ['accounting'],
     sensitiveAudit: true,
     requiresErpPermissionCheck: true,

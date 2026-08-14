@@ -27,6 +27,7 @@ import {
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useConfirm } from '@/common/components/modal';
+import { periodCloseCheckCopy } from './ledger.logic';
 
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-allowed disabled:opacity-50';
@@ -243,12 +244,15 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
           <MangmeeCard className="p-4">
             <h2 className="text-sm font-semibold text-gray-900">ตรวจสอบก่อนปิดงวด</h2>
             <div className="mt-3 space-y-2">
-              {(closeRun?.checks ?? []).map((check) => (
-                <div key={check.checkKey} className="rounded-lg border border-gray-100 px-3 py-2 text-sm">
-                  <div className="flex justify-between gap-3"><span className="font-medium text-gray-900">{check.checkKey}</span><span className={check.status === 'PASSED' ? 'text-[#027A48]' : 'text-red-700'}>{check.status}</span></div>
-                  <p className="mt-1 text-gray-500">{check.message}</p>
-                </div>
-              ))}
+              {(closeRun?.checks ?? []).map((check) => {
+                const { label, statusLabel, message: checkMessage } = periodCloseCheckCopy(check);
+                return (
+                  <div key={check.checkKey} className="rounded-lg border border-gray-100 px-3 py-2 text-sm">
+                    <div className="flex justify-between gap-3"><span className="font-medium text-gray-900">{label}</span><span className={check.status === 'PASSED' ? 'text-[#027A48]' : 'text-red-700'}>{statusLabel}</span></div>
+                    <p className="mt-1 text-gray-500">{checkMessage}</p>
+                  </div>
+                );
+              })}
               {!closeRun && <p className="text-sm text-gray-400">กด "ตรวจสอบก่อนปิดงวด" ก่อนปิดงวดบัญชี</p>}
             </div>
           </MangmeeCard>

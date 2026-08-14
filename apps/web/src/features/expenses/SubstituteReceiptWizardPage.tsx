@@ -909,9 +909,14 @@ export function SubstituteReceiptWizardPage({
     setActiveStep('evidence');
   };
 
-  const uploadEvidence = async (purpose: 'expense.receipt.supporting' | 'expense.payment.evidence') => {
+  // `picked` is passed by the picker's own onChange, which fires before the staged-file state
+  // has been applied — reading it from state there would upload the *previous* file, or none.
+  const uploadEvidence = async (
+    purpose: 'expense.receipt.supporting' | 'expense.payment.evidence',
+    picked?: File,
+  ) => {
     if (!detail) throw new Error(t('expenses.substitute_wizard.expense_required', locale));
-    const file = purpose === 'expense.payment.evidence' ? paymentFile : supportingFile;
+    const file = picked ?? (purpose === 'expense.payment.evidence' ? paymentFile : supportingFile);
     if (!file) throw new Error(t('expenses.substitute_wizard.file_required', locale));
     assertAllowedUploadFile(file);
     const pendingIssue = substituteReceiptEvidenceRenderabilityIssue([
@@ -1391,8 +1396,8 @@ export function SubstituteReceiptWizardPage({
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <label className="relative block min-w-0 flex-1">
                     <span className="sr-only">{t('expenses.substitute_wizard.candidate_search', locale)}</span>
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICON.search}</span>
-                    <input className={cx(inputClass, 'pl-11')} value={candidateQuery} placeholder={t('expenses.substitute_wizard.candidate_search', locale)} onChange={(event) => { setCandidateQuery(stripDisallowed(event.target.value)); setCandidatePage(1); }} />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">{ICON.search}</span>
+                    <input className={cx(inputClass, 'mangmee-input-icon-end')} value={candidateQuery} placeholder={t('expenses.substitute_wizard.candidate_search', locale)} onChange={(event) => { setCandidateQuery(stripDisallowed(event.target.value)); setCandidatePage(1); }} />
                   </label>
                   <ThemedSelect aria-label={t('expenses.substitute_wizard.candidate_sort_label', locale)} className={cx(inputClass, 'sm:w-52')} value={candidateSort} onChange={(event) => { setCandidateSort(event.target.value as CandidateSortKey); setCandidatePage(1); }}>
                     <option value="date_desc">{t('expenses.substitute_wizard.candidate_sort_date_desc', locale)}</option>
@@ -1868,9 +1873,25 @@ export function SubstituteReceiptWizardPage({
             ))}
           </div>
         )}
+        {/* Picking a file uploads it. The picker renders the chosen name with a clear button
+            and an upload glyph, so a staged-but-unsent file read as done — people filled both
+            panels, saw the readiness card still short one item, and had no way to tell why.
+            The staged file now only survives a failed upload, which is what the button retries. */}
         <div className="rounded-xl border border-dashed border-brand-200 bg-brand-25 p-3">
-          <ThemedFile file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} placeholder={t('expenses.substitute_wizard.file_types', locale)} aria-label={t(titleKey, locale)} onChange={setFile} />
-          <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy || !file} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
+          <ThemedFile
+            file={file}
+            accept={ATTACHMENT_UPLOAD_ACCEPT}
+            placeholder={t('expenses.substitute_wizard.file_types', locale)}
+            aria-label={t(titleKey, locale)}
+            disabled={busy}
+            onChange={(next) => {
+              setFile(next);
+              if (next) void run(() => uploadEvidence(purpose, next));
+            }}
+          />
+          {file && (
+            <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
+          )}
         </div>
         {purpose === 'expense.payment.evidence' && paymentMethod === 'CASH' && (
           <div className="rounded-xl bg-gray-50 p-3">

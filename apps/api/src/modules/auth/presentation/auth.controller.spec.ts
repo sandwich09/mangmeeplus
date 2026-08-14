@@ -114,7 +114,7 @@ describe('legal acceptance DTO boundary', () => {
     statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
     termsAccepted: true,
     privacyAcknowledged: true,
-    capacityConfirmed: true,
+    deletionAcknowledged: true,
     locale: 'th',
     displayChallenge: 'a'.repeat(64),
   };
@@ -124,7 +124,7 @@ describe('legal acceptance DTO boundary', () => {
     for (const body of [
       { ...valid, termsAccepted: false },
       { ...valid, privacyAcknowledged: 'true' },
-      { ...valid, capacityConfirmed: undefined },
+      { ...valid, deletionAcknowledged: undefined },
       { ...valid, displayChallenge: 'not-a-sha256' },
     ]) {
       await assert.rejects(

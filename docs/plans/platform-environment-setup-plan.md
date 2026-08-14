@@ -192,7 +192,8 @@ Prepare safe state and background processing.
 ### Tasks
 
 - [ ] Add DB pool and timeout config.
-- [ ] Add Redis prefixes for cache, rate limit, queue, idempotency.
+- [ ] Keep Redis key prefixes and TTL/count limits owned by each implemented rate-limit, queue or
+      ledger use case; do not add unused generic cache/idempotency environment keys.
 - [ ] Add idempotency key helper for future mutations.
 - [ ] Add worker graceful shutdown config.
 - [ ] Add DLQ config.

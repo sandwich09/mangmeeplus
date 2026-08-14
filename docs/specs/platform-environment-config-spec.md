@@ -105,7 +105,6 @@ This spec covers:
 |---|---:|---|---|
 | `REQUIRE_COMPANY_CONTEXT` | yes | `true` | Protected routes need company context. |
 | `COMPANY_CONTEXT_HEADER` | yes | `X-Company-Id` | Default company selector. |
-| `PERMISSION_CACHE_TTL_SECONDS` | yes | `60` | Short cache for RBAC resolution. |
 | `RBAC_SEED_ENABLED` | local/staging | `true` | Seed system roles and permissions. |
 | `OWNER_MFA_REQUIRED_FOR_HIGH_RISK` | production | `true` | Export/tax/role changes. |
 
@@ -137,11 +136,12 @@ Raw secret values are acceptable only when injected by runtime secret manager an
 
 | Variable | Required | Example | Notes |
 |---|---:|---|---|
-| `REDIS_URL` | yes | `redis://redis:6379` | Queue, cache, rate limit. |
-| `CACHE_TTL_SECONDS` | yes | `300` | Shared default cache TTL. |
-| `IDEMPOTENCY_TTL_SECONDS` | yes | `86400` | Mutation retry safety. |
-| `RATE_LIMIT_REDIS_PREFIX` | yes | `watchdog:rate` | Avoid key collision. |
-| `QUEUE_REDIS_PREFIX` | yes | `watchdog:queue` | Avoid key collision. |
+| `REDIS_URL` | yes | `redis://redis:6379` | BullMQ queues, distributed rate limits and the optional LINE ledger. |
+
+Cache/queue/idempotency TTLs and Redis key prefixes are not generic environment contracts. Each
+implemented use case owns its bounded TTL/count/prefix in code so an unused env value cannot imply a
+control that the runtime never reads. Permission resolution currently reads the database directly;
+add a cache contract only after measured latency requires one and revocation invalidation is designed.
 
 ## 12. Object Storage and Upload Variables
 
@@ -184,11 +184,13 @@ Must redact:
 |---|---:|---|---|
 | `AUDIT_ENABLED` | yes | `true` | Must be true before business modules. |
 | `AUDIT_SINK` | yes | `database` | Database first. |
-| `AUDIT_RETENTION_DAYS` | yes | `2555` | Seven years default for business records. |
 | `AUDIT_HASH_CHAIN_ENABLED` | later | `false` | Future tamper-evidence. |
 | `DATA_ACCESS_LOG_ENABLED` | sensitive modules | `true` | Reads of finance/tax/customer data. |
 
-Audit logs are separate from application logs.
+Audit logs are separate from application logs. There is no generic `AUDIT_RETENTION_DAYS` runtime
+contract: business/accounting evidence, security/access events and AI usage records have different
+purposes and hold rules. Add an enforced category-specific policy only after the retention register
+has owner/legal approval, a legal-hold design and deletion/restore tests.
 
 ## 15. Observability Variables
 

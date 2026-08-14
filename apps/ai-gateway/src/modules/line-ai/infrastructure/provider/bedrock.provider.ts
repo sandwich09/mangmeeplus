@@ -65,6 +65,9 @@ export class BedrockProvider implements IModelProvider {
 
     return this.converse(command, input.usageTag, (response) => ({
       text: response.output?.message?.content?.[0]?.text ?? '',
+      stopReason: response.stopReason === 'end_turn' ? 'end_turn' as const
+        : response.stopReason === 'max_tokens' ? 'max_tokens' as const
+        : 'other' as const,
     }));
   }
 

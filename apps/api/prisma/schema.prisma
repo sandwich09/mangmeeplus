@@ -5978,7 +5978,10 @@ model EmployeeAccessProfile {
   companyId            String
   userId               String
   membershipId         String               @unique
+  // The name WITHOUT คำนำหน้า. Rows written before 2026-08-15 still have the title concatenated in;
+  // they are not backfilled (no real users yet, owner decision) so `titlePrefix` is null for them.
   displayName          String
+  titlePrefix          String?
   legalName            String?
   // มั่งมี Flow A wizard fields (additive; email lives on User, not here, since login already keys off User.email)
   firstName            String?

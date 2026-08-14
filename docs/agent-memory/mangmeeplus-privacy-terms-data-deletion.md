@@ -77,6 +77,10 @@ Avoid flattening these into a single universal retention period.
 ## Verification 2026-08-14 official first edition
 
 - Current internal v3 artifacts regenerate deterministically: Terms `67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a`; Privacy `1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d`.
+  These are the values v3 was first published with and they are now frozen by an explicit pin in
+  `legal-content.spec.ts`. They were briefly re-cut on 2026-08-14 after the typeface change and
+  then restored on the owner's instruction that a released artifact hash must never move; see
+  `pdpa-legal-pages-design-overhaul.md`.
 - Current acceptance contract source hash and production workflow pin: `8cc9cdaf9fa885cda83d1b867ccedf31fb3690a0a7d7bdf13951773ab1825387`.
 - Contracts 3/3, Web legal/acceptance 8/8, and API legal acceptance 14/14 tests pass. Legal readiness and evidence provisioner specs pass with release `v3`; the checked-in evidence manifest remains deliberately `BLOCKED` until real external evidence is attached.
 - Public rendered pages match the final DOCX titles/standfirsts and all normalized legal blocks: Privacy 95/95, Terms 75/75, Data Deletion 62/62. No final DOCX contains `v2`, `2.0`, `-002`, the prior effective date, or draft/merge labels.

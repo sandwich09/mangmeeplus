@@ -9,6 +9,7 @@ import { listPaymentProofs, type PaymentProofItem } from './crm-inbox.api';
 import { paymentProofContentUrl } from './crm-inbox.logic';
 import { ForbiddenState } from '@/common/components/state';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 
 function fmtWhen(v: string) {
   return formatThaiDateTime(v);
@@ -33,7 +34,7 @@ export function PaymentProofReviewPage({ companyId }: { companyId: string }) {
       // `authedApiFetch` throws a plain Error carrying `status`, never an `ApiError` with
       // `statusCode` — reading the wrong shape meant this forbidden state never rendered.
       if ((e as { status?: number } | null)?.status === 403) setForbidden(true);
-      else setError(e instanceof Error ? e.message : 'โหลดข้อมูลไม่สำเร็จ');
+      else setError(apiErrorMessage(e));
     }
   }, [companyId]);
 

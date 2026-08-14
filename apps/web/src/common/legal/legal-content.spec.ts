@@ -49,6 +49,16 @@ test('preserves the exact historical artifacts after publishing the official fir
     'v1/privacy-th.html': '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
     'v2/terms-th.html': '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
     'v2/privacy-th.html': '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
+    // v3 is the released edition and its bytes are frozen: these are the values it was first
+    // published with, and the owner's instruction is that they never move. A restyle of the
+    // legal pages does NOT move them on its own — the artifacts are static checked-in files
+    // that no build step regenerates — but re-running the generator over v3 would, and this
+    // pin is what stops that landing. It duplicates CURRENT_LEGAL_DOCUMENTS on purpose: that
+    // constant is expected to move when a genuinely new version is cut, this one is not, so a
+    // re-cut of v3 fails here even if the contract was updated to match the new bytes.
+    // A restyled full document therefore has to wait for v4; it cannot be slipped into v3.
+    'v3/terms-th.html': '67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a',
+    'v3/privacy-th.html': '1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d',
   } as const;
 
   for (const [file, expectedHash] of Object.entries(historicalHashes)) {
@@ -120,5 +130,7 @@ test('keeps login and acceptance links aligned with the current public and immut
   assert.match(acceptancePage, /status\.privacy\.href/);
   assert.match(acceptancePage, /ใช้กับบัญชีของคุณทุกกิจการ/);
   assert.match(acceptancePage, /เฉพาะเมื่อเอกสารออกฉบับใหม่/);
+  assert.match(acceptancePage, /await refreshSessionSilently\(\)[\s\S]*window\.location\.assign\(returnTo\)/);
+  assert.doesNotMatch(acceptancePage, /void refreshSessionSilently\(\)/);
   assert.doesNotMatch(acceptancePage, /Business &amp; Accounting Assistant/);
 });

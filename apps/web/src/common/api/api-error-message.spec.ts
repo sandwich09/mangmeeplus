@@ -41,10 +41,70 @@ test('translates partial-payment validation and settlement-route failures', () =
   assert.match(translateApiError('claim_expense_settles_via_reimbursement')!, /ผ่านขั้นตอนจ่ายคืนของใบเบิก/);
 });
 
-test('falls back to the status text only for the client placeholder message', () => {
+test('fails closed to the status copy for every unknown API message', () => {
   assert.equal(apiErrorMessage(apiError('API error 403', { status: 403 })), 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน');
-  // A real server sentence says more than the generic status text, so it stays.
-  assert.equal(apiErrorMessage(apiError('A sentence nobody mapped yet.', { status: 400 })), 'A sentence nobody mapped yet.');
+  assert.equal(
+    apiErrorMessage(apiError('A sentence nobody mapped yet.', { status: 400 })),
+    'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+  );
+});
+
+test('hides the exact unknown-property validation diagnostic and retains no technical token', () => {
+  const message = apiErrorMessage(apiError('property visibility should not exist', {
+    status: 400,
+    details: {
+      statusCode: 400,
+      message: ['property visibility should not exist'],
+      error: 'Bad Request',
+    },
+  }));
+  assert.equal(message, 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง');
+  assert.doesNotMatch(message, /visibility|property|should not exist|Bad Request|API error/i);
+});
+
+test('uses the validation fallback for a second unknown validation array from details', () => {
+  const message = apiErrorMessage(apiError('internalFlag must be a boolean', {
+    details: { statusCode: 422, message: ['internalFlag must be a boolean'] },
+  }));
+  assert.equal(message, 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง');
+  assert.doesNotMatch(message, /internalFlag|boolean/i);
+});
+
+test('supports statusCode and hides unknown 5xx diagnostics', () => {
+  assert.equal(
+    apiErrorMessage(apiError('permission implementation detail', { statusCode: 403 })),
+    'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
+  );
+  assert.equal(
+    apiErrorMessage(apiError('Internal server error', { statusCode: 500 })),
+    'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
+  );
+});
+
+test('maps boundary-tagged network errors without guessing from TypeError', () => {
+  const expected = 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
+  assert.equal(apiErrorMessage(apiError('Network request failed.', { kind: 'network_error' })), expected);
+  const arbitraryTypeError = apiErrorMessage(new TypeError('Cannot read properties of undefined'));
+  assert.equal(arbitraryTypeError, 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+  assert.notEqual(arbitraryTypeError, expected);
+  assert.doesNotMatch(arbitraryTypeError, /undefined|properties/i);
+});
+
+test('maps malformed successful responses to safe server copy', () => {
+  assert.equal(
+    apiErrorMessage(apiError('Invalid API response.', { kind: 'server_error', code: 'invalid_response' })),
+    'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
+  );
+});
+
+test('keeps reviewed local non-API validation copy unchanged', () => {
+  assert.equal(apiErrorMessage(new Error('กรุณาเลือกไฟล์ PNG หรือ JPEG')), 'กรุณาเลือกไฟล์ PNG หรือ JPEG');
+});
+
+test('unknown stable codes never reach the user as snake_case', () => {
+  const message = apiErrorMessage(apiError('some_new_rule', { code: 'some_new_rule' }));
+  assert.equal(message, 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+  assert.doesNotMatch(message, /some_new_rule/);
 });
 
 test('translates the document-number 409 family', () => {

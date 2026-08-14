@@ -28,6 +28,8 @@ function validVatMode(value: string | undefined): 'NO_VAT' | 'VAT_INCLUDED' | 'V
 const VAT_TOLERANCE = 0.05;
 const MAX_IMPLIED_VAT_RATE = 0.2;
 const MAX_OCR_ADDITIONAL_CHARGES = 10;
+// Mirrors the gateway prompt bound; past this the item block is a catalogue, not an expense.
+const MAX_OCR_ITEM_LINES = 40;
 
 function positiveMoney(value: string | undefined): number | undefined {
   const n = Number(String(value ?? '').replace(/,/g, ''));
@@ -187,6 +189,7 @@ function deriveUnitPrice(fields: ReceiptOcrFieldResult, lineTotal: string, lineV
 
 export type ReceiptChargeReconciliationStatus =
   | 'SUMMARY_LINE'
+  | 'RECONCILED_ITEM_LINES'
   | 'RECONCILED_CHARGE_LINES'
   | 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW';
 
@@ -257,6 +260,39 @@ function closeEnough(actual: string, expected: string | undefined): boolean {
   return Math.abs(Number(actual) - Number(toMoney4(expected))) <= VAT_TOLERANCE;
 }
 
+/** A breakdown may replace the summary line only when it reproduces the document's own printed
+ *  totals, so a misread row can never change what the company recorded. Returns the reconciled
+ *  totals, or null when the candidate contradicts the document. */
+function reconciledTotals(
+  candidate: PreparedOcrLine[],
+  fields: ReceiptOcrFieldResult,
+): ReturnType<typeof calcDocumentTotals> | null {
+  const totals = calcDocumentTotals({ lines: candidate.map((line) => line.totals) });
+  // Mixed per-line VAT rates make the document's single printed taxable base incomparable.
+  const taxableIsComparable = new Set(candidate.map((line) => line.vatRate ?? '')).size <= 1;
+  const ok = closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
+    && (!taxableIsComparable || closeEnough(totals.taxableAmount, fields.taxableAmount))
+    && closeEnough(totals.vatAmount, fields.vatAmount)
+    && closeEnough(totals.whtAmount, fields.whtAmount);
+  return ok ? totals : null;
+}
+
+/** Spec §5: the extracted item block, re-validated here because the gateway is a separate service
+ *  and its output is a suggestion, never a trusted contract. */
+function usableItemLines(fields: ReceiptOcrFieldResult): NonNullable<ReceiptOcrFieldResult['lines']> {
+  const lines = fields.lines;
+  if (!Array.isArray(lines) || lines.length < 2 || lines.length > MAX_OCR_ITEM_LINES) return [];
+  const usable = lines.filter((line) => Boolean(
+    line
+    && typeof line.description === 'string' && line.description.trim() && line.description.length <= 200
+    && typeof line.amount === 'string' && positiveMoney(line.amount)
+    && (line.unitPrice === undefined || positiveMoney(line.unitPrice))
+    && (line.quantity === undefined || positiveMoney(line.quantity)),
+  ));
+  // Half a bill is not a breakdown of the bill; drop the whole set rather than record a partial one.
+  return usable.length === lines.length ? usable : [];
+}
+
 function prepareOcrLines(
   fields: ReceiptOcrFieldResult,
   lineTotal: string,
@@ -264,6 +300,7 @@ function prepareOcrLines(
   status: ReceiptChargeReconciliationStatus;
   lines: PreparedOcrLine[];
   totals: ReturnType<typeof calcDocumentTotals>;
+  chargesApplied: number;
 } {
   const vatMode = documentVatMode(fields);
   const whtRate = fields.whtRate ?? null;
@@ -283,6 +320,49 @@ function prepareOcrLines(
       })
     : [];
   const printedSubtotal = positiveMoney(fields.subtotalAmount);
+  const chargeLines = () => charges.map((charge) => prepareLine({
+    description: charge.description,
+    quantity: '1.0000',
+    unitPrice: toMoney4(charge.amount),
+    vatRate: charge.vatRate ?? defaultLineVatRate(fields),
+    whtRate,
+    sourceLineText: charge.evidenceSignal,
+    aiLineConfidence: charge.confidence,
+  }, vatMode));
+
+  // Spec §5/§569: one draft line per printed item row when the document's own arithmetic proves the
+  // split, so a two-item bill stops collapsing into a single "AI สรุปยอดรวม" line. Tried before the
+  // charge branch because an item breakdown supersedes it — the charge lines ride along either way.
+  const items = usableItemLines(fields);
+  if (items.length >= 2) {
+    const candidate = [
+      ...items.map((item, index) => {
+        const qty = positiveMoney(item.quantity) ?? 1;
+        const amount = positiveMoney(item.amount)!;
+        const printedUnit = positiveMoney(item.unitPrice);
+        // Thai bills print the row's extended amount far more often than its unit price, so the
+        // printed unit price is kept only when it explains that amount; otherwise it is derived.
+        const unitPrice = printedUnit && Math.abs(printedUnit * qty - amount) <= VAT_TOLERANCE
+          ? printedUnit
+          : amount / qty;
+        return prepareLine({
+          description: item.description.trim(),
+          quantity: qty.toFixed(4),
+          unitPrice: unitPrice.toFixed(4),
+          vatRate: defaultLineVatRate(fields),
+          whtRate,
+          sourceLineText: item.evidenceSignal,
+          aiLineConfidence: item.confidence,
+          // A document-level discount has no printed row to sit on, so it lands on the first item
+          // and `calcLineTotals` clamps it there; when that clamp loses part of it the totals stop
+          // matching and the whole split falls back to the summary line below.
+        }, vatMode, index === 0 ? toMoney4(fields.discountAmount) : '0');
+      }),
+      ...chargeLines(),
+    ];
+    const totals = reconciledTotals(candidate, fields);
+    if (totals) return { status: 'RECONCILED_ITEM_LINES', lines: candidate, totals, chargesApplied: charges.length };
+  }
 
   if (charges.length > 0 && printedSubtotal) {
     const qty = positiveMoney(fields.quantity) ?? 1;
@@ -298,27 +378,10 @@ function prepareOcrLines(
         vatRate: defaultLineVatRate(fields),
         whtRate,
       }, vatMode, toMoney4(fields.discountAmount)),
-      ...charges.map((charge) => prepareLine({
-        description: charge.description,
-        quantity: '1.0000',
-        unitPrice: toMoney4(charge.amount),
-        vatRate: charge.vatRate ?? defaultLineVatRate(fields),
-        whtRate,
-        sourceLineText: charge.evidenceSignal,
-        aiLineConfidence: charge.confidence,
-      }, vatMode)),
+      ...chargeLines(),
     ];
-    const totals = calcDocumentTotals({ lines: candidate.map((line) => line.totals) });
-    const candidateVatRates = new Set(candidate.map((line) => line.vatRate ?? ''));
-    const taxableIsComparable = candidateVatRates.size <= 1;
-    if (
-      closeEnough(totals.grandTotalAmount, fields.grandTotalAmount)
-      && (!taxableIsComparable || closeEnough(totals.taxableAmount, fields.taxableAmount))
-      && closeEnough(totals.vatAmount, fields.vatAmount)
-      && closeEnough(totals.whtAmount, fields.whtAmount)
-    ) {
-      return { status: 'RECONCILED_CHARGE_LINES', lines: candidate, totals };
-    }
+    const totals = reconciledTotals(candidate, fields);
+    if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines: candidate, totals, chargesApplied: charges.length };
   }
 
   const summaryVatRate = summaryLineVatRate(fields);
@@ -333,6 +396,7 @@ function prepareOcrLines(
     status: hadChargeSuggestions ? 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW' : 'SUMMARY_LINE',
     lines: [summary],
     totals: calcDocumentTotals({ lines: [summary.totals] }),
+    chargesApplied: 0,
   };
 }
 
@@ -492,7 +556,7 @@ export class ReceiptOcrApplyService {
         categoryName: effectiveCategory?.name ?? null,
         categoryAutoFilled,
         chargeReconciliationStatus: prepared!.status,
-        chargesApplied: prepared!.status === 'RECONCILED_CHARGE_LINES' ? prepared!.lines.length - 1 : 0,
+        chargesApplied: prepared!.chargesApplied,
       };
     });
     if (appliedCategory === 'stale') {

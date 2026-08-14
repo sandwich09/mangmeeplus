@@ -208,20 +208,31 @@ if [ ! -x "$DOCKER_BIN" ]; then
   DOCKER_BIN="$(command -v docker)"
 fi
 export DOCKER_BUILDKIT=1
+CREATED_DOCKER_CONFIG=''
 if [ -z "${DOCKER_CONFIG:-}" ]; then
   DOCKER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-bms-docker-config.XXXXXX")"
+  CREATED_DOCKER_CONFIG="$DOCKER_CONFIG"
   if [ -d /Applications/Docker.app/Contents/Resources/cli-plugins ]; then
     ln -s /Applications/Docker.app/Contents/Resources/cli-plugins "$DOCKER_CONFIG/cli-plugins"
   elif [ -d "${HOME:-}/.docker/cli-plugins" ]; then
     ln -s "${HOME}/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
   fi
   export DOCKER_CONFIG
-  trap 'rm -rf "$DOCKER_CONFIG"' EXIT
 fi
 
 aws_cmd() {
   env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy "$AWS_BIN" "$@"
 }
+
+# The same no-overwrite SSM mutex is used by the Redis migration helper. This closes the race where
+# deploy could pass a read-only lock check and mutate ECS while migration acquired the lock.
+# shellcheck source=infra/uat/lib-runtime-mutex.sh
+. infra/uat/lib-runtime-mutex.sh
+cleanup_deploy() {
+  uat_runtime_mutex_release
+  [ -z "$CREATED_DOCKER_CONFIG" ] || rm -rf "$CREATED_DOCKER_CONFIG"
+}
+trap cleanup_deploy EXIT
 
 ACCOUNT_ID="$(aws_cmd sts get-caller-identity --query Account --output text --region "$REGION")"
 
@@ -484,6 +495,12 @@ secret_arn() {
 # policy files that concurrent runs would tear. Deliberately independent of
 # ECS_DEPLOY_MANAGE_IAM — the read-only branch races on nothing but is redundant.
 preflight() {
+  if [ "$DEPLOY_ENV" = uat ] && [ "$UAT_RUNTIME_MUTEX_HELD" != true ]; then
+    uat_runtime_mutex_acquire "deploy-${TARGET}" || {
+      echo "ERROR: UAT Redis migration/deploy mutex is active or cannot be acquired; no service mutation is allowed" >&2
+      exit 1
+    }
+  fi
   if [ -n "${WATCHDOG_COMMON_ENSURED:-}" ]; then
     return 0
   fi

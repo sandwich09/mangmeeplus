@@ -163,7 +163,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
       showToast('VAT registration saved.', 'success');
       await onSaved();
     } catch (err) {
-      showToast((err as Error).message || 'Failed to save VAT registration.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setBusy(false);
     }
@@ -315,7 +315,7 @@ function MembersSection({
       setMembersError(null);
     } catch (err) {
       const e = err as Error & { status?: number };
-      setMembersError(e.status === 403 ? 'You do not have permission to view members.' : e.message || 'Failed to load members.');
+      setMembersError(e.status === 403 ? 'You do not have permission to view members.' : apiErrorMessage(err));
     }
   };
 
@@ -337,7 +337,7 @@ function MembersSection({
       const result = await revealPartnerMemberTempPassword(companyId, member.userId);
       setRevealed((prev) => ({ ...prev, [member.userId]: result.temporaryPassword }));
     } catch (err) {
-      showToast((err as Error).message || 'No revealable password on record.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setBusyUserId(null);
     }
@@ -358,7 +358,7 @@ function MembersSection({
       showToast('New temporary password issued.', 'success');
       await loadMembers();
     } catch (err) {
-      showToast((err as Error).message || 'Failed to reset password.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setBusyUserId(null);
     }
@@ -378,7 +378,7 @@ function MembersSection({
       showToast('LINE unlinked.', 'success');
       await loadMembers();
     } catch (err) {
-      showToast((err as Error).message || 'Failed to unlink LINE.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setBusyUserId(null);
     }
@@ -1124,7 +1124,7 @@ function AiUsageBudgetSection({
       setUsageError(null);
     } catch (err) {
       const e = err as Error & { status?: number };
-      setUsageError(e.status === 403 ? 'You do not have permission to view AI usage.' : e.message || 'Failed to load AI usage.');
+      setUsageError(e.status === 403 ? 'You do not have permission to view AI usage.' : apiErrorMessage(err));
     }
   };
 
@@ -1156,8 +1156,8 @@ function AiUsageBudgetSection({
         'success',
       );
     } catch (err) {
-      // The API's 422 (below 1 satang, above the ceiling) must reach the operator verbatim.
-      showToast((err as Error).message || 'Failed to update the monthly AI budget.', 'error');
+      // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setBudgetLoading(false);
     }
@@ -1312,7 +1312,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
       const e = err as Error & { status?: number };
       if (e.status === 403) setForbidden(true);
       else if (e.status === 404) setNotFound(true);
-      else setError(e.message || 'Failed to load partner.');
+      else setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -1349,7 +1349,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
       setEditMode(false);
       showToast('Profile updated.', 'success');
     } catch (err) {
-      showToast((err as Error).message || 'Failed to update profile.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setEditLoading(false);
     }
@@ -1373,7 +1373,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
       setLifecycleAction(null);
       showToast(`Status changed to ${lifecycleAction}.`, 'success');
     } catch (err) {
-      showToast((err as Error).message || 'Lifecycle transition failed.', 'error');
+      showToast(apiErrorMessage(err), 'error');
       setLifecycleAction(null);
     } finally {
       setLifecycleLoading(false);
@@ -1390,7 +1390,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
       }
       showToast(`AI model set to ${result.modelId}.`, 'success');
     } catch (err) {
-      showToast((err as Error).message || 'Failed to update AI model.', 'error');
+      showToast(apiErrorMessage(err), 'error');
     } finally {
       setAiModelLoading(false);
     }

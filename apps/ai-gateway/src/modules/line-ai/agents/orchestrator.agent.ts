@@ -10,7 +10,7 @@ import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationCo
 import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
-import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible } from './intent-router.agent';
+import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
 import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
@@ -202,6 +202,32 @@ function appendCoverageLines(replyText: string, coverage: LineAiCoverageItem[] |
   return lines.join('\n');
 }
 
+const PRIVATE_RUMOR_REQUEST = /(?:ข่าวลือ|ซุบซิบ|นินทา|เม้าท์|ชีวิตส่วนตัว|ความสัมพันธ์|แอบคบ|เป็นชู้|rumou?r|gossip|private\s+life|relationship|dating)/iu;
+
+function sameRequest(left: string, right: string): boolean {
+  const normalize = (value: string) => value.normalize('NFKC').toLocaleLowerCase('en-US')
+    .replace(/(?:หน่อย|ช่วย|กรุณา|please)/giu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+  const a = normalize(left);
+  const b = normalize(right);
+  return Math.min(a.length, b.length) >= 6 && (a.includes(b) || b.includes(a));
+}
+
+export function withoutRefusedCoverage(coverage: LineAiCoverageItem[] | undefined, plan: AgentIntentPlan): LineAiCoverageItem[] | undefined {
+  const refused = plan.refusals.filter((refusal) => refusal.reason === 'privacy_rumor');
+  if (!coverage || refused.length === 0) return coverage;
+  return coverage.filter((item) => !PRIVATE_RUMOR_REQUEST.test(item.request)
+    && !refused.some((refusal) => sameRequest(item.request, refusal.request)));
+}
+
+function appendPlanRefusalLines(replyText: string, plan: AgentIntentPlan): string {
+  if (!plan.refusals.some((refusal) => refusal.reason === 'privacy_rumor')) return replyText;
+  const line = plan.language.toLowerCase().startsWith('en')
+    ? 'Nong Mangmee won’t guess or spread rumours about another person’s private life.'
+    : 'น้องมั่งมีไม่ขอเดาหรือขยายข่าวลือเกี่ยวกับชีวิตส่วนตัวของคนอื่นนะคะ';
+  return replyText.includes(line) ? replyText : `${replyText}\n${line}`;
+}
+
 function appendPartialAvailability(replyText: string, plan: AgentIntentPlan): string {
   if (plan.status !== 'PARTIAL' || !plan.refusals.some((refusal) => refusal.reason === 'feature_disabled')) return replyText;
   return `${replyText}\n${plan.language.toLowerCase().startsWith('en')
@@ -269,6 +295,9 @@ export class OrchestratorAgent {
     // Route intents
     const router = new IntentRouterAgent(provider);
     const plan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
+    const zeroToolIntent = plan.intents.length === 1 && isZeroToolIntent(plan.intents[0]?.intent)
+      ? plan.intents[0].intent
+      : undefined;
 
     const outputs = [];
 
@@ -279,7 +308,7 @@ export class OrchestratorAgent {
     let askUserQuestion: string | undefined;
     let coverage: LineAiCoverageItem[] | undefined;
     let nativeRan = false;
-    if (plan.status !== 'UNROUTABLE') {
+    if (plan.status !== 'UNROUTABLE' && !zeroToolIntent) {
       const budget = maxToolCalls;
       let textOutputs: SpecialistOutput[] = [];
       if (this.config.lineAiTooluseLoopEnabled && typeof provider.generateWithTools === 'function') {
@@ -312,7 +341,15 @@ export class OrchestratorAgent {
     const hasGroundedFacts = outputs.some((o) => o.facts.length > 0);
     const toolData = outputs.flatMap((o) => o.toolData ?? []);
     let replyText = composed.replyText;
-    if (askUserQuestion && !(nativeRan && toolData.length > 0)) {
+    if (zeroToolIntent === 'capability_help') {
+      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale);
+    } else if (zeroToolIntent === 'casual_conversation') {
+      replyText = await composer.composeCasual(req.messageText, provider, {
+        planLanguage: plan.language,
+        locale: req.userContext.locale,
+        conversationContext: req.conversationContext,
+      });
+    } else if (askUserQuestion && toolData.length === 0) {
       // Discovery (owner decision 2026-07-05): when required input is missing/ambiguous the model
       // asks ONE clarifying question instead of guessing; the follow-up turn resolves it via
       // conversationContext.
@@ -325,11 +362,11 @@ export class OrchestratorAgent {
         conversationContext: req.conversationContext,
         valueCandidates: req.valueCandidates,
       });
+      if (askUserQuestion) replyText = `${replyText}\n${askUserQuestion}`;
       if (nativeRan) {
         // Item 10F: answered parts first, then at most ONE clarify (the loop's ask_user wins
         // over a critic needs_user question), then the honest deferral line.
-        if (askUserQuestion) replyText = `${replyText}\n${askUserQuestion}`;
-        replyText = appendCoverageLines(replyText, coverage, plan.language, !askUserQuestion);
+        replyText = appendCoverageLines(replyText, withoutRefusedCoverage(coverage, plan), plan.language, !askUserQuestion);
       }
     } else if (hasGroundedFacts) {
       replyText = await composer.polishLanguage(composed.replyText, provider, {
@@ -339,6 +376,7 @@ export class OrchestratorAgent {
       });
     }
     replyText = appendPartialAvailability(replyText, plan);
+    replyText = appendPlanRefusalLines(replyText, plan);
     const presentation = buildAnswerPresentation(
       plan,
       outputs,
@@ -518,6 +556,7 @@ export class OrchestratorAgent {
         language: plan.language,
         toolsCalled: outputs.flatMap((o) => o.toolCalls.map((t) => t.name)),
         facts: outputs.flatMap((o) => o.facts.map((f) => ({ label: f.label, value: f.value }))),
+        toolData: outputs.map(boundToolResultContent),
         subRequests: plan.intents.map((intent) => ({ request: req.messageText, subject: intent.subject })),
         ...(req.openClarifications && { openClarifications: req.openClarifications }),
       });

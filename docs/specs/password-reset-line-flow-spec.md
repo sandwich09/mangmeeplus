@@ -10,7 +10,7 @@ Production has no email delivery (`DisabledAuthMailerAdapter` when `APP_ENV != l
 ## Product decisions (locked)
 
 1. Temp-password login always forces the change-password screen; once changed, never again. Enforced only for password-login sessions — LINE-login sessions are never blocked by `mustChangePassword`.
-2. Forgot-password page = username input only (no LINE ID). Static line shown always: "หากคุณเป็นเจ้าของกิจการ กรุณาติดต่อ support@mangmeeplus.com".
+2. Forgot-password page = username input only (no LINE ID). Static line shown always: "หากคุณเป็นเจ้าของกิจการ กรุณาติดต่อ contact@mangmeeplus.com".
 3. Responses are always generic (no account enumeration). Reuse existing password-reset-request rate limits as the cooldown.
 4. Reset request notifies company ADMINs via LINE; if requester is an ADMIN → notify OWNER; if no deliverable ADMIN → fall back to OWNER. Owner accounts get no in-company notification (support line covers them).
 5. Email flow is closed entirely: endpoints removed from the controller, web pages/BFF route deleted. Backend use cases + `PasswordResetToken` model stay parked for a future revival. No in-app notification fallback for now (skip when nobody has LINE linked).
@@ -19,7 +19,7 @@ Production has no email delivery (`DisabledAuthMailerAdapter` when `APP_ENV != l
 
 - **Employee forgot**: `/forgot-password` → submit username → generic success → ADMINs (or OWNER fallback) get LINE push "พนักงาน X ขอรีเซ็ตรหัสผ่าน" → admin opens เมนูพนักงาน → clicks รีเซ็ตรหัสผ่าน on that row → double-confirm popup → temp password shown in handoff modal AND pushed to the employee's linked LINE → employee logs in → forced to `/change-password` → sets own password (now permitted).
 - **Admin forgot**: same, but the push goes to OWNER members only.
-- **Owner forgot**: submits like everyone (generic reply, no push); static support line directs them to support@mangmeeplus.com. System admin resets via existing partner/onboarding tooling.
+- **Owner forgot**: submits like everyone (generic reply, no push); static support line directs them to contact@mangmeeplus.com. System admin resets via existing partner/onboarding tooling.
 - **New employee**: created with DOB-derived password and `mustChangePassword: true` → first password login lands on `/change-password`. Employees who only ever use LINE login are not blocked (decision 1).
 
 ## Backend contract

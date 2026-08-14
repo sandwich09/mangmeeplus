@@ -9,6 +9,7 @@ import {
   type DataRightsCaseType,
 } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { listDataRightsCases, type DataRightsCaseSummary, type DataRightsDueFilter } from './data-rights.api';
 import {
   CASE_TYPE_LABEL,
@@ -80,7 +81,7 @@ export default function DataRightsListPage() {
       const apiError = caught as Error & { status?: number };
       setError(apiError.status === 403
         ? 'บัญชีนี้ไม่มีสิทธิ์จัดการคำขอสิทธิข้อมูล'
-        : apiError.message || 'โหลดรายการไม่สำเร็จ กรุณาลองใหม่');
+        : apiErrorMessage(caught));
     } finally {
       if (isLatestRequestEpoch(requestEpoch, requestEpochRef.current)) {
         setLoading(false);

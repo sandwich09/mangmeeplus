@@ -13,6 +13,7 @@ import {
 import {
   parseDelimitedStatement, sha256Hex, bytesToBase64, classifyStatementFile,
   extractErrorMessage, IMPORT_STATUS_LABELS, SOURCE_KIND_LABELS, LOW_CONFIDENCE_THRESHOLD,
+  statementRowErrorMessage,
   MAX_STATEMENT_BINARY_BYTES, MAX_STATEMENT_TEXT_BYTES, STATEMENT_UPLOAD_ACCEPT,
 } from './banking.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -241,7 +242,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
                       <td className={`px-3 py-2 text-right font-medium ${Number(r.signedAmount) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{money(r.signedAmount)}</td>
                       <td className="px-3 py-2 text-right text-gray-500">{r.runningBalanceAmount ? money(r.runningBalanceAmount) : '-'}</td>
                       <td className="px-3 py-2 text-xs">
-                        {r.errors?.length ? <span className="text-red-600">{r.errors.join(', ')}</span>
+                        {r.errors?.length ? <span className="text-red-600">{r.errors.map(statementRowErrorMessage).join(', ')}</span>
                           : r.isDuplicate ? <span className="text-yellow-700">ซ้ำ</span>
                           : <span className="text-green-700">พร้อมนำเข้า</span>}
                         {chainBreak && <span className="text-orange-600"> · ยอดคงเหลือไม่ต่อเนื่อง</span>}

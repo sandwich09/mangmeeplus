@@ -31,6 +31,10 @@ import { useToast } from '@/common/components/toast';
 import { useConfirm } from '@/common/components/modal';
 
 function err(e: unknown) { return apiErrorMessage(e); }
+function workflowDiagnosticMessage(item: { errorCode?: unknown }): string {
+  if (typeof item.errorCode === 'string') return apiErrorMessage({ code: item.errorCode });
+  return 'ระบบอัตโนมัติทำรายการนี้ไม่สำเร็จ กรุณาลองใหม่หรือติดต่อผู้ดูแลระบบ';
+}
 const inputClass = 'mangmee-input';
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
 const ghostClass = 'rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
@@ -565,7 +569,7 @@ function DeadLettersTab({ companyId }: { companyId: string }) {
                 <StatusBadge status={d.resolutionStatus} labels={DEAD_LETTER_RESOLUTION_LABELS} />
                 <span className="text-xs text-gray-400">{formatDateTime(d.createdAt)}</span>
               </div>
-              <p className="mt-1 text-sm text-red-700">{d.errorMessage}</p>
+              <p className="mt-1 text-sm text-red-700">{workflowDiagnosticMessage(d)}</p>
               {d.resolutionStatus === 'OPEN' && (
                 <div className="mt-2 flex gap-2">
                   <button className={btnClass} disabled={busy === d.id} onClick={() => replay(d.id)}>ลองใหม่</button>

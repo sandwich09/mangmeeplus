@@ -1,9 +1,9 @@
 'use client';
 
-import type {
-  LegalAcceptanceCapacity,
-  LegalAcceptanceLocale,
-  LegalAcceptanceStatusResponse,
+import {
+  LEGAL_DATA_DELETION_HREF,
+  type LegalAcceptanceLocale,
+  type LegalAcceptanceStatusResponse,
 } from '@watchdog-bms/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/common/components/button';
@@ -24,11 +24,12 @@ type Props = {
 type Copy = {
   title: string;
   intro: string;
-  company: string;
   requiredLegend: string;
   termsHeading: string;
   privacyHeading: string;
-  capacityHeading: Record<LegalAcceptanceCapacity, string>;
+  deletionHeading: string;
+  effectiveLabel: string;
+  attestation: string;
   openDocument: string;
   privacyNotConsent: string;
   submit: string;
@@ -50,15 +51,12 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
   th: {
     title: 'ก่อนเริ่มใช้งาน MangmeePlus',
     intro: 'โปรดอ่านเอกสารฉบับเต็มและยืนยันทั้ง 3 รายการด้านล่าง การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ และระบบจะถามอีกครั้งเฉพาะเมื่อเอกสารออกฉบับใหม่',
-    company: 'กิจการอ้างอิงสำหรับหลักฐานครั้งแรก',
     requiredLegend: '* ข้อมูลจำเป็น',
     termsHeading: 'ข้อกำหนดการใช้งาน',
     privacyHeading: 'ประกาศความเป็นส่วนตัว',
-    capacityHeading: {
-      AUTHORIZED_REPRESENTATIVE: 'อำนาจในการยืนยันแทนกิจการ',
-      INVITED_MEMBER: 'สิทธิการใช้งานที่กิจการมอบหมาย',
-      SYSTEM_OPERATOR: 'ขอบเขตหน้าที่ของผู้ดูแลระบบ',
-    },
+    deletionHeading: 'การลบข้อมูล',
+    effectiveLabel: 'วันที่เอกสารมีผลใช้บังคับ',
+    attestation: 'เมื่อกดยืนยัน ระบบจะบันทึกวันเวลา ฉบับเอกสารและค่าตรวจสอบไฟล์ ข้อความที่คุณยืนยัน บัญชีผู้ยืนยัน และกิจการที่อ้างอิง ไว้เป็นหลักฐานแบบเพิ่มได้อย่างเดียว',
     openDocument: 'เปิดอ่านเอกสารฉบับเต็ม',
     privacyNotConsent: 'การรับทราบนี้ไม่ใช่การให้ความยินยอม ไม่เป็นการสละสิทธิของคุณตาม PDPA และไม่ทำให้ MangmeePlus ใช้ข้อมูลนอกเหนือจากฐานกฎหมายและวัตถุประสงค์ที่แจ้งไว้',
     submit: 'ยืนยันและเริ่มใช้งาน',
@@ -78,15 +76,12 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
   en: {
     title: 'Before you start using MangmeePlus',
     intro: 'Please read the full documents and confirm all three required items below. This confirmation applies to your account across companies, and we ask again only when a new document release is issued.',
-    company: 'Initial company evidence context',
     requiredLegend: '* Required',
     termsHeading: 'Terms of Use',
     privacyHeading: 'Privacy Notice',
-    capacityHeading: {
-      AUTHORIZED_REPRESENTATIVE: 'Authority to confirm for the company',
-      INVITED_MEMBER: 'Access assigned by the company',
-      SYSTEM_OPERATOR: 'Platform administrator responsibilities',
-    },
+    deletionHeading: 'Data deletion',
+    effectiveLabel: 'Documents effective from',
+    attestation: 'On confirming, we record the date and time, the document versions and file checksums, the statements you confirmed, your account, and the company in scope, as append-only evidence.',
     openDocument: 'Read the full document',
     privacyNotConsent: 'This acknowledgment is not consent, does not waive your data-protection rights, and does not permit MangmeePlus to use data beyond the lawful bases and purposes described in the notice.',
     submit: 'Confirm and start using MangmeePlus',
@@ -106,7 +101,22 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
 };
 
 function RequiredMark() {
-  return <span className="doc-accept-required" aria-hidden>*</span>;
+  return <span className="doc-gate-required" aria-hidden>*</span>;
+}
+
+// Buddhist era, unconditionally: this screen is Thai-only for the release (see `locale`
+// below). The register renders only after the status fetch resolves on the client, so
+// this can never produce server/client skew. UTC keeps a date-only value on its own day.
+const EFFECTIVE_DATE_FORMAT = new Intl.DateTimeFormat('th-TH-u-ca-buddhist', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
+function effectiveDate(...dates: string[]): string {
+  // The pair can be released separately; the later date is when this pair took effect.
+  return EFFECTIVE_DATE_FORMAT.format(new Date(`${[...dates].sort().at(-1)!}T00:00:00Z`));
 }
 
 export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
@@ -121,7 +131,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [capacityConfirmed, setCapacityConfirmed] = useState(false);
+  const [deletionAcknowledged, setDeletionAcknowledged] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   async function loadStatus(messageAfterLoad?: string) {
@@ -131,9 +141,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
       const nextStatus = await getLegalAcceptanceStatus(companyId);
       setStatus(nextStatus);
       if (!nextStatus.required) {
-        // The API gate reads append-only DB evidence, so token rotation is a best-effort hardening
-        // step rather than a condition for using an acceptance that is already durable.
-        void refreshSessionSilently();
+        if (!(await refreshSessionSilently())) throw new Error('Session refresh after legal acceptance failed.');
         window.location.assign(returnTo);
         return;
       }
@@ -165,14 +173,14 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
     setError(null);
     try {
       await acceptLegalDocuments(companyId, buildLegalAcceptanceInput(status));
-      void refreshSessionSilently();
+      if (!(await refreshSessionSilently())) throw new Error('Session refresh after legal acceptance failed.');
       window.location.assign(returnTo);
     } catch (nextError) {
       const code = (nextError as { code?: string }).code;
       if (code === 'legal_acceptance_challenge_stale' || code === 'legal_document_version_stale') {
         setTermsAccepted(false);
         setPrivacyAcknowledged(false);
-        setCapacityConfirmed(false);
+        setDeletionAcknowledged(false);
         setSubmitting(false);
         await loadStatus(copy.staleError);
         return;
@@ -195,167 +203,212 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   const version = (document: { displayVersionTh: string }) => document.displayVersionTh;
   const title = (document: { titleTh: string }) => document.titleTh;
 
+  // Drives the progress line and the ready state of the execute control. The button is
+  // never disabled: an empty submit has to report *which* item is missing and focus it,
+  // which a disabled control cannot do.
+  const confirmations = [termsAccepted, privacyAcknowledged, deletionAcknowledged];
+  const confirmed = confirmations.filter(Boolean).length;
+
   return (
     // `doc` carries the shared legal-document token block from legal.css: this screen
     // is the signature page of the notices it links to, so it is set in their language.
-    <main lang={locale} className="doc">
-      <div className="doc-accept-main">
-        <header className="doc-accept-brand">
-          <span className="doc-wordmark-glyph" aria-hidden>
-            <MangmeeLogo size={19} />
+    // `doc-gate` makes it the full-viewport two-column signing screen.
+    <main lang={locale} className="doc doc-gate">
+      {/* Identity and register: who is signing, for which company, from what date.
+          Pinned for the whole scroll on wide screens, stacked on top on narrow ones. */}
+      <aside className="doc-gate-aside">
+        <div className="doc-gate-brand">
+          <span className="doc-gate-brand-mark" aria-hidden>
+            <MangmeeLogo size={22} />
           </span>
           <div>
-            <p className="doc-accept-brand-name">
+            <p className="doc-gate-brand-name">
               มั่ง<span style={{ color: 'var(--doc-gold)' }}>มี</span> MangmeePlus
             </p>
-            <p className="doc-accept-brand-sub doc-display">Secure business workspace</p>
+            <p className="doc-gate-brand-sub doc-display">Secure business workspace</p>
           </div>
-        </header>
+        </div>
 
-        <section className="doc-accept-sheet">
-          <div className="doc-accept-plate">
-            <p className="doc-eyebrow doc-display">Legal acceptance</p>
-            <h1 className="doc-title">{copy.title}</h1>
-            <p className="doc-standfirst">{copy.intro}</p>
-            {status ? (
-              <p className="doc-accept-for">
-                <span className="doc-accept-for-label">{copy.company}</span>
-                <span className="doc-accept-for-value">{status.companyName}</span>
-              </p>
-            ) : null}
-          </div>
+        <div className="doc-gate-lede">
+          <p className="doc-gate-eyebrow doc-display">Legal acceptance</p>
+          <h1 className="doc-gate-title">{copy.title}</h1>
+          <p className="doc-gate-intro">{copy.intro}</p>
+        </div>
 
-          <div className="doc-accept-body">
-            {loading ? (
-              <div className="doc-accept-status" role="status">
-                <span className="doc-accept-spinner" aria-hidden />
-                <p style={{ margin: 0 }}>{copy.loading}</p>
-              </div>
-            ) : !status ? (
-              <div className="doc-accept-status" role="alert">
-                <p className="doc-accept-error" style={{ marginTop: 0 }}>{error ?? copy.loadError}</p>
-                <Button type="button" variant="secondary" onClick={() => void loadStatus()}>{copy.retry}</Button>
-              </div>
-            ) : (
-              <form ref={formRef} onSubmit={submit} noValidate>
-                <div className="doc-accept-legend">
-                  <p className="doc-accept-legend-title">รายการที่ต้องยืนยัน</p>
-                  <p className="doc-accept-legend-note doc-accept-required">{copy.requiredLegend}</p>
+        {status ? (
+          <dl className="doc-gate-register">
+            <div>
+              <dt>{copy.effectiveLabel}</dt>
+              <dd>{effectiveDate(status.terms.effectiveDate, status.privacy.effectiveDate)}</dd>
+            </div>
+          </dl>
+        ) : null}
+
+      </aside>
+
+      <div className="doc-gate-panel">
+        <div className="doc-gate-work">
+          {loading ? (
+            <div className="doc-gate-status" role="status">
+              <span className="doc-gate-spinner" aria-hidden />
+              <p style={{ margin: 0 }}>{copy.loading}</p>
+            </div>
+          ) : !status ? (
+            <div className="doc-gate-status" role="alert">
+              <p className="doc-gate-error" style={{ margin: 0 }}>{error ?? copy.loadError}</p>
+              <Button type="button" variant="secondary" onClick={() => void loadStatus()}>{copy.retry}</Button>
+            </div>
+          ) : (
+            <form ref={formRef} onSubmit={submit} noValidate className="doc-gate-form">
+              <div className="doc-gate-legend">
+                <div>
+                  <p className="doc-gate-legend-title">รายการที่ต้องยืนยัน</p>
+                  <p className="doc-gate-legend-hint">{copy.footer}</p>
                 </div>
+                <p className="doc-gate-legend-note doc-gate-required">{copy.requiredLegend}</p>
+              </div>
 
-                {error ? (
-                  <p id="legal-acceptance-error" role="alert" className="doc-accept-error">
-                    {error}
+              {error ? (
+                <p id="legal-acceptance-error" role="alert" className="doc-gate-error">
+                  {error}
+                </p>
+              ) : null}
+
+              {/* Three confirmations in a fixed order — the numerals record position
+                  in a required sequence, not decoration. */}
+              <ol className="doc-gate-steps">
+                <li className="doc-gate-step">
+                  <div className="doc-gate-step-head">
+                    <div className="doc-gate-step-id">
+                      <span className="doc-gate-step-num doc-display" aria-hidden>1</span>
+                      <div>
+                        <h2 className="doc-gate-step-title">{copy.termsHeading}</h2>
+                        <p className="doc-gate-step-meta">{title(status.terms)} · {version(status.terms)}</p>
+                      </div>
+                    </div>
+                    <a href={status.terms.href} target="_blank" rel="noopener noreferrer" className="doc-gate-open">
+                      {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
+                    </a>
+                  </div>
+                  <label className="doc-gate-check">
+                    <input
+                      type="checkbox"
+                      name="termsAccepted"
+                      required
+                      checked={termsAccepted}
+                      onChange={(event) => setTermsAccepted(event.target.checked)}
+                      aria-describedby={error ? 'legal-acceptance-error' : undefined}
+                    />
+                    <span>{statements?.terms}<RequiredMark /></span>
+                  </label>
+                </li>
+
+                <li className="doc-gate-step">
+                  <div className="doc-gate-step-head">
+                    <div className="doc-gate-step-id">
+                      <span className="doc-gate-step-num doc-display" aria-hidden>2</span>
+                      <div>
+                        <h2 className="doc-gate-step-title">{copy.privacyHeading}</h2>
+                        <p className="doc-gate-step-meta">{title(status.privacy)} · {version(status.privacy)}</p>
+                      </div>
+                    </div>
+                    <a href={status.privacy.href} target="_blank" rel="noopener noreferrer" className="doc-gate-open">
+                      {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
+                    </a>
+                  </div>
+                  <label className="doc-gate-check">
+                    <input
+                      type="checkbox"
+                      name="privacyAcknowledged"
+                      required
+                      checked={privacyAcknowledged}
+                      onChange={(event) => setPrivacyAcknowledged(event.target.checked)}
+                      aria-describedby={error
+                        ? 'privacy-acknowledgment-note legal-acceptance-error'
+                        : 'privacy-acknowledgment-note'}
+                    />
+                    <span>{statements?.privacy}<RequiredMark /></span>
+                  </label>
+                  <p id="privacy-acknowledgment-note" className="doc-gate-note">
+                    <strong>หมายเหตุ:</strong> {copy.privacyNotConsent}
                   </p>
-                ) : null}
+                </li>
 
-                {/* Three confirmations in a fixed order — the numerals record position
-                    in a required sequence, not decoration. */}
-                <ol className="doc-accept-list">
-                  <li className="doc-accept-item">
-                    <span className="doc-accept-num" aria-hidden>1</span>
-                    <div>
-                      <div className="doc-accept-head">
-                        <div>
-                          <h2 className="doc-accept-item-title">{copy.termsHeading}</h2>
-                          <p className="doc-accept-item-meta">{title(status.terms)} · {version(status.terms)}</p>
-                        </div>
-                        <a href={status.terms.href} target="_blank" rel="noopener noreferrer" className="doc-accept-open">
-                          {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
-                        </a>
-                      </div>
-                      <label className="doc-accept-check">
-                        <input
-                          type="checkbox"
-                          name="termsAccepted"
-                          required
-                          checked={termsAccepted}
-                          onChange={(event) => setTermsAccepted(event.target.checked)}
-                          aria-describedby={error ? 'legal-acceptance-error' : undefined}
-                        />
-                        <span>{statements?.terms}<RequiredMark /></span>
-                      </label>
+                <li className="doc-gate-step">
+                  <div className="doc-gate-step-head">
+                    <div className="doc-gate-step-id">
+                      <span className="doc-gate-step-num doc-display" aria-hidden>3</span>
+                      <h2 className="doc-gate-step-title">{copy.deletionHeading}</h2>
                     </div>
-                  </li>
+                    <a
+                      href={LEGAL_DATA_DELETION_HREF}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="doc-gate-open"
+                    >
+                      {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
+                    </a>
+                  </div>
+                  <label className="doc-gate-check">
+                    <input
+                      type="checkbox"
+                      name="deletionAcknowledged"
+                      required
+                      checked={deletionAcknowledged}
+                      onChange={(event) => setDeletionAcknowledged(event.target.checked)}
+                      aria-describedby={error ? 'legal-acceptance-error' : undefined}
+                    />
+                    <span>{statements?.deletion}<RequiredMark /></span>
+                  </label>
+                </li>
+              </ol>
 
-                  <li className="doc-accept-item">
-                    <span className="doc-accept-num" aria-hidden>2</span>
-                    <div>
-                      <div className="doc-accept-head">
-                        <div>
-                          <h2 className="doc-accept-item-title">{copy.privacyHeading}</h2>
-                          <p className="doc-accept-item-meta">{title(status.privacy)} · {version(status.privacy)}</p>
-                        </div>
-                        <a href={status.privacy.href} target="_blank" rel="noopener noreferrer" className="doc-accept-open">
-                          {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
-                        </a>
-                      </div>
-                      <label className="doc-accept-check">
-                        <input
-                          type="checkbox"
-                          name="privacyAcknowledged"
-                          required
-                          checked={privacyAcknowledged}
-                          onChange={(event) => setPrivacyAcknowledged(event.target.checked)}
-                          aria-describedby={error
-                            ? 'privacy-acknowledgment-note legal-acceptance-error'
-                            : 'privacy-acknowledgment-note'}
-                        />
-                        <span>{statements?.privacy}<RequiredMark /></span>
-                      </label>
-                      <p id="privacy-acknowledgment-note" className="doc-accept-note">
-                        <strong>หมายเหตุ:</strong> {copy.privacyNotConsent}
-                      </p>
-                    </div>
-                  </li>
+              <p className="doc-gate-attest">{copy.attestation}</p>
 
-                  <li className="doc-accept-item">
-                    <span className="doc-accept-num" aria-hidden>3</span>
-                    <div>
-                      <h2 className="doc-accept-item-title">{copy.capacityHeading[status.capacity]}</h2>
-                      <label className="doc-accept-check">
-                        <input
-                          type="checkbox"
-                          name="capacityConfirmed"
-                          required
-                          checked={capacityConfirmed}
-                          onChange={(event) => setCapacityConfirmed(event.target.checked)}
-                          aria-describedby={error ? 'legal-acceptance-error' : undefined}
-                        />
-                        <span>{statements?.capacity}<RequiredMark /></span>
-                      </label>
-                    </div>
-                  </li>
-                </ol>
-
-                <div className="doc-accept-actions">
-                  <Button type="submit" size="lg" loading={submitting} className="w-full !rounded-xl">
-                    {copy.submit}
-                    <span aria-hidden>→</span>
-                  </Button>
-                  <p className="doc-accept-hint">{copy.footer}</p>
+              {/* Last child of the form and sticky to the bottom: Accept is on screen
+                  from the first paint at any viewport height, and comes to rest here
+                  once the reader reaches the end. */}
+              <div className="doc-gate-execute">
+                <div className="doc-gate-progress">
+                  <span>ยืนยันแล้ว <b>{confirmed}</b> จาก 3 รายการ</span>
+                  <span className="doc-gate-progress-rail" aria-hidden>
+                    {confirmations.map((done, index) => (
+                      <span key={index} className={done ? 'is-on' : undefined} />
+                    ))}
+                  </span>
                 </div>
-              </form>
-            )}
-          </div>
-        </section>
-
-        <footer className="doc-accept-foot">
-          <nav aria-label="เอกสารทางกฎหมาย" className="doc-accept-foot-links">
-            <a href="/privacy" target="_blank" rel="noopener noreferrer">{copy.privacyLink}</a>
-            <a href="/terms" target="_blank" rel="noopener noreferrer">{copy.termsLink}</a>
-            <a href="/data-deletion" target="_blank" rel="noopener noreferrer">{copy.deletionLink}</a>
-          </nav>
-          <button
-            type="button"
-            disabled={submitting || loggingOut}
-            onClick={() => void signOut()}
-            className="doc-accept-signout"
-          >
-            {loggingOut ? 'กำลังออกจากระบบ…' : copy.logout}
-          </button>
-        </footer>
+                <Button
+                  type="submit"
+                  size="lg"
+                  loading={submitting}
+                  className={confirmed === 3 ? 'doc-gate-submit is-ready' : 'doc-gate-submit'}
+                >
+                  {copy.submit}
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
+
+      {/* Its own grid child, placed under the work column on a phone and continuing the
+          brand column on a wide screen: these are the secondary exits, and on a small
+          screen they were pushing the first confirmation off the opening viewport. */}
+      <footer className="doc-gate-foot">
+        <nav aria-label="เอกสารทางกฎหมาย" className="doc-gate-foot-links">
+          <a href="/privacy" target="_blank" rel="noopener noreferrer">{copy.privacyLink}</a>
+          <a href="/terms" target="_blank" rel="noopener noreferrer">{copy.termsLink}</a>
+          <a href="/data-deletion" target="_blank" rel="noopener noreferrer">{copy.deletionLink}</a>
+        </nav>
+        <button
+          type="button"
+          disabled={submitting || loggingOut}
+          onClick={() => void signOut()}
+          className="doc-gate-signout"
+        >
+          {loggingOut ? 'กำลังออกจากระบบ…' : copy.logout}
+        </button>
+      </footer>
     </main>
   );
 }

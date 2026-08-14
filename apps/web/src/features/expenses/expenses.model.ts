@@ -16,6 +16,7 @@ import {
   effectiveVatRateLabel, vatModeRequiresRate,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
 
@@ -988,7 +989,12 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
   const code = candidate?.code ?? candidate?.details?.code;
   const blocker = candidate?.details?.blocker;
   if (code === 'EXPENSE_HAS_LINKED_DATA' && typeof blocker === 'string') {
-    const label = EXPENSE_DELETE_BLOCKER_LABELS[blocker]?.[locale] ?? blocker;
+    const label = EXPENSE_DELETE_BLOCKER_LABELS[blocker]?.[locale];
+    if (!label) {
+      return locale === 'th'
+        ? 'ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้อง'
+        : 'This expense cannot be deleted because it has linked data. Review the related records.';
+    }
     return locale === 'th'
       ? `ลบรายการนี้ไม่ได้ เนื่องจากมีข้อมูลเชื่อมโยง: ${label}`
       : `This expense cannot be deleted because it has linked data: ${label}.`;
@@ -998,7 +1004,7 @@ export function expenseDeleteErrorMessage(error: unknown, locale: SupportedLocal
       ? 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง'
       : 'The expense changed during deletion. Reload and try again.';
   }
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) return apiErrorMessage(error);
   return locale === 'th' ? 'เกิดข้อผิดพลาด' : 'An error occurred.';
 }
 

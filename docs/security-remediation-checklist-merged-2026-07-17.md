@@ -462,6 +462,12 @@
 - **ข้อโต้แย้ง + evidence:** Opus บอกไม่มี documented backup window แต่ `platform-environment-config-spec.md:287-295` ระบุ backup 35 วัน/log 14 วัน; ปัญหาคือ live drift และไม่มี tombstone/re-erasure หลัง restore
 - **หลักฐานปิดงาน:** live config evidence, restore/RTO/RPO drill, post-restore re-erasure test และ rotation/revocation evidence
 - [x] **Repository controls/test path (2026-07-28):** read-only verifier fail closed ถ้า RDS ไม่ encrypted/Multi-AZ/deletion-protected/35-day backup หรือ Redis ไม่ TLS/at-rest/auth/failover/2-node/35-day snapshot; durable tombstone replay + authenticated post-restore re-erasure และ rotation/revocation runbook/tests เพิ่มแล้ว; Prisma/API/static checks ผ่าน
+- **Live topology evidence update (2026-08-15; ยังไม่ปิด M-17 รวม):** successful readiness run
+  `31789220329` และ runtime SHA-256
+  `17148172d4157d19333684c3b84d362c3de53e4de053c76e4f4e62bf8798f8f7` ยืนยัน Production RDS
+  encrypted/Multi-AZ/deletion-protected/backup 35 วัน และ Redis encrypted/authenticated/failover/2 nodes/
+  snapshot 35 วันสำหรับ source `748f1fa…`; CloudTrail creation events สอดคล้องกัน. Restore/RTO/RPO,
+  post-restore re-erasure และ secret rotation/revocation ยังไม่มีหลักฐานครบ จึงคง checkbox เปิด
 - [ ] **Live closure:** apply reviewed RDS/Redis hardening, run isolated restore/RTO/RPO + re-erasure drill, enable/execute supported secret rotations และ prove old-version/session revocation; attach sanitized live config and approvals
 
 ### [ ] M-18 — บังคับ software/container supply-chain policy ก่อน deploy

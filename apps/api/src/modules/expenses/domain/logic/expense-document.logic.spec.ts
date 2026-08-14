@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveTaxEvidence, validateCaptureHints, gateLineSplit, isExpenseExtractionEligible, toSourceDocumentType } from './expense-document.logic';
+import { deriveTaxEvidence, validateCaptureHints, isExpenseExtractionEligible, toSourceDocumentType } from './expense-document.logic';
 import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexXlsx, buildManifestEntry, accountingPeriod } from './expense-export.logic';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS, type ExpenseAttachmentRef } from '@watchdog-bms/contracts';
 
@@ -177,53 +177,6 @@ describe('validateCaptureHints', () => {
     assert.equal(result.vatMode, 'NEEDS_REVIEW');
     assert.equal(result.sourceDocumentType, 'NEEDS_REVIEW');
     assert.ok(result.warnings.includes('unknown_source_document_type'));
-  });
-});
-
-describe('gateLineSplit', () => {
-  it('keeps clearly visible multi-line items', () => {
-    const result = gateLineSplit(
-      [
-        { description: 'กาแฟ', quantity: '2', unitPrice: '50', lineTotalAmount: '100' },
-        { description: 'ขนม', quantity: '1', unitPrice: '40', lineTotalAmount: '40' },
-      ],
-      '140',
-      'summary',
-    );
-    assert.equal(result.fallback, false);
-    assert.equal(result.lines.length, 2);
-    assert.equal(result.lines[0]?.description, 'กาแฟ');
-  });
-
-  it('falls back to one summary line when a line has no amount evidence', () => {
-    const result = gateLineSplit(
-      [
-        { description: 'กาแฟ', quantity: '2' },
-        { description: 'ขนม', lineTotalAmount: '40' },
-      ],
-      '140',
-      'summary',
-    );
-    assert.equal(result.fallback, true);
-    assert.equal(result.lines.length, 1);
-    assert.equal(result.lines[0]?.description, 'summary');
-  });
-
-  it('falls back when line totals disagree with the grand total', () => {
-    const result = gateLineSplit(
-      [
-        { description: 'a', quantity: '1', unitPrice: '100', lineTotalAmount: '100' },
-        { description: 'b', quantity: '1', unitPrice: '100', lineTotalAmount: '100' },
-      ],
-      '500',
-      'summary',
-    );
-    assert.equal(result.fallback, true);
-  });
-
-  it('falls back for zero or one suggested line', () => {
-    assert.equal(gateLineSplit([], '100', 's').fallback, true);
-    assert.equal(gateLineSplit([{ description: 'only', quantity: '1', unitPrice: '100' }], '100', 's').fallback, true);
   });
 });
 

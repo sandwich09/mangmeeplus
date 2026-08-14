@@ -2,7 +2,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
 
-const context = { displayName: 'พิม · แอดมิน', roleLabel: 'แอดมิน', branchScopeLabel: '2 สาขา', companyId: 'c 1', webBaseUrl: 'https://app.example.com/', permissions: [] };
+// entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
+// permission dimension on its own. Feature gating has its own cases at the end of the suite.
+const context = { displayName: 'พิม · แอดมิน', roleLabel: 'แอดมิน', branchScopeLabel: '2 สาขา', companyId: 'c 1', webBaseUrl: 'https://app.example.com/', permissions: [], entitledFeatureKeys: null };
+
+const ALL_PERMISSIONS = ['dashboard.read', 'crm.booking.read', 'crm.inbox.read', 'expense.read', 'ledger.read', 'procurement.purchase_order.read', 'procurement.purchase_order.approve', 'reimbursement.approve', 'expense.receipt.line_upload'];
+const labels = (message: { quickReply?: { items: Array<{ action: { label: string } }> } }) =>
+  message.quickReply?.items.map((item) => item.action.label);
+/** buildStaffCompletionQuickReply returns the quick reply itself, not a message wrapping one. */
+const quickLabels = (quickReply: { items: Array<{ action: { label: string } }> }) =>
+  quickReply.items.map((item) => item.action.label);
 
 describe('LINE staff menu', () => {
   it('shows only actions allowed by resolved backend permissions', () => {
@@ -158,5 +167,46 @@ describe('LINE staff menu', () => {
   it('parses only explicit menu commands', () => {
     assert.equal(staffMenuCommand('📊 ถามข้อมูล'), 'query');
     assert.equal(staffMenuCommand('ยอดขายวันนี้'), null);
+  });
+
+  // UAT 2026-08-15: ยอดขายวันนี้ was offered on a company that never switched sales on, so the
+  // only possible answer was an empty one. A permission the company has not bought a feature for
+  // is not a menu.
+  describe('feature entitlement gate', () => {
+    const withFeatures = (...featureKeys: string[]) =>
+      ({ ...context, permissions: ALL_PERMISSIONS, entitledFeatureKeys: new Set(featureKeys) });
+
+    it('hides every action whose owning feature the company has switched off', () => {
+      const expensesOnly = withFeatures('expenses', 'expenses.upload');
+      assert.deepEqual(labels(buildStaffMainMenu(expensesOnly)), ['ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล', '📷 ถ่ายใบเสร็จ']);
+      assert.deepEqual(labels(buildStaffQueryMenu(expensesOnly)), ['ค่าใช้จ่ายเดือนนี้', '« เมนูหลัก']);
+      // Same permissions, sales switched on: the reported button comes back.
+      assert.ok(labels(buildStaffMainMenu(withFeatures('sales_documents')))?.includes('ยอดขายวันนี้'));
+    });
+
+    it('keeps every allowed action for a legacy company with no entitlement rows', () => {
+      const legacy = { ...context, permissions: ALL_PERMISSIONS, entitledFeatureKeys: null };
+      assert.deepEqual(labels(buildStaffMainMenu(legacy)), ['ยอดขายวันนี้', 'คิว/นัดวันนี้', 'แชทค้างตอบ', 'ค่าใช้จ่ายเดือนนี้', 'รายงานการเงิน', 'ใบสั่งซื้อ (PO)', '📊 ถามข้อมูล', '✅ รายการรออนุมัติ', '📷 ถ่ายใบเสร็จ']);
+    });
+
+    it('drops the approval button when no approval queue survives, and keeps it when one does', () => {
+      assert.equal(quickLabels(buildStaffCompletionQuickReply(withFeatures('expenses'))).includes('✅ รายการรออนุมัติ'), false);
+
+      const reimbursementOnly = withFeatures('reimbursement');
+      assert.ok(quickLabels(buildStaffCompletionQuickReply(reimbursementOnly)).includes('✅ รายการรออนุมัติ'));
+      // The card behind the button must show exactly the queue that justified offering it.
+      const footer = (buildPendingApprovalCard(reimbursementOnly) as { contents: any }).contents.footer;
+      assert.deepEqual(footer.contents.map((button: any) => button.action.label), ['คำขอเบิกเงิน']);
+    });
+
+    it('hides the receipt camera when the expenses upload submenu is off', () => {
+      assert.equal(quickLabels(buildStaffCompletionQuickReply(withFeatures('expenses'))).includes('📷 ถ่ายใบเสร็จ'), false);
+      assert.ok(quickLabels(buildStaffCompletionQuickReply(withFeatures('expenses', 'expenses.upload'))).includes('📷 ถ่ายใบเสร็จ'));
+    });
+
+    it('tells the user the menu reflects what the company enabled, not only their role', () => {
+      assert.match(JSON.stringify(buildStaffMainMenu(context)), /บริษัทเปิดใช้/);
+      assert.match((buildStaffQueryMenu(context) as { text: string }).text, /บริษัทเปิดใช้/);
+    });
   });
 });

@@ -20,8 +20,8 @@ function status(): LegalAcceptanceStatusResponse {
     terms: CURRENT_LEGAL_DOCUMENTS.terms,
     privacy: CURRENT_LEGAL_DOCUMENTS.privacy,
     statements: {
-      th: legalAcceptanceStatements('AUTHORIZED_REPRESENTATIVE', 'บริษัท ตัวอย่าง จำกัด', 'th'),
-      en: legalAcceptanceStatements('AUTHORIZED_REPRESENTATIVE', 'บริษัท ตัวอย่าง จำกัด', 'en'),
+      th: legalAcceptanceStatements('th'),
+      en: legalAcceptanceStatements('en'),
     },
     displayChallenges: {
       th: 'a'.repeat(64),
@@ -41,14 +41,14 @@ describe('buildLegalAcceptanceInput', () => {
     assert.match(displayed.privacy.artifactSha256, /^[a-f0-9]{64}$/);
   });
 
-  it('records explicit terms acceptance, privacy acknowledgment and authority confirmation separately', () => {
+  it('records explicit terms acceptance, privacy acknowledgment and deletion acknowledgment separately', () => {
     assert.deepEqual(buildLegalAcceptanceInput(status()), {
       termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
       privacyVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
       statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
       termsAccepted: true,
       privacyAcknowledged: true,
-      capacityConfirmed: true,
+      deletionAcknowledged: true,
       locale: 'th',
       displayChallenge: 'a'.repeat(64),
     });
