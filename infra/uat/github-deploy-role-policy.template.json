@@ -191,6 +191,12 @@
       "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/uat/*"
     },
     {
+      "Sid": "ReleaseUatRedisMigrationMutex",
+      "Effect": "Allow",
+      "Action": "ssm:DeleteParameter",
+      "Resource": "arn:aws:ssm:ap-southeast-1:<ACCOUNT_ID>:parameter/watchdog-bms/uat/redis-migration-lock"
+    },
+    {
       "Sid": "DescribeUatSecrets",
       "Effect": "Allow",
       "Action": "secretsmanager:DescribeSecret",

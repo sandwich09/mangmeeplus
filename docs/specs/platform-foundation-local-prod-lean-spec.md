@@ -128,7 +128,6 @@ App Runner is not a default target for new deployments because it is no longer o
 |---|---:|---:|---|
 | `REQUIRE_COMPANY_CONTEXT` | required | required | Default true. |
 | `COMPANY_CONTEXT_HEADER` | required | required | Default `X-Company-Id`. |
-| `PERMISSION_CACHE_TTL_SECONDS` | required | required | Short TTL. |
 | `SEED_SYSTEM_ROLES_ENABLED` | allowed | deploy-job only | Do not seed blindly from app startup. |
 
 ### Data and storage variables
@@ -137,7 +136,7 @@ App Runner is not a default target for new deployments because it is no longer o
 |---|---:|---:|---|
 | `DATABASE_URL` | required | required or secret reference | Source of truth. |
 | `DATABASE_SECRET_ARN` | optional | preferred | Preferred production secret source. |
-| `REDIS_URL` | required | required or secret reference | Queue, cache, rate limit, idempotency. |
+| `REDIS_URL` | required | required or secret reference | BullMQ queues, distributed rate limits and optional LINE ledger. |
 | `S3_BUCKET` | required | required | Tenant-scoped object keys. |
 | `S3_ENDPOINT` | local only | forbidden unless explicit | MinIO/local emulator only. |
 | `S3_PUBLIC_ENDPOINT` | self-hosted only | optional | Browser-reachable presigning endpoint; unset falls back to `S3_ENDPOINT` or the SDK AWS URL. |

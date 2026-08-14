@@ -1,9 +1,11 @@
 # Agent Memory: UAT Redis encryption
 
-Status: `bootstrap-data.sh` now creates an encrypted node and is guarded by a spec. The **live UAT
-node is still unencrypted** — encryption cannot be toggled, so it has to be replaced; the migration
-is written up in `infra/uat/README.md` and not yet run. Production Redis does not exist and must be
-rebuilt to the M-17 shape before any production deploy.
+Status: `bootstrap-data.sh` creates an encrypted v2 node and the reversible blue/green helper/spec are
+implemented. The **live UAT node is still unencrypted** because no AWS mutation was run in this
+implementation turn. The destructive migration originally recorded here is superseded by the
+blue/green plan in `docs/plans/uat-production-runtime-config-remediation-plan.md`.
+Production Redis topology was rebuilt and proven against M-17 on 2026-08-14; M-17 overall remains
+open for restore/re-erasure and secret rotation evidence.
 
 Owner: Opus 5, 2026-08-08. Companion: `aws-cost-spike-2026-08.md` (why prod Redis was deleted).
 
@@ -53,11 +55,12 @@ would have failed this baseline; rebuilding it is the natural moment to close M-
 - `delete-secret` without `--force-delete-without-recovery` holds the name for 7–30 days, and
   `bootstrap-data.sh` refuses to run when the secret exists without a node. That combination bricks
   the rerun.
-- Recreating the secret yields a **new ARN**. `deploy.sh` resolves the name to an ARN at deploy time
-  and embeds it in `valueFrom`, so the task definitions must be rewritten — bringing UAT back has to
-  be a deploy, not just a capacity change.
-- UAT is parked at zero capacity right now, which makes this the cheapest window to replace the node.
-  Its contents are disposable: BullMQ jobs and rate-limit counters, no durable state.
+- Recreating the secret would yield a **new ARN**, but that is no longer the chosen migration.
+  Blue/green writes a new value version to the existing secret and retains the old version for rollback.
+- UAT was live at capacity 1/2 on the 2026-08-15 read-back. It must be parked and verified at zero
+  immediately before cutover so old/new BullMQ consumers can never overlap.
+- Migration and UAT deploy now acquire the same no-overwrite SSM mutex. The original read-only lock
+  check had a time-of-check/time-of-use race and was rejected during implementation review.
 
 ## Verification
 
@@ -68,15 +71,17 @@ would have failed this baseline; rebuilding it is the natural moment to close M-
 - Mutation-checked both ways: reverting the URL to `redis://` and deleting
   `--at-rest-encryption-enabled` each fail the spec.
 - `bash -n` clean; the other two `infra/uat/*.spec.sh` still pass.
+- `infra/uat/redis-blue-green.spec.sh` covers prepare/cutover/rollback, interrupted-create resume,
+  non-zero capacity/tasks, wrong account, shared-mutex exclusion, no secret output and no cache-delete
+  permission.
 - **Not verified: nothing has been run against AWS.** The encrypted node has never been created, so
   the create call, the waiter and the `rediss://` connection are unproven in practice.
 
 ## Next
 
-1. Run the UAT migration in `infra/uat/README.md` while capacity is at zero, then bring UAT back
-   with a deploy and confirm workers connect over TLS.
-2. Rebuild production Redis to the full M-17 shape and close the checklist item — that needs an
-   owner decision on the ~2x cost of the second node, which is a production availability
-   requirement rather than something to decide silently here.
-3. M-17's other halves are untouched by this work: RDS Multi-AZ, deletion protection, 35-day backup
-   retention, and secret rotation for 7/7 production secrets.
+1. Apply the reviewed operator/deploy-role policies, then schedule the explicit migration window.
+2. Park UAT, create the encrypted v2 group, preserve the secret ARN, smoke/soak, then delete the old
+   node only after owner sign-off.
+3. Keep Production Redis on the dedicated readiness path. Successful readiness run `31789220329`
+   and runtime SHA-256 `17148172d4157d19333684c3b84d362c3de53e4de053c76e4f4e62bf8798f8f7`
+   prove encryption/auth/failover/two nodes/35-day snapshots for source `748f1fa…`.

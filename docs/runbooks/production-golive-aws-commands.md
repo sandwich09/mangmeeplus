@@ -294,64 +294,27 @@ aws sns publish --topic-arn "$SECURITY_ALERT_TOPIC_ARN" \
 `IncomingBytes` คือตัวที่ถ้ามีตั้งแต่ต้นเดือน เหตุการณ์ 6 ส.ค. จะจบที่ $7 แทน $179
 
 ```sh
-# ค่า log ระเบิด — เตือนเมื่อ ingest เกิน 1 GB ใน 1 ชั่วโมง
-aws cloudwatch put-metric-alarm \
-  --alarm-name watchdog-bms-prod-log-ingest-spike \
-  --alarm-description 'CloudWatch log ingest spike (billed on raw bytes)' \
-  --namespace AWS/Logs --metric-name IncomingBytes --statistic Sum \
-  --period 3600 --evaluation-periods 1 --threshold 1073741824 \
-  --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching \
-  --alarm-actions "$SECURITY_ALERT_TOPIC_ARN"
-
-# connection ใกล้เต็ม — เพดาน t4g.small ~225
-aws cloudwatch put-metric-alarm \
-  --alarm-name watchdog-bms-prod-db-connections-high \
-  --namespace AWS/RDS --metric-name DatabaseConnections --statistic Maximum \
-  --dimensions Name=DBInstanceIdentifier,Value=watchdog-bms-prod-db \
-  --period 300 --evaluation-periods 2 --threshold 150 \
-  --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching \
-  --alarm-actions "$SECURITY_ALERT_TOPIC_ARN"
-
-# CPU credit ใกล้หมด — burstable ตอน credit หมดจะช้าลง 10 เท่าพร้อมกันทั้งระบบ
-aws cloudwatch put-metric-alarm \
-  --alarm-name watchdog-bms-prod-db-cpu-credits-low \
-  --namespace AWS/RDS --metric-name CPUCreditBalance --statistic Minimum \
-  --dimensions Name=DBInstanceIdentifier,Value=watchdog-bms-prod-db \
-  --period 300 --evaluation-periods 2 --threshold 50 \
-  --comparison-operator LessThanThreshold --treat-missing-data notBreaching \
-  --alarm-actions "$SECURITY_ALERT_TOPIC_ARN"
-
-# Redis หน่วยความจำใกล้เต็ม — noeviction แปลว่าเต็มแล้ว write จะ error ไม่ใช่ลบของเก่า
-aws cloudwatch put-metric-alarm \
-  --alarm-name watchdog-bms-prod-redis-memory-high \
-  --namespace AWS/ElastiCache --metric-name DatabaseMemoryUsagePercentage --statistic Maximum \
-  --dimensions Name=ReplicationGroupId,Value=watchdog-bms-prod-redis \
-  --period 300 --evaluation-periods 2 --threshold 75 \
-  --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching \
-  --alarm-actions "$SECURITY_ALERT_TOPIC_ARN"
+SECURITY_ALERT_TOPIC_ARN="$SECURITY_ALERT_TOPIC_ARN" \
+  bash infra/monitoring/runtime-alarms.sh install production
+SECURITY_ALERT_TOPIC_ARN="$SECURITY_ALERT_TOPIC_ARN" \
+  bash infra/monitoring/runtime-alarms.sh verify production
 ```
 
-> `CPUCreditBalance` ของ t4g **AWS มี bug ที่ไม่ส่งค่าเข้า CloudWatch** alarm จะอยู่สถานะ
-> `INSUFFICIENT_DATA` ถ้าเป็นแบบนั้น ให้ตั้ง `treat-missing-data notBreaching` ไว้แบบนี้
-> แล้วเฝ้า `CPUUtilization` แทน — ถ้ามันค้างที่ ~10–20% นาน ๆ คือกำลังโดน throttle
-
-### log ingest alarm — ต้องทำต่อ log group ไม่ใช่ยอดรวม
+script สร้าง per-log-group `IncomingBytes` 512 MiB/ชั่วโมง, per-node Redis memory 75%, RDS
+free storage 4 GB, free memory 200 MB, connections 150 และ CPU credit 50. `verify` เทียบ contract
+ทุก field, ยืนยัน SNS subscription และบังคับว่าทุก dimension ต้องมี datapoint จริง
 
 ```sh
-for g in api-web ai-gateway workers; do
-  aws cloudwatch put-metric-alarm --region ap-southeast-1 \
-    --alarm-name "watchdog-bms-prod-log-ingest-$g" \
-    --namespace AWS/Logs --metric-name IncomingBytes --statistic Sum \
-    --dimensions Name=LogGroupName,Value="/ecs/watchdog-bms-prod-$g" \
-    --period 3600 --evaluation-periods 1 --threshold 536870912 \
-    --comparison-operator GreaterThanThreshold --treat-missing-data notBreaching \
-    --alarm-actions "$SECURITY_ALERT_TOPIC_ARN"
-done
+# หลัง verify per-node ผ่านเท่านั้น ลบ alarm เก่าที่ใช้ ReplicationGroupId และไม่มี datapoint
+CONFIRM_RETIRE_INVALID_PROD_REDIS_ALARM=DELETE_ZERO_DATAPOINT_ALARM \
+SECURITY_ALERT_TOPIC_ARN="$SECURITY_ALERT_TOPIC_ARN" \
+  bash infra/monitoring/runtime-alarms.sh retire-invalid-prod-redis production
 ```
 
-**`SEARCH()` ใช้กับ metric alarm ไม่ได้** — ลองแล้วได้ `SEARCH is not supported on Metric Alarms`
-(ใช้ได้เฉพาะใน dashboard) จึงต้องตั้งทีละ log group ตามชื่อที่ `deploy.sh` สร้าง:
-`/ecs/watchdog-bms-prod-{api-web,ai-gateway,workers}`
+**ห้ามใช้ `ReplicationGroupId` กับ `DatabaseMemoryUsagePercentage`:** alarm เดิมอยู่ `OK` เพราะ
+missing data เป็น non-breaching ทั้งที่ 24 ชั่วโมงมี 0 datapoints. Metric จริงใช้
+`CacheClusterId` + `CacheNodeId`; script discover node และสร้าง alarm แยก node. เช่นเดียวกัน
+`IncomingBytes` ต้องมี `LogGroupName`; alarm รวมที่ไม่มี dimension ไม่ใช่ control ที่ทำงาน
 
 alarm สร้างล่วงหน้าได้โดยที่ log group ยังไม่มี — จะอยู่ `INSUFFICIENT_DATA` จนกว่าจะมีข้อมูลจริง
 
