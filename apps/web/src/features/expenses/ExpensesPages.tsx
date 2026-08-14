@@ -1131,9 +1131,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => { setVatEditors({}); setValues((v) => ({ ...v, lines: v.lines.filter((_, lineIndex) => lineIndex !== index) })); }} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* A textarea, not an input: on a phone the single line clipped the description at the
+                field edge (a seeded 33-character line needed 278px of a 264px box at 390 wide, and
+                194px at 320), so the value being checked against the receipt could not be read in
+                one look. Two rows and wrapping at every width — a one-line box would clip the same
+                way on a narrow desktop window, and splitting the control by breakpoint would mean
+                two DOM fields for one value. */}
             <label className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
-              <input className={validationInputClass(descriptionIssue)} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
+              <textarea className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
               <FieldIssueNote issue={descriptionIssue} />
             </label>
             <label>

@@ -780,7 +780,9 @@ export const workspaceDictionary = {
     'expenses.step_data': 'ตรวจข้อมูล',
     'expenses.step_evidence': 'ภาษีและเอกสาร',
     'expenses.step_review': 'ตรวจก่อนส่ง',
-    'expenses.step_data_helper': 'ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ และยอดเงิน ให้ตรงกับใบเสร็จทางซ้าย',
+    // Not "ทางซ้าย": the document viewer is `hidden lg:flex`, so on a phone there is nothing to
+    // the left — the receipt is reached from the attachment list above the form.
+    'expenses.step_data_helper': 'ตรวจชื่อผู้ขาย เลขที่เอกสาร วันที่ และยอดเงิน ให้ตรงกับใบเสร็จที่แนบไว้',
     'expenses.step_evidence_helper': 'เลือกว่าเอกสารนี้เป็นใบกำกับภาษีหรือไม่ เพื่อให้ระบบคิดภาษีถูกต้อง',
     'expenses.step_review_helper': 'ดูสรุปทั้งหมดอีกครั้ง แล้วส่งให้ผู้อนุมัติ',
     'expenses.back_to_list': 'กลับไปรายการค่าใช้จ่าย',
@@ -2038,7 +2040,7 @@ export const workspaceDictionary = {
     'expenses.step_data': 'Check the data',
     'expenses.step_evidence': 'Tax and documents',
     'expenses.step_review': 'Review before sending',
-    'expenses.step_data_helper': 'Check the vendor, document number, date, and amount against the receipt on the left.',
+    'expenses.step_data_helper': 'Check the vendor, document number, date, and amount against the attached receipt.',
     'expenses.step_evidence_helper': 'Choose whether this document is a tax invoice so the system calculates tax correctly.',
     'expenses.step_review_helper': 'Review the full summary again, then send it to the approver.',
     'expenses.back_to_list': 'Back to expenses',

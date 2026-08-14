@@ -137,7 +137,9 @@ test.describe('LEGAL — explicit Terms acceptance and Privacy Notice acknowledg
       await expect(requiredBoxes).toHaveCount(3);
       for (let index = 0; index < 3; index += 1) {
         await expect(requiredBoxes.nth(index)).not.toBeChecked();
-        await expect(requiredBoxes.nth(index).locator('xpath=..').locator('span.text-red-600')).toHaveCount(1);
+        // The required mark is a document-typography class, not a Tailwind colour utility;
+        // this assertion had been pinned to the pre-redesign markup and never re-checked.
+        await expect(requiredBoxes.nth(index).locator('xpath=..').locator('span.doc-gate-required')).toHaveCount(1);
       }
       await expect(page.getByRole('link', { name: /เปิดอ่านเอกสารฉบับเต็ม|Read the full document/i })).toHaveCount(2);
       await expect(page.getByText(/ไม่ใช่การให้ความยินยอม|is not consent/i)).toBeVisible();

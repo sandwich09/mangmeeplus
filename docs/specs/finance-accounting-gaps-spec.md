@@ -27,7 +27,9 @@
 
 ## GAP-01 · Job preset การเงิน/บัญชี ขาดสิทธิ์อ่าน — role ที่สร้างใช้งานจริงไม่ได้
 
-**ประเภท:** บั๊ก (ยืนยันด้วยการรัน `compileRole` จริง) · **Priority: P1** · **Effort: S** · **ไม่ต้องตัดสินใจ product — ทำได้ทันที**
+**ประเภท:** บั๊ก (ยืนยันด้วยการรัน `compileRole` จริง) · **Priority: P1** · **Effort: S** · **สถานะ: ✅ แก้แล้ว — ยืนยันด้วยการรันเทสต์จริง 2026-08-14**
+
+> **ยืนยัน 2026-08-14:** `FINANCE_PACKS` (`role-template.registry.ts`) มี `.view` pack ครบแล้ว (billing/payment/bank/procurement/expense/tax) และ `tpl.x.accounting` มี `pack.ledger.view` + `pack.tax.view` แล้ว · guard test มีจริง 2 ไฟล์: `role-template-read-coverage.spec.ts` และ `role-template-system-role-parity.spec.ts` · รันผ่าน 24/24 รวม assertion "tpl.x.finance holds all 24 finance reads" และ "every preset grants the paired .read for every write it grants" (acceptance ข้อ 4 ของ spec นี้)
 
 ### ปัญหา
 
@@ -200,7 +202,9 @@ Preset นี้ถึงมือผู้ใช้จริงแล้ว —
 
 ## GAP-07 · expense ที่จ่ายเงินแล้วค้าง `postingStatus='pending'` ถาวร → block ปิดงวดตลอดกาล
 
-**ประเภท:** บั๊ก (ยืนยันใน Phase 0 ของ GAP-02, 2026-07-28) · **Priority: P1** · **Effort: S–M** · **รอเคาะแนวแก้**
+**ประเภท:** บั๊ก (ยืนยันใน Phase 0 ของ GAP-02, 2026-07-28) · **Priority: P1** · **Effort: S–M** · **สถานะ: ✅ แก้แล้ว — ยืนยันด้วยการรันเทสต์จริง 2026-08-14**
+
+> **ยืนยัน 2026-08-14:** แนวแก้ที่เสนอไว้ถูกนำไปทำจริง — มี canonical posting source `expense.payment` แล้ว (`journal.use-case.ts:417-431`, idempotency key `expense.payment:${payment.id}` ต่อ payment id ตามกลไก payment-leg ของ GAP-02 Phase 3) · เทสต์ `expense-payment-posting.use-case.spec.ts` รันผ่าน ครอบคลุม: post `Dr 2120-01 / Cr 1110-01` จาก payment event, ใช้วันที่ `paidAt` เป็นงวด, จ่ายบางส่วน, idempotent, ปฏิเสธ claim-born expense (ต้องผ่าน `reimbursement.payment`) · `countPostingBlockers` มีเทสต์ "GAP-07 settlement blockers" ยืนยันว่านับ paid expense ที่ยังไม่มี settlement journal โดยไม่นับซ้ำ และไม่นับ claim-born · ด่านปิดงวดรวม reimbursement blockers แล้ว (GAP-02 Phase 4 / PR-2 — `period.use-case.ts:177`)
 
 - `RecordExpensePaymentUseCase` ตั้ง `postingStatus='pending'` หลังบันทึกการจ่าย (`expense-draft.use-case.ts:566-603`) แต่เส้น post จังหวะจ่ายของ expense ไปไม่ถึง (ดู GAP-02 ข้อเท็จจริง 1) → ค้าง `pending` ถาวร
 - `countPostingBlockers` นับ `CONFIRMED` + `postingStatus='pending'` เป็น blocker ปิดงวด (`prisma-expense.repository.ts:1153-1164`) → **expense ทุกใบที่บันทึกการจ่ายแล้วกลายเป็นตัว block การปิดงวดถาวร** — บั๊กนี้มีอยู่วันนี้ ไม่เกี่ยวกับเบิกจ่าย
@@ -221,11 +225,11 @@ Preset นี้ถึงมือผู้ใช้จริงแล้ว —
 
 | ID | เรื่อง | ประเภท | Priority | Effort | ตัดสินใจ product? | พร้อมทำ |
 |---|---|---|---|---|---|---|
-| GAP-01 | Preset การเงิน/บัญชีขาดสิทธิ์อ่าน | บั๊ก | **P1** | S | ไม่ต้อง | ✅ ทำได้ทันที |
+| GAP-01 | Preset การเงิน/บัญชีขาดสิทธิ์อ่าน | บั๊ก | **P1** | S | ไม่ต้อง | ✅ **แก้แล้ว + เทสต์ผ่าน (ยืนยัน 2026-08-14)** |
 | GAP-02 | เบิกจ่ายไม่ลง GL + ปิดงวดไม่ตรวจ | ช่องว่างบัญชี | **P1** | M | ✅ ทาง B | ✅ Phase 1–3 เสร็จ+e2e ผ่าน (PR-1) · เหลือ Phase 4 (PR-2) |
 | GAP-03 | supplier payment ไม่มีขั้น release จริง | design gap | P2 | S/M | ต้อง | ทาง B ทำได้เลย |
 | GAP-04 | `taxReviewerRole` ไม่ถูก enforce | dead config | P2 | S | ต้อง | รอตัดสินใจ |
 | GAP-05 | ปิดบัญชีสิ้นปี | missing feature | P3 | L | ต้อง (spec แยก) | รอ spec |
 | GAP-06 | hardening + ความสอดคล้อง 6 ข้อ | misc | P3 | S–M | บางข้อ | ✅ 6.2–6.6 ทำแล้ว · เหลือ 6.1 |
-| GAP-07 | expense ที่จ่ายแล้ว block ปิดงวดถาวร | บั๊ก | **P1** | S–M | ต้อง (แนวแก้) | รอเคาะ — กลไก payment-leg จาก Phase 3 พร้อม wire |
+| GAP-07 | expense ที่จ่ายแล้ว block ปิดงวดถาวร | บั๊ก | **P1** | S–M | — | ✅ **แก้แล้ว + เทสต์ผ่าน (ยืนยัน 2026-08-14)** |
 | GAP-08 | expense มีใบเสร็จ confirm ไม่ผ่าน + error mask | บั๊ก | **P1** | S | — | ✅ แก้แล้ว (PR-1) |
