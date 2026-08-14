@@ -15,6 +15,12 @@ import { AgentCoreRuntimeClient } from '../../infrastructure/runtime/agentcore-r
 const MUTATION_REPLY = '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ';
 const UNSUPPORTED_REPLY = '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
+// A switched-off module is not a permission problem and not an empty result. Without its own reply
+// the user is told "📭 ไม่พบข้อมูลที่ตรงกันค่ะ", which reads as "your business has no data" when the
+// truth is that the company never turned the feature on. Names no other company and no other feature.
+const FEATURE_OFF_REPLY = '🚧 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานสำหรับบริษัทของคุณค่ะ\nหากต้องการเปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบของบริษัทนะคะ';
+/** Matches the errorCode the ERP tool boundary returns when a company feature is off. */
+const FEATURE_NOT_ENABLED_CODE = 'FEATURE_NOT_ENABLED';
 const ERROR_REPLY = '⏳ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
 const NO_DATA_REPLY = '📭 ไม่พบข้อมูลที่ตรงกันค่ะ กรุณาลองถามใหม่อีกครั้งนะคะ';
 const CAPTURE_PENDING_REPLY = [
@@ -270,6 +276,12 @@ export class LineAiTurnUseCase {
     const topTools = tools.slice(0, 3);
     const toolInput = intent === 'capture_accounting_evidence' ? { attachments: req.attachments ?? [], messageText: req.messageText } : {};
     const results = await Promise.all(topTools.map((t) => this.erpTools.invoke(t, erpCtx, toolInput)));
+
+    // Checked before the forbidden branch so a turn blocked purely by the company's feature switch
+    // is never reported as a missing permission or as an empty business.
+    if (results.length > 0 && results.every((r) => r.errorCode === FEATURE_NOT_ENABLED_CODE)) {
+      return this.buildRefusedResponse(req, 'unsupported_module', FEATURE_OFF_REPLY, startMs, intent, agent);
+    }
 
     if (results.every((r) => r.status === 'forbidden')) {
       return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs, intent, agent);
