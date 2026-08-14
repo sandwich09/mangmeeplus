@@ -58,6 +58,15 @@ Verification (2026-08-15, second pass):
 - `node_modules/.bin/tsx --test src/modules/employee-access/application/use-cases/update-employee-branch-scope.spec.ts`: pass 17/17 — 1 new: a corrected title lands in its own column, `displayName` stays bare, and `User` receives the name without a title.
 - `CI=true corepack pnpm --filter @watchdog-bms/api test`: pass, exit 0 · `--filter @watchdog-bms/web test`: pass 901/901 · `tsc --noEmit` pass across api and web.
 
-Next:
-1. Apply the migration wherever this deploys — `prisma migrate deploy`. The column exists in schema and migration only; no running database has it yet, and the API will fail selecting it until then.
-2. Re-run the UAT that started this: change a คำนำหน้า, confirm the employee page shows the new title, and confirm the sidebar shows the bare name (it hides the title by owner decision, so it should read มีนา ใจงาม either way).
+Live verification on the local Docker stack 2026-08-15 (rebuilt from this code, not a baked image):
+- Migration `20260815000000_employee_title_prefix` applied for real (`finished_at` set); `EmployeeAccessProfile.titlePrefix` exists as nullable `text`.
+- Pre-split rows confirmed untouched on real data: `displayName` = 'นายทดสอบ ระบบดี', `titlePrefix` = null. The no-backfill decision behaves as intended.
+- Edit form loaded that pre-split row correctly through the fallback: ชื่อ = 'ทดสอบ', นามสกุล = 'ระบบดี', and the นาย chip selected — so the old glued-on title is still read back without eating the name.
+- Switched the chip to นางสาว, preview updated to 'นางสาวทดสอบ ระบบดี', saved. Database after: `displayName` = 'ทดสอบ ระบบดี', `titlePrefix` = 'นางสาว', `User.displayName` = 'ทดสอบ ระบบดี'. The split works end to end and the account name stays title-free.
+- `GET /settings/employees/:id` returns `displayName='ทดสอบ ระบบดี'`, `titlePrefix='นางสาว'`, `firstName='ทดสอบ'`, `lastName='ระบบดี'`.
+- Note on access: every seeded account hits the legal-acceptance gate (stored acceptance is `2026-08-09.2`, current documents are a newer release) and it blocks the API too, not just the web — `403 legal_acceptance_required` on business modules. The owner accepted in the browser to unblock this test; there is no dev bypass flag.
+
+FOUND DURING THIS TEST — the display half went into dead code:
+- `EmployeeAccessWorkspacePage` in `EmployeeAccessPages.tsx`, where both `employeeFullName` calls were added, **is not rendered by any route**. Only `RoleBuilder`, `coveredPacks`, `ghostClass`, `dangerClass`, and `QrLinkCard` are imported from that file. Those two edits are inert.
+- The route that actually renders the employee list is `IndividualPermissionsPrototypePage` (`/settings/access-overview`), and it identifies people with `employeeShortName` = `nickname || displayName` — a deliberately compact label, which is why it shows 'เทส' rather than any full name. A title does not belong on a short name, so this is not simply a matter of swapping the helper in.
+- Net: the title is now stored and returned by the API, but the only place a user currently sees it is the edit form's own preview. Where the formal name with คำนำหน้า should appear — employee detail header, printed documents, accountant exports — is an open product question, not a code gap to patch blindly.
