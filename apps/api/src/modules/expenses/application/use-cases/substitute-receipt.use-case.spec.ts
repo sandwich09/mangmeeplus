@@ -10,6 +10,8 @@ import {
   PreviewSubstituteReceiptUseCase,
 } from './substitute-receipt.use-case';
 import { buildSubstituteCertificationText, canonicalSnapshotHash, type SubstituteReceiptSnapshot } from '../../domain/logic/substitute-receipt.logic';
+import { buildDedupKey } from '../../../dashboard-notifications/domain/logic/notification.logic';
+import { IMPLEMENTED_TRIGGER_KEYS } from '../../../dashboard-notifications/domain/models/notification.model';
 
 const now = new Date('2026-07-13T10:00:00.000Z');
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
@@ -309,8 +311,67 @@ describe('substitute receipt signing lifecycle', () => {
     assert.equal(certifiedInput.snapshotJson.originalSourceDocumentType, 'EXPENSE_NOTE_TEXT');
     assert.equal(certifiedInput.snapshotChecksumSha256, canonicalSnapshotHash(certifiedInput.snapshotJson));
     assert.deepEqual(notifications.map((item) => item.recipientUserIds), [['approver-1']]);
-    assert.equal(notifications[0].triggerKey, 'expense.substitute_receipt_signature_pending');
+    assert.equal(notifications[0].triggerKey, 'expense.substitute_receipt_approval_pending');
     assert.equal(notifications[0].sourceId, 'sub-1');
+  });
+
+  // Guard for the collision that silently dropped every approver notification: prepare and certify
+  // emit for the same evidence id, so if they ever share a triggerKey again their dedup keys match,
+  // prepare's cooldown swallows certify, and the approver gets no recipient or delivery row.
+  it('gives the payer and approver stages distinct dedup keys for the same certificate', async () => {
+    const prepareNotifications: any[] = [];
+    const certifyNotifications: any[] = [];
+    const evidence = prepared();
+    const prepareRepo = {
+      findByIdWithRelations: async () => expense(),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', originalFileName: 'bill.jpg' }],
+      createPreparedSubstituteEvidence: async () => evidence,
+    } as any;
+    await new PrepareSubstituteReceiptUseCase(prepareRepo, audit, {
+      execute: async (input: any) => { prepareNotifications.push(input); return {}; },
+    } as any).execute(ctx('finance-1'), 'exp-1', {
+      reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
+      businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
+      paymentMethod: 'CASH', idempotencyKey: 'idem-dedup', expectedExpenseUpdatedAt: now.toISOString(),
+    });
+
+    const certifyRepo = {
+      findSubstituteEvidence: async () => evidence,
+      findByIdWithRelations: async () => expense(),
+      findPersonalSignatureAttachment: async () => ({ id: 'sig-payer', bucket: 'b', objectKey: 'sig', mimeType: 'image/png', byteSize: png.length, checksumSha256: null }),
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      markSubstituteEvidenceCertified: async () => prepared({ status: 'PAYER_CERTIFIED' }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'] }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+    } as any;
+    const storage = {
+      getObject: async () => ({ bytes: png, mimeType: 'image/png' }),
+      putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length }),
+      deleteObject: async () => undefined,
+    } as any;
+    const preview = await new PreviewSubstituteReceiptUseCase(certifyRepo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
+    await new CertifySubstituteReceiptUseCase(certifyRepo, storage, audit, {
+      execute: async (input: any) => { certifyNotifications.push(input); return {}; },
+    } as any, cleanup).execute(ctx('payer-1'), 'exp-1', 'sub-1', {
+      payerPosition: 'พนักงาน', certificationAcknowledged: true, signatureAttachmentId: 'sig-payer',
+      previewChecksumSha256: preview.previewChecksumSha256,
+      expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+    });
+
+    assert.deepEqual(prepareNotifications[0].recipientUserIds, ['payer-1']);
+    assert.deepEqual(certifyNotifications[0].recipientUserIds, ['approver-1']);
+    assert.equal(prepareNotifications[0].sourceId, certifyNotifications[0].sourceId);
+    assert.notEqual(buildDedupKey(prepareNotifications[0]), buildDedupKey(certifyNotifications[0]));
+    for (const notification of [...prepareNotifications, ...certifyNotifications]) {
+      assert.ok(
+        IMPLEMENTED_TRIGGER_KEYS.includes(notification.triggerKey),
+        `${notification.triggerKey} must be registered or the LINE preference gate drops it`,
+      );
+    }
   });
 
   it('blocks an unsafe legacy certified snapshot before issuing or writing an artifact', async () => {
