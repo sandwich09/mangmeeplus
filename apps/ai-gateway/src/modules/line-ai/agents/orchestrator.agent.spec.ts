@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildAnswerPresentation, OrchestratorAgent } from './orchestrator.agent';
+import { buildAnswerPresentation, OrchestratorAgent, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
 
@@ -160,6 +160,20 @@ describe('buildAnswerPresentation', () => {
     assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [presentationOutput('FAILED')], 'ดึงข้อมูลไม่ได้'), undefined);
     assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [presentationOutput('UNSUPPORTED')], 'ไม่รองรับ'), undefined);
     assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [presentationOutput('SUCCEEDED')], 'ขอข้อมูลเพิ่ม', '', 'th-TH', true), undefined);
+  });
+});
+
+describe('withoutRefusedCoverage', () => {
+  it('removes a paraphrased private request using the router refusal instead of keywords', () => {
+    const plan = {
+      status: 'PARTIAL', language: 'th', intents: [], requiresHumanReview: false,
+      refusals: [{ request: 'พี่บีกับผู้จัดการเป็นอะไรกันแน่', reason: 'privacy_rumor' }],
+    } as any;
+    const coverage = [
+      { request: 'พี่บีกับผู้จัดการเป็นอะไรกันแน่', verdict: 'uncovered' as const },
+      { request: 'เดือนนี้เงินออกไปเท่าไหร่', subject: 'expense' as const, verdict: 'covered' as const },
+    ];
+    assert.deepEqual(withoutRefusedCoverage(coverage, plan), [coverage[1]]);
   });
 });
 

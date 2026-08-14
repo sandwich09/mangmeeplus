@@ -30,6 +30,16 @@ const LONG_CONTEXT = 'c'.repeat(CACHE_MIN_CHARS);
 const SHORT_CONTEXT = 'c'.repeat(CACHE_MIN_CHARS - 1);
 
 describe('BedrockProvider error mapping', () => {
+  it('exposes max_tokens on text generation', async () => {
+    const provider = makeProvider();
+    (provider as any).client = {
+      send: async () => ({ stopReason: 'max_tokens', output: { message: { content: [{ text: 'partial' }] } } }),
+    };
+    const result = await provider.generateText({ messages: [{ role: 'user', text: 'hello' }] });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.stopReason, 'max_tokens');
+  });
+
   it('maps ThrottlingException to PROVIDER_THROTTLED', async () => {
     const provider = makeProvider();
     (provider as any).client = {

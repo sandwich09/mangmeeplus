@@ -204,9 +204,20 @@ function appendCoverageLines(replyText: string, coverage: LineAiCoverageItem[] |
 
 const PRIVATE_RUMOR_REQUEST = /(?:ข่าวลือ|ซุบซิบ|นินทา|เม้าท์|ชีวิตส่วนตัว|ความสัมพันธ์|แอบคบ|เป็นชู้|rumou?r|gossip|private\s+life|relationship|dating)/iu;
 
-function withoutRefusedCoverage(coverage: LineAiCoverageItem[] | undefined, plan: AgentIntentPlan): LineAiCoverageItem[] | undefined {
-  if (!coverage || !plan.refusals.some((refusal) => refusal.reason === 'privacy_rumor')) return coverage;
-  return coverage.filter((item) => !PRIVATE_RUMOR_REQUEST.test(item.request));
+function sameRequest(left: string, right: string): boolean {
+  const normalize = (value: string) => value.normalize('NFKC').toLocaleLowerCase('en-US')
+    .replace(/(?:หน่อย|ช่วย|กรุณา|please)/giu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+  const a = normalize(left);
+  const b = normalize(right);
+  return Math.min(a.length, b.length) >= 6 && (a.includes(b) || b.includes(a));
+}
+
+export function withoutRefusedCoverage(coverage: LineAiCoverageItem[] | undefined, plan: AgentIntentPlan): LineAiCoverageItem[] | undefined {
+  const refused = plan.refusals.filter((refusal) => refusal.reason === 'privacy_rumor');
+  if (!coverage || refused.length === 0) return coverage;
+  return coverage.filter((item) => !PRIVATE_RUMOR_REQUEST.test(item.request)
+    && !refused.some((refusal) => sameRequest(item.request, refusal.request)));
 }
 
 function appendPlanRefusalLines(replyText: string, plan: AgentIntentPlan): string {

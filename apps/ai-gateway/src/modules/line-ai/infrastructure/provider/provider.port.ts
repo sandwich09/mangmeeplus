@@ -22,7 +22,7 @@ export type ProviderInput = {
 };
 
 export type ProviderOutput =
-  | { ok: true; text: string }
+  | { ok: true; text: string; stopReason?: 'end_turn' | 'max_tokens' | 'other' }
   | { ok: false; error: ProviderError };
 
 // ── Item 10F: native tool-use (Bedrock Converse toolConfig / OpenAI function calling) ──

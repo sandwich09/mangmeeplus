@@ -147,7 +147,7 @@ export class ResponseComposerAgent {
     });
     if (!result.ok) return fallback;
     const reply = stripReplyWrapping(result.text);
-    return reply && !looksLikeJson(reply) ? boundCasualReply(reply, fallback) : fallback;
+    return reply && !looksLikeJson(reply) ? boundCasualReply(reply, fallback, result.stopReason === 'max_tokens') : fallback;
   }
 
   compose(plan: AgentIntentPlan, outputs: SpecialistOutput[], messageText = '', locale = 'th-TH'): ComposedReply {
@@ -315,9 +315,9 @@ function stripReplyWrapping(text: string): string {
   return t;
 }
 
-function boundCasualReply(reply: string, fallback: string): string {
+function boundCasualReply(reply: string, fallback: string, requireCompleteBoundary = false): string {
   const maxChars = 280;
-  if (reply.length <= maxChars) return reply;
+  if (!requireCompleteBoundary && reply.length <= maxChars) return reply;
   const bounded = reply.slice(0, maxChars + 1);
   const boundaries = [...bounded.matchAll(/(?:[.!?…]|(?:ค่ะ|ครับ|คะ|นะคะ|จ้ะ|จ้า))(?:\s|$|[😊🙂😄😁🥹❤️❤])/gu)];
   const last = boundaries.at(-1);

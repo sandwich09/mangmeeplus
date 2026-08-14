@@ -61,6 +61,18 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
     assert.ok(!reply.endsWith('แล้'));
     assert.ok(reply.length <= 320);
   });
+
+  it('keeps only completed sentences when the provider stops at max tokens below the character cap', async () => {
+    const provider: IModelProvider = {
+      generateText: async () => ({
+        ok: true,
+        stopReason: 'max_tokens',
+        text: 'ได้เลยค่ะ 😄 เรื่องคลาสสิกในออฟฟิศ: ใครเอาข้าวเพื่อนออกจากตู้เย็น แล้วไม่มีใครสารภาพสักคน ทั้งที่กล้องวงจรปิดก็อยู่ตรงนั้น! 🍱📹 บางทีความลับที่ลึกที่สุดคือ "ใครกินข้า',
+      }),
+    };
+    const reply = await agent.composeCasual('ขอเรื่องเม้าท์ขำๆ แบบไม่พาดพิงใครหน่อย', provider);
+    assert.equal(reply, 'ได้เลยค่ะ 😄 เรื่องคลาสสิกในออฟฟิศ: ใครเอาข้าวเพื่อนออกจากตู้เย็น แล้วไม่มีใครสารภาพสักคน ทั้งที่กล้องวงจรปิดก็อยู่ตรงนั้น!');
+  });
 });
 
 describe('ResponseComposerAgent.polishLanguage (grounded language layer)', () => {
