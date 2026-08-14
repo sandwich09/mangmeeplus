@@ -49,10 +49,22 @@ function isoToDob(value?: string) {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
 }
 
+/**
+ * คำนำหน้า has its own field since 2026-08-15. Rows written before that still carry it inside
+ * `displayName`, so the old `startsWith` guess survives only as a fallback for them — never for a
+ * record that states its own title. Delete it once no pre-split rows remain.
+ */
 function employeeTitle(employee: EmployeeSummary): TitleOption {
+  if (employee.titlePrefix) return employee.titlePrefix;
   if (employee.displayName.startsWith('นางสาว')) return 'นางสาว';
   if (employee.displayName.startsWith('นาง')) return 'นาง';
   return 'นาย';
+}
+
+/** The stored name for a pre-split row still has the title glued on; a split row does not. */
+function employeeNameWithoutTitle(employee: EmployeeSummary): string {
+  if (employee.titlePrefix) return employee.displayName;
+  return employee.displayName.slice(employeeTitle(employee).length).trim();
 }
 
 function TextField({
@@ -292,10 +304,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
       }
       if (employeeResult.status === 'fulfilled' && employeeResult.value) {
         const employee = employeeResult.value;
-        const prefix = employeeTitle(employee);
-        const fallbackName = employee.displayName.slice(prefix.length).trim().split(/\s+/);
+        const fallbackName = employeeNameWithoutTitle(employee).split(/\s+/);
         setEditingEmployee(employee);
-        setTitle(prefix);
+        setTitle(employeeTitle(employee));
         setFirstName(employee.firstName ?? fallbackName[0] ?? '');
         setLastName(employee.lastName ?? fallbackName.slice(1).join(' '));
         setNickname(employee.nickname ?? '');
@@ -386,7 +397,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
 
   const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
   const avatarInitial = fullName ? `${firstName.trim()[0] ?? ''}${lastName.trim()[0] ?? ''}` : '?';
-  const displayName = fullName ? `${title}${fullName}` : 'พนักงานใหม่';
+  // Preview only. Naming it `displayName` is what made the title look like part of the stored name;
+  // what gets stored is `fullName` plus `titlePrefix`, kept apart.
+  const previewName = fullName ? `${title}${fullName}` : 'พนักงานใหม่';
   const defaultBranchName = branches.find((branch) => branch.id === defaultBranchId)?.name ?? '';
 
   const summaryRows = [
@@ -451,7 +464,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
     setError('');
     try {
       const profile = {
-        displayName,
+        // The stored name is the name alone; the title goes in its own field so nothing downstream
+        // has to guess it back out of a concatenated string.
+        displayName: fullName || previewName,
+        titlePrefix: title,
         phoneNumber: phone,
         email: email.trim(),
         firstName: firstName.trim(),
@@ -538,6 +554,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   async function finishEmployee() {
     if (employeeActive) {
       router.push(`/companies/${companyId}/settings/access-overview`);
+      // The shell name comes from the server layout's session, and a shared layout survives client
+      // navigation — without this a self-rename stays stale in the sidebar until a full reload.
+      router.refresh();
       return;
     }
     const employeeId = editingEmployee?.id ?? result?.employeeId;
@@ -603,7 +622,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
               {avatarInitial}
             </div>
             <div className="min-w-0">
-              <div className="truncate text-lg font-extrabold text-gray-900">{displayName}</div>
+              <div className="truncate text-lg font-extrabold text-gray-900">{previewName}</div>
               {selectedRole && (
                 <span className="mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold" style={{ backgroundColor: `${colorForRole(selectedRole)}1F`, color: colorForRole(selectedRole) }}>
                   {selectedRole.name}

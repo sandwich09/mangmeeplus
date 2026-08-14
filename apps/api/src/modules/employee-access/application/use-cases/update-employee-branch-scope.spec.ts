@@ -15,10 +15,12 @@ function makePrisma(opts: {
   candidateRoles?: FakeRole[];
   targetRoleRows?: Array<{ roleId: string; role: { key: string } }>;
   duplicateIdentity?: boolean;
+  otherCompanyMemberships?: number;
 } = {}) {
-  const writes = { profileUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any };
+  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any };
   const tx = {
     employeeAccessProfile: { update: async (args: any) => { writes.profileUpdate = args; return {}; } },
+    user: { update: async (args: any) => { writes.userUpdate = args; return {}; } },
     membershipRole: {
       deleteMany: async () => ({}),
       createMany: async (args: any) => { writes.assignedRoleIds = args.data.map((d: any) => d.roleId); return {}; },
@@ -44,6 +46,7 @@ function makePrisma(opts: {
       },
       companyMembership: {
         findUniqueOrThrow: async () => ({ branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null }),
+        count: async () => opts.otherCompanyMemberships ?? 0,
       },
       role: { findMany: async () => opts.candidateRoles ?? [] },
       membershipRole: { findMany: async () => opts.targetRoleRows ?? [] },
@@ -168,6 +171,32 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     assert.equal(writes.auditArgs.data.metadataJson.granterUserId, 'admin-1');
     assert.equal(writes.auditArgs.data.metadataJson.granteeUserId, PROFILE.userId);
     assert.deepEqual(writes.auditArgs.data.metadataJson.roleDiff, { addedRoleIds: ['r-sales'], removedRoleIds: ['r-old'] });
+  });
+});
+
+describe('UpdateEmployeeUseCase display name', () => {
+  it('syncs the renamed employee onto User so /auth/me (sidebar, header) is not stale', async () => {
+    const { prisma, writes } = makePrisma();
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'นางสาวมีนา ใจงาม' });
+    assert.equal(writes.profileUpdate.data.displayName, 'นางสาวมีนา ใจงาม');
+    assert.equal(writes.userUpdate.data.displayName, 'นางสาวมีนา ใจงาม');
+  });
+
+  it('stores a corrected คำนำหน้า in its own column, not glued onto the name', async () => {
+    const { prisma, writes } = makePrisma();
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'มีนา ใจงาม', titlePrefix: 'นางสาว' });
+    assert.equal(writes.profileUpdate.data.titlePrefix, 'นางสาว');
+    assert.equal(writes.profileUpdate.data.displayName, 'มีนา ใจงาม');
+    // The account name is the person; the title is a profile field and never reaches User.
+    assert.equal(writes.userUpdate.data.displayName, 'มีนา ใจงาม');
+    assert.equal(writes.userUpdate.data.titlePrefix, undefined);
+  });
+
+  it('leaves a cross-company shared login with its own account name', async () => {
+    const { prisma, writes } = makePrisma({ otherCompanyMemberships: 1 });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, displayName: 'นางสาวมีนา ใจงาม' });
+    assert.equal(writes.profileUpdate.data.displayName, 'นางสาวมีนา ใจงาม');
+    assert.equal(writes.userUpdate, undefined);
   });
 });
 
