@@ -443,6 +443,15 @@ body {
   }
 }
 
+/* Room for an icon sitting inside the field. Tailwind's `pr-*` cannot do this job:
+   its utilities live in `@layer utilities`, and the unlayered `.mangmee-input`
+   padding above beats any layered rule no matter the source order — so a field
+   with an inset icon silently kept its normal padding and the icon landed on top
+   of the text the user was typing. */
+.mangmee-input-icon-end {
+  padding-right: 2.75rem;
+}
+
 .mangmee-input:focus {
   border-color: var(--color-brand-700);
   box-shadow: var(--shadow-focus);

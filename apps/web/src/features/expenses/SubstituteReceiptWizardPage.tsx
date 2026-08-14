@@ -1396,8 +1396,8 @@ export function SubstituteReceiptWizardPage({
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <label className="relative block min-w-0 flex-1">
                     <span className="sr-only">{t('expenses.substitute_wizard.candidate_search', locale)}</span>
-                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICON.search}</span>
-                    <input className={cx(inputClass, 'pl-11')} value={candidateQuery} placeholder={t('expenses.substitute_wizard.candidate_search', locale)} onChange={(event) => { setCandidateQuery(stripDisallowed(event.target.value)); setCandidatePage(1); }} />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">{ICON.search}</span>
+                    <input className={cx(inputClass, 'mangmee-input-icon-end')} value={candidateQuery} placeholder={t('expenses.substitute_wizard.candidate_search', locale)} onChange={(event) => { setCandidateQuery(stripDisallowed(event.target.value)); setCandidatePage(1); }} />
                   </label>
                   <ThemedSelect aria-label={t('expenses.substitute_wizard.candidate_sort_label', locale)} className={cx(inputClass, 'sm:w-52')} value={candidateSort} onChange={(event) => { setCandidateSort(event.target.value as CandidateSortKey); setCandidatePage(1); }}>
                     <option value="date_desc">{t('expenses.substitute_wizard.candidate_sort_date_desc', locale)}</option>

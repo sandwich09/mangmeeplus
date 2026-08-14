@@ -92,8 +92,11 @@ describe('whtLinkErrorOutcome', () => {
     assert.equal(whtLinkErrorOutcome(authedApiFetchError(403)).reload, false);
   });
 
-  it('falls back to the server message, then to a usable default', () => {
-    assert.equal(whtLinkErrorOutcome(authedApiFetchError(500, { message: 'boom' })).message, 'boom');
+  it('hides an unreviewed server diagnostic, then keeps a usable default', () => {
+    assert.equal(
+      whtLinkErrorOutcome(authedApiFetchError(500, { message: 'boom' })).message,
+      'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
+    );
     assert.equal(whtLinkErrorOutcome(null).message, 'ไม่สามารถแนบหนังสือรับรองได้');
     assert.equal(whtLinkErrorOutcome({}).reload, false);
   });

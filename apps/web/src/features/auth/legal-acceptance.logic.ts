@@ -13,7 +13,7 @@ export function buildLegalAcceptanceInput(
     statementVersion: status.statementVersion,
     termsAccepted: true,
     privacyAcknowledged: true,
-    capacityConfirmed: true,
+    deletionAcknowledged: true,
     // The current immutable Terms and Privacy artifacts are Thai. English
     // acceptance stays disabled until separately versioned English artifacts exist.
     locale: 'th',

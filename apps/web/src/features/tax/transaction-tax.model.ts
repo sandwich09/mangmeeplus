@@ -6,7 +6,7 @@ import type {
   TransactionTaxDirection,
   TransactionTaxSnapshot,
 } from '@watchdog-bms/contracts';
-import { translateApiError } from '@/common/api/api-error-message';
+import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 
 export const TAX_CONTEXT_LABELS: Record<TransactionTaxContext, string> = {
   DOMESTIC_SALE: 'ขายในประเทศ',
@@ -127,7 +127,68 @@ export function transactionTaxErrorMessage(error: unknown): string {
   if (candidate.status === 409) return 'ข้อมูลหรือช่วงวันที่ซ้ำกับการตั้งค่าที่มีอยู่ กรุณาโหลดใหม่';
   if (candidate.status === 422 && code === 'tax_profile_incomplete') return 'โปรไฟล์ยังขาดบัญชีหรือกฎรายงานที่จำเป็น';
   if (candidate.status === 422) return 'รายการภาษีต้องได้รับการตรวจสอบก่อนดำเนินการ';
-  return candidate.message ?? 'เรียกข้อมูลภาษีไม่สำเร็จ';
+  if (error instanceof Error) return apiErrorMessage(error);
+  if (candidate.message) {
+    return apiErrorMessage(Object.assign(new Error(candidate.message), { status: candidate.status, code }));
+  }
+  return 'เรียกข้อมูลภาษีไม่สำเร็จ';
+}
+
+const TRANSACTION_TAX_DIAGNOSTIC_MESSAGES: Record<string, string> = {
+  tax_code_not_active_or_not_applicable: 'Tax Code นี้ไม่พร้อมใช้กับรายการหรือวันที่เอกสาร กรุณาเลือก Tax Code อื่น',
+  tax_code_ambiguous: 'พบ Tax Code ที่ตรงกันมากกว่าหนึ่งรายการ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี',
+  tax_account_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกบัญชี กรุณาตั้งค่าบัญชีภาษีก่อนใช้งาน',
+  tax_account_rule_ambiguous: 'Tax Code นี้ผูกบัญชีซ้ำกัน กรุณาตรวจสอบการตั้งค่าบัญชีภาษี',
+  functional_currency_fx_required: 'รายการสกุลเงินต่างประเทศยังขาดอัตราแลกเปลี่ยน วันที่ หรือแหล่งที่มา',
+  zero_tax_treatment_has_tax_amount: 'รายการภาษีอัตรา 0 ต้องไม่มียอดภาษี กรุณาตรวจสอบยอดเงิน',
+  entered_tax_amount_outside_tolerance: 'ยอดภาษีที่กรอกต่างจากยอดที่ระบบคำนวณเกินกำหนด กรุณาตรวจสอบยอดภาษี',
+  tax_evidence_required: 'รายการนี้ต้องแนบหลักฐานภาษีก่อนดำเนินการต่อ',
+  tax_report_rule_missing: 'Tax Code นี้ยังไม่ได้ผูกช่องรายงานภาษี กรุณาตั้งค่ารายงานภาษี',
+  partial_deductibility_split_policy_required: 'ภาษีซื้อที่ขอคืนได้บางส่วนยังขาดวิธีแบ่งยอด กรุณาตั้งค่านโยบายการแบ่งยอด',
+  import_tax_destination_required: 'ภาษีนำเข้ายังไม่ได้ระบุว่าจะบันทึกเป็นค่าใช้จ่ายหรือสินทรัพย์',
+};
+
+/** Success payloads carry stable diagnostic codes, not user-facing copy. */
+export function transactionTaxDiagnosticMessage(diagnostic: string): string {
+  const code = diagnostic.split(':', 1)[0] ?? '';
+  return TRANSACTION_TAX_DIAGNOSTIC_MESSAGES[code]
+    ?? 'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี';
+}
+
+const TAX_CODE_IMPORT_MESSAGES: Record<string, string> = {
+  'externalCode is required': 'กรุณาระบุรหัส Tax Code (externalCode)',
+  'displayName is required': 'กรุณาระบุชื่อ Tax Code (displayName)',
+  'taxRegime is invalid': 'รูปแบบ taxRegime ไม่ถูกต้อง',
+  'SAP Tax Code import supports VAT and IMPORT_VAT only': 'นำเข้าได้เฉพาะ taxRegime แบบ VAT หรือ IMPORT_VAT',
+  'direction is invalid': 'รูปแบบ direction ไม่ถูกต้อง',
+  'treatment is invalid': 'รูปแบบ treatment ไม่ถูกต้อง',
+  'calculationMethod is invalid': 'รูปแบบ calculationMethod ไม่ถูกต้อง',
+  'claimabilityDefault is invalid': 'รูปแบบ claimabilityDefault ไม่ถูกต้อง',
+  'transactionContexts contains an invalid value': 'transactionContexts มีค่าที่ระบบไม่รองรับ',
+  'Tax rate must be between 0 and 100': 'อัตราภาษีต้องอยู่ระหว่าง 0 ถึง 100',
+  'At least one transaction context is required': 'กรุณาระบุ transactionContexts อย่างน้อย 1 รายการ',
+  'VAT Tax Codes support only OUTPUT, INPUT, or SELF_ASSESSED direction': 'Tax Code VAT รองรับ direction แบบ OUTPUT, INPUT หรือ SELF_ASSESSED เท่านั้น',
+  'OUTPUT direction is incompatible with purchase/import context': 'direction แบบ OUTPUT ใช้กับบริบทซื้อหรือนำเข้าไม่ได้',
+  'INPUT direction is incompatible with sale/export context': 'direction แบบ INPUT ใช้กับบริบทขายหรือส่งออกไม่ได้',
+  'SELF_ASSESSED is supported only for imported services': 'direction แบบ SELF_ASSESSED ใช้ได้เฉพาะบริการจากต่างประเทศ',
+  'Partial deductibility requires an explicit split policy and is not yet activatable': 'ภาษีซื้อที่ขอคืนได้บางส่วนยังเปิดใช้ไม่ได้จนกว่าจะกำหนดวิธีแบ่งยอด',
+  evidence_policy_invalid: 'รูปแบบกฎหลักฐานภาษีไม่ถูกต้อง',
+  evidence_policy_invalid_json: 'กฎหลักฐานภาษีไม่ใช่ JSON ที่ถูกต้อง',
+  'effectiveTo must be on or after effectiveFrom': 'วันที่สิ้นสุดต้องไม่ก่อนวันที่เริ่มใช้',
+  'effectiveFrom must be YYYY-MM-DD': 'วันที่เริ่มใช้ต้องอยู่ในรูปแบบ YYYY-MM-DD',
+  'Tax Code/direction effective window conflicts with another row or existing definition': 'Tax Code, direction และช่วงวันที่ซ้ำกับแถวอื่นหรือข้อมูลเดิม',
+};
+
+export function taxCodeImportDiagnosticMessage(diagnostic: string): string {
+  const exact = TAX_CODE_IMPORT_MESSAGES[diagnostic];
+  if (exact) return exact;
+  if (/ requires rate 0 and calculation method NONE$/.test(diagnostic)) {
+    return 'Tax Code ประเภทนี้ต้องใช้อัตรา 0 และ calculationMethod แบบ NONE';
+  }
+  if (/ requires a positive rate and tax calculation method$/.test(diagnostic)) {
+    return 'Tax Code ประเภทนี้ต้องมีอัตราภาษีมากกว่า 0 และระบุวิธีคำนวณภาษี';
+  }
+  return 'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบรูปแบบไฟล์';
 }
 
 /**

@@ -17,6 +17,7 @@ import type {
   CrmMessageSummary,
 } from '@watchdog-bms/contracts';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ForbiddenState } from '@/common/components/state';
 import { cx } from '@/common/components/mangmee';
 import { useToast } from '@/common/components/toast';
@@ -65,6 +66,19 @@ import {
 import { InboxAiPanel } from './InboxAiPanel';
 
 const POLL_MS = 10_000;
+
+function inboxSendApiErrorMessage(error: unknown): string {
+  const candidate = error as { code?: unknown; message?: unknown } | null | undefined;
+  const diagnostic = typeof candidate?.code === 'string'
+    ? candidate.code
+    : typeof candidate?.message === 'string'
+      ? candidate.message
+      : '';
+  if (/(text_too_long|channel_disabled|customer_unfollowed|invalid_access_token)/.test(diagnostic)) {
+    return sendErrorMessage(diagnostic);
+  }
+  return apiErrorMessage(error);
+}
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
 type ComposerMode = 'reply' | 'note';
@@ -388,7 +402,7 @@ export function InboxPrototypePage({
       setComposeText('');
       if (result.message.deliveryStatus === 'FAILED') setSendError(sendErrorMessage(result.message.deliveryError ?? ''));
     } catch (e) {
-      setSendError(sendErrorMessage((e as Error).message ?? ''));
+      setSendError(inboxSendApiErrorMessage(e));
     } finally {
       setSending(false);
     }
@@ -1162,7 +1176,7 @@ function MessageBubble({ companyId, message, canFlagProof }: { companyId: string
         >
           {isMedia ? <MediaContent companyId={companyId} message={message} /> : (message.contentText ?? '')}
         </div>
-        <div className="text-gray-400" style={{ fontSize: 11, marginTop: 4, textAlign: isOut ? 'right' : undefined }} title={message.deliveryError}>
+        <div className="text-gray-400" style={{ fontSize: 11, marginTop: 4, textAlign: isOut ? 'right' : undefined }} title={failed ? sendErrorMessage(message.deliveryError ?? '') : undefined}>
           {failed ? <span className="font-semibold text-red-600">ส่งไม่สำเร็จ · </span> : null}
           {pending ? <span>กำลังส่ง · </span> : null}
           {isOut && message.deliveryStatus === 'SENT' ? <span>ส่งแล้ว · </span> : null}

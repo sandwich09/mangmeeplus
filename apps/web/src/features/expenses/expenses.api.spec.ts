@@ -10,6 +10,7 @@ import {
   downloadSubstituteReceiptPdf,
   fetchAttachmentPreviewBlob,
   fetchSubstituteReceiptPdfBlob,
+  initPersonalSignatureUpload,
   normalizeApiBase,
   resolveUploadUrl,
   uploadReceiptFile,
@@ -70,6 +71,30 @@ describe('expenses.api URL helpers', () => {
     assert.equal(request.headers?.get('content-type'), 'image/png');
     assert.equal(request.headers?.get('if-none-match'), '*');
     assert.equal(request.body, file);
+  });
+
+  it('sends only the server-owned signature upload contract fields', async () => {
+    let request: { url?: string; body?: BodyInit | null } = {};
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      request = { url: String(input), body: init?.body };
+      return new Response(JSON.stringify({ attachmentId: 'att-signature' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await initPersonalSignatureUpload(
+      'co-1',
+      'exp-1',
+      'evidence-1',
+      new File([Uint8Array.from([0x89, 0x50, 0x4e, 0x47])], 'signature.png', { type: 'image/png' }),
+    );
+
+    assert.equal(request.url, '/api/v1/companies/co-1/expenses/exp-1/substitute-receipt/evidence-1/signature-upload-intent');
+    assert.deepEqual(JSON.parse(String(request.body)), {
+      originalFileName: 'signature.png',
+      mimeType: 'image/png',
+      byteSize: 4,
+    });
   });
 
   it('masks file-server failures behind upload-safe messages', async () => {
@@ -173,6 +198,27 @@ describe('expenses.api URL helpers', () => {
     assert.equal(requested, '/api/v1/companies/co-1/expenses/exp-1/substitute-receipt/evidence-1/artifact.pdf');
     assert.equal(blob.type, 'application/pdf');
     assert.equal(blob.size, 5);
+  });
+
+  it('keeps API metadata when a substitute receipt PDF request fails', async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      message: ['property visibility should not exist'],
+      code: 'request_validation_failed',
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json', 'x-request-id': 'req-pdf-1' },
+    })) as typeof fetch;
+
+    await assert.rejects(
+      fetchSubstituteReceiptPdfBlob('co-1', 'exp-1', 'evidence-1'),
+      (error: Error & { status?: number; code?: string; details?: { requestId?: string; message?: string[] } }) => {
+        assert.equal(error.status, 400);
+        assert.equal(error.code, 'request_validation_failed');
+        assert.deepEqual(error.details?.message, ['property visibility should not exist']);
+        assert.equal(error.details?.requestId, 'req-pdf-1');
+        return true;
+      },
+    );
   });
 
   it('appends the download anchor and delays object URL revocation for Safari', async () => {

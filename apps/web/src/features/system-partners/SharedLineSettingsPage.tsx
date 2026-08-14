@@ -33,6 +33,7 @@ import { useState } from 'react';
 import { BackLink } from '@/common/components/app-shell/BackLink';
 import { useToast } from '@/common/components/toast';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { setSharedLineCredential } from './system-partners.api';
 import type { SharedLineCredentialMetadataDto } from './system-partners.api';
 
@@ -74,7 +75,7 @@ function CredentialCard({ kind, onSaved }: { kind: CredentialKind; onSaved: (kin
       setOpen(false);
       onSaved(kind, meta);
     } catch (err) {
-      setError((err as Error).message || 'Failed to save credentials.');
+      setError(apiErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -10,7 +10,7 @@ import type {
 } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { listTaxCodeDefinitions, resolveTransactionTaxPreview } from './transaction-tax.api';
-import { availableTaxDefinitions, suggestedLineTaxCode, transactionTaxErrorMessage } from './transaction-tax.model';
+import { availableTaxDefinitions, suggestedLineTaxCode, transactionTaxDiagnosticMessage, transactionTaxErrorMessage } from './transaction-tax.model';
 
 type Props = {
   companyId: string;
@@ -164,8 +164,8 @@ export function TransactionTaxLineSelector({
               <span>{component.reportContributions.length ? `${component.reportContributions.length} ช่องรายงาน` : 'ยังไม่ผูกรายงาน'}</span>
             </div>
           ))}
-          {preview.warnings.map((warning) => <p key={warning} className="mt-1 text-amber-700">{warning}</p>)}
-          {preview.errors.map((message) => <p key={message} className="mt-1 text-red-700">{message}</p>)}
+          {preview.warnings.map((warning) => <p key={warning} className="mt-1 text-amber-700">{transactionTaxDiagnosticMessage(warning)}</p>)}
+          {preview.errors.map((message) => <p key={message} className="mt-1 text-red-700">{transactionTaxDiagnosticMessage(message)}</p>)}
         </div>
       )}
     </div>

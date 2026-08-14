@@ -17,6 +17,7 @@ import type {
   EmployeeSummary,
   PreviewCrmCustomerMergeResult,
 } from '@watchdog-bms/contracts';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBranchChip } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
@@ -127,7 +128,7 @@ function errorMessage(error: unknown, fallback: string): string {
   if (status === 403) return 'บัญชีนี้ไม่มีสิทธิ์ทำรายการ';
   if (status === 409) return 'ข้อมูลถูกเปลี่ยนหรือพบลูกค้าซ้ำ กรุณาตรวจสอบอีกครั้ง';
   if (status === 422 || status === 400) return 'ข้อมูลไม่ผ่านเงื่อนไข กรุณาตรวจสอบแล้วลองใหม่';
-  return error instanceof Error && error.message && !/^API error/.test(error.message) ? error.message : fallback;
+  return error instanceof Error && error.message ? apiErrorMessage(error) : fallback;
 }
 
 function mergeConflictLabel(code: string): string {

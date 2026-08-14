@@ -11,6 +11,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { Button } from '@/common/components/button';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { createDataRightsCase } from './data-rights.api';
 import {
   CASE_TYPE_DESCRIPTION,
@@ -123,7 +124,7 @@ export default function DataRightsNewPage({ remediation }: { remediation?: DataR
       } else if (apiError.code === 'data_rights_prior_case_invalid') {
         setSubmitError('เคสต้นทางต้องเป็น BLOCKED และมีประเภทกับรหัสเป้าหมายตรงกับเคสใหม่นี้ทุกช่อง');
       } else {
-        setSubmitError(apiError.message || 'สร้างเคสไม่สำเร็จ กรุณาตรวจข้อมูลแล้วลองใหม่');
+        setSubmitError(apiErrorMessage(caught));
       }
     } finally {
       setSubmitting(false);

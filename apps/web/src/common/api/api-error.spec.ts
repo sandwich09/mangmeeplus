@@ -34,6 +34,12 @@ describe('ApiError', () => {
     const err = new ApiError({ kind: 'validation', message: 'bad input', fieldErrors: fields });
     assert.deepEqual(err.fieldErrors, fields);
   });
+
+  it('retains a raw transport cause', () => {
+    const cause = new SyntaxError('Unexpected token');
+    const err = new ApiError({ kind: 'server_error', code: 'invalid_response', message: 'Invalid API response.', cause });
+    assert.equal(err.cause, cause);
+  });
 });
 
 // ── resolvePermissionState ────────────────────────────────────────────────────
@@ -101,15 +107,17 @@ describe('mapResponseToApiError', () => {
   });
 
   it('maps 404 to not_found', async () => {
-    const err = await mapResponseToApiError(makeResponse(404, {}));
+    const err = await mapResponseToApiError(makeResponse(404, { code: 'artifact_not_found' }));
     assert.equal(err.kind, 'not_found');
     assert.equal(err.statusCode, 404);
+    assert.equal(err.code, 'artifact_not_found');
   });
 
   it('maps 429 to rate_limited', async () => {
-    const err = await mapResponseToApiError(makeResponse(429, { message: 'Too many requests.' }));
+    const err = await mapResponseToApiError(makeResponse(429, { message: 'Too many requests.', code: 'quota_exceeded' }));
     assert.equal(err.kind, 'rate_limited');
     assert.equal(err.statusCode, 429);
+    assert.equal(err.code, 'quota_exceeded');
   });
 
   it('maps 422 to validation with NestJS message array', async () => {
@@ -136,9 +144,10 @@ describe('mapResponseToApiError', () => {
   });
 
   it('maps 500 to server_error', async () => {
-    const err = await mapResponseToApiError(makeResponse(500, { message: 'internal' }));
+    const err = await mapResponseToApiError(makeResponse(500, { message: 'internal', code: 'upstream_failed' }));
     assert.equal(err.kind, 'server_error');
     assert.equal(err.statusCode, 500);
+    assert.equal(err.code, 'upstream_failed');
   });
 
   it('reads request id from response header', async () => {

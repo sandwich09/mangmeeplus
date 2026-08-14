@@ -23,12 +23,17 @@ test.describe('TOAST — global feedback', () => {
   });
 
   test('TOAST-02 failed notification save shows the API error toast', async ({ authedPage, companyId }) => {
+    const expected = 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง';
     await authedPage.route('**/api/v1/**', (route) => (
       route.request().method() === 'PUT'
         ? route.fulfill({
-            status: 500,
+            status: 400,
             contentType: 'application/json',
-            body: JSON.stringify({ message: 'ทดสอบข้อผิดพลาด' }),
+            body: JSON.stringify({
+              statusCode: 400,
+              message: ['property visibility should not exist'],
+              error: 'Bad Request',
+            }),
           })
         : route.fallback()
     ));
@@ -38,6 +43,10 @@ test.describe('TOAST — global feedback', () => {
     await expectNoClientError(authedPage);
 
     await authedPage.getByRole('button', { name: 'LINE', exact: true }).click();
-    await expect(authedPage.locator('[role="alert"].toast-enter').filter({ hasText: 'ทดสอบข้อผิดพลาด' })).toBeVisible();
+    const errorToasts = authedPage.locator('[role="alert"].toast-enter');
+    await expect(errorToasts).toHaveCount(1);
+    await expect(errorToasts).toContainText(expected);
+    await expect(errorToasts).not.toContainText(/visibility|property|should not exist|Bad Request|API error/i);
+    await expect(authedPage.locator('body')).not.toContainText(/property visibility should not exist/i);
   });
 });

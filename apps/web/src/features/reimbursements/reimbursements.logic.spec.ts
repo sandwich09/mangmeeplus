@@ -268,11 +268,10 @@ describe('errorMessage', () => {
     assert.match(message, /มากกว่า 0/);
     assert.doesNotMatch(message, /lines_required|amount_must_be_positive/);
   });
-  it('falls back to the raw text for unknown codes and free-form messages', () => {
-    assert.equal(errorMessage('brand_new_server_code'), 'brand_new_server_code');
-    assert.equal(errorMessage('เกิดข้อผิดพลาด'), 'เกิดข้อผิดพลาด');
-    assert.equal(errorMessage('Request failed (500)'), 'Request failed (500)');
-    assert.equal(errorMessage(''), '');
+  it('hides unreviewed API diagnostics behind the shared safe fallback', () => {
+    for (const raw of ['brand_new_server_code', 'เกิดข้อผิดพลาด', 'Request failed (500)', '']) {
+      assert.equal(errorMessage(raw), 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
+    }
   });
 });
 
@@ -283,9 +282,9 @@ describe('errorText', () => {
     const domain = Object.assign(new Error('API error 400'), { status: 400, code: 'missing_receipt' });
     assert.match(errorText(domain), /ใบเสร็จ/);
   });
-  it('falls back to message translation and the generic non-Error copy', () => {
+  it('falls back to message translation and the generic API copy', () => {
     assert.match(errorText(new Error('lines_required')), /1 รายการ/);
-    assert.equal(errorText(undefined), 'เกิดข้อผิดพลาด');
+    assert.equal(errorText(undefined), 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง');
   });
 });
 

@@ -604,12 +604,12 @@ describe('expenseDeleteErrorMessage', () => {
     }
   });
 
-  it('names an unknown blocker and preserves unrelated error fallbacks', () => {
+  it('hides an unknown blocker and preserves unrelated error fallbacks', () => {
     assert.equal(
       expenseDeleteErrorMessage({
         details: { code: 'EXPENSE_HAS_LINKED_DATA', blocker: 'FUTURE_LINK' },
       }, 'en'),
-      'This expense cannot be deleted because it has linked data: FUTURE_LINK.',
+      'This expense cannot be deleted because it has linked data. Review the related records.',
     );
     assert.equal(expenseDeleteErrorMessage(new Error('Retention locked.'), 'th'), 'Retention locked.');
     assert.equal(expenseDeleteErrorMessage(null, 'th'), 'เกิดข้อผิดพลาด');
