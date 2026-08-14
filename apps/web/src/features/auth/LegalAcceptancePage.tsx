@@ -2,7 +2,6 @@
 
 import {
   LEGAL_DATA_DELETION_HREF,
-  type LegalAcceptanceCapacity,
   type LegalAcceptanceLocale,
   type LegalAcceptanceStatusResponse,
 } from '@watchdog-bms/contracts';
@@ -25,13 +24,10 @@ type Props = {
 type Copy = {
   title: string;
   intro: string;
-  company: string;
   requiredLegend: string;
   termsHeading: string;
   privacyHeading: string;
   deletionHeading: string;
-  capacityLabel: string;
-  capacityValue: Record<LegalAcceptanceCapacity, string>;
   effectiveLabel: string;
   attestation: string;
   openDocument: string;
@@ -55,17 +51,10 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
   th: {
     title: 'ก่อนเริ่มใช้งาน MangmeePlus',
     intro: 'โปรดอ่านเอกสารฉบับเต็มและยืนยันทั้ง 3 รายการด้านล่าง การยืนยันนี้ใช้กับบัญชีของคุณทุกกิจการ และระบบจะถามอีกครั้งเฉพาะเมื่อเอกสารออกฉบับใหม่',
-    company: 'กิจการอ้างอิงสำหรับหลักฐานครั้งแรก',
     requiredLegend: '* ข้อมูลจำเป็น',
     termsHeading: 'ข้อกำหนดการใช้งาน',
     privacyHeading: 'ประกาศความเป็นส่วนตัว',
     deletionHeading: 'การลบข้อมูล',
-    capacityLabel: 'สถานะผู้ยืนยัน',
-    capacityValue: {
-      AUTHORIZED_REPRESENTATIVE: 'ผู้มีอำนาจกระทำการแทนกิจการ',
-      INVITED_MEMBER: 'ผู้ใช้งานที่กิจการมอบหมาย',
-      SYSTEM_OPERATOR: 'ผู้ดูแลระบบแพลตฟอร์ม',
-    },
     effectiveLabel: 'วันที่เอกสารมีผลใช้บังคับ',
     attestation: 'เมื่อกดยืนยัน ระบบจะบันทึกวันเวลา ฉบับเอกสารและค่าตรวจสอบไฟล์ ข้อความที่คุณยืนยัน บัญชีผู้ยืนยัน และกิจการที่อ้างอิง ไว้เป็นหลักฐานแบบเพิ่มได้อย่างเดียว',
     openDocument: 'เปิดอ่านเอกสารฉบับเต็ม',
@@ -87,17 +76,10 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
   en: {
     title: 'Before you start using MangmeePlus',
     intro: 'Please read the full documents and confirm all three required items below. This confirmation applies to your account across companies, and we ask again only when a new document release is issued.',
-    company: 'Initial company evidence context',
     requiredLegend: '* Required',
     termsHeading: 'Terms of Use',
     privacyHeading: 'Privacy Notice',
     deletionHeading: 'Data deletion',
-    capacityLabel: 'Signing capacity',
-    capacityValue: {
-      AUTHORIZED_REPRESENTATIVE: 'Authorized representative of the company',
-      INVITED_MEMBER: 'Member assigned by the company',
-      SYSTEM_OPERATOR: 'Platform administrator',
-    },
     effectiveLabel: 'Documents effective from',
     attestation: 'On confirming, we record the date and time, the document versions and file checksums, the statements you confirmed, your account, and the company in scope, as append-only evidence.',
     openDocument: 'Read the full document',
@@ -255,14 +237,6 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
 
         {status ? (
           <dl className="doc-gate-register">
-            <div>
-              <dt>{copy.company}</dt>
-              <dd>{status.companyName}</dd>
-            </div>
-            <div>
-              <dt>{copy.capacityLabel}</dt>
-              <dd>{copy.capacityValue[status.capacity]}</dd>
-            </div>
             <div>
               <dt>{copy.effectiveLabel}</dt>
               <dd>{effectiveDate(status.terms.effectiveDate, status.privacy.effectiveDate)}</dd>
