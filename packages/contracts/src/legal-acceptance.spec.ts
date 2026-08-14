@@ -22,7 +22,7 @@ describe('legal acceptance release', () => {
     }
     assert.equal(CURRENT_LEGAL_DOCUMENTS.terms.latestHref, '/terms');
     assert.equal(CURRENT_LEGAL_DOCUMENTS.privacy.latestHref, '/privacy');
-    assert.equal(LEGAL_ACCEPTANCE_STATEMENT_VERSION, 'v1');
+    assert.equal(LEGAL_ACCEPTANCE_STATEMENT_VERSION, 'v2');
   });
 
   it('derives capacity from server roles rather than accepting a client-selected capacity', () => {
@@ -31,11 +31,13 @@ describe('legal acceptance release', () => {
     assert.equal(legalAcceptanceCapacity(['EMPLOYEE']), 'INVITED_MEMBER');
   });
 
-  it('keeps acceptance, acknowledgment and authority statements semantically separate', () => {
-    const statements = legalAcceptanceStatements('INVITED_MEMBER', 'บริษัทตัวอย่าง', 'th');
+  it('keeps acceptance, privacy and deletion acknowledgment statements semantically separate', () => {
+    const statements = legalAcceptanceStatements('th');
     assert.match(statements.terms, /ฉันยอมรับข้อกำหนดการใช้งาน/);
     assert.match(statements.privacy, /ฉันยืนยันว่าได้รับและมีโอกาสอ่านประกาศความเป็นส่วนตัว/);
     assert.doesNotMatch(statements.privacy, /ยินยอม/);
-    assert.match(statements.capacity, /ได้รับอนุญาตจาก บริษัทตัวอย่าง/);
+    assert.match(statements.deletion, /ขั้นตอนการขอลบบัญชีและข้อมูลส่วนบุคคล/);
+    // Acknowledging the procedure is not a deletion request and not a waiver of the right to ask.
+    assert.doesNotMatch(statements.deletion, /ยินยอม|สละสิทธิ/);
   });
 });

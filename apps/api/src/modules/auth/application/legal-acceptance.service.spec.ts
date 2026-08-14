@@ -30,7 +30,7 @@ const INPUT: AcceptLegalDocumentsInput = {
   statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
   termsAccepted: true,
   privacyAcknowledged: true,
-  capacityConfirmed: true,
+  deletionAcknowledged: true,
   locale: 'th',
   displayChallenge: legalDisplayChallenge({
     userId: 'user-1',
@@ -55,7 +55,7 @@ function acceptedRows(
   at = new Date('2026-08-09T12:00:00.000Z'),
   capacity: 'AUTHORIZED_REPRESENTATIVE' | 'INVITED_MEMBER' | 'SYSTEM_OPERATOR' = 'AUTHORIZED_REPRESENTATIVE',
 ) {
-  const statements = legalAcceptanceStatements(capacity, 'บริษัท ทดสอบ จำกัด', 'th');
+  const statements = legalAcceptanceStatements('th');
   const common = {
     batchId: 'batch-1',
     statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
@@ -72,8 +72,8 @@ function acceptedRows(
     }),
     acceptedAt: at,
   };
-  const termsStatement = `${statements.terms}\n${statements.capacity}`;
-  const privacyStatement = `${statements.privacy}\n${statements.capacity}`;
+  const termsStatement = statements.terms;
+  const privacyStatement = `${statements.privacy}\n${statements.deletion}`;
   return [
     {
       ...common,
@@ -126,7 +126,7 @@ describe('LegalAcceptanceService', () => {
     assert.equal(status.required, true);
     assert.equal(status.companyName, 'บริษัท ทดสอบ จำกัด');
     assert.equal(status.capacity, 'AUTHORIZED_REPRESENTATIVE');
-    assert.match(status.statements.th.capacity, /มีอำนาจสมัครใช้บริการ/);
+    assert.match(status.statements.th.deletion, /ขั้นตอนการขอลบบัญชีและข้อมูลส่วนบุคคล/);
     assert.match(status.statements.en.terms, /I accept/);
     assert.match(status.displayChallenges.th, /^[a-f0-9]{64}$/);
     assert.notEqual(status.displayChallenges.th, status.displayChallenges.en);
@@ -206,7 +206,10 @@ describe('LegalAcceptanceService', () => {
     assert.equal(creates[0].displayChallenge, INPUT.displayChallenge);
     assert.equal(creates[1].displayChallenge, INPUT.displayChallenge);
     assert.deepEqual(creates[0].rolesJson, ['OWNER']);
-    assert.match(creates[0].statementText, /บริษัท ทดสอบ จำกัด/);
+    // The deletion procedure has no document type of its own, so its acknowledgment must be
+    // legible on the privacy notice row rather than lost between the two evidence rows.
+    assert.equal(creates[0].statementText, legalAcceptanceStatements('th').terms);
+    assert.match(creates[1].statementText, /ขั้นตอนการขอลบบัญชีและข้อมูลส่วนบุคคล/);
     assert.equal(
       creates[0].statementSha256,
       createHash('sha256').update(creates[0].statementText, 'utf8').digest('hex'),

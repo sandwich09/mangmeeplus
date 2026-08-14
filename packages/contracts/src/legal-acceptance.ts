@@ -31,7 +31,11 @@ export const CURRENT_LEGAL_DOCUMENTS = {
   },
 } as const;
 
-export const LEGAL_ACCEPTANCE_STATEMENT_VERSION = 'v1';
+/** The data deletion procedure is a live page, not a frozen artifact: it carries no byte hash. */
+export const LEGAL_DATA_DELETION_HREF = '/data-deletion';
+
+// v2 replaced the authority statement with the data deletion acknowledgment.
+export const LEGAL_ACCEPTANCE_STATEMENT_VERSION = 'v2';
 
 export type LegalAcceptanceLocale = 'th' | 'en';
 export type LegalAcceptanceCapacity =
@@ -42,7 +46,7 @@ export type LegalAcceptanceCapacity =
 export type LegalAcceptanceStatements = {
   terms: string;
   privacy: string;
-  capacity: string;
+  deletion: string;
 };
 
 export type LegalAcceptanceStatusResponse = {
@@ -66,7 +70,7 @@ export type AcceptLegalDocumentsInput = {
   statementVersion: string;
   termsAccepted: true;
   privacyAcknowledged: true;
-  capacityConfirmed: true;
+  deletionAcknowledged: true;
   locale: LegalAcceptanceLocale;
   /** Echo of the challenge returned for the locale the user actually reviewed. */
   displayChallenge: string;
@@ -93,34 +97,22 @@ function displayVersion(
 }
 
 export function legalAcceptanceStatements(
-  capacity: LegalAcceptanceCapacity,
-  companyName: string,
   locale: LegalAcceptanceLocale,
 ): LegalAcceptanceStatements {
   const termsVersion = displayVersion(locale, CURRENT_LEGAL_DOCUMENTS.terms);
   const privacyVersion = displayVersion(locale, CURRENT_LEGAL_DOCUMENTS.privacy);
 
   if (locale === 'en') {
-    const capacityStatement = capacity === 'AUTHORIZED_REPRESENTATIVE'
-      ? `I confirm that I am authorized to subscribe to the service and accept these Terms on behalf of ${companyName}.`
-      : capacity === 'SYSTEM_OPERATOR'
-        ? 'I confirm that I am authorized to use the platform administration account within my assigned duties.'
-        : `I confirm that ${companyName} has authorized me to use the service within my assigned role and permissions.`;
     return {
       terms: `I accept the MangmeePlus Terms of Use, version ${termsVersion}.`,
       privacy: `I acknowledge that I have received and had an opportunity to read the MangmeePlus Privacy Notice, version ${privacyVersion}.`,
-      capacity: capacityStatement,
+      deletion: 'I acknowledge the MangmeePlus procedure for requesting deletion of an account and personal data, and the conditions under which data may be retained.',
     };
   }
 
-  const capacityStatement = capacity === 'AUTHORIZED_REPRESENTATIVE'
-    ? `ฉันยืนยันว่ามีอำนาจสมัครใช้บริการและยอมรับข้อกำหนดนี้แทน ${companyName}`
-    : capacity === 'SYSTEM_OPERATOR'
-      ? 'ฉันยืนยันว่าได้รับมอบหมายให้ใช้บัญชีผู้ดูแลระบบตามขอบเขตหน้าที่ของฉัน'
-      : `ฉันยืนยันว่าได้รับอนุญาตจาก ${companyName} ให้ใช้บริการตามบทบาทและสิทธิที่กิจการกำหนด`;
   return {
     terms: `ฉันยอมรับข้อกำหนดการใช้งาน MangmeePlus ${termsVersion}`,
     privacy: `ฉันยืนยันว่าได้รับและมีโอกาสอ่านประกาศความเป็นส่วนตัว MangmeePlus ${privacyVersion} แล้ว`,
-    capacity: capacityStatement,
+    deletion: 'ฉันรับทราบขั้นตอนการขอลบบัญชีและข้อมูลส่วนบุคคลของ MangmeePlus รวมถึงกรณีที่อาจต้องเก็บข้อมูลต่อตามกฎหมายแล้ว',
   };
 }

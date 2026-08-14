@@ -1,9 +1,10 @@
 'use client';
 
-import type {
-  LegalAcceptanceCapacity,
-  LegalAcceptanceLocale,
-  LegalAcceptanceStatusResponse,
+import {
+  LEGAL_DATA_DELETION_HREF,
+  type LegalAcceptanceCapacity,
+  type LegalAcceptanceLocale,
+  type LegalAcceptanceStatusResponse,
 } from '@watchdog-bms/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/common/components/button';
@@ -28,11 +29,10 @@ type Copy = {
   requiredLegend: string;
   termsHeading: string;
   privacyHeading: string;
-  capacityHeading: Record<LegalAcceptanceCapacity, string>;
+  deletionHeading: string;
   capacityLabel: string;
   capacityValue: Record<LegalAcceptanceCapacity, string>;
   effectiveLabel: string;
-  fingerprintLabel: string;
   attestation: string;
   openDocument: string;
   privacyNotConsent: string;
@@ -59,11 +59,7 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     requiredLegend: '* ข้อมูลจำเป็น',
     termsHeading: 'ข้อกำหนดการใช้งาน',
     privacyHeading: 'ประกาศความเป็นส่วนตัว',
-    capacityHeading: {
-      AUTHORIZED_REPRESENTATIVE: 'อำนาจในการยืนยันแทนกิจการ',
-      INVITED_MEMBER: 'สิทธิการใช้งานที่กิจการมอบหมาย',
-      SYSTEM_OPERATOR: 'ขอบเขตหน้าที่ของผู้ดูแลระบบ',
-    },
+    deletionHeading: 'การลบข้อมูล',
     capacityLabel: 'สถานะผู้ยืนยัน',
     capacityValue: {
       AUTHORIZED_REPRESENTATIVE: 'ผู้มีอำนาจกระทำการแทนกิจการ',
@@ -71,7 +67,6 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
       SYSTEM_OPERATOR: 'ผู้ดูแลระบบแพลตฟอร์ม',
     },
     effectiveLabel: 'วันที่เอกสารมีผลใช้บังคับ',
-    fingerprintLabel: 'ค่าตรวจสอบไฟล์ (SHA-256)',
     attestation: 'เมื่อกดยืนยัน ระบบจะบันทึกวันเวลา ฉบับเอกสารและค่าตรวจสอบไฟล์ ข้อความที่คุณยืนยัน บัญชีผู้ยืนยัน และกิจการที่อ้างอิง ไว้เป็นหลักฐานแบบเพิ่มได้อย่างเดียว',
     openDocument: 'เปิดอ่านเอกสารฉบับเต็ม',
     privacyNotConsent: 'การรับทราบนี้ไม่ใช่การให้ความยินยอม ไม่เป็นการสละสิทธิของคุณตาม PDPA และไม่ทำให้ MangmeePlus ใช้ข้อมูลนอกเหนือจากฐานกฎหมายและวัตถุประสงค์ที่แจ้งไว้',
@@ -96,11 +91,7 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     requiredLegend: '* Required',
     termsHeading: 'Terms of Use',
     privacyHeading: 'Privacy Notice',
-    capacityHeading: {
-      AUTHORIZED_REPRESENTATIVE: 'Authority to confirm for the company',
-      INVITED_MEMBER: 'Access assigned by the company',
-      SYSTEM_OPERATOR: 'Platform administrator responsibilities',
-    },
+    deletionHeading: 'Data deletion',
     capacityLabel: 'Signing capacity',
     capacityValue: {
       AUTHORIZED_REPRESENTATIVE: 'Authorized representative of the company',
@@ -108,7 +99,6 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
       SYSTEM_OPERATOR: 'Platform administrator',
     },
     effectiveLabel: 'Documents effective from',
-    fingerprintLabel: 'File checksum (SHA-256)',
     attestation: 'On confirming, we record the date and time, the document versions and file checksums, the statements you confirmed, your account, and the company in scope, as append-only evidence.',
     openDocument: 'Read the full document',
     privacyNotConsent: 'This acknowledgment is not consent, does not waive your data-protection rights, and does not permit MangmeePlus to use data beyond the lawful bases and purposes described in the notice.',
@@ -147,11 +137,6 @@ function effectiveDate(...dates: string[]): string {
   return EFFECTIVE_DATE_FORMAT.format(new Date(`${[...dates].sort().at(-1)!}T00:00:00Z`));
 }
 
-/** Head and tail of the artifact checksum — enough to compare against the evidence row. */
-function shortFingerprint(sha256: string): string {
-  return `${sha256.slice(0, 12)}…${sha256.slice(-12)}`;
-}
-
 export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   // Acceptance is Thai-only for this release because the immutable full Terms
   // and Privacy artifacts are currently published in Thai only.
@@ -164,7 +149,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
-  const [capacityConfirmed, setCapacityConfirmed] = useState(false);
+  const [deletionAcknowledged, setDeletionAcknowledged] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   async function loadStatus(messageAfterLoad?: string) {
@@ -215,7 +200,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
       if (code === 'legal_acceptance_challenge_stale' || code === 'legal_document_version_stale') {
         setTermsAccepted(false);
         setPrivacyAcknowledged(false);
-        setCapacityConfirmed(false);
+        setDeletionAcknowledged(false);
         setSubmitting(false);
         await loadStatus(copy.staleError);
         return;
@@ -241,7 +226,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   // Drives the progress line and the ready state of the execute control. The button is
   // never disabled: an empty submit has to report *which* item is missing and focus it,
   // which a disabled control cannot do.
-  const confirmations = [termsAccepted, privacyAcknowledged, capacityConfirmed];
+  const confirmations = [termsAccepted, privacyAcknowledged, deletionAcknowledged];
   const confirmed = confirmations.filter(Boolean).length;
 
   return (
@@ -333,10 +318,6 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                       {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
                     </a>
                   </div>
-                  <p className="doc-gate-hash doc-display" title={status.terms.artifactSha256}>
-                    <span className="doc-gate-hash-label">{copy.fingerprintLabel}</span>{' '}
-                    {shortFingerprint(status.terms.artifactSha256)}
-                  </p>
                   <label className="doc-gate-check">
                     <input
                       type="checkbox"
@@ -363,10 +344,6 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                       {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
                     </a>
                   </div>
-                  <p className="doc-gate-hash doc-display" title={status.privacy.artifactSha256}>
-                    <span className="doc-gate-hash-label">{copy.fingerprintLabel}</span>{' '}
-                    {shortFingerprint(status.privacy.artifactSha256)}
-                  </p>
                   <label className="doc-gate-check">
                     <input
                       type="checkbox"
@@ -389,19 +366,27 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                   <div className="doc-gate-step-head">
                     <div className="doc-gate-step-id">
                       <span className="doc-gate-step-num doc-display" aria-hidden>3</span>
-                      <h2 className="doc-gate-step-title">{copy.capacityHeading[status.capacity]}</h2>
+                      <h2 className="doc-gate-step-title">{copy.deletionHeading}</h2>
                     </div>
+                    <a
+                      href={LEGAL_DATA_DELETION_HREF}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="doc-gate-open"
+                    >
+                      {copy.openDocument} ↗<span className="sr-only"> (เปิดในแท็บใหม่)</span>
+                    </a>
                   </div>
                   <label className="doc-gate-check">
                     <input
                       type="checkbox"
-                      name="capacityConfirmed"
+                      name="deletionAcknowledged"
                       required
-                      checked={capacityConfirmed}
-                      onChange={(event) => setCapacityConfirmed(event.target.checked)}
+                      checked={deletionAcknowledged}
+                      onChange={(event) => setDeletionAcknowledged(event.target.checked)}
                       aria-describedby={error ? 'legal-acceptance-error' : undefined}
                     />
-                    <span>{statements?.capacity}<RequiredMark /></span>
+                    <span>{statements?.deletion}<RequiredMark /></span>
                   </label>
                 </li>
               </ol>

@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   CURRENT_LEGAL_DOCUMENTS,
   LEGAL_ACCEPTANCE_STATEMENT_VERSION,
+  LEGAL_DATA_DELETION_HREF,
   legalAcceptanceCapacity,
   legalAcceptanceStatements,
   type AcceptLegalDocumentsInput,
@@ -75,23 +76,14 @@ function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
-const LEGAL_ACCEPTANCE_CAPACITIES: readonly LegalAcceptanceCapacity[] = [
-  'AUTHORIZED_REPRESENTATIVE',
-  'INVITED_MEMBER',
-  'SYSTEM_OPERATOR',
-];
 const LEGAL_ACCEPTANCE_LOCALES: readonly LegalAcceptanceLocale[] = ['th', 'en'];
-const STATEMENT_TEMPLATE_COMPANY_SENTINEL = '__MANGMEEPLUS_COMPANY_NAME__';
 
 /** Changes automatically when any shared clickwrap sentence changes, even without a manual bump. */
 export function legalStatementTemplateFingerprint(): string {
-  return sha256(JSON.stringify(LEGAL_ACCEPTANCE_CAPACITIES.flatMap((capacity) =>
-    LEGAL_ACCEPTANCE_LOCALES.map((locale) => ({
-      capacity,
-      locale,
-      statements: legalAcceptanceStatements(capacity, STATEMENT_TEMPLATE_COMPANY_SENTINEL, locale),
-    })),
-  )));
+  return sha256(JSON.stringify(LEGAL_ACCEPTANCE_LOCALES.map((locale) => ({
+    locale,
+    statements: legalAcceptanceStatements(locale),
+  }))));
 }
 
 type DisplayChallengeContext = LegalAcceptanceLocator & {
@@ -101,7 +93,7 @@ type DisplayChallengeContext = LegalAcceptanceLocator & {
 };
 
 export function legalDisplayChallenge(context: DisplayChallengeContext): string {
-  const statements = legalAcceptanceStatements(context.capacity, context.companyName, context.locale);
+  const statements = legalAcceptanceStatements(context.locale);
   return sha256(JSON.stringify([
     'MANGMEEPLUS_LEGAL_DISPLAY_CHALLENGE_V1',
     context.membershipId,
@@ -120,9 +112,10 @@ export function legalDisplayChallenge(context: DisplayChallengeContext): string 
     CURRENT_LEGAL_DOCUMENTS.privacy.version,
     CURRENT_LEGAL_DOCUMENTS.privacy.href,
     CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
+    LEGAL_DATA_DELETION_HREF,
     statements.terms,
     statements.privacy,
-    statements.capacity,
+    statements.deletion,
   ]));
 }
 
@@ -199,8 +192,8 @@ export class LegalAcceptanceService {
       terms: CURRENT_LEGAL_DOCUMENTS.terms,
       privacy: CURRENT_LEGAL_DOCUMENTS.privacy,
       statements: {
-        th: legalAcceptanceStatements(capacity, membership.company.name, 'th'),
-        en: legalAcceptanceStatements(capacity, membership.company.name, 'en'),
+        th: legalAcceptanceStatements('th'),
+        en: legalAcceptanceStatements('en'),
       },
       displayChallenges: {
         th: legalDisplayChallenge({
@@ -261,11 +254,12 @@ export class LegalAcceptanceService {
         current: await this.getStatus(actor),
       });
     }
-    const statements = legalAcceptanceStatements(capacity, membership.company.name, input.locale);
-    // The authority statement is part of each clickwrap evidence row, so either document row
-    // remains independently intelligible if records are later exported for a legal claim.
-    const termsStatement = `${statements.terms}\n${statements.capacity}`;
-    const privacyStatement = `${statements.privacy}\n${statements.capacity}`;
+    const statements = legalAcceptanceStatements(input.locale);
+    const termsStatement = statements.terms;
+    // `LegalDocumentType` has no data deletion member: the deletion procedure is a live page rather
+    // than a frozen artifact, so its acknowledgment is evidenced on the privacy notice row it
+    // belongs to, keeping that row intelligible on its own if records are exported for a claim.
+    const privacyStatement = `${statements.privacy}\n${statements.deletion}`;
     const acceptedAt = new Date();
     const batchId = randomUUID();
     const acceptanceScope = legalReleaseScopeRef(actor.userId);
@@ -434,7 +428,7 @@ export class LegalAcceptanceService {
         },
       });
     }
-    if (input.termsAccepted !== true || input.privacyAcknowledged !== true || input.capacityConfirmed !== true) {
+    if (input.termsAccepted !== true || input.privacyAcknowledged !== true || input.deletionAcknowledged !== true) {
       throw new BadRequestException({
         code: 'legal_acceptance_confirmation_required',
         message: 'All required confirmations must be explicitly checked.',

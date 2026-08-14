@@ -1394,26 +1394,6 @@
   color: var(--doc-accent-deep);
 }
 
-/* The checksum of the exact file being accepted, verbatim from the evidence row.
-   Showing it is what makes this screen a record and not a form: the reader can tell
-   which artifact their acceptance is bound to. Latin-only run, so tracking is safe. */
-.doc-gate-hash {
-  display: block;
-  margin: 0.875rem 0 0;
-  border-radius: 0.5rem;
-  background: var(--color-gray-50);
-  padding: 0.4375rem 0.625rem;
-  color: var(--doc-soft);
-  font-size: var(--doc-text-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.doc-gate-hash-label {
-  font-weight: 600;
-}
-
 /* The statement being agreed to, and the whole block is the hit area: a legal tick
    should not be a 21px target on a phone. Min height keeps a one-line statement as
    easy to hit as a three-line one. */
