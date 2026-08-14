@@ -5,6 +5,8 @@ repo_root="$(git rev-parse --show-toplevel)"
 script="$repo_root/infra/uat/redis-blue-green.sh"
 policy="$repo_root/infra/uat/redis-blue-green-operator-policy.template.json"
 deploy="$repo_root/infra/prod-ecs-express/deploy.sh"
+deploy_wrapper="$repo_root/infra/uat/deploy-with-runtime-mutex.sh"
+mutex_lib="$repo_root/infra/uat/lib-runtime-mutex.sh"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-redis-blue-green-spec.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -143,6 +145,20 @@ run_mode() {
     FAKE_CALL_LOG="$tmp_dir/calls.log" "$@" bash "$script" "$selected"
 }
 
+# The deploy caller exposes REGION, while the Redis caller historically exposed region. The
+# shared mutex must own its AWS region and must work with the lowercase caller variable absent.
+reset_state
+(
+  unset region
+  export AWS_REGION=ap-southeast-1 AWS_BIN="$tmp_dir/aws" \
+    FAKE_STATE="$tmp_dir/state.json" FAKE_CALL_LOG="$tmp_dir/calls.log"
+  aws_cmd() { "$AWS_BIN" "$@"; }
+  . "$mutex_lib"
+  uat_runtime_mutex_acquire runtime-spec
+  uat_runtime_mutex_release
+)
+jq -e '.lock == false and .lockValue == ""' "$tmp_dir/state.json" >/dev/null
+
 reset_state
 prepare_output="$(run_mode prepare CONFIRM_UAT_REDIS_PREPARE=CREATE_ENCRYPTED_CANDIDATE)"
 jq -e '.state=="prepared" and .secretArnPreserved==true and .runtimeChanged==false' <<< "$prepare_output" >/dev/null
@@ -246,5 +262,9 @@ jq -e 'any(.Statement[]; .Sid=="ReleaseUatRedisMigrationMutex"
 grep -Fq '. infra/uat/lib-runtime-mutex.sh' "$deploy"
 grep -Fq 'uat_runtime_mutex_acquire "deploy-${TARGET}"' "$deploy"
 grep -Fq 'UAT Redis migration/deploy mutex is active or cannot be acquired' "$deploy"
+grep -Fq 'exec bash infra/prod-ecs-express/deploy.sh "${1:-all}"' "$deploy_wrapper"
+if grep -Eq 'lib-runtime-mutex|uat_runtime_mutex_acquire' "$deploy_wrapper"; then
+  echo 'ERROR: compatibility wrapper attempts to own the mutex a second time' >&2; exit 1
+fi
 
 echo 'redis-blue-green.spec.sh: ok'
