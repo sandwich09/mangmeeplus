@@ -12,7 +12,6 @@ import {
   LegalAcceptanceService,
   legalDisplayChallenge,
   legalReleaseScopeRef,
-  legalStatementTemplateFingerprint,
 } from './legal-acceptance.service';
 
 const ACTOR = {
@@ -168,6 +167,67 @@ describe('LegalAcceptanceService', () => {
 
     assert.equal(status.required, true);
     assert.equal(status.acceptedAt, null);
+  });
+
+  it('keeps the same legal content accepted after a statement-only deployment', async () => {
+    const rows: any[] = acceptedRows();
+    for (const row of rows) {
+      row.statementVersion = 'v1';
+      row.displayChallenge = 'legacy-display-challenge';
+      row.statementText = `legacy statement\n${row.statementText}`;
+      row.statementSha256 = createHash('sha256').update(row.statementText, 'utf8').digest('hex');
+    }
+    let recordWhere: any;
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['OWNER']) },
+        legalDocumentActionRecord: {
+          findMany: async (args: any) => { recordWhere = args.where; return rows; },
+        },
+      },
+    } as any;
+    const service = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
+
+    const status = await service.getStatus(ACTOR);
+
+    assert.equal(status.required, false);
+    assert.equal(status.acceptedAt, '2026-08-09T12:00:00.000Z');
+    assert.equal(recordWhere.acceptedByUserId, ACTOR.userId);
+    assert.equal(recordWhere.scopeRef, undefined);
+    assert.equal(recordWhere.statementVersion, undefined);
+  });
+
+  it('keeps the same hashes accepted across an internal release-id and URL change', async () => {
+    const rows: any[] = acceptedRows();
+    for (const row of rows) {
+      row.documentVersion = 'v99';
+      row.artifactUrl = row.documentType === 'TERMS_OF_USE'
+        ? '/legal/releases/v99/terms-th.html'
+        : '/legal/releases/v99/privacy-th.html';
+    }
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['OWNER']) },
+        legalDocumentActionRecord: { findMany: async () => rows },
+      },
+    } as any;
+    const service = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
+
+    assert.equal((await service.getStatus(ACTOR)).required, false);
+  });
+
+  it('requires acceptance when either immutable document hash changes', async () => {
+    const rows: any[] = acceptedRows();
+    rows[0] = { ...rows[0]!, releaseFingerprintSha256: 'f'.repeat(64) };
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['OWNER']) },
+        legalDocumentActionRecord: { findMany: async () => rows },
+      },
+    } as any;
+    const service = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
+
+    assert.equal((await service.getStatus(ACTOR)).required, true);
   });
 
   it('writes exactly two append-only evidence rows and two secondary audits atomically', async () => {
@@ -334,7 +394,11 @@ describe('LegalAcceptanceService', () => {
   it('returns an existing current pair idempotently without appending more evidence', async () => {
     let createCalls = 0;
     let auditCalls = 0;
-    const rows = acceptedRows();
+    const rows: any[] = acceptedRows();
+    for (const row of rows) {
+      row.statementVersion = 'v1';
+      row.displayChallenge = 'legacy-display-challenge';
+    }
     const tx = {
       legalDocumentActionRecord: {
         findMany: async () => rows,
@@ -360,14 +424,13 @@ describe('LegalAcceptanceService', () => {
   });
 
   it('keeps current evidence after an invited member becomes an owner', async () => {
-    const userScope = legalReleaseScopeRef(ACTOR.userId);
     const rows = acceptedRows(new Date('2026-08-09T12:00:00.000Z'), 'INVITED_MEMBER');
     let currentRoles = ['STAFF'];
     const prisma = {
       client: {
         companyMembership: { findFirst: async () => membership(currentRoles) },
         legalDocumentActionRecord: {
-          findMany: async (args: any) => args.where.scopeRef === userScope ? rows : [],
+          findMany: async (args: any) => args.where.acceptedByUserId === ACTOR.userId ? rows : [],
         },
       },
     } as any;
@@ -379,7 +442,6 @@ describe('LegalAcceptanceService', () => {
   });
 
   it('keeps current evidence when the same user enters another company', async () => {
-    const userScope = legalReleaseScopeRef(ACTOR.userId);
     const rows = acceptedRows(new Date('2026-08-09T12:00:00.000Z'), 'INVITED_MEMBER');
     const otherActor = { ...ACTOR, companyId: 'company-2', membershipId: 'membership-2' };
     const prisma = {
@@ -391,7 +453,7 @@ describe('LegalAcceptanceService', () => {
           roles: [{ role: { key: 'MANAGER' } }],
         }) },
         legalDocumentActionRecord: {
-          findMany: async (args: any) => args.where.scopeRef === userScope ? rows : [],
+          findMany: async (args: any) => args.where.acceptedByUserId === ACTOR.userId ? rows : [],
         },
       },
     } as any;
@@ -400,30 +462,37 @@ describe('LegalAcceptanceService', () => {
     assert.equal(await service.isRequired(otherActor), false);
   });
 
-  it('changes user scope for statement, artifact URL, document, or hash changes without overwriting history', () => {
+  it('keys new acceptance writes only by user and immutable document hashes', () => {
     const base = legalReleaseScopeRef(ACTOR.userId);
     const release = {
-      statementVersion: LEGAL_ACCEPTANCE_STATEMENT_VERSION,
-      termsVersion: CURRENT_LEGAL_DOCUMENTS.terms.version,
-      termsArtifactUrl: CURRENT_LEGAL_DOCUMENTS.terms.href,
       termsFingerprint: CURRENT_LEGAL_DOCUMENTS.terms.artifactSha256,
-      privacyVersion: CURRENT_LEGAL_DOCUMENTS.privacy.version,
-      privacyArtifactUrl: CURRENT_LEGAL_DOCUMENTS.privacy.href,
       privacyFingerprint: CURRENT_LEGAL_DOCUMENTS.privacy.artifactSha256,
-      statementTemplateFingerprint: legalStatementTemplateFingerprint(),
     };
+    assert.equal(base, legalReleaseScopeRef(ACTOR.userId, release));
     assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
-      ...release, statementVersion: 'future-statement',
-    }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
-      ...release, termsVersion: 'future-terms',
-    }));
-    assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
-      ...release, termsArtifactUrl: '/legal/releases/future/terms-th.html',
+      ...release, termsFingerprint: 'e'.repeat(64),
     }));
     assert.notEqual(base, legalReleaseScopeRef(ACTOR.userId, {
       ...release, privacyFingerprint: 'f'.repeat(64),
     }));
     assert.notEqual(base, legalReleaseScopeRef('another-user'));
+  });
+
+  it('uses the latest coherent pair when legacy retries produced more than two matching rows', async () => {
+    const older: any[] = acceptedRows(new Date('2026-08-09T12:00:00.000Z'));
+    const newer: any[] = acceptedRows(new Date('2026-08-15T02:00:00.000Z'));
+    for (const row of newer) row.batchId = 'batch-2';
+    const prisma = {
+      client: {
+        companyMembership: { findFirst: async () => membership(['OWNER']) },
+        legalDocumentActionRecord: { findMany: async () => [...older, ...newer] },
+      },
+    } as any;
+    const service = new LegalAcceptanceService(prisma, { log: async () => undefined } as any);
+
+    const status = await service.getStatus(ACTOR);
+
+    assert.equal(status.required, false);
+    assert.equal(status.acceptedAt, '2026-08-15T02:00:00.000Z');
   });
 });

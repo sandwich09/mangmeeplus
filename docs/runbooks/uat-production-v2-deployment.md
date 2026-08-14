@@ -114,8 +114,10 @@ readiness อีกครั้งโดยไม่แสดง secret ก่�
 
 ห้ามใช้ `set -x`, `curl -v`, command-line header, `tee` หรือพิมพ์ secret. ถ้า Privacy/PDPA หรือ
 journey ธุรกิจเปลี่ยน ให้รัน acceptance ของ journey นั้นบน exact UAT candidate เพิ่มก่อน READY.
-เมื่อ legal version เปลี่ยน ต้องพิสูจน์ว่าผู้ใช้ที่เกี่ยวข้องถูกขอ acceptance รุ่นใหม่ตามกติกาและห้าม
-bypass `legalAcceptanceRequired` เพียงเพื่อให้ smoke test ผ่าน.
+เมื่อ Terms/Privacy artifact SHA-256 pair เปลี่ยนเพราะเนื้อหาสาระเปลี่ยน ต้องพิสูจน์ว่าผู้ใช้ที่เกี่ยวข้อง
+ถูกขอ acceptance รุ่นใหม่ตามกติกาและห้าม bypass `legalAcceptanceRequired` เพียงเพื่อให้ smoke test ผ่าน.
+การ deploy ซ้ำ, เปลี่ยน internal version/URL, display label, statement version หรือข้อความ/หน้าตา checkbox
+โดย artifact hash pair เดิม ต้องไม่ทำให้ผู้ใช้ที่มีหลักฐานครบถูกถามซ้ำ.
 
 ## 4. Production Readiness
 

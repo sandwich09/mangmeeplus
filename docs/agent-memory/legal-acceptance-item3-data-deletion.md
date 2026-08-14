@@ -1,6 +1,6 @@
 # Agent Memory: legal-acceptance หน้ายืนยัน — ตัดค่าตรวจสอบไฟล์ และเปลี่ยนข้อ 3 เป็นการลบข้อมูล
 
-Status: implemented + unit-verified (2026-08-15) — ยังไม่ได้รัน e2e (ต้องมี API/web/DB จริง)
+Status: acceptance identity correction implemented + unit/typecheck/deployment-contract verified (2026-08-15) — เป็นการแก้ไขภายใน/UAT เท่านั้น ยังไม่ได้แสดงบน Production หรือเปิดใช้จริง; ยังไม่ได้รัน live e2e (ต้องมี API/web/DB จริง)
 Owner: supapron (เจ้าของสั่งตรงในเซสชัน 2026-08-15)
 
 Scope:
@@ -21,12 +21,28 @@ Decisions (จากคำสั่งเจ้าของ + คำถามย
      ว่าผู้กดมีอำนาจผูกพันกิจการ) — `actorCapacity` ยังบันทึกจาก role ฝั่ง server เหมือนเดิม
 3. `/data-deletion` เป็นหน้า live ไม่ใช่ artifact ที่ freeze ไว้พร้อม hash → ข้อ 3 ผูกกับข้อความยืนยัน +
    `statementVersion` + URL ของหน้า ไม่ผูกกับ SHA-256
+4. Internal release version กับ display version ยังไม่ตรงกันโดยเจตนาในช่วงเตรียม UAT:
+   - ระบบเก็บ `CURRENT_LEGAL_DOCUMENTS.*.version = v3` และ artifact URL `/legal/releases/v3/...`
+   - หน้าจอแสดงผู้ใช้เป็น `ฉบับที่ 1 (1.0)`
+   - mapping นี้เป็นการแก้ไขภายในที่ยังไม่ได้แสดงบน Production/ยังไม่ได้เปิดใช้จริง จึงห้ามถือว่า
+     ค่า `v3` ในหลักฐาน UAT คือ version ที่ผู้ใช้ Production รับทราบแล้ว
+   - ก่อนเปิดใช้จริงต้องตัดสินใจและบันทึก mapping ให้ชัดเจน หรือทำให้ version ที่แสดงกับ version ที่เก็บตรงกัน
 
-Consequence ที่แจ้งเจ้าของแล้ว:
+Consequence เดิม (ยกเลิกโดยคำตัดสินเจ้าของ 2026-08-15):
 
 - ชุดข้อความเปลี่ยน → `legalStatementTemplateFingerprint()` เปลี่ยน → `scopeRef` เปลี่ยน และ
   `LEGAL_ACCEPTANCE_STATEMENT_VERSION` bump `v1` → `v2` → **ผู้ใช้ที่เคยยอมรับแล้วจะถูกถามใหม่ทุกคน**
-  (surface = `MATERIAL_UPDATE`) หลักฐานเดิมยังอยู่ครบแบบ append-only
+  (surface = `MATERIAL_UPDATE`) หลักฐานเดิมยังอยู่ครบแบบ append-only — พฤติกรรมนี้เป็น root cause
+  ที่ต้องแก้ เพราะ Terms/Privacy artifact hash pair ไม่ได้เปลี่ยน
+
+Decision ใหม่ 2026-08-15:
+
+- re-acceptance ผูกเฉพาะ user + current Terms/Privacy artifact SHA-256 pair
+- internal version/URL, display label, statement version/template และ redeploy ไม่ใช่ trigger
+- หลักฐาน v3 เดิมที่เป็น coherent pair และ hash ตรง current pair ต้องใช้ต่อได้โดยไม่ update/backfill DB
+- display challenge ยังผูกข้อความล่าสุดเพื่อ reject form ที่เปิดค้าง แต่ไม่ invalidate หลักฐานที่บันทึกแล้ว
+- ถ้า Data Deletion เปลี่ยนสาระจนต้องรับทราบใหม่ ต้องออก immutable Terms/Privacy release ใหม่ระหว่างที่
+  Data Deletion ยังไม่มี frozen artifact ของตัวเอง
 
 Plan:
 
@@ -63,7 +79,20 @@ Verification:
   (ของเดิมจาก generated Prisma client ที่ค้าง — expenses/ledger/platform-access ไม่เกี่ยวกับงานนี้)
 - ยังไม่ได้รัน `e2e/legal-acceptance.spec.ts` เพราะต้องยกสแตกจริง (API + web + Postgres)
 
+Verification 2026-08-15 — acceptance identity correction:
+
+- Contracts legal release tests 3/3 ผ่าน
+- API legal/auth focused tests 89/89 ผ่าน; ในนี้ LegalAcceptanceService 18/18 ครอบ statement-only deploy,
+  internal release-id/URL change, changed artifact hash, legacy idempotency, cross-company/role และหลาย legacy batch
+- API `tsc --noEmit` ผ่านสะอาด
+- production maintenance pin sync/check และ maintenance release validator ผ่าน
+- production image security aggregate ผ่าน รวม workflow/READY/passport/migration/security contracts
+- `git diff --check` ผ่าน; ไม่มี migration, backfill, update หรือ delete หลักฐาน acceptance เดิม
+- ยังไม่ได้รัน browser e2e บน deployed UAT candidate
+
 Next:
 
 - รัน e2e legal-acceptance เมื่อยกสแตกได้ แล้วบันทึกผลที่นี่
-- ก่อน deploy: แจ้งผู้ใช้ว่าทุกคนจะถูกขอยืนยันใหม่หนึ่งรอบ (statement v2)
+- หลัง deploy candidate: ยืนยันด้วยผู้ใช้ที่มี v3 hash pair เดิมว่า `required=false` และเข้า business route ได้
+- ก่อน Production launch: resolve ความไม่ตรงกันระหว่าง internal `v3` กับ display `ฉบับที่ 1 (1.0)` และยืนยัน
+  ว่า evidence ที่เกิดใน UAT ไม่ถูกนับเป็น Production/customer acceptance
