@@ -7,7 +7,7 @@ Docs: docs/specs/password-reset-line-flow-spec.md + docs/plans/password-reset-li
 
 Locked answers to the open questions (2026-07-25):
 1. mustChangePassword block scoped by JWT `provider` claim — `'line'` sessions exempt (no DB migration; refresh preserves claim; absent claim = block as today).
-2. Username-only input. 3. Generic responses + reuse existing reset-request rate buckets; static line "หากคุณเป็นเจ้าของกิจการ กรุณาติดต่อ support@mangmeeplus.com" always shown.
+2. Username-only input. 3. Generic responses + reuse existing reset-request rate buckets; static line "หากคุณเป็นเจ้าของกิจการ กรุณาติดต่อ contact@mangmeeplus.com" always shown.
 4. No deliverable ADMIN → notify OWNER; admin requester → OWNER; owner requester → no push. TTL stays 72h.
 5. Email flow closed (controller endpoints removed, web pages/BFF deleted); use cases + PasswordResetToken parked for future. No in-app noti fallback yet.
 Build facts: internal LINE rail uses system OA token (config.lineMessagingChannelAccessToken); api test list is hand-maintained in apps/api/package.json; LoginPage lacked a forgot link (Lane C adds); worktree shared with another active session — baseline of pre-existing dirty files saved at scratchpad git-baseline-before-lanes.txt; commit must stage surgically.
