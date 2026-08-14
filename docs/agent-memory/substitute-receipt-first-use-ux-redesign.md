@@ -155,3 +155,49 @@ Focused verification: contracts typecheck PASS; web typecheck PASS; wizard/error
 6. Payer and approver: preview/signature/acknowledgement gates, including OWNER_SELF combined presentation.
 7. Completed state: download/open/back-to-expense and secondary version history.
 8. Check desktop screenshot proportions and at least one narrow viewport for wrapping, sticky-card fallback, and tap targets.
+
+## Evidence upload is one action now (2026-08-14)
+
+Reported: "Upload หลักฐานแล้วไปต่อไม่ได้" on `/companies/<id>/expenses/substitute-receipts/new`,
+step 2, with a screenshot showing both panels holding a filename and the readiness card still
+reading `ยังขาด 1 รายการ`.
+
+Not a backend failure. The panel had a **two-step upload**: `ThemedFile` staged the pick into
+`supportingFile` / `paymentFile`, and only the separate `เพิ่มไฟล์หลักฐาน` button called
+`uploadEvidence`. `ThemedFile` renders the chosen name with a clear (×) control and an upload
+glyph reading `เปลี่ยนไฟล์`, so a staged file is visually indistinguishable from an uploaded
+one — people filled both panels, saw the checklist still short, and had nothing on screen to
+tell them the file had never left the browser. Readiness counts `supportingIds` /`paymentIds`
+(attachment ids), which a staged `File` never enters.
+
+Fix, in `SubstituteReceiptWizardPage.tsx`: picking a file uploads it.
+
+- `uploadEvidence(purpose, picked?)` takes the file as an argument. The picker's `onChange`
+  fires before the staged-file state has been applied, so reading it from state there would
+  upload the *previous* file, or none. Existing call sites pass nothing and still read state.
+- `ThemedFile` gets `disabled={busy}` so a second pick cannot race an in-flight upload.
+- The `เพิ่มไฟล์หลักฐาน` button now renders only while a staged file exists, which after this
+  change means only after a failed upload — it is the retry, not the happy path.
+
+Verified live against `infra/docker/compose.local.yml` with `apps/web` in `next dev` on :3000
+(the API's `CORS_ALLOWED_ORIGINS` only lists :3000/:3001, so the dev server has to take that
+port — stop `docker-web-1` first and start it again afterwards). Signed in as `Owner`, took the
+Grab expense through step 1 and the details form, then on the evidence step performed exactly
+one action per panel — `setInputFiles`, no follow-up click:
+
+| | available-file panels | submit |
+|---|---|---|
+| before | 0 | disabled |
+| after supporting pick | 1 | disabled (payment still missing) |
+| after payment pick | 2 | **enabled** |
+
+Both files appear checked under `ไฟล์ที่มีในรายการนี้`, the picker returns to empty, the
+`เพิ่มไฟล์หลักฐาน` button is gone, and the readiness card reads
+`ข้อมูลส่วนนี้ครบแล้ว พร้อมไปต่อ` with all four rows green. `apps/web` `tsc --noEmit` clean;
+`pnpm test` 898/898.
+
+Note for the next reader: the details-step controls carry no `type`, `id`, `name` or
+`aria-label`, so `input[type="text"]` matches nothing there — drive them by placeholder
+(`ชื่อบุคคล ร้านค้า หรือผู้ให้บริการ`, `เช่น ผู้ให้บริการรายย่อยแจ้งว่า…`,
+`เช่น เดินทางไปพบลูกค้าโครงการ A…`). Filling the tax-id field with a non-numeric value silently
+blocks readiness through `payeeIdentityIssues`.
