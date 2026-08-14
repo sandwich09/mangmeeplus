@@ -164,6 +164,22 @@ export type ReceiptOcrAdditionalCharge = {
   confidence?: number;
 };
 
+/** Spec §5 line splitting: one printed row of the document's item block. Advisory only — the API
+ *  re-derives every total from these rows and keeps them solely when the arithmetic reconciles with
+ *  the printed document totals, otherwise the draft falls back to the single summary line. */
+export type ReceiptOcrLineItem = {
+  description: string;
+  quantity: string;
+  /** The row's printed extended amount (quantity × unit price). Thai receipts print this money
+   *  column while the per-unit price is often absent, so reconciliation is built on it. */
+  amount: string;
+  /** The row's printed per-unit price, when the document actually shows one. */
+  unitPrice?: string;
+  /** One short exact span copied from stage-one OCR text. */
+  evidenceSignal: string;
+  confidence?: number;
+};
+
 export type ReceiptOcrFieldResult = {
   vendorName?: string;
   vendorTaxId?: string;
@@ -182,6 +198,10 @@ export type ReceiptOcrFieldResult = {
   whtAmount?: string;
   grandTotalAmount?: string;
   vatMode?: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
+  /** Printed item rows in document order, when the item block is legible. The single
+   *  description/quantity/unitPrice above stays the whole-document summary the draft uses whenever
+   *  these rows are absent or fail reconciliation. */
+  lines?: ReceiptOcrLineItem[];
   /** Positive printed charges only; discounts/negative rounding stay in discountAmount. */
   additionalCharges?: ReceiptOcrAdditionalCharge[];
   /** Optional reporting-category suggestion. It is advisory until the API revalidates

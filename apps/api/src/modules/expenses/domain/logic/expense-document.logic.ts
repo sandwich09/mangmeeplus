@@ -168,25 +168,6 @@ export function validateCaptureHints(hints: CaptureHintsInput, activeCategoryIds
   };
 }
 
-export type SuggestedLine = {
-  description?: string;
-  quantity?: string;
-  unitPrice?: string;
-  lineTotalAmount?: string;
-};
-
-export type GatedLine = {
-  description: string;
-  quantity: string;
-  unitPrice: string;
-  sourceLineText: string | null;
-};
-
-export type LineSplitResult = {
-  lines: GatedLine[];
-  fallback: boolean;
-};
-
 function toPositiveNumber(value: string | undefined): number | null {
   if (value === undefined || value === null || `${value}`.trim() === '') return null;
   const parsed = Number(`${value}`.replace(/,/g, '').trim());
@@ -244,53 +225,4 @@ export function isExpenseExtractionEligible(
     && !classification.requiresClarification
     && EXPENSE_EXTRACTION_KINDS.has(classification.documentKind)
     && amountSignalSupports(grandTotalAmount, classification.amountSignals);
-}
-
-/**
- * Multi-line receipt split gate: keep AI-suggested lines only when every line
- * has a description and consistent quantity/price/total evidence, and the sum
- * of line totals stays within 2% (or 1 THB) of the visible grand total.
- * Otherwise fall back to one summary line so the draft stays reviewable.
- */
-export function gateLineSplit(suggested: SuggestedLine[], grandTotalAmount: string | undefined, summaryDescription: string): LineSplitResult {
-  const fallbackLine: GatedLine = {
-    description: summaryDescription,
-    quantity: '1',
-    unitPrice: grandTotalAmount && toPositiveNumber(grandTotalAmount) ? grandTotalAmount : '0',
-    sourceLineText: null,
-  };
-
-  if (!suggested || suggested.length < 2) {
-    return { lines: [fallbackLine], fallback: true };
-  }
-
-  const gated: GatedLine[] = [];
-  let sum = 0;
-  for (const line of suggested) {
-    const description = line.description?.trim();
-    if (!description) return { lines: [fallbackLine], fallback: true };
-    const qty = toPositiveNumber(line.quantity) ?? 1;
-    let unitPrice = toPositiveNumber(line.unitPrice);
-    const lineTotal = toPositiveNumber(line.lineTotalAmount);
-    if (unitPrice === null && lineTotal !== null) unitPrice = lineTotal / qty;
-    if (unitPrice === null) return { lines: [fallbackLine], fallback: true };
-    const computedTotal = lineTotal ?? qty * unitPrice;
-    if (lineTotal !== null && Math.abs(qty * unitPrice - lineTotal) > Math.max(lineTotal * 0.02, 1)) {
-      return { lines: [fallbackLine], fallback: true };
-    }
-    sum += computedTotal;
-    gated.push({
-      description: description.slice(0, MAX_TEXT_HINT_LENGTH),
-      quantity: qty.toString(),
-      unitPrice: unitPrice.toFixed(4),
-      sourceLineText: boundText(line.description),
-    });
-  }
-
-  const grandTotal = toPositiveNumber(grandTotalAmount);
-  if (grandTotal !== null && Math.abs(sum - grandTotal) > Math.max(grandTotal * 0.02, 1)) {
-    return { lines: [fallbackLine], fallback: true };
-  }
-
-  return { lines: gated, fallback: false };
 }

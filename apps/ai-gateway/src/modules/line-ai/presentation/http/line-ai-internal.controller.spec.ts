@@ -279,6 +279,78 @@ describe('LineAiInternalController', () => {
     }
   });
 
+  // UAT 2026-08-14: a two-item bill returned one line. The item block now travels as `lines`, and
+  // like every other extracted number each row's money must appear in the stage-1 OCR text.
+  it('receipt OCR returns one entry per printed item row and drops the block when a row amount is unprinted', async () => {
+    const originalFetch = globalThis.fetch;
+    const runOcr = async (rows: unknown[]) => {
+      globalThis.fetch = (async (url: any) => {
+        if (String(url).includes('api.opentyphoon.ai')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              choices: [{ message: { content: '{"natural_text":"ใบเสร็จ ร้านอาหาร\\nพิซซ่า 1 524.00\\nปีกไก่ 2 298.00\\nรวม 822.00 PAID"}' } }],
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            output_text: JSON.stringify({
+              classification: {
+                contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+                businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
+                confidence: 0.95, evidenceSignals: ['ร้านอาหาร'], amountSignals: ['822.00'],
+                settlementSignals: ['ใบเสร็จ'], missingRequiredSignals: [], contradictionSignals: [], requiresClarification: false,
+              },
+              fields: { grandTotalAmount: '822.00', vatMode: 'NO_VAT', lines: rows },
+            }),
+          }),
+        };
+      }) as any;
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'openai', openAiApiKey: 'openai-key', openAiModel: 'gpt-test',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+      return controller.receiptOcr('secret', {
+        requestId: 'req-ocr-lines',
+        companyId: 'company-1',
+        userId: 'user-1',
+        attachment: { id: 'att-1', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'ZmFrZQ==' },
+      });
+    };
+
+    try {
+      const split = await runOcr([
+        { description: 'พิซซ่า', quantity: '1', amount: '524.00', evidenceSignal: 'พิซซ่า 1 524.00', confidence: 0.94 },
+        { description: 'ปีกไก่', quantity: '2', amount: '298.00', evidenceSignal: 'ปีกไก่ 2 298.00', confidence: 0.92 },
+      ]);
+      assert.deepEqual(split.fields?.lines, [
+        { description: 'พิซซ่า', quantity: '1', amount: '524.00', evidenceSignal: 'พิซซ่า 1 524.00', confidence: 0.94 },
+        { description: 'ปีกไก่', quantity: '2', amount: '298.00', evidenceSignal: 'ปีกไก่ 2 298.00', confidence: 0.92 },
+      ]);
+
+      const invented = await runOcr([
+        { description: 'พิซซ่า', quantity: '1', amount: '524.00', evidenceSignal: 'พิซซ่า 1 524.00' },
+        { description: 'ปีกไก่', quantity: '2', amount: '299.00', evidenceSignal: 'ปีกไก่ 2 298.00' },
+      ]);
+      assert.equal(invented.fields?.lines, undefined, '299.00 appears nowhere in the OCR text');
+      assert.equal(invented.fields?.grandTotalAmount, '822.00', 'the printed total still survives');
+
+      const single = await runOcr([
+        { description: 'พิซซ่า', quantity: '1', amount: '524.00', evidenceSignal: 'พิซซ่า 1 524.00' },
+      ]);
+      assert.equal(single.fields?.lines, undefined, 'one row says nothing the summary line does not');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('receipt OCR drops category suggestions outside the active catalogue or without exact OCR evidence', async () => {
     const originalFetch = globalThis.fetch;
     const runOcr = async (expenseCategoryId: string, evidenceSignals: string[]) => {
@@ -802,6 +874,36 @@ describe('business document classification gate', () => {
       'ร้านกาแฟ\nยอดรวม 65.00\nชำระแล้ว',
     );
     assert.equal(parsed?.documentKind, 'ABBREVIATED_TAX_INVOICE');
+  });
+
+  // Owner decision 2026-08-15: a POS slip headed plainly "Bill" is the customer's paid copy, so the
+  // prompt now reads that title as settlement evidence. The gate must let it through — the Royal
+  // Pizza UAT slip carries no ชำระแล้ว/PAID stamp, only its own title.
+  it('keeps a Bill-titled POS slip as settled expense evidence', () => {
+    const text = 'Royal Pizza - Narathiwas 24\nTax ID: 0115559007535\nBill\nSubtotal 822.00\nTotal 797.00';
+    const gated = gateBusinessDocumentClassification(
+      classification({
+        documentKind: 'ABBREVIATED_TAX_INVOICE',
+        amountSignals: ['797.00'],
+        settlementSignals: ['Bill'],
+      }),
+      { vendorName: 'Royal Pizza - Narathiwas 24', vendorTaxId: '0115559007535', grandTotalAmount: '797.00' },
+      text,
+    );
+    assert.equal(gated.documentKind, 'ABBREVIATED_TAX_INVOICE');
+    assert.equal(gated.documentFamily, 'EXPENSE_EVIDENCE');
+    assert.equal(gated.transactionState, 'PAID');
+    assert.ok(!gated.missingRequiredSignals.includes('MISSING_PAYMENT_EVIDENCE'));
+
+    // The title only counts when the model quotes it verbatim; an unpaid billing note still falls
+    // through to the payment-evidence gate rather than riding on the word บิล.
+    const billingNote = gateBusinessDocumentClassification(
+      classification({ settlementSignals: [], amountSignals: ['797.00'] }),
+      { vendorName: 'Royal Pizza - Narathiwas 24', grandTotalAmount: '797.00' },
+      'Royal Pizza - Narathiwas 24\nใบวางบิล\nTotal 797.00',
+    );
+    assert.equal(billingNote.documentKind, 'SUPPLIER_INVOICE_OR_BILL');
+    assert.ok(billingNote.missingRequiredSignals.includes('MISSING_PAYMENT_EVIDENCE'));
   });
 
   it('downgrades a quantity-only receipt candidate to ORDER_OR_CHECK_BILL', () => {
