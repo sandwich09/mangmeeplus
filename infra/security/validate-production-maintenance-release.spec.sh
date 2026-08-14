@@ -48,6 +48,7 @@ presentation_files=(
 full_exact_files=(
   "${api_exact_files[@]}"
   infra/prod-ecs-express/deploy.sh
+  infra/prod-ecs-express/list-service-deployments-all.sh
   infra/prod-ecs-express/verify-deployment.sh
   infra/prod-ecs-express/verify-production-maintenance.sh
   infra/prod-ecs-express/run-release-task.sh

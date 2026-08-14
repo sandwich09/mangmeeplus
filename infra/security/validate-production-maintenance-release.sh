@@ -37,9 +37,10 @@ expected_change_password_route=2e256a37b0a775e7778839bef15c9516d82dc23503f46660a
 expected_legal_acceptance_route=f0076607745d2b17e6b34281c71b391ef8eeb8f67089de2c347d12801e0b3007
 expected_platform_route=1c72dbc0de94bbb74a4734056b2c67fd8931aeed3f523fbfd48792fc6336e32e
 expected_deploy=b8c8ac1a4375c3cdc888ff5e8647d1d2cab7a751a2c3c0d7b09d11f83d4ca639
+expected_list_service_deployments=fb189137c58cf208191ad24ea2007a9758086bef4dfece967be94f6f7a800620
 expected_verify=775612d203c4a43a34818d6f9d31d0f3b4eb66e497889b67886fc24c6bbff045
 expected_maintenance_verify=c1f2675eedcd0a171f8a43b5dd3c9ab6ffcc09bf7a46e23cb0a75f6549f29ab5
-expected_release_task=b71681ef90f0a86083352f8aada0724c0d94441df23a5b46a5b7afff6ae5a6a7
+expected_release_task=2c180ddcc278752dde8f2b90b3db20f4b4ea545afde5022c4fed555fb56138bc
 expected_register_task=c3147096188d1afbc395db8bd4bed2e79ac534bac87cf2b76aac502764f54b77
 expected_run_task=4cce82a00a3200f19503b26bb0689dfe8cbb927bbca408f6f33909c0d69e3cb5
 expected_cleanup_one_shot_task=78da71bf5e19865352bc234d96712f7dfc5e43a6fee98af27138f935199cca70
@@ -112,6 +113,7 @@ check_literal apps/api/src/common/config/app-config.service.ts "get productionSe
 check_literal apps/api/src/modules/audit/domain/models/audit-action.ts "PLATFORM_ACCESS_STATE_UPDATE: 'platform.access.state_update',"
 if [ "$scope" = full ]; then
   check_file infra/prod-ecs-express/deploy.sh "$expected_deploy"
+  check_file infra/prod-ecs-express/list-service-deployments-all.sh "$expected_list_service_deployments"
   check_file infra/prod-ecs-express/verify-deployment.sh "$expected_verify"
   check_file infra/prod-ecs-express/verify-production-maintenance.sh "$expected_maintenance_verify"
   check_file infra/prod-ecs-express/run-release-task.sh "$expected_release_task"

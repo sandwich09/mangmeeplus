@@ -136,7 +136,7 @@ type BootstrapClosedRecoveryService = DeploymentEvidence & {
 };
 
 type BootstrapClosedRecoveryEvidence = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   artifactDigest: string;
   maintenanceProofSha256: string;
   failedPromotionRunId: string;
@@ -147,6 +147,7 @@ type BootstrapClosedRecoveryEvidence = {
   parentTaskArn: string;
   manifestSha256: string;
   services: BootstrapClosedRecoveryService[];
+  boundHistory: DeploymentEvidence[];
 };
 
 type MutationIntent = {
@@ -372,6 +373,16 @@ function sameEvidence(left: DeploymentEvidence, right: DeploymentEvidence): bool
     && left.targetRevisionArn === right.targetRevisionArn
     && left.sourceSha === right.sourceSha
     && left.noOp === right.noOp;
+}
+
+function compareDeploymentEvidence(left: DeploymentEvidence, right: DeploymentEvidence): number {
+  const leftKey = [left.service, left.deploymentArn ?? '', left.targetRevisionArn];
+  const rightKey = [right.service, right.deploymentArn ?? '', right.targetRevisionArn];
+  for (let index = 0; index < leftKey.length; index += 1) {
+    if (leftKey[index]! < rightKey[index]!) return -1;
+    if (leftKey[index]! > rightKey[index]!) return 1;
+  }
+  return 0;
 }
 
 function expectedReleaseServices(target: string | null): string[] {
@@ -2049,13 +2060,13 @@ export function parseBootstrapClosedRecoveryEvidence(serialized: string): Bootst
   let value: unknown;
   try { value = JSON.parse(serialized); } catch { throw new Error('bootstrap-closed recovery evidence must be valid JSON'); }
   const keys = [
-    'artifactDigest', 'controllerCommit', 'failedPromotionRunAttempt', 'failedPromotionRunId',
+    'artifactDigest', 'boundHistory', 'controllerCommit', 'failedPromotionRunAttempt', 'failedPromotionRunId',
     'maintenanceProofSha256', 'manifestSha256', 'operationId', 'parentTaskArn', 'schemaVersion',
     'services', 'sourceCommit',
   ];
   if (!exactObjectKeys(value, keys)) throw new Error('bootstrap-closed recovery evidence has an unexpected shape');
   const evidence = value as unknown as BootstrapClosedRecoveryEvidence;
-  if (evidence.schemaVersion !== 1
+  if (evidence.schemaVersion !== 2
     || !/^sha256:[0-9a-f]{64}$/.test(evidence.artifactDigest)
     || !/^[0-9a-f]{64}$/.test(evidence.maintenanceProofSha256)
     || !/^[1-9][0-9]*$/.test(evidence.failedPromotionRunId)
@@ -2065,11 +2076,13 @@ export function parseBootstrapClosedRecoveryEvidence(serialized: string): Bootst
     || !UUID_PATTERN.test(evidence.operationId)
     || !/^arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:task\/watchdog-bms-prod\/[A-Za-z0-9_-]+$/.test(evidence.parentTaskArn)
     || !/^[0-9a-f]{64}$/.test(evidence.manifestSha256)
-    || !Array.isArray(evidence.services) || evidence.services.length !== 3) {
+    || !Array.isArray(evidence.services) || evidence.services.length !== 3
+    || !Array.isArray(evidence.boundHistory) || evidence.boundHistory.length > 8) {
     throw new Error('bootstrap-closed recovery evidence identity is invalid');
   }
   const serviceKeys = ['deploymentArn', 'image', 'maintenanceControls', 'noOp', 'service',
     'serviceArn', 'sourceSha', 'targetRevisionArn'];
+  const historyKeys = ['deploymentArn', 'noOp', 'service', 'serviceArn', 'sourceSha', 'targetRevisionArn'];
   const [, , , region, accountId] = evidence.parentTaskArn.split(':');
   const identities: Record<string, { serviceName: string; repository: string }> = {
     'api-web': { serviceName: 'watchdog-bms-api-web-pub', repository: 'watchdog-bms-api' },
@@ -2091,6 +2104,23 @@ export function parseBootstrapClosedRecoveryEvidence(serialized: string): Bootst
         || Array.isArray(item.maintenanceControls);
     })) {
     throw new Error('bootstrap-closed recovery service evidence is invalid');
+  }
+  const sortedHistory = evidence.boundHistory.slice().sort(compareDeploymentEvidence);
+  if (canonicalJson(sortedHistory) !== canonicalJson(evidence.boundHistory)
+    || new Set(evidence.boundHistory.map(canonicalJson)).size !== evidence.boundHistory.length
+    || evidence.boundHistory.some((item) => {
+      const identity = identities[item.service];
+      const serviceArn = `arn:aws:ecs:${region}:${accountId}:service/watchdog-bms-prod/${identity?.serviceName}`;
+      return !identity || item.service === 'api-web' || !exactObjectKeys(item, historyKeys)
+        || item.sourceSha !== evidence.sourceCommit || item.serviceArn !== serviceArn
+        || !item.targetRevisionArn.startsWith(serviceArn.replace(':service/', ':service-revision/') + '/')
+        || item.noOp !== false || typeof item.deploymentArn !== 'string'
+        || !item.deploymentArn.startsWith(serviceArn.replace(':service/', ':service-deployment/') + '/');
+    })
+    || [...new Set(evidence.boundHistory.map((item) => item.service))].some((service) =>
+      !evidence.services.some((current) => current.service === service
+        && evidence.boundHistory.some((item) => sameEvidence(current, item))))) {
+    throw new Error('bootstrap-closed recovery bound history is invalid');
   }
   return evidence;
 }
@@ -3056,9 +3086,10 @@ export async function recoverPreIntentApiRelease(
 
 /**
  * Recover the narrow V2 controller crash where maintenance-bootstrap deployed the exact candidate,
- * release-prepare succeeded, and the controller failed before deploy.sh could persist any intent.
- * This records FAILED_CONFIRMED only; the next ordinary release repeats preparation and creates the
- * normal per-service intent/bind/finalizer chain.
+ * release-prepare succeeded, and api-web never received a durable intent. Existing non-api intents
+ * are accepted only when every one is BOUND and their complete evidence equals the failed artifact's
+ * bounded append-only history. This records FAILED_CONFIRMED only; the next ordinary release repeats
+ * preparation and creates the normal per-service intent/bind/finalizer chain.
  */
 export async function recoverBootstrapClosedPreIntentRelease(
   client: Client,
@@ -3123,6 +3154,8 @@ export async function recoverBootstrapClosedPreIntentRelease(
     `, [input.operationId, input.targetEnvironment]);
     const row = parent.rows[0];
     const expectedWorkflow = `${input.controller.githubRepository}/.github/workflows/deploy-production-v2.yml@refs/heads/main`;
+    const parentHistory = Array.isArray(row?.deploymentManifestJson)
+      ? (row.deploymentManifestJson as DeploymentEvidence[]).slice().sort(compareDeploymentEvidence) : [];
     const exactParent = row && row.mode === 'release' && row.releaseDeployTarget === 'all'
       && row.buildReleaseId === input.buildReleaseId && row.ecsTaskArn === input.evidence.parentTaskArn
       && row.sourceBranch === 'main' && row.controllerKind === 'GITHUB_ACTIONS'
@@ -3131,19 +3164,39 @@ export async function recoverBootstrapClosedPreIntentRelease(
       && row.githubWorkflowRef === expectedWorkflow
       && row.githubRepository === input.controller.githubRepository
       && row.leaseOwner === row.ecsTaskArn
-      && (row.deploymentManifestJson === null
-        || (Array.isArray(row.deploymentManifestJson) && row.deploymentManifestJson.length === 0))
+      && canonicalJson(parentHistory) === canonicalJson(input.evidence.boundHistory.slice().sort(compareDeploymentEvidence))
       && row.preIntentApiCleanupCompletedAt === null && row.preIntentApiCleanupEvidenceJson === null
       && row.ecsServiceArn === null && row.serviceDeploymentArn === null
       && row.targetServiceRevisionArn === null && row.activeBuildsJson === null;
     if (!exactParent || !['UNKNOWN', 'RECONCILED_FAILED_CONFIRMED'].includes(row.status)) {
-      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery parent is not the exact zero-intent V2 hold');
+      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery parent is not the exact no-api-intent V2 hold');
     }
-    const intents = await client.query<{ count: number }>(`
-      SELECT count(*)::int AS count FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1
+    const intents = await client.query<{
+      operationId: string; targetEnvironment: string; buildReleaseId: string; serviceKey: string;
+      status: string; evidenceJson: unknown; closedAt: Date | null;
+      legacyRollbackObservedAt: Date | null; legacyRollbackCleanedAt: Date | null;
+      failedBuildCleanupRequiredAt: Date | null; failedBuildCleanupCompletedAt: Date | null;
+    }>(`
+      SELECT "operationId","targetEnvironment","buildReleaseId","serviceKey","status","evidenceJson","closedAt",
+             "legacyRollbackObservedAt","legacyRollbackCleanedAt",
+             "failedBuildCleanupRequiredAt","failedBuildCleanupCompletedAt"
+        FROM "RemoteReleaseMutationIntent" WHERE "operationId" = $1 ORDER BY "createdAt" ASC
     `, [input.operationId]);
-    if ((intents.rows[0]?.count ?? 0) !== 0) {
-      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery requires zero durable service intents');
+    const observedHistory = input.evidence.boundHistory.filter((item) => intents.rows.some((intent) =>
+      intent.evidenceJson !== null && typeof intent.evidenceJson === 'object'
+        && sameEvidence(item, intent.evidenceJson as DeploymentEvidence)));
+    const exactIntents = intents.rows.length === input.evidence.boundHistory.length
+      && intents.rows.length <= 8 && intents.rows.every((intent) =>
+      intent.operationId === input.operationId && intent.targetEnvironment === input.targetEnvironment
+      && intent.buildReleaseId === input.buildReleaseId
+      && (intent.serviceKey === 'ai-gateway' || intent.serviceKey === 'workers')
+      && intent.status === 'BOUND' && intent.closedAt !== null
+      && intent.evidenceJson !== null && typeof intent.evidenceJson === 'object'
+      && input.evidence.boundHistory.some((item) => sameEvidence(item, intent.evidenceJson as DeploymentEvidence))
+      && (intent.legacyRollbackObservedAt === null || intent.legacyRollbackCleanedAt !== null)
+      && (intent.failedBuildCleanupRequiredAt === null || intent.failedBuildCleanupCompletedAt !== null));
+    if (!exactIntents || canonicalJson(observedHistory) !== canonicalJson(input.evidence.boundHistory)) {
+      throw new RemoteReleaseOperationBlocked('bootstrap-closed recovery requires exact resolved non-api intent history');
     }
     if (row.status === 'RECONCILED_FAILED_CONFIRMED') {
       if (row.reconciliationEvidenceRef !== evidenceRef) {
@@ -3153,16 +3206,23 @@ export async function recoverBootstrapClosedPreIntentRelease(
       return { replay: true, services };
     }
     const actorRef = `github:${input.controller.githubRepository}:${input.controller.githubRunId}:${input.controller.githubRunAttempt}`;
+    const partial = input.evidence.boundHistory.length > 0;
     const updated = await client.query(`
       UPDATE "RemoteReleaseOperation"
          SET "status" = 'RECONCILED_FAILED_CONFIRMED', "completedAt" = CURRENT_TIMESTAMP,
              "reconciledAt" = CURRENT_TIMESTAMP, "reconciledByActorRef" = $2,
              "reconciledByTaskArn" = $3, "reconciliationEvidenceRef" = $4,
-             "reconciliationReason" = 'V2 controller failed before the first rollout intent; exact bootstrap-closed candidate remained stable',
-             "outcomeReason" = 'FAILED_CONFIRMED after exact bootstrap-closed zero-intent recovery; clean release retry required',
+             "reconciliationReason" = $5,
+             "outcomeReason" = $6,
              "updatedAt" = CURRENT_TIMESTAMP
        WHERE "id" = $1 AND "status" = 'UNKNOWN'
-    `, [input.operationId, actorRef, input.recovererTaskArn, evidenceRef]);
+    `, [input.operationId, actorRef, input.recovererTaskArn, evidenceRef,
+      partial
+        ? 'V2 controller stopped before api-web intent; exact resolved non-api history and candidate-closed services remained stable'
+        : 'V2 controller failed before the first rollout intent; exact bootstrap-closed candidate remained stable',
+      partial
+        ? 'FAILED_CONFIRMED after exact partial-closed no-api-intent recovery; clean release retry required'
+        : 'FAILED_CONFIRMED after exact bootstrap-closed zero-intent recovery; clean release retry required']);
     if (updated.rowCount !== 1) throw new RemoteReleaseOperationBlocked('bootstrap-closed parent moved during recovery');
     await client.query(`
       INSERT INTO "AuditLog" (

@@ -23,7 +23,7 @@ on:
         required: true
         type: string
       intent_id:
-        description: OPEN intent UUID, PRE_INTENT, ORPHAN, or BOOTSTRAP_CLOSED for the exact V2 zero-intent controller failure
+        description: OPEN intent UUID, PRE_INTENT, ORPHAN, or BOOTSTRAP_CLOSED for an exact V2 no-api-intent controller failure
         required: true
         type: string
       service_name:
@@ -320,21 +320,32 @@ jobs:
           names="$root/names"; expected="$root/expected"; metadata="$root/metadata"; extracted="$root/extracted"
           mkdir -m 700 "$extracted"
           zipinfo -1 "$archive" > "$names"
-          test "$(wc -l < "$names"|tr -d '[:space:]')" = 11
-          test "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '[:space:]')" = 11
+          member_count="$(wc -l < "$names"|tr -d '[:space:]')"
+          test "$member_count" = "$(LC_ALL=C sort -u "$names"|wc -l|tr -d '[:space:]')"
           printf '%s\n' bootstrap-closed/ai-gateway.json bootstrap-closed/api-web.json \
             bootstrap-closed/maintenance-proof.json bootstrap-closed/workers.json \
             bootstrap-maintenance-proof.json controller.json release-operation.json \
             release-prepare.log > "$expected"
-          grep -Ev '^bootstrap-closed/history/(ai-gateway|api-web|workers)-[A-Za-z0-9_-]+-false\.json$' "$names" \
+          grep -Ev '^(bootstrap-closed/history/(ai-gateway|api-web|workers)|history/(ai-gateway|workers))-[A-Za-z0-9_-]+-(true|false)\.json$|^(ai-gateway|workers)\.json$' "$names" \
             | LC_ALL=C sort > "$root/stable"
           LC_ALL=C sort "$expected" > "$root/expected-sorted"
           cmp -s "$root/stable" "$root/expected-sorted"
           for service in ai-gateway api-web workers; do
             test "$(grep -Ec "^bootstrap-closed/history/${service}-[A-Za-z0-9_-]+-false\\.json$" "$names")" = 1
           done
+          bound_count=0
+          for service in ai-gateway workers; do
+            history_count="$(grep -Ec "^history/${service}-[A-Za-z0-9_-]+-(true|false)\\.json$" "$names" || true)"
+            root_count="$(grep -Ec "^${service}\\.json$" "$names" || true)"
+            if [ "$history_count" -eq 0 ]; then test "$root_count" -eq 0
+            else test "$root_count" -eq 1; fi
+            bound_count=$((bound_count + history_count))
+          done
+          test "$bound_count" -le 8
+          partial_roots="$(grep -Ec '^(ai-gateway|workers)\.json$' "$names" || true)"
+          test "$member_count" -eq $((11 + bound_count + partial_roots))
           zipinfo -l "$archive" | awk '$1 ~ /^[-dlcbps?]/ {print $1 "\t" $4 "\t" $NF}' > "$metadata"
-          test "$(wc -l < "$metadata"|tr -d '[:space:]')" = 11
+          test "$(wc -l < "$metadata"|tr -d '[:space:]')" = "$member_count"
           while IFS=$'\t' read -r mode size member; do
             [[ "$mode" == -* && "$size" =~ ^[1-9][0-9]*$ && "$size" -le 1048576 ]]
             grep -Fxq "$member" "$names"
@@ -377,18 +388,47 @@ jobs:
               == ($histories|map({service,serviceArn,sourceSha,targetRevisionArn})|sort_by(.service))
             and all($histories[];.noOp==false and (.deploymentArn|type)=="string")
           ' "$proof" >/dev/null
+          shopt -s nullglob
+          bound_files=("$extracted"/history/*.json)
+          if [ "${#bound_files[@]}" -eq 0 ]; then bound_histories='[]'
+          else bound_histories="$(jq -cs 'sort_by([.service,(.deploymentArn//""),.targetRevisionArn])' "${bound_files[@]}")"; fi
+          jq -e --arg source "$RELEASE_REF" '
+            length <= 8
+            and ([.[]|tojson]|unique|length)==length
+            and all(.[];
+              (keys|sort)==["deploymentArn","noOp","service","serviceArn","sourceSha","targetRevisionArn"]
+              and ({"ai-gateway":"watchdog-bms-ai-gateway-v2",workers:"watchdog-bms-workers"}[.service]) as $name
+              | ($name|type)=="string" and .sourceSha==$source
+              and .serviceArn==("arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/"+$name)
+              and (.targetRevisionArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/"+$name+"/[^/]+$"))
+              and .noOp==false and (.deploymentArn|type)=="string"
+              and (.deploymentArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/"+$name+"/[^/]+$")))
+          ' <<< "$bound_histories" >/dev/null
+          selected_files=()
+          for service in ai-gateway api-web workers; do
+            selected="$extracted/bootstrap-closed/${service}.json"
+            if [ -f "$extracted/${service}.json" ]; then
+              selected="$extracted/${service}.json"
+              jq -e --argjson histories "$bound_histories" '. as $current|any($histories[];.==$current)' \
+                "$selected" >/dev/null
+            fi
+            selected_files+=("$selected")
+          done
+          selected_histories="$(jq -cs 'sort_by(.service)' "${selected_files[@]}")"
           compact="$(jq -cnS --arg digest "$artifact_digest" --arg maintenance "$maintenance_sha" \
             --arg run "$FAILED_PROMOTION_RUN_ID" --argjson attempt "$attempt" \
             --arg controller "$original_controller" --arg source "$RELEASE_REF" \
             --arg operation "$PARENT_ID" --arg task "$artifact_parent_task" \
-            --slurpfile proof "$proof" --argjson histories "$histories" '
-            {schemaVersion:1,artifactDigest:$digest,maintenanceProofSha256:$maintenance,
+            --slurpfile proof "$proof" --argjson selected "$selected_histories" \
+            --argjson bound "$bound_histories" '
+            {schemaVersion:2,artifactDigest:$digest,maintenanceProofSha256:$maintenance,
              failedPromotionRunId:$run,failedPromotionRunAttempt:$attempt,controllerCommit:$controller,
              sourceCommit:$source,operationId:$operation,parentTaskArn:$task,
              manifestSha256:$proof[0].manifestSha256,
              services:([$proof[0].services[] as $service
-               | $histories[]|select(.service==$service.service)
-               | . + {image:$service.image,maintenanceControls:$service.maintenanceControls}]|sort_by(.service))}
+               | $selected[]|select(.service==$service.service)
+               | . + {image:$service.image,maintenanceControls:$service.maintenanceControls}]|sort_by(.service)),
+             boundHistory:$bound}
           ')"
           # Cheap, read-only provider proof before the recovery executor build.
           while IFS= read -r service; do
