@@ -1,5 +1,5 @@
-export const LEGAL_LAST_UPDATED = '10 สิงหาคม 2569';
-export const LEGAL_EFFECTIVE_DATE = '10 สิงหาคม 2569';
+export const LEGAL_LAST_UPDATED = '14 สิงหาคม 2569';
+export const LEGAL_EFFECTIVE_DATE = '14 สิงหาคม 2569';
 
 export const LEGAL_OPERATOR = {
   tradeName: 'MangmeePlus',

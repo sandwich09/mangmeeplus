@@ -28,6 +28,13 @@ source, image digest, migration catalog หรือ controller contract ไม�
 การเปิด `live` ไม่อยู่ใน runbook นี้. ต้องมี legal evidence และ owner launch decision แยกต่างหาก.
 จนกว่าจะมีคำสั่งนั้น ให้ใช้ `maintenance_closed` เท่านั้น.
 
+Legal release ปัจจุบันใช้ internal append-only id `v3` เพื่อรักษา history แต่แสดงต่อผู้ใช้และใน
+เอกสารทนายเป็นฉบับประกาศใช้จริงครั้งแรก `ฉบับที่ 1 (1.0)`. Candidate นี้ deploy UAT และ Production
+แบบ `maintenance_closed` ได้ขณะที่ manifest ยังเป็น `BLOCKED`; ห้ามตีความว่า legal gate ผ่าน.
+ก่อนเปิด `live` ไฟล์ที่ลงนามต้องผูกกับ exact v3 artifact hashes, evidence bundle/manifest ต้องเป็น
+`VERIFIED` และ workflow ต้อง validate bytes จริง. ถ้าทนายส่งกลับหลัง Passport หรือ READY หมดอายุ
+ต้องออก Passport/READY สดอีกครั้ง แม้ source/image ไม่เปลี่ยน; ห้ามลด expiry gate เพื่อเปิดระบบ.
+
 ## 2. Proof ก่อนใช้ GitHub Actions
 
 1. Merge เฉพาะ exact reviewed head ที่ required CI ผ่านครบ. ห้ามลด branch protection หรือข้าม check.

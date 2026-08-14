@@ -6,6 +6,7 @@ import test from 'node:test';
 import { CURRENT_LEGAL_DOCUMENTS } from '@watchdog-bms/contracts';
 import {
   LEGAL_EFFECTIVE_DATE,
+  LEGAL_LAST_UPDATED,
   LEGAL_NAV_ITEMS,
   LEGAL_OPERATOR,
   LEGAL_SOURCES,
@@ -26,7 +27,8 @@ test('publishes one consistent MangmeePlus legal identity and all public notices
 });
 
 test('links to official Thai legal materials and carries an explicit effective date', () => {
-  assert.equal(LEGAL_EFFECTIVE_DATE, '10 สิงหาคม 2569');
+  assert.equal(LEGAL_EFFECTIVE_DATE, '14 สิงหาคม 2569');
+  assert.equal(LEGAL_LAST_UPDATED, '14 สิงหาคม 2569');
   for (const href of [
     LEGAL_SOURCES.pdpaAct,
     LEGAL_SOURCES.pdpaRules,
@@ -40,15 +42,17 @@ test('links to official Thai legal materials and carries an explicit effective d
   }
 });
 
-test('preserves the exact v1 artifacts after publishing v2', () => {
+test('preserves the exact historical artifacts after publishing the official first edition', () => {
   const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
-  const v1Hashes = {
-    'terms-th.html': 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
-    'privacy-th.html': '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
+  const historicalHashes = {
+    'v1/terms-th.html': 'd1de74bdef45404d1c8b0e2f8d3d93c31ffd612ccea4d9ee90dcc1b4c35184c7',
+    'v1/privacy-th.html': '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
+    'v2/terms-th.html': '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
+    'v2/privacy-th.html': '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
   } as const;
 
-  for (const [file, expectedHash] of Object.entries(v1Hashes)) {
-    const bytes = readFileSync(`${repositoryRoot}/apps/web/public/legal/releases/v1/${file}`);
+  for (const [file, expectedHash] of Object.entries(historicalHashes)) {
+    const bytes = readFileSync(`${repositoryRoot}/apps/web/public/legal/releases/${file}`);
     assert.equal(createHash('sha256').update(bytes).digest('hex'), expectedHash);
   }
 });
@@ -72,7 +76,7 @@ test('immutable release URLs serve the exact bytes recorded in the contract', ()
   }
 });
 
-test('publishes the declared v2 launch scope without deferred or unproven provider claims', () => {
+test('publishes the declared official-version-1 scope without deferred or unproven provider claims', () => {
   const repositoryRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
   const privacy = readFileSync(`${repositoryRoot}/apps/web/app/privacy/page.tsx`, 'utf8');
   const terms = readFileSync(`${repositoryRoot}/apps/web/app/terms/page.tsx`, 'utf8');
