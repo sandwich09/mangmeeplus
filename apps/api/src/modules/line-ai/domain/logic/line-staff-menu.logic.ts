@@ -5,6 +5,10 @@ export type StaffMenuContext = {
   roleLabel: string;
   branchScopeLabel: string;
   permissions: string[];
+  /** Feature keys this company has switched on, from `loadEntitledFeatureKeys`. `null` is that
+   *  loader's legacy fail-open sentinel (a company with no entitlement rows at all) and shows
+   *  every menu the caller's permissions already allow. */
+  entitledFeatureKeys: ReadonlySet<string> | null;
   webBaseUrl?: string;
   companyId: string;
   isOwner?: boolean;
@@ -15,32 +19,51 @@ export type CompanyPickerItem = {
   companyName: string;
 };
 
+/**
+ * [label, sent text, any-of permissions, any-of feature keys].
+ *
+ * The feature column names the module that OWNS the data the answer reads, so a company that never
+ * switched that module on never sees a button whose only possible reply is "no data" or a refusal.
+ * Submenu keys are listed directly where one exists, because `evaluateEntitledFeatureKeys` already
+ * expands a parent's submenus — checking the submenu is the precise gate, not a stricter one.
+ */
 const QUERY_ACTIONS = [
-  ['ยอดขายวันนี้', 'ดูยอดขายวันนี้', ['sales.order.read', 'dashboard.read']],
-  ['คิว/นัดวันนี้', 'ดูคิววันนี้', ['crm.booking.read']],
-  ['แชทค้างตอบ', 'ดูแชทค้างตอบ', ['crm.inbox.read']],
-  ['ค่าใช้จ่ายเดือนนี้', 'ดูค่าใช้จ่ายเดือนนี้', ['expense.read']],
-  ['รายงานการเงิน', 'ดูรายงานการเงิน', ['report.finance.read', 'ledger.read']],
-  ['ใบสั่งซื้อ (PO)', 'ดูใบสั่งซื้อ', ['procurement.purchase_order.read', 'procurement.purchase_order.read_related']],
+  // Owner decision 2026-08-15: today's number is read off the dashboard, so `dashboard.read` is the
+  // honest permission. `sales.order.read` used to sit here too and was removed — it exists in no
+  // registry, no role, and no tool, so it never gated anything. The button waits for the sales
+  // feature through the entitlement column instead.
+  ['ยอดขายวันนี้', 'ดูยอดขายวันนี้', ['dashboard.read'], ['sales_documents']],
+  ['คิว/นัดวันนี้', 'ดูคิววันนี้', ['crm.booking.read'], ['crm.bookings']],
+  ['แชทค้างตอบ', 'ดูแชทค้างตอบ', ['crm.inbox.read'], ['crm.inbox']],
+  ['ค่าใช้จ่ายเดือนนี้', 'ดูค่าใช้จ่ายเดือนนี้', ['expense.read'], ['expenses']],
+  ['รายงานการเงิน', 'ดูรายงานการเงิน', ['report.finance.read', 'ledger.read'], ['reports', 'double_entry_ledger']],
+  ['ใบสั่งซื้อ (PO)', 'ดูใบสั่งซื้อ', ['procurement.purchase_order.read', 'procurement.purchase_order.read_related'], ['procurement.purchase_orders']],
 ] as const;
 
 const hasAny = (permissions: Set<string>, required: readonly string[]) => required.some((key) => permissions.has(key));
 
+const hasFeature = (entitled: ReadonlySet<string> | null, required: readonly string[]) =>
+  entitled === null || required.some((key) => entitled.has(key));
+
 const messageAction = (label: string, text = label) => ({ type: 'action' as const, action: { type: 'message' as const, label, text } });
 
 export function buildStaffCompletionQuickReply(
-  context: Pick<StaffMenuContext, 'permissions' | 'isOwner'>,
+  context: Pick<StaffMenuContext, 'permissions' | 'entitledFeatureKeys' | 'isOwner'>,
 ): NonNullable<LineReplyMessage['quickReply']> {
   const permissions = new Set(context.permissions);
+  const entitled = context.entitledFeatureKeys;
   const items: LineQuickReplyItem[] = QUERY_ACTIONS
-    .filter(([, , required]) => hasAny(permissions, required))
+    .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(entitled, features))
     .map(([label, text]) => messageAction(label, text));
   items.push(messageAction('📊 ถามข้อมูล', 'ถามข้อมูล'));
   if (context.isOwner) items.push(messageAction('🏢 บริษัทของฉัน', '/companies'));
-  if (hasAny(permissions, ['procurement.purchase_request.approve', 'procurement.purchase_order.approve', 'reimbursement.approve'])) {
+  // Offered only when the approval card behind it can render at least one real queue, so the
+  // button and the card it opens can never disagree about what this company runs.
+  if (availableApprovalSurfaces(permissions, entitled).length > 0) {
     items.push(messageAction('✅ รายการรออนุมัติ', 'รายการรออนุมัติ'));
   }
-  if (hasAny(permissions, ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'])) {
+  if (hasAny(permissions, ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'])
+    && hasFeature(entitled, ['expenses.upload'])) {
     items.push({ type: 'action', action: { type: 'camera', label: '📷 ถ่ายใบเสร็จ' } } as const);
   }
   return { items: items.slice(0, 13) };
@@ -54,7 +77,7 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
   const scopeLabel = context.branchScopeLabel;
   return {
     type: 'flex',
-    altText: `สวัสดีค่ะ ${displayName} 👋\nตำแหน่ง ${roleLabel} · ดูข้อมูลได้ ${scopeLabel} · เข้าถึง ${items.length} เมนู\nเมนูด้านล่างแสดงเฉพาะสิ่งที่ตำแหน่งคุณมีสิทธิ์เข้าถึง`,
+    altText: `สวัสดีค่ะ ${displayName} 👋\nตำแหน่ง ${roleLabel} · ดูข้อมูลได้ ${scopeLabel} · เข้าถึง ${items.length} เมนู\nเมนูด้านล่างแสดงเฉพาะสิ่งที่บริษัทเปิดใช้และตำแหน่งคุณมีสิทธิ์เข้าถึง`,
     contents: {
       type: 'bubble',
       size: 'kilo',
@@ -73,7 +96,7 @@ export function buildStaffMainMenu(context: StaffMenuContext): LineReplyMessage 
             { type: 'span', text: ' · เข้าถึง ' },
             { type: 'span', text: `${items.length} เมนู`, weight: 'bold' },
           ] },
-          { type: 'text', text: 'เมนูด้านล่างแสดงเฉพาะสิ่งที่ตำแหน่งคุณมีสิทธิ์เข้าถึง', wrap: true, size: 'xs', color: '#667085' },
+          { type: 'text', text: 'เมนูด้านล่างแสดงเฉพาะสิ่งที่บริษัทเปิดใช้และตำแหน่งคุณมีสิทธิ์เข้าถึง', wrap: true, size: 'xs', color: '#667085' },
         ],
       },
       styles: { body: { backgroundColor: '#FFFFFF' } },
@@ -139,12 +162,12 @@ export function buildCompanyPickerMessage(companies: CompanyPickerItem[], curren
 export function buildStaffQueryMenu(context: StaffMenuContext): LineReplyMessage {
   const permissions = new Set(context.permissions);
   const items = QUERY_ACTIONS
-    .filter(([, , required]) => hasAny(permissions, required))
+    .filter(([, , required, features]) => hasAny(permissions, required) && hasFeature(context.entitledFeatureKeys, features))
     .map(([label, text]) => messageAction(label, text));
   items.push(messageAction('« เมนูหลัก', 'เมนูหลัก'));
   return {
     type: 'text',
-    text: 'อยากดูข้อมูลส่วนไหนดีคะ 📊\nแสดงเฉพาะเมนูที่ตำแหน่งคุณมีสิทธิ์เข้าถึง',
+    text: 'อยากดูข้อมูลส่วนไหนดีคะ 📊\nแสดงเฉพาะเมนูที่บริษัทเปิดใช้และตำแหน่งคุณมีสิทธิ์เข้าถึง',
     quickReply: { items },
   };
 }
@@ -173,19 +196,26 @@ export function buildReceiptCapturePrompt(context: StaffMenuContext): LineReplyM
   };
 }
 
-/** One button per real approval queue the member can act on. Ordered as listed. */
+/** One button per real approval queue the member can act on. Ordered as listed.
+ *  [label, any-of permissions, web path, any-of feature keys]. */
 const APPROVAL_SURFACES = [
-  ['คำขอเบิกเงิน', ['reimbursement.approve'], 'reimbursements?tab=approvals'],
-  ['ใบขอซื้อ/ใบสั่งซื้อ', ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'], 'procurement'],
+  ['คำขอเบิกเงิน', ['reimbursement.approve'], 'reimbursements?tab=approvals', ['reimbursement']],
+  ['ใบขอซื้อ/ใบสั่งซื้อ', ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'], 'procurement', ['procurement.purchase_requests', 'procurement.purchase_orders']],
 ] as const;
+
+/** The single source both the quick-reply button and the card itself read. Hoisted, so the quick
+ *  reply above can call it. */
+function availableApprovalSurfaces(permissions: Set<string>, entitled: ReadonlySet<string> | null) {
+  return APPROVAL_SURFACES.filter(([, required, , features]) =>
+    hasAny(permissions, required) && hasFeature(entitled, features));
+}
 
 export function buildPendingApprovalCard(context: StaffMenuContext): LineReplyMessage {
   const base = context.webBaseUrl?.replace(/\/$/, '');
   const permissions = new Set(context.permissions);
   const companySegment = `/companies/${encodeURIComponent(context.companyId)}/`;
   const buttons = base
-    ? APPROVAL_SURFACES
-      .filter(([, required]) => hasAny(permissions, required))
+    ? availableApprovalSurfaces(permissions, context.entitledFeatureKeys)
       .map(([label, , path]) => ({
         type: 'button', style: 'primary', color: '#12B76A',
         action: { type: 'uri', label, uri: `${base}${companySegment}${path}` },

@@ -18,7 +18,7 @@ describe('LineReplyAdapter rich payload delivery', () => {
         return new Response('', { status: 200 });
       }) as typeof fetch;
       const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
-      const context = { displayName: 'พิม', roleLabel: 'แอดมิน', branchScopeLabel: 'ทุกสาขา', companyId: 'company-1', webBaseUrl: 'https://app.example.com', permissions: [] };
+      const context = { displayName: 'พิม', roleLabel: 'แอดมิน', branchScopeLabel: 'ทุกสาขา', companyId: 'company-1', webBaseUrl: 'https://app.example.com', permissions: [], entitledFeatureKeys: null };
       assert.equal(await adapter.sendReply('reply-token', [buildStaffMainMenu(context), buildPendingApprovalCard(context)]), 'ok');
       assert.ok(signal instanceof AbortSignal, 'LINE delivery must be time-bounded');
     } finally {

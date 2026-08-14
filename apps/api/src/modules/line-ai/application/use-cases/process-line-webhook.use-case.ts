@@ -748,14 +748,16 @@ export class ProcessLineWebhookUseCase {
     if (result !== 'ok') throw new Error(`LINE_DELIVERY_${result.toUpperCase()}`);
   }
 
-  private withCompletionMenu(
+  private async withCompletionMenu(
     message: LineReplyMessage,
+    companyId: string,
     access: { permissions: string[]; roles: string[] },
-  ): LineReplyMessage {
+  ): Promise<LineReplyMessage> {
     return {
       ...message,
       quickReply: buildStaffCompletionQuickReply({
         permissions: access.permissions,
+        entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         isOwner: access.roles.includes('OWNER'),
       }),
     };
@@ -767,8 +769,9 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
   ): Promise<void> {
-    await this.deliverRequiredMessages(event, [this.withCompletionMenu(
+    await this.deliverRequiredMessages(event, [await this.withCompletionMenu(
       buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId),
+      companyId,
       access,
     )]);
   }
@@ -978,6 +981,7 @@ export class ProcessLineWebhookUseCase {
           ? await this.resolveBranchScopeLabel(companyId, resolvedAccess.scopes.branchIds)
           : branchScopeFallbackLabel(resolvedAccess.scopes.branchIds),
         permissions: resolvedAccess.permissions,
+        entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
         webBaseUrl: this.config.webBaseUrl,
         companyId,
         isOwner: resolvedAccess.roles.includes('OWNER'),
@@ -1297,8 +1301,9 @@ export class ProcessLineWebhookUseCase {
 
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const fallbackText = formatLineReply(turnResponse, this.config.webBaseUrl);
-    const delivery = await this.deliverMessages(event, [this.withCompletionMenu(
+    const delivery = await this.deliverMessages(event, [await this.withCompletionMenu(
       buildLineBusinessAnswerMessage(turnResponse, fallbackText, this.config.webBaseUrl, companyId),
+      companyId,
       resolvedAccess,
     )]);
     if (delivery !== 'ok') {

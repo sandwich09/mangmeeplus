@@ -12,11 +12,14 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import {
   LINE_ALLOWED_TOOL_CATEGORIES,
   LINE_TOOL_REGISTRY,
+  hasToolFeature,
   hasToolPermissions,
   type ToolCategory,
   type ToolMeta,
   type ToolResult,
 } from '@watchdog-bms/contracts';
+import { PrismaService } from '../../../../common/database/prisma.service';
+import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { AuditService } from '../../../audit/application/audit.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../../common/logger/security-event';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
@@ -127,6 +130,7 @@ export class InternalToolsController {
 
   constructor(
     private readonly config: AppConfigService,
+    private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly resolver: PermissionResolverService,
     private readonly actorDelegation: ActorDelegationService,
@@ -373,7 +377,8 @@ export class InternalToolsController {
       locale: dto.context.locale ?? 'th',
     };
 
-    // L-08 deny order — registry entry, then classification, then ERP permissions, then wiring.
+    // L-08 deny order — registry entry, then classification, then ERP permissions, then company
+    // feature entitlement, then wiring.
     // Every branch below is fail-closed: nothing reaches `tool.execute` without a registry entry
     // whose category this phase allows.
     const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === dto.toolName);
@@ -405,10 +410,29 @@ export class InternalToolsController {
 
     // 3. ERP permissions from the registry entry, now unconditionally.
     if (!hasToolPermissions(meta, ctx.permissions)) {
-      return deny('ERP_PERMISSION_DENIED', 'MEDIUM', 'forbidden', 'ERP_PERMISSION_DENIED');
+      // The resolver strips permissions whose owning feature is OFF, so most disabled modules
+      // already fail here. Reporting that as a permission denial tells the user "🔒 คุณไม่มีสิทธิ์"
+      // and sends them to an admin for a grant they already hold. Put the stripped permissions back:
+      // if the tool would then be allowed, the feature switch is the cause, not the role.
+      const withoutEntitlementStripping = [
+        ...ctx.permissions,
+        ...Object.keys(access.entitlementDeniedPermissions ?? {}),
+      ];
+      return hasToolPermissions(meta, withoutEntitlementStripping)
+        ? deny('FEATURE_NOT_ENABLED', 'LOW', 'unsupported_module', 'FEATURE_NOT_ENABLED')
+        : deny('ERP_PERMISSION_DENIED', 'MEDIUM', 'forbidden', 'ERP_PERMISSION_DENIED');
     }
 
-    // 4. Registered and allowed, but the source module is not wired in this build.
+    // 4. Permitted, but the company never switched this tool's own module on. Checked AFTER
+    //    permissions so only a caller who could otherwise read the data learns which features this
+    //    company runs. Catches the tools whose permission belongs to a different feature than the
+    //    data they read — `sales.get_sales_summary` reads sales documents while its permission
+    //    (`crm.report.read`) is gated by CRM, so a company with sales off still answered.
+    if (!hasToolFeature(meta, await loadEntitledFeatureKeys(this.prisma, ctx.companyId))) {
+      return deny('FEATURE_NOT_ENABLED', 'LOW', 'unsupported_module', 'FEATURE_NOT_ENABLED');
+    }
+
+    // 5. Registered and allowed, but the source module is not wired in this build.
     const tool = this.toolMap.get(dto.toolName);
     if (!tool) return deny('SOURCE_MODULE_NOT_READY', 'LOW', 'unsupported_module', 'SOURCE_MODULE_NOT_READY');
 

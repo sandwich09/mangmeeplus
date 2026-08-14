@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { formatThaiTime } from '@/common/i18n/thai-date';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
+import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
   CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate,
   CompanyAccessMatrixRow, EffectiveAccessView, EffectivePermission,
@@ -399,9 +400,10 @@ function EmployeesView({ companyId }: { companyId: string }) {
             <div key={emp.id} className={`${panelClass} p-4`}>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex min-w-0 gap-3">
+                  {/* The avatar stays on the bare name: initials should never start at คำนำหน้า. */}
                   <InitialAvatar label={emp.displayName} muted={emp.status === 'DISABLED'} />
                   <div className="min-w-0">
-                    <div className="truncate text-base font-bold text-gray-900">{emp.displayName}</div>
+                    <div className="truncate text-base font-bold text-gray-900">{employeeFullName(emp)}</div>
                     <div className="mt-1 text-xs text-gray-500">{emp.identityMasked} · {emp.phoneNumber}</div>
                     <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-400">
                       <span>{emp.mustChangePassword ? 'ยังไม่เปลี่ยนรหัสผ่าน' : 'เปลี่ยนรหัสผ่านแล้ว'}</span>
@@ -1205,7 +1207,7 @@ function MatrixRow({ companyId, row, open, onToggle }: {
         <td className="px-4 py-3">
           <div className="flex items-center gap-3">
             <InitialAvatar label={row.displayName} />
-            <span className="font-bold text-gray-900">{row.displayName}</span>
+            <span className="font-bold text-gray-900">{employeeFullName(row)}</span>
           </div>
         </td>
         <td className="px-4 py-3">

@@ -16,6 +16,8 @@ type OpenAiUsage = {
 };
 
 type OpenAiResponse = {
+  status?: string;
+  incomplete_details?: { reason?: string };
   output_text?: string;
   output?: Array<{ content?: Array<{ text?: string }> }>;
   usage?: OpenAiUsage;
@@ -80,7 +82,13 @@ export class OpenAiProvider implements IModelProvider {
         return { ok: false, error };
       }
       usage = body.usage;
-      return { ok: true, text: this.extractText(body) };
+      return {
+        ok: true,
+        text: this.extractText(body),
+        stopReason: body.status === 'incomplete' && body.incomplete_details?.reason === 'max_output_tokens'
+          ? 'max_tokens'
+          : body.status === 'completed' ? 'end_turn' : 'other',
+      };
     } catch (err) {
       const error = this.mapThrownError(err);
       errorCode = error.code;

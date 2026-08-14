@@ -291,8 +291,9 @@ verify กับ datapoint จริงผ่านแล้วครบ 9 alarm
 CPU credit และทุก alarm ชี้ไป confirmed SNS subscription. Script SHA-256 ที่ใช้คือ
 `12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`.
 SNS accepted a sanitized canary publish with MessageId
-`198e9125-6a84-5124-866b-f3dc35bfe21e`; this proves topic acceptance, while mailbox delivery still
-requires owner confirmation.
+`198e9125-6a84-5124-866b-f3dc35bfe21e`. Owner-supplied inbox evidence on 2026-08-15 confirmed
+delivery; only screenshot SHA-256 `f524646240c97510a4a500e1bcfecedf064e2549f620081dbd586605d09451bb`
+is retained because the image exposes the mailbox and unsubscribe endpoint.
 
 Alarm Redis เดิม `watchdog-bms-prod-redis-memory-high` ที่ใช้ `ReplicationGroupId` ยังอยู่และยัง
 ไม่มี datapoint; ห้ามลบด้วย workstation ปัจจุบันเพราะยังไม่มีหลักฐาน `DeleteAlarms` allow.

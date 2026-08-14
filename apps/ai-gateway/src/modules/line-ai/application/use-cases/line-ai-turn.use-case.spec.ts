@@ -402,3 +402,32 @@ describe('LineAiTurnUseCase – coverage passthrough (item 10F)', () => {
     assert.equal(resp.coverage, undefined);
   });
 });
+
+// UAT 2026-08-15: the ERP tool boundary now refuses a tool whose owning company feature is off.
+// Without a reply of its own, that refusal fell through to "📭 ไม่พบข้อมูลที่ตรงกันค่ะ", which tells
+// the user their business has no data when the truth is the feature was never switched on.
+describe('LineAiTurnUseCase – company feature switched off', () => {
+  const useCaseReturning = (result: Record<string, unknown>) => new LineAiTurnUseCase(
+    { invoke: async (tool: any) => ({ toolName: tool.name, sourceRefs: [], asOf: new Date().toISOString(), ...result }) } as any,
+    makeOrchestrator(),
+    { lineAiAgentOrchestrationEnabled: false, lineAiAgentRuntime: 'disabled' } as any,
+    makeAgentcoreRuntime(),
+  );
+
+  it('names the feature switch instead of reporting no data or a missing permission', async () => {
+    const resp = await useCaseReturning({ status: 'unsupported_module', errorCode: 'FEATURE_NOT_ENABLED' }).execute(validReq);
+
+    assert.equal(resp.refused, true);
+    assert.match(resp.replyText, /ยังไม่ได้เปิดใช้งาน/);
+    assert.equal(resp.replyText.includes('ไม่พบข้อมูล'), false, 'a disabled feature is not an empty result');
+    assert.equal(resp.replyText.includes('ไม่มีสิทธิ์'), false, 'a disabled feature is not a permission problem');
+    // The refusal must not disclose anything beyond what this user asked about.
+    assert.equal(/[a-z_]+_documents|crm|thai_tax/.test(resp.replyText), false, 'no internal feature key leaks');
+  });
+
+  it('still reports a genuine permission denial as a permission denial', async () => {
+    const resp = await useCaseReturning({ status: 'forbidden', errorCode: 'ERP_PERMISSION_DENIED' }).execute(validReq);
+    assert.equal(resp.refused, true);
+    assert.match(resp.replyText, /ไม่มีสิทธิ์/);
+  });
+});

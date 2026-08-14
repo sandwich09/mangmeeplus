@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ResponseComposerAgent } from './response-composer.agent';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent } from './response-composer.agent';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
 // Stub provider: receives the JSON `{ language, reply }` the language layer sends and returns
@@ -15,6 +15,65 @@ function stubProvider(reply: (groundedReply: string, language: string) => Provid
 }
 
 const GROUNDED = '• ยอดทั้งหมด: 11,875.00\n• ยังไม่จ่าย: 0';
+
+describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
+  const agent = new ResponseComposerAgent();
+
+  it('describes capabilities without claiming that every feature is available', () => {
+    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง');
+    assert.match(reply, /ยอดขาย/);
+    assert.match(reply, /ขึ้นกับสิทธิ์และฟีเจอร์/);
+    assert.match(reply, /ต้องทำบนเว็บ/);
+  });
+
+  it('uses the warm female employee persona for pure casual conversation', async () => {
+    let capturedSystemPrompt = '';
+    let capturedPayload: any;
+    const provider: IModelProvider = {
+      async generateText(input) {
+        capturedSystemPrompt = input.systemPrompt ?? '';
+        capturedPayload = JSON.parse(input.messages[0]!.text);
+        return { ok: true, text: 'เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊' };
+      },
+    };
+    const reply = await agent.composeCasual('วันนี้เหนื่อยจัง', provider, {
+      conversationContext: { windowMinutes: 15, maxTurns: 16, recentTurns: [{ at: '2026-08-15T10:00:00.000Z', userMessagePreview: 'สวัสดี' }] },
+    });
+    assert.equal(reply, 'เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊');
+    assert.equal(capturedSystemPrompt, CASUAL_CONVERSATION_SYSTEM_PROMPT);
+    assert.equal(capturedPayload.messageText, 'วันนี้เหนื่อยจัง');
+    assert.equal(capturedPayload.conversationContext.recentTurns.length, 1);
+  });
+
+  it('falls back safely when casual generation is unavailable', async () => {
+    const provider: IModelProvider = { generateText: async () => ({ ok: false, error: { code: 'PROVIDER_TIMEOUT', message: 'timeout', retryable: true } }) };
+    assert.match(await agent.composeCasual('สวัสดี', provider), /น้องมั่งมี/);
+  });
+
+  it('drops an incomplete long tail instead of sending a sentence cut mid-word', async () => {
+    const provider: IModelProvider = {
+      generateText: async () => ({
+        ok: true,
+        text: `${'เข้าใจเลยค่ะ '.repeat(18)}\nช่วงนี้งานเยอะเป็นพิเศษ หรือรู้สึกหมดแรงมาสักพักแล้`,
+      }),
+    };
+    const reply = await agent.composeCasual('ช่วงนี้หมดไฟ', provider);
+    assert.ok(!reply.endsWith('แล้'));
+    assert.ok(reply.length <= 320);
+  });
+
+  it('keeps only completed sentences when the provider stops at max tokens below the character cap', async () => {
+    const provider: IModelProvider = {
+      generateText: async () => ({
+        ok: true,
+        stopReason: 'max_tokens',
+        text: 'ได้เลยค่ะ 😄 เรื่องคลาสสิกในออฟฟิศ: ใครเอาข้าวเพื่อนออกจากตู้เย็น แล้วไม่มีใครสารภาพสักคน ทั้งที่กล้องวงจรปิดก็อยู่ตรงนั้น! 🍱📹 บางทีความลับที่ลึกที่สุดคือ "ใครกินข้า',
+      }),
+    };
+    const reply = await agent.composeCasual('ขอเรื่องเม้าท์ขำๆ แบบไม่พาดพิงใครหน่อย', provider);
+    assert.equal(reply, 'ได้เลยค่ะ 😄 เรื่องคลาสสิกในออฟฟิศ: ใครเอาข้าวเพื่อนออกจากตู้เย็น แล้วไม่มีใครสารภาพสักคน ทั้งที่กล้องวงจรปิดก็อยู่ตรงนั้น!');
+  });
+});
 
 describe('ResponseComposerAgent.polishLanguage (grounded language layer)', () => {
   const agent = new ResponseComposerAgent();
@@ -94,6 +153,18 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     const out = await agent.composeAnswer('มีกี่สาขา', TOOL_DATA, FALLBACK, provider);
     assert.ok(out.includes('2 สาขา'));
     assert.ok(out.includes('สาขาลาดพร้าว'));
+  });
+
+  it('falls back when a count explicitly requested by the user is omitted', async () => {
+    const data = [{ tool: 'sales.get_sales_summary', data: { totalSales: '125430.50', transactionCount: 7 } }];
+    const fallback = '• ยอดรับเงินจริง: 125430.50 บาท\n• จำนวนรายการ: 7 รายการ';
+    const out = await agent.composeAnswer(
+      'ยอดขายเดือนนี้เท่าไหร่ มีกี่รายการ',
+      data,
+      fallback,
+      answerProvider('ยอดรับเงินจริงเดือนนี้ 125430.50 บาทค่ะ'),
+    );
+    assert.equal(out, fallback);
   });
 
   it('accepts value-equal number reformatting (85 vs 85.0000)', async () => {

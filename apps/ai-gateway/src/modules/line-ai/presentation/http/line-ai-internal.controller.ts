@@ -20,6 +20,9 @@ import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_K
 // API-side ReceiptOcrClient waits up to 60s. Keep under that outer wrapper.
 const DOCUMENT_OCR_TIMEOUT_MS = 45_000;
 const MAX_RECEIPT_CATEGORY_CATALOGUE = 100;
+// Long enough for a full restaurant or grocery bill; past this the item block is a catalogue, not
+// an expense document, and the summary line is the honest answer.
+const MAX_RECEIPT_OCR_LINES = 40;
 
 type ReceiptUnderstanding =
   | { ok: true; fields?: ReceiptOcrResponse['fields']; classification?: ReceiptOcrResponse['classification'] }
@@ -395,7 +398,7 @@ Return compact JSON only, no markdown:
 Allowed reason codes: NO_DOCUMENT_STRUCTURE, UNREADABLE_OR_CROPPED, MULTIPLE_DOCUMENTS, LOW_CLASSIFICATION_CONFIDENCE, CONTRADICTORY_SIGNALS, QUANTITY_ONLY, MISSING_MONETARY_AMOUNT, MISSING_TRANSACTION_TOTAL, MISSING_PAYMENT_EVIDENCE, ORDER_ONLY, MISSING_VENDOR, MISSING_DOCUMENT_NUMBER, MISSING_VENDOR_TAX_ID, MISSING_TAX_BASE_OR_VAT, QUOTATION_NOT_TRANSACTION, PAYMENT_EVIDENCE_ONLY, MISSING_SCHEDULED_TIME, MISSING_PARTY_OR_PROVIDER, MISSING_BOOKING_REFERENCE, AMBIGUOUS_BUSINESS_DIRECTION, CHANNEL_SCOPE_MISMATCH, TARGET_PERMISSION_MISSING, TARGET_MODULE_DISABLED, OCR_UNAVAILABLE, HUMAN_REVIEW_REQUIRED.
 Evidence, amount, and settlement signals must be short exact spans copied from OCR text. Empty arrays are valid. Never return raw OCR text or reasoning.
 Receipt requires a positive transaction-specific total, explicit receipt/paid/settlement evidence, and issuer/date/reference anchor. Item names or quantities without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. A total without settlement evidence is a bill/order, not RECEIPT. Quotations, appointments, bookings, reservations, signatures, and non-financial images are never expense receipts even when an amount is visible.
-Settlement evidence INCLUDES the document's own title. ใบเสร็จรับเงิน / ใบรับเงิน / ใบเสร็จ / RECEIPT and บิลเงินสด / CASH SALE / CASH BILL are issued only when money is received (Thai Revenue Code s.105): such a title plus a positive total IS settlement evidence even without a separate paid stamp. ใบกำกับภาษีอย่างย่อ is a retail point-of-sale document — treat it as settled, and as definitively settled when its title is combined with ใบเสร็จรับเงิน. A standalone full ใบกำกับภาษี for goods is NOT settlement evidence by itself. Body settlement signals: ได้รับเงิน/รับเงินแล้ว, ชำระแล้ว, จ่ายแล้ว, PAID, ชำระเงินสด, payment method เงินสด/โอน/บัตร, เงินทอน (change), ผู้รับเงิน signature. Anti-signals (unpaid document): ใบแจ้งหนี้, ใบวางบิล, ใบเสนอราคา, ใบส่งของ, ใบสั่งซื้อ, เช็คบิล, กำหนดชำระ / credit terms / due date.
+Settlement evidence INCLUDES the document's own title. ใบเสร็จรับเงิน / ใบรับเงิน / ใบเสร็จ / RECEIPT and บิลเงินสด / CASH SALE / CASH BILL are issued only when money is received (Thai Revenue Code s.105): such a title plus a positive total IS settlement evidence even without a separate paid stamp. A document titled plainly BILL / บิล is settlement evidence on the same footing (owner decision 2026-08-15): Thai POS systems print the customer's paid copy under that heading, so a bare BILL title plus a positive total is settled — copy the title span into settlementSignals and set transactionState PAID. That covers the bare word only. ใบวางบิล, เช็คบิล, and ใบแจ้งหนี้ each contain it yet stay the unpaid anti-signals listed below, and a printed credit term or due date always outranks the title. ใบกำกับภาษีอย่างย่อ is a retail point-of-sale document — treat it as settled, and as definitively settled when its title is combined with ใบเสร็จรับเงิน. A standalone full ใบกำกับภาษี for goods is NOT settlement evidence by itself. Body settlement signals: ได้รับเงิน/รับเงินแล้ว, ชำระแล้ว, จ่ายแล้ว, PAID, ชำระเงินสด, payment method เงินสด/โอน/บัตร, เงินทอน (change), ผู้รับเงิน signature. Anti-signals (unpaid document): ใบแจ้งหนี้, ใบวางบิล, ใบเสนอราคา, ใบส่งของ, ใบสั่งซื้อ, เช็คบิล, กำหนดชำระ / credit terms / due date.
 When a settlement title or signal is present, set transactionState to PAID and copy the exact span (e.g. the title) into settlementSignals.
 ABBREVIATED_TAX_INVOICE vs TAX_INVOICE: use ABBREVIATED_TAX_INVOICE whenever the document titles itself ใบกำกับภาษีอย่างย่อ / TAX INVOICE (ABB) / TAX INV (ABB) / ABB, or is a retail point-of-sale slip that shows the seller's tax id and a VAT amount but identifies NO buyer. Use TAX_INVOICE only for the full form, which names the BUYER (ชื่อ/ที่อยู่ผู้ซื้อ) as well as the seller. Buyer identification is the discriminator, and the printed title decides on its own when present. This is a form distinction, not a completeness gap: a missing buyer name on an abbreviated invoice is not a missing field and never a reason code.
 Always keep the most specific documentKind that matches the document's form (e.g. a handwritten cash-sale bill is HANDWRITTEN_CASH_BILL even when the bill number or the vendor tax id is blank). Completeness gaps are reason codes in missingRequiredSignals and names in missingFields — they never change documentKind, and NEEDS_REVIEW as a kind is only for documents no specific kind fits. Set requiresClarification true only for content-level problems (unreadable, cropped, multiple documents, contradictory signals, or no transaction total anywhere) — a missing tax id, bill number, or buyer name alone does not require clarification.
@@ -403,10 +406,12 @@ documentFamily: settled purchase evidence — receipts, tax invoices (full or ab
 Never report MISSING_TRANSACTION_TOTAL or MISSING_MONETARY_AMOUNT when you filled grandTotalAmount — a reason code must not contradict your own extracted fields.
 Whenever grandTotalAmount is filled, amountSignals MUST include the total NUMBER itself as one span, copied verbatim from the OCR text (e.g. "11,875.00" — the bare number, not a combined phrase; validation drops any span that does not appear character-for-character in the OCR text, and a total with no surviving amount signal is rejected).
 businessDirection is judged from the perspective of the business UPLOADING this document, never from the document's own voice — a receipt always speaks as the seller. The issuer/header block identifies the seller; the buyer appears only in a customer field (ลูกค้า, นาม, ผู้ซื้อ, ได้รับเงินจาก, Bill to, Customer). Supplier-issued settled evidence submitted for expense capture is PURCHASE_EXPENSE even when the buyer field is blank or absent (abbreviated tax invoices legally omit the buyer). Use SALES_RECEIVABLE only when the document is evidently issued BY the uploading business itself. If genuinely unresolvable, use UNKNOWN with AMBIGUOUS_BUSINESS_DIRECTION — never default to SALES_RECEIVABLE.
-Fields (omit irrelevant or unknown fields): vendorName, vendorTaxId, vendorBranchCode, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, grandTotalAmount, vatMode, additionalCharges, categorySuggestion, confidence, missingFields.
+Fields (omit irrelevant or unknown fields): vendorName, vendorTaxId, vendorBranchCode, documentNumber, expenseDate YYYY-MM-DD, description, quantity, unitPrice, vatRate, subtotalAmount, discountAmount, taxableAmount, vatAmount, whtRate, whtAmount, grandTotalAmount, vatMode, lines, additionalCharges, categorySuggestion, confidence, missingFields.
+description, quantity, and unitPrice describe the document AS A WHOLE — they are the one-line summary used when the item block cannot be split. lines is where each printed item row goes.
 vendorTaxId is the SELLER's Thai 13-digit เลขประจำตัวผู้เสียภาษี (labels: เลขประจำตัวผู้เสียภาษี / เลขประจำตัวผู้เสียภาษีอากร / เลขผู้เสียภาษี / TAX ID / TIN / เลขทะเบียนนิติบุคคล / ทะเบียนเลขที่). It may be printed with dashes or spaces (0-9940-0016-30-11) — return digits only. Look in the header AND the footer: hospitals and POS slips often print it in small type at the bottom. A full tax invoice prints seller AND buyer tax ids — return the seller's (issuer header side), never the buyer's. Never use a phone number.
 documentNumber is the document's own printed running number (labels: เลขที่ / เลขที่ใบเสร็จ / เลขที่เอกสาร / เลขที่ใบกำกับภาษี / No. / Receipt No. / Invoice No. / Bill No.). When the document uses a carbon-book pair, combine เล่มที่ X เลขที่ Y as "X/Y". documentNumber is NEVER the date, and never HN/AN/VN (hospital patient/visit numbers), queue or table numbers, POS terminal/merchant ids (TID/MID), card approval codes, the tax id, or a phone number. If only a date appears where the number should be, omit documentNumber.
 vendorBranchCode is the seller's issuing-branch designation printed next to the tax id: สำนักงานใหญ่ / สนญ / HO / HQ / Head Office → "00000"; สาขาที่ N / Branch N → the branch number as printed.
+lines is optional and contains at most 40 printed item rows in document order. Each entry is {"description":"printed item name","quantity":"printed quantity, \"1\" when the row prints none","amount":"the row's own printed money amount","unitPrice":"the printed per-unit price, only when the row prints one","evidenceSignal":"one short exact OCR span","confidence":0.0}. Return EVERY item row the item block prints: a bill listing two products must return two entries, never one merged entry and never only the first row. amount is the row's money column as printed, which on Thai bills is the extended amount for the whole row, not the per-unit price — พิซซ่า 1 524.00 is quantity "1" and amount "524.00", ปีกไก่ 2 298.00 is quantity "2" and amount "298.00" with unitPrice omitted because 149.00 is nowhere on the bill. Give unitPrice only when that per-unit number is itself printed. The row amounts must add up to the printed subtotal (or the printed total when no subtotal is printed); re-read the item block when they do not. Never put a service charge, delivery fee, VAT, discount, payment, change, or the total row into lines — those belong to additionalCharges, discountAmount, vatAmount, and grandTotalAmount. Omit lines entirely when the item block is unreadable or its rows cannot be told apart.
 additionalCharges is optional and contains at most 10 POSITIVE printed charges. Each entry is {"kind":"SERVICE_CHARGE"|"DELIVERY"|"PACKAGING"|"PLATFORM_FEE"|"TIP"|"ROUNDING"|"OTHER","description":"printed label","amount":"positive printed amount","vatRate":"optional decimal fraction including 0","evidenceSignal":"one short exact OCR span","confidence":0.0}. Put discounts, coupons, promotions, and negative rounding only in discountAmount — never duplicate them in additionalCharges. subtotalAmount is the merchandise/service subtotal BEFORE additionalCharges. For VAT_EXCLUDED documents, charge amount is its pre-VAT amount; for VAT_INCLUDED documents, it is its printed VAT-inclusive amount. Include vatRate only when the document explicitly prints or its complete VAT arithmetic proves the rate applies to that charge; use "0" only when the charge is explicitly/provably outside VAT. If charge tax treatment is unclear, omit its vatRate and let ERP reconciliation require review.
 categorySuggestion is optional and has exactly this shape: {"expenseCategoryId":"an id from the active catalogue","confidence":0.0,"evidenceSignals":["short exact OCR span"]}.
 Choose at most one category for the whole document. Use only an expenseCategoryId present in the active catalogue. Base the choice on the document's vendor, business purpose, and purchased items, never on catalogue text alone. evidenceSignals must contain 1-5 short exact spans copied from OCR text, not category names copied from the catalogue. Omit categorySuggestion and add "category" to missingFields when the catalogue is empty or no category is clearly supported. A category is only a reporting dimension: never use it to infer or alter VAT, Tax Code, GL account, payment, or document classification.
@@ -568,6 +573,19 @@ export function applyOcrValueCrossCheck(
     }
   }
 
+  // A split item block is all-or-nothing: one row priced at a number the document never printed
+  // makes the whole breakdown untrustworthy, so it drops back to the single summary line rather
+  // than seeding a draft with an invented row. Quantities are exempt — the row often prints none,
+  // and a misread one moves only the reviewer-visible split, never the recorded total.
+  const printedMoney = (value: string): boolean => {
+    const amount = Number.parseFloat(value.replace(/,/g, ''));
+    return Number.isFinite(amount) && allowedNumbers.has(amount);
+  };
+  if (out.lines?.some((line) => !printedMoney(line.amount)
+    || (line.unitPrice !== undefined && !printedMoney(line.unitPrice)))) {
+    delete out.lines;
+  }
+
   if (!out.vatAmount) {
     const printedVatAmount = singlePrintedVatAmount(documentText);
     if (printedVatAmount) {
@@ -686,6 +704,42 @@ function parseReceiptOcrJson(
     if (out.whtRate) {
       const rate = Number.parseFloat(out.whtRate);
       if (!(Number.isFinite(rate) && rate > 0 && rate < 1)) delete out.whtRate;
+    }
+    // Spec §5: item rows are advisory. Every row must quote an OCR span that really exists, so a
+    // hallucinated product cannot reach a draft; the API still drops the whole set unless the row
+    // amounts reconcile with the printed totals.
+    if (Array.isArray(rawFields['lines']) && rawFields['lines'].length <= MAX_RECEIPT_OCR_LINES) {
+      const lines: NonNullable<typeof out.lines> = [];
+      for (const item of rawFields['lines']) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const line = item as Record<string, unknown>;
+        const description = typeof line['description'] === 'string' ? line['description'].trim() : '';
+        const amount = typeof line['amount'] === 'string' ? line['amount'].trim() : '';
+        const rawQuantity = typeof line['quantity'] === 'string' ? line['quantity'].trim() : '1';
+        const quantity = rawQuantity || '1';
+        const rawUnitPrice = typeof line['unitPrice'] === 'string' ? line['unitPrice'].trim() : undefined;
+        const evidenceSignal = typeof line['evidenceSignal'] === 'string' ? line['evidenceSignal'].trim() : '';
+        const confidence = line['confidence'];
+        if (
+          !description || description.length > 200
+          || !amount || amount.length > 32 || !(Number.parseFloat(amount.replace(/,/g, '')) > 0)
+          || quantity.length > 16 || !(Number.parseFloat(quantity.replace(/,/g, '')) > 0)
+          || (rawUnitPrice !== undefined && (rawUnitPrice.length > 32 || !(Number.parseFloat(rawUnitPrice.replace(/,/g, '')) > 0)))
+          || !evidenceSignal || evidenceSignal.length > 120 || !documentText.includes(evidenceSignal)
+          || (confidence !== undefined && !(typeof confidence === 'number' && Number.isFinite(confidence) && confidence >= 0 && confidence <= 1))
+        ) continue;
+        lines.push({
+          description,
+          quantity,
+          amount,
+          ...(rawUnitPrice !== undefined ? { unitPrice: rawUnitPrice } : {}),
+          evidenceSignal,
+          ...(typeof confidence === 'number' ? { confidence } : {}),
+        });
+      }
+      // One surviving row says nothing the summary line does not already say, and a partially
+      // dropped set no longer represents the document — both stay with the summary path.
+      if (lines.length >= 2 && lines.length === rawFields['lines'].length) out.lines = lines;
     }
     if (Array.isArray(rawFields['additionalCharges']) && rawFields['additionalCharges'].length <= 10) {
       const charges: NonNullable<typeof out.additionalCharges> = [];

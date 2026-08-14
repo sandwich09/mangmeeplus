@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException } from '@nestjs/common';
-import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_TOOL_REGISTRY, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
+import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_TOOL_REGISTRY, hasToolFeature, toolFeatureKeys, type ToolMeta, type ToolResult } from '@watchdog-bms/contracts';
 import { SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { InternalToolsController } from './internal-tools.controller';
@@ -15,6 +15,8 @@ function fakeResolver(access: {
   branchIds?: string[];
   locationIds?: string[];
   roles?: string[];
+  /** permission key → the feature key whose OFF switch removed it, as the real resolver reports. */
+  entitlementDeniedPermissions?: Record<string, string>;
 } | null) {
   return {
     resolveAccess: async (_userId: string, companyId?: string) => {
@@ -24,6 +26,7 @@ function fakeResolver(access: {
         companyId: access.companyId ?? companyId ?? 'c1',
         roles: access.roles ?? [],
         permissions: access.permissions,
+        entitlementDeniedPermissions: access.entitlementDeniedPermissions,
         scopes: { branchIds: access.branchIds, locationIds: access.locationIds },
       };
     },
@@ -72,6 +75,12 @@ function failingAudit(failsOn: (entry: any) => boolean = () => true) {
   } as any;
 }
 
+/** `loadEntitledFeatureKeys` returns null for a company with no entitlement rows — the legacy
+ *  fail-open case every pre-existing test here assumes. Pass rows to switch features on/off. */
+function fakePrisma(rows: Array<{ featureKey: string; enabled: boolean }> = []) {
+  return { client: { companyFeatureEntitlement: { findMany: async () => rows } } } as any;
+}
+
 const okAudit = { log: async () => undefined, logOrThrow: async () => undefined } as any;
 
 const STUBS = Array.from({ length: 55 }, () => ({}) as any);
@@ -81,6 +90,7 @@ describe('InternalToolsController', () => {
     const stub = {} as any;
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: '' } as any,
+      fakePrisma(),
       okAudit,
       fakeResolver({ permissions: [AI] }),
       fakeDelegation(),
@@ -97,6 +107,7 @@ describe('InternalToolsController', () => {
     const stub = {} as any;
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       okAudit,
       // Caller claims permissions, but the DB-resolved access lacks ai.tool.invoke.
       fakeResolver({ permissions: ['crm.report.read'] }),
@@ -117,6 +128,7 @@ describe('InternalToolsController', () => {
     const stub = {} as any;
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       okAudit,
       fakeResolver(null),
       fakeDelegation(),
@@ -136,6 +148,7 @@ describe('InternalToolsController', () => {
     const stub = {} as any;
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       okAudit,
       fakeResolver({ permissions: [AI, 'crm.customer.read'] }),
       fakeDelegation(),
@@ -155,6 +168,7 @@ describe('InternalToolsController', () => {
     const stub = {} as any;
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       okAudit,
       // Missing tax.config.read: one of two required permissions is not enough.
       fakeResolver({ permissions: [AI, 'tax.profile.read'] }),
@@ -184,6 +198,7 @@ describe('InternalToolsController', () => {
     };
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' },
+      fakePrisma(),
       okAudit,
       fakeResolver({ permissions: [AI, 'tax.profile.read', 'tax.config.read'], branchIds: ['b1'] }),
       fakeDelegation(),
@@ -211,6 +226,7 @@ describe('InternalToolsController', () => {
     const auditEvents: any[] = [];
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' },
+      fakePrisma(),
       { log: async (entry: any) => { auditEvents.push(entry); }, logOrThrow: async (entry: any) => { auditEvents.push(entry); } },
       fakeResolver({ permissions: [AI, 'crm.report.read'], branchIds: ['b1'], membershipId: 'm9', companyId: 'c1', roles: ['SALES'] }),
       fakeDelegation('m9'),
@@ -251,6 +267,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: [AI] }),
       { consume: async () => { throw new Error('bad delegation'); } } as any,
@@ -277,6 +294,7 @@ describe('InternalToolsController', () => {
     tools[11] = { execute: async () => { executed += 1; return { toolName: 'sales.get_sales_summary', status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } };
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       failingAudit(),
       fakeResolver({ permissions: [AI, 'crm.report.read'] }),
       fakeDelegation(),
@@ -297,6 +315,7 @@ describe('InternalToolsController', () => {
     // Only the DENIED row fails: the delegation-consume row lands, so this exercises the gate.
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       failingAudit((entry) => entry.result === 'DENIED'),
       fakeResolver({ permissions: ['crm.report.read'] }), // lacks the ai.tool.invoke gate
       fakeDelegation(),
@@ -316,6 +335,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       // Membership moved after the (still signature-valid, now consumed) delegation was issued.
       fakeResolver({ permissions: [AI], membershipId: 'm-current' }),
@@ -349,6 +369,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver(null),
       fakeDelegation(),
@@ -376,6 +397,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: ['crm.report.read'] }),
       fakeDelegation(),
@@ -403,6 +425,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: [AI, 'tax.profile.read'] }),
       fakeDelegation(),
@@ -426,6 +449,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: [AI, 'crm.customer.read'] }),
       fakeDelegation(),
@@ -450,6 +474,7 @@ describe('InternalToolsController', () => {
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret' } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: [AI, 'crm.report.read'] }),
       fakeDelegation(),
@@ -486,6 +511,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
     const { events, audit } = recordingAudit();
     const controller = new (InternalToolsController as any)(
       { aiGatewayInternalSecret: 'secret', aiFinalMutationEnabled: options.finalMutationEnabled ?? false } as any,
+      fakePrisma(),
       audit,
       fakeResolver({ permissions: options.permissions }),
       fakeDelegation(),
@@ -635,6 +661,92 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
         context: { requestId: 'r-walk', companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
       });
       assert.equal(result.status, 'ok', `${toolName} must still execute (got ${result.errorCode ?? result.status})`);
+    }
+  });
+});
+
+// UAT 2026-08-15: the LINE menu stopped offering ยอดขายวันนี้ on a company with sales switched off,
+// but typing the question as free text still reached sales.get_sales_summary and answered. The tool
+// boundary is the authoritative gate, so the feature switch is enforced here too.
+describe('InternalToolsController — company feature entitlement', () => {
+  /** tax.get_tax_code_profile is wired at index 17 and owned by the `thai_tax` feature. */
+  function taxController(rows: Array<{ featureKey: string; enabled: boolean }>, access?: Parameters<typeof fakeResolver>[0]) {
+    const tools: { execute: (ctx: any) => Promise<any> }[] = Array.from({ length: 32 }, () => ({ execute: async () => ({ status: 'ok' }) }));
+    tools[17] = {
+      execute: async () => ({ toolName: 'tax.get_tax_code_profile', status: 'ok', data: { reviewRequired: false }, sourceRefs: [], asOf: new Date().toISOString() }),
+    };
+    return new (InternalToolsController as any)(
+      { aiGatewayInternalSecret: 'secret' },
+      fakePrisma(rows),
+      okAudit,
+      fakeResolver(access ?? { permissions: [AI, 'tax.profile.read', 'tax.config.read'] }),
+      fakeDelegation(),
+      ...tools,
+    ) as InternalToolsController;
+  }
+
+  const invokeTax = (controller: InternalToolsController) => controller.invoke('secret', DELEGATION, {
+    toolName: 'tax.get_tax_code_profile',
+    context: { companyId: 'c1', userId: 'u1', permissions: [], locale: 'th-TH' },
+  } as any);
+
+  it('refuses a tool whose owning feature the company switched off', async () => {
+    const result = await invokeTax(taxController([{ featureKey: 'thai_tax', enabled: false }]));
+    assert.equal(result.status, 'unsupported_module');
+    assert.equal(result.errorCode, 'FEATURE_NOT_ENABLED');
+    // A refusal never carries business data across the boundary.
+    assert.equal(result.data, undefined);
+    assert.deepEqual(result.sourceRefs, []);
+  });
+
+  it('runs the same tool once the feature is on', async () => {
+    const result = await invokeTax(taxController([{ featureKey: 'thai_tax', enabled: true }]));
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(result.data, { reviewRequired: false });
+  });
+
+  it('leaves a legacy company with no entitlement rows untouched', async () => {
+    const result = await invokeTax(taxController([]));
+    assert.equal(result.status, 'ok', 'no entitlement rows is the fail-open legacy company');
+  });
+
+  it('reports a permission the feature switch removed as FEATURE_NOT_ENABLED, not a permission gap', async () => {
+    // What the real resolver produces when thai_tax is off: the permission is stripped AND the
+    // reason is recorded. Telling this user "🔒 คุณไม่มีสิทธิ์" would send them to an admin for a
+    // grant their role already carries.
+    const result = await invokeTax(taxController([{ featureKey: 'thai_tax', enabled: false }], {
+      permissions: [AI, 'tax.profile.read'],
+      entitlementDeniedPermissions: { 'tax.config.read': 'thai_tax' },
+    }));
+    assert.equal(result.status, 'unsupported_module');
+    assert.equal(result.errorCode, 'FEATURE_NOT_ENABLED');
+  });
+
+  it('still reports a real permission gap as ERP_PERMISSION_DENIED even beside an unrelated feature switch', async () => {
+    const result = await invokeTax(taxController([{ featureKey: 'thai_tax', enabled: true }], {
+      permissions: [AI, 'tax.profile.read'],
+      entitlementDeniedPermissions: { 'crm.report.read': 'crm' },
+    }));
+    assert.equal(result.status, 'forbidden');
+    assert.equal(result.errorCode, 'ERP_PERMISSION_DENIED');
+  });
+
+  it('gates the reported sales tool, whose permission belongs to a different feature than its data', async () => {
+    // sales.get_sales_summary requires crm.report.read but reads sales documents, so CRM being on
+    // used to be enough. Only the tool-level feature key closes it.
+    const salesTool = LINE_TOOL_REGISTRY.find((tool) => tool.name === 'sales.get_sales_summary');
+    assert.deepEqual(toolFeatureKeys(salesTool!), ['sales_documents']);
+    assert.equal(hasToolFeature(salesTool!, new Set(['crm', 'crm.overview'])), false);
+    assert.equal(hasToolFeature(salesTool!, new Set(['sales_documents'])), true);
+  });
+
+  it('never gates reimbursement reads, which outlive their feature switch by owner decision', async () => {
+    // Owner decision 2026-08-10 (launch matrix §6.3 r5): disabling reimbursement blocks new claims
+    // but in-flight approvals keep flowing, so an approver must still be able to ask LINE.
+    for (const name of ['reimbursement.list_pending_approvals', 'reimbursement.get_summary', 'reimbursement.get_detail']) {
+      const tool = LINE_TOOL_REGISTRY.find((entry) => entry.name === name);
+      assert.deepEqual(toolFeatureKeys(tool!), [], `${name} must stay ungated`);
+      assert.equal(hasToolFeature(tool!, new Set(['expenses'])), true, name);
     }
   });
 });

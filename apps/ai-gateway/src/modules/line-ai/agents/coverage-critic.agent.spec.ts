@@ -52,12 +52,14 @@ describe('CoverageCriticAgent.judge', () => {
       language: 'th',
       toolsCalled: ['sales.get_sales_summary'],
       facts: [{ label: 'ยอดขาย', value: '12,500' }],
+      toolData: ['{"status":"SUCCEEDED","data":[{"vendorNameSnapshot":"ร้านเอ","grandTotalAmount":"500"}]}'],
     });
     assert.equal(verdicts?.[0]?.verdict, 'covered');
     assert.equal(captured?.systemPrompt, COVERAGE_CRITIC_SYSTEM_PROMPT);
     const payload = JSON.parse(captured?.messages[0]?.text ?? '{}');
     assert.deepEqual(payload.toolsCalled, ['sales.get_sales_summary']);
     assert.equal(payload.facts[0].value, '12,500');
+    assert.match(payload.toolData[0], /vendorNameSnapshot/);
   });
 
   it('returns null on provider failure (fail-open)', async () => {

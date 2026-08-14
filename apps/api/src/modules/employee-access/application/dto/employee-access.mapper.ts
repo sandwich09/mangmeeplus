@@ -28,6 +28,7 @@ type EmployeeProfileRow = {
   userId: string;
   membershipId: string;
   displayName: string;
+  titlePrefix?: string | null;
   legalName: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -64,6 +65,9 @@ export function toEmployeeSummary(row: EmployeeProfileRow): EmployeeSummary {
     userId: row.userId,
     membershipId: row.membershipId,
     displayName: row.displayName,
+    // Null on rows written before the title was split out of displayName; those are never
+    // backfilled, so the reader simply gets no title rather than a guessed one.
+    titlePrefix: (row.titlePrefix ?? undefined) as EmployeeSummary['titlePrefix'],
     legalName: row.legalName ?? undefined,
     email: row.email ?? row.user.email ?? undefined,
     firstName: row.firstName ?? undefined,

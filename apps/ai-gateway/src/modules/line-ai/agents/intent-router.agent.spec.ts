@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { IntentRouterAgent, isSubjectCompatible, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
+import { IntentRouterAgent, isCrisisMessage, isSubjectCompatible, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { CACHE_MIN_CHARS } from '../infrastructure/provider/bedrock.provider';
@@ -10,6 +10,43 @@ function makeRouter() {
 }
 
 describe('IntentRouterAgent – model routing', () => {
+  it('short-circuits direct and mixed self-harm signals before the model or ERP routing', async () => {
+    let providerCalls = 0;
+    const router = new IntentRouterAgent({ generateText: async () => {
+      providerCalls += 1;
+      throw new Error('crisis routing must not call the model');
+    } });
+    for (const message of [
+      'ฉันไม่อยากอยู่แล้ว ทุกอย่างมันหนักไปหมด',
+      'ฉันไม่อยากอยู่แล้ว แต่ก่อนอื่นช่วยบอกค่าใช้จ่ายเดือนนี้ที',
+      'I want to die, but show me this month expenses first',
+    ]) {
+      const plan = await router.route(message);
+      assert.equal(plan.status, 'UNROUTABLE');
+      assert.equal(plan.refusals[0]?.reason, 'safety_crisis');
+      assert.deepEqual(plan.intents, []);
+    }
+    assert.equal(providerCalls, 0);
+    assert.equal(isCrisisMessage('งานเยอะจนไม่ไหวแล้ว ช่วยดูค่าใช้จ่ายที'), false, 'ordinary frustration is not a crisis override');
+    assert.equal(isCrisisMessage('กำลังเขียนนโยบายป้องกันการฆ่าตัวตายในที่ทำงาน'), false, 'prevention discussion is not a personal crisis signal');
+    assert.equal(isCrisisMessage('employee suicide prevention policy'), false, 'English prevention discussion is not a personal crisis signal');
+  });
+
+  it('normalizes model-written private-rumour refusals to a stable reason code', async () => {
+    const router = new IntentRouterAgent({ generateText: async () => ({
+      ok: true,
+      text: JSON.stringify({
+        status: 'PARTIAL', language: 'th',
+        intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.get_breakdown'], missingContext: [] }],
+        refusals: [{ request: 'เม้าท์ว่าพี่เอแอบคบใคร', reason: 'เป็นข่าวลือเกี่ยวกับชีวิตส่วนตัวและความสัมพันธ์ของพนักงาน' }],
+        requiresHumanReview: false,
+      }),
+    }) });
+    const plan = await router.route('เม้าท์ว่าพี่เอแอบคบใคร แล้วดูค่าใช้จ่ายเดือนนี้');
+    assert.equal(plan.status, 'PARTIAL');
+    assert.equal(plan.refusals[0]?.reason, 'privacy_rumor');
+  });
+
   it('enables Phase 4 CRM tools only for their canonical business subjects', () => {
     const compatible: Array<[string, string]> = [
       ['crm_report', 'crm.get_report_summary'],
@@ -149,7 +186,7 @@ describe('IntentRouterAgent – model routing', () => {
     assert.equal(plan.language, 'th');
   });
 
-	  it('uses provider JSON plan when available', async () => {
+  it('uses provider JSON plan when available', async () => {
 	    let systemPrompt = '';
 	    let catalog: any = {};
     const router = new IntentRouterAgent({
@@ -172,6 +209,8 @@ describe('IntentRouterAgent – model routing', () => {
 
     const plan = await router.route('show accounting summary', false);
     assert.ok(systemPrompt.includes('Intent Router Agent'));
+    assert.ok(systemPrompt.includes('capability_help'));
+    assert.ok(systemPrompt.includes('business intent wins'));
     assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'ledger.get_financial_summary'));
     assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'sales.get_sales_summary'));
 	    assert.ok(catalog.enabledFeatures.some((feature: any) => feature.toolName === 'crm.get_pipeline_summary'));
@@ -181,6 +220,47 @@ describe('IntentRouterAgent – model routing', () => {
 	    assert.equal(plan.language, 'en');
 	    assert.equal(plan.intents[0]?.agent, 'accounting');
 	  });
+
+  it('accepts pure casual and capability-help plans without tools', async () => {
+    for (const [messageText, intent] of [
+      ['สวัสดี วันนี้เหนื่อยนิดหน่อย', 'casual_conversation'],
+      ['น้องมั่งมีทำอะไรได้บ้าง', 'capability_help'],
+    ] as const) {
+      const router = new IntentRouterAgent({
+        generateText: async () => ({
+          ok: true,
+          text: JSON.stringify({
+            status: 'ROUTABLE', language: 'th',
+            intents: [{ intent, subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }],
+            refusals: [], requiresHumanReview: false,
+          }),
+        }),
+      });
+      const plan = await router.route(messageText);
+      assert.equal(plan.status, 'ROUTABLE');
+      assert.equal(plan.intents[0]?.intent, intent);
+      assert.deepEqual(plan.intents[0]?.requiredTools, []);
+    }
+  });
+
+  it('rejects a zero-tool intent mixed with a business request', async () => {
+    const router = new IntentRouterAgent({
+      generateText: async () => ({
+        ok: true,
+        text: JSON.stringify({
+          status: 'ROUTABLE', language: 'th',
+          intents: [
+            { intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] },
+            { intent: 'report_request', subject: 'sale', agent: 'sales', priority: 2, requiredTools: ['sales.get_sales_summary'], missingContext: [] },
+          ],
+          refusals: [], requiresHumanReview: false,
+        }),
+      }),
+    });
+    const plan = await router.route('วันนี้เหนื่อยจัง ยอดขายตกไหม');
+    assert.equal(plan.status, 'UNROUTABLE');
+    assert.equal(plan.refusals[0]?.reason, 'tool_unavailable');
+  });
 
 	  it('passes bounded conversation context to model routing payloads', async () => {
 	    const context = {
@@ -318,7 +398,7 @@ describe('IntentRouterAgent – model routing', () => {
         text: JSON.stringify({
           status: 'ROUTABLE',
           language: 'th',
-          intents: [{ intent: 'read_summary', agent: 'accounting', priority: 1, requiredTools: [], missingContext: [] }],
+          intents: [{ intent: 'read_summary', subject: 'ledger', agent: 'accounting', priority: 1, requiredTools: [], missingContext: [] }],
           refusals: [],
           requiresHumanReview: false,
         }),
