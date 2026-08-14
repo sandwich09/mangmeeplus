@@ -49,6 +49,13 @@ test('preserves the exact historical artifacts after publishing the official fir
     'v1/privacy-th.html': '7b274807143af68ee51fa7bc3ec71174206a810eb9ff0de209ee81c10cb874a4',
     'v2/terms-th.html': '09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281',
     'v2/privacy-th.html': '5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd',
+    // v3 is the released edition and its bytes are frozen from here: nothing may move them
+    // again, because this hash is what the append-only acceptance evidence records and what
+    // the gate shows the signer. The pin below duplicates CURRENT_LEGAL_DOCUMENTS on purpose —
+    // that constant is *expected* to move when a new version is cut, this one is not, so a
+    // re-cut of v3 fails here even if the contract was updated to match it.
+    'v3/terms-th.html': '4d21b7b5c98171d0ae7ca34ccf93c215304822bd512af11c63993a8f13fbe8ed',
+    'v3/privacy-th.html': 'cd86af5ede65d5bcdd9be9910da5382b8ad2a07bb8e2eb29b148062150709fc7',
   } as const;
 
   for (const [file, expectedHash] of Object.entries(historicalHashes)) {
