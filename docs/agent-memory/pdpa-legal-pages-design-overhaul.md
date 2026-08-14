@@ -1,6 +1,6 @@
 # Agent Memory: PDPA / legal pages design overhaul
 
-Status: UAT candidate deployed; one session-rotation race found by live acceptance and fixed locally. Redeploy verification pending — see Next.
+Status: UAT deployed and independently verified. Production is intentionally untouched pending signed legal evidence — see Next.
 
 Owner: Web (apps/web).
 
@@ -285,18 +285,23 @@ the hash; the legal text is not.
 
 ## Next
 
-- **2026-08-14 UAT acceptance finding:** UAT run `31816168613` successfully deployed
-  develop merge `51af1beaa0e2f31661b982ca80bb1bdb8299f85b` and passed immutable-image,
-  signature, rollout, health, retirement, Passport, and an independent deep DB-readiness
-  probe. A disposable-company browser journey then proved the legal form, three public
-  documents, three explicit confirmations, Sarabun rendering, and the durable acceptance
-  write. It also exposed a client race after the write: both the new-acceptance and
-  already-current paths started `/api/auth/refresh` without awaiting it, then navigated;
-  navigation could abort the rotating response after the old session had been revoked.
-  Both paths now require a successful awaited refresh before navigation. Focused legal
-  tests pass 6/6, the complete web suite 898/898, web typecheck, and `git diff --check`.
-  Next is reviewed PR/CI, one UAT redeploy, then the same disposable-company journey with
-  post-navigation `/auth/me` and legal-status readback before Production is considered.
+- **2026-08-14/15 UAT acceptance:** initial UAT run `31816168613` deployed develop merge
+  `51af1beaa0e2f31661b982ca80bb1bdb8299f85b` and exposed a client race after the durable
+  acceptance write: both the new-acceptance and already-current paths started
+  `/api/auth/refresh` without awaiting it, then navigated; navigation could abort the
+  rotating response after the old session had been revoked. Both paths now require a
+  successful awaited refresh before navigation. Focused legal tests passed 6/6, the complete
+  web suite 898/898, web typecheck, required PR CI run `31819600423`, and exact-head review.
+  PR #81 merged to develop; UAT run `31820677669` then deployed reviewed source
+  `a88605225a107d4d8ffb958c1644b21575d7d10b` with all image/tool publication, signature,
+  SBOM, release-task, immutable rollout, exact digest/health, retirement, signed acceptance,
+  and Passport jobs successful. Independent provider readback proved api-web, ai-gateway,
+  and workers ACTIVE with one active configuration each and the exact source SHA; a
+  secret-safe deep readiness probe returned `service=api`, `status=ok`, `db=ok`. The final
+  disposable-company browser journey passed all three public documents, three required
+  confirmations, Sarabun rendering, exact refresh HTTP 204, post-navigation OWNER identity,
+  `legalAcceptanceRequired=false`, and dashboard reload; its company was archived in the
+  cleanup path. Production was not changed.
 
 - Because this remains pre-launch, the narrowed copy is consolidated into v1. The legal-release
   evidence manifest now targets `v1` but remains `BLOCKED`; no review evidence was fabricated.
