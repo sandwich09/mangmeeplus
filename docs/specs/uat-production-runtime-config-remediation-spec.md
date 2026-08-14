@@ -158,6 +158,12 @@ delete, archive or mutate any audit row.
 
 ## 7. IAM boundary
 
+The UAT operational controller runs from `main`. The deploy-role mutex delta and migration-operator
+authority must not be applied before this reviewed source is promoted to that controller branch;
+otherwise the existing exact policy verifier correctly rejects the live policy as drift. Promotion,
+exact policy apply/read-back and the operational window are one ordered gate, never independent
+permission probes.
+
 The Redis migration operator needs only read access to the three UAT service states/tasks, read/create
 access for the exact UAT v2 ElastiCache resources, parameter-group read, and versioned read/write on
 the exact UAT Redis secret. It receives no ElastiCache delete permission and no Production resource.

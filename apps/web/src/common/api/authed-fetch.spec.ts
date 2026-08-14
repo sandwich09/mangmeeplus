@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ACCESS_CONTEXT_STALE_EVENT, authedFetch, authedApiFetch, readCookieValue } from './authed-fetch';
+import { apiErrorMessage } from './api-error-message';
 import { subscribeToastBus, type ToastEvent } from '../feedback/toast-bus';
 
 type Call = { url: string; init?: RequestInit };
@@ -79,14 +80,45 @@ describe('authed-fetch', () => {
   // /login there would discard a session that is still ACTIVE on the server. Only the refresh
   // route's own 401 (which deletes the cookies) means the session is really gone.
   it('does not bounce to /login when the refresh failed transiently', async () => {
-    for (const refreshStatus of [502, 503]) {
+    for (const [refreshStatus, expectedMessage] of [
+      [502, 'เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาลองใหม่อีกครั้ง'],
+      [503, 'ระบบกำลังปรับปรุงหรือมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วลองใหม่'],
+    ] as const) {
       const assigned = withStubbedWindow(async () => {
-        const fetchImpl = scriptedFetch([() => jsonResponse(401), () => jsonResponse(refreshStatus, { message: 'x' })], []);
-        const res = await authedFetch('/companies/c1/dashboard', undefined, fetchImpl);
-        assert.equal(res.status, 401, 'the caller still sees the 401 and can retry later');
+        const calls: Call[] = [];
+        const fetchImpl = scriptedFetch([() => jsonResponse(401), () => jsonResponse(refreshStatus, { message: 'x' })], calls);
+        await assert.rejects(
+          () => authedApiFetch('/companies/c1/dashboard', undefined, fetchImpl),
+          (error: Error & { status?: number }) => {
+            assert.equal(error.status, refreshStatus);
+            assert.equal(apiErrorMessage(error), expectedMessage);
+            assert.doesNotMatch(apiErrorMessage(error), /เซสชัน/);
+            return true;
+          },
+        );
+        assert.equal(calls.length, 2, 'a transient refresh failure must not retry the original request');
       });
       assert.deepEqual(await assigned, [], `a ${refreshStatus} refresh must not log the user out`);
     }
+  });
+
+  it('classifies a refresh fetch rejection as network without logging the user out', async () => {
+    const refreshCause = new TypeError('Failed to fetch refresh');
+    const assigned = withStubbedWindow(async () => {
+      const calls: Call[] = [];
+      const fetchImpl = scriptedFetch([() => jsonResponse(401), () => { throw refreshCause; }], calls);
+      await assert.rejects(
+        () => authedApiFetch('/companies/c1/dashboard', undefined, fetchImpl),
+        (error: Error & { kind?: string; cause?: unknown }) => {
+          assert.equal(error.kind, 'network_error');
+          assert.equal(error.cause, refreshCause);
+          assert.equal(apiErrorMessage(error), 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+          return true;
+        },
+      );
+      assert.equal(calls.length, 2);
+    });
+    assert.deepEqual(await assigned, []);
   });
 
   it('bounces to /login when the refresh proves the session is gone', async () => {
@@ -259,27 +291,65 @@ describe('authed-fetch', () => {
     );
   });
 
-  it('emits one mapped Thai toast before a failed mutation reaches the caller', async () => {
+  it('emits one safe validation toast while preserving the raw mutation error', async () => {
     const events: ToastEvent[] = [];
     const unsubscribe = subscribeToastBus((event) => events.push(event));
     let emittedBeforeCatch = false;
+    const body = {
+      statusCode: 400,
+      message: ['property visibility should not exist'],
+      error: 'Bad Request',
+    };
     try {
       await withStubbedWindow(async () => {
-        const fetchImpl = scriptedFetch([() => jsonResponse(500)], []);
+        const fetchImpl = scriptedFetch([() => jsonResponse(400, body)], []);
         await assert.rejects(
           () => authedApiFetch('/companies/c1/expenses', { method: 'POST', body: '{}' }, fetchImpl)
             .catch((error) => {
               emittedBeforeCatch = events.length === 1;
               throw error;
             }),
-          (error: Error) => error.message === 'API error 500',
+          (error: Error & { status?: number; details?: unknown }) => {
+            assert.equal(error.message, 'property visibility should not exist');
+            assert.equal(error.status, 400);
+            assert.deepEqual(error.details, body);
+            return true;
+          },
         );
       });
     } finally {
       unsubscribe();
     }
     assert.equal(emittedBeforeCatch, true);
-    assert.deepEqual(events, [{ tone: 'error', message: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง' }]);
+    assert.deepEqual(events, [{
+      tone: 'error',
+      message: 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
+    }]);
+  });
+
+  it('emits exactly one friendly toast before a mutating network rejection', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    const networkError = new TypeError('Failed to fetch');
+    try {
+      await withStubbedWindow(async () => {
+        const fetchImpl = scriptedFetch([() => { throw networkError; }], []);
+        await assert.rejects(
+          () => authedApiFetch('/companies/c1/expenses', { method: 'PATCH', body: '{}' }, fetchImpl),
+          (error: Error & { kind?: string; cause?: unknown }) => {
+            assert.equal(error.kind, 'network_error');
+            assert.equal(error.cause, networkError);
+            return true;
+          },
+        );
+      });
+    } finally {
+      unsubscribe();
+    }
+    assert.deepEqual(events, [{
+      tone: 'error',
+      message: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
+    }]);
   });
 
   it('does not emit a toast for failed reads', async () => {
@@ -288,6 +358,20 @@ describe('authed-fetch', () => {
     try {
       await withStubbedWindow(async () => {
         const fetchImpl = scriptedFetch([() => jsonResponse(500)], []);
+        await assert.rejects(() => authedApiFetch('/companies/c1/expenses', undefined, fetchImpl));
+      });
+    } finally {
+      unsubscribe();
+    }
+    assert.deepEqual(events, []);
+  });
+
+  it('does not emit a toast for a read network rejection', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    try {
+      await withStubbedWindow(async () => {
+        const fetchImpl = scriptedFetch([() => { throw new TypeError('Failed to fetch'); }], []);
         await assert.rejects(() => authedApiFetch('/companies/c1/expenses', undefined, fetchImpl));
       });
     } finally {
@@ -314,6 +398,24 @@ describe('authed-fetch', () => {
     }
     assert.deepEqual(events, []);
     assert.equal('suppressErrorToast' in calls[0]!.init!, false);
+  });
+
+  it('suppresses a mutating network toast when opted out', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    try {
+      await withStubbedWindow(async () => {
+        const fetchImpl = scriptedFetch([() => { throw new TypeError('Failed to fetch'); }], []);
+        await assert.rejects(() => authedApiFetch(
+          '/companies/c1/expenses',
+          { method: 'POST', body: '{}', suppressErrorToast: true },
+          fetchImpl,
+        ));
+      });
+    } finally {
+      unsubscribe();
+    }
+    assert.deepEqual(events, []);
   });
 
   it('keeps the response request ID with API error details', async () => {
@@ -361,6 +463,30 @@ describe('authed-fetch', () => {
     const fetchImpl = scriptedFetch([() => jsonResponse(201, { id: 'e1' })], []);
     const result = await authedApiFetch<{ id: string }>('/companies/c1/expenses', { method: 'POST', body: '{}' }, fetchImpl);
     assert.equal(result.id, 'e1');
+  });
+
+  it('turns malformed successful JSON into one safe server error and retains the parse cause', async () => {
+    const events: ToastEvent[] = [];
+    const unsubscribe = subscribeToastBus((event) => events.push(event));
+    try {
+      await withStubbedWindow(async () => {
+        const fetchImpl = scriptedFetch([() => new Response('{not-json', { status: 200 })], []);
+        await assert.rejects(
+          () => authedApiFetch('/companies/c1/expenses', { method: 'POST', body: '{}' }, fetchImpl),
+          (error: Error & { kind?: string; code?: string; statusCode?: number; cause?: unknown }) => {
+            assert.equal(error.kind, 'server_error');
+            assert.equal(error.code, 'invalid_response');
+            assert.equal(error.statusCode, 200);
+            assert.ok(error.cause instanceof SyntaxError);
+            assert.equal(apiErrorMessage(error), 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง');
+            return true;
+          },
+        );
+      });
+    } finally {
+      unsubscribe();
+    }
+    assert.deepEqual(events, [{ tone: 'error', message: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง' }]);
   });
 
   it('reads cookie values from a cookie string', () => {

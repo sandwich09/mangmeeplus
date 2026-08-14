@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ForbiddenState } from '@/common/components/state';
 import { MangmeeBranchChip, MangmeeCard, cx } from '@/common/components/mangmee';
 import { createBroadcastDraft, generateBroadcast, listBroadcastCampaigns, listBroadcastChannels, previewBroadcast, sendBroadcast } from './broadcast.api';
@@ -22,7 +23,7 @@ const colors: Array<{ id: BroadcastColorId; label: string; gradient: string; fg:
 ];
 const statusLabel: Record<BroadcastCampaign['status'], string> = { DRAFT: 'ฉบับร่าง', READY: 'พร้อมส่ง', SCHEDULED: 'ตั้งเวลา', QUEUED: 'เข้าคิว', SENDING: 'กำลังส่ง', COMPLETED: 'ส่งแล้ว', PARTIAL: 'สำเร็จบางส่วน', FAILED: 'ล้มเหลว', CANCELLED: 'ยกเลิก' };
 
-function errorText(error: unknown) { return error instanceof Error ? error.message : 'เกิดข้อผิดพลาด กรุณาลองอีกครั้ง'; }
+function errorText(error: unknown) { return apiErrorMessage(error); }
 function audienceText(count?: number) { return count === undefined || count < 0 ? 'ตรวจตอนส่ง' : `${count.toLocaleString('th-TH')} คน`; }
 function Card({ title, children }: { title: string; children: React.ReactNode }) { return <MangmeeCard className="px-5 py-5"><h2 className="text-sm font-bold text-gray-500">{title}</h2>{children}</MangmeeCard>; }
 

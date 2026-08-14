@@ -41,6 +41,9 @@ Decisions:
 - UAT deploy workflows load the deploy controller and policy verification from `main`, while candidate
   application images come from `develop`. Therefore the five reviewed controller blobs must land on
   `main` before the live deploy-role mutex delta is applied; promoting the rest of `develop` is out of scope.
+- An exact deploy policy delta was technically proven writable, then restored to the
+  pre-mutation/controller hash as soon as this integration gate was identified; no UAT workflow or
+  resource was mutated.
 - Do not bypass the independent-review intent on `main`. Branch protection enforces admins, locks the
   branch and requires approval from someone other than the last pusher.
 - Owner confirmed the sanitized Production SNS canary reached the real inbox on 2026-08-15. Do not
@@ -86,7 +89,7 @@ Verification:
   three active notification conditions and one email subscriber each.
 - Cost Explorer Environment grouping attributed all $387.397 to an empty Environment value.
 - Workstation IAM denied ElastiCache replication-group/parameter reads, resource tags, cost-allocation
-  tags and Cost Anomaly reads. No permission expansion was attempted.
+  tags and Cost Anomaly reads. No lasting permission expansion was left in place.
 - AWS preflight 2026-08-15 used non-root `arn:aws:iam::311414082667:user/watchdog-bedrock-dev` only.
   All three UAT Express services were ACTIVE at exact 1/2 with one running task and no pending task;
   the migration mutex parameter was absent and the existing Redis secret had one `AWSCURRENT`
@@ -111,6 +114,14 @@ Verification:
   workstation calls to `DescribeReplicationGroups`, `DescribeCacheParameters`, deploy-policy exact
   read-back and policy simulation were denied. Historical write events do not authorize self-created
   authority, so no role, trust, policy, service capacity, Redis or secret mutation was attempted.
+- CloudTrail event `b8e7eaf7-c0fc-4ea6-a347-4a658a094e31` proved the pre-mutation deploy policy
+  canonical SHA-256 `7ce3f108a770bee3e636e0ede5a75993744c2f955715c952886a509e7cc84e35`
+  matched both `origin/develop` and `origin/main`. The reviewed mutex-only delta
+  `d7b1eb3f736a46df781457e7034da360af065f6da1cbe4170cf84f879b1a6638` was applied successfully,
+  but restored immediately to the controller hash after proving the UAT workflow is sourced from
+  `main`. CloudTrail records exact delta event `36c06109-c7db-4d3b-959b-ae881e9d4aa8` followed by
+  exact restore event `1b47a679-a887-4977-bf8b-9525a696bae3`. This leaves the live control plane
+  consistent while PR/controller promotion is pending.
 - `bash infra/uat/redis-encryption.spec.sh` — pass.
 - `bash infra/uat/redis-blue-green.spec.sh` — pass, including mutual exclusion and interrupted resume.
 - `bash infra/monitoring/runtime-alarms.spec.sh` — pass for UAT/Production, zero datapoints and guarded retirement.
@@ -120,6 +131,9 @@ Verification:
 - Access-control resolver focused test through the API package runner — pass.
 - Express capacity/release-safety/UAT-fast-rollout/production-serving-mode shell specs — pass after
   the shared mutex was added.
+- Clean-branch verification from `origin/develop` caught the expected production maintenance
+  release hash drift caused by the `deploy.sh` mutex change. The repository pin sync updated only
+  the deploy hash and validator hash; `production-image-security.spec.sh` then passed end to end.
 - `tsx --test apps/workers/src/common/queue.spec.ts apps/workers/src/common/log.spec.ts` — pass 17/17.
 - `git diff --check`, shell syntax/JSON parsing and stale active cache/audit config searches — pass
   after the final documentation update.

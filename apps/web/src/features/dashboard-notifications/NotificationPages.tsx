@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ForbiddenState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import {
@@ -46,7 +47,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
     setLoading(true);
     listNotifications(companyId, { read: filter === 'unread' ? false : undefined, pageSize: 50 })
       .then((res) => { setItems(res.items); setLoading(false); })
-      .catch((err: unknown) => { setError(err instanceof Error ? err.message : 'โหลดล้มเหลว'); setLoading(false); });
+      .catch((err: unknown) => { setError(apiErrorMessage(err)); setLoading(false); });
   }
 
   useEffect(() => { reload(); }, [canRead, companyId, filter]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -195,7 +196,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
     if (!canManage) return;
     getPreferences(companyId)
       .then((res) => { setPref(res); setLoading(false); })
-      .catch((err: unknown) => { setError(err instanceof Error ? err.message : 'โหลดล้มเหลว'); setLoading(false); });
+      .catch((err: unknown) => { setError(apiErrorMessage(err)); setLoading(false); });
   }, [canManage, companyId]);
 
   async function save(next: NotificationPreference, successMessage?: string) {
@@ -206,7 +207,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
       setPref(updated);
       if (successMessage) toast.success(successMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'บันทึกล้มเหลว');
+      setError(apiErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -296,7 +297,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
     if (!canManage) return;
     listRules(companyId)
       .then((res) => { setRules(res.items); setLoading(false); })
-      .catch((err: unknown) => { setError(err instanceof Error ? err.message : 'โหลดล้มเหลว'); setLoading(false); });
+      .catch((err: unknown) => { setError(apiErrorMessage(err)); setLoading(false); });
   }, [canManage, companyId]);
 
   async function toggleRule(rule: NotificationRule) {

@@ -85,14 +85,16 @@ Repository change first:
 
 AWS execution:
 
-1. จอด UAT ที่ capacity `0/0` และยืนยันว่า task/connection ถูก drain แล้ว เพื่อกัน BullMQ split-brain
-2. สร้าง encrypted single-node replication group v2 ใน subnet/SG/parameter group เดิม
-3. read-back ให้ครบ: available, one node, at-rest/transit/auth true, parameter group `noeviction`
-4. เก็บ current secret version id ไว้เป็น rollback pointer แล้วเพิ่มค่า `rediss://` เป็น version ใหม่ใน ARN เดิม
-5. เปิด UAT `1/2`; ตรวจ service health, worker heartbeat, queue scan หนึ่งรอบ, API rate-limit path,
+1. Merge เข้า `develop`, promote reviewed controller source เข้า `main`, แล้ว exact-read/apply deploy
+   mutex delta และ dedicated migration role ด้วย non-root authority; ห้าม apply ก่อน controller promotion
+2. จอด UAT ที่ capacity `0/0` และยืนยันว่า task/connection ถูก drain แล้ว เพื่อกัน BullMQ split-brain
+3. สร้าง encrypted single-node replication group v2 ใน subnet/SG/parameter group เดิม
+4. read-back ให้ครบ: available, one node, at-rest/transit/auth true, parameter group `noeviction`
+5. เก็บ current secret version id ไว้เป็น rollback pointer แล้วเพิ่มค่า `rediss://` เป็น version ใหม่ใน ARN เดิม
+6. เปิด UAT `1/2`; ตรวจ service health, worker heartbeat, queue scan หนึ่งรอบ, API rate-limit path,
    Redis connections/memory/evictions และไม่มี TLS/auth error
-6. soak อย่างน้อย 24 ชั่วโมงหรือหนึ่ง acceptance cycle
-7. ลบ standalone node เดิมเมื่อ owner อนุมัติหลังผ่าน soak; ไม่ลบ secret
+7. soak อย่างน้อย 24 ชั่วโมงหรือหนึ่ง acceptance cycle
+8. ลบ standalone node เดิมเมื่อ owner อนุมัติหลังผ่าน soak; ไม่ลบ secret
 
 Rollback: จอด UAT, ย้าย `AWSCURRENT` กลับ secret version เดิม, เปิด UAT ให้เชื่อม standalone เดิม;
 ห้ามลบ standalone จนกว่า exit criteria จะผ่าน

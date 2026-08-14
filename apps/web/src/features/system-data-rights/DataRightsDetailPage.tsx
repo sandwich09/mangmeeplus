@@ -15,6 +15,7 @@ import {
   type DataRightsIdentityMethod,
 } from '@watchdog-bms/contracts';
 import { Button } from '@/common/components/button';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { Modal, useConfirm } from '@/common/components/modal';
 import {
@@ -206,7 +207,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
       setDetail(await getDataRightsCase(caseId));
     } catch (caught) {
       const apiError = caught as Error & { status?: number };
-      setLoadError(apiError.status === 404 ? 'ไม่พบเคสนี้ หรือไม่มีสิทธิ์เข้าถึง' : apiError.message || 'โหลดรายละเอียดไม่สำเร็จ');
+      setLoadError(apiError.status === 404 ? 'ไม่พบเคสนี้ หรือไม่มีสิทธิ์เข้าถึง' : apiErrorMessage(caught));
     } finally {
       setLoading(false);
     }
@@ -228,11 +229,20 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
         missingCategories?: string[];
         missingEvidence?: Array<{ evidenceType?: string; category?: string | null }>;
       } };
-      const missingEvidence = apiError.details?.missingEvidence?.map((item) =>
-        `${item.evidenceType ?? 'หลักฐาน'}${item.category ? ` / ${item.category}` : ''}`);
+      const missingCategories = apiError.details?.missingCategories?.map((category) =>
+        category in CATEGORY_LABEL ? CATEGORY_LABEL[category as DataRightsDecisionCategory] : 'หมวดข้อมูลที่กำหนด');
+      const missingEvidence = apiError.details?.missingEvidence?.map((item) => {
+        const evidenceLabel = item.evidenceType && item.evidenceType in EVIDENCE_TYPE_LABEL
+          ? EVIDENCE_TYPE_LABEL[item.evidenceType as DataRightsEvidenceType]
+          : 'หลักฐานที่กำหนด';
+        const categoryLabel = item.category && item.category in CATEGORY_LABEL
+          ? CATEGORY_LABEL[item.category as DataRightsDecisionCategory]
+          : null;
+        return `${evidenceLabel}${categoryLabel ? ` / ${categoryLabel}` : ''}`;
+      });
       setCommandError([
-        apiError.message || 'ดำเนินการไม่สำเร็จ',
-        apiError.details?.missingCategories?.length ? `ขาดหมวด: ${apiError.details.missingCategories.join(', ')}` : '',
+        apiErrorMessage(caught),
+        missingCategories?.length ? `ขาดหมวด: ${missingCategories.join(', ')}` : '',
         missingEvidence?.length ? `ขาดหลักฐาน: ${missingEvidence.join(', ')}` : '',
       ].filter(Boolean).join(' · '));
       return false;

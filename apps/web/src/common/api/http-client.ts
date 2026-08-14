@@ -63,8 +63,8 @@ export class HttpClient {
         credentials: 'include',
         signal: opts?.signal,
       });
-    } catch {
-      throw new ApiError({ kind: 'network_error', message: 'Network request failed.' });
+    } catch (cause) {
+      throw new ApiError({ kind: 'network_error', message: 'Network request failed.', cause });
     }
 
     if (!response.ok) {
@@ -74,7 +74,17 @@ export class HttpClient {
     // 204 No Content
     if (response.status === 204) return undefined as T;
 
-    return response.json() as Promise<T>;
+    try {
+      return await response.json() as T;
+    } catch (cause) {
+      throw new ApiError({
+        kind: 'server_error',
+        code: 'invalid_response',
+        message: 'Invalid API response.',
+        statusCode: response.status,
+        cause,
+      });
+    }
   }
 }
 

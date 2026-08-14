@@ -27,7 +27,7 @@ import {
   type TaxCodeProfileTemplate,
   upsertTaxCodeDefinition,
 } from './transaction-tax.api';
-import { TAX_CONTEXT_LABELS, transactionTaxCapabilities, transactionTaxErrorMessage } from './transaction-tax.model';
+import { TAX_CONTEXT_LABELS, taxCodeImportDiagnosticMessage, transactionTaxCapabilities, transactionTaxErrorMessage } from './transaction-tax.model';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { useConfirm } from '@/common/components/modal';
@@ -255,7 +255,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                 <ThemedSelect value={importFormat} onChange={(event) => { setImportFormat(event.target.value as 'CSV' | 'JSON'); setImportPreview(null); }}><option value="CSV">CSV</option><option value="JSON">JSON</option></ThemedSelect>
                 <textarea className={`${field} min-h-40 font-mono text-xs`} value={importContent} onChange={(event) => { setImportContent(event.target.value); setImportPreview(null); }} placeholder="externalCode,displayName,taxRegime,direction,treatment,transactionContexts,rate,calculationMethod,claimabilityDefault,effectiveFrom" />
                 <div className="flex gap-2"><button type="button" disabled={busy || !importContent.trim()} onClick={() => void previewImport()} className={button}>Preview import</button><button type="button" disabled={busy || !importPreview?.canApply} onClick={() => void applyImport()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Apply reviewed rows</button></div>
-                {importPreview && <div className={`rounded-lg p-3 text-xs ${importPreview.canApply ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}><strong>{importPreview.rows.length} rows · {importPreview.canApply ? 'พร้อมนำเข้า' : 'ต้องแก้ conflict/error'}</strong><div className="mt-2 space-y-1">{importPreview.rows.filter((row) => row.errors.length).map((row) => <div key={row.rowNumber}>Row {row.rowNumber}: {row.errors.join('; ')}</div>)}</div><div className="mt-2 break-all font-mono text-[10px]">checksum {importPreview.checksum}</div></div>}
+                {importPreview && <div className={`rounded-lg p-3 text-xs ${importPreview.canApply ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}><strong>{importPreview.rows.length} แถว · {importPreview.canApply ? 'พร้อมนำเข้า' : 'ต้องแก้ข้อมูลก่อนนำเข้า'}</strong><div className="mt-2 space-y-1">{importPreview.rows.filter((row) => row.errors.length).map((row) => <div key={row.rowNumber}>แถว {row.rowNumber}: {row.errors.map(taxCodeImportDiagnosticMessage).join('; ')}</div>)}</div><div className="mt-2 break-all font-mono text-[10px]">checksum {importPreview.checksum}</div></div>}
               </div>
             </MangmeeCard>
           )}

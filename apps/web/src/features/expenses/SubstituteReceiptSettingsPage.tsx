@@ -8,6 +8,7 @@ import type {
   SubstituteReceiptPolicySettings,
   UpdateSubstituteReceiptPolicyInput,
 } from '@watchdog-bms/contracts';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
@@ -18,7 +19,7 @@ import { validApproverSelection, validateSubstituteReceiptPolicy } from './subst
 const STRICT = 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
 
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : 'เกิดข้อผิดพลาด กรุณาลองใหม่';
+  return apiErrorMessage(error);
 }
 
 export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string }) {

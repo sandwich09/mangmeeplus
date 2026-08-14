@@ -19,6 +19,7 @@ export class ApiError extends Error {
   readonly code?: string;
   readonly requestId?: string;
   readonly fieldErrors?: FieldError[];
+  readonly cause?: unknown;
 
   constructor(opts: {
     kind: ApiErrorKind;
@@ -27,6 +28,7 @@ export class ApiError extends Error {
     code?: string;
     requestId?: string;
     fieldErrors?: FieldError[];
+    cause?: unknown;
   }) {
     super(opts.message);
     this.name = 'ApiError';
@@ -35,5 +37,6 @@ export class ApiError extends Error {
     this.code = opts.code;
     this.requestId = opts.requestId;
     this.fieldErrors = opts.fieldErrors;
+    this.cause = opts.cause;
   }
 }

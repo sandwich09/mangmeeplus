@@ -2,11 +2,12 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 // The API answers business-rule failures in English (its messages double as
 // operator/log text). This is the single seam where those reach a Thai screen.
-// Unknown text passes through untouched — a raw English sentence is still more
-// useful to the user and to support than a generic "เกิดข้อผิดพลาด".
+// Reviewed mappings stay specific; unknown API diagnostics fail closed to an
+// actionable Thai fallback while UI-authored local errors keep their copy.
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  invalid_response: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
   // Permissions / scope
   insufficient_permissions: 'คุณไม่มีสิทธิ์ทำรายการนี้ กรุณาติดต่อเจ้าของร้าน',
   legal_acceptance_not_required: 'บัญชีนี้ไม่ต้องยอมรับเอกสารกฎหมาย',
@@ -82,6 +83,10 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_UPDATE_VERSION_REQUIRED: 'ข้อมูลเวอร์ชันเอกสารหายไป กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_VERSION_INVALID: 'ข้อมูลเวอร์ชันเอกสารไม่ถูกต้อง กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_CONFLICT: 'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
+  EXPENSE_CHANGED_DURING_DELETE: 'รายการถูกแก้ไขระหว่างการลบ กรุณาโหลดข้อมูลใหม่แล้วลองอีกครั้ง',
+  EXPENSE_NOT_DELETABLE: 'ลบรายการค่าใช้จ่ายนี้ไม่ได้ในสถานะปัจจุบัน กรุณาตรวจสอบสถานะเอกสาร',
+  EXPENSE_HAS_LINKED_DATA: 'ลบรายการไม่ได้ เพราะมีข้อมูลอื่นเชื่อมโยงอยู่ กรุณาตรวจสอบรายการที่เกี่ยวข้องก่อน',
+  SUBSTITUTE_EVIDENCE_RETENTION_LOCKED: 'ลบไฟล์นี้ไม่ได้ เพราะใช้เป็นหลักฐานของใบรับรองแทนใบเสร็จที่ลงนามแล้ว',
   accounting_document_changed: 'เอกสารถูกแก้ไขหรือเปลี่ยนสถานะโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงทำรายการอีกครั้ง',
   accounting_document_already_converted: 'ใบเสนอราคานี้ถูกแปลงเป็นเอกสารอื่นแล้ว กรุณาโหลดใหม่และตรวจสอบเอกสารที่สร้างไว้',
   // Substitute-receipt lifecycle
@@ -431,6 +436,7 @@ const MESSAGE_PATTERNS: ReadonlyArray<[RegExp, (m: RegExpMatchArray) => string]>
 
 /** Generic last resort, so an unmapped failure still reads as Thai. */
 const STATUS_LABELS: Record<number, string> = {
+  400: 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
   401: 'เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่',
   403: CODE_LABELS['insufficient_permissions']!,
   404: 'ไม่พบข้อมูลที่ต้องการ',
@@ -438,12 +444,28 @@ const STATUS_LABELS: Record<number, string> = {
   // 413/429/503 มาจาก proxy หรือ rate limiter ซึ่งไม่ส่ง code มาด้วย เดิมจึงตกไปเป็น "API error 429"
   // ดิบ ๆ ทั้งที่เป็นสามสถานการณ์ที่ผู้ใช้ทำอะไรต่อได้ต่างกันชัดเจน
   413: 'ไฟล์หรือข้อมูลที่ส่งมีขนาดใหญ่เกินไป กรุณาลดขนาดแล้วลองใหม่',
+  422: 'ข้อมูลจากหน้าจอไม่ตรงกับที่ระบบรองรับ กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง',
   429: 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง',
   500: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
   502: 'เชื่อมต่อระบบไม่ได้ชั่วคราว กรุณาลองใหม่อีกครั้ง',
   503: 'ระบบกำลังปรับปรุงหรือมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วลองใหม่',
   504: 'ระบบตอบกลับช้าเกินกำหนด กรุณาลองใหม่อีกครั้ง',
 };
+
+const KIND_LABELS: Record<string, string> = {
+  network: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
+  network_error: 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
+  validation: STATUS_LABELS[400]!,
+  unauthorized: STATUS_LABELS[401]!,
+  forbidden: STATUS_LABELS[403]!,
+  not_found: STATUS_LABELS[404]!,
+  rate_limited: STATUS_LABELS[429]!,
+  server_error: STATUS_LABELS[500]!,
+};
+
+const API_KINDS = new Set([...Object.keys(KIND_LABELS), 'unknown']);
+const OTHER_CLIENT_ERROR = 'ทำรายการไม่สำเร็จ กรุณาตรวจสอบข้อมูลแล้วลองอีกครั้ง';
+const GENERIC_API_ERROR = 'ทำรายการไม่สำเร็จ กรุณาลองอีกครั้ง';
 
 /** Translates one API message/code. Returns null when nothing is known about it. */
 export function translateApiError(raw: string): string | null {
@@ -461,21 +483,59 @@ export function translateApiError(raw: string): string | null {
   return null;
 }
 
-/** Message for a caught API error: Thai when known, the original text otherwise. */
+/** Customer copy for a caught error; raw API diagnostics remain on the original object. */
 export function apiErrorMessage(e: unknown): string {
-  if (!(e instanceof Error)) return 'เกิดข้อผิดพลาด';
-  const code = (e as { code?: unknown }).code;
+  const error = e as {
+    message?: unknown;
+    code?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    kind?: unknown;
+    details?: unknown;
+  } | null | undefined;
+  const details = error?.details && typeof error.details === 'object'
+    ? error.details as typeof error
+    : undefined;
+  const code = error?.code ?? details?.code;
   if (typeof code === 'string') {
     const byCode = translateApiError(code);
     if (byCode) return byCode;
   }
-  const byMessage = translateApiError(e.message);
+  const message = e instanceof Error
+    ? e.message
+    : typeof error?.message === 'string'
+      ? error.message
+      : typeof details?.message === 'string'
+        ? details.message
+        : '';
+  const byMessage = translateApiError(message);
   if (byMessage) return byMessage;
-  const status = (e as { status?: unknown }).status;
-  // Only fall back to the status text when the message is the client's own
-  // `API error <status>` placeholder — a real server sentence tells more.
-  if (typeof status === 'number' && /^API error \d+$/.test(e.message)) {
-    return STATUS_LABELS[status] ?? e.message;
+
+  const status = typeof error?.status === 'number'
+    ? error.status
+    : typeof error?.statusCode === 'number'
+      ? error.statusCode
+      : typeof details?.status === 'number'
+        ? details.status
+        : typeof details?.statusCode === 'number'
+          ? details.statusCode
+          : undefined;
+  if (status !== undefined) {
+    if (STATUS_LABELS[status]) return STATUS_LABELS[status]!;
+    if (status >= 400 && status < 500) return OTHER_CLIENT_ERROR;
+    if (status >= 500 && status < 600) return STATUS_LABELS[500]!;
+    return GENERIC_API_ERROR;
   }
-  return e.message || 'เกิดข้อผิดพลาด';
+
+  const kind = typeof error?.kind === 'string'
+    ? error.kind
+    : typeof details?.kind === 'string'
+      ? details.kind
+      : undefined;
+  if (kind && KIND_LABELS[kind]) return KIND_LABELS[kind]!;
+  if (e instanceof TypeError) return GENERIC_API_ERROR;
+  if (typeof code === 'string' || (kind && API_KINDS.has(kind)) || error?.details !== undefined) {
+    return GENERIC_API_ERROR;
+  }
+  return e instanceof Error && e.message ? e.message : 'เกิดข้อผิดพลาด';
 }

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { BackLink } from '@/common/components/app-shell/BackLink';
 import { useToast } from '@/common/components/toast';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { parseBudgetBahtInput, satangToBaht, satangToBahtInput } from './ai-budget.logic';
 import { getPlatformAiBudget, setPlatformAiBudget } from './system-partners.api';
 import type { PlatformAiBudgetDto } from './system-partners.api';
@@ -43,7 +44,7 @@ export default function PlatformAiBudgetPage() {
         setLoadError(
           e.status === 403
             ? 'You do not have permission to manage platform AI budget settings.'
-            : e.message || 'Failed to load platform AI budget settings.',
+            : apiErrorMessage(err),
         );
       }
     })();
@@ -59,7 +60,7 @@ export default function PlatformAiBudgetPage() {
       }
       // Empty means "inherit" for a company override; the platform itself has nothing to inherit.
       if (parsed.monthlyBudgetSatang === null) {
-        toast.error('Both the monthly default and the ceiling are required.');
+        toast.error('กรุณาระบุงบประมาณรายเดือนเริ่มต้นและเพดานรายเดือนให้ครบ');
         return;
       }
       satang.push(parsed.monthlyBudgetSatang);
@@ -71,8 +72,8 @@ export default function PlatformAiBudgetPage() {
       apply(await setPlatformAiBudget({ monthlyBudgetSatang, ceilingSatang }));
       toast.success('Platform AI budget settings saved.');
     } catch (err) {
-      // The API's 422 (below 1 satang, ceiling below the default) must reach the operator verbatim.
-      toast.error((err as Error).message || 'Failed to save platform AI budget settings.');
+      // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
+      toast.error(apiErrorMessage(err));
     } finally {
       setSaving(false);
     }

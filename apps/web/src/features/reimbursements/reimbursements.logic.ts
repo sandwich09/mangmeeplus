@@ -1,19 +1,22 @@
 // Pure client-side helpers for the reimbursement forms (mirror server rules for UX only).
 
-import { translateApiError } from '@/common/api/api-error-message';
+import { apiErrorMessage, translateApiError } from '@/common/api/api-error-message';
 import { ERROR_CODE_LABELS } from './reimbursements.model';
 
 /**
  * The API answers with stable error codes, sometimes several joined by commas
  * (`validateLines` returns a list). Translate what we know — this feature's own
  * codes first, then the shared cross-feature map — and pass anything else
- * through untouched: an unrecognised code is still more useful to the user
- * (and to support) than a generic "เกิดข้อผิดพลาด".
+ * through the shared safe fallback so implementation details never reach the screen.
  */
-export function errorMessage(raw: string): string {
+export function errorMessage(
+  raw: string,
+  source: unknown = Object.assign(new Error(raw), { kind: 'unknown' }),
+): string {
   const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
-  if (parts.length === 0) return raw;
-  return parts.map((part) => ERROR_CODE_LABELS[part] ?? translateApiError(part) ?? part).join(' · ');
+  if (parts.length === 0) return apiErrorMessage(source);
+  return parts.map((part) => ERROR_CODE_LABELS[part] ?? translateApiError(part)
+    ?? apiErrorMessage(parts.length === 1 ? source : Object.assign(new Error(part), { kind: 'unknown' }))).join(' · ');
 }
 
 /**
@@ -25,7 +28,7 @@ export function errorText(e: unknown): string {
   const code = (e as { code?: unknown } | null)?.code;
   const viaCode = typeof code === 'string' ? ERROR_CODE_LABELS[code] ?? translateApiError(code) : null;
   if (viaCode) return viaCode;
-  return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด');
+  return errorMessage(e instanceof Error ? e.message : 'เกิดข้อผิดพลาด', e);
 }
 
 export const STALE_APPROVAL_CODE = 'stale_approval_snapshot';

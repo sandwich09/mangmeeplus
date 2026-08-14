@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate } from '@/common/i18n/thai-date';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useEffect, useState } from 'react';
 import { listPartners } from './system-partners.api';
 import type { PartnerCompanySummaryDto, LineContextHealth } from './system-partners.api';
@@ -94,7 +95,7 @@ export default function PartnerListPage() {
       if (e.status === 403) {
         setError('Access denied. You do not have permission to view the partner list.');
       } else {
-        setError(e.message || 'Failed to load partners.');
+        setError(apiErrorMessage(err));
       }
     } finally {
       setLoading(false);

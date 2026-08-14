@@ -1,3 +1,5 @@
+import { apiErrorMessage } from '@/common/api/api-error-message';
+
 export const ACCOUNTS_PAYABLE_TABS = ['bills', 'payments', 'wht', 'aging'] as const;
 export type AccountsPayableTab = (typeof ACCOUNTS_PAYABLE_TABS)[number];
 
@@ -69,5 +71,12 @@ export function whtLinkErrorOutcome(error: unknown): WhtLinkErrorOutcome {
     return { message: 'ไม่พบรายการนี้แล้ว — กำลังโหลดข้อมูลล่าสุด', reload: true };
   }
   const message = (error as { message?: unknown } | null)?.message;
-  return { message: typeof message === 'string' && message ? message : 'ไม่สามารถแนบหนังสือรับรองได้', reload: false };
+  return {
+    message: typeof message === 'string' && message
+      ? apiErrorMessage(error instanceof Error
+        ? error
+        : Object.assign(new Error(message), { status, ...(typeof code === 'string' ? { code } : {}) }))
+      : 'ไม่สามารถแนบหนังสือรับรองได้',
+    reload: false,
+  };
 }

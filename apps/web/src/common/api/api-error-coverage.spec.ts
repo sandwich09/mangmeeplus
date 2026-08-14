@@ -3,10 +3,10 @@
  * snake_case identifier the developer typed — `missing_receipt_reason_required` on a screen a shop
  * owner is meant to act on.
  *
- * Translating all 383 codes at once is not the safe move: a wrong Thai sentence is worse than an
- * untranslated one, because it sends the user to fix the wrong thing. So the coverage that is
- * enforced here is the launch surface — the modules behind the eleven features being switched on.
- * Everything outside it still falls through to the original text, which is ugly but honest.
+ * Translating every code at once is not the safe move: a wrong Thai sentence is worse than a
+ * generic one because it sends the user to fix the wrong thing. The specific-copy coverage enforced
+ * here stays on the launch surface; every unknown API-shaped error now fails closed to the shared
+ * status/kind fallback instead of exposing its raw code.
  *
  * The list is derived from the API source rather than restated, so adding a code to a launch module
  * without Thai text fails here instead of appearing on a customer's screen.
@@ -45,8 +45,8 @@ function launchErrorCodes(): Map<string, string> {
     for (const file of sourceFiles(join(API_MODULES, moduleName))) {
       const source = readFileSync(file, 'utf8');
       const found = [
-        ...source.matchAll(/(?:BadRequest|UnprocessableEntity|Conflict|Forbidden|NotFound|Gone|PayloadTooLarge)Exception\(\s*'([a-z][a-z0-9_]{3,})'/g),
-        ...source.matchAll(/code:\s*'([a-z][a-z0-9_]{3,})'/g),
+        ...source.matchAll(/(?:BadRequest|UnprocessableEntity|Conflict|Forbidden|Unauthorized|NotFound|Gone|PayloadTooLarge|TooManyRequests|ServiceUnavailable)Exception\(\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
+        ...source.matchAll(/code:\s*'([A-Za-z][A-Za-z0-9_:-]{3,})'/g),
       ];
       for (const match of found) if (!codes.has(match[1]!)) codes.set(match[1]!, moduleName);
     }

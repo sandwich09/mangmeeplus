@@ -9,6 +9,7 @@
 import { CSRF_COOKIE, CSRF_ERROR_CODE, CSRF_HEADER } from '../auth/auth-cookies.constants';
 import { legalAcceptancePath } from '../auth/session-gate.logic';
 import { emitApiErrorToast } from '../feedback/toast-bus';
+import { ApiError } from '../models/api-error.model';
 
 const API_PREFIX = '/api/v1';
 const REFRESH_ENDPOINT = '/api/auth/refresh';
@@ -41,13 +42,18 @@ function normalizePath(path: string): string {
   return path.startsWith('/v1/') ? path.slice(3) : path;
 }
 
-let refreshInFlight: Promise<number> | null = null;
+type RefreshResult = { response: Response | null; cause?: unknown };
+
+let refreshInFlight: Promise<RefreshResult> | null = null;
+
+function networkError(cause: unknown): ApiError {
+  return new ApiError({ kind: 'network_error', message: 'Network request failed.', cause });
+}
 
 // Refresh rotates the server session (old sid dies), so concurrent 401s must share one attempt.
-// Resolves to the BFF status, because *why* a refresh failed decides what the caller may do:
-// 204 rotated, 401 the session is gone, anything else (0 = network error) is transient and the
-// auth cookies are still in place.
-function refreshSession(fetchImpl: FetchLike): Promise<number> {
+// Keeps the response/cause because *why* a refresh failed decides what the caller may show:
+// 204 rotated, 401 the session is gone, and 5xx/network is a transient transport failure.
+function refreshSession(fetchImpl: FetchLike): Promise<RefreshResult> {
   refreshInFlight ??= (async () => {
     try {
       const res = await fetchImpl(REFRESH_ENDPOINT, {
@@ -55,9 +61,9 @@ function refreshSession(fetchImpl: FetchLike): Promise<number> {
         credentials: 'include',
         headers: buildCsrfHeader(),
       });
-      return res.status;
-    } catch {
-      return 0;
+      return { response: res };
+    } catch (cause) {
+      return { response: null, cause };
     } finally {
       refreshInFlight = null;
     }
@@ -111,27 +117,34 @@ export async function authedFetch(path: string, init?: RequestInit, fetchImpl: F
   const url = `${API_PREFIX}${normalizePath(path)}`;
   const method = (init?.method ?? 'GET').toUpperCase();
 
-  const exec = () => {
+  const exec = async () => {
     const headers: Record<string, string> = {
       ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...((init?.headers as Record<string, string> | undefined) ?? {}),
       ...(MUTATING_METHOD.test(method) ? buildCsrfHeader() : {}),
     };
-    return fetchImpl(url, { ...init, headers, credentials: 'include' });
+    try {
+      return await fetchImpl(url, { ...init, headers, credentials: 'include' });
+    } catch (cause) {
+      throw networkError(cause);
+    }
   };
 
   let res = await exec();
   if (res.status === 401) {
-    const refreshStatus = await refreshSession(fetchImpl);
+    const refresh = await refreshSession(fetchImpl);
+    const refreshStatus = refresh.response?.status ?? 0;
     if (refreshStatus === REFRESH_ROTATED) res = await exec();
+    else if (refreshStatus === 0) throw networkError(refresh.cause);
+    else if (refreshStatus !== 401) res = refresh.response!.clone();
     // Bounce to /login only when the session is really gone — the BFF answers 401 for that, and
     // clears the cookies with it. A transient refresh failure (502/503/network) leaves the
-    // cookies intact, so the caller just sees this 401 and the next call retries the refresh;
-    // redirecting there would throw away a session that is still ACTIVE on the server.
+    // cookies intact, so the caller sees that transport failure and the next call retries the
+    // refresh; redirecting there would throw away a session that is still ACTIVE on the server.
     if (res.status === 401 && (refreshStatus === REFRESH_ROTATED || refreshStatus === 401)) redirectToLogin();
   } else if (await isRecoverableCsrfRejection(res)) {
     // At most one refresh + one retry: a second CSRF rejection is returned to the caller.
-    if ((await refreshSession(fetchImpl)) === REFRESH_ROTATED) res = await exec();
+    if ((await refreshSession(fetchImpl)).response?.status === REFRESH_ROTATED) res = await exec();
   }
   // The API uses a stable code rather than a translated message, so every raw and JSON call is
   // caught consistently. Preserve the current same-app destination for the post-acceptance return.
@@ -147,7 +160,15 @@ export async function authedFetch(path: string, init?: RequestInit, fetchImpl: F
 export async function authedApiFetch<T>(path: string, init?: AuthedInit, fetchImpl: FetchLike = defaultFetch): Promise<T> {
   const { suppressErrorToast, ...requestInit } = init ?? {};
   const method = (requestInit.method ?? 'GET').toUpperCase();
-  const res = await authedFetch(path, requestInit, fetchImpl);
+  let res: Response;
+  try {
+    res = await authedFetch(path, requestInit, fetchImpl);
+  } catch (error) {
+    if (MUTATING_METHOD.test(method) && typeof window !== 'undefined' && !suppressErrorToast) {
+      emitApiErrorToast(error);
+    }
+    throw error;
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
       message?: unknown;
@@ -189,5 +210,19 @@ export async function authedApiFetch<T>(path: string, init?: AuthedInit, fetchIm
   // res.json() on those throws "Unexpected end of JSON input" AFTER the server persisted.
   const text = await res.text();
   if (!text) return undefined as T;
-  return JSON.parse(text) as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch (cause) {
+    const error = new ApiError({
+      kind: 'server_error',
+      code: 'invalid_response',
+      message: 'Invalid API response.',
+      statusCode: res.status,
+      cause,
+    });
+    if (MUTATING_METHOD.test(method) && typeof window !== 'undefined' && !suppressErrorToast) {
+      emitApiErrorToast(error);
+    }
+    throw error;
+  }
 }

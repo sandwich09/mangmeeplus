@@ -8,7 +8,9 @@ import {
   isTaxSourceLocked,
   pp30SalesSideRecorded,
   taxDefinitionRateForSource,
+  taxCodeImportDiagnosticMessage,
   transactionTaxCapabilities,
+  transactionTaxDiagnosticMessage,
   transactionTaxErrorMessage,
 } from './transaction-tax.model.js';
 
@@ -75,6 +77,24 @@ describe('transaction tax web model', () => {
     assert.equal(transactionTaxErrorMessage({ status: 403, code: 'feature_not_enabled' }), 'ยังไม่ได้เปิดฟีเจอร์นี้');
     // A plain permission 403 (no code) keeps the permission copy.
     assert.equal(transactionTaxErrorMessage({ status: 403 }), 'คุณไม่มีสิทธิ์ดำเนินการนี้');
+  });
+
+  it('renders success-payload tax diagnostics without exposing unknown server text', () => {
+    assert.match(transactionTaxDiagnosticMessage('tax_account_rule_missing:INPUT_VAT_CLAIMABLE'), /ผูกบัญชี/);
+    assert.match(transactionTaxDiagnosticMessage('tax_evidence_required'), /แนบหลักฐาน/);
+    assert.equal(
+      transactionTaxDiagnosticMessage('select * from hidden_table'),
+      'ตรวจสอบภาษีรายการนี้ไม่สำเร็จ กรุณาติดต่อผู้ดูแลการตั้งค่าภาษี',
+    );
+  });
+
+  it('renders import diagnostics as actionable Thai and fails closed for unknown text', () => {
+    assert.equal(taxCodeImportDiagnosticMessage('externalCode is required'), 'กรุณาระบุรหัส Tax Code (externalCode)');
+    assert.match(taxCodeImportDiagnosticMessage('STANDARD requires a positive rate and tax calculation method'), /อัตราภาษีมากกว่า 0/);
+    assert.equal(
+      taxCodeImportDiagnosticMessage('Prisma constraint secret'),
+      'ข้อมูล Tax Code ในแถวนี้ไม่ถูกต้อง กรุณาตรวจสอบรูปแบบไฟล์',
+    );
   });
 
   it('adapts VAT rate units only for legacy expense inputs', () => {
