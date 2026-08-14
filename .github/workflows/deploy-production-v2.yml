@@ -122,7 +122,9 @@ jobs:
 
           test -n "$GH_POLICY_READ_TOKEN"
           echo 'PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true' >> "$GITHUB_ENV"
-          status="$(curl --silent --show-error --location --output "$root/main-protection.json" \
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
+          status="$(curl --silent --show-error --location "${curl_retry[@]}" \
+            --output "$root/main-protection.json" \
             --write-out '%{http_code}' --header "Authorization: Bearer $GH_POLICY_READ_TOKEN" \
             --header 'Accept: application/vnd.github+json' \
             --header 'X-GitHub-Api-Version: 2022-11-28' \

@@ -566,6 +566,10 @@ grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON: ${{ steps.bootstrap_closed.out
 grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery_workflow"
 grep -Fq 'boundHistory:$bound' "$recovery_workflow"
 grep -Fq 'test "$bound_count" -le 8' "$recovery_workflow"
+test "$(grep -Fc 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$recovery_workflow")" -eq 2
+test "$(grep -Fc '"${curl_retry[@]}"' "$recovery_workflow")" -eq 4
+grep -Fq -- '--max-filesize 16384 --output "$readiness" --write-out' "$recovery_workflow"
+grep -Fq -- '--max-filesize 65536 --dump-header "$headers" --output "$body_file"' "$recovery_workflow"
 grep -Fq 'inputs.intent_id }}" = PRE_INTENT' "$recovery_workflow"
 grep -Fq 'group: watchdog-bms-${{ inputs.environment }}-deploy' "$recovery_workflow"
 grep -Fq 'cancel-in-progress: false' "$recovery_workflow"
@@ -670,6 +674,8 @@ test "$(grep -Fc 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/p
 grep -Fq 'source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'caller_ci="$(git rev-parse "$GITHUB_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
 grep -Fq 'head_sha=$SOURCE_SHA' "$uat_workflow"
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$uat_workflow"
+grep -Fq 'curl --fail --silent --show-error "${curl_retry[@]}"' "$uat_workflow"
 grep -Fq 'event=pull_request&status=success&head_sha=$SOURCE_SHA' "$uat_workflow"
 grep -Fq '.event == "pull_request"' "$uat_workflow"
 grep -Fq 'validated_ci_run_id: ${{ needs.resolve-release.outputs.validated_ci_run_id }}' "$uat_workflow"
@@ -2082,6 +2088,7 @@ bash "$repo_root/infra/prod-ecs-express/register-task-definition-with-retry.spec
 bash "$repo_root/infra/prod-ecs-express/cleanup-one-shot-task.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-task-network-failover.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/production-ready-release-task.spec.sh"
+bash "$repo_root/infra/prod-ecs-express/bounded-http-retry.spec.sh"
 bash -n "$repo_root/infra/prod-ecs-express/active-release-tasks.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-create.sh"
 bash -n "$repo_root/infra/prod-ecs-express/bind-express-deployment.sh"

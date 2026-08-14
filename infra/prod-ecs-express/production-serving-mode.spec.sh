@@ -122,6 +122,9 @@ for flag in \
 done
 grep -Fq '{name:"QUEUE_ENABLED", value:$queueEnabled}' "$deploy"
 grep -Fq '.activeCount == 1' "$verify"
+grep -Fq 'curl_bin="${CURL_BIN:-curl}"' "$verify"
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$verify"
+test "$(grep -Fc '"${curl_retry[@]}"' "$verify")" -eq 2
 ai_wave_line="$(grep -n -m1 'run_rollout_wave ai-gateway workers' "$deploy" | cut -d: -f1)"
 api_wave_line="$(grep -n -m1 'run_rollout_wave api-web$' "$deploy" | cut -d: -f1)"
 test "$ai_wave_line" -lt "$api_wave_line"

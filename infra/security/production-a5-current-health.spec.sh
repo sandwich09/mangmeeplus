@@ -168,15 +168,24 @@ set -euo pipefail
 output=''
 seen_proto=false
 seen_bound=false
+retry=false
+retry_delay=false
+retry_max_time=false
+retry_all_errors=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --output) output="$2"; shift 2 ;;
     --proto) [ "$2" = '=https' ]; seen_proto=true; shift 2 ;;
     --max-filesize) [ "$2" = 16384 ]; seen_bound=true; shift 2 ;;
+    --retry) [ "$2" = 2 ]; retry=true; shift 2 ;;
+    --retry-delay) [ "$2" = 2 ]; retry_delay=true; shift 2 ;;
+    --retry-max-time) [ "$2" = 70 ]; retry_max_time=true; shift 2 ;;
+    --retry-all-errors) retry_all_errors=true; shift ;;
     *) shift ;;
   esac
 done
-[ "$seen_proto" = true ] && [ "$seen_bound" = true ] && [ -n "$output" ]
+[ "$seen_proto$seen_bound$retry$retry_delay$retry_max_time$retry_all_errors" = truetruetruetruetruetrue ]
+[ -n "$output" ]
 printf '{"details":"ready","status":"ok"}\n' > "$output"
 if [ "${FAKE_HEALTH_MODE:-ok}" = http ]; then printf '201'; else printf '200'; fi
 FAKE_CURL

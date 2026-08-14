@@ -9,6 +9,9 @@ deploy="$root/infra/prod-ecs-express/deploy.sh"
 maintenance="$root/infra/prod-ecs-express/verify-production-maintenance.sh"
 recovery="$root/.github/workflows/recover-release-intent.yml"
 
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$workflow"
+grep -Fq 'curl --silent --show-error --location "${curl_retry[@]}"' "$workflow"
+
 for required in \
   'UAT Release Passport V2' 'Production Readiness V2 run' \
   'validate-production-release-ready-v2.sh' 'validate-uat-release-passport-v2.sh' \

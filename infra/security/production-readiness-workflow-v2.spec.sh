@@ -2,6 +2,9 @@
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 workflow="$root/.github/workflows/production-readiness.yml"
+
+grep -Fq 'curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)' "$workflow"
+grep -Fq 'curl --silent --show-error --location "${curl_retry[@]}"' "$workflow"
 [ -f "$workflow" ]
 ruby -e 'require "yaml"; value=YAML.load_file(ARGV[0]); abort unless value.is_a?(Hash)' "$workflow"
 

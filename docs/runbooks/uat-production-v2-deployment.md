@@ -194,6 +194,10 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
   candidate, reviewed recovery SHA และ parent operation UUID; recovery ไม่ถือเป็น promotion สำเร็จ.
 - Recovery สำเร็จไม่ใช่ promotion สำเร็จ. หลัง recovery ให้ออก READY ใหม่บน current `main`, freeze
   `main` แล้ว dispatch Production ใหม่หนึ่งครั้ง.
+- HTTP checks แบบ read-only ของ UAT CI reuse, branch protection, runtime health, deep DB readiness
+  และ maintenance ingress ใช้ bounded transport/provider retry เท่านั้น: สูงสุดสามครั้ง ครั้งละ
+  20 วินาที ภายในเพดาน 70 วินาที. HTTP/JSON/maintenance marker ที่ผิด contract ยัง fail closed และ
+  ห้ามนำ retry contract นี้ไปครอบคำสั่ง mutation.
 - ถ้า source/image/migration catalog เปลี่ยน ให้เริ่มจาก UAT และ Passport ใหม่เสมอ.
 
 ## 7. หลักฐานอ้างอิงรอบที่ผ่านจริง
