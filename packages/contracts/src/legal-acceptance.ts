@@ -11,9 +11,9 @@ export const CURRENT_LEGAL_DOCUMENTS = {
     titleEn: 'MangmeePlus Terms of Use',
     // SHA-256 of the exact UTF-8 bytes served from `href`. The release file is append-only:
     // changing it requires a new version, URL and hash rather than overwriting this artifact.
-    artifactSha256: '4d21b7b5c98171d0ae7ca34ccf93c215304822bd512af11c63993a8f13fbe8ed',
+    artifactSha256: '67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: '4d21b7b5c98171d0ae7ca34ccf93c215304822bd512af11c63993a8f13fbe8ed',
+    releaseFingerprintSha256: '67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a',
   },
   privacy: {
     type: 'PRIVACY_NOTICE',
@@ -25,9 +25,9 @@ export const CURRENT_LEGAL_DOCUMENTS = {
     latestHref: '/privacy',
     titleTh: 'ประกาศความเป็นส่วนตัว MangmeePlus',
     titleEn: 'MangmeePlus Privacy Notice',
-    artifactSha256: 'cd86af5ede65d5bcdd9be9910da5382b8ad2a07bb8e2eb29b148062150709fc7',
+    artifactSha256: '1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d',
     /** @deprecated Use artifactSha256. Kept temporarily for mixed-version consumers. */
-    releaseFingerprintSha256: 'cd86af5ede65d5bcdd9be9910da5382b8ad2a07bb8e2eb29b148062150709fc7',
+    releaseFingerprintSha256: '1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d',
   },
 } as const;
 

@@ -76,12 +76,12 @@ Avoid flattening these into a single universal retention period.
 
 ## Verification 2026-08-14 official first edition
 
-- Current internal v3 artifacts regenerate deterministically: Terms `4d21b7b5c98171d0ae7ca34ccf93c215304822bd512af11c63993a8f13fbe8ed`; Privacy `cd86af5ede65d5bcdd9be9910da5382b8ad2a07bb8e2eb29b148062150709fc7`.
-  These replace the hashes first recorded for v3 (`67757a82…` / `1e224b9f…`): the owner confirmed on
-  2026-08-14 that nobody had accepted v3, so the two artifacts were re-cut in place after the
-  typeface change (see `pdpa-legal-pages-design-overhaul.md`). Everything from `<body>` onward is
-  byte-identical to the first cut — only the inlined `<style>` differs, so no legal text moved.
-- Current acceptance contract source hash and production workflow pin: `26ee59215e2d8ef5944b60cdcc6e674d22ed3eeacd43c716c2adefc6aa381b60`.
+- Current internal v3 artifacts regenerate deterministically: Terms `67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a`; Privacy `1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d`.
+  These are the values v3 was first published with and they are now frozen by an explicit pin in
+  `legal-content.spec.ts`. They were briefly re-cut on 2026-08-14 after the typeface change and
+  then restored on the owner's instruction that a released artifact hash must never move; see
+  `pdpa-legal-pages-design-overhaul.md`.
+- Current acceptance contract source hash and production workflow pin: `8cc9cdaf9fa885cda83d1b867ccedf31fb3690a0a7d7bdf13951773ab1825387`.
 - Contracts 3/3, Web legal/acceptance 8/8, and API legal acceptance 14/14 tests pass. Legal readiness and evidence provisioner specs pass with release `v3`; the checked-in evidence manifest remains deliberately `BLOCKED` until real external evidence is attached.
 - Public rendered pages match the final DOCX titles/standfirsts and all normalized legal blocks: Privacy 95/95, Terms 75/75, Data Deletion 62/62. No final DOCX contains `v2`, `2.0`, `-002`, the prior effective date, or draft/merge labels.
 - The five DOCX files and five PDFs were rendered and visually reviewed across 37 pages. Embedded hashes in the counsel approval memo match 3/3 legal DOCX files; the submission letter matches all 4/4 attached DOCX files. The final manifest verifies all 10 files and the ZIP contains exactly those files plus the manifest.

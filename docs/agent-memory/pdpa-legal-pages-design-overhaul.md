@@ -254,44 +254,34 @@ scroll), and on desktop the page is unscrollable while the work column scrolls i
 `/privacy` was re-rendered through `render-legal-release-artifact.ts` and checked at 1440
 and 390.
 
-### v3 re-cut in place, not bumped to v4
+### v3 was NOT re-cut — the released hashes are frozen
 
-The immutable artifacts inline the stylesheets as they stood when the release was cut, so after
-the typeface change the full documents opened from the gate would have stayed in Plex while the
-four live pages were Sarabun. The owner confirmed nobody had accepted v3, so the two files were
-re-cut in place — the same pre-launch treatment v1 got, and the reason to prefer it over cutting
-v4 is that a v4 would leave an orphan version and a re-prompt path for a change that alters no
-legal text. `flag: 'wx'` means the old files had to be deleted first; that deletion is the
-deliberate act, so it is recorded here.
+The artifacts inline the stylesheets as they stood when the release was cut, so after the
+typeface change the full documents opened from the gate stay in Outfit/IBM Plex Sans Thai while
+the four live pages are Sarabun. They were re-cut in place on 2026-08-14 to close that gap, and
+then **restored** the same day: the owner's instruction is that a released artifact hash must
+never move, stated twice and unambiguously. Everything is back to the first-cut bytes —
+Terms `67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a`, Privacy
+`1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d`, contract source
+`8cc9cdaf9fa885cda83d1b867ccedf31fb3690a0a7d7bdf13951773ab1825387` — and those two artifact
+values now sit in the `historicalHashes` pin in `legal-content.spec.ts` beside v1 and v2, so a
+future re-cut of v3 fails the suite even if `CURRENT_LEGAL_DOCUMENTS` were updated to match the
+new bytes.
 
-Everything from `<body>` onward is **byte-identical** to the first cut (verified by diffing the
-post-`<body>` slice against `git show HEAD:…`); only the inlined `<style>` differs. New hashes:
-Terms `4d21b7b5c98171d0ae7ca34ccf93c215304822bd512af11c63993a8f13fbe8ed`, Privacy
-`cd86af5ede65d5bcdd9be9910da5382b8ad2a07bb8e2eb29b148062150709fc7`.
+**Do not "fix" the typeface mismatch by regenerating v3.** The generator writes with `flag: 'wx'`
+and the pin above is deliberate. A restyled full document has to wait for a genuine v4.
 
-Everything that pinned the old bytes was moved in step — there were exactly three places, found
-by grepping the hashes repo-wide:
+Worth being precise about, because it was misstated once in conversation: editing `legal.css` or
+`fonts.css` does **not** move a released hash on its own. The artifacts are static checked-in
+files, the generator is referenced by no npm script, CI workflow or shell script, and it cannot
+overwrite an existing release. The hashes moved only because a human deleted the files and re-ran
+it. Demonstrated by appending a rule to both stylesheets and re-hashing: identical, and
+`legal-content.spec.ts` still passed 6/6.
 
-- `packages/contracts/src/legal-acceptance.ts` — `artifactSha256` and the deprecated
-  `releaseFingerprintSha256` for both documents.
-- `.github/workflows/deploy-production.yml` — `EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256`, which
-  pins the *source hash of that contract file*, so editing the artifact hashes changes it too:
-  now `26ee59215e2d8ef5944b60cdcc6e674d22ed3eeacd43c716c2adefc6aa381b60`.
-  `infra/docker/production-image-security.spec.sh:289` is what enforces the two staying in step.
-- `docs/agent-memory/mangmeeplus-privacy-terms-data-deletion.md` — the recorded verification hashes.
-
-Nothing else needed touching: `validate-legal-release-readiness.sh` *derives* the expected
-hashes from the contract source and compares them to the files on disk (lines 112–113, 174–175)
-rather than carrying its own copy, and `docs/security-evidence/legal-release-evidence.json`
-targets `releaseVersion: "v3"`, which did not move. The manifest stays `BLOCKED`; running the
-validator standalone still stops at the missing `LEGAL_RELEASE_EVIDENCE_SHA256`, which is the
-documented pre-launch state and not a regression.
-
-Verification after the re-cut: contracts 121/121, `apps/web` 898/898, API
-`legal-acceptance.service.spec.ts` 14/14, `validate-legal-release-readiness.spec.sh`,
-`provision-legal-release-evidence.spec.sh` and `production-image-security.spec.sh` all pass.
-(The last needs `pnpm` on PATH; in a shell without it, it fails at line 2213 for that reason
-alone — `corepack pnpm` via a shim is enough.)
+The re-cut is still recorded here because it proved something useful about the artifact format:
+everything from `<body>` onward was byte-identical across the two cuts (36,420 and 52,683 bytes),
+so the whole hash delta came from the inlined `<style>` block. Only presentation is coupled to
+the hash; the legal text is not.
 
 ## Next
 
