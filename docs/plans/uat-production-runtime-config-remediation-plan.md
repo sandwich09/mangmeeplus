@@ -120,7 +120,8 @@ Exit:
 - [ ] UAT `FreeableMemory` ใช้ 64 MB ไม่ใช้ 200 MB เพราะ baseline จริง ~151 MB
 - [x] Production alarms ใช้ SNS topic ที่มี confirmed subscriber เดิม; alarm names มี environment
       และข้อความไม่มี tenant data
-- [ ] ยืนยัน SNS canary delivery ที่ mailbox ก่อนปิด Phase 3 รวม
+- [x] ยืนยัน SNS canary delivery ที่ mailbox: owner ส่งภาพ inbox วันที่ 2026-08-15 ซึ่งเห็น subject
+      `[TEST] production runtime alarm pipeline` และข้อความ sanitized canary ตรงกับ publish ที่ AWS รับ
 - [ ] retire `watchdog-bms-prod-redis-memory-high` หลัง non-root operator ได้ exact
       `cloudwatch:DeleteAlarms`; workstation ปัจจุบันไม่มีหลักฐาน allow จึงไม่ลองลบเพื่อหา error
 
@@ -134,7 +135,11 @@ Exit: `describe-alarms` เห็นทุก alarm, action count = 1, SNS canar
 Live evidence 2026-08-15 01:10 UTC+7: Production install และ verify ผ่านครบ 9 alarms, ทุก
 dimension มี datapoint และ SNS subscription confirmed. Script SHA-256
 `12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`. Invalid alarm เดิมยังคงอยู่
-จนกว่าจะมี exact delete authority; UAT install ยังไม่เริ่มเพราะ v2 node ยังไม่มีตามลำดับที่กำหนด
+จนกว่าจะมี exact delete authority; UAT install ยังไม่เริ่มเพราะ v2 node ยังไม่มีตามลำดับที่กำหนด.
+เวลาเดียวกัน owner ยืนยัน mailbox delivery ด้วยภาพ inbox; เก็บเฉพาะ SHA-256 ของภาพ
+`f524646240c97510a4a500e1bcfecedf064e2549f620081dbd586605d09451bb` และ SNS MessageId
+`198e9125-6a84-5124-866b-f3dc35bfe21e` ในหลักฐาน ไม่ copy ภาพที่มี mailbox/unsubscribe endpoint
+เข้า repository
 
 ### Phase 4 — Decide and enforce audit lifecycle (P1, owner/legal gate)
 

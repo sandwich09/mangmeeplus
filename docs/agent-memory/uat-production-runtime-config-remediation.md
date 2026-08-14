@@ -1,6 +1,6 @@
 # Agent Memory: UAT / Production runtime config remediation
 
-Status: PARTIAL LIVE — Production alarms installed/verified; UAT Redis migration blocked at IAM preflight
+Status: PARTIAL LIVE — Production alarms and mailbox delivery verified; controller PR CI-green and awaiting independent approval; remaining cloud mutations await non-root platform-admin
 Owner: thawatchai
 Scope: Redis/memory, BullMQ/cache configuration, CloudWatch logs, RDS observability,
 database audit retention and AWS cost controls across UAT/Production/shared infrastructure.
@@ -38,6 +38,17 @@ Decisions:
   `DeleteAlarms`; no delete probe was made.
 - UAT was deliberately left running at 1/2. Parking it before Redis operator authority exists would
   create avoidable downtime with no safe path to complete prepare/cutover.
+- UAT deploy workflows load the deploy controller and policy verification from `main`, while candidate
+  application images come from `develop`. Therefore the five reviewed controller blobs must land on
+  `main` before the live deploy-role mutex delta is applied; promoting the rest of `develop` is out of scope.
+- Do not bypass the independent-review intent on `main`. Branch protection enforces admins, locks the
+  branch and requires approval from someone other than the last pusher.
+- Owner confirmed the sanitized Production SNS canary reached the real inbox on 2026-08-15. Do not
+  retain the supplied screenshot in the repository because it exposes the mailbox and unsubscribe
+  endpoint; the screenshot hash, subject and SNS MessageId are sufficient for this operational gate.
+- Owner authorized exact retirement of the invalid alarm and Phase 6 cost-control work. Authority is
+  still fail-closed: the active non-root principal cannot grant itself IAM access, and an expired root
+  profile is not a substitute for the required temporary non-root platform-admin session.
 
 Open questions:
 - Privacy/Legal + Accounting approval for AuditLog/AiUsageEvent retention classes and legal holds.
@@ -80,6 +91,14 @@ Verification:
   All three UAT Express services were ACTIVE at exact 1/2 with one running task and no pending task;
   the migration mutex parameter was absent and the existing Redis secret had one `AWSCURRENT`
   version. No secret value was read.
+- Owner-supplied inbox evidence on 2026-08-15 showed subject `[TEST] production runtime alarm pipeline`
+  and the expected sanitized canary body. Screenshot SHA-256 is
+  `f524646240c97510a4a500e1bcfecedf064e2549f620081dbd586605d09451bb`; matching SNS publish
+  MessageId is `198e9125-6a84-5124-866b-f3dc35bfe21e`. The screenshot itself was not copied because
+  it contains mailbox and unsubscribe endpoint data. Phase 3 SNS end-to-end delivery is VERIFIED.
+- Follow-up authority preflight on 2026-08-15 found only `watchdog-bedrock-dev` usable. Read-only IAM
+  inventory and `SimulatePrincipalPolicy` were denied, while profile `thawatchai` was expired. No IAM,
+  alarm, billing, anomaly-monitor or resource-tag mutation was attempted.
 - Production alarm install/verify passed live at 2026-08-15 01:10 UTC+7 using script SHA-256
   `12a21225a68a133b953490a7fd66764031ff0190e14333b265006063bb126157`: 3 log-ingest, 2 per-node
   Redis memory and 4 RDS alarms. Exact contract read-back showed the expected dimensions,
@@ -104,12 +123,27 @@ Verification:
 - `tsx --test apps/workers/src/common/queue.spec.ts apps/workers/src/common/log.spec.ts` — pass 17/17.
 - `git diff --check`, shell syntax/JSON parsing and stale active cache/audit config searches — pass
   after the final documentation update.
+- Runtime remediation PR `#84` merged to `develop` as
+  `d88dadf84bf7a32d7848bd7d19f6334cd8ae6cb9` after all required CI passed.
+- Controller-only PR `#85` targets `main` from head
+  `ceefe0506e7f2d4f4d35835229505c3965551002`; its five file blobs match the reviewed copies on
+  `develop`. Local full production image/security gate passed, and GitHub CI run `31829862844`
+  passed Resolve Source, Typecheck and Test (12m16s), Security Audit, Secret Scan, Production Config
+  Validation and Migration Review. Image/publish jobs skipped by the controller-only workflow path.
+- GitHub rejected `gh pr merge 85 --squash --admin` with `New changes require approval from someone
+  other than the last pusher`. Live protection read-back confirms `enforce_admins=true`,
+  `lock_branch=true`, one required approval, stale-review dismissal and
+  `require_last_push_approval=true`; protection was not changed and no alternate identity was used to
+  self-approve.
 
 Next:
-1. Owner/provider supplies a temporary non-root platform-admin session. Exact-read then apply the
-   reviewed UAT deploy mutex delta and dedicated Redis migration operator role/policy; do not use root.
-2. Re-run read-only preflight, park UAT, execute prepare/cutover, reopen, install/verify UAT alarms,
+1. An independent collaborator approves PR `#85`; then merge it, fetch `origin/main` and prove the
+   five controller blobs before any UAT IAM mutation.
+2. Apply the exact reviewed deploy-role mutex policy delta and verify its canonical policy hash from
+   CloudTrail. Owner/provider then supplies a temporary non-root platform-admin session to create the
+   dedicated Redis migration operator role/policy; do not use root.
+3. Re-run read-only preflight, park UAT, execute prepare/cutover, reopen, install/verify UAT alarms,
    run acceptance and retain the legacy node through soak.
-3. Give the monitoring operator exact `DeleteAlarms`, re-run Production verify, retire only the
-   zero-datapoint legacy alarm, and confirm the SNS canary at the mailbox.
-4. Obtain the audit retention decision and platform-admin cost-control read-back.
+4. Give the monitoring operator exact `DeleteAlarms`, re-run Production verify and retire only the
+   zero-datapoint legacy alarm. SNS mailbox delivery is already verified.
+5. Obtain the audit retention decision and platform-admin cost-control read-back.
