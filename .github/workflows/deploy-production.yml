@@ -436,7 +436,7 @@ jobs:
         env:
           EXPECTED_LEGAL_EVIDENCE_PROVISIONER_SHA256: 5fb9bc2cdc315ba471cb41ec69b09c7e500dd087a1cacfa0312f8a6fc2859e08
           EXPECTED_LEGAL_RELEASE_VALIDATOR_SHA256: 66fdfa5b9fc936d657612f306a741efc321c0565b81750489ebd337db9f52ad1
-          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 8cc9cdaf9fa885cda83d1b867ccedf31fb3690a0a7d7bdf13951773ab1825387
+          EXPECTED_LEGAL_ACCEPTANCE_CONTRACT_SHA256: 26ee59215e2d8ef5944b60cdcc6e674d22ed3eeacd43c716c2adefc6aa381b60
         run: |
           set -euo pipefail
           test "$(sha256sum infra/security/provision-legal-release-evidence.sh | awk '{print $1}')" \
