@@ -21,6 +21,7 @@ public_url="${PUBLIC_DOMAIN_URL:-}"
 public_url="${public_url%/}"
 aws_bin="${AWS_BIN:-aws}"
 curl_bin="${CURL_BIN:-curl}"
+curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
 work="$(mktemp -d "${TMPDIR:-/tmp}/production-maintenance-proof.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 : > "$work/probes.ndjson"
@@ -103,7 +104,7 @@ probe() {
   local label="$1" method="$2" url="$3" body_kind="$4" prefix status marker cache_control
   local set_cookie content_type body_sha body_size observed_at
   prefix="$work/$label"
-  "$curl_bin" --silent --show-error --proto '=https' --max-time 20 \
+  "$curl_bin" --silent --show-error --proto '=https' --max-time 20 "${curl_retry[@]}" \
     --request "$method" --header 'Accept: application/json, text/html' \
     --header 'Content-Type: application/json' --data-binary '{}' \
     --dump-header "$prefix.headers" --output "$prefix.body" --write-out '%{http_code}' \

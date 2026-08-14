@@ -169,10 +169,11 @@ jobs:
         run: |
           set -euo pipefail
           branch=main
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
           [ "$DEPLOY_ENV" = uat ] && branch=develop
           ci_event=workflow_dispatch
           [ "$DEPLOY_ENV" = uat ] && ci_event=pull_request
-          response="$(curl --fail --silent --show-error \
+          response="$(curl --fail --silent --show-error "${curl_retry[@]}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -184,7 +185,7 @@ jobs:
             )][0].id // empty
           ' <<< "$response")"
           [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
-          jobs="$(curl --fail --silent --show-error \
+          jobs="$(curl --fail --silent --show-error "${curl_retry[@]}" \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -286,6 +287,7 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/bootstrap-closed-recovery"; mkdir -m 700 "$root"
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
           run="$root/run.json"; jobs="$root/jobs.json"; artifacts="$root/artifacts.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FAILED_PROMOTION_RUN_ID" > "$run"
           jq -e --arg run "$FAILED_PROMOTION_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
@@ -452,15 +454,20 @@ jobs:
           api_origin="$(jq -er '.services[]|select(.service=="api-web")|.rawOrigin' "$proof")"
           worker_token="$(aws secretsmanager get-secret-value --secret-id watchdog-bms/production/worker-internal-token \
             --version-stage AWSCURRENT --query SecretString --output text)"
-          body="$(printf 'header = "X-Worker-Token: %s"\n' "$worker_token" | curl --config - \
-            --proto '=https' --tlsv1.2 --fail-with-body --silent --show-error --max-time 20 \
+          readiness="$root/readiness.json"
+          status="$(printf 'header = "X-Worker-Token: %s"\n' "$worker_token" | curl --config - \
+            "${curl_retry[@]}" --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
+            --max-filesize 16384 --output "$readiness" --write-out '%{http_code}' \
             "${api_origin%/}/v1/internal/health/readiness")"
           unset worker_token
-          jq -e '.service=="api" and .status=="ok" and .db=="ok"' <<< "$body" >/dev/null
+          test "$status" = 200
+          jq -e '.service=="api" and .status=="ok" and .db=="ok"' "$readiness" >/dev/null
           for url in "${PUBLIC_DOMAIN_URL%/}/login" "${api_origin%/}/login"; do
             headers="$root/headers"; body_file="$root/body"
-            test "$(curl --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
-              --dump-header "$headers" --output "$body_file" --write-out '%{http_code}' "$url")" = 200
+            test "$(curl "${curl_retry[@]}" \
+              --proto '=https' --tlsv1.2 --silent --show-error --max-time 20 \
+              --max-filesize 65536 --dump-header "$headers" --output "$body_file" \
+              --write-out '%{http_code}' "$url")" = 200
             grep -Eiq '^X-Mangmee-Maintenance:[[:space:]]*active' "$headers"
             grep -Fq 'data-platform-access="closed"' "$body_file"
           done

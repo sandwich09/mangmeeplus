@@ -81,11 +81,19 @@ method=GET
 headers=''
 body=''
 url=''
+retry=false
+retry_delay=false
+retry_max_time=false
+retry_all_errors=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --request) method="$2"; shift 2 ;;
     --dump-header) headers="$2"; shift 2 ;;
     --output) body="$2"; shift 2 ;;
+    --retry) [ "$2" = 2 ]; retry=true; shift 2 ;;
+    --retry-delay) [ "$2" = 2 ]; retry_delay=true; shift 2 ;;
+    --retry-max-time) [ "$2" = 70 ]; retry_max_time=true; shift 2 ;;
+    --retry-all-errors) retry_all_errors=true; shift ;;
     --header|--data-binary|--proto|--max-time|--write-out) shift 2 ;;
     --silent|--show-error) shift ;;
     https://*) url="$1"; shift ;;
@@ -93,6 +101,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ -n "$headers$body$url" ]
+[ "$retry$retry_delay$retry_max_time$retry_all_errors" = truetruetruetrue ]
 {
   echo 'HTTP/2 200'
   [ "${FAKE_MISSING_MARKER:-false}" = true ] || echo 'X-Mangmee-Maintenance: active'

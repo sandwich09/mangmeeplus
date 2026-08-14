@@ -12,6 +12,7 @@ account=311414082667
 cluster=watchdog-bms-prod
 aws_bin="${AWS_BIN:-aws}"
 curl_bin="${CURL_BIN:-curl}"
+curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
 stability_seconds="${A5_HEALTH_STABILITY_SECONDS:-2}"
 [[ "$stability_seconds" =~ ^[0-9]+$ ]] && [ "$stability_seconds" -le 10 ]
 
@@ -279,7 +280,7 @@ for service in ai-gateway api-web workers; do
 
   health_url="${ssm_url}${health_path}"
   body_raw="$directory/health-body.raw.json"
-  http_status="$($curl_bin --silent --show-error --proto '=https' --max-time 20 \
+  http_status="$("$curl_bin" --silent --show-error --proto '=https' --max-time 20 "${curl_retry[@]}" \
     --max-filesize 16384 --output "$body_raw" --write-out '%{http_code}' "$health_url")"
   [[ "$http_status" =~ ^[0-9]{3}$ ]] && [ "$http_status" -eq 200 ]
   body_size="$(wc -c < "$body_raw" | tr -d '[:space:]')"

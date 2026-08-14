@@ -1,6 +1,8 @@
 # Agent Memory: legal Version 1 Production release
 
-Status: Production candidate is healthy and globally closed; the reviewed recovery hotfix is locally proven and ready for PR/CI before durable recovery.
+Status: Production candidate is healthy and globally closed. The first reviewed recovery reached
+all immutable/provider checks but stopped before build or mutation on one transient 20-second HTTP
+timeout; bounded read-only HTTP proof hardening is under local verification before one retry.
 
 Owner: Codex / repository owner
 
@@ -23,6 +25,9 @@ Decisions:
   non-no-op intents whose count and append-only evidence exactly match the failed-run artifact. Two live reads must
   also prove all three services are the exact candidate in `maintenance_only`. Recovery records
   `RECONCILED_FAILED_CONFIRMED`; it does not relabel the failed promotion as success.
+- Read-only HTTP proofs use three bounded attempts (20 seconds each, 70-second retry ceiling).
+  Provider 429/5xx and transport failures may retry; HTTP identity/body/marker drift still fails
+  closed. No mutation command receives automatic retry authority from this change.
 
 Open questions:
 
@@ -41,6 +46,9 @@ Artifacts:
   `e757be59910a47dc921e3d289f8d5fb9`; the stopped-task record has aged out of ECS.
 - Failed-run controller evidence artifact digest:
   `sha256:2f294e2d6324be9892dc1eb8baba53196573f8bebaff22b52336abceafd553df`.
+- First recovery controller: merged main `d161c5b6a7e2f3bbecfccb405c3c75b121b84073`, exact-main CI
+  run `31778631591` success. Recovery run `31779613515` failed before ECR login/build/executor/DB
+  mutation because the deep-readiness curl timed out once after 20 seconds with zero bytes.
 
 Verification:
 
@@ -63,10 +71,16 @@ Verification:
   isolated repetitions and the full workspace run.
 - Production image/security aggregate, maintenance validator/pin sync, API typecheck, workflow YAML,
   focused shell contracts, dependency audit (no high/critical finding) and `git diff --check` pass.
+- Immediately after run `31779613515`, the same exact Production deep DB readiness endpoint passed
+  from the approved non-root profile in under one second. Public and raw-origin `/login` both return
+  HTTP 200 with the exact maintenance markers; the full current-health collector passes all three
+  services in `maintenance_only`.
+- The native-curl regression proves 503 then 200 succeeds in exactly two requests, HTTP 401 is not
+  retried, and an HTTP-200 body with the wrong readiness contract is rejected.
 
 Next:
 
-1. Merge the reviewed controller/recovery hotfix and require exact-head CI.
+1. Merge the bounded HTTP proof hotfix and require exact-main CI.
 2. Dispatch one exact recovery for the parent and prove `RECONCILED_FAILED_CONFIRMED` plus stable
    candidate-closed runtime.
 3. Issue a fresh READY on the new controller, freeze main, and dispatch Production once.
