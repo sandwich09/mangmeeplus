@@ -1,6 +1,6 @@
 # Agent Memory: PDPA / legal pages design overhaul
 
-Status: Implemented and verified locally. Not released — see Next.
+Status: UAT candidate deployed; one session-rotation race found by live acceptance and fixed locally. Redeploy verification pending — see Next.
 
 Owner: Web (apps/web).
 
@@ -284,6 +284,19 @@ so the whole hash delta came from the inlined `<style>` block. Only presentation
 the hash; the legal text is not.
 
 ## Next
+
+- **2026-08-14 UAT acceptance finding:** UAT run `31816168613` successfully deployed
+  develop merge `51af1beaa0e2f31661b982ca80bb1bdb8299f85b` and passed immutable-image,
+  signature, rollout, health, retirement, Passport, and an independent deep DB-readiness
+  probe. A disposable-company browser journey then proved the legal form, three public
+  documents, three explicit confirmations, Sarabun rendering, and the durable acceptance
+  write. It also exposed a client race after the write: both the new-acceptance and
+  already-current paths started `/api/auth/refresh` without awaiting it, then navigated;
+  navigation could abort the rotating response after the old session had been revoked.
+  Both paths now require a successful awaited refresh before navigation. Focused legal
+  tests pass 6/6, the complete web suite 898/898, web typecheck, and `git diff --check`.
+  Next is reviewed PR/CI, one UAT redeploy, then the same disposable-company journey with
+  post-navigation `/auth/me` and legal-status readback before Production is considered.
 
 - Because this remains pre-launch, the narrowed copy is consolidated into v1. The legal-release
   evidence manifest now targets `v1` but remains `BLOCKED`; no review evidence was fabricated.
