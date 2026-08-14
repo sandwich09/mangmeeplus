@@ -64,6 +64,10 @@ task จะ timeout ก่อนเริ่ม container แม้ public route
 
 ## 3. เปิด / ปิด
 
+การ deploy release ใหม่ทั้ง UAT และ Production ใช้ canonical flow ที่
+`docs/runbooks/uat-production-v2-deployment.md`. ส่วนนี้อธิบาย cloud operation และ capacity;
+ห้ามใช้คำสั่ง Production V1 จากเอกสาร historical.
+
 ### UAT — deploy
 
 Deploy ทำผ่าน GitHub workflow เท่านั้น ไม่ใช่จากเครื่อง (`infra/prod-ecs-express/README.md`)
@@ -135,6 +139,10 @@ capacity ไม่ใช่ deploy ใหม่
 **`run-a5-capacity-mutating.sh` ต้องการ `minTaskCount >= 1`** ต้องเปิดก่อนรัน U5 capacity
 
 ### Production
+
+Production release ใหม่ต้องผ่าน signed UAT Passport และ Production READY แล้ว dispatch
+`deploy-production-v2.yml` ตาม `uat-production-v2-deployment.md`; ห้ามเรียก `deploy.sh` จาก
+workstation เพื่อทำ promotion. ค่า capacity/status ด้านล่างเป็น inventory/diagnostic context เท่านั้น.
 
 ณ 2026-08-10 ทั้งสาม service มี capacity `1/2` และมี task รันครบ แต่เป็นคนละ source SHA เพราะ
 ถูกเปิดด้วย single-service incident deploy หลายรอบ; App Runner legacy ทั้งคู่ยัง PAUSED

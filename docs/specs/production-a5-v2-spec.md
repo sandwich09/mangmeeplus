@@ -1,8 +1,8 @@
 # Production A5 V2 Spec
 
-Status: Execution frozen; deterministic runtime/IAM blockers must be fixed and proved before any workflow run
+Status: Operational through `PROMOTED_CLOSED`; customer-live opening remains a separate legal/owner gate
 Owner: Platform / release owner
-Last reviewed: 2026-08-12
+Last reviewed: 2026-08-14
 Related:
 
 - `docs/specs/uat-fast-selective-deployment-spec.md`
@@ -10,6 +10,7 @@ Related:
 - `docs/specs/production-global-maintenance-mode-spec.md`
 - `docs/plans/production-a5-v2-readiness-matrix.md`
 - `docs/plans/production-a5-v2-plan.md`
+- `docs/runbooks/uat-production-v2-deployment.md`
 
 ## 1. Outcome
 

@@ -10,6 +10,10 @@
 > หมายความว่า local implementation อนุญาตให้ mutate Production; ยังคงหยุดจน V2 live exit
 > gates ผ่าน
 
+> **CURRENT OPERATOR RUNBOOK — 2026-08-14:** V2 ผ่าน end-to-end ถึง `PROMOTED_CLOSED` แล้ว.
+> ห้ามใช้คำสั่ง V1 ด้านล่างสำหรับ release ใหม่; ใช้
+> `docs/runbooks/uat-production-v2-deployment.md` เท่านั้น. เนื้อหาที่เหลือเก็บเป็น historical map.
+
 เป้า: ขึ้น production ทาง A (promotion เต็ม) ให้จบ | สร้าง 2026-08-08
 คู่กับ `feature-entitlement-u5-production-handoff.md`, `production-u5-live-prerequisites.md`
 
