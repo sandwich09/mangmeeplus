@@ -674,10 +674,13 @@ if grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$TARGET"' "$uat_workflow"; t
   echo "ERROR: UAT workflow bypasses the reviewed runtime mutex wrapper" >&2
   exit 1
 fi
-grep -Fq '. "$(dirname "$0")/lib-runtime-mutex.sh"' "$uat_deploy"
-grep -Fq 'trap uat_runtime_mutex_release EXIT' "$uat_deploy"
-grep -Fq 'uat_runtime_mutex_acquire "deploy-${target}-${GITHUB_RUN_ID:-manual}"' "$uat_deploy"
-grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$target"' "$uat_deploy"
+grep -Fq '. infra/uat/lib-runtime-mutex.sh' "$repo_root/infra/prod-ecs-express/deploy.sh"
+grep -Fq 'uat_runtime_mutex_acquire "deploy-${TARGET}"' "$repo_root/infra/prod-ecs-express/deploy.sh"
+grep -Fq 'exec bash infra/prod-ecs-express/deploy.sh "${1:-all}"' "$uat_deploy"
+if grep -Eq 'lib-runtime-mutex|uat_runtime_mutex_acquire' "$uat_deploy"; then
+  echo "ERROR: UAT compatibility wrapper attempts to own the mutex a second time" >&2
+  exit 1
+fi
 grep -Fq 'AI Gateway endpoint unchanged; skipping redundant api-web rollout' "$repo_root/infra/prod-ecs-express/deploy.sh"
 test "$(grep -Fc 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/prod-ecs-express/deploy.sh")" -eq 2
 grep -Fq 'source_ci="$(git rev-parse "$SOURCE_SHA:.github/workflows/ci.yml")"' "$uat_workflow"
