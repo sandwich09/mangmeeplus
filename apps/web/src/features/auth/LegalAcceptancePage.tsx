@@ -174,9 +174,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
       const nextStatus = await getLegalAcceptanceStatus(companyId);
       setStatus(nextStatus);
       if (!nextStatus.required) {
-        // The API gate reads append-only DB evidence, so token rotation is a best-effort hardening
-        // step rather than a condition for using an acceptance that is already durable.
-        void refreshSessionSilently();
+        if (!(await refreshSessionSilently())) throw new Error('Session refresh after legal acceptance failed.');
         window.location.assign(returnTo);
         return;
       }
@@ -208,7 +206,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
     setError(null);
     try {
       await acceptLegalDocuments(companyId, buildLegalAcceptanceInput(status));
-      void refreshSessionSilently();
+      if (!(await refreshSessionSilently())) throw new Error('Session refresh after legal acceptance failed.');
       window.location.assign(returnTo);
     } catch (nextError) {
       const code = (nextError as { code?: string }).code;
