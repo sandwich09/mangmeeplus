@@ -240,11 +240,12 @@ case "$mode" in
         exit 2
       }
       if [ "${#bootstrap_closed_recovery}" -gt 32768 ] || ! jq -e '
-        type == "object" and .schemaVersion == 1
+        type == "object" and .schemaVersion == 2
         and (.artifactDigest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
         and (.operationId | type == "string" and test("^[0-9a-f-]{36}$"))
         and (.sourceCommit | type == "string" and test("^[0-9a-f]{40}$"))
         and (.services | type == "array" and length == 3)
+        and (.boundHistory | type == "array" and length <= 8)
       ' <<< "$bootstrap_closed_recovery" >/dev/null 2>&1; then
         echo "ERROR: release-bootstrap-closed-recover requires bounded controller-derived evidence" >&2
         exit 2

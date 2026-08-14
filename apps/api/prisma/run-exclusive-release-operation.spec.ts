@@ -1624,7 +1624,7 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     `, [unexpectedIntentId, bootstrapEvidence.operationId, PROD_SOURCE,
       bootstrapEvidence.services.find((service) => service.service === 'workers')!.serviceArn,
       '1'.repeat(64), '2'.repeat(64), PROD_RECOVERY_TASK]);
-    await assert.rejects(() => recoverBootstrapClosedPreIntentRelease(first!, input), /requires zero durable service intents/);
+    await assert.rejects(() => recoverBootstrapClosedPreIntentRelease(first!, input), /exact resolved non-api intent history/);
     await first.query('DELETE FROM "RemoteReleaseMutationIntent" WHERE "id"=$1', [unexpectedIntentId]);
     assert.deepEqual(await recoverBootstrapClosedPreIntentRelease(first, input), {
       replay: false,
@@ -1647,6 +1647,96 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     `, [bootstrapEvidence.operationId])).rows[0].metadataJson;
     assert.equal(audit.evidence.artifactDigest, bootstrapEvidence.artifactDigest);
     assert.equal(audit.recoveryValidatedCiRunId, input.recoveryValidatedCiRunId);
+  });
+
+  it('terminalizes exact candidate-closed partial history only after every non-api intent is resolved', async (t) => {
+    if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
+    const partialEvidence = structuredClone(bootstrapEvidence);
+    partialEvidence.operationId = randomUUID();
+    partialEvidence.parentTaskArn = 'arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/partial-parent';
+    partialEvidence.artifactDigest = `sha256:${'9'.repeat(64)}`;
+    partialEvidence.boundHistory = partialEvidence.services
+      .filter((service) => service.service !== 'api-web')
+      .map((service) => ({
+        service: service.service, serviceArn: service.serviceArn, deploymentArn: service.deploymentArn,
+        targetRevisionArn: service.targetRevisionArn, sourceSha: service.sourceSha, noOp: service.noOp,
+      }));
+    await beginRemoteReleaseOperation(first, {
+      id: partialEvidence.operationId, targetEnvironment: 'production', mode: 'release',
+      releaseDeployTarget: 'all', buildReleaseId: PROD_SOURCE, ecsTaskArn: partialEvidence.parentTaskArn,
+      ecsServiceArn: null, serviceDeploymentArn: null, targetServiceRevisionArn: null,
+      activeBuilds: null, deploymentManifest: partialEvidence.boundHistory,
+      ...PROD_ORIGINAL_CONTROLLER, leaseSeconds: 30,
+    });
+    await holdRemoteReleaseOperation(first, partialEvidence.operationId, partialEvidence.parentTaskArn);
+    const intentIds: string[] = [];
+    for (const evidence of partialEvidence.boundHistory) {
+      const id = randomUUID();
+      intentIds.push(id);
+      const serviceName = evidence.serviceArn.split('/').at(-1)!;
+      await first.query(`
+        INSERT INTO "RemoteReleaseMutationIntent" (
+          "id","operationId","targetEnvironment","buildReleaseId","serviceKey","mutationKind",
+          "expectedServiceArn","clusterName","serviceName","ssmParameterName","requestHash",
+          "desiredConfigHash","beforeDeploymentArnsJson","beforeActiveConfigurationsJson",
+          "preparedByTaskArn","status","evidenceJson","closedByTaskArn","closedAt",
+          "requestDeadlineAt","createdAt","updatedAt"
+        ) VALUES ($1,$2,'production',$3,$4,'UPDATE',$5,'watchdog-bms-prod',$6,$7,$8,$9,
+                  '[]'::jsonb,'[]'::jsonb,$10,'BOUND',$11::jsonb,$12,CURRENT_TIMESTAMP,
+                  CURRENT_TIMESTAMP + INTERVAL '10 minutes',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+      `, [id, partialEvidence.operationId, PROD_SOURCE, evidence.service, evidence.serviceArn, serviceName,
+        `/watchdog-bms/production/ecs-express-${evidence.service}-service-arn`,
+        '4'.repeat(64), '5'.repeat(64), partialEvidence.parentTaskArn, JSON.stringify(evidence), PROD_RECOVERY_TASK]);
+    }
+    await first.query(`
+      UPDATE "RemoteReleaseOperation" SET "leaseExpiresAt"=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE "id"=$1
+    `, [partialEvidence.operationId]);
+    const input = {
+      operationId: partialEvidence.operationId, targetEnvironment: 'production' as const,
+      buildReleaseId: PROD_SOURCE, recoveryExecutorBuildReleaseId: SHA_B,
+      recoveryExecutorImage: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:${'f'.repeat(64)}`,
+      recoveryValidatedCiRunId: '31730000002', recovererTaskArn: PROD_RECOVERY_TASK,
+      controller: PROD_RECOVERY_CONTROLLER, region: 'ap-southeast-1', evidence: partialEvidence,
+      readPlatform: async () => bootstrapPlatformReads(),
+    };
+    await first.query(`
+      UPDATE "RemoteReleaseMutationIntent" SET "failedBuildCleanupRequiredAt"=CURRENT_TIMESTAMP WHERE "id"=$1
+    `, [intentIds[0]]);
+    await assert.rejects(() => recoverBootstrapClosedPreIntentRelease(first!, input),
+      /exact resolved non-api intent history/);
+    await first.query(`
+      UPDATE "RemoteReleaseMutationIntent" SET "failedBuildCleanupCompletedAt"=CURRENT_TIMESTAMP WHERE "id"=$1
+    `, [intentIds[0]]);
+    const duplicateIntentId = randomUUID();
+    const duplicateEvidence = partialEvidence.boundHistory[0]!;
+    await first.query(`
+      INSERT INTO "RemoteReleaseMutationIntent" (
+        "id","operationId","targetEnvironment","buildReleaseId","serviceKey","mutationKind",
+        "expectedServiceArn","clusterName","serviceName","ssmParameterName","requestHash",
+        "desiredConfigHash","beforeDeploymentArnsJson","beforeActiveConfigurationsJson",
+        "preparedByTaskArn","status","evidenceJson","closedByTaskArn","closedAt",
+        "requestDeadlineAt","createdAt","updatedAt"
+      ) VALUES ($1,$2,'production',$3,$4,'UPDATE',$5,'watchdog-bms-prod',$6,$7,$8,$9,
+                '[]'::jsonb,'[]'::jsonb,$10,'BOUND',$11::jsonb,$12,CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP + INTERVAL '10 minutes',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    `, [duplicateIntentId, partialEvidence.operationId, PROD_SOURCE, duplicateEvidence.service,
+      duplicateEvidence.serviceArn, duplicateEvidence.serviceArn.split('/').at(-1),
+      `/watchdog-bms/production/ecs-express-${duplicateEvidence.service}-service-arn`,
+      '6'.repeat(64), '7'.repeat(64), partialEvidence.parentTaskArn,
+      JSON.stringify(duplicateEvidence), PROD_RECOVERY_TASK]);
+    await assert.rejects(() => recoverBootstrapClosedPreIntentRelease(first!, input),
+      /exact resolved non-api intent history/);
+    await first.query('DELETE FROM "RemoteReleaseMutationIntent" WHERE "id"=$1', [duplicateIntentId]);
+    assert.deepEqual(await recoverBootstrapClosedPreIntentRelease(first, input), {
+      replay: false,
+      services: partialEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)),
+    });
+    const parent = (await first.query(`
+      SELECT "status","reconciliationReason","outcomeReason" FROM "RemoteReleaseOperation" WHERE "id"=$1
+    `, [partialEvidence.operationId])).rows[0];
+    assert.equal(parent.status, 'RECONCILED_FAILED_CONFIRMED');
+    assert.match(parent.reconciliationReason, /resolved non-api history/);
+    assert.match(parent.outcomeReason, /partial-closed no-api-intent recovery/);
   });
 });
 
@@ -1821,7 +1911,7 @@ const bootstrapServices = [
   },
 ] as const;
 const bootstrapEvidence = {
-  schemaVersion: 1 as const,
+  schemaVersion: 2 as const,
   artifactDigest: `sha256:${'1'.repeat(64)}`,
   maintenanceProofSha256: '2'.repeat(64),
   failedPromotionRunId: PROD_ORIGINAL_CONTROLLER.githubRunId,
@@ -1838,6 +1928,7 @@ const bootstrapEvidence = {
     image: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/${item.repository}@sha256:${String(index + 4).repeat(64)}`,
     maintenanceControls: item.controls,
   })),
+  boundHistory: [],
 };
 const bootstrapPlatformReads = () => bootstrapServices.map((item) => {
   const expected = bootstrapEvidence.services.find((service) => service.service === item.service)!;
@@ -1866,6 +1957,24 @@ describe('bootstrap-closed zero-intent recovery decision', () => {
     const swappedImage = structuredClone(bootstrapEvidence);
     swappedImage.services[0]!.image = bootstrapEvidence.services[1]!.image;
     assert.throws(() => parseBootstrapClosedRecoveryEvidence(JSON.stringify(swappedImage)), /service evidence is invalid/);
+    const partial = structuredClone(bootstrapEvidence);
+    partial.boundHistory = partial.services.filter((service) => service.service !== 'api-web').map((service) => ({
+      service: service.service, serviceArn: service.serviceArn, deploymentArn: service.deploymentArn,
+      targetRevisionArn: service.targetRevisionArn, sourceSha: service.sourceSha, noOp: service.noOp,
+    }));
+    const aiCurrent = partial.boundHistory.find((item) => item.service === 'ai-gateway')!;
+    partial.boundHistory.unshift({ ...aiCurrent,
+      deploymentArn: `${aiCurrent.serviceArn.replace(':service/', ':service-deployment/')}/Z-mixed-case-older`,
+      targetRevisionArn: `${aiCurrent.serviceArn.replace(':service/', ':service-revision/')}/revision-older`,
+    });
+    assert.deepEqual(parseBootstrapClosedRecoveryEvidence(JSON.stringify(partial)), partial);
+    const apiHistory = structuredClone(partial);
+    const api = apiHistory.services.find((service) => service.service === 'api-web')!;
+    apiHistory.boundHistory.push({ service: api.service, serviceArn: api.serviceArn,
+      deploymentArn: api.deploymentArn, targetRevisionArn: api.targetRevisionArn,
+      sourceSha: api.sourceSha, noOp: api.noOp });
+    apiHistory.boundHistory.sort((left, right) => left.service.localeCompare(right.service));
+    assert.throws(() => parseBootstrapClosedRecoveryEvidence(JSON.stringify(apiHistory)), /bound history is invalid/);
     assert.deepEqual(validateBootstrapClosedRecoveryPlatform(bootstrapEvidence, bootstrapPlatformReads()),
       bootstrapEvidence.services.slice().sort((left, right) => left.service.localeCompare(right.service)));
     const providerSettled = bootstrapPlatformReads();

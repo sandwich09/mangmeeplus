@@ -564,6 +564,8 @@ grep -Fq 'release-bootstrap-closed-recover' "$recovery_workflow"
 grep -Fq "inputs.intent_id == 'BOOTSTRAP_CLOSED'" "$recovery_workflow"
 grep -Fq 'RELEASE_BOOTSTRAP_CLOSED_RECOVERY_JSON: ${{ steps.bootstrap_closed.outputs.evidence }}' "$recovery_workflow"
 grep -Fq 'production-v2-controller-evidence-${RELEASE_REF}-attempt-${attempt}' "$recovery_workflow"
+grep -Fq 'boundHistory:$bound' "$recovery_workflow"
+grep -Fq 'test "$bound_count" -le 8' "$recovery_workflow"
 grep -Fq 'inputs.intent_id }}" = PRE_INTENT' "$recovery_workflow"
 grep -Fq 'group: watchdog-bms-${{ inputs.environment }}-deploy' "$recovery_workflow"
 grep -Fq 'cancel-in-progress: false' "$recovery_workflow"
@@ -1455,11 +1457,11 @@ held_full="$(jq -cn --argjson first "$held_record_one" --argjson second "$held_r
 held_task="$fixture/held-task.json"
 bootstrap_closed_recovery="$(jq -cn \
   --arg operation "$parent_operation_id" --arg source "$allowed_sha" \
-  '{schemaVersion:1,artifactDigest:("sha256:"+("1"*64)),maintenanceProofSha256:("2"*64),
+  '{schemaVersion:2,artifactDigest:("sha256:"+("1"*64)),maintenanceProofSha256:("2"*64),
     failedPromotionRunId:"31727367323",failedPromotionRunAttempt:1,controllerCommit:("d"*40),
     sourceCommit:$source,operationId:$operation,
     parentTaskArn:"arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/parent",
-    manifestSha256:("3"*64),services:[{},{},{}]}')"
+    manifestSha256:("3"*64),services:[{},{},{}],boundHistory:[]}')"
 bootstrap_closed_task="$fixture/bootstrap-closed-task.json"
 render_release_task 'the exact V2 bootstrap-closed recovery' release-bootstrap-closed-recover \
   "RELEASE_PARENT_OPERATION_ID=$parent_operation_id" \
@@ -2181,6 +2183,7 @@ if grep -Fq 'DEPLOY_ENV=production' "$capacity_wrapper"; then
   exit 1
 fi
 
+bash "$repo_root/infra/prod-ecs-express/list-service-deployments-all.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/release-safety.spec.sh"
 bash "$repo_root/infra/uat/select-deploy-target.spec.sh"
 bash "$repo_root/infra/prod-ecs-express/uat-fast-rollout.spec.sh"

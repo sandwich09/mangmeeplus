@@ -186,8 +186,12 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
 - Failure หลังปิดหรือเริ่ม durable operation: ห้าม dispatch Production ซ้ำจน controller evidence และ
   database/platform state พิสูจน์ terminal state. ใช้ `recover-release-intent.yml` เฉพาะ mode/identity
   ที่ evidence ระบุ (`PRE_INTENT`, intent UUID, `ORPHAN` หรือ `BOOTSTRAP_CLOSED`).
-- `BOOTSTRAP_CLOSED` ใช้ได้เฉพาะ failed Production V2 ที่มี zero intents และ exact failed-run artifact;
-  ต้องส่ง `failed_promotion_run_id`, held candidate, reviewed recovery SHA และ parent operation UUID.
+- `BOOTSTRAP_CLOSED` ใช้ได้เฉพาะ failed Production V2 ที่ไม่มี api-web intent และมี exact failed-run
+  artifact. แบบเดิมรองรับ zero intents; แบบ partial-closed รองรับเฉพาะ non-api intents ที่ทุกตัวเป็น
+  `BOUND`, ไม่มี cleanup ค้าง และ evidence ตรงกับ append-only rollout history ใน artifact ทุก byte.
+  ทั้งสองแบบต้อง live-read สองรอบว่าบริการทั้งสามเป็น candidate เดียวกันและ `maintenance_only` ก่อน
+  terminalize parent เป็น `RECONCILED_FAILED_CONFIRMED`. ต้องส่ง `failed_promotion_run_id`, held
+  candidate, reviewed recovery SHA และ parent operation UUID; recovery ไม่ถือเป็น promotion สำเร็จ.
 - Recovery สำเร็จไม่ใช่ promotion สำเร็จ. หลัง recovery ให้ออก READY ใหม่บน current `main`, freeze
   `main` แล้ว dispatch Production ใหม่หนึ่งครั้ง.
 - ถ้า source/image/migration catalog เปลี่ยน ให้เริ่มจาก UAT และ Passport ใหม่เสมอ.
