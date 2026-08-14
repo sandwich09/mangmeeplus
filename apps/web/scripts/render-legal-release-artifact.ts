@@ -3,7 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const RELEASE_VERSION = 'v2';
+// Internal append-only release id. Public copy identifies this as official document version 1.
+const RELEASE_VERSION = 'v3';
+const OFFICIAL_DOCUMENT_VERSION = '1';
 const FIXED_COPYRIGHT_YEAR = '2026';
 
 /**
@@ -78,13 +80,13 @@ async function main(): Promise<void> {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex,follow">
   <meta name="mangmeeplus-legal-version" content="${RELEASE_VERSION}">
-  <title>${title} · ฉบับ ${RELEASE_VERSION}</title>
+  <title>${title} · ฉบับที่ ${OFFICIAL_DOCUMENT_VERSION}</title>
   <style>
 ${buildStylesheet()}
   </style>
 </head>
 <body>
-  <p class="release-banner">เอกสารฉบับคงที่สำหรับการยอมรับทางอิเล็กทรอนิกส์ · เวอร์ชัน <strong>${RELEASE_VERSION}</strong> · มีผลวันที่ 10 สิงหาคม 2569</p>
+  <p class="release-banner">เอกสารฉบับคงที่สำหรับการยอมรับทางอิเล็กทรอนิกส์ · ฉบับที่ <strong>${OFFICIAL_DOCUMENT_VERSION}</strong> · มีผลวันที่ 14 สิงหาคม 2569</p>
   ${renderedPage}
 </body>
 </html>

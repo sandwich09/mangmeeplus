@@ -4,6 +4,12 @@ Status 2026-08-09: public Privacy, Terms, and Data Deletion surfaces are being a
 
 Status 2026-08-10 v2 implementation: web copy, immutable Terms/Privacy artifacts, current acceptance contract, production contract pin, evidence-manifest version, and focused regression coverage are implemented and verified. Every v1 artifact remains byte-for-byte unchanged. `docs/security-evidence/legal-release-evidence.json` remains `BLOCKED` until the external evidence and exact-hash Thai-counsel approval are complete.
 
+Status 2026-08-14 intermediate counsel-copy sync (superseded by the official first edition below): the three counsel-ready Word documents were compared with the rendered public pages. At that checkpoint their substantive legal blocks already derived from and matched v2; the public pages were updated only for counsel-copy title, standfirst, heading, and effective-date phrasing. `LEGAL_LAST_UPDATED` was 14 August 2026 while the candidate legal effective date remained 10 August 2026. The later owner decision below replaced this intermediate candidate with the official first-edition v3 bytes and 14 August 2026 effective date.
+
+Status 2026-08-14 official first edition: owner designated the settled public/counsel copy as official document version 1.0. Every user-facing web, DOCX, and PDF label now says “ฉบับที่ 1” or `1.0`; the effective and last-updated date is 14 August 2026. The acceptance system uses internal append-only release id `v3` so historical v1/v2 bytes and any prior evidence cannot be rewritten or confused with the official document numbering. The current contract therefore requires acknowledgment of the new v3 bytes while displaying official version 1.0.
+
+Status 2026-08-14 deployment candidate: the reviewed target is UAT `all` followed by Production `maintenance_closed`; customer launch remains closed. Local source/build/deployment-contract proofs are complete. The repository manifest deliberately remains `BLOCKED` and no checked-in file is represented as signed counsel evidence. A later `live` request must validate the returned signed bundle against the exact v3 bytes and use an unexpired fresh Passport/READY.
+
 Plan: [[plans/mangmeeplus-privacy-terms-data-deletion-plan|MangmeePlus Privacy, Terms, and Data Deletion Plan]]
 
 ## Permanent product/legal decisions
@@ -33,8 +39,8 @@ Plan: [[plans/mangmeeplus-privacy-terms-data-deletion-plan|MangmeePlus Privacy, 
 - `/terms`
 - `/data-deletion`
 - `/legal-acceptance` (authenticated; user + legal-release gate with initial company evidence context)
-- `/legal/releases/v2/terms-th.html` and `/legal/releases/v2/privacy-th.html` are the current immutable Thai acceptance artifacts. The current contract points to their exact byte hashes; Data Deletion remains a public procedure page rather than a third clickwrap document.
-- `/legal/releases/v1/terms-th.html` and `/legal/releases/v1/privacy-th.html` remain immutable historical artifacts and are covered by regression hashes.
+- `/legal/releases/v3/terms-th.html` and `/legal/releases/v3/privacy-th.html` are the current immutable Thai acceptance artifacts for official document version 1.0. The internal URL version is evidence metadata, not the user-facing document edition. Data Deletion remains a public procedure page rather than a third clickwrap document.
+- `/legal/releases/v1/` and `/legal/releases/v2/` remain immutable historical artifacts and are covered by regression hashes.
 - `apps/web/src/common/legal/legal-content.ts` is the public legal identity/date/source constant set.
 - `apps/web/src/common/legal/LegalPage.tsx` is the accessible responsive legal-page shell.
 - Feature-specific contract constants remain outside the public legal-copy module.
@@ -61,6 +67,23 @@ Avoid flattening these into a single universal retention period.
 - v2 hashes: Terms `09fe321666d7fd554544a7cf3c9a7e1c192e71a5ff47fb1c98bbc1c165d63281`; Privacy `5edcb642f8e9ca8e736804d0a732979228822f8183fa602afb4de5e372a67efd`.
 - Current contract source hash and production workflow pin: `6a4f4c3db12a452afee62f3560a10bc9bbe594d6d9053a9bcdd044f496bb66f8`.
 
+## Verification 2026-08-14 intermediate counsel-copy sync (superseded)
+
+- Machine comparison rendered `/privacy`, `/terms`, and `/data-deletion`, then compared their normalized text with the counsel-ready DOCX files. Titles and standfirsts match exactly; counsel-body blocks matched 95/95, 75/75, and 62/62 respectively.
+- The Terms signature placeholder “วันที่ระบุในหนังสือรับรองผลการตรวจและอนุมัติ” was compared against the public page's actual effective date, 10 August 2026; signature-control tables and document formatting are intentionally not web copy.
+- `pnpm --filter @watchdog-bms/web exec tsx --test src/common/legal/legal-content.spec.ts` passes 6/6.
+- Immutable v1/v2 files and `CURRENT_LEGAL_DOCUMENTS` were not edited; their previously recorded SHA-256 values remain the acceptance evidence.
+
+## Verification 2026-08-14 official first edition
+
+- Current internal v3 artifacts regenerate deterministically: Terms `67757a8237de6cd962a7325300d2bbd9a0649f1f273aa1c4972beb1155c1c05a`; Privacy `1e224b9f5f8830a22fe10edb840fd8e01edeaafcd69862a28f1beda59c43b87d`.
+- Current acceptance contract source hash and production workflow pin: `8cc9cdaf9fa885cda83d1b867ccedf31fb3690a0a7d7bdf13951773ab1825387`.
+- Contracts 3/3, Web legal/acceptance 8/8, and API legal acceptance 14/14 tests pass. Legal readiness and evidence provisioner specs pass with release `v3`; the checked-in evidence manifest remains deliberately `BLOCKED` until real external evidence is attached.
+- Public rendered pages match the final DOCX titles/standfirsts and all normalized legal blocks: Privacy 95/95, Terms 75/75, Data Deletion 62/62. No final DOCX contains `v2`, `2.0`, `-002`, the prior effective date, or draft/merge labels.
+- The five DOCX files and five PDFs were rendered and visually reviewed across 37 pages. Embedded hashes in the counsel approval memo match 3/3 legal DOCX files; the submission letter matches all 4/4 attached DOCX files. The final manifest verifies all 10 files and the ZIP contains exactly those files plus the manifest.
+- Reproduced from the current repository: Contracts legal tests 3/3, Web legal/acceptance tests 8/8, API legal acceptance tests 14/14, full Web tests 898/898, Contracts/Web/API typechecks, Contracts/Web/API production builds, legal validator/provisioner specs, deterministic v3 rendering, maintenance pin sync and the full production image security aggregate all pass. `git diff --check` passes.
+- The final counsel DOCX/PDF/ZIP package is external to this repository and was not independently re-opened during deployment verification. The checked-in deploy candidate therefore binds only the exact immutable v3 HTML bytes above; signed-evidence readiness remains fail-closed until the returned files are supplied and validated.
+
 ## Operational blockers
 
 - Verify public registered address and privacy mailbox ownership.
@@ -72,5 +95,4 @@ Avoid flattening these into a single universal retention period.
 - Approve one retention register against live infrastructure.
 - Fix or remove stale self-service AI opt-out claims.
 - Revisit the new 2026 access/copy regulation on its 14 September 2026 effective date.
-- If publication begins after 10 August 2026, replace the candidate effective date with the actual go-live date, regenerate the v2 candidate/hash/contract pin, and have counsel approve those final bytes; do not backdate.
 - Obtain final Thai counsel sign-off.
