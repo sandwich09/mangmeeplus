@@ -105,6 +105,19 @@ production_a5_validate_source_db_configuration() {
   ' "$input" >/dev/null
 }
 
+production_a5_clone_cleanup_evidence() {
+  [ "$#" -eq 8 ]
+  jq -cnS --arg profile "$1" --argjson deleteRequested "$2" \
+    --argjson deleteCompleted "$3" --argjson instanceAbsent "$4" \
+    --argjson secretDeleted "$5" --argjson taskStopped "$6" \
+    --argjson snapshotDeleted "$7" --argjson residual "$8" '
+    {deleteRequestedAtEpoch:$deleteRequested,deleteCompletedAtEpoch:$deleteCompleted,
+     instanceAbsent:$instanceAbsent,secretDeleted:$secretDeleted,taskStopped:$taskStopped,
+     residualResourceCount:$residual}
+    + (if $profile=="readiness-v2" then {snapshotDeleted:$snapshotDeleted} else {} end)
+  '
+}
+
 production_a5_capture_manual_snapshot() {
   local snapshot_json="$1" require_tags="${2:-true}" expected_arn tags_json='' status=0
   expected_arn="arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:snapshot:${manual_snapshot_id}"
@@ -1035,6 +1048,11 @@ jq -cnS \
    describeTasks:{raw:$task[0],sha256:$taskHash}}
 ' > "$network_evidence"
 
+cleanup_evidence="$OUTPUT_DIR/cleanup-evidence.json"
+production_a5_clone_cleanup_evidence "$A5_CLONE_PROFILE" "$delete_requested_at" \
+  "$delete_completed_at" "$cleanup_instance_absent" "$cleanup_secret_deleted" \
+  "$cleanup_task_stopped" "$cleanup_snapshot_deleted" "$residual_resource_count" \
+  > "$cleanup_evidence"
 clone_infrastructure="$OUTPUT_DIR/clone-infrastructure.json"
 jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifier" \
   --arg snapshotArn "$snapshot_arn" --argjson snapshotEpoch "$snapshot_created_epoch" \
@@ -1049,13 +1067,7 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
   --arg source "$SOURCE_SHA" --arg executionRole "$execution_role_arn" \
   --arg profile "$A5_CLONE_PROFILE" \
   --arg secretArn "$managed_secret_arn" --arg secretVersion "$managed_secret_version" \
-  --slurpfile network "$network_evidence" \
-  --argjson deleteRequested "$delete_requested_at" --argjson deleteCompleted "$delete_completed_at" \
-  --argjson instanceAbsent "$cleanup_instance_absent" \
-  --argjson secretDeleted "$cleanup_secret_deleted" \
-  --argjson taskStopped "$cleanup_task_stopped" \
-  --argjson snapshotDeleted "$cleanup_snapshot_deleted" \
-  --argjson residual "$residual_resource_count" '
+  --slurpfile network "$network_evidence" --slurpfile cleanup "$cleanup_evidence" '
   {sourceDbInstanceArn:$sourceDbArn,sourceDbIdentifier:$sourceDbId,snapshotArn:$snapshotArn,
    snapshotCreatedAtEpoch:$snapshotEpoch,snapshotType:$snapshotType,
    temporaryDbInstanceArn:$temporaryArn,temporaryDbIdentifier:$temporaryId,
@@ -1072,13 +1084,8 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
    migrationTaskDefinitionArn:$definitionArn,migrationImage:$image,migrationSourceCommit:$source,
    migrationExecutionRoleArn:$executionRole,migrationTaskRoleArn:null,
    temporaryDatabaseSecretArn:$secretArn,temporaryDatabaseSecretVersionId:$secretVersion,
-   networkBoundary:$network[0].endpointBoundary,networkEvidence:$network[0],
-   cleanup:{deleteRequestedAtEpoch:$deleteRequested,deleteCompletedAtEpoch:$deleteCompleted,
-     instanceAbsent:$instanceAbsent,secretDeleted:$secretDeleted,taskStopped:$taskStopped,
-     residualResourceCount:$residual}}
-  + (if $profile=="readiness-v2" then
-      {rehearsalProfile:$profile,cleanup:(.cleanup+{snapshotDeleted:$snapshotDeleted})}
-    else {} end)
+   networkBoundary:$network[0].endpointBoundary,networkEvidence:$network[0],cleanup:$cleanup[0]}
+  + (if $profile=="readiness-v2" then {rehearsalProfile:$profile} else {} end)
 ' > "$clone_infrastructure"
 
 trap - EXIT
