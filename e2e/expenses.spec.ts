@@ -1,9 +1,10 @@
 import { deflateSync, crc32 } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
+import { addCivilDays, civilDate } from '@watchdog-bms/contracts';
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
 
-type ExpenseSummary = { id: string; status: string; grandTotalAmount: string };
+type ExpenseSummary = { id: string; status: string; grandTotalAmount: string; updatedAt: string };
 type ExpenseList = { data: ExpenseSummary[] };
 type ExpenseDetail = ExpenseSummary & {
   subtotalAmount: string;
@@ -84,10 +85,10 @@ async function createExpenseWithReceipt(api: any, request: any, companyId: strin
   }));
   const uploaded = await request.put(intent.uploadUrl, { data: receiptBytes, headers: { ...intent.uploadHeaders, 'Content-Type': 'image/png' } });
   expect(uploaded.status()).toBe(200);
-  await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses/${created.id}/receipt-uploads/${intent.attachmentId}/complete`, {
+  const completed = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses/${created.id}/receipt-uploads/${intent.attachmentId}/complete`, {
     data: { byteSize: receiptBytes.length, purpose: 'expense.receipt.primary' },
   }));
-  return created;
+  return completed;
 }
 
 test.describe('EXP — expenses + receipts', () => {
@@ -159,7 +160,7 @@ test.describe('EXP — expenses + receipts', () => {
         originalFileName: unique('e2e-receipt') + '.png',
         mimeType: 'image/png',
         byteSize: receiptBytes.length,
-        expenseDate: new Date().toISOString(),
+        expenseDate: civilDate(new Date()),
         note: unique('EXP-06 receipt upload'),
       },
     }));
@@ -198,7 +199,7 @@ test.describe('EXP — expenses + receipts', () => {
         originalFileName: unique('e2e-extraction-receipt') + '.png',
         mimeType: 'image/png',
         byteSize: receiptBytes.length,
-        expenseDate: new Date().toISOString(),
+        expenseDate: civilDate(new Date()),
         note: unique('EXP-07 receipt extraction'),
       },
     }));
@@ -230,6 +231,7 @@ test.describe('EXP — expenses + receipts', () => {
     const created = await createExpenseWithReceipt(api, request, companyId);
     await json<ExpenseSummary>(await api.patch(`companies/${companyId}/expenses/${created.id}`, {
       data: {
+        expectedUpdatedAt: created.updatedAt,
         lines: [{
           lineNumber: 1,
           description: unique('EXP-08 edited line'),
@@ -287,6 +289,78 @@ test('EXP-25 @p1 stores expenseDate as a calendar date even when posted an insta
   );
 
   expect(detail.expenseDate, 'a date column must not carry a time').toMatch(/T00:00:00(\.000)?Z$/);
+});
+
+test('EXP-26 @p1 keeps a backdated document in its intake month and labels both dates', async ({ authedPage, api, companyId }) => {
+  const intakeDate = civilDate(new Date());
+  const documentDate = addCivilDays(intakeDate, -51);
+  const vendor = unique('EXP-26 backdated vendor');
+  const created = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
+    data: {
+      captureSource: 'WEB_MANUAL',
+      expenseDate: documentDate,
+      vatMode: 'NO_VAT',
+      inputVatClaimStatus: 'NON_CLAIMABLE',
+      missingReceiptReason: 'E2E no receipt available',
+      lines: [{ lineNumber: 1, description: 'EXP-26 backdated expense', quantity: '1', unitPrice: '926.00' }],
+    },
+  }));
+  await json<ExpenseSummary>(await api.patch(`companies/${companyId}/expenses/${created.id}`, {
+    data: { expectedUpdatedAt: created.updatedAt, vendorNameSnapshot: vendor },
+  }));
+  const sameMonthVendor = unique('EXP-26 same-month vendor');
+  const sameMonthCreated = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
+    data: {
+      captureSource: 'WEB_MANUAL',
+      expenseDate: intakeDate,
+      vatMode: 'NO_VAT',
+      inputVatClaimStatus: 'NON_CLAIMABLE',
+      missingReceiptReason: 'E2E no receipt available',
+      lines: [{ lineNumber: 1, description: 'EXP-26 same-month expense', quantity: '1', unitPrice: '927.00' }],
+    },
+  }));
+  await json<ExpenseSummary>(await api.patch(`companies/${companyId}/expenses/${sameMonthCreated.id}`, {
+    data: { expectedUpdatedAt: sameMonthCreated.updatedAt, vendorNameSnapshot: sameMonthVendor },
+  }));
+
+  const listRequestPromise = authedPage.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return request.method() === 'GET'
+      && url.pathname.endsWith(`/companies/${companyId}/expenses`)
+      && url.searchParams.has('uploadedFromDate');
+  });
+  await gotoCompany(authedPage, companyId, '/expenses');
+  const listUrl = new URL((await listRequestPromise).url());
+  const [year, month] = intakeDate.slice(0, 7).split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
+  expect(listUrl.searchParams.get('uploadedFromDate')).toBe(`${intakeDate.slice(0, 7)}-01`);
+  expect(listUrl.searchParams.get('uploadedToDate')).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
+  expect(listUrl.searchParams.get('fromDate')).toBeNull();
+  expect(listUrl.searchParams.get('toDate')).toBeNull();
+
+  const row = authedPage.getByTestId('expenses-row').filter({ hasText: vendor });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('วันที่เอกสาร');
+  await expect(row).toContainText('ส่งเข้าระบบ');
+  await expect(row).toContainText('เอกสารย้อนหลัง 51 วัน');
+  await expect(authedPage.getByTestId('expenses-row').filter({ hasText: sameMonthVendor })).not.toContainText('เอกสารย้อนหลัง');
+
+  const exportRequestPromise = authedPage.waitForRequest((request) => (
+    request.method() === 'POST' && new URL(request.url()).pathname.endsWith(`/companies/${companyId}/expenses/accountant-package`)
+  ));
+  await authedPage.getByRole('button', { name: 'ส่งออก Excel' }).click();
+  const exportPayload = (await exportRequestPromise).postDataJSON();
+  expect(exportPayload.dateField).toBe('expenseDate');
+  expect(exportPayload.fromDate).toBe(`${intakeDate.slice(0, 7)}-01`);
+  expect(exportPayload.toDate).toBe(`${intakeDate.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`);
+
+  await authedPage.setViewportSize({ width: 390, height: 844 });
+  await authedPage.reload();
+  const card = authedPage.getByTestId('expenses-card').filter({ hasText: vendor });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('วันที่เอกสาร');
+  await expect(card).toContainText('ส่งเข้าระบบ');
+  await expect(card).toContainText('เอกสารย้อนหลัง 51 วัน');
 });
 
 // Filter retention — docs/specs/list-filter-retention-spec.md §2, §14.
