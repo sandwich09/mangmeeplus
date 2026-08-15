@@ -5,6 +5,35 @@ Date: 2026-08-09
 Owner request: replace the mixed SudoChatBot/WatchDog legal copy with a complete, readable Thai Privacy Notice, Terms of Use, and User Data Deletion notice that reflects MangmeePlus code and current Thai law.
 Memory: [[agent-memory/mangmeeplus-privacy-terms-data-deletion|MangmeePlus Legal Notices Memory]]
 
+## 2026-08-15 acceptance identity correction
+
+Owner clarified that a deployment must not ask a user to accept again when the substantive legal
+document content has not changed. The current implementation violates that rule because its
+`scopeRef` includes internal document versions and URLs, `statementVersion`, and the generated
+checkbox-template fingerprint in addition to the immutable artifact hashes.
+
+The durable acceptance identity is therefore **user + exact current Terms/Privacy artifact SHA-256
+pair**. Internal release numbering, display labels, artifact URLs, checkbox wording, statement
+version, company/role context, application commit, and redeployment remain evidence or stale-form
+controls but are not re-acceptance triggers. The API must recognize any coherent append-only pair
+for the user whose two artifact hashes equal the current pair, including evidence written by the
+legacy broader `scopeRef`; no database rewrite or backfill is allowed.
+
+A materially changed Terms or Privacy text must still be published as a new immutable artifact,
+which changes at least one hash and requires acceptance again. While Data Deletion remains a live
+procedure rather than a separately frozen acceptance artifact, a material procedure change that
+requires renewed acknowledgment must be carried by a new immutable Terms or Privacy release.
+Changing only UI wording or presentation must not simulate a legal content release.
+
+Acceptance criteria:
+
+- redeploying the same artifact hash pair keeps existing users accepted;
+- changing internal version, URL, statement version, or checkbox template alone keeps existing
+  users accepted while stale in-flight submissions still reload;
+- changing either current artifact hash requires a new coherent acceptance pair;
+- incomplete, cross-batch, mutable-URL, wrong-user, or hash-inconsistent evidence still fails closed;
+- existing append-only evidence is neither updated nor deleted.
+
 ## 2026-08-10 v2 amendment
 
 Owner requested that the reviewed launch-scope wording be applied to the web. This amendment supersedes the feature-neutral v1 publication boundary below without changing any v1 artifact. The latest public Privacy, Terms, and Data Deletion routes may now name employee accounts/access, expenses/receipts/reimbursements, employee LINE receipt-image intake and read-only bill questions, OCR/AI assistance, and security/legal evidence. CRM customer and marketing functions remain expressly out of scope.
