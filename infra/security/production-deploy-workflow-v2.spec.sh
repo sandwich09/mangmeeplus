@@ -94,7 +94,8 @@ grep -Fq 'bash infra/prod-ecs-express/deploy.sh "$EFFECTIVE_TARGET"' "$workflow"
 grep -Fq 'RELEASE_DEPLOY_TARGET: ${{ env.EFFECTIVE_TARGET }}' \
   <(sed -n "${prepare_line},${rollout_line}p" "$workflow")
 ! sed -n "${rollout_line},${verify_line}p" "$workflow" | grep -Fq 'RELEASE_DEPLOY_TARGET:'
-! sed -n "${recovery_line},${finalize_refresh_line}p" "$workflow" | grep -Fq 'RELEASE_DEPLOY_TARGET:'
+grep -Fq 'RELEASE_DEPLOY_TARGET: all' \
+  <(sed -n "${recovery_line},${finalize_refresh_line}p" "$workflow")
 grep -Fq 'DEPLOYMENT_EVIDENCE_DIR="$closed" RELEASE_TASKS_APPLIED_SHA=' "$workflow"
 grep -Fq 'id: bootstrap-close' "$workflow"
 grep -Fq 'id: release-prepare' "$workflow"

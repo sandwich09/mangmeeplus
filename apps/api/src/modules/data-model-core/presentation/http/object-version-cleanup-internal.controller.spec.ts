@@ -19,7 +19,7 @@ describe('ObjectVersionCleanupInternalController', () => {
       fail: async (id: string, token: string, code: string) => { calls.push(['fail', id, token, code]); return false; },
     } as any);
 
-    await assert.rejects(() => controller.claim('wrong', { batchSize: 4 }), UnauthorizedException);
+    assert.throws(() => controller.claim('wrong', { batchSize: 4 }), UnauthorizedException);
     await controller.claim('worker-token-value-1234567890', { batchSize: 4 });
     assert.deepEqual(
       await controller.complete('worker-token-value-1234567890', 'task-1', { claimToken: 'claim-1' }),

@@ -15,6 +15,7 @@ function makeContext(opts: {
   xRequestId?: string;
   xCompanyId?: string;
   routeCompanyId?: string;
+  workerToken?: string;
   path?: string;
 }) {
   const request = {
@@ -23,6 +24,7 @@ function makeContext(opts: {
       ...(opts.authHeader ? { authorization: opts.authHeader } : {}),
       ...(opts.xRequestId ? { 'x-request-id': opts.xRequestId } : {}),
       ...(opts.xCompanyId ? { 'x-company-id': opts.xCompanyId } : {}),
+      ...(opts.workerToken ? { 'x-worker-token': opts.workerToken } : {}),
     },
     params: {
       ...(opts.routeCompanyId ? { companyId: opts.routeCompanyId } : {}),
@@ -83,6 +85,20 @@ const mustChangePrisma = prismaFor('test-sub', { mustChangePassword: true });
 const acceptedLegal = { isRequired: async () => false } as any;
 
 describe('AuthGuard', () => {
+  it('leaves public internal machine routes to their controller credential checks while customer access is closed', async () => {
+    const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
+    const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);
+    assert.equal(await guard.canActivate(makeContext({
+      path: '/v1/internal/workflow/outbox/drain',
+      workerToken: 'worker-token-value-1234567890',
+    })), true);
+    assert.equal(await guard.canActivate(makeContext({ path: '/v1/internal/ai/tools/invoke' })), true);
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ path: '/v1/internalized/workflow', workerToken: 'worker-token-value-1234567890' })),
+      (error: any) => error.getResponse().code === 'platform_access_closed',
+    );
+  });
+
   it('keeps login/status public but blocks other public routes while customer access is closed', async () => {
     const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
     for (const path of ['/v1/auth/password/login', '/v1/auth/platform-access']) {
