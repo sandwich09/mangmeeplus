@@ -609,6 +609,7 @@ jobs:
           steps.verify-maintenance.outcome == 'failure'))
         env:
           PRODUCTION_SERVING_MODE: maintenance_only
+          RELEASE_DEPLOY_TARGET: all
           PRODUCTION_IMAGE_MANIFEST: ${{ github.workspace }}/release/production-image-manifest.json
           REIMBURSEMENT_WRITE_QUIESCE: 'true'
         run: |
