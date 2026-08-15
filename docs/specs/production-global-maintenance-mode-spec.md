@@ -38,6 +38,11 @@ the switch is open and the deployed production serving mode is `live`.
 - `PlatformAccessControl` is a singleton `OPEN`/`CLOSED` runtime switch. A missing/unreadable value
   fails closed in production and defaults open outside production. Only `SYSTEM_ADMIN` with the
   existing `system.launch_gate.manage` permission may change it, and every change is audited.
+- The switch controls customer access, not machine control traffic. Exact `@Public()` routes under
+  `/v1/internal/` bypass the customer switch; each controller retains its own fail-closed machine
+  credential check (`X-Worker-Token`, or the AI internal secret plus actor delegation).
+  `maintenance_only` still blocks these routes at the outer proxy and starts workers with
+  `QUEUE_ENABLED=false`.
 - `maintenance_only` overrides the switch to effective `CLOSED` and reports `canOpen=false`. Opening
   therefore requires a legal/security-approved `live` production release first; after that release,
   `SYSTEM_ADMIN` may open or close customer access without another deployment.

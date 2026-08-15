@@ -1,5 +1,21 @@
 # Agent Memory: production A5 v2
 
+## 2026-08-16 — live rollout rollback at the customer/internal boundary
+
+- Production deploy run `31897008213` passed Passport/READY validation, the current-runtime and
+  mutation-boundary rechecks, maintenance close/drain, and the reviewed Production migration.
+- ECS Express rolled back only api-web candidate revision `5017415791246681753`. The provider
+  reported `ROLLBACK_SUCCESSFUL` because its generated rollback alarm observed 100% target 5xx.
+- Sanitized CloudWatch evidence bound every 5xx to scheduled `/v1/internal/*` worker calls. The new
+  API returned `platform_access_closed` while the durable customer switch was CLOSED, even though
+  those public internal controllers independently require the exact `X-Worker-Token`.
+- Decision: keep customer access fail-closed, keep the rollback alarm enabled, and exempt only
+  public `/v1/internal/` machine routes from the customer switch. Each controller's existing
+  constant-time machine credential check remains the trust boundary; `maintenance_only` continues
+  to stop workers and block internal traffic at the proxy.
+- Next: complete automatic closed-stage recovery, merge the focused guard regression, issue a fresh
+  UAT Passport because the API image changes, then rerun READY and the live Production promotion.
+
 Status: COMPLETE for repeatable technical deployment through `PROMOTED_CLOSED`. Fresh UAT Passport,
 Production READY, exact-image Production V2 promotion, global maintenance proof and secret-safe
 SYSTEM_ADMIN acceptance passed on 2026-08-14. Customer launch remains intentionally closed.

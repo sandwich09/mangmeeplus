@@ -41,6 +41,11 @@ function isLegalAcceptanceExempt(path: string): boolean {
   return LEGAL_ACCEPTANCE_EXEMPT_PATHS.has(cleanRequestPath(path));
 }
 
+function isInternalWorkerPath(path: string): boolean {
+  const cleanPath = cleanRequestPath(path);
+  return cleanPath === '/v1/internal' || cleanPath.startsWith('/v1/internal/');
+}
+
 const CLOSED_PUBLIC_PATHS = new Set([
   '/v1/auth/platform-access',
   '/v1/auth/login-channels',
@@ -82,6 +87,7 @@ export class AuthGuard implements CanActivate {
     const reqPath = req.path ?? req.url ?? '';
     const cleanPath = cleanRequestPath(reqPath);
     if (isPublic && ALWAYS_PUBLIC_PATHS.has(cleanPath)) return true;
+    if (isPublic && isInternalWorkerPath(cleanPath)) return true;
 
     const access = this.platformAccess ? await this.platformAccess.getStatus() : null;
     const accessClosed = access?.effectiveState === 'CLOSED';
