@@ -105,6 +105,158 @@ production_a5_validate_source_db_configuration() {
   ' "$input" >/dev/null
 }
 
+production_a5_capture_manual_snapshot() {
+  local snapshot_json="$1" require_tags="${2:-true}" expected_arn tags_json='' status=0
+  expected_arn="arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:snapshot:${manual_snapshot_id}"
+  if ! jq -e --arg id "$manual_snapshot_id" --arg arn "$expected_arn" \
+      --arg source "$source_db_identifier" --arg kms "$source_db_kms_key_arn" '
+      .DBSnapshots|type=="array" and length==1
+      and .[0].DBSnapshotIdentifier==$id and .[0].DBSnapshotArn==$arn
+      and .[0].DBInstanceIdentifier==$source and .[0].SnapshotType=="manual"
+      and .[0].Encrypted==true and .[0].KmsKeyId==$kms
+    ' <<< "$snapshot_json" >/dev/null; then
+    echo 'ERROR: observed a manual snapshot outside the exact clone boundary' >&2
+    return 1
+  fi
+  $require_tags || {
+    manual_snapshot_arn="$expected_arn"
+    manual_snapshot_observed=true
+    return 0
+  }
+  for check in {1..13}; do
+    if tags_json="$(aws rds list-tags-for-resource --region "$AWS_REGION" \
+        --resource-name "$expected_arn" --output json \
+        2>"$OUTPUT_DIR/manual-snapshot-tags.err")"; then status=0; else status=$?; fi
+    if [ "$status" -eq 0 ] && jq -e --slurpfile expected "$OUTPUT_DIR/tags.json" '
+        ([.TagList[]|{Key,Value}]|sort_by(.Key)) == ($expected[0]|sort_by(.Key))
+      ' <<< "$tags_json" >/dev/null; then
+      manual_snapshot_arn="$expected_arn"
+      manual_snapshot_observed=true
+      return 0
+    fi
+    [ "$status" -eq 0 ] || cat "$OUTPUT_DIR/manual-snapshot-tags.err" >&2
+    [ "$check" -lt 13 ] && sleep 5
+  done
+  echo 'ERROR: manual snapshot ownership tags did not converge' >&2
+  return 1
+}
+
+production_a5_wait_for_manual_snapshot() {
+  local output_file="$1" max_checks="${2:-61}" wait_seconds="${3:-15}"
+  local check snapshot_json='' state='' status=0 error_file="${output_file}.err"
+  for ((check=1; check<=max_checks; check++)); do
+    if snapshot_json="$(aws rds describe-db-snapshots --region "$AWS_REGION" \
+        --db-snapshot-identifier "$manual_snapshot_id" --snapshot-type manual \
+        --output json 2> "$error_file")"; then status=0; else status=$?; fi
+    if [ "$status" -eq 0 ]; then
+      if $manual_snapshot_delete_requested; then
+        production_a5_capture_manual_snapshot "$snapshot_json" false || return 1
+      else
+        production_a5_capture_manual_snapshot "$snapshot_json" || return 1
+      fi
+      state="$(jq -er '.DBSnapshots|select(length==1)|.[0].Status' <<< "$snapshot_json")"
+      case "$state" in
+        available) printf '%s' "$snapshot_json" | jq -cS . > "$output_file"; return 0 ;;
+        failed) echo 'ERROR: manual readiness snapshot entered failed state' >&2; return 1 ;;
+      esac
+    elif ! grep -F DBSnapshotNotFound "$error_file" >/dev/null; then
+      cat "$error_file" >&2
+      return 1
+    fi
+    [ "$check" -lt "$max_checks" ] && sleep "$wait_seconds"
+  done
+  echo 'ERROR: manual readiness snapshot did not become available within its 15-minute budget' >&2
+  return 1
+}
+
+production_a5_cleanup_manual_snapshot() {
+  $cleanup_snapshot_deleted && { clone_snapshot_residual=0; return 0; }
+  $snapshot_cleanup_attempted && return 1
+  snapshot_cleanup_attempted=true
+  local snapshot_json='' state='' output='' status=0 absent_checks=0
+  clone_snapshot_residual=1
+  $manual_snapshot_requested || {
+    cleanup_snapshot_deleted=true
+    clone_snapshot_residual=0
+    return 0
+  }
+
+  # A lost CreateDBSnapshot response can become visible later. Observe the deterministic ID for
+  # the documented five-minute provider window before accepting that no snapshot was created.
+  if ! $manual_snapshot_observed; then
+    for check in {1..61}; do
+      if snapshot_json="$(aws rds describe-db-snapshots --region "$AWS_REGION" \
+          --db-snapshot-identifier "$manual_snapshot_id" --snapshot-type manual \
+          --output json 2>"$OUTPUT_DIR/cleanup-snapshot.err")"; then status=0; else status=$?; fi
+      if [ "$status" -eq 0 ]; then
+        production_a5_capture_manual_snapshot "$snapshot_json" || return 1
+        break
+      fi
+      if ! grep -F DBSnapshotNotFound "$OUTPUT_DIR/cleanup-snapshot.err" >/dev/null; then
+        cat "$OUTPUT_DIR/cleanup-snapshot.err" >&2
+        return 1
+      fi
+      [ "$check" -lt 61 ] && sleep 5
+    done
+    if ! $manual_snapshot_observed; then
+      cleanup_snapshot_deleted=true
+      clone_snapshot_residual=0
+      return 0
+    fi
+  fi
+
+  # AWS only permits deleting an available manual snapshot. Reconcile an accepted-but-lost delete
+  # and require three stable DBSnapshotNotFound observations before closing the residue count.
+  for check in {1..61}; do
+    if snapshot_json="$(aws rds describe-db-snapshots --region "$AWS_REGION" \
+        --db-snapshot-identifier "$manual_snapshot_id" --snapshot-type manual \
+        --output json 2>"$OUTPUT_DIR/cleanup-snapshot.err")"; then status=0; else status=$?; fi
+    if [ "$status" -ne 0 ]; then
+      if grep -F DBSnapshotNotFound "$OUTPUT_DIR/cleanup-snapshot.err" >/dev/null; then
+        absent_checks=$((absent_checks+1))
+        if [ "$absent_checks" -ge 3 ]; then
+          cleanup_snapshot_deleted=true
+          clone_snapshot_residual=0
+          return 0
+        fi
+      else
+        cat "$OUTPUT_DIR/cleanup-snapshot.err" >&2
+        return 1
+      fi
+    else
+      absent_checks=0
+      if $manual_snapshot_delete_requested; then
+        production_a5_capture_manual_snapshot "$snapshot_json" false || return 1
+      else
+        production_a5_capture_manual_snapshot "$snapshot_json" || return 1
+      fi
+      state="$(jq -er '.DBSnapshots|select(length==1)|.[0].Status' <<< "$snapshot_json")"
+      case "$state" in
+        available)
+          manual_snapshot_delete_requested=true
+          if output="$(aws rds delete-db-snapshot --region "$AWS_REGION" \
+              --db-snapshot-identifier "$manual_snapshot_id" 2>&1)"; then
+            status=0
+          else
+            status=$?
+          fi
+          if [ "$status" -ne 0 ] \
+              && grep -F AccessDenied <<< "$output" >/dev/null; then
+            printf '%s\n' "$output" >&2
+            return 1
+          fi
+          ;;
+        creating|copying|deleted) ;;
+        *) echo "ERROR: manual readiness snapshot entered terminal cleanup state: $state" >&2; return 1 ;;
+      esac
+    fi
+    if [ "$check" -lt 61 ]; then
+      if [ "$state" = available ] || [ "$state" = deleted ]; then sleep 5; else sleep 15; fi
+    fi
+  done
+  return 1
+}
+
 production_a5_capture_cleanup_clone_secret() {
   local db_json="$1" expected_db_arn secret_arn secret_prefix secret_suffix
   expected_db_arn="arn:aws:rds:${AWS_REGION}:${AWS_ACCOUNT_ID}:db:${temporary_id}"
@@ -312,6 +464,7 @@ esac
 parameter_prefix=/watchdog-bms/production/a5-clone
 cluster=watchdog-bms-prod
 expected_managed_secret_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a
+expected_snapshot_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27
 temporary_id="watchdog-a5-clone-${CLONE_RUN_ID}-a${CLONE_RUN_ATTEMPT}-${SOURCE_SHA:0:8}"
 window_id="a5-clone-${CLONE_RUN_ID}-a${CLONE_RUN_ATTEMPT}"
 task_family="$temporary_id"
@@ -325,6 +478,14 @@ managed_password_requested=false
 db_observed=false
 task_definition_requested=false
 run_task_requested=false
+manual_snapshot_id="${temporary_id}-source"
+manual_snapshot_arn=''
+manual_snapshot_requested=false
+manual_snapshot_observed=false
+manual_snapshot_delete_requested=false
+snapshot_cleanup_attempted=false
+cleanup_snapshot_deleted=true
+snapshot_type=automated
 delete_requested_at=0
 delete_completed_at=0
 cleanup_done=false
@@ -332,7 +493,7 @@ cleanup_attempted=false
 cleanup_instance_absent=false
 cleanup_secret_deleted=false
 cleanup_task_stopped=false
-residual_resource_count=5
+residual_resource_count=6
 
 sha256_json() { jq -cjS . "$1" | sha256sum | awk '{print $1}'; }
 parameter() {
@@ -371,7 +532,8 @@ cleanup() {
   $cleanup_attempted && return 1
   cleanup_attempted=true
   local cleanup_status=0 remaining=1 tasks='[]'
-  local task_residual=1 definition_residual=1 database_residual=1 secret_residual=1 eni_residual=1
+  local task_residual=1 definition_residual=1 database_residual=1 secret_residual=1
+  local snapshot_residual=1 eni_residual=1
   local empty_checks=0 required_empty_checks=3 status=0 output='' arn='' eni=''
   local observed_eni_ids='' cleanup_eni_ids=''
   set +e
@@ -434,6 +596,13 @@ cleanup() {
     cleanup_status=1
   fi
 
+  if production_a5_cleanup_manual_snapshot; then
+    snapshot_residual="$clone_snapshot_residual"
+  else
+    snapshot_residual="$clone_snapshot_residual"
+    cleanup_status=1
+  fi
+
   # Only prove absence of ENIs observed on this run's reconciled tasks. A security-group-wide count
   # would incorrectly fail when another allowed clone run uses the same dedicated group.
   cleanup_eni_ids="$(printf '%s\n%s\n' "$eni_ids" "$observed_eni_ids" \
@@ -453,7 +622,7 @@ cleanup() {
   done
   [ "$eni_residual" -eq 0 ] || cleanup_status=1
 
-  residual_resource_count=$((task_residual+definition_residual+database_residual+secret_residual+eni_residual))
+  residual_resource_count=$((task_residual+definition_residual+database_residual+secret_residual+snapshot_residual+eni_residual))
   if [ "$cleanup_status" -eq 0 ] && [ "$residual_resource_count" -eq 0 ]; then
     cleanup_done=true
   else
@@ -534,19 +703,10 @@ aws rds describe-db-instances --region "$AWS_REGION" --db-instance-identifier "$
 production_a5_validate_source_db_configuration "$source_db_file" "$source_db_identifier" \
   "$configured_subnet_group" "$configured_parameter_group" "$configured_option_group"
 source_db_arn="$(jq -er '.DBInstances[0].DBInstanceArn' "$source_db_file")"
-
-snapshots="$OUTPUT_DIR/snapshots.json"
-aws rds describe-db-snapshots --region "$AWS_REGION" --db-instance-identifier "$source_db_identifier" \
-  --snapshot-type automated --output json | jq -cS . > "$snapshots"
-snapshot="$(jq -cer --arg source "$source_db_identifier" '
-  [.DBSnapshots[] | select(.DBInstanceIdentifier==$source and .SnapshotType=="automated"
-    and .Status=="available" and .Encrypted==true)] | sort_by(.SnapshotCreateTime) | last
-' "$snapshots")"
-snapshot_arn="$(jq -er '.DBSnapshotArn' <<< "$snapshot")"
-snapshot_created_iso="$(jq -er '.SnapshotCreateTime' <<< "$snapshot")"
-snapshot_created_epoch="$(date -u -d "$snapshot_created_iso" +%s)"
-now_epoch="$(date -u +%s)"
-[ "$snapshot_created_epoch" -le "$now_epoch" ] && [ $((now_epoch-snapshot_created_epoch)) -le 129600 ]
+source_db_kms_key_arn="$(jq -er '.DBInstances[0].KmsKeyId
+  |select(test("^arn:aws:kms:ap-southeast-1:311414082667:key/[0-9a-f-]{36}$"))' \
+  "$source_db_file")"
+test "$source_db_kms_key_arn" = "$expected_snapshot_kms_key_arn"
 
 jq -cnS --arg parent "$PARENT_RUN_ID" --arg parentAttempt "$PARENT_RUN_ATTEMPT" \
   --arg producer "$CLONE_RUN_ID" --arg producerAttempt "$CLONE_RUN_ATTEMPT" \
@@ -555,6 +715,31 @@ jq -cnS --arg parent "$PARENT_RUN_ID" --arg parentAttempt "$PARENT_RUN_ATTEMPT" 
     {Key:"producerRunAttempt",Value:$producerAttempt},{Key:"producerRunId",Value:$producer},
     {Key:"purpose",Value:"production-a5-clone"},{Key:"sourceCommit",Value:$source}
   ]' > "$OUTPUT_DIR/tags.json"
+
+snapshots="$OUTPUT_DIR/snapshots.json"
+if [ "$A5_CLONE_PROFILE" = readiness-v2 ]; then
+  snapshot_type=manual
+  cleanup_snapshot_deleted=false
+  manual_snapshot_requested=true
+  aws rds create-db-snapshot --region "$AWS_REGION" \
+    --db-instance-identifier "$source_db_identifier" \
+    --db-snapshot-identifier "$manual_snapshot_id" \
+    --tags "file://$OUTPUT_DIR/tags.json" >/dev/null
+  production_a5_wait_for_manual_snapshot "$snapshots"
+  snapshot="$(jq -cer '.DBSnapshots|select(length==1)|.[0]' "$snapshots")"
+else
+  aws rds describe-db-snapshots --region "$AWS_REGION" --db-instance-identifier "$source_db_identifier" \
+    --snapshot-type automated --output json | jq -cS . > "$snapshots"
+  snapshot="$(jq -cer --arg source "$source_db_identifier" '
+    [.DBSnapshots[] | select(.DBInstanceIdentifier==$source and .SnapshotType=="automated"
+      and .Status=="available" and .Encrypted==true)] | sort_by(.SnapshotCreateTime) | last
+  ' "$snapshots")"
+fi
+snapshot_arn="$(jq -er '.DBSnapshotArn' <<< "$snapshot")"
+snapshot_created_iso="$(jq -er '.SnapshotCreateTime' <<< "$snapshot")"
+snapshot_created_epoch="$(date -u -d "$snapshot_created_iso" +%s)"
+now_epoch="$(date -u +%s)"
+[ "$snapshot_created_epoch" -le "$now_epoch" ] && [ $((now_epoch-snapshot_created_epoch)) -le 129600 ]
 
 restore_requested=true
 aws rds restore-db-instance-from-db-snapshot --region "$AWS_REGION" \
@@ -566,7 +751,15 @@ aws rds restore-db-instance-from-db-snapshot --region "$AWS_REGION" \
   --backup-retention-period 0 --no-auto-minor-version-upgrade --no-deletion-protection \
   --tags "file://$OUTPUT_DIR/tags.json" >/dev/null
 db_raw="$OUTPUT_DIR/describe-db-instances.json"
-production_a5_wait_for_restored_instance "$db_raw"
+if [ "$A5_CLONE_PROFILE" = readiness-v2 ]; then
+  production_a5_wait_for_restored_instance "$db_raw" 80
+  if ! production_a5_cleanup_manual_snapshot; then
+    echo 'ERROR: fresh readiness snapshot cleanup did not converge' >&2
+    exit 1
+  fi
+else
+  production_a5_wait_for_restored_instance "$db_raw"
+fi
 
 # PostgreSQL snapshot restore can't create an RDS-managed master secret. Enable it only after the
 # restored instance is available, then wait for both the DB and its secret to become usable.
@@ -845,6 +1038,7 @@ jq -cnS \
 clone_infrastructure="$OUTPUT_DIR/clone-infrastructure.json"
 jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifier" \
   --arg snapshotArn "$snapshot_arn" --argjson snapshotEpoch "$snapshot_created_epoch" \
+  --arg snapshotType "$snapshot_type" \
   --arg temporaryArn "$temporary_db_arn" --arg temporaryId "$temporary_id" \
   --slurpfile tags "$OUTPUT_DIR/tags.json" --arg engine "$clone_engine" \
   --arg engineVersion "$clone_engine_version" --arg kms "$kms_key_arn" \
@@ -860,9 +1054,10 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
   --argjson instanceAbsent "$cleanup_instance_absent" \
   --argjson secretDeleted "$cleanup_secret_deleted" \
   --argjson taskStopped "$cleanup_task_stopped" \
+  --argjson snapshotDeleted "$cleanup_snapshot_deleted" \
   --argjson residual "$residual_resource_count" '
   {sourceDbInstanceArn:$sourceDbArn,sourceDbIdentifier:$sourceDbId,snapshotArn:$snapshotArn,
-   snapshotCreatedAtEpoch:$snapshotEpoch,snapshotType:"automated",
+   snapshotCreatedAtEpoch:$snapshotEpoch,snapshotType:$snapshotType,
    temporaryDbInstanceArn:$temporaryArn,temporaryDbIdentifier:$temporaryId,
    requiredRunTags:($tags[0]|map({key:.Key,value:.Value})|sort_by(.key)),engine:$engine,
    engineVersion:$engineVersion,storageEncrypted:true,kmsKeyArn:$kms,publiclyAccessible:false,
@@ -881,7 +1076,9 @@ jq -cnS --arg sourceDbArn "$source_db_arn" --arg sourceDbId "$source_db_identifi
    cleanup:{deleteRequestedAtEpoch:$deleteRequested,deleteCompletedAtEpoch:$deleteCompleted,
      instanceAbsent:$instanceAbsent,secretDeleted:$secretDeleted,taskStopped:$taskStopped,
      residualResourceCount:$residual}}
-  + (if $profile=="readiness-v2" then {rehearsalProfile:$profile} else {} end)
+  + (if $profile=="readiness-v2" then
+      {rehearsalProfile:$profile,cleanup:(.cleanup+{snapshotDeleted:$snapshotDeleted})}
+    else {} end)
 ' > "$clone_infrastructure"
 
 trap - EXIT

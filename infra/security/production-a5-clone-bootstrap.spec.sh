@@ -37,6 +37,8 @@ jq -e '
   | ([.Statement[] | select(.Sid == "AllowRdsManagedCloneSecretCreation")][0]) as $secret_create
   | ([.Statement[] | select(.Sid == "AllowCloneTaskDefinitionLifecycle")][0]) as $definitions
   | ([.Statement[] | select(.Sid == "AllowRdsGrantOnSnapshotKey")][0]) as $rds_grant
+  | ([.Statement[] | select(.Sid == "AllowTaggedReadinessSnapshotCreate")][0]) as $snapshot_create
+  | ([.Statement[] | select(.Sid == "AllowTaggedReadinessSnapshotDelete")][0]) as $snapshot_delete
   | ([.Statement[] | select(.Sid == "DenyOutsideCloneController")][0]) as $boundary
   | $pass.Action == "iam:PassRole"
     and $pass.Resource
@@ -69,8 +71,19 @@ jq -e '
     and $rds_grant.Condition.StringEquals["kms:ViaService"]
       == "rds.ap-southeast-1.amazonaws.com"
     and $rds_grant.Condition.Bool["kms:GrantIsForAWSResource"] == "true"
+    and $snapshot_create.Action == "rds:CreateDBSnapshot"
+    and ($snapshot_create.Resource|sort) == ([
+      "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db",
+      "arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*"]|sort)
+    and $snapshot_delete.Action == "rds:DeleteDBSnapshot"
+    and $snapshot_delete.Resource
+      == "arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*"
+    and $snapshot_delete.Condition.StringEquals["rds:snapshot-tag/purpose"]
+      == "production-a5-clone"
     and ($boundary.NotAction|index("kms:CreateGrant")) != null
     and ($boundary.NotAction|index("rds:ModifyDBInstance")) != null
+    and ($boundary.NotAction|index("rds:CreateDBSnapshot")) != null
+    and ($boundary.NotAction|index("rds:DeleteDBSnapshot")) != null
     and ($boundary.NotAction|index("secretsmanager:CreateSecret")) != null
     and ($boundary.NotAction|index("secretsmanager:TagResource")) != null
     and ($boundary.NotAction|index("ecs:ListTaskDefinitions")) != null
@@ -139,8 +152,10 @@ done
 
 validate_provider_resource_contract() {
   jq -e '
-    ([.Statement[] | select(.Sid=="AllowTaggedCloneRestore")][0]) as $restore
+    ([.Statement[] | select(.Sid=="AllowTaggedReadinessSnapshotCreate")][0]) as $create
+    | ([.Statement[] | select(.Sid=="AllowTaggedCloneRestore")][0]) as $restore
     | ([.Statement[] | select(.Sid=="AllowTaggedCloneInitialTags")][0]) as $tags
+    | ([.Statement[] | select(.Sid=="AllowTaggedReadinessSnapshotDelete")][0]) as $delete
     | ([.Statement[] | select(.Sid=="AllowExactCloneTaskList")][0]) as $list
     | ([.Statement[] | select(.Sid=="AllowExactCloneTaskRun")][0]) as $run
     | ([.Statement[] | select(.Sid=="AllowExactCloneTaskDescribeStop")][0]) as $observe
@@ -152,17 +167,30 @@ validate_provider_resource_contract() {
           "aws:RequestTag/purpose":"false","aws:RequestTag/sourceCommit":"false"}} as $tag_condition
     | {ArnEquals:{"ecs:cluster":
         "arn:aws:ecs:ap-southeast-1:311414082667:cluster/watchdog-bms-prod"}} as $cluster
-    | $restore.Action=="rds:RestoreDBInstanceFromDBSnapshot"
+    | $create.Action=="rds:CreateDBSnapshot"
+      and ($create.Resource|sort)==([
+        "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db",
+        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*"]|sort)
+      and $create.Condition==$tag_condition
+      and $restore.Action=="rds:RestoreDBInstanceFromDBSnapshot"
       and ($restore.Resource|sort)==([
         "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*",
         "arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:watchdog-bms-prod-db-*",
         "arn:aws:rds:ap-southeast-1:311414082667:subgrp:watchdog-bms-prod-db-subnets",
         "arn:aws:rds:ap-southeast-1:311414082667:pg:watchdog-bms-prod-pg18",
         "arn:aws:rds:ap-southeast-1:311414082667:og:default:postgres-18"]|sort)
       and $restore.Condition==$tag_condition
       and $tags.Action=="rds:AddTagsToResource"
-      and $tags.Resource=="arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*"
+      and ($tags.Resource|sort)==([
+        "arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-a5-clone-*",
+        "arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*"]|sort)
       and $tags.Condition==$tag_condition
+      and $delete.Action=="rds:DeleteDBSnapshot"
+      and $delete.Resource
+        =="arn:aws:rds:ap-southeast-1:311414082667:snapshot:watchdog-a5-clone-*"
+      and $delete.Condition
+        =={StringEquals:{"rds:snapshot-tag/purpose":"production-a5-clone"}}
       and $list.Action=="ecs:ListTasks" and $list.Resource=="*" and $list.Condition==$cluster
       and $run.Action=="ecs:RunTask"
       and $run.Resource==
@@ -179,10 +207,20 @@ validate_provider_resource_contract() {
 }
 validate_provider_resource_contract "$controller_policy"
 
-for mutation in restore-snapshot-wildcard restore-option-wildcard restore-missing-tag \
-    list-resource list-cluster; do
+for mutation in create-snapshot-wildcard create-missing-tag delete-missing-owner \
+    restore-snapshot-wildcard restore-option-wildcard restore-missing-tag list-resource list-cluster; do
   mutated="$fixture/policy-$mutation.json"
   case "$mutation" in
+    create-snapshot-wildcard)
+      jq '(.Statement[]|select(.Sid=="AllowTaggedReadinessSnapshotCreate").Resource[]
+        | select(contains(":snapshot:")))="arn:aws:rds:ap-southeast-1:311414082667:snapshot:*"' \
+        "$controller_policy" > "$mutated" ;;
+    create-missing-tag)
+      jq 'del(.Statement[]|select(.Sid=="AllowTaggedReadinessSnapshotCreate")
+        .Condition.Null["aws:RequestTag/sourceCommit"])' "$controller_policy" > "$mutated" ;;
+    delete-missing-owner)
+      jq 'del(.Statement[]|select(.Sid=="AllowTaggedReadinessSnapshotDelete").Condition)' \
+        "$controller_policy" > "$mutated" ;;
     restore-snapshot-wildcard)
       jq '(.Statement[]|select(.Sid=="AllowTaggedCloneRestore").Resource[]
         | select(contains(":snapshot:")))="arn:aws:rds:ap-southeast-1:311414082667:snapshot:rds:*"' \

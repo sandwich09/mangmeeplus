@@ -406,9 +406,12 @@ if [ "$(jq -r '.migration.clone==null' "$ready")" = false ]; then
   jq -e --arg source "$source" --arg image "$(jq -er '.tools[]|select(.purpose=="migration-tool")|.image' "$passport")" '
     .migrationSourceCommit==$source and .migrationImage==$image
     and .rehearsalProfile=="readiness-v2"
+    and .snapshotType=="manual"
+    and .snapshotArn==("arn:aws:rds:ap-southeast-1:311414082667:snapshot:"
+      + .temporaryDbIdentifier + "-source")
     and .cleanup=={deleteRequestedAtEpoch:.cleanup.deleteRequestedAtEpoch,
       deleteCompletedAtEpoch:.cleanup.deleteCompletedAtEpoch,instanceAbsent:true,secretDeleted:true,
-      taskStopped:true,residualResourceCount:0}
+      snapshotDeleted:true,taskStopped:true,residualResourceCount:0}
     and .cleanup.deleteRequestedAtEpoch>=1
     and .cleanup.deleteCompletedAtEpoch>=.cleanup.deleteRequestedAtEpoch
   ' "$infrastructure" >/dev/null

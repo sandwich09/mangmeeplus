@@ -819,3 +819,40 @@ Next:
 - Customer traffic remains intentionally closed. Future release operators use
   `docs/runbooks/uat-production-v2-deployment.md`; historical `Next:` blocks above describe prior
   incident checkpoints and are not current instructions.
+
+## Live promotion checkpoint — 2026-08-15
+
+- Reviewed candidate `f7be97f13790e0bf13070613a03662fbb53474d6` passed UAT run
+  `31888441617`, deep DB readiness and the branch-scope Production pre-audit. Passport
+  `uat-release-passport-v2-f7be97f...-attempt-1` remains valid until
+  `2026-08-22T14:16:43Z`; owner live override reference is
+  `OWNER-DIRECTIVE-2026-08-15-LIVE`.
+- Live Readiness `31889653042` passed owner override, immutable image/runtime, A5 reader and
+  Production migration classification, then failed safely in the isolated clone before migration.
+  It restored automated snapshot `rds:watchdog-bms-prod-db-2026-08-14-20-10`, but current
+  Production had subsequently applied `20260815000000_employee_title_prefix`; the clone therefore
+  observed two pending migrations while the exact current ledger correctly authorized only
+  `20260815120000_dashboard_scope_branch`. Task exit 1 was
+  `production_readiness_clone_source_catalog_failed`; Production DB/services were untouched.
+- Independent provider readback proved zero residue: clone DB and RDS-managed secret are NotFound,
+  active task set and ACTIVE exact-family task definitions are empty, the only task is STOPPED/1,
+  and its ENI is deleted/NotFound.
+- Durable correction uses a deterministic, exact-tagged encrypted manual snapshot of the current
+  Production DB only for `readiness-v2`, deletes and stable-proves that snapshot absent immediately
+  after restore, and includes it in residual accounting. Standalone reviewed-v1 retains its
+  existing automated-snapshot evidence contract. Application image bytes do not change, so the
+  successful UAT Passport can be reused after controller review/merge and exact clone-policy apply.
+- Local verification passed: executable accepted-lost create/delete/foreign-tag cleanup fixtures,
+  exact IAM boundary and Access Analyzer, clone runner/bootstrap/workflow, signed evidence,
+  READY/readiness/deploy validators, pin sync, `git diff --check`, and the full
+  `infra/docker/production-image-security.spec.sh` aggregate through its final scanner.
+
+Next:
+
+1. Merge only after exact-head CI and independent review.
+2. Apply/read back only the clone controller inline policy with the scoped temporary non-root
+   ceremony; prove bridge/policy/role `NoSuchEntity`.
+3. Reissue one `live` Readiness from UAT `31888441617` with the exact owner override, require manual
+   snapshot/clone residual zero and signed READY, then freeze `main`.
+4. Dispatch one Production V2 `live` promotion, require signed `PROMOTED_LIVE`, open the durable
+   platform gate with secret-safe SYSTEM_ADMIN control, and complete public/customer acceptance.

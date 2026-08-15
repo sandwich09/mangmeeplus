@@ -9,13 +9,17 @@ trap 'rm -rf -- "$fixture"' EXIT
 
 bash -n "$runner" "$reconstruct"
 for required in \
-  'snapshot-type automated' '129600' 'aws rds modify-db-instance' \
+  'snapshot-type automated' 'aws rds create-db-snapshot' 'aws rds delete-db-snapshot' \
+  'production_a5_wait_for_manual_snapshot' 'production_a5_cleanup_manual_snapshot' \
+  'cleanup_snapshot_deleted' 'snapshotDeleted:$snapshotDeleted' '129600' \
+  'aws rds modify-db-instance' \
   'production_a5_validate_source_db_configuration' \
   'db-parameter-group-name' 'option-group-name' \
   '--db-parameter-group-name "$configured_parameter_group"' \
   '--option-group-name "$configured_option_group"' \
   '--manage-master-user-password --apply-immediately' \
   'alias/aws/secretsmanager' \
+  '52b4943e-e9d7-4fae-b71c-c13b0b157b27' \
   'b2e68e7f-e098-4b88-a92a-5a0f4fe2924a' \
   'watchdog-bms-production-a5-clone-execution' 'migrationTaskRoleArn:null' \
   '"--tsconfig","/app/apps/api/tsconfig.json"' \
@@ -51,7 +55,11 @@ workflow_pre_runner_seconds=600
 workflow_post_runner_seconds=300
 runner_preflight_and_evidence_seconds=300
 registration_recovery_seconds=300
-restore_seconds=$((119*15))
+manual_snapshot_create_seconds=$((60*15))
+readiness_restore_seconds=$((79*15))
+manual_snapshot_delete_seconds=$((3*5))
+clone_source_seconds=$((manual_snapshot_create_seconds + readiness_restore_seconds
+  + manual_snapshot_delete_seconds))
 managed_secret_seconds=$((19*15))
 secret_metadata_seconds=$((12*5))
 run_task_trust_seconds=$((2+4+8+16+32+64+90+90))
@@ -59,17 +67,17 @@ task_visibility_seconds=$((2+4+8+16+32+64+90))
 task_runtime_seconds=$((384*5))
 log_visibility_seconds=$((12*5))
 success_cleanup_seconds=$((2*5 + 2*5 + 60*15 + 24*5 + 36*5))
-runner_forward_seconds=$((runner_preflight_and_evidence_seconds + restore_seconds
+runner_forward_seconds=$((runner_preflight_and_evidence_seconds + clone_source_seconds
   + managed_secret_seconds + secret_metadata_seconds + registration_recovery_seconds + run_task_trust_seconds
   + task_visibility_seconds + task_runtime_seconds + log_visibility_seconds))
 modeled_success_seconds=$((workflow_pre_runner_seconds + runner_forward_seconds
   + success_cleanup_seconds + workflow_post_runner_seconds))
 test "$success_cleanup_seconds" -eq 1220
-test "$runner_forward_seconds" -eq 5232
-test "$modeled_success_seconds" -eq 7352
+test "$runner_forward_seconds" -eq 5547
+test "$modeled_success_seconds" -eq 7667
 test "$modeled_success_seconds" -le "$workflow_budget_seconds"
 test "$runner_forward_seconds" -lt $((credential_budget_seconds-success_cleanup_seconds))
-test $((runner_forward_seconds+success_cleanup_seconds)) -eq 6452
+test $((runner_forward_seconds+success_cleanup_seconds)) -eq 6767
 
 # Ambiguous provider responses reserve cleanup inside the same refreshed 7,200-second session.
 unknown_restore_visibility_seconds=$((60*5))
@@ -82,22 +90,23 @@ stable_task_cleanup_seconds=$((2*5))
 stable_definition_cleanup_seconds=$((2*5))
 ambiguous_restore_failure_seconds=$((runner_preflight_and_evidence_seconds
   + stable_task_cleanup_seconds + stable_definition_cleanup_seconds
+  + manual_snapshot_create_seconds + manual_snapshot_delete_seconds
   + unknown_restore_visibility_seconds + unknown_db_cleanup_seconds))
-ambiguous_modify_failure_seconds=$((runner_preflight_and_evidence_seconds + restore_seconds
+ambiguous_modify_failure_seconds=$((runner_preflight_and_evidence_seconds + clone_source_seconds
   + stable_task_cleanup_seconds + stable_definition_cleanup_seconds
   + unknown_db_cleanup_seconds + unknown_secret_cleanup_seconds))
-ambiguous_definition_failure_seconds=$((runner_preflight_and_evidence_seconds + restore_seconds
+ambiguous_definition_failure_seconds=$((runner_preflight_and_evidence_seconds + clone_source_seconds
   + managed_secret_seconds + secret_metadata_seconds + registration_recovery_seconds + stable_task_cleanup_seconds
   + unknown_definition_visibility_seconds + unknown_db_cleanup_seconds
   + unknown_secret_cleanup_seconds))
-ambiguous_run_task_failure_seconds=$((runner_preflight_and_evidence_seconds + restore_seconds
+ambiguous_run_task_failure_seconds=$((runner_preflight_and_evidence_seconds + clone_source_seconds
   + managed_secret_seconds + secret_metadata_seconds + run_task_trust_seconds
   + unknown_task_visibility_seconds + stable_definition_cleanup_seconds
   + unknown_db_cleanup_seconds + unknown_secret_cleanup_seconds + unknown_eni_cleanup_seconds))
-test "$ambiguous_restore_failure_seconds" -eq 1520
-test "$ambiguous_modify_failure_seconds" -eq 3125
-test "$ambiguous_definition_failure_seconds" -eq 4060
-test "$ambiguous_run_task_failure_seconds" -eq 4246
+test "$ambiguous_restore_failure_seconds" -eq 2435
+test "$ambiguous_modify_failure_seconds" -eq 3440
+test "$ambiguous_definition_failure_seconds" -eq 4375
+test "$ambiguous_run_task_failure_seconds" -eq 4561
 for failure_seconds in "$ambiguous_restore_failure_seconds" \
     "$ambiguous_modify_failure_seconds" "$ambiguous_definition_failure_seconds" \
     "$ambiguous_run_task_failure_seconds"; do
@@ -285,11 +294,60 @@ clone_response() {
         {MasterUserSecret:{SecretArn:$secret,SecretStatus:"active"}} end)]}
   '
 }
+snapshot_response() {
+  local status="$1"
+  jq -cn --arg id "$FAKE_SNAPSHOT_ID" --arg arn "$FAKE_SNAPSHOT_ARN" \
+    --arg source "$FAKE_SOURCE_DB_ID" --arg kms "$FAKE_SOURCE_KMS_ARN" --arg status "$status" '
+    {DBSnapshots:[{DBSnapshotIdentifier:$id,DBSnapshotArn:$arn,
+      DBInstanceIdentifier:$source,SnapshotType:"manual",Encrypted:true,KmsKeyId:$kms,
+      Status:$status,SnapshotCreateTime:"2026-08-15T14:00:00.000Z"}]}
+  '
+}
 not_found() {
   echo "An error occurred ($1) when calling the fake operation" >&2
   exit 254
 }
 case "$1 $2" in
+  'rds describe-db-snapshots')
+    count="$(next_count snapshot-describe)"
+    if [ -f "$state/snapshot-delete-called" ]; then
+      if [ "$FAKE_CLEANUP_MODE" = snapshot-delete-lingers ] && [ "$count" -eq 2 ]; then
+        snapshot_response deleted
+        exit 0
+      fi
+      not_found DBSnapshotNotFound
+    fi
+    case "$FAKE_CLEANUP_MODE" in
+      snapshot-wait)
+        [ "$count" -eq 1 ] && snapshot_response creating || snapshot_response available ;;
+      snapshot-accepted-lost)
+        case "$count" in
+          1) not_found DBSnapshotNotFound ;;
+          2) snapshot_response creating ;;
+          *) snapshot_response available ;;
+        esac ;;
+      snapshot-never-created) not_found DBSnapshotNotFound ;;
+      snapshot-delete-lingers) snapshot_response available ;;
+      snapshot-foreign-tags) snapshot_response available ;;
+      *) exit 97 ;;
+    esac
+    ;;
+  'rds list-tags-for-resource')
+    if [ "$FAKE_CLEANUP_MODE" = snapshot-delete-lingers ] \
+        && [ -f "$state/snapshot-delete-called" ]; then
+      echo 'DBSnapshotNotFound after delete' >&2
+      exit 254
+    fi
+    if [ "$FAKE_CLEANUP_MODE" = snapshot-foreign-tags ]; then
+      jq -cn '{TagList:[{Key:"purpose",Value:"foreign"}]}'
+    else
+      jq -cn --slurpfile tags "$FAKE_TAGS" '{TagList:$tags[0]}'
+    fi
+    ;;
+  'rds delete-db-snapshot')
+    touch "$state/snapshot-delete-called"
+    snapshot_response deleted
+    ;;
   'rds describe-db-instances')
     count="$(next_count rds-describe)"
     case "$FAKE_CLEANUP_MODE" in
@@ -406,6 +464,10 @@ export FAKE_DB_ID="$temporary_id"
 export FAKE_DB_ARN="arn:aws:rds:$AWS_REGION:$AWS_ACCOUNT_ID:db:$temporary_id"
 export FAKE_SECRET_ARN="arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:rds!db-fixture-AbCdEf"
 export FAKE_WRONG_SECRET_ARN="arn:aws:secretsmanager:$AWS_REGION:999999999999:secret:rds!db-foreign-AbCdEf"
+export FAKE_SOURCE_DB_ID=watchdog-bms-prod-db
+export FAKE_SOURCE_KMS_ARN="arn:aws:kms:$AWS_REGION:$AWS_ACCOUNT_ID:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27"
+export FAKE_SNAPSHOT_ID="${temporary_id}-source"
+export FAKE_SNAPSHOT_ARN="arn:aws:rds:$AWS_REGION:$AWS_ACCOUNT_ID:snapshot:$FAKE_SNAPSHOT_ID"
 export OUTPUT_DIR="$fixture/cleanup"
 export FAKE_AWS_STATE="$OUTPUT_DIR/state" FAKE_TAGS="$OUTPUT_DIR/tags.json"
 reset_cleanup_state() {
@@ -421,6 +483,69 @@ reset_cleanup_state() {
   cleanup_instance_absent=false
   cleanup_secret_deleted=false
 }
+
+reset_snapshot_state() {
+  reset_cleanup_state
+  manual_snapshot_id="$FAKE_SNAPSHOT_ID"
+  manual_snapshot_arn=''
+  source_db_identifier="$FAKE_SOURCE_DB_ID"
+  source_db_kms_key_arn="$FAKE_SOURCE_KMS_ARN"
+  manual_snapshot_requested=true
+  manual_snapshot_observed=false
+  manual_snapshot_delete_requested=false
+  snapshot_cleanup_attempted=false
+  cleanup_snapshot_deleted=false
+  clone_snapshot_residual=1
+}
+
+reset_snapshot_state
+export FAKE_CLEANUP_MODE=snapshot-wait
+production_a5_wait_for_manual_snapshot "$OUTPUT_DIR/manual-snapshot.json" 2 0
+test "$manual_snapshot_observed" = true
+test "$manual_snapshot_arn" = "$FAKE_SNAPSHOT_ARN"
+test "$(jq -r '.DBSnapshots[0].Status' "$OUTPUT_DIR/manual-snapshot.json")" = available
+
+reset_snapshot_state
+export FAKE_CLEANUP_MODE=snapshot-accepted-lost
+if ! production_a5_cleanup_manual_snapshot; then
+  echo 'ERROR: accepted-lost manual snapshot cleanup did not converge' >&2
+  exit 1
+fi
+test "$cleanup_snapshot_deleted" = true
+test "$clone_snapshot_residual" -eq 0
+test -f "$FAKE_AWS_STATE/snapshot-delete-called"
+test "$(<"$FAKE_AWS_STATE/snapshot-describe")" -eq 6
+
+reset_snapshot_state
+export FAKE_CLEANUP_MODE=snapshot-never-created
+if ! production_a5_cleanup_manual_snapshot; then
+  echo 'ERROR: never-created manual snapshot did not close its visibility window' >&2
+  exit 1
+fi
+test "$cleanup_snapshot_deleted" = true
+test "$clone_snapshot_residual" -eq 0
+test "$(<"$FAKE_AWS_STATE/snapshot-describe")" -eq 61
+test ! -e "$FAKE_AWS_STATE/snapshot-delete-called"
+
+reset_snapshot_state
+export FAKE_CLEANUP_MODE=snapshot-delete-lingers
+manual_snapshot_observed=true
+if ! production_a5_cleanup_manual_snapshot; then
+  echo 'ERROR: lingering deleted snapshot did not converge to stable absence' >&2
+  exit 1
+fi
+test "$cleanup_snapshot_deleted" = true
+test "$clone_snapshot_residual" -eq 0
+test "$(<"$FAKE_AWS_STATE/snapshot-describe")" -eq 5
+
+reset_snapshot_state
+export FAKE_CLEANUP_MODE=snapshot-foreign-tags
+if production_a5_cleanup_manual_snapshot >/dev/null 2>&1; then
+  echo 'ERROR: cleanup deleted a manual snapshot with foreign ownership tags' >&2
+  exit 1
+fi
+test "$clone_snapshot_residual" -eq 1
+test ! -e "$FAKE_AWS_STATE/snapshot-delete-called"
 
 reset_cleanup_state
 export FAKE_CLEANUP_MODE=accepted-lost
