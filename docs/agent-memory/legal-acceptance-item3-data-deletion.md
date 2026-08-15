@@ -1,6 +1,6 @@
 # Agent Memory: legal-acceptance หน้ายืนยัน — ตัดค่าตรวจสอบไฟล์ และเปลี่ยนข้อ 3 เป็นการลบข้อมูล
 
-Status: acceptance identity correction implemented + unit/typecheck/deployment-contract verified (2026-08-15) — เป็นการแก้ไขภายใน/UAT เท่านั้น ยังไม่ได้แสดงบน Production หรือเปิดใช้จริง; ยังไม่ได้รัน live e2e (ต้องมี API/web/DB จริง)
+Status: deployed and independently verified on UAT run `31853053851` (2026-08-15) — ยังไม่ได้ deploy Production หรือเปิดใช้จริง; authenticated browser regression ยังต้องใช้ session ของหนึ่งในผู้ใช้หลักฐานเดิม
 Owner: supapron (เจ้าของสั่งตรงในเซสชัน 2026-08-15)
 
 Scope:
@@ -88,11 +88,20 @@ Verification 2026-08-15 — acceptance identity correction:
 - production maintenance pin sync/check และ maintenance release validator ผ่าน
 - production image security aggregate ผ่าน รวม workflow/READY/passport/migration/security contracts
 - `git diff --check` ผ่าน; ไม่มี migration, backfill, update หรือ delete หลักฐาน acceptance เดิม
-- ยังไม่ได้รัน browser e2e บน deployed UAT candidate
+- UAT `all` run `31853053851` สำเร็จจาก candidate `c1fd8def8372730e8baac340b989f75723607bf1`;
+  release task/migration, rollout, exact digest/health, retirement/finalization และ signed Passport V2 ผ่าน
+- independent AWS read-back: api-web / AI Gateway / workers เป็น RUNNING ที่ source SHA เดียวกันและ ECR
+  digest มี tag `git-c1fd8def8372730e8baac340b989f75723607bf1`; deep readiness ได้ `api=ok`, `db=ok`
+- UAT DB aggregate แบบ read-only พบ coherent current-hash pair 10 users โดย 9 users เป็น statement รุ่นเก่า
+  และ 1 user เป็น `v2`; ไม่อ่าน username/email และไม่แก้ข้อมูล จึงพิสูจน์ว่าหลักฐาน regression case ยังอยู่ครบ
+- Browser เปิดหน้า UAT ได้ แต่ไม่มี authenticated session; fixture `qa.owner` ไม่มี credential บน UAT (401)
+  และหยุดโดยไม่ลองบัญชีอื่น จึงยังไม่ได้พิสูจน์ `required=false` ผ่าน UI ของหนึ่งใน 9 users เดิม
+- auto Production Readiness run `31854247824` หยุดตามคาดที่ protected-source gate เพราะ candidate อยู่บน
+  `develop` แต่ยังไม่เป็น ancestor ของ `main`; หยุดก่อน Production AWS checks/mutation และไม่ได้ retry
 
 Next:
 
-- รัน e2e legal-acceptance เมื่อยกสแตกได้ แล้วบันทึกผลที่นี่
-- หลัง deploy candidate: ยืนยันด้วยผู้ใช้ที่มี v3 hash pair เดิมว่า `required=false` และเข้า business route ได้
+- ใช้ session/credential ที่ได้รับอนุญาตของหนึ่งใน 9 UAT users ที่มี current hash pair เดิม ยืนยันว่า
+  login/status คืน `legalAcceptanceRequired=false` / `required=false` และเข้า business route ได้
 - ก่อน Production launch: resolve ความไม่ตรงกันระหว่าง internal `v3` กับ display `ฉบับที่ 1 (1.0)` และยืนยัน
   ว่า evidence ที่เกิดใน UAT ไม่ถูกนับเป็น Production/customer acceptance
