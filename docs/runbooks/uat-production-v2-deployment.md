@@ -218,4 +218,15 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
 - final state: `PROMOTED_CLOSED`, `DEPLOYED_NOT_LAUNCHED`, target `all`; secret-safe
   SYSTEM_ADMIN acceptance ผ่านและ customer launch ยังปิด
 
+รอบ 2026-08-15 พิสูจน์ UAT redeploy stability เพิ่มเติมก่อน promote Production:
+
+- candidate source: `c1fd8def8372730e8baac340b989f75723607bf1`
+- UAT/Passport: run `31853053851`, artifact digest
+  `sha256:da870dfc357fe5d2364189be71ab416773cd3aecbada71e06745cd54bcc566a6`
+- deep DB readiness ได้ `service=api`, `status=ok`, `db=ok`
+- disposable OWNER ที่มีหลักฐาน Terms/Privacy hash pair เดิมยังได้ `required=false` และ `acceptedAt`
+  เดิมหลัง redeploy, reset/change-password/relogin; จากนั้น archive และ read back fixture สำเร็จ
+- หลักฐานนี้ยังไม่ใช่ Production promotion; Production ต้องผ่าน READY และ deploy แบบ
+  `maintenance_closed` ตามขั้นตอนด้านบน
+
 Run IDs เหล่านี้เป็น historical evidence ไม่ใช่ input สำหรับ release ใหม่.
