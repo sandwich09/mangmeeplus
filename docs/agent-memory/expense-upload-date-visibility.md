@@ -1,7 +1,7 @@
 # Agent Memory: expense-upload-date-visibility
 
 Status:
-Implemented and locally verified on 2026-08-15. Pending commit, push and PR to `develop`.
+Implemented, locally verified and delivered on 2026-08-15. Implementation commit `9dbc564`; ready PR [#98](https://github.com/MangmeeDev/mangmeeplus/pull/98) targets `develop` from `date-miss`.
 
 Owner:
 Product owner approved the v0.2 spec/plan, cross-channel semantics and implementation on the existing `date-miss` branch, including review, tests, commit, push and PR.
@@ -48,9 +48,9 @@ Verification:
 - Fresh isolated Postgres/Redis/MinIO stack: all 132 migrations applied, standard seed passed, Expenses E2E 16/16 passed; EXP-26 independently passed desktop/mobile, request and export assertions.
 - `git diff --check` passed before documentation update. No package manifest, schema, migration, permission, controller, tax or ledger file changed.
 - Unrelated user-owned `docs/agent-memory/branch-selector-system-audit.md` remains untracked and untouched. The branch also pre-existed with the committed legal-acceptance memory delta; it was not modified in this implementation.
+- Branch `date-miss` was pushed to `origin`; ready PR #98 was created against `develop` with implementation, impact and verification evidence.
 
 Next:
 
-1. Run final diff/typecheck/focused checks after documentation edits.
-2. Commit only the scoped implementation/docs files on `date-miss`.
-3. Push `date-miss` and open a ready PR to `develop`, noting the pre-existing committed branch delta.
+1. Review PR #98 and merge into `develop` when repository checks and reviewer approval pass.
+2. Track the existing 200-row KPI aggregation limitation separately if the intake volume requires server-side aggregates.
