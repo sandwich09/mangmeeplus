@@ -10,6 +10,71 @@ Workflows: `deploy-uat.yml` → `production-readiness.yml` → `deploy-productio
 `production-a5-u5-promotion-ceremony.md`. การ deploy ปกติไม่แก้ Cloudflare และไม่ใช้ AWS root.
 อ่าน `cloud-environment-operations.md` ก่อนตรวจหรือเปลี่ยน AWS ทุกครั้ง.
 
+## เส้นทางปกติ ฉบับคน deploy
+
+จำ flow เดียวนี้: **UAT → READY → Production แบบปิดลูกค้า**. จด ID สามตัวไว้เสมอ:
+`UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`. ถ้าขั้นใด fail ให้หยุดหาสาเหตุ; ห้ามกดซ้ำเพื่อ
+ลองใหม่. Flow นี้ไม่เปิด Cloudflare และผล Production ต้องยังเป็น `maintenance_closed`.
+
+### A. ขึ้น UAT
+
+1. เลือก `candidate` เป็น full SHA 40 ตัวของ reviewed PR head ที่ CI ผ่าน แล้ว merge PR เข้า `main`.
+   ตรวจว่า candidate เป็น ancestor ของทั้ง `origin/main` และ `origin/develop`.
+2. ตรวจว่าไม่มี UAT/Readiness/Production run อื่นกำลัง queued หรือ running แล้ว freeze `main`
+   ตั้งแต่ก่อน dispatch UAT จน Production จบ. นี่คือเส้นทางปกติที่ไม่เกิด controller/source race.
+3. สั่ง UAT จาก workflow บน `main`:
+
+   ```sh
+   repo=MangmeeDev/mangmeeplus
+   candidate=<reviewed-lowercase-40-char-sha>
+
+   gh workflow run deploy-uat.yml -R "$repo" --ref main \
+     -f release_ref="$candidate" \
+     -f target=all \
+     -f run_m01_acceptance=false
+   ```
+
+4. จด `UAT_RUN_ID` แล้วรอ run เดิมจนจบ. ผ่านได้เมื่อ title/source ถูกตัว, workflow สำเร็จ,
+   service ใช้ exact digest, health ผ่าน และมี signed Passport ของ candidate.
+5. ตรวจ deep DB readiness ด้วยคำสั่ง secret-safe ในหัวข้อ 3. ถ้า consent หรือ journey ธุรกิจเปลี่ยน
+   ให้ทดสอบ journey นั้นบน UAT จริงด้วย. ผู้ที่เคยยอมรับเอกสาร hash เดิมต้องไม่ถูกถามซ้ำ.
+
+UAT คือจุดที่ build/test/sign image. หลังจากนี้ Production ต้องใช้ digest ชุดนี้โดยไม่ rebuild.
+
+### B. ออก Production READY
+
+1. UAT `all` ที่สำเร็จจะสร้าง Readiness run ให้อัตโนมัติ. อย่ากด manual ซ้อนกับ run ที่มีอยู่.
+2. จด `READY_RUN_ID`; `main` ต้องยัง frozen และตรงกับ controller ที่เริ่ม UAT.
+3. ผ่านได้เมื่อ Readiness สำเร็จ, controller ตรงกับ `origin/main`, ทุก check เป็น `PASS` และมี signed
+   READY artifact. `EXACT_MATCH` ไม่สร้าง clone; ถ้ามี migration ค้าง ต้อง clone/rehearse และล้าง
+   resource เหลือศูนย์ก่อน.
+
+Readiness เป็นการพิสูจน์ก่อน deploy; ถ้า fail จะยังไม่เปลี่ยน Production. กรณีต้อง dispatch เองดู
+คำสั่งในหัวข้อ 4.
+
+### C. ขึ้น Production แบบปิดลูกค้า
+
+1. ตรวจว่า `origin/main` ยังเท่ากับ controller ใน READY.
+2. สั่ง Production หนึ่งครั้ง:
+
+   ```sh
+   gh workflow run deploy-production-v2.yml -R "$repo" --ref main \
+     -f uat_run_id="$UAT_RUN_ID" \
+     -f readiness_run_id="$READY_RUN_ID" \
+     -f requested_serving_mode=maintenance_closed
+   ```
+
+3. จด `PROD_RUN_ID` แล้วรอ run เดิมจนจบ; ห้าม cancel/rerun ระหว่าง durable operation.
+4. เสร็จจริงเมื่อ workflow สำเร็จ, signed result เป็น `PROMOTED_CLOSED`, maintenance proof เป็น
+   `DEPLOYED_NOT_LAUNCHED`, image/source ตรง UAT, deep DB readiness ผ่าน, SYSTEM_ADMIN acceptance
+   ผ่าน และไม่มี clone residue.
+5. ยืนยันสุดท้ายว่าหน้าลูกค้ายังแสดง maintenance, platform access เป็น `CLOSED` และ
+   `canOpen=false`. การเปิดจริงเป็น ceremony แยกหลัง legal evidence และ owner decision พร้อม.
+
+ถ้า source/image/migration catalog เปลี่ยน ให้เริ่ม A ใหม่. ถ้าเปลี่ยนเฉพาะ controller และ Passport
+ยัง valid อาจเริ่ม B ใหม่ได้ตาม validator. ถ้าเปลี่ยนเพียงเอกสารภายใน `docs/**` ที่ไม่เข้า image/runtime
+ไม่ต้อง deploy.
+
 ## 1. ตัดสินก่อนว่าต้อง deploy หรือไม่
 
 | การเปลี่ยนแปลง | เส้นทางที่ต้องใช้ |
