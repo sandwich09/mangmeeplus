@@ -4,6 +4,11 @@ Status: configuration procedure only. The checked-in `legal-release-evidence.jso
 `BLOCKED`; do not mark an item `VERIFIED` or create substitute evidence until the named review
 has actually occurred.
 
+An owner-approved live exception does not modify this manifest or create substitute files. It is
+recorded separately as `legal.mode=OWNER_OVERRIDE`, exact GitHub actor and approval reference in a
+signed Production READY V2 artifact; see `uat-production-v2-deployment.md` §D. The five-file bundle
+remains required before the release can claim independent legal review.
+
 ## Storage and IAM boundary
 
 Keep this bundle in a dedicated compliance bucket, not the MangmeePlus application attachment

@@ -180,6 +180,25 @@ export function isRoleEditableByCompany(role: Pick<RoleSummary, 'key'>): boolean
   return !NON_EDITABLE_ROLE_KEYS.some((key) => key === role.key);
 }
 
+/** Finance-grade roles; assigning one is owner-gated on `access.role.financial.assign`. */
+export const FINANCIAL_ROLE_KEYS = ['FINANCE', 'ACCOUNTANT'];
+
+/**
+ * Roles whose job is oversight of the whole business — governance, finance, audit — so a membership
+ * holding one must stay `ALL_BRANCHES` (spec branch-scope-visibility R8). Enforced at the employee
+ * write path, never by overriding the permission resolver, so the membership stays the single source
+ * of branch truth. OWNER/SYSTEM_ADMIN cannot reach the employee form at all; they are listed so a
+ * future direct-write path inherits the rule rather than re-deriving it.
+ *
+ * Not one of the four broad-read lists (`crm-customer.use-case.ts`, `crm.logic.ts`,
+ * `audit.controller.ts`, `workflow-task.use-case.ts`): those answer "whose records", this answers
+ * "which branches". MARKETING is deliberately absent here and present in one of those.
+ */
+export const ALL_BRANCH_ROLE_KEYS = [
+  'OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW', 'ADMIN', 'AUDITOR_READONLY',
+  ...FINANCIAL_ROLE_KEYS,
+];
+
 export type CreateRoleInput = {
   name: string;
   description?: string;

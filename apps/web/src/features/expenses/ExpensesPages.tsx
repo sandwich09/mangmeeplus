@@ -29,6 +29,7 @@ import {
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
+  lateDocumentDays,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent,
   vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
   vatRateFromPrintedAmount, effectiveVatRateLabel, vatModeRequiresRate,
@@ -39,6 +40,7 @@ import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail,
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
@@ -75,6 +77,13 @@ function periodRange(gran: Gran, month: string, day: string): { fromDate: string
   const [y, m] = month.split('-').map((n) => parseInt(n, 10));
   const last = new Date(y!, m!, 0).getDate();
   return { fromDate: `${month}-01`, toDate: `${month}-${String(last).padStart(2, '0')}` };
+}
+
+function LateDocumentBadge({ expense, locale }: { expense: ExpenseSummary; locale: SupportedLocale }) {
+  const days = lateDocumentDays(expense);
+  return days === null
+    ? null
+    : <MangmeeBadge tone="amber">{messageWithParams(t('expenses.late_document_days', locale), { days: String(days) })}</MangmeeBadge>;
 }
 
 export type ExtractionNotice = { tone: 'info' | 'error'; message: string };
@@ -1318,10 +1327,19 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const res = await listExpenses(companyId, { ...(branchId ? { branchId } : {}), fromDate, toDate, pageSize: 200 });
+      const res = await listExpenses(companyId, {
+        ...(branchId ? { branchId } : {}),
+        uploadedFromDate: fromDate,
+        uploadedToDate: toDate,
+        pageSize: 200,
+      });
       setRows(res.data);
-    } catch (e) { setError(err(e)); }
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setLoading(false); }
+    // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
   }, [companyId, branchId, fromDate, toDate]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -1390,7 +1408,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       if (result.truncated) setExportNotice(`ส่งออก ${result.rowCount} จากทั้งหมด ${result.totalMatched} รายการ — แบ่งช่วงวันที่ให้สั้นลงเพื่อส่งออกให้ครบ`);
       downloadIndexXlsx(result, `expense-index-${gran === 'month' ? month : day}.xlsx`);
       setExported(true); setTimeout(() => setExported(false), 3000);
-    } catch (e) { setError(err(e)); }
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setExporting(false); }
   };
 
@@ -1409,15 +1430,18 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         {/* period control (finBar) */}
-        <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
-          <div className="mangmee-segmented shrink-0 whitespace-nowrap">
-            <button className={cx('mangmee-tab', gran === 'day' && 'mangmee-tab-active')} onClick={() => setGran('day')}>{t('expenses.granularity_day', locale)}</button>
-            <button className={cx('mangmee-tab', gran === 'month' && 'mangmee-tab-active')} onClick={() => setGran('month')}>{t('expenses.granularity_month', locale)}</button>
+        <div className="w-full sm:w-auto">
+          <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
+            <div className="mangmee-segmented shrink-0 whitespace-nowrap">
+              <button className={cx('mangmee-tab', gran === 'day' && 'mangmee-tab-active')} onClick={() => setGran('day')}>{t('expenses.granularity_day', locale)}</button>
+              <button className={cx('mangmee-tab', gran === 'month' && 'mangmee-tab-active')} onClick={() => setGran('month')}>{t('expenses.granularity_month', locale)}</button>
+            </div>
+            {gran === 'day'
+              ? <ThemedDate className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={day} onChange={(e) => setDay(e.target.value)} />
+              : <ThemedDate mode="month" className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
+            {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
           </div>
-          {gran === 'day'
-            ? <ThemedDate className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={day} onChange={(e) => setDay(e.target.value)} />
-            : <ThemedDate mode="month" className={cx(inputClass, 'w-auto shrink-0 whitespace-nowrap')} value={month} onChange={(e) => setMonth(e.target.value)} />}
-          {gran === 'day' && <button className={cx(ghostClass, 'shrink-0 whitespace-nowrap px-3')} onClick={() => setDay(todayCivilDate())}>{t('expenses.today', locale)}</button>}
+          <p className="mt-1 text-xs text-gray-400">{t('expenses.intake_filter_desc', locale)}</p>
         </div>
         {/* export controls */}
         <div className="flex flex-col gap-1 lg:shrink-0 lg:items-end">
@@ -1483,8 +1507,12 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                           </div>
                         </div>
                         <div>
-                          <div className="text-sm text-gray-600">{dateShort(e.expenseDate)}</div>
-                          <div className="mt-0.5"><MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge></div>
+                          <div className="text-xs text-gray-500"><span className="font-semibold">{t('expenses.document_date', locale)}:</span> {dateShort(e.expenseDate)}</div>
+                          <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> {dateShort(e.uploadedAt)}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <LateDocumentBadge expense={e} locale={locale} />
+                            <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, e.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
+                          </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
                         <div className="flex flex-col items-end gap-1"><StatusBadge status={e.status} /><StatusBadge status={e.paymentStatus} /></div>
@@ -1512,9 +1540,13 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                     <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{firstFilled(e.expenseNumber, e.vendorDocumentNumber) ?? '—'}</span>
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
                   </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
+                    <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{dateShort(e.expenseDate)}</div>
+                    <div className="text-right"><span className="block font-semibold">{t('expenses.intake_date', locale)}</span>{dateShort(e.uploadedAt)}</div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                     <StatusBadge status={e.status} />
-                    <span className="shrink-0 text-xs text-gray-500">{dateShort(e.expenseDate)}</span>
+                    <LateDocumentBadge expense={e} locale={locale} />
                   </div>
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{baht(e.grandTotalAmount)}</div>
                 </button>

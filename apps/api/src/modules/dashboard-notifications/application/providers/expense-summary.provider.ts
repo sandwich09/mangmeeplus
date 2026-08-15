@@ -22,8 +22,12 @@ export class ExpenseSummaryProvider {
     companyId: string;
     periodStart: Date;
     periodEnd: Date;
+    /** Absent = company-wide. Present = exact branch match, so company-central (branchId null)
+     *  rows appear under the combined view and under no individual branch (spec R4) — the same
+     *  rule the Expenses list applies to an explicit selection. */
+    branchIds?: string[];
   }): Promise<DashboardWidget[]> {
-    const { companyId, periodStart, periodEnd } = input;
+    const { companyId, periodStart, periodEnd, branchIds } = input;
     const computedAt = new Date().toISOString();
 
     try {
@@ -31,7 +35,7 @@ export class ExpenseSummaryProvider {
       // ponytail: three counting queries, no shared scan. Fold into one groupBy if this shows up in slow logs.
       const [confirmedInPeriod, pendingReview, unpaid] = await Promise.all([
         this.prisma.client.expenseRecord.aggregate({
-          where: { companyId, status: 'CONFIRMED', expenseDate: { gte: periodStart, lte: periodEnd } },
+          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: 'CONFIRMED', expenseDate: { gte: periodStart, lte: periodEnd } },
           _sum: { grandTotalAmount: true },
           _count: { _all: true },
         }),
@@ -40,10 +44,10 @@ export class ExpenseSummaryProvider {
         // metric stays current-state rather than period-scoped — period-scoping it would hide
         // stale unreviewed receipts, which is what this number exists to surface.
         this.prisma.client.expenseRecord.count({
-          where: { companyId, status: { in: [...EXPENSE_PENDING_STATUSES] } },
+          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: { in: [...EXPENSE_PENDING_STATUSES] } },
         }),
         this.prisma.client.expenseRecord.aggregate({
-          where: { companyId, status: 'CONFIRMED', paymentStatus: { in: ['UNPAID', 'PARTIALLY_PAID'] } },
+          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: 'CONFIRMED', paymentStatus: { in: ['UNPAID', 'PARTIALLY_PAID'] } },
           _sum: { outstandingAmount: true },
         }),
       ]);

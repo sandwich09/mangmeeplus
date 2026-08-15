@@ -12,7 +12,7 @@ function qs(params?: Record<string, unknown>): string {
 
 // ---- Vendor Bills ----
 
-export function listVendorBills(companyId: string, params?: { status?: string; supplierId?: string; matchingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }) {
+export function listVendorBills(companyId: string, params?: { status?: string; supplierId?: string; matchingStatus?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }) {
   return apiFetch<{ data: VendorBillSummary[]; total: number; page: number; pageSize: number }>(`/companies/${companyId}/accounts-payable/vendor-bills${qs(params)}`);
 }
 

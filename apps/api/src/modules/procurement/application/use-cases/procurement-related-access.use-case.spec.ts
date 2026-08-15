@@ -73,3 +73,33 @@ describe('procurement related-document reads', () => {
     });
   }
 });
+
+// Spec R6: an explicit branch filter outside the caller's scope is a 403, not a silently empty page.
+const branchFilterLists = [
+  { label: 'purchase order', read: 'procurement.purchase_order.read', list: 'listPurchaseOrders', List: ListPurchaseOrdersUseCase },
+  { label: 'vendor bill', read: 'procurement.vendor_bill.read', list: 'listVendorBills', List: ListVendorBillsUseCase },
+] as const;
+
+describe('procurement list branch filter', () => {
+  for (const entry of branchFilterLists) {
+    it(`rejects an out-of-scope branch filter on the ${entry.label} list`, async () => {
+      let queries = 0;
+      const repo = { [entry.list]: async () => { queries += 1; return { data: [], total: 0 }; } };
+      await assert.rejects(
+        () => new entry.List(repo as any).execute(ctx([entry.read]), { branchId: 'branch-2' }),
+        ForbiddenException,
+      );
+      assert.equal(queries, 0, 'the out-of-scope branch must be refused before the query runs');
+    });
+
+    it(`passes an in-scope branch filter through to the ${entry.label} query`, async () => {
+      const calls: unknown[][] = [];
+      const repo = { [entry.list]: async (...args: unknown[]) => { calls.push(args); return { data: [], total: 0 }; } };
+      await new entry.List(repo as any).execute(ctx([entry.read]), { branchId: 'branch-1' });
+      assert.deepEqual(calls[0], ['company-1', { branchId: 'branch-1' }, { branchIds: ['branch-1'] }]);
+      // An unrestricted caller keeps naming any branch it likes.
+      await new entry.List(repo as any).execute({ ...ctx([entry.read]), scopes: {} }, { branchId: 'branch-9' });
+      assert.deepEqual(calls[1], ['company-1', { branchId: 'branch-9' }, {}]);
+    });
+  }
+});

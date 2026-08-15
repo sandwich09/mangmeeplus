@@ -54,14 +54,14 @@ async function apiFetch<T>(path: string, init?: AuthedInit): Promise<T> {
 
 // ---- Dashboard ----
 
-export function getDashboard(companyId: string, periodKind?: DashboardPeriodKind): Promise<DashboardSnapshot> {
-  return apiFetch(`/v1/companies/${companyId}/dashboard${qs({ periodKind })}`);
+export function getDashboard(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string): Promise<DashboardSnapshot> {
+  return apiFetch(`/v1/companies/${companyId}/dashboard${qs({ periodKind, branchId })}`);
 }
 
-export function generateSnapshot(companyId: string, periodKind?: DashboardPeriodKind): Promise<DashboardSnapshot> {
+export function generateSnapshot(companyId: string, periodKind?: DashboardPeriodKind, branchId?: string): Promise<DashboardSnapshot> {
   return apiFetch(`/v1/companies/${companyId}/dashboard/snapshots/generate`, {
     method: 'POST',
-    body: JSON.stringify({ periodKind }),
+    body: JSON.stringify({ periodKind, ...(branchId ? { branchId } : {}) }),
   });
 }
 

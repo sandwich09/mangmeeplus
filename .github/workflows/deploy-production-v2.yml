@@ -233,7 +233,11 @@ jobs:
           migration_status="$(jq -er '.migration.status' "$ready_root/ready.json")"
           pending="$(jq -er '.migration.pendingMigrationCount' "$ready_root/ready.json")"
           effective_target="$(jq -er '.serving.effectiveTarget' "$ready_root/ready.json")"
+          legal_mode="$(jq -er '.legal.mode' "$ready_root/ready.json")"
+          owner_override_ref="$(jq -r '.legal.ownerApprovalRef // ""' "$ready_root/ready.json")"
+          owner_override_actor="$(jq -r '.legal.approvedBy // ""' "$ready_root/ready.json")"
           case "$effective_target" in all|api-web|ai-gateway|workers) ;; *) exit 2 ;; esac
+          case "$legal_mode" in NOT_APPLICABLE|VERIFIED_BUNDLE|OWNER_OVERRIDE) ;; *) exit 2 ;; esac
           baseline_closed="$(jq -r '[.productionBaseline.services[].servingMode=="maintenance_only"]|all' "$ready_root/ready.json")"
           already_candidate_closed="$(jq -n --slurpfile ready "$ready_root/ready.json" \
             --slurpfile manifest release/production-image-manifest.json '
@@ -255,6 +259,8 @@ jobs:
             "RELEASE_TASK_IMAGE=$release_image" "MIGRATION_IMAGE=$migration_image" \
             "MIGRATION_STATUS=$migration_status" "PENDING_MIGRATION_COUNT=$pending" \
             "EFFECTIVE_TARGET=$effective_target" "REQUIRES_CLOSED_STAGE=$requires_closed_stage" \
+            "LEGAL_MODE=$legal_mode" "OWNER_OVERRIDE_REF=$owner_override_ref" \
+            "OWNER_OVERRIDE_ACTOR=$owner_override_actor" \
             "BASELINE_CLOSED=$baseline_closed" "ALREADY_CANDIDATE_CLOSED=$already_candidate_closed" \
             "FINAL_SERVING_MODE=$final_mode" >> "$GITHUB_ENV"
 
@@ -268,10 +274,10 @@ jobs:
           ' > "$evidence/controller.json"
 
       - name: Revalidate current legal evidence for a live opening
-        if: inputs.requested_serving_mode == 'live'
+        if: inputs.requested_serving_mode == 'live' && env.LEGAL_MODE == 'VERIFIED_BUNDLE'
         run: bash infra/security/provision-legal-release-evidence.sh preflight
       - name: Configure narrow legal reader for a live opening
-        if: inputs.requested_serving_mode == 'live'
+        if: inputs.requested_serving_mode == 'live' && env.LEGAL_MODE == 'VERIFIED_BUNDLE'
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
           role-to-assume: ${{ vars.LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN }}
@@ -280,12 +286,19 @@ jobs:
           role-session-name: production-v2-legal-${{ github.run_id }}
           unset-current-credentials: true
       - name: Revalidate the independently reviewed live legal bundle
-        if: inputs.requested_serving_mode == 'live'
+        if: inputs.requested_serving_mode == 'live' && env.LEGAL_MODE == 'VERIFIED_BUNDLE'
         run: |
           set -euo pipefail
           legal="$(bash infra/security/provision-legal-release-evidence.sh provision)"
           LEGAL_RELEASE_EVIDENCE_DIR="$legal" bash infra/security/validate-legal-release-readiness.sh
           echo "LEGAL_EVIDENCE_DIR=$legal" >> "$GITHUB_ENV"
+
+      - name: Honor the signed owner legal override for a live opening
+        if: inputs.requested_serving_mode == 'live' && env.LEGAL_MODE == 'OWNER_OVERRIDE'
+        run: |
+          set -euo pipefail
+          test "$OWNER_OVERRIDE_ACTOR" = MangmeeDev
+          [[ "$OWNER_OVERRIDE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$ ]]
 
       - name: Configure read-only Production security credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
@@ -501,9 +514,14 @@ jobs:
             "${{ inputs.uat_run_id }}" "$(jq -er '.passportRef.runAttempt' "$READY_ROOT/ready.json")" \
             "${{ inputs.readiness_run_id }}" "$READY_RUN_ATTEMPT" "$READY_CONTROLLER" \
             "$GITHUB_REPOSITORY" "$(date -u +%s)" >/dev/null
-          if [ "${{ inputs.requested_serving_mode }}" = live ]; then
+          if [ "${{ inputs.requested_serving_mode }}" = live ] \
+              && [ "$LEGAL_MODE" = VERIFIED_BUNDLE ]; then
             LEGAL_RELEASE_EVIDENCE_DIR="$LEGAL_EVIDENCE_DIR" \
               bash infra/security/validate-legal-release-readiness.sh
+          elif [ "${{ inputs.requested_serving_mode }}" = live ]; then
+            test "$LEGAL_MODE" = OWNER_OVERRIDE
+            test "$OWNER_OVERRIDE_ACTOR" = MangmeeDev
+            [[ "$OWNER_OVERRIDE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$ ]]
           fi
           export PRODUCTION_READY_REPOSITORY_CATALOG_HASH PRODUCTION_READY_APPLIED_CATALOG_HASH
           export PRODUCTION_READY_PENDING_CATALOG_HASH PRODUCTION_READY_PENDING_COUNT

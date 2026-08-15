@@ -103,4 +103,56 @@ describe('expense related-view ABAC', () => {
     assert.ok(capturedWhere.AND[1].OR.some((clause: any) => clause.approverUserId === 'actor-1'));
     assert.ok(capturedWhere.AND[2].OR.some((clause: any) => clause.paymentDate));
   });
+
+  it('orders upload-range lists by newest intake before applying the page limit', async () => {
+    let capturedFindMany: any;
+    const prisma = {
+      client: {
+        expenseRecord: {
+          findMany: async (input: any) => { capturedFindMany = input; return []; },
+          count: async () => 0,
+        },
+      },
+    } as any;
+
+    await new PrismaExpenseRepository(prisma).listExpenses({
+      companyId: 'company-1', uploadedFromDate: '2026-08-01', uploadedToDate: '2026-08-31', pageSize: 200,
+    }, { branchIds: ['branch-1'] }, 'actor-1');
+
+    assert.deepEqual(capturedFindMany.orderBy, { uploadedAt: 'desc' });
+    assert.equal(capturedFindMany.take, 200);
+    assert.equal(capturedFindMany.where.companyId, 'company-1');
+    assert.deepEqual(capturedFindMany.where.OR, [
+      { branchId: { in: ['branch-1'] } }, { branchId: null },
+    ]);
+    assert.equal(capturedFindMany.where.AND.length, 1);
+    assert.match(JSON.stringify(capturedFindMany.where.AND[0]), /"createdByUserId":"actor-1"/);
+    assert.deepEqual(capturedFindMany.where.uploadedAt, {
+      gte: new Date('2026-07-31T17:00:00.000Z'),
+      lt: new Date('2026-08-31T17:00:00.000Z'),
+    });
+    assert.equal(capturedFindMany.where.expenseDate, undefined);
+  });
+
+  it('keeps document-date ordering for callers without a dedicated upload-date lens', async () => {
+    let capturedFindMany: any;
+    const prisma = {
+      client: {
+        expenseRecord: {
+          findMany: async (input: any) => { capturedFindMany = input; return []; },
+          count: async () => 0,
+        },
+      },
+    } as any;
+
+    await new PrismaExpenseRepository(prisma).listExpenses({ companyId: 'company-1', pageSize: 20 });
+
+    assert.deepEqual(capturedFindMany.orderBy, { expenseDate: 'desc' });
+
+    await new PrismaExpenseRepository(prisma).listExpenses({
+      companyId: 'company-1', fromDate: '2026-08-01', uploadedFromDate: '2026-08-01', pageSize: 20,
+    });
+
+    assert.deepEqual(capturedFindMany.orderBy, { expenseDate: 'desc' });
+  });
 });

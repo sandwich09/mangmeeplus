@@ -84,6 +84,14 @@ describe('internal worker bodies', () => {
       'forceGenerate is set by the route, not the caller');
   });
 
+  it('accepts an optional branchId and caps its length', async () => {
+    assert.equal((await accepts(GenerateDashboardSnapshotDto, { periodKind: 'today', branchId: 'br_1' })).branchId, 'br_1');
+    assert.equal((await accepts(GenerateDashboardSnapshotDto, {})).branchId, undefined, 'absent means the caller own scope');
+    // Whether the branch is readable is a 403 from the use case; this boundary only bounds it.
+    await rejects(GenerateDashboardSnapshotDto, { branchId: 'b'.repeat(65) });
+    await rejects(GenerateDashboardSnapshotDto, { branchId: 42 });
+  });
+
   it('accepts the {periodKey} the daily-owner-summary job posts', async () => {
     assert.equal((await accepts(DailyOwnerSummaryDto, { periodKey: '2026-07-29' })).periodKey, '2026-07-29');
     assert.equal((await accepts(DailyOwnerSummaryDto, {})).periodKey, undefined, 'absent means today');

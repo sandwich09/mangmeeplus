@@ -28,6 +28,17 @@ for required in \
   grep -Fq "$required" "$workflow" || { echo "ERROR: Production V2 workflow is missing $required" >&2; exit 1; }
 done
 
+for owner_override in \
+  'legal_mode="$(jq -er' '.legal.mode' \
+  'Honor the signed owner legal override for a live opening' \
+  "env.LEGAL_MODE == 'VERIFIED_BUNDLE'" "env.LEGAL_MODE == 'OWNER_OVERRIDE'" \
+  'test "$OWNER_OVERRIDE_ACTOR" = MangmeeDev'; do
+  grep -Fq "$owner_override" "$workflow" || {
+    echo "ERROR: Production V2 workflow is missing owner override binding: $owner_override" >&2
+    exit 1
+  }
+done
+
 for forbidden in 'pnpm ' 'npm ' 'yarn ' 'docker build' 'build-push-action' 'anchore/sbom-action' \
   'cosign sign ' 'cosign attest' 'uses: ./.github/workflows/ci.yml' 'prisma validate'; do
   if grep -Fq "$forbidden" "$workflow"; then

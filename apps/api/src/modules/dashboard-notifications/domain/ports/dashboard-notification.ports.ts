@@ -1,5 +1,5 @@
 // Domain ports for Dashboard and Notification (Item 06)
-import type { DashboardSnapshot, DashboardWidgetConfig } from '../models/dashboard.model';
+import type { DashboardScope, DashboardSnapshot, DashboardWidgetConfig } from '../models/dashboard.model';
 import type {
   NotificationRule,
   NotificationEvent,
@@ -12,7 +12,9 @@ import type {
 // ---- Dashboard ----
 
 export interface DashboardSnapshotRepositoryPort {
-  findLatest(companyId: string, periodKind: string): Promise<DashboardSnapshot | null>;
+  /** `scope`/`scopeKey` are part of the lookup key, not decoration: without them a branch snapshot
+   *  is served to a company-wide request, and one branch's to another. */
+  findLatest(companyId: string, periodKind: string, scope: DashboardScope, scopeKey?: string): Promise<DashboardSnapshot | null>;
   findById(companyId: string, id: string): Promise<DashboardSnapshot | null>;
   create(data: Omit<DashboardSnapshot, 'id' | 'createdAt'>): Promise<DashboardSnapshot>;
 }

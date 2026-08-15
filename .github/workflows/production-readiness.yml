@@ -17,6 +17,10 @@ on:
         default: maintenance_closed
         type: choice
         options: [maintenance_closed, live]
+      owner_legal_override_ref:
+        description: Owner approval reference for an auditable live legal-evidence override
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -37,6 +41,9 @@ jobs:
       eligible: ${{ steps.resolve.outputs.eligible }}
       uat_run_id: ${{ steps.resolve.outputs.uat_run_id }}
       requested_mode: ${{ steps.resolve.outputs.requested_mode }}
+      legal_mode: ${{ steps.resolve.outputs.legal_mode }}
+      owner_override_ref: ${{ steps.resolve.outputs.owner_override_ref }}
+      owner_override_actor: ${{ steps.resolve.outputs.owner_override_actor }}
     steps:
       - id: resolve
         env:
@@ -44,6 +51,7 @@ jobs:
           DISPATCH_RUN_ID: ${{ inputs.uat_run_id }}
           EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
           DISPATCH_MODE: ${{ inputs.requested_serving_mode }}
+          DISPATCH_OWNER_OVERRIDE_REF: ${{ inputs.owner_legal_override_ref }}
         run: |
           set -euo pipefail
           run_id="$EVENT_RUN_ID"
@@ -51,6 +59,20 @@ jobs:
           [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || { run_id="$DISPATCH_RUN_ID"; mode="$DISPATCH_MODE"; }
           [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
           case "$mode" in maintenance_closed|live) ;; *) exit 2 ;; esac
+          legal_mode=NOT_APPLICABLE
+          owner_override_ref=
+          owner_override_actor=
+          if [ -n "$DISPATCH_OWNER_OVERRIDE_REF" ]; then
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$mode" = live
+            test "$GITHUB_ACTOR" = MangmeeDev
+            [[ "$DISPATCH_OWNER_OVERRIDE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$ ]]
+            legal_mode=OWNER_OVERRIDE
+            owner_override_ref="$DISPATCH_OWNER_OVERRIDE_REF"
+            owner_override_actor="$GITHUB_ACTOR"
+          elif [ "$mode" = live ]; then
+            legal_mode=VERIFIED_BUNDLE
+          fi
           run_json="$RUNNER_TEMP/uat-run.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$run_json"
           attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$run_json")"
@@ -61,7 +83,9 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then test "$count" = 1; fi
           eligible=false
           [ "$count" = 1 ] && eligible=true
-          printf '%s\n' "eligible=$eligible" "uat_run_id=$run_id" "requested_mode=$mode" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "eligible=$eligible" "uat_run_id=$run_id" "requested_mode=$mode" \
+            "legal_mode=$legal_mode" "owner_override_ref=$owner_override_ref" \
+            "owner_override_actor=$owner_override_actor" >> "$GITHUB_OUTPUT"
 
   readiness:
     name: Prove Production readiness without application mutation
@@ -76,6 +100,9 @@ jobs:
       ECR_REGISTRY: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com
       UAT_RUN_ID: ${{ needs.discover.outputs.uat_run_id }}
       REQUESTED_MODE: ${{ needs.discover.outputs.requested_mode }}
+      LEGAL_MODE: ${{ needs.discover.outputs.legal_mode }}
+      OWNER_OVERRIDE_REF: ${{ needs.discover.outputs.owner_override_ref }}
+      OWNER_OVERRIDE_ACTOR: ${{ needs.discover.outputs.owner_override_actor }}
       SECURITY_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly
       A5_READER_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly
       A5_CLONE_ROLE_ARN: arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone
@@ -181,13 +208,13 @@ jobs:
             and .allow_force_pushes.enabled==false and .allow_deletions.enabled==false' \
             "$root/main-protection.json" >/dev/null
       - name: Reject a live READY until the independent legal bundle is complete
-        if: needs.discover.outputs.requested_mode == 'live'
+        if: needs.discover.outputs.requested_mode == 'live' && needs.discover.outputs.legal_mode == 'VERIFIED_BUNDLE'
         run: bash infra/security/provision-legal-release-evidence.sh preflight
       - name: Verify the closed-mode maintenance controller
         if: needs.discover.outputs.requested_mode == 'maintenance_closed'
         run: bash infra/security/validate-production-maintenance-release.sh "$GITHUB_WORKSPACE" full
       - name: Configure narrow legal evidence reader for live mode
-        if: needs.discover.outputs.requested_mode == 'live'
+        if: needs.discover.outputs.requested_mode == 'live' && needs.discover.outputs.legal_mode == 'VERIFIED_BUNDLE'
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
           role-to-assume: ${{ env.LEGAL_READER_ROLE_ARN }}
@@ -195,11 +222,18 @@ jobs:
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
           role-session-name: production-readiness-legal-${{ github.run_id }}
       - name: Provision and fully validate legal evidence for live mode
-        if: needs.discover.outputs.requested_mode == 'live'
+        if: needs.discover.outputs.requested_mode == 'live' && needs.discover.outputs.legal_mode == 'VERIFIED_BUNDLE'
         run: |
           set -euo pipefail
           legal_dir="$(bash infra/security/provision-legal-release-evidence.sh provision)"
           LEGAL_RELEASE_EVIDENCE_DIR="$legal_dir" bash infra/security/validate-legal-release-readiness.sh
+      - name: Bind explicit owner legal override for live mode
+        if: needs.discover.outputs.requested_mode == 'live' && needs.discover.outputs.legal_mode == 'OWNER_OVERRIDE'
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$OWNER_OVERRIDE_ACTOR" = MangmeeDev
+          [[ "$OWNER_OVERRIDE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$ ]]
       - name: Configure read-only Production security credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
@@ -366,6 +400,8 @@ jobs:
             --arg source "$SOURCE_SHA" --arg uat "$UAT_RUN_ID" --argjson uatAttempt "$UAT_ATTEMPT" \
             --arg passportHash "$(sha256sum "$PASSPORT_ROOT/passport.json"|awk '{print $1}')" \
             --argjson passportExpires "$passport_expires" --arg mode "$REQUESTED_MODE" \
+            --arg legalMode "$LEGAL_MODE" --arg ownerOverrideRef "$OWNER_OVERRIDE_REF" \
+            --arg ownerOverrideActor "$OWNER_OVERRIDE_ACTOR" \
             --arg target "$EFFECTIVE_TARGET" \
             --arg healthHash "$(sha256sum "$EVIDENCE_DIR/production-health.json"|awk '{print $1}')" \
             --arg runtimeHash "$(sha256sum "$EVIDENCE_DIR/production-runtime.json"|awk '{print $1}')" \
@@ -380,6 +416,9 @@ jobs:
              sourceCommit:$source,passportRef:{runId:$uat,runAttempt:$uatAttempt,
                contentSha256:$passportHash,expiresAtEpoch:$passportExpires},
              serving:{requestedMode:$mode,effectiveTarget:$target},
+             legal:{mode:$legalMode,
+               ownerApprovalRef:(if $legalMode=="OWNER_OVERRIDE" then $ownerOverrideRef else null end),
+               approvedBy:(if $legalMode=="OWNER_OVERRIDE" then $ownerOverrideActor else null end)},
              aws:{accountId:"311414082667",region:"ap-southeast-1"},
              issuedAtEpoch:$issued,expiresAtEpoch:$expires,
              productionBaseline:{path:"production-health.json",sha256:$healthHash,services:$services},
@@ -388,7 +427,9 @@ jobs:
                runtimePath:"catalog-runtime.json",runtimeSha256:$catalogRuntimeHash,
                status:$migrationStatus,pendingMigrationCount:$pending,clone:$clone},
              checks:{a5Reader:"PASS",artifactIntegrity:"PASS",awsPolicies:"PASS",
-               imageSignatures:"PASS",legalMode:"PASS",productionRuntime:"PASS",serviceStability:"PASS"}}
+               imageSignatures:"PASS",
+               legalMode:(if $legalMode=="OWNER_OVERRIDE" then "OWNER_OVERRIDE" else "PASS" end),
+               productionRuntime:"PASS",serviceStability:"PASS"}}
           ' > "$READINESS_ROOT/ready-body.json"
           content="$(jq -cjS . "$READINESS_ROOT/ready-body.json"|sha256sum|awk '{print $1}')"
           jq -cS --arg hash "$content" '.+{contentSha256:$hash}' \

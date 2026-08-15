@@ -81,4 +81,24 @@ describe('ExpenseSummaryProvider', () => {
     const [widget] = await provider.collectMetrics(input());
     assert.equal(widget.unavailableReason, 'ข้อมูลค่าใช้จ่ายไม่พร้อมใช้งาน');
   });
+
+  it('narrows all three queries to the given branches, by exact match', async () => {
+    const { provider, calls } = makeSut();
+    await provider.collectMetrics({ ...input(), branchIds: ['b1', 'b2'] });
+
+    assert.equal(calls.length, 3);
+    for (const where of calls) {
+      assert.deepEqual((where as any).branchId, { in: ['b1', 'b2'] });
+      // Exact match, not branchScopeWhere: company-central rows (branchId null) belong to the
+      // combined view and to no individual branch (spec R4), so per-branch figures need not sum to
+      // the company total. This mirrors the Expenses list, which the card links to.
+      assert.equal((where as any).OR, undefined);
+    }
+  });
+
+  it('applies no branch predicate at all when unscoped', async () => {
+    const { provider, calls } = makeSut();
+    await provider.collectMetrics(input());
+    assert.deepEqual(calls.map((where) => (where as any).branchId), [undefined, undefined, undefined]);
+  });
 });

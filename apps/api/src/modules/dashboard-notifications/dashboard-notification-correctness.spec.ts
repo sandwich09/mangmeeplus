@@ -23,6 +23,7 @@ import {
   PrismaNotificationEventRepository,
   PrismaNotificationRecipientRepository,
 } from './infrastructure/prisma-notification.repository';
+import { PrismaDashboardSnapshotRepository } from './infrastructure/prisma-dashboard.repository';
 import { IMPLEMENTED_TRIGGER_KEYS, FUTURE_TRIGGER_KEYS } from './domain/models/notification.model';
 import type { RequestContext } from '../auth/domain/models/request-context.model';
 
@@ -88,6 +89,27 @@ describe('dashboard snapshot cache across a period rollover', () => {
     await useCase.execute(ctx, COMPANY, forPeriod(TODAY));
 
     assert.equal(snapshots.rows.length, 1, 'the matching cached period must still be served');
+  });
+});
+
+describe('dashboard snapshot lookup scope', () => {
+  // findLatest matched only companyId + periodKind, so the first branch-scoped row written could be
+  // served to a company-wide read, or one branch's numbers to another branch. The use-case passing
+  // the right arguments is not enough — the where clause has to carry them.
+  it('keys the lookup on scope and scopeKey, matching company-wide on NULL', async () => {
+    const wheres: any[] = [];
+    const prisma = {
+      client: { dashboardSnapshot: { findFirst: async (args: any) => { wheres.push(args.where); return null; } } },
+    } as any;
+    const repo = new PrismaDashboardSnapshotRepository(prisma);
+
+    await repo.findLatest(COMPANY, 'today', 'branch', 'br-1');
+    await repo.findLatest(COMPANY, 'today', 'company');
+
+    assert.deepEqual(wheres[0], { companyId: COMPANY, periodKind: 'today', scope: 'BRANCH', scopeKey: 'br-1' });
+    // null, not undefined: an undefined scopeKey drops the predicate entirely and lets a branch row
+    // answer the company-wide read, which is the leak this key exists to prevent.
+    assert.deepEqual(wheres[1], { companyId: COMPANY, periodKind: 'today', scope: 'COMPANY', scopeKey: null });
   });
 });
 

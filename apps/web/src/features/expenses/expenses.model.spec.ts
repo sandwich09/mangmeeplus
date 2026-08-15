@@ -40,10 +40,20 @@ import {
   expenseDeleteTargetLabel,
   isExpensePending,
   summarizeExpenseKpis,
+  lateDocumentDays,
   type ExpenseDraftReviewValues,
 } from './expenses.model';
 
 describe('expenses.model', () => {
+  it('marks a document as backdated only when its Bangkok intake date is in a later month', () => {
+    assert.equal(lateDocumentDays({ expenseDate: '2026-06-30', uploadedAt: '2026-08-20T10:00:00.000Z' }), 51);
+    assert.equal(lateDocumentDays({ expenseDate: '2026-07-31', uploadedAt: '2026-07-31T18:00:00.000Z' }), 1);
+    assert.equal(lateDocumentDays({ expenseDate: '2026-08-01', uploadedAt: '2026-08-31T10:00:00.000Z' }), null);
+    assert.equal(lateDocumentDays({ expenseDate: '2026-08-20', uploadedAt: '2026-08-01T10:00:00.000Z' }), null);
+    assert.equal(lateDocumentDays({ expenseDate: 'not-a-date', uploadedAt: '2026-08-20T10:00:00.000Z' }), null);
+    assert.equal(lateDocumentDays({ expenseDate: '2026-06-30', uploadedAt: 'not-an-instant' }), null);
+  });
+
   it('turns internal expense codes into meaningful Thai labels', () => {
     assert.equal(expenseValueLabel(TAX_EVIDENCE_REASON_LABELS, 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE'), 'บิลเขียนมือหรือข้อความ ต้องจัดทำใบรับรองแทนใบเสร็จรับเงิน');
     assert.equal(expenseValueLabel(AI_SUMMARY_STATUS_LABELS, 'TEXT_NOTE_SEMANTIC_CAPTURE'), 'อ่านข้อมูลจากโน้ตข้อความแล้ว รอตรวจสอบ');

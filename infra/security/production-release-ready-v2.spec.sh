@@ -190,6 +190,7 @@ jq -cnS --arg source "$source" --arg controller "$controller" --arg passport "$p
     runAttempt:1,controllerRef:"refs/heads/main",controllerCommit:$controller},sourceCommit:$source,
    passportRef:{runId:"8001",runAttempt:2,contentSha256:$passport,expiresAtEpoch:($expires+60)},
    serving:{requestedMode:"maintenance_closed",effectiveTarget:"all"},
+   legal:{mode:"NOT_APPLICABLE",ownerApprovalRef:null,approvedBy:null},
    aws:{accountId:"311414082667",region:"ap-southeast-1"},issuedAtEpoch:$issued,expiresAtEpoch:$expires,
    productionBaseline:{path:"production-health.json",sha256:$health,services:$services[0]},
    runtimeBaseline:{path:"production-runtime.json",sha256:$runtimeBaseline},
@@ -227,6 +228,7 @@ reject stale '.expiresAtEpoch=1999999999'
 reject changed-baseline '.productionBaseline.services[0].sourceCommit=("f"*40)'
 reject missing-clone '.migration.status="APPEND_ONLY_PENDING"|.migration.pendingMigrationCount=1'
 reject failed-check '.checks.a5Reader="FAIL"'
+reject closed-owner-override '.legal={mode:"OWNER_OVERRIDE",ownerApprovalRef:"BOARD-2026-08-15",approvedBy:"MangmeeDev"}|.checks.legalMode="OWNER_OVERRIDE"'
 
 reject_prerequisite() {
   local name="$1" filter="$2" original_hash mutated_hash
@@ -311,11 +313,42 @@ jq -cS '(.services[].rawEvidence.describeExpressGatewayService.raw.second.servic
   "$work/production-health.json" > "$work/production-health-live.json"
 mv "$work/production-health-live.json" "$work/production-health.json"
 rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}
+  |.legal={mode:"VERIFIED_BUNDLE",ownerApprovalRef:null,approvedBy:null}
   |.productionBaseline.sha256=$health
   |.productionBaseline.services|=map(.servingMode="live")' "$work/live-selective.json" \
   --arg health "$(sha_file "$work/production-health.json")"
 bash "$validator" "$work/live-selective.json" "$work" "$work/passport.json" "$source" 8001 2 9001 1 \
   "$controller" example/watchdog "$now" >/dev/null
+rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}
+  |.legal={mode:"OWNER_OVERRIDE",ownerApprovalRef:"BOARD-2026-08-15",approvedBy:"MangmeeDev"}
+  |.checks.legalMode="OWNER_OVERRIDE"
+  |.productionBaseline.sha256=$health
+  |.productionBaseline.services|=map(.servingMode="live")' "$work/live-owner-override.json" \
+  --arg health "$(sha_file "$work/production-health.json")"
+bash "$validator" "$work/live-owner-override.json" "$work" "$work/passport.json" "$source" \
+  8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null
+rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}
+  |.legal={mode:"OWNER_OVERRIDE",ownerApprovalRef:"BOARD-2026-08-15",approvedBy:"other"}
+  |.checks.legalMode="OWNER_OVERRIDE"
+  |.productionBaseline.sha256=$health
+  |.productionBaseline.services|=map(.servingMode="live")' "$work/live-owner-override-wrong-actor.json" \
+  --arg health "$(sha_file "$work/production-health.json")"
+if bash "$validator" "$work/live-owner-override-wrong-actor.json" "$work" \
+    "$work/passport.json" "$source" 8001 2 9001 1 "$controller" example/watchdog "$now" \
+    >/dev/null 2>&1; then
+  echo 'ERROR: READY validator accepted a foreign owner override' >&2; exit 1
+fi
+rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}
+  |.legal={mode:"OWNER_OVERRIDE",ownerApprovalRef:"short",approvedBy:"MangmeeDev"}
+  |.checks.legalMode="OWNER_OVERRIDE"
+  |.productionBaseline.sha256=$health
+  |.productionBaseline.services|=map(.servingMode="live")' "$work/live-owner-override-bad-ref.json" \
+  --arg health "$(sha_file "$work/production-health.json")"
+if bash "$validator" "$work/live-owner-override-bad-ref.json" "$work" \
+    "$work/passport.json" "$source" 8001 2 9001 1 "$controller" example/watchdog "$now" \
+    >/dev/null 2>&1; then
+  echo 'ERROR: READY validator accepted an invalid owner override reference' >&2; exit 1
+fi
 mv "$work/production-health-closed.json" "$work/production-health.json"
 rewrite '.serving.effectiveTarget="api-web"' "$work/closed-selective.json"
 if bash "$validator" "$work/closed-selective.json" "$work" "$work/passport.json" "$source" \
@@ -323,6 +356,7 @@ if bash "$validator" "$work/closed-selective.json" "$work" "$work/passport.json"
   echo 'ERROR: READY validator accepted selective maintenance closure' >&2; exit 1
 fi
 rewrite '.serving={requestedMode:"live",effectiveTarget:"api-web"}
+  |.legal={mode:"VERIFIED_BUNDLE",ownerApprovalRef:null,approvedBy:null}
   |.productionBaseline.services|=map(.servingMode="live")
   |.productionBaseline.services[0].sourceCommit=("f"*40)' "$work/split-selective.json"
 if bash "$validator" "$work/split-selective.json" "$work" "$work/passport.json" "$source" \

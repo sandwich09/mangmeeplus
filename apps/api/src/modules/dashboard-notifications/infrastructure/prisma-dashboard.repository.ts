@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { DashboardSnapshotRepositoryPort, DashboardWidgetConfigRepositoryPort } from '../domain/ports/dashboard-notification.ports';
-import type { DashboardSnapshot, DashboardWidgetConfig } from '../domain/models/dashboard.model';
+import type { DashboardScope, DashboardSnapshot, DashboardWidgetConfig } from '../domain/models/dashboard.model';
 
 function toSnapshot(row: any): DashboardSnapshot {
   return {
@@ -41,9 +41,11 @@ function toWidgetConfig(row: any): DashboardWidgetConfig {
 export class PrismaDashboardSnapshotRepository implements DashboardSnapshotRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findLatest(companyId: string, periodKind: string): Promise<DashboardSnapshot | null> {
+  async findLatest(companyId: string, periodKind: string, scope: DashboardScope, scopeKey?: string): Promise<DashboardSnapshot | null> {
     const row = await this.prisma.client.dashboardSnapshot.findFirst({
-      where: { companyId, periodKind },
+      // scope and scopeKey are part of the key. `scopeKey: null` is the company-wide row and must
+      // match NULL exactly, so a company-wide read can never be answered by a branch snapshot.
+      where: { companyId, periodKind, scope: scope.toUpperCase() as any, scopeKey: scopeKey ?? null },
       orderBy: { generatedAt: 'desc' },
     });
     return row ? toSnapshot(row) : null;

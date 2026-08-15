@@ -86,6 +86,9 @@ export class ListPurchaseOrdersUseCase {
     const canReadAll = ctx.permissions.includes('procurement.purchase_order.read');
     const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.PURCHASE_ORDER);
     if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    // Explicit out-of-scope branch filter is a 403, never a silent empty list (spec R6). Written out
+    // rather than via isBranchInScope, which answers true for an absent branchId (spec §4.2).
+    if (ctx.scopes?.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) throw new ForbiddenException('Branch is out of scope');
     const { data, total } = await this.repo.listPurchaseOrders(ctx.companyId, {
       ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
     }, ctx.scopes ?? {});

@@ -17,6 +17,9 @@ for required in \
   'validate-production-release-ready-v2.sh' 'PRODUCTION_RELEASE_READY_V2' \
   'production-release-ready-v2-' 'select-deploy-target.sh' \
   'requestedMode:$mode,effectiveTarget:$target' \
+  'owner_legal_override_ref:' 'legal_mode=OWNER_OVERRIDE' \
+  'test "$GITHUB_ACTOR" = MangmeeDev' \
+  'legal:{mode:$legalMode' 'ownerApprovalRef:' 'approvedBy:' \
   'AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}' \
   'PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}' \
   'WORKFLOW_WEBHOOK_ALLOWED_HOSTS: ${{ vars.WORKFLOW_WEBHOOK_ALLOWED_HOSTS }}' \
@@ -67,6 +70,11 @@ ready="$(line 'Build, validate and sign Production READY V2')"
 # legal bundle before the first general Production AWS read credential is configured.
 closed="$(line 'Verify the closed-mode maintenance controller')"
 legal="$(line 'Provision and fully validate legal evidence for live mode')"
-[ "$closed" -lt "$security" ] && [ "$legal" -lt "$security" ]
+override="$(line 'Bind explicit owner legal override for live mode')"
+[ "$closed" -lt "$security" ] && [ "$legal" -lt "$security" ] \
+  && [ "$override" -lt "$security" ]
+
+grep -Fq "needs.discover.outputs.legal_mode == 'VERIFIED_BUNDLE'" "$workflow"
+grep -Fq "needs.discover.outputs.legal_mode == 'OWNER_OVERRIDE'" "$workflow"
 
 echo 'Production readiness V2 workflow contract: PASS'

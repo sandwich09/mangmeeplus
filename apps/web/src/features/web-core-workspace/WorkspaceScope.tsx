@@ -3,6 +3,10 @@
 // Data comes from the cookie-session BFF (authedApiFetch); errors fall back silently to no selector.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
+import { AlertModal } from '@/common/components/modal';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
+import { branchDisplayName, branchScopeLabel } from './branch-scope-label.logic';
 import {
   fetchActiveBranches,
   fetchMyCompanies,
@@ -21,6 +25,12 @@ type BranchFilterValue = {
   branches: BranchOption[];
   /** true when the user is locked to a single branch (selector hidden) */
   locked: boolean;
+  /**
+   * A read was refused for the selected branch (spec R9). Resets to all branches, drops the saved
+   * selection, refetches the scope, and raises the dialog — the reset is what makes the dialog
+   * escapable when an admin revokes a branch mid-session.
+   */
+  reportBranchForbidden: () => void;
 };
 
 const BranchFilterContext = createContext<BranchFilterValue | null>(null);
@@ -40,9 +50,12 @@ export function BranchFilterProvider({
   onContextLoaded?: (context: Awaited<ReturnType<typeof fetchMyContext>>) => void;
   children: React.ReactNode;
 }) {
+  const locale = useWorkspaceLocale();
   const [branches, setBranches] = useState<BranchOption[]>([]);
   const [locked, setLocked] = useState(false);
   const [branchId, setBranchIdState] = useState('');
+  const [forbidden, setForbidden] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +83,7 @@ export function BranchFilterProvider({
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId, onContextLoaded]);
+  }, [companyId, onContextLoaded, reloadToken]);
 
   const setBranchId = useCallback(
     (id: string) => {
@@ -80,11 +93,38 @@ export function BranchFilterProvider({
     [companyId],
   );
 
-  const value = useMemo(() => ({ branchId, setBranchId, branches, locked }), [branchId, setBranchId, branches, locked]);
-  return <BranchFilterContext.Provider value={value}>{children}</BranchFilterContext.Provider>;
+  const reportBranchForbidden = useCallback(() => {
+    // Drop the saved selection before the refetch: the effect re-reads localStorage on every run.
+    if (typeof window !== 'undefined') window.localStorage.removeItem(storageKey(companyId));
+    setBranchIdState('');
+    setForbidden(true);
+    setReloadToken((n) => n + 1);
+  }, [companyId]);
+
+  const value = useMemo(
+    () => ({ branchId, setBranchId, branches, locked, reportBranchForbidden }),
+    [branchId, setBranchId, branches, locked, reportBranchForbidden],
+  );
+  return (
+    <BranchFilterContext.Provider value={value}>
+      {children}
+      {/* One mount for the whole workspace (WorkspaceLayout.tsx), so every page is covered. */}
+      <AlertModal
+        open={forbidden}
+        title={t('error.forbidden', locale)}
+        message={t('branch.scope.forbidden_body', locale)}
+        onClose={() => setForbidden(false)}
+      />
+    </BranchFilterContext.Provider>
+  );
 }
 
-const branchLabel = (b: BranchOption) => `${b.name}${b.type === 'HEAD_OFFICE' ? ' (สำนักงานใหญ่)' : ''}`;
+/** The one derived branch-scope label (spec R1) for any surface that shows one. */
+export function useBranchScopeLabel(): string | null {
+  const filter = useBranchFilter();
+  const locale = useWorkspaceLocale();
+  return branchScopeLabel(filter, locale);
+}
 
 const BranchIcon = () => (
   <svg className="h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -95,25 +135,25 @@ const BranchIcon = () => (
 
 export function BranchSelector() {
   const filter = useBranchFilter();
+  const locale = useWorkspaceLocale();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useCloseOnOutsideClick(rootRef, useCallback(() => setOpen(false), []));
 
-  // Locked to one branch, or no scope data yet: show the same visual chip without opening a menu.
-  if (!filter || filter.locked) {
+  const label = branchScopeLabel(filter, locale);
+
+  // Context unresolved, lookup failed, or no branch to name: render nothing (spec R3).
+  if (!filter || !label) return null;
+
+  // Restricted to one branch: name that branch, non-interactive. No chevron — nothing opens.
+  if (filter.locked) {
     return (
       <span className="flex h-10 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700">
         <BranchIcon />
-        ทุกสาขา (รวม)
-        <svg className="h-4 w-4 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-        </svg>
+        {label}
       </span>
     );
   }
-
-  const current = filter.branches.find((b) => b.id === filter.branchId);
-  const label = current ? branchLabel(current) : 'ทุกสาขา (รวม)';
 
   return (
     <div ref={rootRef} className="relative min-w-0 flex-1 sm:flex-none">
@@ -138,7 +178,7 @@ export function BranchSelector() {
             }`}
             onClick={() => { setOpen(false); filter.setBranchId(''); }}
           >
-            ทุกสาขา (รวม){filter.branchId === '' ? ' ✓' : ''}
+            {t('branch.scope.all', locale)}{filter.branchId === '' ? ' ✓' : ''}
           </button>
           {filter.branches.map((b) => (
             <button
@@ -149,7 +189,7 @@ export function BranchSelector() {
               }`}
               onClick={() => { setOpen(false); filter.setBranchId(b.id); }}
             >
-              {branchLabel(b)}{b.id === filter.branchId ? ' ✓' : ''}
+              {branchDisplayName(b, locale)}{b.id === filter.branchId ? ' ✓' : ''}
             </button>
           ))}
         </div>
