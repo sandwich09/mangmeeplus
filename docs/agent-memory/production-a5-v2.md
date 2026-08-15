@@ -13,6 +13,9 @@
   public `/v1/internal/` machine routes from the customer switch. Each controller's existing
   constant-time machine credential check remains the trust boundary; `maintenance_only` continues
   to stop workers and block internal traffic at the proxy.
+- Closed recovery restored all three exact candidate images and passed deep service health, but its
+  drain proof rejected a missing `RELEASE_DEPLOY_TARGET=all` workflow binding. The recovery step now
+  binds that exact target, and its contract test rejects a future omission.
 - Next: complete automatic closed-stage recovery, merge the focused guard regression, issue a fresh
   UAT Passport because the API image changes, then rerun READY and the live Production promotion.
 
