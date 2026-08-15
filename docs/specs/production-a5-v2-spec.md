@@ -327,7 +327,8 @@ Signed `PRODUCTION_RELEASE_READY_V2` ต้องผูกอย่างน้�
 - Production migration ledger hash (รวม historical execution order) และ exact pending set
 - AWS account/region, role-policy hash, network/secret/readiness inventory hash
 - A5 rehearsal evidence hash เมื่อมี pending migration
-- legal readiness reference ที่ mode ต้องใช้
+- legal readiness mode: independent `VERIFIED_BUNDLE`, `NOT_APPLICABLE` สำหรับ closed หรือ
+  explicit `OWNER_OVERRIDE` ที่ผูก exact owner identity และ approval reference ใน signed READY
 - issued/expiry time และ readiness run id/attempt
 
 Certificate อายุไม่เกิน 24 ชั่วโมง แต่ baseline drift ทำให้หมดอายุทันทีแม้ยังไม่ถึงเวลา
@@ -359,7 +360,7 @@ Production workflow รับเพียง UAT passport reference, readiness r
 1. signature/hash/expiry ของ passport และ READY
 2. current Production baseline hash เท่ากับ certificate
 3. exact image digests/signatures ยังอยู่
-4. legal gate สำหรับ mode ที่ขอ
+4. legal gate สำหรับ mode ที่ขอ หรือ explicit owner override ที่ signed READY ผูก actor/reference
 5. ไม่มี active release/migration operation ที่ขัดกัน
 
 หากข้อใดไม่ตรงให้จบเป็น `NOT_READY` ก่อน mutation และชี้เหตุเดียวที่แก้ได้ ไม่เริ่ม build,

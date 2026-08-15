@@ -357,6 +357,11 @@ Verification:
 - UAT deep database readiness was proved separately without another Action run using the non-root
   `watchdog-bedrock` profile and the AWSCURRENT UAT worker token: the authenticated endpoint returned
   `service=api`, `status=ok`, `db=ok` at `2026-08-12T14:12:06Z`. Token value was not logged.
+- Owner directive 2026-08-15 permits a live launch before counsel returns the five legal evidence
+  files. The implementation does not falsify the `BLOCKED` manifest: only manual live readiness by
+  GitHub actor `MangmeeDev` can bind a validated owner approval reference into signed READY as
+  `legal.mode=OWNER_OVERRIDE`. Verified-bundle, Passport, IAM, migration, health, recovery and
+  expiry gates remain unchanged. Production result binds the exact READY hash for audit.
 - Cleanup hotfix PR `#47` merged as controller `33ed788ccc644502e572fe2d679aac9b2b98cc6e` after
   required CI and independent approval. The owner-approved temporary ceremony then re-armed the
   exact reader controller/execution roles under the assumed non-root principal, exact-read back all

@@ -50,8 +50,8 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
   def hash:type=="string" and test("^[0-9a-f]{64}$");
   def sha:type=="string" and test("^[0-9a-f]{40}$");
   exact(["artifactKind","aws","checks","contentSha256","environment","expiresAtEpoch",
-    "issuedAtEpoch","migration","passportRef","productionBaseline","repository","schemaVersion",
-    "runtimeBaseline","serving","sourceCommit","workflow"])
+    "issuedAtEpoch","legal","migration","passportRef","productionBaseline","repository",
+    "schemaVersion","runtimeBaseline","serving","sourceCommit","workflow"])
   and .schemaVersion==2 and .artifactKind=="PRODUCTION_RELEASE_READY_V2"
   and .environment=="production" and .repository==$repository and .sourceCommit==$source
   and (.workflow|exact(["controllerCommit","controllerRef","path","runAttempt","runId"]))
@@ -69,6 +69,17 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
   and (.serving.requestedMode=="maintenance_closed" or .serving.requestedMode=="live")
   and (.serving.effectiveTarget=="all" or .serving.effectiveTarget=="api-web"
     or .serving.effectiveTarget=="ai-gateway" or .serving.effectiveTarget=="workers")
+  and (.legal|exact(["approvedBy","mode","ownerApprovalRef"]))
+  and (if .serving.requestedMode=="maintenance_closed" then
+      .legal=={mode:"NOT_APPLICABLE",ownerApprovalRef:null,approvedBy:null}
+      and .checks.legalMode=="PASS"
+    elif .legal.mode=="VERIFIED_BUNDLE" then
+      .legal.ownerApprovalRef==null and .legal.approvedBy==null and .checks.legalMode=="PASS"
+    else .legal.mode=="OWNER_OVERRIDE"
+      and (.legal.ownerApprovalRef|type)=="string"
+      and (.legal.ownerApprovalRef|test("^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$"))
+      and .legal.approvedBy=="MangmeeDev" and .checks.legalMode=="OWNER_OVERRIDE"
+    end)
   and .aws=={accountId:"311414082667",region:"ap-southeast-1"}
   and (.productionBaseline|exact(["path","services","sha256"]))
   and .productionBaseline.path=="production-health.json" and (.productionBaseline.sha256|hash)
@@ -99,7 +110,8 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
     then .serving.effectiveTarget=="all" else true end)
   and (.checks|exact(["a5Reader","artifactIntegrity","awsPolicies","imageSignatures",
     "legalMode","productionRuntime","serviceStability"]))
-  and all(.checks[];.=="PASS")
+  and all(.checks|to_entries[];
+    if .key=="legalMode" then (.value=="PASS" or .value=="OWNER_OVERRIDE") else .value=="PASS" end)
   and .contentSha256==$content and (.contentSha256|hash)
 ' "$ready" >/dev/null
 
