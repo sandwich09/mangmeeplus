@@ -13,7 +13,7 @@ import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking,
-  effectiveVatRateLabel, vatModeRequiresRate,
+  effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -253,6 +253,16 @@ export type ExpenseSummary = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Days between the printed document date and the Bangkok intake date for the cross-month badge. */
+export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | 'uploadedAt'>): number | null {
+  const documentDate = expense.expenseDate.slice(0, 10);
+  const uploadedAt = new Date(expense.uploadedAt);
+  if (!isCivilDate(documentDate) || Number.isNaN(uploadedAt.getTime())) return null;
+  const intakeDate = civilDate(uploadedAt);
+  if (intakeDate <= documentDate || civilPeriodKey(intakeDate) === civilPeriodKey(documentDate)) return null;
+  return (civilDateToUtcDate(intakeDate).getTime() - civilDateToUtcDate(documentDate).getTime()) / 86_400_000;
+}
 
 export type ExpenseDetail = ExpenseSummary & {
   /** Suggested input Tax Code from this expense's category. A hint for the line picker only. */

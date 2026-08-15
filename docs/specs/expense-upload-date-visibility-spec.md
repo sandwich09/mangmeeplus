@@ -2,7 +2,7 @@
 
 ## 1. Status
 
-v0.2, 2026-08-15. **Proposed — not implemented.**
+v0.3, 2026-08-15. **Implemented and locally verified.**
 
 This specification records the product decision made on 2026-08-15: keep the existing Expenses list design, group its operational list by the date the record entered the system, show both document and intake dates, and show `เอกสารย้อนหลัง X วัน` only when those two dates fall in different calendar months.
 
@@ -56,9 +56,9 @@ Goal:
 | Legacy rows were backfilled with `uploadedAt = createdAt` | `apps/api/prisma/migrations/20260703000000_item09_document_intake_signature/migration.sql:24-27` | Historical rows have a stable intake approximation; no data backfill is required |
 | `ExpenseSummary` already returns `uploadedAt` | `packages/contracts/src/expenses.ts:328-358`, `apps/web/src/features/expenses/expenses.model.ts:225-254` | No response-contract widening is needed |
 | The list API already accepts `uploadedFromDate` / `uploadedToDate` | `packages/contracts/src/expenses.ts:466-482`, `expense.controller.ts:148-169`, `expenses.api.ts:93-101` | Main-page filtering can switch without a new endpoint |
-| Repository filtering already maps those fields to `uploadedAt` with a half-open civil-day range | `prisma-expense.repository.ts:620-635` | Existing timezone-safe range behavior can be reused |
-| The main Expenses list sends `fromDate` / `toDate`, which the repository maps to `expenseDate` | `ExpensesPages.tsx:1316-1325`, `prisma-expense.repository.ts:630` | This is the direct cause of the reported disappearance |
-| The main list still orders by `expenseDate desc` | `prisma-expense.repository.ts:632` | Merely changing the filter is insufficient; a newly uploaded old document can still be buried or excluded by the 200-row cap |
+| Baseline repository filtering mapped upload dates to a UTC-midnight half-open range | `prisma-expense.repository.ts`, characterized by `expense-related-access.use-case.spec.ts` | Implementation had to shift only the timestamp/upload lens to Bangkok midnight; otherwise 00:00–06:59 on a month boundary lands in the wrong cohort |
+| Before this implementation, the main Expenses list sent `fromDate` / `toDate`, which the repository mapped to `expenseDate` | `ExpensesPages.tsx`, `prisma-expense.repository.ts` | This was the direct cause of the reported disappearance |
+| Before this implementation, the main list ordered by `expenseDate desc` | `prisma-expense.repository.ts` | Merely changing the filter was insufficient; a newly uploaded old document could still be buried or excluded by the 200-row cap |
 | The list KPI cards and status counts are calculated from the period-scoped rows | `ExpensesPages.tsx:1335-1346`, `expenses.model.ts:927-954` | Switching the period changes KPI meaning from document cohort to intake cohort |
 | Main-list export explicitly uses `dateField: 'expenseDate'` | `ExpensesPages.tsx:1386` | Export must be kept as an accounting/document-date action and labelled clearly; it must not silently inherit list semantics |
 | Accountant Evidence already defaults to `uploadedAt` and lets users switch to `expenseDate` | `ExpensesWorkspacePanels.tsx:488,510-517,639-640` | The desired date separation already has a working precedent; no Evidence behavior change is needed |
@@ -450,5 +450,17 @@ Pending media stores its own `createdAt` and expires after 30 minutes, while the
 - Use the existing upload/intake date to keep newly entered records in the selected upload month.
 - Show `เอกสารย้อนหลัง X วัน` only when document month and intake month differ.
 - Write Spec and Plan and inspect surrounding business/code impact before implementation.
-- No implementation is authorized by this document-only task.
-- Owner review is still required for the clarified-LINE boundary and the distinction between reimbursement attachment/submission time and Expense projection time.
+- The owner authorized implementation, review, tests, commit, push and a PR to `develop` after reviewing the v0.2 spec/plan and cross-channel impact audit.
+- Clarified LINE media follows Expense confirmation/creation time; reimbursement rows follow Expense projection creation time. Neither source attachment/submission timestamp replaces `ExpenseRecord.uploadedAt`.
+
+## 15. Implementation Evidence
+
+Implemented without schema, migration, dependency, permission, controller, accounting, ledger or tax changes:
+
+- the main Expenses list sends only `uploadedFromDate/uploadedToDate` and keeps accountant export on `dateField: expenseDate`;
+- timestamp upload ranges use Bangkok civil-month boundaries and order by `uploadedAt desc` before `take`; no-range or combined document-date callers retain `expenseDate desc`;
+- desktop and mobile retain the existing row/card structure while showing both dates and the derived amber tag;
+- KPI/empty-state copy names the intake cohort and export copy names the document-date lens;
+- E2E stale fixtures found during review were aligned to the existing civil-date and optimistic-lock contracts.
+
+Verification evidence and exact commands/results are recorded in the linked plan and `docs/agent-memory/expense-upload-date-visibility.md`.

@@ -2,9 +2,9 @@
 
 ## 1. Status
 
-v0.2, 2026-08-15. **Planned — not started. Awaiting spec sign-off.**
+v0.3, 2026-08-15. **Implemented and locally verified.**
 
-No application code, schema, configuration or runtime behavior has been changed by this planning task.
+The approved implementation is complete. No schema, migration, dependency, permission, controller, accounting, ledger or tax behavior changed.
 
 Authority: [[specs/expense-upload-date-visibility-spec|Expense Upload-Date Visibility and Late-Document Tag Spec]]
 
@@ -377,7 +377,7 @@ Result: 73/73 passed, including direct media, text capture and stored-media clar
 
 ### 10.3 Post-change focused commands
 
-Exact repository spec filename will be recorded when the test is added; it must be invoked directly rather than relying only on the broad API suite.
+The repository assertions were added to the already-covered related-access spec so the default API test manifest continues to execute them without a `package.json` edit.
 
 ```bash
 corepack pnpm --dir apps/web exec tsx --test \
@@ -387,7 +387,7 @@ corepack pnpm --dir apps/web exec tsx --test \
   src/features/expenses/substitute-receipt-wizard.model.spec.ts
 
 corepack pnpm --dir apps/api exec tsx --test --test-reporter=spec \
-  <new-expense-list-repository-spec> \
+  src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts \
   src/modules/expenses/application/use-cases/expense-upload.use-case.spec.ts \
   src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts
 
@@ -401,7 +401,7 @@ corepack pnpm --dir apps/web typecheck
 corepack pnpm --dir apps/api typecheck
 ```
 
-`<new-expense-list-repository-spec>` is a plan placeholder, not a runnable command. Step 2 cannot close until the real path replaces it in this document and task memory.
+The runnable path above replaced the planning placeholder and covers upload ordering, Bangkok boundaries, page limit, company/branch/related ABAC and legacy document ordering.
 
 ### 10.4 Integration/browser proof
 
@@ -428,6 +428,25 @@ git diff --check
 git status --short
 git diff --name-only
 ```
+
+## 11. Completion Evidence (2026-08-15)
+
+Implementation closed Steps 0–6 with the following evidence:
+
+- Red-first web helper: failed because `lateDocumentDays` did not exist; green result 49/49 for the focused model spec.
+- Red-first repository ordering: expected `uploadedAt desc`, received `expenseDate desc`; green result 8/8 after the conditional order.
+- Review-discovered timezone red test: expected Bangkok bounds `2026-07-31T17:00Z`–`2026-08-31T17:00Z`, received UTC-midnight bounds; green 8/8 after the timestamp-lens correction.
+- Web expense/API/substitute matrix: 80/80 passed.
+- Expense upload/substitute/related API matrix: exit 0, including the 8/8 repository/ABAC cases.
+- Reimbursement projection plus LINE direct/text/clarified-media matrix: exit 0.
+- `corepack pnpm --dir apps/web typecheck`: passed.
+- `corepack pnpm --dir apps/api typecheck`: passed.
+- `e2e/expenses.spec.ts`: 16/16 passed against a fresh isolated stack after migrations and standard seed.
+- `EXP-26`: passed independently after adding assertions for upload-only list query, 51-day tag, same-month no-tag, accountant export `dateField: expenseDate`, and desktop/mobile DOM.
+- Review found three stale existing E2E fixtures in the touched file (two receipt intents sent timestamps instead of civil dates; one PATCH omitted `expectedUpdatedAt`); all were corrected and the formerly failing three paths passed in the 16/16 rerun.
+- Isolated `codex-expense-date` containers, network and volumes were removed after verification; generated `next-env.d.ts` was restored and Playwright artifacts were moved outside the worktree.
+
+Known limitation remains unchanged: main-list KPI/chip calculations operate on at most the newest 200 intake rows. Server ordering now guarantees that cap contains the newest intake cohort; server-side aggregate redesign remains out of scope.
 
 Review the final file list against §5. Any schema, migration, contract, permission, package, tax, ledger or unrelated source file is a stop-and-explain event, not an automatically accepted change.
 

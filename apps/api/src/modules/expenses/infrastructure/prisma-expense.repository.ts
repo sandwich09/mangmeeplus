@@ -27,6 +27,16 @@ const SUPERSEDED_DUPLICATE_REASON = 'system:superseded_by_confirmed_duplicate';
 const SUBSTITUTE_RECEIPT_DOCUMENT_TYPE = 'expense.substitute_receipt';
 const SUBSTITUTE_RECEIPT_OWNER_TYPE = 'expense_substitute_receipt';
 export const SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON = 'EXPENSE_VOIDED';
+const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
+
+/** Timestamp ranges follow the same Bangkok civil dates shown by the Expenses UI. */
+function bangkokCivilDayRangeToUtc(from?: string, to?: string): { gte?: Date; lt?: Date } {
+  const range = civilDayRangeToUtc(from, to);
+  return {
+    ...(range.gte && { gte: new Date(range.gte.getTime() - BANGKOK_UTC_OFFSET_MS) }),
+    ...(range.lt && { lt: new Date(range.lt.getTime() - BANGKOK_UTC_OFFSET_MS) }),
+  };
+}
 
 
 type ExpenseTaxFinalizer = (input: {
@@ -627,9 +637,11 @@ export class PrismaExpenseRepository {
     // 10D branch ABAC: restricted scope sees its branches plus company-central (null) rows.
     // Explicit branchId filter (already scope-asserted by the use-case) is narrower and wins.
     const scopeWhere = scopes && !rest.branchId ? branchScopeWhere(scopes) : {};
-    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: civilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
+    const where: any = { companyId, ...scopeWhere, ...(rest.status && { status: rest.status }), ...(rest.paymentStatus && { paymentStatus: rest.paymentStatus }), ...(rest.duplicateStatus && { duplicateStatus: rest.duplicateStatus }), ...(rest.postingStatus && { postingStatus: rest.postingStatus }), ...(rest.vendorCounterpartyId && { vendorCounterpartyId: rest.vendorCounterpartyId }), ...(rest.captureSource && { captureSource: rest.captureSource }), ...(rest.sourceDocumentType && { sourceDocumentType: rest.sourceDocumentType }), ...(rest.taxEvidenceStatus && { taxEvidenceStatus: rest.taxEvidenceStatus }), ...(rest.expenseCategoryId && { expenseCategoryId: rest.expenseCategoryId }), ...(rest.createdByUserId && { createdByUserId: rest.createdByUserId }), ...(rest.branchId && { branchId: rest.branchId }), ...(rest.fromDate || rest.toDate ? { expenseDate: civilDayRangeToUtc(rest.fromDate, rest.toDate) } : {}), ...(rest.uploadedFromDate || rest.uploadedToDate ? { uploadedAt: bangkokCivilDayRangeToUtc(rest.uploadedFromDate, rest.uploadedToDate) } : {}), ...(relatedUserId ? { AND: [expenseRelatedToUserWhere(relatedUserId)] } : {}) };
+    const uploadDateLens = (rest.uploadedFromDate || rest.uploadedToDate) && !(rest.fromDate || rest.toDate);
+    const orderBy = uploadDateLens ? { uploadedAt: 'desc' as const } : { expenseDate: 'desc' as const };
     const [data, total] = await Promise.all([
-      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy: { expenseDate: 'desc' } }),
+      this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy }),
       this.prisma.client.expenseRecord.count({ where }),
     ]);
     return { data: data.map(mapExpense), total, page, pageSize };

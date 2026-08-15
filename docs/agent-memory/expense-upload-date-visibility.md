@@ -1,56 +1,56 @@
 # Agent Memory: expense-upload-date-visibility
 
 Status:
-Spec and plan v0.2 drafted 2026-08-15; not implemented. Awaiting owner review/sign-off on cross-channel date semantics.
+Implemented and locally verified on 2026-08-15. Pending commit, push and PR to `develop`.
 
 Owner:
-Product owner requested existing-design preservation, upload-month visibility, a cross-month `เอกสารย้อนหลัง X วัน` tag, and mandatory spec/plan plus surrounding impact discovery before implementation.
+Product owner approved the v0.2 spec/plan, cross-channel semantics and implementation on the existing `date-miss` branch, including review, tests, commit, push and PR.
 
 Scope:
-Document-only discovery for the Expenses main-list bug where a receipt uploaded in August disappears after its document date resolves to June. Includes UI/API/repository, KPI, export, Evidence, web upload, manual entry, substitute receipt, reimbursement projection, LINE capture, Ledger/Tax and Thai business-boundary impact. No runtime or application-code change.
+Main Expenses operational list only: intake-date query/order, both-date display, cross-month late tag, KPI/empty/export lens copy, tests and documentation. Web upload, manual, substitute, reimbursement and LINE source workflows were regression-checked but not re-dated or rewritten.
 
 Decisions:
 
-- Preserve the existing Expenses page layout and controls; no new date-lens UI on the main list.
-- Reuse existing `ExpenseRecord.uploadedAt`; no schema field/migration.
-- Main list day/month and its KPI/status cohort use `uploadedAt`.
-- Visible business wording is `วันที่ส่งเข้าระบบ` because manual/API/reimbursement rows may have no file upload.
-- Precise domain meaning is `วันที่เข้ารายการค่าใช้จ่าย`: web upload intent, manual draft creation, substitute-new Expense creation, reimbursement projection creation, or LINE Expense creation depending on source.
-- Show `เอกสารย้อนหลัง X วัน` only when intake is later and the two Asia/Bangkok civil dates have different `YYYY-MM` values.
-- Keep `expenseDate` unchanged for accounting/tax/document truth.
-- Server must order upload-range queries by `uploadedAt desc` before the 200-row cap.
-- Main-list accountant export remains document-date based; helper copy must state that explicitly.
-- Evidence Panel, Dashboard financial summaries, Reimbursement workflow, Ledger and Thai Tax behavior are unchanged.
-- Substitute evidence created for an existing Expense never refreshes the Expense intake; its hub keeps payment/expense-date filtering.
-- Reimbursement receipt upload/submit does not create an Expense; an `API_INTERNAL` Expense is materialized at manager/finance approval.
-- LINE clarified media stores an attachment before Expense creation; current `uploadedAt` is confirmation time within the 30-minute window.
-- No implementation is authorized in this task.
+- Reuse `ExpenseRecord.uploadedAt`; no new field or migration.
+- Main list day/month and KPI/status cohort use the Bangkok civil date of `uploadedAt`.
+- `expenseDate` remains document/accounting/tax truth; accountant export remains `dateField: expenseDate`.
+- Show `เอกสารย้อนหลัง X วัน` only when intake is later and the Bangkok civil month differs.
+- Order a dedicated upload-date lens by `uploadedAt desc` before `take`; no-range or combined document-date callers retain `expenseDate desc`.
+- Existing Expense intake never moves when OCR/review, optional evidence or substitute-certificate workflow runs.
+- Reimbursement projection and clarified LINE rows enter the main list when their Expense row is created, not when an upstream attachment or request first arrived.
+- Known 200-row client KPI ceiling remains out of scope.
 
-Open questions:
+Bug/gap findings during implementation:
 
-- Owner sign-off on the full spec, especially canonical copy `วันที่ส่งเข้าระบบ` and the deliberate list-versus-export date-lens separation.
-- Owner sign-off that reimbursement Expense rows belong to projection-creation month, not claim attachment/submission month.
-- Owner sign-off that clarified LINE media belongs to Expense confirmation/creation month (recommended); original media-arrival month would widen implementation scope.
-- The existing 200-row client KPI ceiling remains a known, non-blocking limitation outside this scope.
+- Existing upload-range conversion used UTC midnight while UI/tag use Asia/Bangkok. This would exclude month-day 1 between 00:00–06:59 Bangkok and include the same hours from the next month. Fixed only for Expense timestamp/upload lenses and pinned with exact UTC bounds.
+- Three stale Expenses E2E fixtures used superseded API shapes: two receipt intents sent an ISO timestamp instead of a civil date and one PATCH omitted `expectedUpdatedAt`. Updated test fixtures; no production boundary was weakened.
+- Main list source export intentionally differs from the visible cohort. UI copy and E2E request assertions make this explicit.
 
 Artifacts:
 
 - `docs/specs/expense-upload-date-visibility-spec.md`
 - `docs/plans/expense-upload-date-visibility-plan.md`
-- `docs/agent-memory/expense-upload-date-visibility.md`
+- `apps/web/src/features/expenses/ExpensesPages.tsx`
+- `apps/web/src/features/expenses/expenses.model.ts`
+- `apps/web/src/features/expenses/expenses.model.spec.ts`
+- `apps/web/src/common/i18n/workspace-dictionary.ts`
+- `apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts`
+- `apps/api/src/modules/expenses/application/use-cases/expense-related-access.use-case.spec.ts`
+- `e2e/expenses.spec.ts`
 
 Verification:
 
-- Inspected current expense contracts, schema, migration, UI list/filter/KPI/export, API controller/use case/repository, Evidence date lenses, reimbursement expense projection, report/dashboard/tax/ledger consumers and civil-date helpers.
-- Traced web upload, manual entry, substitute existing/new, reimbursement draft/attachment/submit/projection, and LINE direct media/text/clarified-media flows to their Expense creation point.
-- Confirmed `uploadedAt` and upload-range filters already exist and are indexed.
-- Confirmed current main-list query filters `expenseDate` and current repository sort is `expenseDate desc`.
-- Baseline focused suites passed: web Expense/Substitute 65/65, Expense upload/Substitute API 27/27, Reimbursement mapping/approval/finance 78/78 and LINE intake 73/73.
-- Identified missing proof that must be added red-first during implementation: repository upload-order-before-pagination, main-list request payload, cross-month helper/UI, source immutability and clarified-LINE month boundary.
-- Confirmed no application code, schema, configuration, package manifest or runtime behavior was changed.
-- Working tree already contained unrelated user change `docs/agent-memory/legal-acceptance-item3-data-deletion.md`; left untouched.
+- Red-first late-tag helper, upload ordering and Bangkok month-boundary assertions all failed for the intended baseline reason and passed after implementation.
+- Focused web model: 49/49 passed; post-change web expense/API/substitute matrix: 80/80 passed.
+- Focused repository/ABAC: 8/8 passed; expense upload/substitute/related matrix exited 0.
+- Reimbursement materialization/approval/finance plus LINE intake dispatch matrix exited 0.
+- Web and API typechecks passed.
+- Fresh isolated Postgres/Redis/MinIO stack: all 132 migrations applied, standard seed passed, Expenses E2E 16/16 passed; EXP-26 independently passed desktop/mobile, request and export assertions.
+- `git diff --check` passed before documentation update. No package manifest, schema, migration, permission, controller, tax or ledger file changed.
+- Unrelated user-owned `docs/agent-memory/branch-selector-system-audit.md` remains untracked and untouched. The branch also pre-existed with the committed legal-acceptance memory delta; it was not modified in this implementation.
 
 Next:
 
-1. Owner reviews/specifies any wording or export-lens change.
-2. Only after sign-off, implement the scoped plan and record focused verification evidence here.
+1. Run final diff/typecheck/focused checks after documentation edits.
+2. Commit only the scoped implementation/docs files on `date-miss`.
+3. Push `date-miss` and open a ready PR to `develop`, noting the pre-existing committed branch delta.
