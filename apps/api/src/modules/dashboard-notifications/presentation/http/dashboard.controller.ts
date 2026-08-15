@@ -16,9 +16,10 @@ export class DashboardController {
     @ReqCtx() ctx: RequestContext,
     @Param('companyId') companyId: string,
     @Query('periodKind') periodKind?: string,
+    @Query('branchId') branchId?: string,
   ) {
     assertRouteCompany(ctx, companyId);
-    return this.generateSnapshot.execute(ctx, companyId, { periodKind: periodKind as any });
+    return this.generateSnapshot.execute(ctx, companyId, { periodKind: periodKind as any, branchId });
   }
 
   @Get('snapshots/latest')
@@ -27,9 +28,10 @@ export class DashboardController {
     @ReqCtx() ctx: RequestContext,
     @Param('companyId') companyId: string,
     @Query('periodKind') periodKind?: string,
+    @Query('branchId') branchId?: string,
   ) {
     assertRouteCompany(ctx, companyId);
-    return this.generateSnapshot.execute(ctx, companyId, { periodKind: periodKind as any });
+    return this.generateSnapshot.execute(ctx, companyId, { periodKind: periodKind as any, branchId });
   }
 
   @Post('snapshots/generate')
@@ -40,6 +42,6 @@ export class DashboardController {
     @Body() body: GenerateDashboardSnapshotDto,
   ) {
     assertRouteCompany(ctx, companyId);
-    return this.generateSnapshot.execute(ctx, companyId, { periodKind: body.periodKind, forceGenerate: true });
+    return this.generateSnapshot.execute(ctx, companyId, { periodKind: body.periodKind, branchId: body.branchId, forceGenerate: true });
   }
 }

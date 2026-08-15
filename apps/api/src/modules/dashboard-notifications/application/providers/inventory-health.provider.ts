@@ -23,21 +23,28 @@ export class InventoryHealthProvider {
     companyId: string;
     periodStart: Date;
     periodEnd: Date;
+    /** Absent = company-wide. Present = balances from movements at that branch's locations only;
+     *  locations with a null branch are company-central stock and belong to the combined view
+     *  alone (spec R4/§4.5). */
+    branchIds?: string[];
   }): Promise<DashboardWidget[]> {
-    const { companyId } = input;
+    const { companyId, branchIds } = input;
     const computedAt = new Date().toISOString();
 
     try {
-      // Low stock products: balance <= reorderPoint where reorderPoint is set
+      // Low stock products: balance <= reorderPoint where reorderPoint is set.
+      // Company-level on purpose: products are not branch-scoped, so a product with no movement in
+      // the branch correctly reads balance 0 rather than disappearing from the count.
       const productsWithReorder = await this.prisma.client.product.findMany({
         where: { companyId, status: 'ACTIVE', reorderPoint: { not: null } },
         select: { id: true, sku: true, name: true, reorderPoint: true },
       });
 
-      // Get aggregate balances for these products
+      // Get aggregate balances for these products. StockMovement has no branchId of its own, so the
+      // branch is reached through the location relation (schema.prisma:1154).
       const movementGroups = await this.prisma.client.stockMovement.groupBy({
         by: ['productId', 'direction'],
-        where: { companyId, productId: { in: productsWithReorder.map((p) => p.id) } },
+        where: { companyId, ...(branchIds && { location: { branchId: { in: branchIds } } }), productId: { in: productsWithReorder.map((p) => p.id) } },
         _sum: { quantity: true },
       });
 
@@ -57,9 +64,11 @@ export class InventoryHealthProvider {
       // Total active products
       const totalProducts = await this.prisma.client.product.count({ where: { companyId, status: 'ACTIVE' } });
 
-      // Last stock movement time
+      // Last stock movement time. Branch-filtered through the same relation as the balances:
+      // company-wide here would report another branch's activity under a branch-named label, which
+      // is the mismatch between stated and queried scope this work exists to remove (spec R1).
       const lastMovement = await this.prisma.client.stockMovement.findFirst({
-        where: { companyId },
+        where: { companyId, ...(branchIds && { location: { branchId: { in: branchIds } } }) },
         orderBy: { occurredAt: 'desc' },
         select: { occurredAt: true },
       });

@@ -277,6 +277,7 @@ export type ListDocumentsFilter = {
   documentType?: AccountingDocumentType;
   documentTypes?: AccountingDocumentType[];
   relatedUserId?: string;
+  branchId?: string;
   status?: AccountingDocumentStatus;
   paymentStatus?: AccountingPaymentStatus;
   postingStatus?: AccountingPostingStatus;

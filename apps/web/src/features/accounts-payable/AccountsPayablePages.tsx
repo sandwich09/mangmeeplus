@@ -15,6 +15,7 @@ import { listSuppliers } from '@/features/procurement/procurement.api';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment } from '@/features/tax/transaction-tax.api';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { canSubmitSupplierPayment, isSupplierPaymentWithholdingValid, isVendorBillTaxEvidenceBlocked, isVendorBillTaxEvidenceCompleteForReview } from './accounts-payable.model';
 import { parseAccountsPayableTab, visibleAccountsPayableTabs, whtLinkErrorOutcome, type AccountsPayableTab } from './accounts-payable.logic';
 import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
@@ -394,13 +395,19 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
   const [info, setInfo] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [deepLinkLoading, setDeepLinkLoading] = useState(false);
+  const branch = useBranchFilter();
+  const branchId = branch?.branchId || undefined;
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const r = await listVendorBills(companyId, { status: statusFilter || undefined }); setData(r.data ?? []); }
-    catch (e) { setError(err(e)); }
+    try { const r = await listVendorBills(companyId, { status: statusFilter || undefined, branchId }); setData(r.data ?? []); }
+    catch (e) {
+      if (isBranchScope403(e, branchId)) { branch?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setLoading(false); }
-  }, [companyId, statusFilter]);
+    // `branch` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
+  }, [companyId, statusFilter, branchId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {

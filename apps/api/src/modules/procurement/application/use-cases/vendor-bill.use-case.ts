@@ -314,10 +314,13 @@ export class ReviewVendorBillTaxEvidenceUseCase {
 export class ListVendorBillsUseCase {
   constructor(private readonly repo: PrismaProcurementRepository) {}
 
-  async execute(ctx: RequestContext, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: VendorBillRecord[]; total: number; page: number; pageSize: number }> {
+  async execute(ctx: RequestContext, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }): Promise<{ data: VendorBillRecord[]; total: number; page: number; pageSize: number }> {
     const canReadAll = ctx.permissions.includes('procurement.vendor_bill.read');
     const canReadRelated = ctx.permissions.includes(PROCUREMENT_RELATED_READ_PERMISSIONS.VENDOR_BILL);
     if (!canReadAll && !canReadRelated) throw new ForbiddenException();
+    // Explicit out-of-scope branch filter is a 403, never a silent empty list (spec R6). Written out
+    // rather than via isBranchInScope, which answers true for an absent branchId (spec §4.2).
+    if (ctx.scopes?.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) throw new ForbiddenException('Branch is out of scope');
     const { data, total } = await this.repo.listVendorBills(ctx.companyId, {
       ...filter, ...(!canReadAll ? { relatedUserId: ctx.userId } : {}),
     }, ctx.scopes ?? {});

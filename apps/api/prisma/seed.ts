@@ -155,11 +155,13 @@ function moneyNumber(value: string): string {
   return String(parseInt(value.replace(/[^0-9]/g, ''), 10) || 0);
 }
 
+// `hour` is a Bangkok wall-clock hour (UTC+7, no DST), resolved against the Bangkok calendar day —
+// NOT the seeding host's clock. setHours() wrote the host's local time, so the same seed produced
+// different instants on a UTC container and on a Thai laptop, and every booking landed 7 hours late
+// in the week grid, which reads local hours over a 09:00-19:00 window (bookings.model.ts:15-16):
+// a booking seeded for 11:00 rendered at 18:00, and 14:00/16:00/18:00 fell off the grid entirely.
 function dateAt(dayOffset: number, hour: number, minute = 0): Date {
-  const date = new Date();
-  date.setHours(hour, minute, 0, 0);
-  date.setDate(date.getDate() + dayOffset);
-  return date;
+  return new Date(bangkokDayStart(new Date()).getTime() + ((dayOffset * 24 + hour) * 60 + minute) * 60_000);
 }
 
 function addMinutes(date: Date, minutes: number): Date {

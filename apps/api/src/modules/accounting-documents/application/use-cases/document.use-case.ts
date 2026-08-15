@@ -296,6 +296,9 @@ export class ListDocumentsUseCase {
     if (filter.documentType && !readableTypes.includes(filter.documentType) && !canReadRelated) {
       throw new ForbiddenException(`Missing permission: ${docPermission(filter.documentType, 'read')}`);
     }
+    // Explicit out-of-scope branch filter is a 403, never a silent empty list (spec R6). Written out
+    // rather than via isBranchInScope, which answers true for an absent branchId (spec §4.2).
+    if (ctx.scopes.branchIds && filter.branchId && !ctx.scopes.branchIds.includes(filter.branchId)) throw new ForbiddenException('Branch is out of scope');
     return this.repo.listDocuments({
       ...filter,
       companyId: ctx.companyId,

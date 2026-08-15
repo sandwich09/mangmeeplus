@@ -518,6 +518,9 @@ export class PrismaAccountingRepository {
     const skip = (page - 1) * pageSize;
     const where: Record<string, unknown> = { companyId: filter.companyId };
     const and: Record<string, unknown>[] = [branchScopeWhere({ branchIds })];
+    // Explicit selection narrows to that branch alone; the scope predicate above stays as defence
+    // in depth (spec R6). The use case has already 403'd an out-of-scope value.
+    if (filter.branchId) and.push({ branchId: filter.branchId });
     const relatedIds = filter.relatedUserId
       ? await this.relatedDocumentIds(filter.companyId, filter.relatedUserId, branchIds)
       : [];

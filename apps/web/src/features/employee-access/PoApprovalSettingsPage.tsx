@@ -22,6 +22,8 @@ import {
 import { getPoApprovalPolicy, savePoApprovalPolicy } from './employee-access.api';
 import { useConfirm, useInputPrompt } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 
 const stepCircleClass: Record<MangmeeTone, string> = {
   brand: 'bg-brand-50 text-brand-700',
@@ -115,6 +117,7 @@ function DemoTimeline({ steps }: { steps: string[] }) {
 }
 
 export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
+  const locale = useWorkspaceLocale();
   const { confirm, confirmDialog } = useConfirm();
   const { promptInput, inputPromptDialog } = useInputPrompt();
   const toast = useToast();
@@ -187,7 +190,7 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
             กำหนดขั้นการอนุมัติใบสั่งซื้อ (PO) ตามวงเงิน · ใบที่อนุมัติครบขั้นแล้ว ระบบจะสร้างรายการซื้อ/รายจ่ายของวันนั้นในเมนู “ค่าใช้จ่าย+ใบเสร็จ” ให้อัตโนมัติ
           </p>
         </div>
-        <div className="flex items-center gap-3"><MangmeeBranchChip /><button type="button" disabled={loading || saving || saved} aria-busy={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}{saving ? 'กำลังบันทึก...' : saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
+        <div className="flex items-center gap-3"><MangmeeBranchChip label={t('branch.scope.company_wide', locale)} /><button type="button" disabled={loading || saving || saved} aria-busy={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}{saving ? 'กำลังบันทึก...' : saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
       </div>
       {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย...</div>}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

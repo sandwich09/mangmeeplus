@@ -11,6 +11,8 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import { formatThaiTime } from '@/common/i18n/thai-date';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 
 type DashboardTabPeriodKind = Exclude<DashboardPeriodKind, 'last_month' | 'custom'>;
 
@@ -200,6 +202,9 @@ export function CompanyDashboardPage({
   displayName: string | null;
 }) {
   const locale = useWorkspaceLocale();
+  const branchFilter = useBranchFilter();
+  const branchId = branchFilter?.branchId || undefined;
+  const scopeLabel = useBranchScopeLabel();
   const name = firstName(displayName);
   const [periodKind, setPeriodKind] = useState<DashboardTabPeriodKind>('today');
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
@@ -212,14 +217,16 @@ export function CompanyDashboardPage({
     setLoading(true);
     setError(null);
     try {
-      const data = await getDashboard(companyId, kind);
+      const data = await getDashboard(companyId, kind, branchId);
       setSnapshot(data);
-    } catch {
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(t('dashboard.home.load_error', locale));
     } finally {
       setLoading(false);
     }
-  }, [companyId, locale]);
+    // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
+  }, [companyId, locale, branchId]);
 
   useEffect(() => {
     void load(periodKind);
@@ -231,10 +238,11 @@ export function CompanyDashboardPage({
     setRefreshToken((n) => n + 1);
     try {
       const data = canForceGenerateSnapshot(permissions)
-        ? await generateSnapshot(companyId, periodKind)
-        : await getDashboard(companyId, periodKind);
+        ? await generateSnapshot(companyId, periodKind, branchId)
+        : await getDashboard(companyId, periodKind, branchId);
       setSnapshot(data);
-    } catch {
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(t('dashboard.home.refresh_error', locale));
     } finally {
       setRefreshing(false);
@@ -253,17 +261,20 @@ export function CompanyDashboardPage({
           <span className="mx-1.5 text-gray-300">/</span>
           <span className="font-medium text-gray-700">{t('dashboard.title', locale)}</span>
         </div>
-        <span className="inline-flex items-center gap-[7px] rounded-full border border-brand-100 bg-brand-25 px-3 py-[5px] text-sm font-semibold text-brand-600">
-          <StoreIcon className="h-4 w-4" />
-          {t('dashboard.home.all_branches', locale)}
-        </span>
+        {/* No resolved branch context: claim no scope at all rather than a wrong one (spec R3). */}
+        {scopeLabel && (
+          <span className="inline-flex items-center gap-[7px] rounded-full border border-brand-100 bg-brand-25 px-3 py-[5px] text-sm font-semibold text-brand-600">
+            <StoreIcon className="h-4 w-4" />
+            {scopeLabel}
+          </span>
+        )}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-gray-900">{t('dashboard.home.greeting', locale)} {name}</h1>
           <p className="mt-1 text-base text-gray-500">
-            {t('dashboard.home.business_overview', locale)} · {t('dashboard.home.all_branches', locale)}
+            {t('dashboard.home.business_overview', locale)}{scopeLabel && ` · ${scopeLabel}`}
             {snapshot && ` · ${t('dashboard.home.updated_at', locale)} ${locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })}`}
           </p>
         </div>

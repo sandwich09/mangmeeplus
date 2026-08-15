@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import qrcode from 'qrcode-generator';
+import { FINANCIAL_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 
 const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000;
@@ -7,7 +8,9 @@ const LINE_LINK_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 /** OWNER is the protected last-owner role; SYSTEM_ADMIN is a platform-only role. Neither is assignable to company staff. */
 export const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN'];
-export const FINANCIAL_ROLE_KEYS = ['FINANCE', 'ACCOUNTANT'];
+// Role-key lists shared with the web employee form — canonical copies live in contracts, beside
+// NON_EDITABLE_ROLE_KEYS. ALL_BRANCH_ROLE_KEYS is composed from FINANCIAL_ROLE_KEYS there.
+export { FINANCIAL_ROLE_KEYS, ALL_BRANCH_ROLE_KEYS } from '@watchdog-bms/contracts';
 export const FINANCIAL_ROLE_ASSIGN_PERMISSION = 'access.role.financial.assign';
 
 /**

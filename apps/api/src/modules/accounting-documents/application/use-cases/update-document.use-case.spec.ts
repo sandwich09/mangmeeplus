@@ -118,6 +118,32 @@ describe('document-type read permissions', () => {
     assert.deepEqual(filter.documentTypes, []);
     assert.equal(filter.relatedUserId, 'sales-1');
   });
+
+  // Spec R6: an explicit branch filter outside the caller's scope is a 403, not a silently empty page.
+  it('rejects an out-of-scope branch filter on the document list', async () => {
+    let queries = 0;
+    const useCase = new ListDocumentsUseCase({
+      listDocuments: mock.fn(async () => { queries += 1; return { data: [], total: 0, page: 1, pageSize: 20 }; }),
+    } as any);
+    const restricted = { ...ctx, permissions: ['accounting.document.read'], scopes: { branchIds: ['branch-1'] } };
+
+    await assert.rejects(() => useCase.execute(restricted, { branchId: 'branch-2' }), ForbiddenException);
+    assert.equal(queries, 0, 'the out-of-scope branch must be refused before the query runs');
+  });
+
+  it('passes an in-scope branch filter through to the document query', async () => {
+    let filter: any;
+    const useCase = new ListDocumentsUseCase({
+      listDocuments: mock.fn(async (input: any) => { filter = input; return { data: [], total: 0, page: 1, pageSize: 20 }; }),
+    } as any);
+    const restricted = { ...ctx, permissions: ['accounting.document.read'], scopes: { branchIds: ['branch-1'] } };
+
+    await useCase.execute(restricted, { branchId: 'branch-1' });
+    assert.equal(filter.branchId, 'branch-1');
+    // An unrestricted caller keeps naming any branch it likes.
+    await useCase.execute({ ...restricted, scopes: {} }, { branchId: 'branch-9' });
+    assert.equal(filter.branchId, 'branch-9');
+  });
 });
 
 describe('ConvertDocumentUseCase permissions', () => {

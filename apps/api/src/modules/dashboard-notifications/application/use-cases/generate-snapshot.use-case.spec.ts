@@ -8,7 +8,8 @@ import type { RequestContext } from '../../../auth/domain/models/request-context
 
 const COMPANY = 'c1';
 
-function ctxWith(permissions: readonly string[]): RequestContext {
+/** `branchIds` undefined = an unrestricted membership; an array = SELECTED_BRANCHES. */
+function ctxWith(permissions: readonly string[], branchIds?: string[]): RequestContext {
   return {
     requestId: 'r1',
     authSubject: 'u1',
@@ -17,13 +18,15 @@ function ctxWith(permissions: readonly string[]): RequestContext {
     membershipId: 'm1',
     roles: [],
     permissions: [...permissions],
-    scopes: {},
+    scopes: { branchIds },
     authProvider: 'watchdog',
   };
 }
 
-/** Entitlement rows + the two providers' reads, over one fake Prisma client. */
-function makePrisma(entitlements: Record<string, boolean>) {
+/** Entitlement rows + the two providers' reads, over one fake Prisma client.
+ *  `expenseWheres` collects what the expense provider actually queried, which is how the branch
+ *  filter reaching the providers is observed. */
+function makePrisma(entitlements: Record<string, boolean>, expenseWheres: any[]) {
   return {
     client: {
       companyFeatureEntitlement: {
@@ -38,10 +41,13 @@ function makePrisma(entitlements: Record<string, boolean>) {
         findFirst: async () => ({ occurredAt: new Date('2026-08-02T00:00:00Z') }),
       },
       expenseRecord: {
-        aggregate: async (args: any) => (args._sum?.outstandingAmount
-          ? { _sum: { outstandingAmount: 400 } }
-          : { _sum: { grandTotalAmount: 1250 }, _count: { _all: 2 } }),
-        count: async () => 3,
+        aggregate: async (args: any) => {
+          expenseWheres.push(args.where);
+          return args._sum?.outstandingAmount
+            ? { _sum: { outstandingAmount: 400 } }
+            : { _sum: { grandTotalAmount: 1250 }, _count: { _all: 2 } };
+        },
+        count: async (args: any) => { expenseWheres.push(args.where); return 3; },
       },
     },
   } as any;
@@ -61,9 +67,16 @@ function makeSnapshots(seed?: { widgets: unknown[]; generatedAt: Date }) {
       generatedAt: seed.generatedAt,
     }]
     : [];
+  // Deliberately scope-blind: the real repository discriminates on scope/scopeKey in SQL, so what
+  // this fake can prove is the lookup KEY the use case asks for.
+  const findLatestCalls: Array<{ scope: string; scopeKey?: string }> = [];
   return {
     rows,
-    findLatest: async () => rows[rows.length - 1] ?? null,
+    findLatestCalls,
+    findLatest: async (_companyId: string, _periodKind: string, scope: string, scopeKey?: string) => {
+      findLatestCalls.push({ scope, scopeKey });
+      return rows[rows.length - 1] ?? null;
+    },
     create: async (input: any) => {
       const row = { id: `snap-${rows.length}`, ...input };
       rows.push(row);
@@ -73,7 +86,8 @@ function makeSnapshots(seed?: { widgets: unknown[]; generatedAt: Date }) {
 }
 
 function makeSut(entitlements: Record<string, boolean>, seed?: { widgets: unknown[]; generatedAt: Date }) {
-  const prisma = makePrisma(entitlements);
+  const expenseWheres: any[] = [];
+  const prisma = makePrisma(entitlements, expenseWheres);
   const snapshots = makeSnapshots(seed);
   const useCase = new GenerateSnapshotUseCase(
     prisma,
@@ -81,7 +95,7 @@ function makeSut(entitlements: Record<string, boolean>, seed?: { widgets: unknow
     new InventoryHealthProvider(prisma),
     new ExpenseSummaryProvider(prisma),
   );
-  return { useCase, snapshots };
+  return { useCase, snapshots, expenseWheres };
 }
 
 const ENTITLED_EXPENSES_ONLY = { expenses: true, inventory: false, product_catalog: false };
@@ -145,5 +159,70 @@ describe('GenerateSnapshotUseCase entitlement/permission split', () => {
   it('still refuses a caller without any dashboard permission', async () => {
     const { useCase } = makeSut(ENTITLED_EXPENSES_ONLY);
     await assert.rejects(() => useCase.execute(ctxWith(['expense.read']), COMPANY, {}), /dashboard.read required/);
+  });
+});
+
+const READER = ['dashboard.read', 'expense.read'];
+
+describe('GenerateSnapshotUseCase branch dimension', () => {
+  it('rejects an explicit branch outside the caller scope', async () => {
+    const { useCase } = makeSut(ENTITLED_EXPENSES_ONLY);
+    // isBranchInScope() would pass this through for an absent branchId, which is why the use case
+    // writes the check itself.
+    await assert.rejects(
+      () => useCase.execute(ctxWith(READER, ['b1']), COMPANY, { periodKind: 'today', branchId: 'b2' }),
+      /Branch out of scope/,
+    );
+  });
+
+  it('scopes a restricted caller with no selection to its own branches, never company-wide', async () => {
+    const { useCase, snapshots, expenseWheres } = makeSut(ENTITLED_EXPENSES_ONLY);
+
+    await useCase.execute(ctxWith(READER, ['b2', 'b1']), COMPANY, { periodKind: 'today' });
+
+    const stored = snapshots.rows.at(-1);
+    assert.equal(stored.scope, 'branch');
+    assert.equal(stored.scopeKey, 'b1,b2', 'sorted, so two callers holding the same branches share one row');
+    assert.equal(expenseWheres.length, 3);
+    for (const where of expenseWheres) {
+      assert.deepEqual(where.branchId, { in: ['b2', 'b1'] }, 'every expense query is narrowed to the membership branches');
+    }
+  });
+
+  it('leaves an unrestricted caller with no selection exactly as it was', async () => {
+    const { useCase, snapshots, expenseWheres } = makeSut(ENTITLED_EXPENSES_ONLY);
+
+    await useCase.execute(ctxWith(READER), COMPANY, { periodKind: 'today' });
+
+    const stored = snapshots.rows.at(-1);
+    assert.equal(stored.scope, 'company');
+    assert.equal(stored.scopeKey, undefined);
+    assert.deepEqual(expenseWheres.map((w) => w.branchId), [undefined, undefined, undefined], 'no branch predicate at all (spec R7)');
+  });
+
+  it('looks the cache up under the resolved scope, so a cached row cannot cross scopes', async () => {
+    const { useCase, snapshots } = makeSut(ENTITLED_EXPENSES_ONLY);
+
+    await useCase.execute(ctxWith(READER), COMPANY, { periodKind: 'today' });
+    await useCase.execute(ctxWith(READER, ['b1']), COMPANY, { periodKind: 'today' });
+    // Unrestricted caller naming a branch: allowed, and keyed to that branch alone.
+    await useCase.execute(ctxWith(READER), COMPANY, { periodKind: 'today', branchId: 'b9' });
+
+    assert.deepEqual(
+      snapshots.findLatestCalls.map((call: any) => [call.scope, call.scopeKey]),
+      [['company', undefined], ['branch', 'b1'], ['branch', 'b9']],
+    );
+  });
+
+  it('reuses the cache on period and module set only — scope discrimination belongs to findLatest', async () => {
+    const { useCase, snapshots } = makeSut(ENTITLED_EXPENSES_ONLY);
+    const restricted = ctxWith(READER, ['b1']);
+
+    await useCase.execute(restricted, COMPANY, { periodKind: 'today' });
+    await useCase.execute(restricted, COMPANY, { periodKind: 'today' });
+
+    assert.equal(snapshots.rows.length, 1, 'the entitlement guard still reuses a matching fresh row');
+    assert.deepEqual(snapshots.findLatestCalls.map((call: any) => call.scopeKey), ['b1', 'b1'],
+      'the guard never compares scope itself; it only ever sees rows findLatest already keyed');
   });
 });

@@ -23,6 +23,8 @@ import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import { listBranches, type Branch } from '@/features/branch-settings/branches.api';
 import { employeeShortName, listEmployees } from '@/features/employee-access/employee-access.api';
 import { listConversations } from '@/features/crm-inbox/crm-inbox.api';
@@ -454,6 +456,7 @@ function CustomerProfileModal({ companyId, summary, detail, bookings, conversati
 }
 
 export function CustomersPrototypePage({ companyId, permissions, roles }: { companyId: string; permissions: string[]; roles: string[] }) {
+  const locale = useWorkspaceLocale();
   const toast = useToast();
   const canRead = permissions.includes('crm.customer.read');
   const hasOperationalRole = roles.some((role) => ['OWNER', 'ADMIN', 'SALES', 'MANAGER', 'SYSTEM_ADMIN'].includes(role));
@@ -615,7 +618,7 @@ export function CustomersPrototypePage({ companyId, permissions, roles }: { comp
 
   return (
     <div className="mangmee-page">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-extrabold text-gray-900">จัดการลูกค้า</h1><p className="mt-2 text-base font-medium text-gray-500">Customer Directory หลักสำหรับข้อมูลจากพนักงาน, Walk-in, LINE และ AI-assisted intake</p></div><div className="flex items-center gap-2"><MangmeeBranchChip />{canCreate && <button type="button" className={primaryButton} onClick={openCreate}>+ เพิ่มลูกค้า</button>}</div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-extrabold text-gray-900">จัดการลูกค้า</h1><p className="mt-2 text-base font-medium text-gray-500">Customer Directory หลักสำหรับข้อมูลจากพนักงาน, Walk-in, LINE และ AI-assisted intake</p></div><div className="flex items-center gap-2"><MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />{canCreate && <button type="button" className={primaryButton} onClick={openCreate}>+ เพิ่มลูกค้า</button>}</div></div>
       {warnings.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><strong>พบข้อมูลที่อาจซ้ำ:</strong> {warnings.map((warning) => `${warning.displayName} (${warning.matchType}, ${warning.status ? CUSTOMER_STATUS_META[warning.status].label : 'จำกัดสิทธิ์'})`).join(', ')}</div>}
       {error && <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700"><span>{error}</span><button type="button" className="underline" onClick={() => void load()}>ลองใหม่</button></div>}
       <div className="rounded-2xl border border-gray-200 bg-white p-4"><div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_180px_180px_auto]"><input className={inputClass} value={search} disabled={!canPiiSearch} onChange={(event) => setSearch(event.target.value)} placeholder={canPiiSearch ? 'ค้นหาชื่อหรือเบอร์โทร' : 'ปิดการค้นหา PII ตามสิทธิ์'} /><ThemedSelect className={inputClass} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CustomerStatusFilter)}>{CUSTOMER_STATUS_FILTERS.map((filter) => <option key={filter.id} value={filter.id}>{filter.label}</option>)}</ThemedSelect><ThemedSelect className={inputClass} value={tierFilter} onChange={(event) => setTierFilter(event.target.value as 'all' | CrmCustomerTier)}><option value="all">ทุกระดับ</option>{TIER_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</ThemedSelect><div className="flex items-center justify-end whitespace-nowrap text-sm font-semibold text-gray-500">ทั้งหมด {total.toLocaleString('th-TH')} ราย</div></div></div>

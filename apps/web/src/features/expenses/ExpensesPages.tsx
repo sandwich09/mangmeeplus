@@ -40,6 +40,7 @@ import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail,
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { SupportedLocale, DictionaryKey } from '@/common/i18n/workspace-dictionary';
@@ -1333,8 +1334,12 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
         pageSize: 200,
       });
       setRows(res.data);
-    } catch (e) { setError(err(e)); }
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setLoading(false); }
+    // `branchFilter` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
   }, [companyId, branchId, fromDate, toDate]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -1403,7 +1408,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       if (result.truncated) setExportNotice(`ส่งออก ${result.rowCount} จากทั้งหมด ${result.totalMatched} รายการ — แบ่งช่วงวันที่ให้สั้นลงเพื่อส่งออกให้ครบ`);
       downloadIndexXlsx(result, `expense-index-${gran === 'month' ? month : day}.xlsx`);
       setExported(true); setTimeout(() => setExported(false), 3000);
-    } catch (e) { setError(err(e)); }
+    } catch (e) {
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setExporting(false); }
   };
 

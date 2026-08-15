@@ -5,6 +5,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { EMPLOYEE_PROFILE_INCLUDE, toEmployeeSummary } from '../dto/employee-access.mapper';
 import {
+  ALL_BRANCH_ROLE_KEYS,
   NON_ASSIGNABLE_ROLE_KEYS,
   hashIdentityNumber,
   identityLast4,
@@ -129,7 +130,10 @@ export class UpdateEmployeeUseCase {
 
     // 10D branch scope assignment: validate referenced branches belong to this company and are ACTIVE.
     const scopeTouched = cmd.branchScopeMode !== undefined || cmd.branchIds !== undefined || cmd.defaultBranchId !== undefined;
-    if (scopeTouched) {
+    // R8: this write hands the membership an oversight role, which must hold every branch.
+    const assignsAllBranchRole = roles?.some((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key)) ?? false;
+    let widenToAllBranches = false;
+    if (scopeTouched || assignsAllBranchRole) {
       const membership = await this.prisma.client.companyMembership.findUniqueOrThrow({
         where: { id: existing.membershipId },
         select: { branchScopeMode: true, defaultBranchId: true },
@@ -137,21 +141,38 @@ export class UpdateEmployeeUseCase {
       const mode = cmd.branchScopeMode ?? membership.branchScopeMode;
       const defaultBranchId = cmd.defaultBranchId === undefined ? membership.defaultBranchId : cmd.defaultBranchId;
       const referenced = [...new Set([...(cmd.branchIds ?? []), ...(defaultBranchId ? [defaultBranchId] : [])])];
-      if (referenced.length > 0) {
-        const valid = await this.prisma.client.branch.count({
-          where: { companyId: cmd.companyId, id: { in: referenced }, status: 'ACTIVE' },
-        });
-        if (valid !== referenced.length) throw new ForbiddenException('One or more branches are invalid for this company.');
+      if (scopeTouched) {
+        if (referenced.length > 0) {
+          const valid = await this.prisma.client.branch.count({
+            where: { companyId: cmd.companyId, id: { in: referenced }, status: 'ACTIVE' },
+          });
+          if (valid !== referenced.length) throw new ForbiddenException('One or more branches are invalid for this company.');
+        }
+        if (mode === 'SELECTED_BRANCHES') {
+          // Final scope-row set must stay non-empty, or the resolver locks this employee out entirely.
+          const finalCount = cmd.branchIds !== undefined
+            ? cmd.branchIds.length
+            : await this.prisma.client.membershipBranchScope.count({ where: { membershipId: existing.membershipId } });
+          if (finalCount === 0) throw new ForbiddenException('SELECTED_BRANCHES requires at least one branch.');
+        }
+        if (mode === 'DEFAULT_BRANCH_ONLY' && !defaultBranchId) {
+          throw new ForbiddenException('DEFAULT_BRANCH_ONLY requires a default branch.');
+        }
       }
-      if (mode === 'SELECTED_BRANCHES') {
-        // Final scope-row set must stay non-empty, or the resolver locks this employee out entirely.
-        const finalCount = cmd.branchIds !== undefined
-          ? cmd.branchIds.length
-          : await this.prisma.client.membershipBranchScope.count({ where: { membershipId: existing.membershipId } });
-        if (finalCount === 0) throw new ForbiddenException('SELECTED_BRANCHES requires at least one branch.');
-      }
-      if (mode === 'DEFAULT_BRANCH_ONLY' && !defaultBranchId) {
-        throw new ForbiddenException('DEFAULT_BRANCH_ONLY requires a default branch.');
+      // R8 guardrail: an oversight role may not end this write on a narrowed scope. A caller that
+      // states a narrowing is rejected; a plain role assignment widens instead, in the transaction
+      // below. Enforced here rather than in the resolver so MembershipBranchScope stays truthful.
+      if (mode !== 'ALL_BRANCHES') {
+        // `roles` is undefined when roleIds arrived unchanged, so fall back to what the membership holds.
+        const finalRoleKeys = roles?.map((role) => role.key) ?? (await this.prisma.client.membershipRole.findMany({
+          where: { membershipId: existing.membershipId },
+          select: { role: { select: { key: true } } },
+        })).map((mr) => mr.role.key);
+        const allBranchRole = finalRoleKeys.find((key) => ALL_BRANCH_ROLE_KEYS.includes(key));
+        if (allBranchRole) {
+          if (scopeTouched) throw new ForbiddenException(`Role ${allBranchRole} requires access to all branches.`);
+          widenToAllBranches = true;
+        }
       }
     }
 
@@ -200,7 +221,15 @@ export class UpdateEmployeeUseCase {
         });
       }
 
-      if (scopeTouched) {
+      if (widenToAllBranches) {
+        // R8: same transaction as the role write above — split in two, a failure between them leaves
+        // the oversight role pinned to one branch, the exact state this guardrail exists to prevent.
+        await tx.companyMembership.update({
+          where: { id: existing.membershipId },
+          data: { branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null },
+        });
+        await tx.membershipBranchScope.deleteMany({ where: { membershipId: existing.membershipId } });
+      } else if (scopeTouched) {
         await tx.companyMembership.update({
           where: { id: existing.membershipId },
           data: {
@@ -227,7 +256,7 @@ export class UpdateEmployeeUseCase {
           targetId: cmd.employeeId,
           requestId: cmd.requestId,
           result: 'SUCCESS',
-          riskLevel: scopeTouched ? 'HIGH' : 'MEDIUM',
+          riskLevel: scopeTouched || widenToAllBranches ? 'HIGH' : 'MEDIUM',
           metadataJson: {
             membershipId: existing.membershipId,
             ...(roles && {
@@ -242,6 +271,10 @@ export class UpdateEmployeeUseCase {
               branchScopeMode: cmd.branchScopeMode,
               defaultBranchId: cmd.defaultBranchId,
               branchIds: cmd.branchIds,
+            }),
+            ...(widenToAllBranches && {
+              branchScopeMode: 'ALL_BRANCHES',
+              branchScopeWidenedForRole: roles!.find((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key))!.key,
             }),
           },
         },
