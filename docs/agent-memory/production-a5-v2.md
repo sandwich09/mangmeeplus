@@ -856,3 +856,24 @@ Next:
    snapshot/clone residual zero and signed READY, then freeze `main`.
 4. Dispatch one Production V2 `live` promotion, require signed `PROMOTED_LIVE`, open the durable
    platform gate with secret-safe SYSTEM_ADMIN control, and complete public/customer acceptance.
+
+### Readiness evidence correction — run 31892969841
+
+- The fresh current-Production snapshot, isolated restore, exact pending migration rehearsal and
+  cleanup all passed live. Independent readback proved the manual snapshot, clone DB, managed
+  secret, ACTIVE task definition and task ENI absent; the migration task stopped with exit code 0.
+- READY construction then rejected its own clone evidence. The jq expression added the
+  readiness-only cleanup field in a separate object whose `.cleanup` read the original `null`
+  input, replacing the base cleanup object with only `snapshotDeleted:true`. Runtime cleanup was
+  correct; serialized evidence was incomplete.
+- The correction builds the complete cleanup object once, adds `snapshotDeleted` inside that
+  object only for `readiness-v2`, and injects the finished object into clone infrastructure. An
+  executable regression asserts all seven readiness cleanup keys/values and confirms reviewed-v1
+  still omits the readiness-only field.
+
+Next:
+
+1. Merge the controller-only serialization correction after exact-head CI/review; no IAM or image
+   change is required and UAT `31888441617` remains reusable.
+2. Reissue one live Readiness, require the full cleanup object and signed READY, then continue with
+   the frozen-main Production V2 live promotion and durable platform opening.

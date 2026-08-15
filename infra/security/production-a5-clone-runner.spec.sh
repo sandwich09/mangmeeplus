@@ -11,7 +11,8 @@ bash -n "$runner" "$reconstruct"
 for required in \
   'snapshot-type automated' 'aws rds create-db-snapshot' 'aws rds delete-db-snapshot' \
   'production_a5_wait_for_manual_snapshot' 'production_a5_cleanup_manual_snapshot' \
-  'cleanup_snapshot_deleted' 'snapshotDeleted:$snapshotDeleted' '129600' \
+  'cleanup_snapshot_deleted' 'production_a5_clone_cleanup_evidence' \
+  'snapshotDeleted:$snapshotDeleted' 'cleanup:$cleanup[0]' '129600' \
   'aws rds modify-db-instance' \
   'production_a5_validate_source_db_configuration' \
   'db-parameter-group-name' 'option-group-name' \
@@ -41,7 +42,7 @@ for required in \
   'managed_password_requested=false' 'managed_password_requested=true' \
   'absent_checks=$((absent_checks+1))' '[ "$absent_checks" -ge 3 ]' \
   'if ! cleanup; then' 'refusing a duplicate unbounded cleanup attempt' \
-  '--argjson residual "$residual_resource_count"' \
+  '"$cleanup_snapshot_deleted" "$residual_resource_count"' \
   'residualResourceCount:$residual'; do
   grep -F -- "$required" "$runner" >/dev/null
 done
@@ -160,6 +161,20 @@ fi
 # multi-page CloudWatch semantics are proved rather than inferred from static text.
 source "$runner"
 export AWS_REGION=ap-southeast-1 temporary_id=watchdog-a5-clone-fixture
+
+# Execute the same cleanup evidence builder used by the runner. This prevents a jq RHS from
+# accidentally evaluating `.cleanup` against the original null input and replacing the base keys.
+production_a5_clone_cleanup_evidence readiness-v2 10 20 true true true true 0 \
+  > "$fixture/readiness-cleanup.json"
+jq -e 'keys==["deleteCompletedAtEpoch","deleteRequestedAtEpoch","instanceAbsent",
+    "residualResourceCount","secretDeleted","snapshotDeleted","taskStopped"]
+  and .=={deleteCompletedAtEpoch:20,deleteRequestedAtEpoch:10,instanceAbsent:true,
+    residualResourceCount:0,secretDeleted:true,snapshotDeleted:true,taskStopped:true}' \
+  "$fixture/readiness-cleanup.json" >/dev/null
+production_a5_clone_cleanup_evidence reviewed-v1 10 20 true true true false 0 \
+  > "$fixture/reviewed-cleanup.json"
+jq -e 'has("snapshotDeleted")|not' "$fixture/reviewed-cleanup.json" >/dev/null
+
 jq -cnS '{DBInstances:[{DBInstanceIdentifier:"watchdog-bms-prod-db",Engine:"postgres",
   EngineVersion:"18.3",StorageEncrypted:true,PubliclyAccessible:false,
   DBSubnetGroup:{DBSubnetGroupName:"watchdog-bms-prod-db-subnets"},
