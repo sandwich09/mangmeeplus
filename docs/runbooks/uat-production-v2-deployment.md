@@ -237,7 +237,8 @@ gh workflow run production-readiness.yml -R "$repo" --ref main \
 - run อยู่บน exact `origin/main` และ input mode เป็น `maintenance_closed`
 - Passport signature/expiry, branch policy, images, IAM, secret metadata, SSM, network, RDS,
   Redis, AgentCore, service health และ migration catalog ผ่าน
-- `EXACT_MATCH` ใช้ quick path; `APPEND_ONLY_PENDING` ต้อง clone/rehearse/cleanup จน residual เป็นศูนย์
+- `EXACT_MATCH` ใช้ quick path; `APPEND_ONLY_PENDING` ต้องสร้าง fresh tagged manual snapshot,
+  restore clone, ลบ snapshot ก่อน rehearsal และ cleanup DB/secret/task/definition/ENI จน residual เป็นศูนย์
 - มี signed artifact
   `production-release-ready-v2-<candidate>-run-<READY_RUN_ID>-attempt-<attempt>`
 - `ready.json` มี source, UAT run, controller, requested mode และทุก check ตรงกับ run นี้
