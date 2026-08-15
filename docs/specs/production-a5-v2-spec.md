@@ -287,19 +287,24 @@ budget 5 นาที หากเกินให้หยุดเป็น inf
 
 เมื่อมี pending migration:
 
-1. เลือก encrypted automated snapshot ของ Production ที่อายุอยู่ใน policy
+1. สร้าง encrypted manual snapshot ชั่วคราวจาก exact Production DB ของ readiness run นี้ด้วย
+   deterministic id + exact six ownership tags; automated snapshot ยังคงเป็น backup/KMS baseline
+   แต่ห้ามใช้แทน fresh clone source เพราะ migration ledger อาจล้าหลัง Production ปัจจุบัน
 2. restore ไป isolated private subnet/SG แบบ endpoint-only, `PubliclyAccessible=false`
 3. ใช้ exact signed migration-tool digest จาก passport; ห้าม build ใน A5
 4. ตรวจ PRE invariants และ exact applied name/checksum set พร้อม historical execution order
 5. apply exact pending repository set ภายใต้ lock/statement/overall timeout ที่กำหนด
 6. ตรวจ POST schema/data invariants และ compatibility suites
 7. เก็บ tenant-anonymous evidence เท่านั้น
-8. ลบ clone DB, managed secret, task definition และ residual ENI/resource
+8. ลบ manual snapshot ทันทีหลัง restore สำเร็จ และลบ clone DB, managed secret, task definition
+   กับ residual ENI/resource; accepted-but-lost create/delete ทุกจุดต้อง reconcile ด้วย exact id/tag
 9. ออก READY ได้เมื่อ cleanup ยืนยัน `DESTROYED` และ residual count เป็นศูนย์เท่านั้น
 
 Clone controller ต้อง bind provider authorization จริงด้วย:
 
-- `RestoreDBInstanceFromDBSnapshot` ครอบ exact target DB, snapshot, DB subnet group,
+- `CreateDBSnapshot` ครอบ exact source DB + deterministic manual snapshot พร้อม request tags,
+  `DeleteDBSnapshot` ครอบเฉพาะ snapshot tag `purpose=production-a5-clone`, และ
+  `RestoreDBInstanceFromDBSnapshot` ครอบ exact target DB/snapshot/DB subnet group,
   parameter group และ option group ที่อ่านจาก source DB; ห้ามใช้ชื่อที่เดาเอง
 - `ecs:ListTasks` ใช้ `Resource:"*"` พร้อม exact `ecs:cluster` condition สำหรับ Fargate;
   task/run/stop และ task-definition lifecycle คงแยก least-privilege ตาม resource type ที่รองรับ

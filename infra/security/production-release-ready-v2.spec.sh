@@ -363,5 +363,61 @@ if bash "$validator" "$work/split-selective.json" "$work" "$work/passport.json" 
     8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null 2>&1; then
   echo 'ERROR: READY validator accepted a selective split baseline' >&2; exit 1
 fi
+
+# Execute the pending-migration branch against the exact fresh-snapshot cleanup contract.
+jq -cS '.status="APPEND_ONLY_PENDING"|.appliedMigrationCount=0|.pendingMigrationCount=1' \
+  "$work/catalog-result.json" > "$work/catalog-pending.json"
+mv "$work/catalog-pending.json" "$work/catalog-result.json"
+jq -cnS --arg source "$source" '
+  {schemaVersion:2,sourceCommit:$source,status:"PASSED",engine:"PostgreSQL",
+   pendingCatalogHash:("3"*64),pendingMigrations:[{name:"20260815120000_dashboard_scope_branch"}],
+   executedMigrations:[{name:"20260815120000_dashboard_scope_branch"}],
+   schemaValidation:{status:"PASSED"},compatibility:{status:"PASSED"}}
+' > "$work/clone-result.json"
+temporary=watchdog-a5-clone-9001-a1-aaaaaaaa
+jq -cnS --arg source "$source" --arg temporary "$temporary" \
+  --arg image "$(jq -r '.tools[0].image' "$work/passport.json")" '
+  {migrationSourceCommit:$source,migrationImage:$image,rehearsalProfile:"readiness-v2",
+   temporaryDbIdentifier:$temporary,snapshotType:"manual",
+   snapshotArn:("arn:aws:rds:ap-southeast-1:311414082667:snapshot:"+$temporary+"-source"),
+   cleanup:{deleteRequestedAtEpoch:1,deleteCompletedAtEpoch:2,instanceAbsent:true,
+     secretDeleted:true,snapshotDeleted:true,taskStopped:true,residualResourceCount:0}}
+' > "$work/clone-infrastructure.json"
+jq -cS '.clonePolicySha256=("8"*64)' "$work/production-runtime.json" \
+  > "$work/production-runtime.pending.json"
+mv "$work/production-runtime.pending.json" "$work/production-runtime.json"
+make_clone_ready() {
+  local output="$1" infrastructure_hash="$2"
+  rewrite '.runtimeBaseline.sha256=$runtime
+    |.migration={classificationPath:"catalog-result.json",classificationSha256:$catalog,
+      runtimePath:"catalog-runtime.json",runtimeSha256:$catalogRuntime,
+      status:"APPEND_ONLY_PENDING",pendingMigrationCount:1,
+      clone:{resultPath:"clone-result.json",resultSha256:$result,
+        infrastructurePath:"clone-infrastructure.json",infrastructureSha256:$infrastructure}}' \
+    "$output" --arg runtime "$(sha_file "$work/production-runtime.json")" \
+    --arg catalog "$(sha_file "$work/catalog-result.json")" \
+    --arg catalogRuntime "$(sha_file "$work/catalog-runtime.json")" \
+    --arg result "$(sha_file "$work/clone-result.json")" \
+    --arg infrastructure "$infrastructure_hash"
+}
+make_clone_ready "$work/pending-ready.json" "$(sha_file "$work/clone-infrastructure.json")"
+bash "$validator" "$work/pending-ready.json" "$work" "$work/passport.json" "$source" \
+  8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null
+
+for mutation in automated-snapshot retained-snapshot; do
+  cp "$work/clone-infrastructure.json" "$work/clone-infrastructure.valid.json"
+  case "$mutation" in
+    automated-snapshot) jq -cS '.snapshotType="automated"' \
+      "$work/clone-infrastructure.valid.json" > "$work/clone-infrastructure.json" ;;
+    retained-snapshot) jq -cS '.cleanup.snapshotDeleted=false' \
+      "$work/clone-infrastructure.valid.json" > "$work/clone-infrastructure.json" ;;
+  esac
+  make_clone_ready "$work/$mutation-ready.json" "$(sha_file "$work/clone-infrastructure.json")"
+  if bash "$validator" "$work/$mutation-ready.json" "$work" "$work/passport.json" "$source" \
+      8001 2 9001 1 "$controller" example/watchdog "$now" >/dev/null 2>&1; then
+    echo "ERROR: READY validator accepted $mutation clone evidence" >&2; exit 1
+  fi
+  mv "$work/clone-infrastructure.valid.json" "$work/clone-infrastructure.json"
+done
 bash -n "$validator"
 echo 'production release READY V2 contract: PASS'
