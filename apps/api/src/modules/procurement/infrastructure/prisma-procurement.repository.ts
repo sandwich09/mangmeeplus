@@ -1152,7 +1152,7 @@ export class PrismaProcurementRepository {
     return this.toVendorBillRecord(row);
   }
 
-  async listVendorBills(companyId: string, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: VendorBillRecord[]; total: number }> {
+  async listVendorBills(companyId: string, filter: { status?: string; supplierId?: string; purchaseOrderId?: string; matchingStatus?: string; postingStatus?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number; relatedUserId?: string }, scopes: BranchScopes = {}): Promise<{ data: VendorBillRecord[]; total: number }> {
     const page = Math.max(1, filter.page ?? 1);
     const pageSize = Math.min(100, filter.pageSize ?? 20);
     const relatedIds = filter.relatedUserId ? await this.relatedProcurementDocumentIds(companyId, filter.relatedUserId, scopes) : undefined;
@@ -1160,6 +1160,7 @@ export class PrismaProcurementRepository {
       ...(filter.status && { status: filter.status }), ...(filter.supplierId && { supplierId: filter.supplierId }),
       ...(filter.purchaseOrderId && { purchaseOrderId: filter.purchaseOrderId }), ...(filter.matchingStatus && { matchingStatus: filter.matchingStatus }),
       ...(filter.postingStatus && { postingStatus: filter.postingStatus }),
+      ...(filter.branchId && { branchId: filter.branchId }),
       ...(filter.fromDate || filter.toDate ? { billDate: civilDayRangeToUtc(filter.fromDate, filter.toDate) } : {}),
       ...(relatedIds && { id: { in: [...relatedIds.VENDOR_BILL] } }),
     }] };

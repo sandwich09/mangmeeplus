@@ -7,6 +7,7 @@ import { formatThaiDate } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
 import { isReceiptTaxCodeAllowed } from '@/features/tax/transaction-tax.model';
 import type { TaxCodeDefinitionDto, TransactionTaxContext } from '@watchdog-bms/contracts';
@@ -162,23 +163,27 @@ function DocumentList({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const loadAbort = useRef(0);
+  const branch = useBranchFilter();
+  const branchId = branch?.branchId || undefined;
 
   const load = useCallback(async () => {
     const token = ++loadAbort.current;
     setLoading(true);
     setError(null);
     try {
-      const res = await listDocuments(companyId, filterType ? { documentType: filterType } : {});
+      const res = await listDocuments(companyId, { documentType: filterType || undefined, branchId });
       if (token !== loadAbort.current) return;
       setDocs(res.data);
       if (!selectedId && res.data[0]) onSelect(res.data[0].id);
     } catch (e) {
       if (token !== loadAbort.current) return;
+      if (isBranchScope403(e, branchId)) { branch?.reportBranchForbidden(); return; }
       setError(err(e));
     } finally {
       if (token === loadAbort.current) setLoading(false);
     }
-  }, [companyId, filterType, onSelect, selectedId]);
+    // `branch` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
+  }, [companyId, filterType, branchId, onSelect, selectedId]);
 
   useEffect(() => { void load(); }, [load, reloadKey]);
 

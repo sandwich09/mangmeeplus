@@ -8,7 +8,7 @@ const COMPANY_ID = 'company-1';
 
 function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permissions?: Array<{ permission: { key: string } }> }>; existingIdentity?: boolean; existingPhone?: boolean; existingUsers?: Array<{ id: string; username: string; status?: string; email?: string }> } = {}) {
   const roles = (opts.roles ?? [{ id: 'role-sales', key: 'SALES' }]).map((role) => ({ ...role, permissions: role.permissions ?? [] }));
-  const state = { users: [] as any[], credentials: [] as any[], memberships: [] as any[], membershipRoles: [] as any[], profiles: [] as any[], auditLogs: [] as any[], lineLinkTokens: [] as any[] };
+  const state = { users: [] as any[], credentials: [] as any[], memberships: [] as any[], membershipRoles: [] as any[], profiles: [] as any[], auditLogs: [] as any[], lineLinkTokens: [] as any[], branchScopes: [] as any[] };
   for (const u of opts.existingUsers ?? []) state.users.push({ status: 'ACTIVE', ...u });
 
   const tx = {
@@ -48,6 +48,12 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
       createMany: async ({ data }: any) => { state.membershipRoles.push(...data); return { count: data.length }; },
       deleteMany: async ({ where }: any) => {
         state.membershipRoles = state.membershipRoles.filter((item) => item.membershipId !== where.membershipId);
+        return { count: 1 };
+      },
+    },
+    membershipBranchScope: {
+      deleteMany: async ({ where }: any) => {
+        state.branchScopes = state.branchScopes.filter((item) => item.membershipId !== where.membershipId);
         return { count: 1 };
       },
     },
@@ -269,6 +275,36 @@ describe('CreateEmployeeUseCase', () => {
     assert.equal(resumed.mustChangePassword, true);
     assert.equal(state.credentials[0].mustChangePassword, true);
     assert.equal(state.auditLogs.at(-1).metadataJson.resumedDraft, true);
+  });
+
+  // R8 (spec branch-scope-visibility): the create path never carries a branch scope of its own, but
+  // resuming a draft rewrites roles on a membership the wizard's follow-up update may have narrowed.
+  it('widens a narrowed draft membership when the resumed draft carries an all-branch role', async () => {
+    const { useCase, state } = makeUseCase({ roles: [{ id: 'role-accountant', key: 'ACCOUNTANT' }] });
+    const cmd = { ...baseCommand, roleIds: ['role-accountant'], requesterPermissions: ['access.role.financial.assign'] };
+    await useCase.execute(cmd);
+    // what the wizard's follow-up updateEmployee call would have written on the first pass
+    Object.assign(state.memberships[0], { branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: 'branch-1' });
+    state.branchScopes.push({ membershipId: state.memberships[0].id, branchId: 'branch-1' });
+
+    await useCase.execute(cmd);
+
+    assert.equal(state.memberships[0].branchScopeMode, 'ALL_BRANCHES');
+    assert.equal(state.memberships[0].defaultBranchId, null);
+    assert.equal(state.branchScopes.length, 0);
+    assert.equal(state.auditLogs.at(-1).metadataJson.branchScopeWidenedForRole, 'ACCOUNTANT');
+  });
+
+  it('leaves a resumed draft with a branch-scopable role narrowed as it was', async () => {
+    const { useCase, state } = makeUseCase();
+    await useCase.execute(baseCommand);
+    Object.assign(state.memberships[0], { branchScopeMode: 'SELECTED_BRANCHES', defaultBranchId: 'branch-1' });
+    state.branchScopes.push({ membershipId: state.memberships[0].id, branchId: 'branch-1' });
+
+    await useCase.execute(baseCommand);
+
+    assert.equal(state.memberships[0].branchScopeMode, 'SELECTED_BRANCHES');
+    assert.equal(state.branchScopes.length, 1);
   });
 
   it('activates both the employee profile and membership only when the draft is completed', async () => {

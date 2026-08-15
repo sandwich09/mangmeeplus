@@ -39,6 +39,9 @@ export class UpdateNotificationRuleDto {
 /** POST .../dashboard/snapshots/generate — both the user route and the worker one. */
 export class GenerateDashboardSnapshotDto {
   @IsIn(DASHBOARD_PERIOD_KINDS) @IsOptional() periodKind?: (typeof DASHBOARD_PERIOD_KINDS)[number];
+  // Absent = the caller's own scope (company-wide when unrestricted). Out-of-scope values are
+  // rejected with 403 by the use case, not here; this is length/type validation only.
+  @IsString() @IsOptional() @MaxLength(64) branchId?: string;
 }
 
 /** POST /internal/companies/:companyId/notifications/daily-owner-summary */

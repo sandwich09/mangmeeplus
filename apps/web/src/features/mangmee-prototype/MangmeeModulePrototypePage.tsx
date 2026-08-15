@@ -23,6 +23,8 @@ import {
   cx,
   type MangmeeTone,
 } from '@/common/components/mangmee';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 
 type Icon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -330,6 +332,7 @@ function hrefFor(companyId: string, href: string) {
 }
 
 export function MangmeeModulePrototypePage({ companyId, moduleKey }: { companyId: string; moduleKey: ModuleKey }) {
+  const locale = useWorkspaceLocale();
   const config = configs[moduleKey];
 
   return (
@@ -340,7 +343,7 @@ export function MangmeeModulePrototypePage({ companyId, moduleKey }: { companyId
           <span className="mx-2 text-gray-300">/</span>
           <span className="text-gray-700">{config.crumb}</span>
         </div>
-        <MangmeeBranchChip />
+        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
       </div>
 
       <div className="flex flex-wrap items-end justify-between gap-4">

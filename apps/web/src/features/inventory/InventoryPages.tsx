@@ -12,6 +12,8 @@ import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import {
   addProductBarcode,
   createLocation,
@@ -446,14 +448,17 @@ export function LocationsPageClient({ companyId, canManage = false, canManageLab
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const branch = useBranchFilter();
+  const branchId = branch?.branchId || undefined;
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const result = await listLocations(companyId, { search, pageSize: 50 });
+      const result = await listLocations(companyId, { search, branchId, pageSize: 50 });
       setLocations(result.items);
     } catch (error) {
+      if (isBranchScope403(error, branchId)) { branch?.reportBranchForbidden(); return; }
       setError(apiErrorMessage(error));
     } finally {
       setLoading(false);
@@ -462,7 +467,8 @@ export function LocationsPageClient({ companyId, canManage = false, canManageLab
 
   useEffect(() => {
     void load();
-  }, [companyId]);
+    // `load` is re-created every render, so it always reads the current search text.
+  }, [companyId, branchId]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

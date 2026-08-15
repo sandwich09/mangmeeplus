@@ -6,7 +6,8 @@ type ErrorOverrides = Partial<Record<number | 'network' | 'fallback', Dictionary
   conflictCodes?: Record<string, DictionaryKey>;
 };
 
-function statusOf(error: unknown): number | undefined {
+/** HTTP status off either error shape the app throws: `{ status }` from authedApiFetch, `{ statusCode }` from ApiError. */
+export function statusOf(error: unknown): number | undefined {
   const candidate = error as { statusCode?: unknown; status?: unknown } | null | undefined;
   if (typeof candidate?.statusCode === 'number') return candidate.statusCode;
   if (typeof candidate?.status === 'number') return candidate.status;

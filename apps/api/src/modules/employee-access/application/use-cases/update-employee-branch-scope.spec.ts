@@ -16,8 +16,9 @@ function makePrisma(opts: {
   targetRoleRows?: Array<{ roleId: string; role: { key: string } }>;
   duplicateIdentity?: boolean;
   otherCompanyMemberships?: number;
+  membershipScopeMode?: string;
 } = {}) {
-  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any };
+  const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0 };
   const tx = {
     employeeAccessProfile: { update: async (args: any) => { writes.profileUpdate = args; return {}; } },
     user: { update: async (args: any) => { writes.userUpdate = args; return {}; } },
@@ -45,7 +46,7 @@ function makePrisma(opts: {
         }),
       },
       companyMembership: {
-        findUniqueOrThrow: async () => ({ branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null }),
+        findUniqueOrThrow: async () => ({ branchScopeMode: opts.membershipScopeMode ?? 'ALL_BRANCHES', defaultBranchId: null }),
         count: async () => opts.otherCompanyMemberships ?? 0,
       },
       role: { findMany: async () => opts.candidateRoles ?? [] },
@@ -53,7 +54,7 @@ function makePrisma(opts: {
       auditLog: { create: tx.auditLog.create },
       branch: { count: async () => opts.validBranchCount ?? 0 },
       membershipBranchScope: { count: async () => opts.existingScopeRows ?? 0 },
-      $transaction: async (fn: any) => fn(tx),
+      $transaction: async (fn: any) => { writes.transactions += 1; return fn(tx); },
     },
   } as any;
   return { prisma, writes };
@@ -219,5 +220,61 @@ describe('UpdateEmployeeUseCase identity editing', () => {
       () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, identityNumber: '1234567890123' }),
       /ID\/passport already exists/,
     );
+  });
+});
+
+// R8 (spec branch-scope-visibility): oversight roles are guaranteed all-branch by a write-path
+// guardrail, never by overriding the permission resolver.
+const ACCOUNTANT_ROLE_ROW = { roleId: 'r-acct', role: { key: 'ACCOUNTANT' } };
+const FINANCIAL_ASSIGN = 'access.role.financial.assign';
+
+describe('UpdateEmployeeUseCase all-branch role guardrail', () => {
+  it('rejects narrowing the scope of a membership that already holds an all-branch role', async () => {
+    const { prisma } = makePrisma({ validBranchCount: 2, targetRoleRows: [ACCOUNTANT_ROLE_ROW] });
+    await assert.rejects(
+      () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1', 'b2'] }),
+      /Role ACCOUNTANT requires access to all branches/,
+    );
+  });
+
+  it('rejects narrowing in the same write that assigns the all-branch role', async () => {
+    const { prisma } = makePrisma({ validBranchCount: 1, candidateRoles: [FINANCE_ROLE] });
+    await assert.rejects(
+      () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({
+        ...baseCmd,
+        requesterPermissions: [...baseCmd.requesterPermissions, 'accounting.payment.create', FINANCIAL_ASSIGN],
+        roleIds: ['r-finance'],
+        branchScopeMode: 'SELECTED_BRANCHES',
+        branchIds: ['b1'],
+      }),
+      /Role FINANCE requires access to all branches/,
+    );
+  });
+
+  it('widens a narrowed membership on role assignment, in the same transaction as the role write', async () => {
+    const { prisma, writes } = makePrisma({
+      candidateRoles: [FINANCE_ROLE],
+      targetRoleRows: [{ roleId: 'r-sales', role: { key: 'SALES' } }],
+      membershipScopeMode: 'SELECTED_BRANCHES',
+    });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({
+      ...baseCmd,
+      requesterPermissions: [...baseCmd.requesterPermissions, 'accounting.payment.create', FINANCIAL_ASSIGN],
+      roleIds: ['r-finance'],
+    });
+    assert.deepEqual(writes.assignedRoleIds, ['r-finance']);
+    assert.deepEqual(writes.membershipUpdate.data, { branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null });
+    assert.equal(writes.scopeDeletes, 1);
+    // Split across two transactions, a failure between them strands FINANCE on one branch.
+    assert.equal(writes.transactions, 1);
+    assert.equal(writes.auditArgs.data.riskLevel, 'HIGH');
+    assert.equal(writes.auditArgs.data.metadataJson.branchScopeWidenedForRole, 'FINANCE');
+  });
+
+  it('leaves the five branch-scopable roles free to be narrowed', async () => {
+    const { prisma, writes } = makePrisma({ validBranchCount: 2, targetRoleRows: [{ roleId: 'r-sales', role: { key: 'SALES' } }] });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, branchScopeMode: 'SELECTED_BRANCHES', branchIds: ['b1', 'b2'] });
+    assert.equal(writes.membershipUpdate.data.branchScopeMode, 'SELECTED_BRANCHES');
+    assert.deepEqual(writes.scopeCreates.data.map((d: any) => d.branchId), ['b1', 'b2']);
   });
 });

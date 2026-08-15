@@ -9,6 +9,7 @@ import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { LoadingState } from '@/common/components/state/LoadingState';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { createTaxReconciliation, getPp30Boxes, getTaxReconciliation, listTaxReconciliations, reviewTaxReconciliation } from './transaction-tax.api';
 import { pp30SalesSideRecorded, transactionTaxCapabilities, transactionTaxErrorMessage } from './transaction-tax.model';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
@@ -46,7 +47,10 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try { setHistory(await listTaxReconciliations(companyId, { formType, periodKey, branchId: branch?.branchId || undefined, page: 1, pageSize: 20 })); }
-    catch (cause) { setError(transactionTaxErrorMessage(cause)); }
+    catch (cause) {
+      if (isBranchScope403(cause, branch?.branchId)) { branch?.reportBranchForbidden(); return; }
+      setError(transactionTaxErrorMessage(cause));
+    }
     finally { setHistoryLoading(false); }
   }, [branch?.branchId, companyId, formType, periodKey]);
   useEffect(() => { void loadHistory(); }, [loadHistory]);

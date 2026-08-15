@@ -6,6 +6,7 @@ import { loadEntitledFeatureKeys } from '../../../employee-access/application/en
 import { InventoryHealthProvider } from '../providers/inventory-health.provider';
 import { ExpenseSummaryProvider } from '../providers/expense-summary.provider';
 import { getPeriodBoundaries, computeFreshness } from '../../domain/logic/notification.logic';
+import type { DashboardScope } from '../../domain/models/dashboard.model';
 import type { DashboardSnapshotDto, DashboardPeriodKind, DashboardWidget } from '@watchdog-bms/contracts';
 
 @Injectable()
@@ -26,12 +27,26 @@ export class GenerateSnapshotUseCase {
   async execute(
     ctx: RequestContext,
     companyId: string,
-    options: { periodKind?: DashboardPeriodKind; periodStart?: Date; periodEnd?: Date; forceGenerate?: boolean },
+    options: { periodKind?: DashboardPeriodKind; periodStart?: Date; periodEnd?: Date; forceGenerate?: boolean; branchId?: string },
   ): Promise<DashboardSnapshotDto> {
     if (!ctx.permissions.includes('dashboard.read') && !ctx.permissions.includes('dashboard.snapshot.generate')) {
       throw new ForbiddenException('dashboard.read required');
     }
     if (ctx.companyId !== companyId) throw new ForbiddenException('Company mismatch');
+
+    // The branch dimension, resolved once (spec R4). Written out rather than delegated to
+    // `isBranchInScope`, which returns true for an absent branchId (branch.logic.ts:48-52) and so
+    // cannot express "this explicit branch is out of scope".
+    const scopedBranchIds = ctx.scopes.branchIds;
+    if (options.branchId && scopedBranchIds && !scopedBranchIds.includes(options.branchId)) {
+      throw new ForbiddenException('Branch out of scope');
+    }
+    // A restricted caller with no selection gets their own branches, never the company total —
+    // that is the leak this closes. An unrestricted caller with no selection stays company-wide.
+    const branchIds = options.branchId ? [options.branchId] : scopedBranchIds;
+    const scope: DashboardScope = branchIds ? 'branch' : 'company';
+    // Sorted so two callers holding the same branches share one cached row (spec R5).
+    const scopeKey = branchIds ? [...branchIds].sort().join(',') : undefined;
 
     const kind: DashboardPeriodKind = options.periodKind ?? 'today';
     const now = new Date();
@@ -47,7 +62,7 @@ export class GenerateSnapshotUseCase {
     const activeProviders = this.providers.filter((provider) => entitled === null || entitled.has(provider.featureKey));
 
     if (!options.forceGenerate) {
-      const existing = await this.snapshots.findLatest(companyId, kind);
+      const existing = await this.snapshots.findLatest(companyId, kind, scope, scopeKey);
       const cached = (existing?.metricsJson as { widgets?: DashboardWidget[] } | undefined)?.widgets;
       // Reuse only while the cache still matches what the company is entitled to: a feature turned
       // off must not keep serving its card for the rest of the freshness window.
@@ -67,7 +82,7 @@ export class GenerateSnapshotUseCase {
       }
     }
 
-    const providerInput = { companyId, periodStart, periodEnd };
+    const providerInput = { companyId, periodStart, periodEnd, branchIds };
 
     // Collect widgets from the entitled providers (catch per-provider errors); a provider that
     // fails returns an unavailable widget, which the workspace renders as no data rather than
@@ -81,8 +96,8 @@ export class GenerateSnapshotUseCase {
 
     const snapshot = await this.snapshots.create({
       companyId,
-      scope: 'company',
-      scopeKey: undefined,
+      scope,
+      scopeKey,
       periodKind: kind,
       periodStart,
       periodEnd,

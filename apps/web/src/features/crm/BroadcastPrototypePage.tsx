@@ -21,6 +21,8 @@ import {
   type BroadcastSegmentId,
   type BroadcastToneId,
 } from './broadcast-prototype.model';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 
 function StepCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -51,6 +53,7 @@ function Field({ label, value, placeholder, onChange }: {
 }
 
 export function BroadcastPrototypePage() {
+  const locale = useWorkspaceLocale();
   const [topic, setTopic] = useState('');
   const [price, setPrice] = useState('');
   const [keyPoint, setKeyPoint] = useState('');
@@ -116,7 +119,7 @@ export function BroadcastPrototypePage() {
             ส่งข้อความ/โปรโมชันหาลูกค้าผ่าน LINE OA · ให้ AI ช่วยคิดเนื้อหา + โปสเตอร์ · ทุกสาขา (รวม)
           </p>
         </div>
-        <MangmeeBranchChip />
+        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[1.3fr_1fr]">

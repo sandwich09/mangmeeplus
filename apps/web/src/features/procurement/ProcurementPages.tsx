@@ -7,6 +7,8 @@ import { ForbiddenState, LoadingState } from '@/common/components/state';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { listSuppliers, listPurchaseRequests, listPurchaseOrders, listGoodsReceipts, submitPurchaseRequest, approvePurchaseRequest, rejectPurchaseRequest, issuePurchaseOrder, postGoodsReceipt, voidGoodsReceipt } from './procurement.api';
 import { parseProcurementTab, visibleProcurementTabs, type ProcurementTab } from './procurement.logic';
+import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useToast } from '@/common/components/toast';
 import { useInputPrompt } from '@/common/components/modal';
@@ -162,13 +164,19 @@ function PurchaseOrderList({ companyId }: { companyId: string }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const branch = useBranchFilter();
+  const branchId = branch?.branchId || undefined;
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    try { const r = await listPurchaseOrders(companyId, { status: statusFilter || undefined }); setData(r.data ?? []); }
-    catch (e) { setError(err(e)); }
+    try { const r = await listPurchaseOrders(companyId, { status: statusFilter || undefined, branchId }); setData(r.data ?? []); }
+    catch (e) {
+      if (isBranchScope403(e, branchId)) { branch?.reportBranchForbidden(); return; }
+      setError(err(e));
+    }
     finally { setLoading(false); }
-  }, [companyId, statusFilter]);
+    // `branch` is deliberately absent: reportBranchForbidden is stable per companyId, which is here.
+  }, [companyId, statusFilter, branchId]);
 
   useEffect(() => { load(); }, [load]);
 

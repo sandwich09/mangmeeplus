@@ -31,7 +31,7 @@ export class VendorBillController {
   @RequireAnyPermission('procurement.vendor_bill.read', 'procurement.vendor_bill.read_related')
   async list(@ReqCtx() ctx: RequestContext, @Param('companyId') companyId: string, @Query() q: any) {
     assertRouteCompany(ctx, companyId);
-    return this.listBills.execute(ctx, { status: q['status'], supplierId: q['supplierId'], purchaseOrderId: q['purchaseOrderId'], matchingStatus: q['matchingStatus'], postingStatus: q['postingStatus'], fromDate: q['fromDate'], toDate: q['toDate'], page: q['page'] ? Number(q['page']) : undefined, pageSize: q['pageSize'] ? Number(q['pageSize']) : undefined });
+    return this.listBills.execute(ctx, { status: q['status'], supplierId: q['supplierId'], purchaseOrderId: q['purchaseOrderId'], matchingStatus: q['matchingStatus'], postingStatus: q['postingStatus'], branchId: q['branchId'], fromDate: q['fromDate'], toDate: q['toDate'], page: q['page'] ? Number(q['page']) : undefined, pageSize: q['pageSize'] ? Number(q['pageSize']) : undefined });
   }
 
   // H-07: static routes must be declared before the ':id' routes below.

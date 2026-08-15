@@ -4,7 +4,7 @@ import type React from 'react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { useRouter } from 'next/navigation';
-import { hasPrivilegedGrant, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
+import { ALL_BRANCH_ROLE_KEYS, hasPrivilegedGrant, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { LoadingState } from '@/common/components/state/LoadingState';
@@ -16,6 +16,7 @@ import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 
 type TitleOption = 'นาย' | 'นาง' | 'นางสาว';
 type AddStep = 1 | 2 | 3 | 4;
@@ -383,6 +384,16 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   }, [companyId, postal]);
 
   const selectedRole = roles.find((r) => r.id === roleId);
+  // R8: an oversight role (ADMIN, FINANCE, ACCOUNTANT, ...) must hold every branch, and the server
+  // rejects anything narrower — so the picker must not offer the choice.
+  const branchPickerLocked = Boolean(selectedRole && ALL_BRANCH_ROLE_KEYS.includes(selectedRole.key));
+
+  useEffect(() => {
+    if (!branchPickerLocked || branches.length === 0) return;
+    setBranchIds(branches.map((branch) => branch.id));
+    setDefaultBranchId((current) => current || branches[0]!.id);
+  }, [branchPickerLocked, branches]);
+
   const provinces = unique([...addressOptions.map((row) => row.provinceTh), ...(province ? [province] : [])]);
   const districts = unique([
     ...addressOptions.filter((row) => row.provinceTh === province).map((row) => row.districtTh),
@@ -610,7 +621,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
             {isEditing ? 'แก้ไขข้อมูลพนักงาน ตำแหน่ง และสาขาที่สังกัดทีละขั้น' : 'สร้างบัญชีพนักงานใหม่ กำหนดตำแหน่งและสาขาที่สังกัด · เจ้าของร้านสร้างได้เท่านั้น'}
           </p>
         </div>
-        <MangmeeBranchChip />
+        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
       </div>
 
       {loadError && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{loadError}</div>}
@@ -741,7 +752,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={toggleAllBranches} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', branchIds.length === branches.length && branches.length > 0 ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500')}>
+                <button type="button" onClick={toggleAllBranches} disabled={branchPickerLocked} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', branchIds.length === branches.length && branches.length > 0 ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500', branchPickerLocked && 'cursor-default')}>
                   <span>{branchIds.length === branches.length && branches.length > 0 ? '✓' : '+'}</span>
                   ทุกสาขา
                 </button>
@@ -749,13 +760,18 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
                   const selected = branchIds.includes(branch.id);
                   const last = selected && branchIds.length === 1;
                   return (
-                    <button key={branch.id} type="button" onClick={() => toggleBranch(branch.id)} disabled={last} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', selected ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200', last ? 'cursor-default' : 'cursor-pointer')}>
+                    <button key={branch.id} type="button" onClick={() => toggleBranch(branch.id)} disabled={last || branchPickerLocked} className={cx('inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-[14.5px] font-extrabold transition', selected ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200', last || branchPickerLocked ? 'cursor-default' : 'cursor-pointer')}>
                       <span className={selected ? 'text-brand-500' : 'text-gray-300'}>{selected ? '✓' : '+'}</span>
                       {branch.name}
                     </button>
                   );
                 })}
               </div>
+              {branchPickerLocked && (
+                <div className="mt-2 text-sm font-medium text-gray-400">
+                  ตำแหน่ง{selectedRole?.name ?? ''} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
+                </div>
+              )}
               <label className="mt-4 block max-w-md">
                 <span className="mb-1.5 block text-[15px] font-semibold text-gray-700">
                   สาขาหลัก (Default Branch) <span className="text-error-500">*</span>

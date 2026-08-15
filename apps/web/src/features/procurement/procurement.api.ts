@@ -59,7 +59,7 @@ export function cancelPurchaseRequest(companyId: string, id: string, reason?: st
 
 // ---- Purchase Orders ----
 
-export function listPurchaseOrders(companyId: string, params?: { status?: string; supplierId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }) {
+export function listPurchaseOrders(companyId: string, params?: { status?: string; supplierId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number }) {
   return apiFetch<any>(`/companies/${companyId}/procurement/purchase-orders${qs(params)}`);
 }
 

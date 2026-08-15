@@ -9,7 +9,8 @@ import { cx } from '@/common/components/mangmee';
 import { useConfirm } from '@/common/components/modal';
 import { LoadingState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
-import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
+import { useBranchFilter, useBranchScopeLabel } from '../web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { listBranches, type Branch } from '../branch-settings/branches.api';
 import { employeeShortName, listEmployees } from '../employee-access/employee-access.api';
 import { listProducts } from '../inventory/inventory.api';
@@ -183,7 +184,12 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
 
+  // Two different questions, so two different values (spec R1). What the list is SHOWING is
+  // scopeLabel below — all branches when nothing is selected. Where a NEW booking would be written
+  // has to be one concrete branch: the server rejects an empty branchId (crm-booking.use-case.ts:176),
+  // and the create modal only offers a branch picker when there is more than one to pick from.
   const activeBranchId = branchFilter?.branchId || branches[0]?.id || '';
+  const scopeLabel = useBranchScopeLabel();
 
   const load = useCallback(async () => {
     if (!canRead) {
@@ -199,6 +205,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
       });
       setBookings(result.items);
     } catch (e) {
+      if (isBranchScope403(e, branchFilter?.branchId)) { branchFilter?.reportBranchForbidden(); return; }
       setError(localizedErrorMessage(e, locale, { fallback: 'error.load_failed' }));
     } finally {
       setLoading(false);
@@ -244,7 +251,6 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
   const todayCount = countTodayBookings(bookings, today);
   const selectedDay = daySel ?? (weekOffset === 0 ? today.getDay() : 0);
   const mobileColumn: BookingDayColumn = columns[selectedDay] ?? columns[0]!;
-  const activeBranchName = branches.find((b) => b.id === activeBranchId)?.name ?? (branchFilter?.branchId ? '' : 'ทุกสาขา');
   const selectedBooking = bookings.find((booking) => booking.id === selectedBookingId) ?? null;
 
   // Manage-appointment popup shows the customer's phone; fetched lazily per selection.
@@ -470,10 +476,13 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
             <p className="mt-1 text-sm text-gray-500">{canCreate ? 'เลือกช่วงเวลาว่างในตารางเพื่อเพิ่มนัดหมาย' : 'ดูตารางนัดหมายของสาขา'}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2">
-              <div className="text-[11px] font-semibold text-gray-500">สาขาที่กำลังดู</div>
-              <div className="mt-0.5 text-sm font-bold text-gray-800">{activeBranchName || 'ทุกสาขา'}</div>
-            </div>
+            {/* No resolved branch context: claim no scope at all rather than a wrong one (spec R3). */}
+            {scopeLabel && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2">
+                <div className="text-[11px] font-semibold text-gray-500">สาขาที่กำลังดู</div>
+                <div className="mt-0.5 text-sm font-bold text-gray-800">{scopeLabel}</div>
+              </div>
+            )}
             <div className="rounded-xl border border-brand-100 bg-brand-50 px-3.5 py-2">
               <div className="text-[11px] font-semibold text-brand-700">คิววันนี้</div>
               <div className="mt-0.5 text-sm font-extrabold text-brand-800">{todayCount.toLocaleString('th-TH')} คิว</div>

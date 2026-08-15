@@ -1,7 +1,7 @@
 // Domain models for Dashboard (Item 06) — no framework imports
 
 export type DashboardPeriodKind = 'today' | 'week' | 'month' | 'quarter' | 'last_month' | 'custom';
-export type DashboardScope = 'company' | 'role' | 'user';
+export type DashboardScope = 'company' | 'role' | 'user' | 'branch';
 export type DashboardFreshnessStatus = 'fresh' | 'stale' | 'partial' | 'unavailable';
 export type DashboardGeneratedBy = 'system' | 'manual' | 'worker' | 'ai_gateway';
 export type DashboardWidgetStatus = 'enabled' | 'disabled';

@@ -36,7 +36,9 @@ export function MangmeeCard({ children, className }: { children: ReactNode; clas
   return <section className={cx('mangmee-card', className)}>{children}</section>;
 }
 
-export function MangmeeBranchChip({ label = 'ทุกสาขา (รวม)' }: { label?: ReactNode }) {
+// Required by design (spec R2): a shared chip that silently defaults would caption a company-wide
+// page with a branch scope it does not have. Every call site declares its own intent.
+export function MangmeeBranchChip({ label }: { label: ReactNode }) {
   return (
     <span className="inline-flex h-9 items-center gap-2 rounded-full border border-brand-100 bg-brand-25 px-3 text-sm font-bold text-brand-700">
       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">

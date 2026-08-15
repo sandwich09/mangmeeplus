@@ -9,6 +9,7 @@ import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { fetchAttachmentPreviewBlob } from '@/features/expenses/expenses.api';
 import { createTradeTaxEvidence, listTradeTaxEvidence, uploadTradeTaxEvidenceAttachment, verifyTradeTaxEvidence } from './transaction-tax.api';
 import { TAX_CONTEXT_LABELS, transactionTaxCapabilities, transactionTaxErrorMessage } from './transaction-tax.model';
@@ -80,7 +81,10 @@ export function TradeTaxEvidencePage({ companyId, permissions }: { companyId: st
     if (!canReadEvidence) return;
     setLoading(true); setError('');
     try { setItems(await listTradeTaxEvidence(companyId, { branchId: branch?.branchId || undefined })); }
-    catch (cause) { setError(transactionTaxErrorMessage(cause)); }
+    catch (cause) {
+      if (isBranchScope403(cause, branch?.branchId)) { branch?.reportBranchForbidden(); return; }
+      setError(transactionTaxErrorMessage(cause));
+    }
     finally { setLoading(false); }
   }, [branch?.branchId, canReadEvidence, companyId]);
   useEffect(() => { void load(); }, [load]);

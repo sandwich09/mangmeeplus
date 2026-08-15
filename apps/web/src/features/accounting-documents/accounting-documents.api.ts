@@ -35,7 +35,7 @@ export async function createCounterparty(companyId: string, body: { type: string
 // ---- Documents ----
 export async function listDocuments(
   companyId: string,
-  params?: { documentType?: AccountingDocumentType; status?: string; paymentStatus?: string; counterpartyId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number },
+  params?: { documentType?: AccountingDocumentType; status?: string; paymentStatus?: string; counterpartyId?: string; branchId?: string; fromDate?: string; toDate?: string; page?: number; pageSize?: number },
 ): Promise<PaginatedResult<DocumentSummary>> {
   return apiFetch(`/v1/companies/${companyId}/accounting/documents${qs(params)}`);
 }

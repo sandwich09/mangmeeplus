@@ -8,6 +8,8 @@ import { createBroadcastDraft, generateBroadcast, listBroadcastCampaigns, listBr
 import type { CrmCampaignPreview } from '@watchdog-bms/contracts';
 import { broadcastBlockReason, type BroadcastCampaign, type BroadcastCandidate, type BroadcastColorId, type BroadcastPreflight, type BroadcastSegmentId, type BroadcastToneId } from './broadcast.model';
 import { formatThaiDate } from '@/common/i18n/thai-date';
+import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 
 const tones: Array<{ id: BroadcastToneId; emoji: string; label: string }> = [
   { id: 'fun', emoji: '🎉', label: 'สนุก สดใส' }, { id: 'friendly', emoji: '😊', label: 'เป็นกันเอง' },
@@ -28,6 +30,7 @@ function audienceText(count?: number) { return count === undefined || count < 0 
 function Card({ title, children }: { title: string; children: React.ReactNode }) { return <MangmeeCard className="px-5 py-5"><h2 className="text-sm font-bold text-gray-500">{title}</h2>{children}</MangmeeCard>; }
 
 export function BroadcastPage({ companyId }: { companyId: string }) {
+  const locale = useWorkspaceLocale();
   const [workspace, setWorkspace] = useState<{ preflight: BroadcastPreflight; campaigns: BroadcastCampaign[] } | null>(null);
   const [loading, setLoading] = useState(true), [forbidden, setForbidden] = useState(false);
   const [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
@@ -92,7 +95,7 @@ export function BroadcastPage({ companyId }: { companyId: string }) {
 
   const colorMeta = colors.find((item) => item.id === color)!;
   return <div className="mangmee-page">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-extrabold text-gray-900">บรอดแคสต์</h1><p className="mt-2 text-gray-500">สร้างข้อความและส่งผ่าน LINE OA ด้วยข้อมูลผู้รับจริง</p></div><MangmeeBranchChip /></div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-3xl font-extrabold text-gray-900">บรอดแคสต์</h1><p className="mt-2 text-gray-500">สร้างข้อความและส่งผ่าน LINE OA ด้วยข้อมูลผู้รับจริง</p></div><MangmeeBranchChip label={t('branch.scope.company_wide', locale)} /></div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}<button type="button" onClick={() => setError(null)} className="float-right font-bold">×</button></div>}
     {success && <div role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700">✓ {success}</div>}
     {!workspace.preflight.channelConnected && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">ยังไม่ได้เชื่อมต่อ LINE OA จึงบันทึกร่างได้แต่ยังส่งไม่ได้</div>}

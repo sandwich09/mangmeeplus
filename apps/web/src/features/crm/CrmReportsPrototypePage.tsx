@@ -11,7 +11,8 @@ import { formatMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
+import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
+import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 import { avatarColor, avatarInitial } from '@/features/crm-inbox/crm-inbox.logic';
 import { DesignIcons } from '@/features/web-core-workspace/design-icons';
 import { getCrmReportsSummary } from './crm.api';
@@ -77,6 +78,8 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
   const locale = useWorkspaceLocale();
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId || undefined;
+  // The one derived branch-scope label (spec R1); `null` while the context is unresolved (R3).
+  const branchLabel = useBranchScopeLabel();
   const canReadReports = permissions.includes('crm.report.read');
   const [period, setPeriod] = useState<DashboardPeriodKind>('today');
   const [summaryState, setSummaryState] = useState<{ period: DashboardPeriodKind; data: CrmReportsSummary } | null>(null);
@@ -111,6 +114,7 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
       setForbidden(false);
     } catch (e) {
       if (token !== loadAbort.current) return;
+      if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
       if (isForbiddenError(e)) setForbidden(true);
       else setError(true);
     } finally {
@@ -140,7 +144,6 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
 
   if (forbidden) return <ForbiddenState />;
 
-  const branchLabel = branchFilter?.branches.find((branch) => branch.id === branchId)?.name ?? t('crm_reports.branch_all', locale);
   const w = (key: string) => brief.find((x) => x.key === key);
   const wNum = (key: string) => { const x = w(key); return Number(x?.value ?? x?.count ?? 0) || 0; };
   const wBaht = (key: string) => { const x = w(key); return fmtBaht(x?.amount != null ? Number(x.amount) : Number(x?.value ?? 0)); };
@@ -176,7 +179,7 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
     if (!summary || !storedPeriod) return;
     const rows: (string | number)[][] = [
       [t('crm_reports.title', locale)],
-      [t('crm_reports.csv.branch', locale), branchLabel],
+      [t('crm_reports.csv.branch', locale), branchLabel ?? ''],
       [t('crm_reports.csv.period', locale), storedPeriodLabel],
       [],
       [t('crm_reports.chat_summary', locale)],
@@ -221,7 +224,7 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-3xl font-extrabold leading-tight text-gray-900">{t('crm_reports.title', locale)}</h1>
-          <p className="mt-3 text-base font-medium text-gray-500">{t('crm_reports.subtitle', locale)} · {branchLabel} · {periodLabel}</p>
+          <p className="mt-3 text-base font-medium text-gray-500">{t('crm_reports.subtitle', locale)}{branchLabel && ` · ${branchLabel}`} · {periodLabel}</p>
         </div>
       </div>
 

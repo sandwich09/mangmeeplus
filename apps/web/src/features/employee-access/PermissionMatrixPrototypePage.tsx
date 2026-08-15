@@ -42,6 +42,7 @@ import {
 import { RoleBuilder, coveredPacks, ghostClass, dangerClass } from './EmployeeAccessPages';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 
@@ -239,7 +240,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
             กำหนดว่าแต่ละตำแหน่งทำอะไรได้บ้าง — ดู/สร้าง/แก้ไข/ลบ/อนุมัติ
           </p>
         </div>
-        <MangmeeBranchChip />
+        <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}

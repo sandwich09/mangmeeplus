@@ -4,6 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import {
+  ALL_BRANCH_ROLE_KEYS,
   buildLineLinkPackage,
   generateLineLinkToken,
   employeePasswordFromDateOfBirth,
@@ -123,6 +124,9 @@ export class CreateEmployeeUseCase {
     const lineLinkToken = generateLineLinkToken();
 
     if (duplicateIdentity) {
+      // An oversight role must hold every branch; resuming a draft is a role write onto a membership
+      // whose scope a previous pass through the wizard may already have narrowed.
+      const widenBranchScope = roles.some((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key));
       const previousRoleIds = (await this.prisma.client.membershipRole.findMany({
         where: { membershipId: duplicateIdentity.membershipId },
         select: { roleId: true },
@@ -154,8 +158,13 @@ export class CreateEmployeeUseCase {
           }
           await tx.companyMembership.update({
             where: { id: duplicateIdentity.membershipId },
-            data: { status: 'DRAFT' },
+            data: { status: 'DRAFT', ...(widenBranchScope && { branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null }) },
           });
+          if (widenBranchScope) {
+            // R8: the only create path that writes roles onto a membership an earlier pass may have
+            // narrowed. Widen with the role write, not after it (spec branch-scope-visibility R8).
+            await tx.membershipBranchScope.deleteMany({ where: { membershipId: duplicateIdentity.membershipId } });
+          }
           await tx.membershipRole.deleteMany({ where: { membershipId: duplicateIdentity.membershipId } });
           await tx.membershipRole.createMany({
             data: roles.map((role) => ({ membershipId: duplicateIdentity.membershipId, roleId: role.id })),
@@ -217,6 +226,7 @@ export class CreateEmployeeUseCase {
                 },
                 resumedDraft: true,
                 reusedExistingUser,
+                ...(widenBranchScope && { branchScopeMode: 'ALL_BRANCHES', branchScopeWidenedForRole: roles.find((role) => ALL_BRANCH_ROLE_KEYS.includes(role.key))!.key }),
               },
             },
           });
