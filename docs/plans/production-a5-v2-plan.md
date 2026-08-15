@@ -123,7 +123,8 @@ Runtime: quick 1–2 นาที (hard 5 นาที); migration 45–90 น�
 
 - [x] เพิ่ม `production-readiness.yml` ที่รับ UAT run/passport โดยไม่ต้องมี deploy parent
 - [x] automatic readiness bind `maintenance_closed`; live readiness รับเฉพาะ explicit request
-  หลัง legal evidence ผ่าน
+  หลัง legal evidence ผ่าน หรือ owner `MangmeeDev` ส่ง approval reference เพื่อสร้าง signed
+  `OWNER_OVERRIDE` โดยไม่ปลอม manifest เป็น `VERIFIED`
 - [x] common preflight อ่าน GitHub/AWS/IAM/network/secrets/RDS/Redis/service baseline
 - [x] รัน readonly migration catalog classification
 - [x] quick path ออก READY เมื่อ exact catalog ไม่มี pending migration

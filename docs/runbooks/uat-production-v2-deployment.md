@@ -12,9 +12,10 @@ Workflows: `deploy-uat.yml` → `production-readiness.yml` → `deploy-productio
 
 ## เส้นทางปกติ ฉบับคน deploy
 
-จำ flow เดียวนี้: **UAT → READY → Production แบบปิดลูกค้า**. จด ID สามตัวไว้เสมอ:
+จำ flow เดียวนี้: **UAT → READY → Production**. จด ID สามตัวไว้เสมอ:
 `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`. ถ้าขั้นใด fail ให้หยุดหาสาเหตุ; ห้ามกดซ้ำเพื่อ
-ลองใหม่. Flow นี้ไม่เปิด Cloudflare และผล Production ต้องยังเป็น `maintenance_closed`.
+ลองใหม่. Flow ปกติไม่เปิด Cloudflare และจบที่ `maintenance_closed`; live ใช้ explicit owner override
+หรือ verified legal bundle ตามหัวข้อ D เท่านั้น.
 
 ### A. ขึ้น UAT
 
@@ -71,6 +72,38 @@ Readiness เป็นการพิสูจน์ก่อน deploy; ถ้�
 5. ยืนยันสุดท้ายว่าหน้าลูกค้ายังแสดง maintenance, platform access เป็น `CLOSED` และ
    `canOpen=false`. การเปิดจริงเป็น ceremony แยกหลัง legal evidence และ owner decision พร้อม.
 
+### D. ขึ้น Production แบบเปิดลูกค้าด้วย owner override
+
+ใช้เฉพาะเมื่อ owner ตัดสินใจรับความเสี่ยงและให้ reference ที่ตรวจย้อนหลังได้. ระบบจะไม่แก้
+`legal-release-evidence.json` จาก `BLOCKED` เป็น `VERIFIED`; signed READY จะบันทึก
+`legal.mode=OWNER_OVERRIDE`, `approvedBy=MangmeeDev` และ reference จริง.
+
+1. หลัง UAT สำเร็จ อย่าใช้ READY อัตโนมัติแบบ `maintenance_closed` เป็น input ของ live. ออก READY
+   ใหม่จาก Passport เดิมโดยสั่ง:
+
+   ```sh
+   OWNER_OVERRIDE_REF=<owner-approval-reference>
+   gh workflow run production-readiness.yml -R "$repo" --ref main \
+     -f uat_run_id="$UAT_RUN_ID" \
+     -f requested_serving_mode=live \
+     -f owner_legal_override_ref="$OWNER_OVERRIDE_REF"
+   ```
+
+2. ตรวจ signed READY ว่า `serving.requestedMode=live`, `legal.mode=OWNER_OVERRIDE`,
+   `legal.approvedBy=MangmeeDev` และ `legal.ownerApprovalRef` ตรง input ทุก byte.
+3. สั่ง Production ด้วย READY live นั้น:
+
+   ```sh
+   gh workflow run deploy-production-v2.yml -R "$repo" --ref main \
+     -f uat_run_id="$UAT_RUN_ID" \
+     -f readiness_run_id="$READY_RUN_ID" \
+     -f requested_serving_mode=live
+   ```
+
+4. ผ่านเมื่อ signed result เป็น `PROMOTED_LIVE`, service ทั้งสามเป็น exact UAT digest + `live`,
+   deep DB readiness ผ่าน, public login/customer journey ผ่าน และไม่มี clone residue. เก็บ override
+   reference ไว้กับ release record; เมื่อไฟล์จากทนายกลับมาให้สร้าง verified bundle ตาม runbook แยก.
+
 ถ้า source/image/migration catalog เปลี่ยน ให้เริ่ม A ใหม่. ถ้าเปลี่ยนเฉพาะ controller และ Passport
 ยัง valid อาจเริ่ม B ใหม่ได้ตาม validator. ถ้าเปลี่ยนเพียงเอกสารภายใน `docs/**` ที่ไม่เข้า image/runtime
 ไม่ต้อง deploy.
@@ -90,15 +123,16 @@ Readiness เป็นการพิสูจน์ก่อน deploy; ถ้�
 source, image digest, migration catalog หรือ controller contract ไม่ตรง. Passport และ READY อายุไม่เกิน
 24 ชั่วโมง; Production ตรวจซ้ำและปฏิเสธเองเมื่อหมดอายุหรือ baseline drift.
 
-การเปิด `live` ไม่อยู่ใน runbook นี้. ต้องมี legal evidence และ owner launch decision แยกต่างหาก.
-จนกว่าจะมีคำสั่งนั้น ให้ใช้ `maintenance_closed` เท่านั้น.
+การเปิด `live` ต้องมี independent verified legal bundle หรือ explicit owner override ตามหัวข้อ D.
+ผู้รันทั่วไปสร้าง override ไม่ได้; workflow รับเฉพาะ manual dispatch โดย actor `MangmeeDev` และผูก
+approval reference เข้า signed READY.
 
 Legal release ปัจจุบันใช้ internal append-only id `v3` เพื่อรักษา history แต่แสดงต่อผู้ใช้และใน
 เอกสารทนายเป็นฉบับประกาศใช้จริงครั้งแรก `ฉบับที่ 1 (1.0)`. Candidate นี้ deploy UAT และ Production
 แบบ `maintenance_closed` ได้ขณะที่ manifest ยังเป็น `BLOCKED`; ห้ามตีความว่า legal gate ผ่าน.
-ก่อนเปิด `live` ไฟล์ที่ลงนามต้องผูกกับ exact v3 artifact hashes, evidence bundle/manifest ต้องเป็น
-`VERIFIED` และ workflow ต้อง validate bytes จริง. ถ้าทนายส่งกลับหลัง Passport หรือ READY หมดอายุ
-ต้องออก Passport/READY สดอีกครั้ง แม้ source/image ไม่เปลี่ยน; ห้ามลด expiry gate เพื่อเปิดระบบ.
+เส้นทางปกติก่อนเปิด `live` ยังต้องผูกไฟล์ลงนามกับ exact v3 artifact hashes และ validate bundle จริง.
+Owner override ไม่เปลี่ยนสถานะ legal manifest และไม่ใช่หลักฐานจากทนาย. Passport/READY expiry,
+runtime, IAM, migration, health และ recovery gates ยังบังคับเหมือนเดิมทุกข้อ.
 
 ## 2. Proof ก่อนใช้ GitHub Actions
 
