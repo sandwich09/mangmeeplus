@@ -107,6 +107,11 @@ Next run the one-time A5 reader-bootstrap workflow. On every outcome it deletes
 with the exact metadata-only recovery policy. Do not dispatch Production Readiness until that cleanup has
 completed and the temporary promotion-bootstrap role is gone.
 
+The full prerequisite helper derives the clone restore contract from the live source DB and must match
+all six reviewed resources before its first durable mutation: target clone DB, deterministic manual
+readiness snapshot, automated source snapshot, subnet group, parameter group and option group. A mismatch
+fails closed with an explicit contract error; do not remove the manual-snapshot resource or retry unchanged.
+
 Readiness independently re-proves the exact deploy policy and two-hour session duration, every ECS
 runtime/task/service-linked role, workers cleanup policy, durable reader/clone controller roles,
 reader/apply/clone execution roles, metadata-only recovery reader-bootstrap controller, absence of its temporary

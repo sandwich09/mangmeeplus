@@ -206,6 +206,11 @@ validate_provider_resource_contract() {
   ' "$1" >/dev/null
 }
 validate_provider_resource_contract "$controller_policy"
+grep -Fq -- '--arg manual_snapshot "arn:aws:rds:$region:$account_id:snapshot:watchdog-a5-clone-*"' \
+  "$bootstrap"
+grep -Fq '[$target,$manual_snapshot,$snapshot,$subnet,$parameter,$option]|sort' "$bootstrap"
+grep -Fq 'ERROR: reviewed clone restore resources do not match the live source database contract' \
+  "$bootstrap"
 
 for mutation in create-snapshot-wildcard create-missing-tag delete-missing-owner \
     restore-snapshot-wildcard restore-option-wildcard restore-missing-tag list-resource list-cluster; do

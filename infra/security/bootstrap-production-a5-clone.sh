@@ -81,17 +81,22 @@ option_group="$(jq -er '
   | select(.Status=="in-sync") | .OptionGroupName
 ' <<< "$source_db")"
 restore_resources="$(jq -cS --arg target "arn:aws:rds:$region:$account_id:db:watchdog-a5-clone-*" \
+  --arg manual_snapshot "arn:aws:rds:$region:$account_id:snapshot:watchdog-a5-clone-*" \
   --arg snapshot "arn:aws:rds:$region:$account_id:snapshot:rds:$source_db_identifier-*" \
   --arg subnet "arn:aws:rds:$region:$account_id:subgrp:$db_subnet_group" \
   --arg parameter "arn:aws:rds:$region:$account_id:pg:$db_parameter_group" \
   --arg option "arn:aws:rds:$region:$account_id:og:$option_group" \
-  '[$target,$snapshot,$subnet,$parameter,$option]|sort' <<< '{}')"
-test "$(jq -cS '
+  '[$target,$manual_snapshot,$snapshot,$subnet,$parameter,$option]|sort' <<< '{}')"
+actual_restore_resources="$(jq -cS '
   [.Statement[] | select(.Sid=="AllowTaggedCloneRestore")][0].Resource | sort
-' "$controller_policy_file")" = "$restore_resources"
+' "$controller_policy_file")"
+if [ "$actual_restore_resources" != "$restore_resources" ]; then
+  echo 'ERROR: reviewed clone restore resources do not match the live source database contract' >&2
+  exit 1
+fi
 
 # Do not mutate the shared private-network prerequisites until the live source configuration and
-# the reviewed restore policy are proved to describe the same five provider resources.
+# the reviewed restore policy are proved to describe the same six provider resources.
 AWS_ACCOUNT_ID="$account_id" bash "$network_bootstrap" --apply
 network_parameter() {
   aws ssm get-parameter --region "$region" --name "/watchdog-bms/production/a5-network/$1" \

@@ -222,14 +222,19 @@ clone_option_group="$(jq -er '
   |select(.Status=="in-sync")|.OptionGroupName|select(length>0)' <<< "$source_db")"
 expected_clone_restore_resources="$(jq -cnS \
   --arg target "arn:aws:rds:$region:$account:db:watchdog-a5-clone-*" \
+  --arg manual_snapshot "arn:aws:rds:$region:$account:snapshot:watchdog-a5-clone-*" \
   --arg snapshot "arn:aws:rds:$region:$account:snapshot:rds:watchdog-bms-prod-db-*" \
   --arg subnet "arn:aws:rds:$region:$account:subgrp:$clone_subnet_group" \
   --arg parameter "arn:aws:rds:$region:$account:pg:$clone_parameter_group" \
   --arg option "arn:aws:rds:$region:$account:og:$clone_option_group" \
-  '[$target,$snapshot,$subnet,$parameter,$option]|sort')"
-test "$(jq -cS '[.Statement[]|select(.Sid=="AllowTaggedCloneRestore")][0].Resource|sort' \
-  "$root/infra/security/production-a5-clone-policy.template.json")" \
-  = "$expected_clone_restore_resources"
+  '[$target,$manual_snapshot,$snapshot,$subnet,$parameter,$option]|sort')"
+actual_clone_restore_resources="$(jq -cS \
+  '[.Statement[]|select(.Sid=="AllowTaggedCloneRestore")][0].Resource|sort' \
+  "$root/infra/security/production-a5-clone-policy.template.json")"
+if [ "$actual_clone_restore_resources" != "$expected_clone_restore_resources" ]; then
+  echo 'ERROR: reviewed clone restore resources do not match the live source database contract' >&2
+  exit 1
+fi
 sed "s/<ACCOUNT_ID>/$account/g" "$deploy_trust" > "$work/deploy-trust.json"
 sed "s/<ACCOUNT_ID>/$account/g" "$deploy_policy" > "$work/deploy-policy.json"
 sed "s/<ACCOUNT_ID>/$account/g" "$uat_deploy_policy" > "$work/uat-deploy-policy.json"
