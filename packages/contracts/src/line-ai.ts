@@ -19,10 +19,10 @@ export const LINE_AI_AGENT_REGISTRY: LineAiAgentDefinition[] = [
   { agent: 'general', label: 'General Assistant', status: 'enabled', toolNames: ['company.get_current_context', 'company.list_branches', 'company.get_employee_summary', 'company.get_employee_detail', 'dashboard.get_business_health_summary', 'notifications.list_open_alerts', 'inventory.get_product_detail', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
   { agent: 'inventory', label: 'Inventory Agent', status: 'enabled', toolNames: ['inventory.search_products', 'inventory.get_product_detail', 'inventory.get_stock_balance', 'inventory.list_low_stock', 'inventory.summarize_stock_movements'] },
   { agent: 'notifications', label: 'Notifications Agent', status: 'enabled', toolNames: ['notifications.list_open_alerts', 'notifications.get_daily_summary'] },
-  { agent: 'cfo', label: 'AI CFO', status: 'limited', toolNames: ['ledger.get_financial_summary', 'ledger.get_period_status', 'ledger.get_report_summary', 'dashboard.get_business_health_summary', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'] },
+  { agent: 'cfo', label: 'AI CFO', status: 'limited', toolNames: ['ledger.get_financial_summary', 'ledger.get_period_status', 'ledger.get_report_summary', 'dashboard.get_business_health_summary', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail'] },
   { agent: 'sales', label: 'Sales Agent', status: 'limited', toolNames: ['sales.get_sales_summary', 'crm.get_customer_summary', 'crm.search_customers', 'crm.get_customer_360', 'crm.get_report_summary', 'crm.get_pipeline_summary', 'crm.list_open_followups', 'crm.get_booking_summary', 'crm.list_bookings', 'crm.get_inbox_summary', 'crm.list_conversations', 'crm.get_conversation_summary', 'crm.suggest_sales_followups'] },
   { agent: 'crm', label: 'CRM Agent', status: 'limited', toolNames: ['crm.get_customer_summary', 'crm.search_customers', 'crm.get_customer_360', 'crm.get_report_summary', 'crm.get_pipeline_summary', 'crm.list_open_followups', 'crm.get_booking_summary', 'crm.list_bookings', 'crm.get_inbox_summary', 'crm.list_conversations', 'crm.get_conversation_summary', 'crm.suggest_sales_followups'] },
-  { agent: 'accounting', label: 'Accounting Agent', status: 'limited', toolNames: ['accounting.capture_receipt_evidence', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.list_recent', 'expense.get_detail', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
+  { agent: 'accounting', label: 'Accounting Agent', status: 'limited', toolNames: ['accounting.capture_receipt_evidence', 'accounting.get_document_detail', 'accounting.get_receivable_summary', 'expense.list_recent', 'expense.get_detail', 'expense.get_daily_closing', 'reimbursement.get_summary', 'reimbursement.get_detail', 'procurement.get_summary', 'procurement.search_suppliers', 'procurement.get_purchase_order_detail', 'ledger.get_period_status', 'ledger.get_report_summary'] },
   {
     agent: 'tax',
     label: 'Tax Agent',
@@ -77,6 +77,37 @@ export type LineAiRefusalReason =
   | 'ai_timeout'
   | 'line_delivery_failure';
 
+/** Identity reported by the executing AgentCore artifact itself. All fields are immutable build
+ * evidence; an older artifact omits the whole object rather than inventing partial identity. */
+export type LineAiRuntimeIdentity = {
+  sourceCommit: string;
+  artifactSha256: string;
+  serviceVersion: string;
+  contractVersion: number;
+};
+
+/** Identity the signed ECS candidate expects before an invocation begins. Unlike the artifact's
+ * reported identity this deliberately has no serviceVersion: it is derived from retained release
+ * evidence and therefore remains available on timeout or network failure. */
+export type LineAiExpectedRuntimeIdentity = Omit<LineAiRuntimeIdentity, 'serviceVersion'>;
+
+export const LINE_AI_RUNTIME_CONTRACT_VERSION = 1;
+
+/** Measured seams only. Optional fields keep older AgentCore artifacts wire-compatible. */
+export type LineAiStageDurations = {
+  bodyReadMs?: number;
+  payloadValidationMs?: number;
+  orchestrationMs?: number;
+  runtimeTotalMs?: number;
+  agentcoreHttpMs?: number;
+};
+
+export type LineAiRuntimeBinding = {
+  /** SHA-256 prefix of the configured runtime ARN; enough to correlate without logging an ARN. */
+  runtimeArnHash: string;
+  qualifier: string;
+};
+
 /** Server-derived LINE user context – never populated from LINE user text. */
 export type LineUserContext = {
   lineUserId: string;
@@ -94,7 +125,7 @@ export type LineUserContext = {
 /** Single source of truth for the short-term LINE memory window (api loader, gateway prompts,
  *  agentcore passthrough all derive from these — do not hardcode the numbers elsewhere). */
 export const LINE_AI_CONTEXT_WINDOW_MINUTES = 15;
-export const LINE_AI_CONTEXT_MAX_TURNS = 16;
+export const LINE_AI_CONTEXT_MAX_TURNS = 15;
 export const LINE_AI_ACTOR_DELEGATIONS_PER_TOOL = 8;
 
 export type LineAiConversationContextTurn = {
@@ -322,6 +353,7 @@ export type LineIntakeRouteIntent =
   | 'EXPENSE_DOCUMENT_CAPTURE'
   /** Correcting a field of a record this assistant already captured — never a new capture. */
   | 'EXPENSE_CAPTURE_CORRECTION'
+  | 'SUBSTITUTE_RECEIPT_CONTINUATION'
   | 'BUSINESS_DOCUMENT_REFERENCE'
   | 'SIGNATURE_UPLOAD_TICKET'
   | 'BUSINESS_READ_QUESTION'
@@ -533,6 +565,12 @@ export type LineAiTurnResponse = {
   coverage?: LineAiCoverageItem[];
   /** One entry per model call this turn made; absent from an older gateway or AgentCore artifact. */
   usage?: AiUsageEntry[];
+  /** Additive hosted-runtime evidence. Missing identity means an older/unacceptable candidate. */
+  runtimeIdentity?: LineAiRuntimeIdentity;
+  expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
+  runtimeBinding?: LineAiRuntimeBinding;
+  stageDurationsMs?: LineAiStageDurations;
+  modelCallCount?: number;
 };
 
 // ─── Item 10B agent orchestration types ──────────────────────────────────────
@@ -621,6 +659,8 @@ export const LINE_AI_ERROR_CODES = {
   MUTATION_BLOCKED: 'LINE_AI_MUTATION_BLOCKED',
   TOOL_UNAVAILABLE: 'LINE_AI_TOOL_UNAVAILABLE',
   AI_TIMEOUT: 'LINE_AI_AI_TIMEOUT',
+  PROVIDER_UNAVAILABLE: 'LINE_AI_PROVIDER_UNAVAILABLE',
+  RATE_LIMITED: 'LINE_AI_RATE_LIMITED',
   DELIVERY_FAILURE: 'LINE_AI_DELIVERY_FAILURE',
 } as const;
 

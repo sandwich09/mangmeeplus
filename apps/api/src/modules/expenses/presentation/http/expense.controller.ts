@@ -72,6 +72,7 @@ import {
 import { GetExpenseCapturePolicyUseCase } from '../../application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from '../../application/use-cases/expense-extraction.use-case';
 import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense.use-case';
+import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-cases/line-substitute-receipt-continuation.use-case';
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput, CreateSignatureAssetInput,
@@ -104,6 +105,7 @@ export class ExpenseController {
     private readonly dupResolve: ResolveDuplicateUseCase,
     private readonly listCats: ListExpenseCategoriesUseCase,
     private readonly prepareSubstituteReceipt: PrepareSubstituteReceiptUseCase,
+    private readonly lineSubstituteReceiptContinuation: LineSubstituteReceiptContinuationUseCase,
     private readonly previewSubstituteReceipt: PreviewSubstituteReceiptUseCase,
     private readonly certifySubstituteReceipt: CertifySubstituteReceiptUseCase,
     private readonly approveSubstituteReceipt: ApproveSubstituteReceiptUseCase,
@@ -254,6 +256,16 @@ export class ExpenseController {
   @RequirePermissions('expense.review')
   prepareSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: GenerateSubstituteReceiptInput) {
     return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
+  }
+
+  @Get(':expenseId/substitute-receipt/continuations/:workflowId')
+  @RequirePermissions('expense.review')
+  loadLineSubstituteContinuation(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('workflowId') workflowId: string,
+  ) {
+    return this.lineSubstituteReceiptContinuation.loadForWeb(ctx, expenseId, workflowId);
   }
 
   @Get(':expenseId/substitute-receipt/payers')

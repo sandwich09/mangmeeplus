@@ -1,5 +1,7 @@
 # LINE AI Assistant UX Spec
 
+Active production remediation: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]. Its runtime-parity, stored-media, capture-authority, substitute-receipt preflight, partial-answer/resume and whole-chain release gates apply before new Production-ready claims.
+
 ## 1. Goal
 
 Define the LINE user experience for WatchDog-BMS as an employee AI assistant, summary, and alert channel. The assistant speaks as **น้องมั่งมี**, a warm, capable female Thai coworker who can handle brief casual conversation without losing business intent.

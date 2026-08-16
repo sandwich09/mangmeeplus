@@ -32,6 +32,11 @@ serving_model_provider="${MODEL_PROVIDER:-disabled}"
 serving_approved_ai_providers="${APPROVED_AI_PROVIDERS:-}"
 serving_queue_enabled=true
 serving_maintenance_active=false
+agentcore_runtime_arn="${AGENTCORE_RUNTIME_ARN:-}"
+agentcore_runtime_qualifier="${AGENTCORE_RUNTIME_QUALIFIER:-}"
+agentcore_expected_source="${AGENTCORE_EXPECTED_SOURCE_COMMIT:-}"
+agentcore_expected_artifact="${AGENTCORE_EXPECTED_ARTIFACT_SHA256:-}"
+agentcore_expected_contract="${AGENTCORE_EXPECTED_CONTRACT_VERSION:-}"
 if [ "$serving_mode" = maintenance_only ]; then
   serving_ai_enabled=false
   serving_crm_auto_reply=false
@@ -50,6 +55,18 @@ if [ "$deploy_env" = production ] && [ "$serving_mode" = live ] \
     echo "ERROR: production live MODEL_PROVIDER must appear in APPROVED_AI_PROVIDERS" >&2
     exit 2
   esac
+fi
+if [ "$target" = all ] || [ "$target" = ai-gateway ]; then
+  [[ "$agentcore_runtime_arn" =~ ^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$ ]] \
+    || { echo "ERROR: exact AGENTCORE_RUNTIME_ARN is required to verify AI Gateway" >&2; exit 2; }
+  [[ "$agentcore_runtime_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}$ ]] \
+    || { echo "ERROR: exact source-specific AGENTCORE_RUNTIME_QUALIFIER is required to verify AI Gateway" >&2; exit 2; }
+  [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ && "$agentcore_expected_source" = "$commit" ]] \
+    || { echo "ERROR: signed AgentCore source must equal the active ECS source" >&2; exit 2; }
+  [[ "$agentcore_expected_artifact" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "ERROR: signed AgentCore artifact hash is required" >&2; exit 2; }
+  [[ "$agentcore_expected_contract" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "ERROR: signed AgentCore contract version is required" >&2; exit 2; }
 fi
 param_prefix="/watchdog-bms/${deploy_env}"
 aws_bin="${AWS_BIN:-aws}"
@@ -87,7 +104,12 @@ verify_service_environment() {
     --arg modelProvider "$serving_model_provider" \
     --arg approvedAiProviders "$serving_approved_ai_providers" \
     --arg queueEnabled "$serving_queue_enabled" \
-    --arg maintenanceActive "$serving_maintenance_active" '
+    --arg maintenanceActive "$serving_maintenance_active" \
+    --arg agentcoreArn "$agentcore_runtime_arn" \
+    --arg agentcoreQualifier "$agentcore_runtime_qualifier" \
+    --arg agentcoreExpectedSource "$agentcore_expected_source" \
+    --arg agentcoreExpectedArtifact "$agentcore_expected_artifact" \
+    --arg agentcoreExpectedContract "$agentcore_expected_contract" '
       . as $state |
       def value($name):
         [$state.environment[]? | select(.name == $name) | .value]
@@ -101,6 +123,12 @@ verify_service_environment() {
           and value("AI_GATEWAY_ENABLED") == $aiEnabled
         elif $service == "ai-gateway" then
           value("MODEL_PROVIDER") == $modelProvider
+          and value("LINE_AI_AGENT_RUNTIME") == "agentcore"
+          and value("AGENTCORE_RUNTIME_ARN") == $agentcoreArn
+          and value("AGENTCORE_RUNTIME_QUALIFIER") == $agentcoreQualifier
+          and value("AGENTCORE_EXPECTED_SOURCE_COMMIT") == $agentcoreExpectedSource
+          and value("AGENTCORE_EXPECTED_ARTIFACT_SHA256") == $agentcoreExpectedArtifact
+          and value("AGENTCORE_EXPECTED_CONTRACT_VERSION") == $agentcoreExpectedContract
           and (if $mode == "live" then value("APPROVED_AI_PROVIDERS") == $approvedAiProviders else true end)
           and all([
             "LINE_AI_AGENT_ORCHESTRATION_ENABLED",

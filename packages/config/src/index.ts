@@ -340,6 +340,9 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   AGENTCORE_REGION: z.string().optional(),
   AGENTCORE_RUNTIME_ARN: z.string().optional(),
   AGENTCORE_RUNTIME_QUALIFIER: z.string().optional(),
+  AGENTCORE_EXPECTED_SOURCE_COMMIT: z.string().regex(/^[0-9a-f]{40}$/).optional(),
+  AGENTCORE_EXPECTED_ARTIFACT_SHA256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  AGENTCORE_EXPECTED_CONTRACT_VERSION: z.coerce.number().int().positive().optional(),
   AGENTCORE_INVOKE_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
   // L-12: AgentCore invocation bounds. Enforced while streaming, never after buffering.
   AGENTCORE_MAX_BODY_BYTES: z.coerce.number().int().positive().default(1048576),
@@ -760,7 +763,9 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
       errors.push('Typhoon OCR processing region is not approved');
     }
     if (str(config['LINE_AI_AGENT_RUNTIME']) === 'agentcore') {
-      for (const key of ['AGENTCORE_REGION', 'AGENTCORE_RUNTIME_ARN', 'AGENTCORE_RUNTIME_QUALIFIER']) {
+      for (const key of ['AGENTCORE_REGION', 'AGENTCORE_RUNTIME_ARN', 'AGENTCORE_RUNTIME_QUALIFIER',
+        'AGENTCORE_EXPECTED_SOURCE_COMMIT', 'AGENTCORE_EXPECTED_ARTIFACT_SHA256',
+        'AGENTCORE_EXPECTED_CONTRACT_VERSION']) {
         if (missing(key)) errors.push(`${key} is required when LINE_AI_AGENT_RUNTIME=agentcore`);
       }
     }

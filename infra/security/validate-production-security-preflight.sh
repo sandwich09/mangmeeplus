@@ -44,19 +44,23 @@ security_preflight_expected_members() {
       production-image-manifest.json sbom-ai-gateway.spdx.json \
       sbom-api-web.spdx.json sbom-workers.spdx.json ;;
     passport-v2) printf '%s\n' \
-      migration-catalog.json passport.bundle passport.json \
+      agentcore-binding.json migration-catalog.json passport.bundle passport.json \
+      release/agentcore/agentcore-artifact.json release/agentcore/agentcore.zip \
       release/cosign-ai-gateway.json release/cosign-api-web.json release/cosign-workers.json \
+      release/line-ai-contract.ts release/line-ai-release-manifest.json \
       release/production-image-manifest.json release/sbom-ai-gateway.spdx.json \
       release/sbom-api-web.spdx.json release/sbom-workers.spdx.json \
       tools/cosign-migration-tool.json tools/cosign-release-task.json \
       tools/image-migration-tool.json tools/image-release-task.json \
       tools/sbom-migration-tool.spdx.json tools/sbom-release-task.spdx.json ;;
     ready-v2-quick) printf '%s\n' \
-      catalog-result.json catalog-runtime.json migration-catalog.json passport.json \
+      agentcore-production-binding.json catalog-result.json catalog-runtime.json \
+      line-ai-release-manifest.json migration-catalog.json passport.json \
       production-health.json production-runtime.json promotion-prerequisites.json \
       ready.bundle ready.json ;;
     ready-v2-migration) printf '%s\n' \
-      catalog-result.json catalog-runtime.json clone-infrastructure.json clone-result.json \
+      agentcore-production-binding.json catalog-result.json catalog-runtime.json \
+      clone-infrastructure.json clone-result.json line-ai-release-manifest.json \
       migration-catalog.json passport.json production-health.json production-runtime.json \
       promotion-prerequisites.json ready.bundle ready.json ;;
     *) echo "ERROR: unknown artifact extraction profile" >&2; return 2 ;;

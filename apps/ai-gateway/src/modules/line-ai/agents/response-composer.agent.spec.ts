@@ -37,7 +37,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
       },
     };
     const reply = await agent.composeCasual('วันนี้เหนื่อยจัง', provider, {
-      conversationContext: { windowMinutes: 15, maxTurns: 16, recentTurns: [{ at: '2026-08-15T10:00:00.000Z', userMessagePreview: 'สวัสดี' }] },
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-08-15T10:00:00.000Z', userMessagePreview: 'สวัสดี' }] },
     });
     assert.equal(reply, 'เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊');
     assert.equal(capturedSystemPrompt, CASUAL_CONVERSATION_SYSTEM_PROMPT);
@@ -250,6 +250,19 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     const provider: IModelProvider = { async generateText() { called = true; return { ok: true, text: 'x' }; } };
     const out = await agent.composeAnswer('มีกี่สาขา', [], FALLBACK, provider);
     assert.equal(out, FALLBACK);
+    assert.equal(called, false);
+  });
+
+  it('keeps daily-closing bucket semantics deterministic without a model rewrite', async () => {
+    let called = false;
+    const fallback = '• ถึงกำหนดวันนี้ (ไม่ได้แปลว่าอนุมัติให้จ่าย): 500.00 THB';
+    const out = await agent.composeAnswer(
+      'วันนี้ต้องจ่ายอะไรบ้าง',
+      [{ tool: 'expense.get_daily_closing', data: { dueEndOfDay: { totals: [{ currency: 'THB', count: 1, total: '500' }] } } }],
+      fallback,
+      { async generateText() { called = true; return { ok: true, text: 'อนุมัติให้จ่ายแล้ว 500 บาท' }; } },
+    );
+    assert.equal(out, fallback);
     assert.equal(called, false);
   });
 });

@@ -1,10 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { AiGatewayConfigService } from '../config/ai-gateway-config.service';
 import type { ToolPolicy } from './tool-policy.model';
 
 @Injectable()
 export class ToolPolicyEnforcerService {
-  constructor(private readonly config: AiGatewayConfigService) {}
+  constructor(@Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService) {}
 
   assertToolCanExecute(policy: ToolPolicy): void {
     if (!this.config.aiToolPolicyEnforced) {

@@ -42,6 +42,7 @@ import type {
   LineBufferMediaItem,
   LineBufferFlushTiming,
 } from '../domain/logic/line-message-buffer.logic';
+import { emitLineAiTerminalOutcome } from '../domain/logic/line-ai-terminal-outcome.logic';
 
 export type LineBufferIncomingItem =
   | {
@@ -125,8 +126,35 @@ export class LineMessageBufferService implements OnModuleDestroy {
       messagingChannelId: envelope.messagingChannelId,
     });
     if (legal.status === 'required' && !companyCommand) {
-      const shouldReply = await this.terminalizePendingLegalAcceptance(envelope, legal.companyId);
-      if (shouldReply) await this.deliverLegalAcceptanceReply(envelope);
+      const shouldReply = await this.claimPendingLegalAcceptance(envelope, legal.companyId);
+      if (shouldReply) {
+        const delivery = await this.deliverLegalAcceptanceReply(envelope);
+        if (delivery !== 'ok') {
+          const released = await this.prisma.client.lineWebhookEventLog.updateMany({
+            where: { webhookEventId: envelope.item.webhookEventId, status: 'response_ready' },
+            data: {
+              status: 'received', errorCode: 'RETRYABLE_LEGAL_REPLY_DELIVERY_FAILED',
+              processedAt: null, payloadJson: Prisma.DbNull,
+            },
+          });
+          if (released.count !== 1) throw new Error('LINE_LEGAL_REPLY_RELEASE_STATE_LOST');
+          throw new Error('LINE_LEGAL_REPLY_DELIVERY_FAILED');
+        }
+        const terminal = await this.prisma.client.lineWebhookEventLog.updateMany({
+          where: { webhookEventId: envelope.item.webhookEventId, status: 'response_ready' },
+          data: {
+            status: 'legal_acceptance_required', errorCode: LINE_AI_ERROR_CODES.FORBIDDEN,
+            processedAt: new Date(), payloadJson: Prisma.DbNull,
+          },
+        });
+        if (terminal.count !== 1) throw new Error('LINE_LEGAL_REPLY_TERMINAL_STATE_LOST');
+        emitLineAiTerminalOutcome(this.logger, {
+          webhookEventId: envelope.item.webhookEventId,
+          companyId: legal.companyId,
+          status: 'legal_acceptance_required',
+          errorCode: LINE_AI_ERROR_CODES.FORBIDDEN,
+        });
+      }
       return;
     }
 
@@ -151,16 +179,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  /** Create (or atomically convert) the event into a terminal dedup marker. The envelope is used
+  /** Create (or atomically convert) the event into a delivery claim. The envelope is used
    * only in memory; none of its text, reply token, chat id, or media metadata enters payloadJson. */
-  private async terminalizePendingLegalAcceptance(
+  private async claimPendingLegalAcceptance(
     envelope: LineBufferEnvelope,
     companyId: string,
   ): Promise<boolean> {
     const webhookEventId = envelope.item.webhookEventId;
-    const terminal = {
+    const claimed = {
       companyId,
-      status: 'legal_acceptance_required',
+      status: 'response_ready',
       errorCode: LINE_AI_ERROR_CODES.FORBIDDEN,
       processedAt: new Date(),
       payloadJson: Prisma.DbNull,
@@ -171,9 +199,10 @@ export class LineMessageBufferService implements OnModuleDestroy {
           webhookEventId,
           lineUserIdHash: hashMessagePreview(envelope.lineUserId),
           eventType: 'message',
-          ...terminal,
+          ...claimed,
         },
       });
+      this.emitAccepted(webhookEventId);
       return true;
     } catch {
       // Unique violation or DB hiccup: as with acceptEvent, only a durable row lets us ack safely.
@@ -181,6 +210,20 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
     const existing = await this.prisma.client.lineWebhookEventLog.findUnique({ where: { webhookEventId } });
     if (!existing) throw new Error('LINE_WEBHOOK_EVENT_NOT_DURABLE');
+    if (existing.status === 'response_ready' && existing.errorCode === LINE_AI_ERROR_CODES.FORBIDDEN) {
+      const claimAgeMs = Date.now() - (existing.processedAt ?? existing.createdAt).getTime();
+      if (claimAgeMs < LINE_BUFFER_ORPHAN_REPROCESS_MS) throw new Error('LINE_LEGAL_REPLY_IN_FLIGHT');
+      const reclaimed = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: {
+          webhookEventId,
+          status: 'response_ready',
+          errorCode: LINE_AI_ERROR_CODES.FORBIDDEN,
+          processedAt: existing.processedAt,
+        },
+        data: claimed,
+      });
+      return reclaimed.count === 1;
+    }
     if (existing.status !== 'received') return false;
 
     // Scrub a row written by an older replica/redelivery race before it can be replayed. The
@@ -188,12 +231,12 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // in-memory turn.
     const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { webhookEventId, status: 'received' },
-      data: terminal,
+      data: claimed,
     });
     return updated.count === 1;
   }
 
-  private async deliverLegalAcceptanceReply(envelope: LineBufferEnvelope): Promise<void> {
+  private async deliverLegalAcceptanceReply(envelope: LineBufferEnvelope): Promise<LineDeliveryResult> {
     const messages = [this.lineReply.buildTextMessage(LEGAL_ACCEPTANCE_REQUIRED_REPLY)];
     let result: LineDeliveryResult = await this.lineReply
       .sendReply(envelope.item.replyToken, messages)
@@ -203,9 +246,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
         .sendPush(envelope.chatId, messages)
         .catch(() => 'failed_other' as const);
     }
-    if (result !== 'ok') {
-      this.logger.warn({ msg: 'LINE legal acceptance reply delivery failed', result });
-    }
+    if (result !== 'ok') this.logger.warn({ msg: 'LINE legal acceptance reply delivery failed', result });
+    return result;
   }
 
   /** Age-aware dedup (spec §9): terminal row → drop; young `received` row →
@@ -229,6 +271,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
           payloadJson,
         },
       });
+      this.emitAccepted(webhookEventId);
       return true;
     } catch {
       // Unique violation (row exists) or DB hiccup — inspect the row.
@@ -248,12 +291,19 @@ export class LineMessageBufferService implements OnModuleDestroy {
       return reclaimed.count === 1;
     }
     const orphaned = Date.now() - (existing.processedAt ?? existing.createdAt).getTime() >= LINE_BUFFER_ORPHAN_REPROCESS_MS;
-    if (!orphaned || persistPayload) return orphaned;
+    if (!orphaned) return false;
+    if (persistPayload) {
+      return true;
+    }
     const scrubbed = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { webhookEventId, status: 'received' },
       data: { payloadJson: Prisma.DbNull },
     });
     return scrubbed.count === 1;
+  }
+
+  private emitAccepted(webhookEventId: string): void {
+    this.logger.log({ msg: 'line.ai.accepted', surface: 'employee_oa', webhookEventId });
   }
 
   private appendAccepted(envelope: LineBufferEnvelope): void {
@@ -345,12 +395,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
    *  normal use. Drop the newest, tell the user once, keep the audit trail. */
   private handleOverflow(state: ChatState, dropped: LineBufferItem[]): void {
     const droppedIds = dropped.map((item) => item.webhookEventId);
-    void this.prisma.client.lineWebhookEventLog
-      .updateMany({
-        where: { webhookEventId: { in: droppedIds }, status: 'received' },
+    void Promise.all(droppedIds.map(async (webhookEventId) => {
+      const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId, status: 'received' },
         data: { status: 'rate_limited', errorCode: 'RATE_LIMITED', processedAt: new Date(), payloadJson: Prisma.DbNull },
-      })
-      .catch(() => {});
+      }).catch(() => ({ count: 0 }));
+      if (updated.count === 1) {
+        emitLineAiTerminalOutcome(this.logger, { webhookEventId, status: 'rate_limited', errorCode: 'RATE_LIMITED' });
+      }
+    }));
     void this.audit
       .log({
         action: 'ai.line.flood_dropped',
@@ -443,15 +496,19 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (!existing || existing.status !== 'received') return;
 
     const ids = items.map((item) => item.webhookEventId);
-    const parked = await this.prisma.client.lineWebhookEventLog.updateMany({
-      where: { webhookEventId: { in: ids }, status: 'received' },
-      data: {
-        status: 'delivery_pending',
-        errorCode: 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED',
-        processedAt: null,
-      },
-    }).catch(() => ({ count: 0 }));
-    if (parked.count === 0) return;
+    const claimedIds: string[] = [];
+    for (const webhookEventId of ids) {
+      const claimed = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId, status: 'received' },
+        data: {
+          status: 'response_ready',
+          errorCode: 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED',
+          processedAt: new Date(),
+        },
+      }).catch(() => ({ count: 0 }));
+      if (claimed.count === 1) claimedIds.push(webhookEventId);
+    }
+    if (claimedIds.length === 0) return;
 
     const messages = [this.lineReply.buildTextMessage(DISPATCH_ERROR_REPLY)];
     let result: LineDeliveryResult = await this.lineReply
@@ -462,16 +519,26 @@ export class LineMessageBufferService implements OnModuleDestroy {
         .sendPush(state.chatId, messages)
         .catch(() => 'failed_other' as const);
     }
-    if (result !== 'ok') return;
-
-    await this.prisma.client.lineWebhookEventLog.updateMany({
-      where: {
-        webhookEventId: { in: ids },
-        status: 'delivery_pending',
-        errorCode: 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED',
-      },
-      data: { status: 'unavailable_delivered', errorCode: null, processedAt: new Date(), payloadJson: Prisma.DbNull },
-    }).catch(() => {});
+    for (const webhookEventId of claimedIds) {
+      const terminalStatus = result === 'ok' ? 'unavailable_delivered' : 'delivery_pending';
+      const errorCode = result === 'ok' ? null : 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED';
+      const terminal = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: {
+          webhookEventId,
+          status: 'response_ready',
+          errorCode: 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED',
+        },
+        data: {
+          status: terminalStatus,
+          errorCode,
+          processedAt: result === 'ok' ? new Date() : null,
+          ...(result === 'ok' ? { payloadJson: Prisma.DbNull } : {}),
+        },
+      }).catch(() => ({ count: 0 }));
+      if (terminal.count === 1) {
+        emitLineAiTerminalOutcome(this.logger, { webhookEventId, status: terminalStatus, errorCode });
+      }
+    }
   }
 
   private async dispatchGroup(state: ChatState, group: LineBatchGroup): Promise<void> {
@@ -546,13 +613,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
   /** Mark bubbles that were folded into a completed batched turn. Only rows
    *  still `received` — never clobber a terminal status. */
   private async markBatched(webhookEventIds: string[]): Promise<void> {
-    if (webhookEventIds.length === 0) return;
-    await this.prisma.client.lineWebhookEventLog
-      .updateMany({
-        where: { webhookEventId: { in: webhookEventIds }, status: 'received' },
+    for (const webhookEventId of webhookEventIds) {
+      const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId, status: 'received' },
         data: { status: 'batched', processedAt: new Date(), payloadJson: Prisma.DbNull },
       })
-      .catch(() => {});
+        .catch(() => ({ count: 0 }));
+      if (updated.count === 1) {
+        emitLineAiTerminalOutcome(this.logger, { webhookEventId, status: 'batched' });
+      }
+    }
   }
 
   /** Typing indicator while a turn runs. One-on-one chats only (LINE limit).

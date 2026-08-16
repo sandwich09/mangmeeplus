@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase } from './expense-document.use-case';
+import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
 import { CreateSignatureAssetUseCase, ApproveSignatureAssetUseCase, RejectSignatureAssetUseCase, FillSignatureUseCase } from './signature-asset.use-case';
 import { CreateAccountantPackageUseCase, GetSharedEvidenceViewUseCase } from './expense-evidence.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -59,7 +59,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'hash-chat-1',
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'hash-chat-1',
     });
 
     const metadata = updates.at(-1).sourceChannelMetadataJson;
@@ -72,7 +73,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-2', lineEventId: 'evt-2',
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      lineMessageId: 'msg-2', lineEventId: 'evt-2',
     });
 
     assert.equal('chatKeyHash' in updates.at(-1).sourceChannelMetadataJson, false);
@@ -89,7 +91,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1',
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      lineMessageId: 'msg-1', lineEventId: 'evt-1',
       consumption: { companyId: 'company-1', ledgerStreamKey: 'lineai:ledger:company-1:chat1', entryIds: ['7-0'], outcome: 'evidence_capture' },
     });
 
@@ -107,7 +110,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await assert.rejects(() => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1',
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      lineMessageId: 'msg-1', lineEventId: 'evt-1',
       consumption: { companyId: 'company-1', ledgerStreamKey: 'k', entryIds: ['7-0'], outcome: 'evidence_capture' },
     }), /marker_conflict/);
   });
@@ -120,7 +124,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1',
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      lineMessageId: 'msg-1', lineEventId: 'evt-1',
     });
 
     assert.equal(receivedCallback, undefined);
@@ -131,13 +136,48 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
       messageText: 'ค่าอะไรก็ไม่รู้ 100 บาท',
-      captureHints: { amount: '100', expenseCategoryId: 'cat-invented' },
+      captureHints: { amount: '100', description: 'ค่าอะไรก็ไม่รู้', expenseCategoryId: 'cat-invented' },
       lineMessageId: 'msg-2',
       lineEventId: 'evt-2',
     });
     assert.equal(result.categoryId, null);
     assert.ok(result.warnings.includes('category_not_active'));
     assert.equal(updates.at(-1).aiVerificationSummaryJson.insertedFields.expenseCategoryId, undefined);
+  });
+
+  it('rejects a model capture route when amount or source-grounded purpose/category is missing', async () => {
+    const calls: any[] = [];
+    const { repo } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (...args: any[]) => { calls.push(args); return { id: 'must-not-exist' }; },
+    } as any, audit, outbox);
+
+    for (const [messageText, captureHints] of [
+      ['รีบทำให้หน่อย', { amount: '590', expenseCategoryId: 'cat-meals' }],
+      ['ยอด 590 บาท', { amount: '590' }],
+      ['ค่ากาแฟวันนี้', { description: 'ค่ากาแฟ' }],
+    ] as const) {
+      await assert.rejects(
+        () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+          messageText, captureHints, lineMessageId: `msg-${messageText}`, lineEventId: `evt-${messageText}`,
+        }),
+        LineTextExpenseCaptureIncompleteError,
+      );
+    }
+    assert.equal(calls.length, 0, 'the final mutation boundary creates no draft');
+  });
+
+  it('allows an amount from the exact clarification request after the user supplies its purpose', async () => {
+    const { repo } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'เป็นค่าเดินทาง',
+      groundingTexts: ['ยอด 200 บาท'],
+      captureHints: { amount: '200', description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel' },
+      lineMessageId: 'msg-follow-up', lineEventId: 'evt-follow-up',
+    });
+    assert.equal(result.insertedAmount, '200.0000');
+    assert.equal(result.categoryId, 'cat-travel');
   });
 
   it('is idempotent by LINE message id', async () => {

@@ -19,6 +19,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { LineMessageBufferService, type LineBufferEnvelope } from '../line-message-buffer.service';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
+import { emitLineAiTerminalOutcome } from '../../domain/logic/line-ai-terminal-outcome.logic';
 
 /** Past this age the employee has moved on; answering an hour-old question is worse than not
  *  answering it. Reaching it means the sweep itself was down, so the row is parked for ops
@@ -76,6 +77,9 @@ export class RecoverOrphanLineEventsUseCase {
           // Parked by the buffer's dispatch-failure path when even the fallback message could
           // not be sent — that row still owes the user something.
           { status: 'delivery_pending', errorCode: { startsWith: 'RETRYABLE_' } },
+          // Claimed for a fallback response, then the process died before recording whether that
+          // response reached LINE. Replaying is deliberately at-least-once and keeps it visible.
+          { status: 'response_ready', errorCode: { startsWith: 'RETRYABLE_' } },
         ],
       },
       orderBy: { createdAt: 'asc' },
@@ -142,11 +146,14 @@ export class RecoverOrphanLineEventsUseCase {
     status: string,
     errorCode: string,
   ): Promise<void> {
-    await this.prisma.client.lineWebhookEventLog.updateMany({
+    const parked = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { id: row.id, status: row.status, errorCode: row.errorCode },
       data: { status, errorCode, processedAt: new Date(), payloadJson: Prisma.DbNull },
-    }).catch(() => {});
-    this.logger.warn({ msg: 'line_orphan_parked', webhookEventId: row.webhookEventId, status, errorCode });
+    }).catch(() => ({ count: 0 }));
+    if (parked.count === 1) {
+      this.logger.warn({ msg: 'line_orphan_parked', webhookEventId: row.webhookEventId, status, errorCode });
+      emitLineAiTerminalOutcome(this.logger, { webhookEventId: row.webhookEventId, status, errorCode });
+    }
   }
 
   /** This table had no retention at all: it is the dedup ledger for every LINE event ever

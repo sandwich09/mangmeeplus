@@ -717,7 +717,7 @@ EOF
     --policy-document file:///tmp/watchdog-bms-ecs-api-task-policy.json
 
   ensure_role "$AI_TASK_ROLE" '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
-  local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-6xOx1tCbz0}"
+  local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-}"
   # A malformed ARN does not fail anything at deploy time - the gateway boots green and only fails
   # when a user actually sends a message, as an AgentCore invoke error with no obvious cause. The
   # live service carried one truncated 8 characters short for weeks. Shape-check it here so a bad
@@ -810,6 +810,24 @@ ensure_log_group() {
   aws_cmd logs put-retention-policy --log-group-name "$log_group" --retention-in-days "$LOG_RETENTION_DAYS" --region "$REGION"
   if [ -n "$LOG_KMS_KEY_ID" ]; then
     aws_cmd logs associate-kms-key --log-group-name "$log_group" --kms-key-id "$LOG_KMS_KEY_ID" --region "$REGION"
+  fi
+  if [[ "$log_group" == *"-api-web" ]]; then
+    aws_cmd logs put-metric-filter \
+      --log-group-name "$log_group" \
+      --filter-name line-ai-accepted \
+      --filter-pattern '{ $.msg = "line.ai.accepted" }' \
+      --metric-transformations "metricName=${metric_name}_line_ai_accepted,metricNamespace=WatchDog/LineAI,metricValue=1,defaultValue=0" \
+      --region "$REGION"
+    local terminal_class
+    for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled \
+      provider_unavailable timeout delivery_pending failed_terminal; do
+      aws_cmd logs put-metric-filter \
+        --log-group-name "$log_group" \
+        --filter-name "line-ai-terminal-${terminal_class}" \
+        --filter-pattern "{ \$.msg = \"line.ai.terminal\" && \$.terminalClass = \"${terminal_class}\" }" \
+        --metric-transformations "metricName=${metric_name}_line_ai_${terminal_class},metricNamespace=WatchDog/LineAI,metricValue=1,defaultValue=0" \
+        --region "$REGION"
+    done
   fi
   if [ -n "$SECURITY_ALERT_TOPIC_ARN" ]; then
     aws_cmd logs put-metric-filter \
@@ -1470,7 +1488,12 @@ ai_container_json() {
   # purpose — a divergence here boots a green gateway that 401s every authenticated request.
   local public_web_url
   public_web_url="$(normalize_url "${PUBLIC_DOMAIN_URL:-$api_web_url}")"
-  local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-6xOx1tCbz0}"
+  local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-}"
+  local agentcore_qualifier="${AGENTCORE_RUNTIME_QUALIFIER:-}"
+  local agentcore_expected_source="${AGENTCORE_EXPECTED_SOURCE_COMMIT:-}"
+  local agentcore_expected_artifact="${AGENTCORE_EXPECTED_ARTIFACT_SHA256:-}"
+  local agentcore_expected_contract="${AGENTCORE_EXPECTED_CONTRACT_VERSION:-}"
+  local line_ai_runtime="${LINE_AI_AGENT_RUNTIME:-}"
   # A malformed ARN does not fail anything at deploy time - the gateway boots green and only fails
   # when a user actually sends a message, as an AgentCore invoke error with no obvious cause. The
   # live service carried one truncated 8 characters short for weeks. Shape-check it here so a bad
@@ -1479,6 +1502,27 @@ ai_container_json() {
     echo "ERROR: AGENTCORE_RUNTIME_ARN is not a well-formed AgentCore runtime ARN: ${agentcore_arn}" >&2
     exit 2
   fi
+  if [ "$line_ai_runtime" != agentcore ]; then
+    echo 'ERROR: deployed AI Gateway must use the signed AgentCore candidate path' >&2
+    exit 2
+  fi
+  if [[ ! "$agentcore_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}$ ]]; then
+    echo 'ERROR: AGENTCORE_RUNTIME_QUALIFIER must be a source-specific candidate endpoint' >&2
+    exit 2
+  fi
+  if { [ "$DEPLOY_ENV" = production ] && [[ "$agentcore_qualifier" != candidate_production_* ]]; } \
+      || { [ "$DEPLOY_ENV" = uat ] && [[ "$agentcore_qualifier" != candidate_uat_* ]]; }; then
+    echo 'ERROR: AgentCore qualifier belongs to a different deployment environment' >&2
+    exit 2
+  fi
+  [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_SOURCE_COMMIT must be the signed candidate source' >&2; exit 2; }
+  [[ "$agentcore_expected_artifact" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_ARTIFACT_SHA256 must be the retained CodeZip hash' >&2; exit 2; }
+  [[ "$agentcore_expected_contract" =~ ^[1-9][0-9]*$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_CONTRACT_VERSION must be a positive integer' >&2; exit 2; }
+  [ "$agentcore_expected_source" = "$SHA" ] \
+    || { echo 'ERROR: AgentCore expected source differs from the ECS image source' >&2; exit 2; }
   jq -n \
     --arg image "$image" \
     --arg sha "$SHA" \
@@ -1490,7 +1534,10 @@ ai_container_json() {
     --arg agentcoreArn "$agentcore_arn" \
     --arg agentcoreRegion "${AGENTCORE_REGION:-$REGION}" \
     --arg region "$REGION" \
-    --arg agentcoreQualifier "${AGENTCORE_RUNTIME_QUALIFIER:-DEFAULT}" \
+    --arg agentcoreQualifier "$agentcore_qualifier" \
+    --arg agentcoreExpectedSource "$agentcore_expected_source" \
+    --arg agentcoreExpectedArtifact "$agentcore_expected_artifact" \
+    --arg agentcoreExpectedContract "$agentcore_expected_contract" \
     --arg agentcoreTimeout "${AGENTCORE_INVOKE_TIMEOUT_MS:-20000}" \
     --arg agentcoreMaxBodyBytes "${AGENTCORE_MAX_BODY_BYTES:-1048576}" \
     --arg agentcoreMaxMessageChars "${AGENTCORE_MAX_MESSAGE_CHARS:-8000}" \
@@ -1508,7 +1555,7 @@ ai_container_json() {
     --arg bedrockRegion "${BEDROCK_REGION:-}" \
     --arg bedrockModelId "${BEDROCK_MODEL_ID:-}" \
     --arg documentAiModelId "${DOCUMENT_AI_MODEL_ID:-}" \
-    --arg lineAiAgentRuntime "${LINE_AI_AGENT_RUNTIME:-strands-local}" \
+    --arg lineAiAgentRuntime "$line_ai_runtime" \
     --arg aiSecret "$(secret_arn "${SECRET_PREFIX}/ai-gateway-internal-secret")" \
     --arg typhoonSecret "$(secret_arn "${SECRET_PREFIX}/typhoon-ocr-api-key" 2>/dev/null || true)" \
     --arg jwtSecret "$(secret_arn "${SECRET_PREFIX}/watchdog-jwt-secret")" \
@@ -1550,6 +1597,9 @@ ai_container_json() {
         {name:"AGENTCORE_REGION", value:$agentcoreRegion},
         {name:"AGENTCORE_RUNTIME_ARN", value:$agentcoreArn},
         {name:"AGENTCORE_RUNTIME_QUALIFIER", value:$agentcoreQualifier},
+        {name:"AGENTCORE_EXPECTED_SOURCE_COMMIT", value:$agentcoreExpectedSource},
+        {name:"AGENTCORE_EXPECTED_ARTIFACT_SHA256", value:$agentcoreExpectedArtifact},
+        {name:"AGENTCORE_EXPECTED_CONTRACT_VERSION", value:$agentcoreExpectedContract},
         {name:"AGENTCORE_INVOKE_TIMEOUT_MS", value:$agentcoreTimeout},
         {name:"AGENTCORE_MAX_BODY_BYTES", value:$agentcoreMaxBodyBytes},
         {name:"AGENTCORE_MAX_MESSAGE_CHARS", value:$agentcoreMaxMessageChars},

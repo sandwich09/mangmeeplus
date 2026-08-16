@@ -88,7 +88,7 @@ jobs:
             "owner_override_actor=$owner_override_actor" >> "$GITHUB_OUTPUT"
 
   readiness:
-    name: Prove Production readiness without application mutation
+    name: Stage an isolated candidate and prove Production readiness
     needs: discover
     if: needs.discover.outputs.eligible == 'true'
     runs-on: ubuntu-latest
@@ -120,8 +120,6 @@ jobs:
       TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}
       LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}
       AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
-      AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
-      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}
       LEGAL_READER_ROLE_ARN: ${{ vars.LEGAL_RELEASE_EVIDENCE_READER_ROLE_ARN }}
       REDIS_REPLICATION_GROUP_ID: ${{ vars.REDIS_REPLICATION_GROUP_ID }}
       LEGAL_RELEASE_EVIDENCE_SHA256: ${{ vars.LEGAL_RELEASE_EVIDENCE_SHA256 }}
@@ -234,6 +232,53 @@ jobs:
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$OWNER_OVERRIDE_ACTOR" = MangmeeDev
           [[ "$OWNER_OVERRIDE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+=,-]{7,159}$ ]]
+      - name: Configure the Production candidate staging controller
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          role-duration-seconds: 7200
+          role-session-name: production-readiness-agentcore-${{ github.run_id }}
+          unset-current-credentials: true
+      - name: Stage and read back the exact Production AgentCore candidate
+        env:
+          AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ env.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
+        run: |
+          set -euo pipefail
+          test -n "$AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF"
+          candidate="$READINESS_ROOT/candidate-source"
+          git worktree add --detach "$candidate" "$SOURCE_SHA"
+          cp "$PASSPORT_ROOT/release/line-ai-release-manifest.json" \
+            "$EVIDENCE_DIR/line-ai-release-manifest.json"
+          test "$(bash "$candidate/infra/ai-gateway/validate-line-ai-release-manifest.sh" \
+            "$EVIDENCE_DIR/line-ai-release-manifest.json" \
+            "$PASSPORT_ROOT/release/production-image-manifest.json" \
+            "$PASSPORT_ROOT/release/agentcore" "$PASSPORT_ROOT/release/line-ai-contract.ts" \
+            "$SOURCE_SHA")" = "$SOURCE_SHA"
+          export ERP_CORE_INTERNAL_URL
+          ERP_CORE_INTERNAL_URL="$(aws ssm get-parameter --region "$AWS_REGION" \
+            --name /watchdog-bms/production/erp-core-internal-url \
+            --query Parameter.Value --output text)"
+          SOURCE_COMMIT="$SOURCE_SHA" DEPLOY_ENVIRONMENT=production \
+            AGENTCORE_ARTIFACT_MANIFEST="$PASSPORT_ROOT/release/agentcore/agentcore-artifact.json" \
+            AGENTCORE_BINDING_OUTPUT="$EVIDENCE_DIR/agentcore-production-binding.json" \
+            AGENTCORE_EXECUTION_ROLE_ARN="arn:aws:iam::$AWS_ACCOUNT_ID:role/watchdog-bms-production-agentcore-candidate-execution-role" \
+            AGENTCORE_SECRET_PREFIX=watchdog-bms/production \
+            PUBLIC_BASE_URL="$PUBLIC_DOMAIN_URL" WATCHDOG_JWT_ISSUER="$PUBLIC_DOMAIN_URL" \
+            WATCHDOG_JWT_AUDIENCE=watchdog-bms-production \
+            BEDROCK_MODEL_ID=global.anthropic.claude-sonnet-4-6 \
+            AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF="$AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF" \
+            bash -c 'cd "$1" && bash infra/ai-gateway/agentcore-deploy.sh' _ "$candidate"
+          qualifier="$(bash "$candidate/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
+            "$EVIDENCE_DIR/agentcore-production-binding.json" \
+            "$EVIDENCE_DIR/line-ai-release-manifest.json" production)"
+          runtime_arn="$(jq -er '.runtime.arn' "$EVIDENCE_DIR/agentcore-production-binding.json")"
+          printf '%s\n' \
+            "AGENTCORE_CANDIDATE_BINDING=$EVIDENCE_DIR/agentcore-production-binding.json" \
+            "LINE_AI_RELEASE_MANIFEST=$EVIDENCE_DIR/line-ai-release-manifest.json" \
+            "AGENTCORE_RUNTIME_ARN=$runtime_arn" \
+            "AGENTCORE_RUNTIME_QUALIFIER=$qualifier" >> "$GITHUB_ENV"
       - name: Configure read-only Production security credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
@@ -381,7 +426,15 @@ jobs:
             | select(($source|length)==1 and ($s.servingMode=="live" or $s.servingMode=="maintenance_only"))
             | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
                servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,
-               taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service)' \
+               taskDefinitionArn:$s.taskDefinition.arn,
+               lineAiBinding:(if $s.service=="ai-gateway" then
+                 {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
+                  runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
+                  qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0]),
+                  expectedSourceCommit:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_SOURCE_COMMIT")|.value][0]),
+                  expectedArtifactSha256:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256")|.value][0]),
+                  expectedContractVersion:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_CONTRACT_VERSION")|.value][0])}
+                 else null end)}] | sort_by(.service)' \
             "$EVIDENCE_DIR/production-health.json" > "$services"
           test "$(jq 'length' "$services")" = 3
           issued="$(date -u +%s)"; passport_expires="$(jq -er '.expiresAtEpoch' "$PASSPORT_ROOT/passport.json")"
@@ -405,6 +458,8 @@ jobs:
             --arg target "$EFFECTIVE_TARGET" \
             --arg healthHash "$(sha256sum "$EVIDENCE_DIR/production-health.json"|awk '{print $1}')" \
             --arg runtimeHash "$(sha256sum "$EVIDENCE_DIR/production-runtime.json"|awk '{print $1}')" \
+            --arg lineAiManifestHash "$(sha256sum "$EVIDENCE_DIR/line-ai-release-manifest.json"|awk '{print $1}')" \
+            --arg agentcoreBindingHash "$(sha256sum "$EVIDENCE_DIR/agentcore-production-binding.json"|awk '{print $1}')" \
             --arg catalogHash "$(sha256sum "$EVIDENCE_DIR/catalog-result.json"|awk '{print $1}')" \
             --arg catalogRuntimeHash "$(sha256sum "$EVIDENCE_DIR/catalog-runtime.json"|awk '{print $1}')" \
             --arg migrationStatus "$MIGRATION_STATUS" --argjson pending "$PENDING_MIGRATION_COUNT" \
@@ -423,6 +478,9 @@ jobs:
              issuedAtEpoch:$issued,expiresAtEpoch:$expires,
              productionBaseline:{path:"production-health.json",sha256:$healthHash,services:$services},
              runtimeBaseline:{path:"production-runtime.json",sha256:$runtimeHash},
+             lineAiCandidate:{releaseManifestPath:"line-ai-release-manifest.json",
+               releaseManifestSha256:$lineAiManifestHash,
+               bindingPath:"agentcore-production-binding.json",bindingSha256:$agentcoreBindingHash},
              migration:{classificationPath:"catalog-result.json",classificationSha256:$catalogHash,
                runtimePath:"catalog-runtime.json",runtimeSha256:$catalogRuntimeHash,
                status:$migrationStatus,pendingMigrationCount:$pending,clone:$clone},

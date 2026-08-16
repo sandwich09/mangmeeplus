@@ -50,7 +50,7 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
   def hash:type=="string" and test("^[0-9a-f]{64}$");
   def sha:type=="string" and test("^[0-9a-f]{40}$");
   exact(["artifactKind","aws","checks","contentSha256","environment","expiresAtEpoch",
-    "issuedAtEpoch","legal","migration","passportRef","productionBaseline","repository",
+    "issuedAtEpoch","legal","lineAiCandidate","migration","passportRef","productionBaseline","repository",
     "schemaVersion","runtimeBaseline","serving","sourceCommit","workflow"])
   and .schemaVersion==2 and .artifactKind=="PRODUCTION_RELEASE_READY_V2"
   and .environment=="production" and .repository==$repository and .sourceCommit==$source
@@ -81,16 +81,36 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
       and .legal.approvedBy=="MangmeeDev" and .checks.legalMode=="OWNER_OVERRIDE"
     end)
   and .aws=={accountId:"311414082667",region:"ap-southeast-1"}
+  and (.lineAiCandidate|exact(["bindingPath","bindingSha256","releaseManifestPath",
+    "releaseManifestSha256"]))
+  and .lineAiCandidate.bindingPath=="agentcore-production-binding.json"
+  and .lineAiCandidate.releaseManifestPath=="line-ai-release-manifest.json"
+  and (.lineAiCandidate.bindingSha256|hash)
+  and (.lineAiCandidate.releaseManifestSha256|hash)
   and (.productionBaseline|exact(["path","services","sha256"]))
   and .productionBaseline.path=="production-health.json" and (.productionBaseline.sha256|hash)
   and (.productionBaseline.services|type)=="array" and (.productionBaseline.services|length)==3
   and ([.productionBaseline.services[].service]|sort)==["ai-gateway","api-web","workers"]
   and all(.productionBaseline.services[];
-    exact(["image","service","serviceRevisionArn","servingMode","sourceCommit","taskDefinitionArn"])
+    exact(["image","lineAiBinding","service","serviceRevisionArn","servingMode","sourceCommit","taskDefinitionArn"])
     and (.sourceCommit|sha) and (.image|test("@sha256:[0-9a-f]{64}$"))
     and (.serviceRevisionArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:service-revision/"))
     and (.taskDefinitionArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"))
-    and (.servingMode=="maintenance_only" or .servingMode=="live"))
+    and (.servingMode=="maintenance_only" or .servingMode=="live")
+    and (if .service=="ai-gateway" then
+      (.lineAiBinding|exact(["expectedArtifactSha256","expectedContractVersion","expectedSourceCommit",
+        "qualifier","runtime","runtimeArn"]))
+      and .lineAiBinding.runtime=="agentcore"
+      and (.lineAiBinding.runtimeArn|test("^arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$"))
+      and (.lineAiBinding.qualifier|type=="string" and length>=1 and length<=64
+        and test("^[A-Za-z0-9_-]+$"))
+      and ((.lineAiBinding.expectedSourceCommit==null
+          and .lineAiBinding.expectedArtifactSha256==null
+          and .lineAiBinding.expectedContractVersion==null)
+        or (.lineAiBinding.expectedSourceCommit==.sourceCommit
+          and (.lineAiBinding.expectedArtifactSha256|test("^[0-9a-f]{64}$"))
+          and (.lineAiBinding.expectedContractVersion|test("^[1-9][0-9]*$"))))
+    else .lineAiBinding==null end))
   and (.runtimeBaseline|exact(["path","sha256"]))
   and .runtimeBaseline.path=="production-runtime.json" and (.runtimeBaseline.sha256|hash)
   and (.migration|exact(["classificationPath","classificationSha256","clone",
@@ -115,6 +135,16 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
   and .contentSha256==$content and (.contentSha256|hash)
 ' "$ready" >/dev/null
 
+line_ai_release_manifest="$(safe "$(jq -er '.lineAiCandidate.releaseManifestPath' "$ready")" 1048576)"
+agentcore_binding="$(safe "$(jq -er '.lineAiCandidate.bindingPath' "$ready")" 1048576)"
+test "$(sha_file "$line_ai_release_manifest")" = "$(jq -er '.lineAiCandidate.releaseManifestSha256' "$ready")"
+test "$(sha_file "$agentcore_binding")" = "$(jq -er '.lineAiCandidate.bindingSha256' "$ready")"
+test "$(sha_file "$line_ai_release_manifest")" = "$(jq -er '.lineAiCandidate.manifestSha256' "$passport")"
+test "$(bash "$controller_root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
+  "$agentcore_binding" "$line_ai_release_manifest" production)" = \
+  "$(jq -er '.endpoint.name' "$agentcore_binding")"
+test "$(jq -er '.sourceCommit' "$agentcore_binding")" = "$source"
+
 health="$(safe "$(jq -er '.productionBaseline.path' "$ready")" 16777216)"
 test "$(sha_file "$health")" = "$(jq -er '.productionBaseline.sha256' "$ready")"
 jq -e --slurpfile ready "$ready" '
@@ -125,7 +155,15 @@ jq -e --slurpfile ready "$ready" '
     | ([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value]) as $source
     | {service:$s.service,image:$a.primaryContainer.image,sourceCommit:$source[0],
        servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,
-       taskDefinitionArn:$s.taskDefinition.arn}] | sort_by(.service))
+       taskDefinitionArn:$s.taskDefinition.arn,
+       lineAiBinding:(if $s.service=="ai-gateway" then
+         {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
+          runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
+          qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0]),
+          expectedSourceCommit:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_SOURCE_COMMIT")|.value][0]),
+          expectedArtifactSha256:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256")|.value][0]),
+          expectedContractVersion:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_CONTRACT_VERSION")|.value][0])}
+         else null end)}] | sort_by(.service))
     == ($ready[0].productionBaseline.services|sort_by(.service))
 ' "$health" >/dev/null
 
@@ -152,7 +190,8 @@ test "$(sha_file "$promotion_prerequisites")" = \
   "$(jq -er '.promotionPrerequisitesSha256' "$runtime_baseline")"
 expected_lifecycle_sha="$(jq -cS '{Rules:(.Rules|sort_by(.ID))}' \
   "$controller_root/infra/object-storage-lifecycle.json" | sha_stream)"
-jq -e --arg lifecycle "$expected_lifecycle_sha" '
+jq -e --arg lifecycle "$expected_lifecycle_sha" \
+  --slurpfile binding "$agentcore_binding" --slurpfile lineRelease "$line_ai_release_manifest" '
   def exact($wanted):(keys|sort)==($wanted|sort);
   def hash:type=="string" and test("^[0-9a-f]{64}$");
   def integer:type=="number" and floor==.;
@@ -191,7 +230,9 @@ jq -e --arg lifecycle "$expected_lifecycle_sha" '
     "watchdog-bms-production-a5-apply-execution","watchdog-bms-production-a5-bootstrap-execution",
     "watchdog-bms-production-a5-clone","watchdog-bms-production-a5-clone-execution",
     "watchdog-bms-production-a5-reader-bootstrap","watchdog-bms-production-a5-readonly",
-    "watchdog-bms-production-a5-readonly-execution","watchdog-bms-production-security-readonly",
+    "watchdog-bms-production-a5-readonly-execution",
+    "watchdog-bms-production-agentcore-candidate-execution-role",
+    "watchdog-bms-production-security-readonly",
     "watchdog-bms-release-task-role"];
   def role_arn($name):
     if $name=="AWSServiceRoleForApplicationAutoScaling_ECSService" then
@@ -216,7 +257,9 @@ jq -e --arg lifecycle "$expected_lifecycle_sha" '
     else 3600 end;
   def inline_name($name):
     if $name=="watchdog-bms-production-a5-bootstrap-execution" then null
-    elif $name=="watchdog-bms-agentcore-execution-role" then "watchdog-bms-agentcore-permissions"
+    elif $name=="watchdog-bms-agentcore-execution-role"
+      or $name=="watchdog-bms-production-agentcore-candidate-execution-role"
+      then "watchdog-bms-agentcore-permissions"
     elif $name=="watchdog-bms-deploy-production" then "watchdog-bms-production-deploy"
     elif $name=="ecsTaskExecutionRole" then "watchdog-bms-ecs-execution-secrets"
     elif $name=="watchdog-bms-release-task-role" then "watchdog-bms-release-task-ecs-read"
@@ -253,10 +296,9 @@ jq -e --arg lifecycle "$expected_lifecycle_sha" '
     and .requiredVariables==["AWS_DEPLOY_ROLE_ARN","PUBLIC_DOMAIN_URL",
       "WORKFLOW_WEBHOOK_ALLOWED_HOSTS","CLAMAV_HOST","LOG_KMS_KEY_ID",
       "SECURITY_ALERT_TOPIC_ARN","LINE_LOGIN_CHANNEL_ID","LINE_LIFF_ID",
-      "LINE_MESSAGING_CHANNEL_ID","LINE_AI_AGENT_RUNTIME","AGENTCORE_REGION",
-      "AGENTCORE_RUNTIME_ARN","AGENTCORE_RUNTIME_QUALIFIER"]
+      "LINE_MESSAGING_CHANNEL_ID","LINE_AI_AGENT_RUNTIME","AGENTCORE_REGION"]
     and (.requiredVariableValuesSha256|hash))
-  and (.roles|type=="array" and length==21 and .==sort_by(.roleName)
+  and (.roles|type=="array" and length==22 and .==sort_by(.roleName)
     and map(.roleName)==role_names
     and all(.[];. as $role|exact(["attachedPolicies","inlinePolicyName","maxSessionDuration",
         "policySha256","roleArn","roleName","state","trustSha256"])
@@ -357,23 +399,32 @@ jq -e --arg lifecycle "$expected_lifecycle_sha" '
         =="arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a")
     and (.agentCore as $agent
     | ($agent|exact(["appEnv","artifactBucket","artifactPrefix","artifactRuntime",
-        "artifactVersionId","deployEnvironment","entryPoint","executionRoleArn","gitSha",
-        "networkMode","requireMMDSV2","runtimeArn","runtimeId","runtimeVersion",
-        "serverProtocol","status"]))
-    and $agent=={appEnv:"production",
-      artifactBucket:"watchdog-bms-agentcore-artifacts-311414082667",
-      artifactPrefix:$agent.artifactPrefix,artifactRuntime:"NODE_22",
-      artifactVersionId:$agent.artifactVersionId,deployEnvironment:"production",
-      entryPoint:["runtime.js"],
-      executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
-      gitSha:"eaa9005a1857b3cd582ceda743977496ed955110",networkMode:"PUBLIC",requireMMDSV2:true,
-      runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
-      runtimeId:"watchdog_orchestrator-6xOx1tCbz0",runtimeVersion:$agent.runtimeVersion,
-      serverProtocol:"HTTP",status:"READY"}
-    and ($agent.runtimeVersion|type=="string" and test("^[1-9][0-9]{0,4}$"))
-    and ($agent.artifactPrefix|test(
-      "^agentcore/watchdog_orchestrator-eaa9005a1857b3cd582ceda743977496ed955110-[0-9a-f]{64}\\.zip$"))
-    and ($agent.artifactVersionId|type=="string" and length>0)))
+        "artifactSha256","artifactVersionId","bindingStrategy","configurationSha256",
+        "contractVersion","deployEnvironment","endpointArn","endpointName","endpointStatus",
+        "endpointVersion","entryPoint","executionRoleArn","gitSha","networkMode",
+        "requireMMDSV2","runtimeArn","runtimeId","runtimeVersion","serverProtocol","status"]))
+    and $agent.appEnv=="production" and $agent.deployEnvironment=="production"
+    and $agent.artifactRuntime=="NODE_22" and $agent.entryPoint==["runtime.js"]
+    and $agent.networkMode=="PUBLIC" and $agent.requireMMDSV2==true
+    and $agent.serverProtocol=="HTTP" and $agent.status=="READY"
+    and $agent.endpointStatus=="READY"
+    and $agent.runtimeArn==$binding[0].runtime.arn
+    and $agent.runtimeId==$binding[0].runtime.id
+    and $agent.runtimeVersion==$binding[0].runtime.version
+    and $agent.executionRoleArn==$binding[0].executionRoleArn
+    and $agent.gitSha==$binding[0].sourceCommit
+    and $agent.artifactSha256==$binding[0].artifact.sha256
+    and $agent.artifactBucket==$binding[0].artifact.bucket
+    and $agent.artifactPrefix==$binding[0].artifact.prefix
+    and $agent.artifactVersionId==$binding[0].artifact.objectVersionId
+    and $agent.endpointArn==$binding[0].endpoint.arn
+    and $agent.endpointName==$binding[0].endpoint.name
+    and $agent.endpointVersion==$binding[0].endpoint.version
+    and $agent.bindingStrategy==$binding[0].bindingStrategy
+    and $agent.configurationSha256==$binding[0].configurationSha256
+    and $agent.contractVersion==$binding[0].contractVersion
+    and $agent.gitSha==$lineRelease[0].sourceCommit
+    and $agent.artifactSha256==$lineRelease[0].agentCore.artifactSha256))
 ' "$promotion_prerequisites" >/dev/null
 
 classification="$(safe "$(jq -er '.migration.classificationPath' "$ready")" 1048576)"

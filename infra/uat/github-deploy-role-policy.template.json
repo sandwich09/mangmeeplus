@@ -111,7 +111,8 @@
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-infrastructure-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-api-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
-        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-agentcore-execution-role"
       ]
     },
     {
@@ -124,16 +125,61 @@
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-infrastructure-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-api-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
-        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-agentcore-execution-role"
       ],
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": [
             "ecs.amazonaws.com",
-            "ecs-tasks.amazonaws.com"
+            "ecs-tasks.amazonaws.com",
+            "bedrock-agentcore.amazonaws.com"
           ]
         }
       }
+    },
+    {
+      "Sid": "ManageOnlyUatAgentCoreExecutionRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-agentcore-execution-role"
+    },
+    {
+      "Sid": "ManageUatAgentCoreCandidate",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:UpdateAgentRuntime",
+        "bedrock-agentcore:GetAgentRuntime",
+        "bedrock-agentcore:ListAgentRuntimes",
+        "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+        "bedrock-agentcore:GetAgentRuntimeEndpoint",
+        "bedrock-agentcore:ListAgentRuntimeEndpoints",
+        "bedrock-agentcore:InvokeAgentRuntime"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageVersionedAgentCoreArtifacts",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::watchdog-bms-agentcore-artifacts-<ACCOUNT_ID>",
+        "arn:aws:s3:::watchdog-bms-agentcore-artifacts-<ACCOUNT_ID>/agentcore/watchdog_orchestrator_uat_candidate-*"
+      ]
     },
     {
       "Sid": "VerifyUatReleaseTaskRolePolicy",
@@ -142,6 +188,7 @@
       "Resource": [
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
       ]
     },

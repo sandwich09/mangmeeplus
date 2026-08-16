@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -21,8 +22,8 @@ type RequestWithContext = Request & {
 @Injectable()
 export class AiToolGuard implements CanActivate {
   constructor(
-    private readonly reflector: Reflector,
-    private readonly verifier: WatchdogContextVerifier,
+    @Inject(Reflector) private readonly reflector: Reflector,
+    @Inject(WatchdogContextVerifier) private readonly verifier: WatchdogContextVerifier,
   ) {}
 
   canActivate(context: ExecutionContext): boolean {

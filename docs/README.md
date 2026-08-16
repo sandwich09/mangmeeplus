@@ -56,6 +56,9 @@ Start from `Home.md`:
 - LINE AI read-only assistant plan: `plans/line-ai-read-only-assistant-plan.md`
 - LINE AI business query coverage spec: `specs/line-ai-business-query-coverage-spec.md`
 - LINE AI business query coverage plan: `plans/line-ai-business-query-coverage-plan.md`
+- LINE AI owner daily closing feedback: `product/line-ai-owner-daily-closing-feedback-th.md`
+- LINE AI owner daily closing spec: `specs/line-ai-owner-daily-closing-spec.md`
+- LINE AI owner daily closing plan: `plans/line-ai-owner-daily-closing-plan.md`
 - LINE AI channel/auth spec: `specs/line-ai-channel-auth-spec.md`
 - Web frontend code style guideline: `guidelines/web-frontend-code-style.md`
 - Backend hexagonal code style guideline: `guidelines/backend-hexagonal-code-style.md`

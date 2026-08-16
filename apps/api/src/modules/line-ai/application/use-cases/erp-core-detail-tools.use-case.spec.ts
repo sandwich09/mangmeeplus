@@ -110,14 +110,14 @@ describe('LINE ERP core detail tools', () => {
   });
 
   it('wires all six adapters into the internal tool map', () => {
-    const oldDependencies = Array.from({ length: 43 }, () => ({}));
+    const dependenciesBeforeCoreDetailAdapters = Array.from({ length: 44 }, () => ({}));
     const adapters = [
       { execute: async () => ({}) }, { execute: async () => ({}) },
       { execute: async () => ({}) }, { execute: async () => ({}) },
       { execute: async () => ({}) }, { execute: async () => ({}) },
     ];
     const controller = new (InternalToolsController as any)(
-      {}, {}, {}, {}, {}, ...oldDependencies, ...adapters,
+      {}, {}, {}, {}, {}, ...dependenciesBeforeCoreDetailAdapters, ...adapters,
     );
     const map = (controller as any).toolMap as Map<string, unknown>;
     assert.equal(map.get('inventory.get_product_detail'), adapters[0]);

@@ -645,7 +645,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
   it('every wired read tool keeps working — walked from the registry, not a hardcoded list', async () => {
     const { controller } = build({ permissions: [AI] });
     const wired = [...((controller as any).toolMap as Map<string, unknown>).keys()];
-    assert.equal(wired.length, 54, 'the wired read-tool surface must not shrink');
+    assert.equal(wired.length, 55, 'the wired read-tool surface must not shrink');
 
     for (const toolName of wired) {
       const meta = LINE_TOOL_REGISTRY.find((entry) => entry.name === toolName)!;

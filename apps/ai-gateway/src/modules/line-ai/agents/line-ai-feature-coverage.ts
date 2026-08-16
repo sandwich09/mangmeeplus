@@ -75,8 +75,8 @@ export const LINE_AI_FEATURE_COVERAGE: readonly LineAiFeatureCoverageRow[] = [
     tools: tools('ledger.get_financial_summary'), requiredPermissions: ['ledger.report.read'], sourceModule: 'ledger',
   },
   {
-    id: 'expenses', feature: 'Expense recency and breakdown', status: 'covered', questionKinds: ['summary', 'list'],
-    tools: tools('expense.list_recent', 'expense.get_breakdown'), requiredPermissions: ['expense.read', 'expense.read_related', 'expense.read_own'],
+    id: 'expenses', feature: 'Expense recency, breakdown, and owner daily closing', status: 'covered', questionKinds: ['summary', 'list'],
+    tools: tools('expense.list_recent', 'expense.get_breakdown', 'expense.get_daily_closing'), requiredPermissions: ['expense.read', 'expense.read_related', 'expense.read_own'],
     sourceModule: 'expenses', navigationMenuIds: ['expenses'],
   },
   {

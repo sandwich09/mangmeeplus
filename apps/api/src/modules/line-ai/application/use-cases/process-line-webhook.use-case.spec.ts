@@ -595,11 +595,11 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), true);
     assert.equal(aiGatewayRequests[0]?.messageText, 'ใบกำกับภาษี ร้านทดสอบ ยอด 1,234.50 บาท');
     assert.match(replies[0] ?? '', /ฟีเจอร์นี้ยังไม่ได้เปิดใช้งาน/);
-    assert.equal((updates.at(-1) as any).data.status, 'completed');
+    assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
-	  it('keeps a failed LINE delivery retryable and never records a false completed turn', async () => {
-	    const { prisma, updates, aiTurns, aiTurnUpdates } = makePrisma();
+  it('keeps a failed LINE delivery retryable and never records a false completed turn', async () => {
+    const { prisma, updates, aiTurns, aiTurnUpdates } = makePrisma();
     const { useCase } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
       aiGatewayFn: () => ({
@@ -616,15 +616,26 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
       sendReplyFn: async () => { throw new Error('LINE 400: Invalid reply token'); },
     });
+    const logs: any[] = [];
+    (useCase as any).logger = {
+      log: (entry: unknown) => logs.push(entry),
+      warn: () => undefined,
+      error: () => undefined,
+    };
 
     // Delivery throws, but execute resolves with persisted retry state.
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-delivery-fail-1', messageText: 'มีสินค้าใกล้หมดไหม' });
 
-	    assert.equal(aiTurns.length, 1, 'turn persisted despite delivery failure');
-      assert.equal((aiTurns[0] as any).data.status, 'PROCESSING');
-      assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
-	    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
-	  });
+    assert.equal(aiTurns.length, 1, 'turn persisted despite delivery failure');
+    assert.equal((aiTurns[0] as any).data.status, 'PROCESSING');
+    assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
+    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
+    assert.deepEqual(
+      logs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => entry.terminalClass),
+      ['delivery_pending'],
+      'a failed delivery must never emit the delivered terminal metric',
+    );
+  });
 
   it('does not mark an employee answer completed when reply token and push both fail', async () => {
     const { prisma, updates, aiTurnUpdates } = makePrisma();
@@ -669,6 +680,7 @@ describe('ProcessLineWebhookUseCase', () => {
   });
 
 	  it('passes at most LINE_AI_CONTEXT_MAX_TURNS recent turns from the active 15-minute window to intake router and AI Gateway', async () => {
+	    assert.equal(LINE_AI_CONTEXT_MAX_TURNS, 15, 'the owner-selected history bound is exactly 15 turns');
 	    const now = Date.now();
 	    const inWindow = LINE_AI_CONTEXT_MAX_TURNS + 1; // one more than the cap
 	    const recentTurns = [
@@ -1535,6 +1547,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     ack: async (entry: any, outcome: string) => { events.push(`ack:${outcome}`); ledgerCalls.acks.push({ id: entry.id, outcome }); },
   } as any;
   const aiGatewayRequests: any[] = [];
+  const intakeRequests: any[] = [];
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
@@ -1548,6 +1561,7 @@ function makeLedgerUseCase(prisma: any, opts: {
         throw new Error('AI Gateway not expected');
       },
       requestLineIntakeRoute: async (req: any) => {
+        intakeRequests.push(req);
         if (opts.intakeRouteFn) return opts.intakeRouteFn(req);
         return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 };
       },
@@ -1564,7 +1578,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );
-  return { useCase, events, ledgerCalls, aiGatewayRequests };
+  return { useCase, events, ledgerCalls, aiGatewayRequests, intakeRequests };
 }
 
 const LEDGER_TURN_RESPONSE = {
@@ -1625,12 +1639,16 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
   it('attaches open clarifications to the turn request and consumes only the ones this turn answered', async () => {
     const { prisma } = makePrisma();
     const entryOf = (id: string, userId = 'user-1') => ({ id, key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 't0', kind: 'sub_request', userId });
-    const { useCase, ledgerCalls, aiGatewayRequests } = makeLedgerUseCase(prisma, {
+    const { useCase, ledgerCalls, aiGatewayRequests, intakeRequests } = makeLedgerUseCase(prisma, {
       aiGatewayFn: () => LEDGER_TURN_RESPONSE,
       // The router names what the message answered; the other entry is still waiting.
       intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, resolvedClarificationIds: ['7-0'] }),
       openWaiting: [
-        { id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense', askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0') },
+        {
+          id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense',
+          askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0'),
+          pendingMedia: { pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg' },
+        },
         { id: '8-0', question: 'สาขาไหน?', text: 'ยอดขายสาขา', askedAt: '2026-07-07T09:59:30.000Z', entry: entryOf('8-0') },
       ],
     });
@@ -1640,6 +1658,12 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(aiGatewayRequests[0]?.openClarifications?.length, 2);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.question, 'ปีไหน?');
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.subject, 'expense');
+    assert.deepEqual(aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia, {
+      pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg',
+    });
+    assert.deepEqual(intakeRequests[0]?.openClarifications?.[0]?.pendingMedia,
+      aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia,
+      'the same opaque stored-media handle reaches intake and turn requests');
     assert.ok(ledgerCalls.acks.some((a) => a.id === '7-0' && a.outcome === 'acked'), 'the answered entry is done waiting');
     assert.equal(ledgerCalls.acks.some((a) => a.id === '8-0'), false, 'an unanswered question must stay open');
   });
@@ -1728,6 +1752,11 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
         ...TOOL_TURN_RESPONSE,
         refused: true,
         refusalReason: 'mutation_blocked',
+        runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+        expectedRuntimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1 },
+        runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
+        stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
+        modelCallCount: 2,
         toolCalls: [
           { name: 'sales.get_sales_summary', status: 'ok', durationMs: 11 },
           { name: 'inventory.list_low_stock', status: 'error', durationMs: 233, errorCode: 'TOOL_EXECUTION_ERROR' },
@@ -1749,6 +1778,13 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
     // Each row carries its own measured duration, not the whole-turn duration.
     assert.deepEqual(toolInvocations.map((row) => row.durationMs), [11, 233]);
     assert.equal((aiTurns[0] as any).data.durationMs, 900);
+    assert.deepEqual((aiTurns[0] as any).data.observabilityJson, {
+      runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+      expectedRuntimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1 },
+      runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
+      stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
+      modelCallCount: 2,
+    });
     assert.deepEqual(toolInvocations.map((row) => row.status), ['ok', 'error']);
     assert.deepEqual(toolInvocations.map((row) => row.errorCode), [null, 'TOOL_EXECUTION_ERROR']);
   });

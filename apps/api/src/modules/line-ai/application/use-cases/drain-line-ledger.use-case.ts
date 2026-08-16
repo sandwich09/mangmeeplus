@@ -12,7 +12,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_WINDOW_MINUTES } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -26,6 +26,7 @@ import { LineAiLedgerService, type LedgerEntry } from '../line-ai-ledger.service
 import { formatLineReply, lineAssistantDisabled } from './process-line-webhook.use-case';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
+import { emitLineAiTerminalOutcome, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
 
 export type DrainLineLedgerResult = {
   skipped?: boolean;
@@ -115,6 +116,7 @@ export class DrainLineLedgerUseCase {
     }
 
     if (deliveryCount > this.config.lineAiLedgerDeliveryCap) {
+      await this.finalizeSourceEvent(entry, 'failed_terminal', 'LINE_LEDGER_DELIVERY_CAP_EXCEEDED');
       await this.ledger.ack(entry, 'parked', { deliveryCount });
       return 'parked';
     }
@@ -129,9 +131,13 @@ export class DrainLineLedgerUseCase {
       // through this drain's own push seam. Out-of-window turns and sub_requests stay silent:
       // nobody is waiting on those.
       if (entry.kind === 'turn' && this.inContextWindow(entry, now)) {
-        await this.lineReply.sendPush(entry.chatKey, [
+        const delivery = await this.lineReply.sendPush(entry.chatKey, [
           this.lineReply.buildTextMessage(formatRefusal('feature_disabled')),
         ]);
+        if (delivery !== 'ok') throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);
+        await this.finalizeSourceEvent(entry, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE);
+      } else if (entry.kind === 'turn') {
+        await this.finalizeSourceEvent(entry, 'failed_terminal', 'LINE_LEDGER_CONTEXT_EXPIRED');
       }
       await this.ledger.ack(entry, 'refused', { reason: 'feature_disabled' });
       return 'refused';
@@ -140,6 +146,15 @@ export class DrainLineLedgerUseCase {
     // Re-resolve identity + permissions at execution time — revoked access refuses safely.
     const userContext = await this.resolveUserContext(entry);
     if (!userContext) {
+      if (entry.kind === 'turn' && this.inContextWindow(entry, now)) {
+        const delivery = await this.lineReply.sendPush(entry.chatKey, [
+          this.lineReply.buildTextMessage(formatRefusal('forbidden')),
+        ]);
+        if (delivery !== 'ok') throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);
+        await this.finalizeSourceEvent(entry, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN);
+      } else if (entry.kind === 'turn') {
+        await this.finalizeSourceEvent(entry, 'failed_terminal', 'LINE_LEDGER_PERMISSION_REVOKED_AFTER_CONTEXT');
+      }
       await this.ledger.ack(entry, 'refused', { reason: 'identity_or_permission_revoked' });
       return 'refused';
     }
@@ -162,7 +177,7 @@ export class DrainLineLedgerUseCase {
     ]);
     if (delivery !== 'ok') throw new Error(`LINE_PUSH_${delivery.toUpperCase()}`);
     if (entry.kind === 'turn' && entry.webhookEventId) {
-      await Promise.all([
+      const [, eventUpdate] = await Promise.all([
         this.prisma.client.aiTurn.updateMany({
           where: {
             companyId: entry.companyId,
@@ -181,9 +196,22 @@ export class DrainLineLedgerUseCase {
             status: { in: ['processing', 'response_ready', 'delivery_pending'] },
           },
           // The push landed, so this row owes nothing and must stop carrying the replay payload.
-          data: { status: 'completed', errorCode: null, processedAt: new Date(), payloadJson: Prisma.DbNull },
+          data: {
+            status: terminalStatusForLineTurn(response),
+            errorCode: response.errorCode ?? null,
+            processedAt: new Date(),
+            payloadJson: Prisma.DbNull,
+          },
         }),
       ]);
+      if (eventUpdate.count === 1) {
+        emitLineAiTerminalOutcome(this.logger, {
+          webhookEventId: entry.webhookEventId,
+          companyId: entry.companyId,
+          status: terminalStatusForLineTurn(response),
+          errorCode: response.errorCode,
+        });
+      }
     }
     await this.ledger.ack(entry, 'followed_up', {
       deliveryCount,
@@ -191,6 +219,25 @@ export class DrainLineLedgerUseCase {
       toolCount: response.toolsInvoked.length,
     });
     return 'followedUp';
+  }
+
+  private async finalizeSourceEvent(entry: LedgerEntry, status: string, errorCode: string): Promise<void> {
+    if (entry.kind !== 'turn' || !entry.webhookEventId) return;
+    const updated = await this.prisma.client.lineWebhookEventLog.updateMany({
+      where: {
+        webhookEventId: entry.webhookEventId,
+        status: { in: ['processing', 'response_ready', 'delivery_pending'] },
+      },
+      data: { status, errorCode, processedAt: new Date(), payloadJson: Prisma.DbNull },
+    });
+    if (updated.count === 1) {
+      emitLineAiTerminalOutcome(this.logger, {
+        webhookEventId: entry.webhookEventId,
+        companyId: entry.companyId,
+        status,
+        errorCode,
+      });
+    }
   }
 
   /** The entry's LINE AI context window is still open, so the user is plausibly still waiting. */

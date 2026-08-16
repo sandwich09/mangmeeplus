@@ -79,6 +79,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       payeeAddress: '  1 ถนนทดสอบ  ', payeeTaxId: '1-2345-67890-12-3',
       paymentMethod: 'CASH', idempotencyKey: 'idem-1', expectedExpenseUpdatedAt: now.toISOString(),
+      continuationId: 'workflow-1',
     });
     assert.equal(captured.originalSourceDocumentType, 'EXPENSE_NOTE_TEXT');
     assert.equal(captured.payerUserId, 'payer-1');
@@ -86,6 +87,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     assert.equal(captured.payeeAddress, '1 ถนนทดสอบ');
     assert.equal(captured.payeeTaxId, '1234567890123');
     assert.equal(captured.paymentEvidenceAttachmentIds.length, 0);
+    assert.deepEqual(captured.lineContinuation, { workflowId: 'workflow-1', userId: 'finance-1' });
     assert.deepEqual(notifications, [{
       companyId: 'co-1',
       triggerKey: 'expense.substitute_receipt_signature_pending',

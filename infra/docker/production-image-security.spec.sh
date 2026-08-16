@@ -906,6 +906,7 @@ jq -e '.Statement[] | select(.Sid == "VerifyUatReleaseTaskRolePolicy")
   | .Action == "iam:GetRolePolicy"
     and ((.Resource | sort) == [
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
+      "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role"
     ])' \

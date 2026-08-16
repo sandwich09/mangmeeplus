@@ -8,10 +8,13 @@ Scope: Company settings page, configured substitute-receipt approvers, cash-evid
 
 Decisions:
 - Reuse company setup and expense permissions; no new permission keys.
-- No policy means the substitute-receipt flow is not production-enabled for that company.
+- Superseded by the owner-approved 2026-08-06 approval-mode decision: no policy row now means default
+  `OWNER_SELF`, while `configured` remains false and runtime readiness still requires an eligible
+  current `expense.confirm` approver in branch scope. `DESIGNATED_APPROVERS` remains configured/fail-closed.
 - Default cash mode requires a separate payment-evidence image/PDF plus supporting evidence.
 - Settings may describe accepted evidence, but semantic/legal sufficiency remains a finance/accountant review decision.
-- Configured approvers must be active members with `expense.confirm`; the actual payer can never approve the same evidence.
+- Approvers must be active members with `expense.confirm`; `DESIGNATED_APPROVERS` rejects the actual
+  payer, while `OWNER_SELF` permits same-user approval only for the shared owner/admin/manager exemption.
 - The exact payer/approver file applied to the certificate is a reviewed, cropped transparent PNG derived in-browser from that signer's PNG/JPEG upload.
 - Payee acknowledgement/signature remains separate payment evidence; it is not substituted for the payer or approver signature required by the Revenue Department example certificate.
 

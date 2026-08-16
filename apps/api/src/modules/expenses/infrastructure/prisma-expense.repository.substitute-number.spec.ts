@@ -30,13 +30,14 @@ function preparedInput() {
   };
 }
 
-function makeRepo(existing: Record<string, any> | null = null) {
+function makeRepo(existing: Record<string, any> | null = null, sourceChannelMetadataJson: Record<string, unknown> | null = null) {
   const tx: any = {
     $executeRaw: mock.fn(async () => undefined),
     expenseRecord: {
       findFirst: mock.fn(async () => ({
         id: 'expense-secret-cuid', companyId: 'company-1', expenseNumber: null,
         status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT,
+        sourceChannelMetadataJson,
       })),
       updateMany: mock.fn(async () => ({ count: 1 })),
       findFirstOrThrow: mock.fn(async () => ({ id: 'expense-secret-cuid', updatedAt: UPDATED_AT })),
@@ -110,5 +111,24 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     assert.equal(result.documentNumber, 'SRC-202608-00001');
     assert.equal(reserveNumberInTransaction.mock.callCount(), 0);
     assert.equal(commitNumberInTransaction.mock.callCount(), 0);
+  });
+
+  it('consumes a matching LINE continuation in the same expense revision used by PREPARED evidence', async () => {
+    const state = {
+      workflowId: 'workflow-1', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1',
+      userId: 'preparer-1', expenseId: 'expense-secret-cuid', status: 'OPEN',
+      targetRevision: UPDATED_AT.toISOString(),
+    };
+    const { repo, tx } = makeRepo(null, { lineSubstituteReceiptContinuation: state, keep: 'safe' });
+
+    await repo.createPreparedSubstituteEvidence({
+      ...preparedInput(),
+      lineContinuation: { workflowId: 'workflow-1', userId: 'preparer-1' },
+    });
+
+    const update = tx.expenseRecord.updateMany.mock.calls[0]?.arguments[0];
+    assert.equal(update.data.sourceChannelMetadataJson.keep, 'safe');
+    assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'CONSUMED');
+    assert.equal(update.data.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.targetRevision, update.data.updatedAt.toISOString());
   });
 });

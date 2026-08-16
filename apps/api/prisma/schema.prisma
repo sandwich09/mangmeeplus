@@ -1525,6 +1525,8 @@ model AiTurn {
   modelRegion        String?
   modelPurpose       String?
   modelLineageJson   Json?
+  /** Sanitized runtime identity/binding, measured stage durations, and model-call count. */
+  observabilityJson  Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   conversation       AiConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -2218,6 +2220,8 @@ model ExpenseRecord {
   @@index([companyId, vendorCounterpartyId])
   @@index([companyId, sourceReimbursementRequestId])
   @@index([companyId, paymentStatus])
+  @@index([companyId, paymentStatus, dueDate])
+  @@index([companyId, primaryAttachmentId, missingReceiptReason])
   @@index([companyId, postingStatus])
   @@index([companyId, duplicateStatus])
   @@index([companyId, lineMessageId])
@@ -7192,6 +7196,7 @@ enum LineIntakePendingMediaStatus {
   PENDING
   RESOLVED_RECEIPT
   RESOLVED_ILLUSTRATION
+  RESOLVED_MULTI_ENTRY_REVIEW
   EXPIRED
 }
 

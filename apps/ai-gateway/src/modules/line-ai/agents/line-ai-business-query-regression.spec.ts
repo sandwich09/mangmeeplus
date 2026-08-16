@@ -1,24 +1,34 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_TOOL_REGISTRY } from '@watchdog-bms/contracts';
+import { LINE_TOOL_REGISTRY, type AgentIntentItem, type AgentIntentPlan } from '@watchdog-bms/contracts';
 import { IntentRouterAgent } from './intent-router.agent';
 import { AccountingSummaryAgent } from './accounting-summary.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
 import { enforceSourceHonesty } from '../infrastructure/erp-tool.client';
 import { CUSTOMER_CLARIFICATION_REGRESSION, LINE_AI_BUSINESS_QUERY_REGRESSION_CORPUS } from './line-ai-business-query-regression.corpus';
 
-function plan(tool: string, language: string) {
+function plan(
+  tool: string,
+  language: string,
+  subject: AgentIntentItem['subject'] = 'customer',
+  agent: AgentIntentItem['agent'] = 'crm',
+): AgentIntentPlan {
   return {
     status: 'ROUTABLE' as const, language,
-    intents: [{ intent: 'read_summary' as const, subject: 'customer' as const, agent: 'crm' as const, priority: 1, requiredTools: [tool], missingContext: [] }],
+    intents: [{ intent: 'read_summary' as const, subject, agent, priority: 1, requiredTools: [tool], missingContext: [] }],
     refusals: [], requiresHumanReview: false,
   };
 }
 
 describe('LINE AI mandatory business-query regression corpus', () => {
+  it('keeps the owner daily-closing shorthand row in the mandatory corpus', () => {
+    assert.ok(LINE_AI_BUSINESS_QUERY_REGRESSION_CORPUS.some((testCase) =>
+      testCase.id === 'owner-daily-closing-th-abbreviations' && testCase.tool === 'expense.get_daily_closing'));
+  });
+
   for (const testCase of LINE_AI_BUSINESS_QUERY_REGRESSION_CORPUS) {
-    it(`${testCase.id}: routes and invokes CRM customer source, never employee`, async () => {
-      const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text: JSON.stringify(plan(testCase.tool, testCase.language)) }) });
+    it(`${testCase.id}: routes and invokes the expected business source`, async () => {
+      const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text: JSON.stringify(plan(testCase.tool, testCase.language, testCase.subject, testCase.agent)) }) });
       const routed = await router.route(testCase.message);
       assert.equal(routed.intents[0]?.subject, testCase.subject);
       assert.ok(!routed.intents[0]?.requiredTools.includes(testCase.forbiddenTool));
@@ -28,13 +38,13 @@ describe('LINE AI mandatory business-query regression corpus', () => {
       const specialist = new AccountingSummaryAgent({ invoke: async (tool: { name: string; sourceModule: string }) => {
         invoked.push(tool.name);
         return {
-          toolName: tool.name, status: 'ok' as const, data: { total: 12, active: 10, archived: 2 },
-          sourceRefs: [{ label: 'ลูกค้า', module: tool.sourceModule, entityType: 'customer_summary', permissionChecked: true as const, webPath: '/companies/c1/customers' }],
+          toolName: tool.name, status: 'ok' as const, data: testCase.data,
+          sourceRefs: [{ ...testCase.sourceRef, module: tool.sourceModule, permissionChecked: true as const }],
           asOf: '2026-07-15T00:00:00Z',
         };
       } } as any);
       const output = await specialist.run(
-        { companyId: 'c1', userId: 'u1', permissions: ['crm.customer.read'], locale: testCase.language === 'th' ? 'th-TH' : 'en-US' },
+        { companyId: 'c1', userId: 'u1', permissions: [...testCase.permissions], locale: testCase.language === 'th' ? 'th-TH' : 'en-US' },
         routed.intents[0]!, 1,
       );
       assert.ok(!invoked.includes(testCase.forbiddenTool));
@@ -42,7 +52,10 @@ describe('LINE AI mandatory business-query regression corpus', () => {
 
       const composed = new ResponseComposerAgent().compose(routed, [output], testCase.message, testCase.language === 'th' ? 'th-TH' : 'en-US');
       assert.match(composed.replyText, new RegExp(testCase.expectedData));
-      assert.equal(composed.webLinks[0]?.path, '/companies/c1/customers');
+      if ('expectedReply' in testCase) {
+        for (const expected of testCase.expectedReply) assert.ok(composed.replyText.includes(expected), expected);
+      }
+      assert.equal(composed.webLinks[0]?.path, testCase.sourceRef.webPath);
       assert.ok(!composed.replyText.includes('/companies/'), 'data answer is primary; link remains secondary metadata');
     });
   }

@@ -1,6 +1,7 @@
 import type {
-  BusinessDocumentClassification, SourceDocumentType, TaxEvidenceStatus, TaxEvidenceReasonCode,
+  BusinessDocumentClassification, LineAiValueCandidates, SourceDocumentType, TaxEvidenceStatus, TaxEvidenceReasonCode,
 } from '@watchdog-bms/contracts';
+import { extractValueCandidates } from '@watchdog-bms/contracts';
 
 const SOURCE_DOCUMENT_TYPES: SourceDocumentType[] = [
   'RECEIPT', 'TAX_INVOICE', 'ABBREVIATED_TAX_INVOICE', 'TRANSFER_SLIP', 'HANDWRITTEN_CASH_BILL', 'SUPPLIER_BILL',
@@ -166,6 +167,43 @@ export function validateCaptureHints(hints: CaptureHintsInput, activeCategoryIds
     expenseCategoryId,
     warnings,
   };
+}
+
+function comparableText(value: string): string {
+  return value.normalize('NFKC').toLocaleLowerCase('th-TH').replace(/\s+/g, ' ').trim();
+}
+
+function samePositiveAmount(left: string, right: string): boolean {
+  const a = toPositiveNumber(left);
+  const b = toPositiveNumber(right);
+  return a !== null && b !== null && a === b;
+}
+
+/**
+ * Final deterministic authority for LINE text-only draft creation.
+ *
+ * An intake route is advisory. The selected amount must occur in source text and the business
+ * purpose must either be an active category or a bounded description copied from source text.
+ * `groundingTexts` is limited to exact clarification requests resolved by this turn; ordinary
+ * conversation history is never considered evidence.
+ */
+export function isLineTextExpenseCaptureEligible(
+  messageText: string,
+  hints: CaptureHintsInput,
+  activeCategories: ReadonlyMap<string, string>,
+  groundingTexts: string[] = [],
+): boolean {
+  const sourceText = [messageText, ...groundingTexts].filter(Boolean).join('\n');
+  const validated = validateCaptureHints(hints, new Set(activeCategories.keys()));
+  if (!validated.amount) return false;
+
+  const candidates: LineAiValueCandidates = extractValueCandidates(sourceText);
+  if (!candidates.amounts.some((candidate) => samePositiveAmount(candidate.value, validated.amount!))) return false;
+
+  const description = validated.description && comparableText(validated.description);
+  if (description && comparableText(sourceText).includes(description)) return true;
+  const categoryName = validated.expenseCategoryId && activeCategories.get(validated.expenseCategoryId);
+  return !!categoryName && comparableText(sourceText).includes(comparableText(categoryName));
 }
 
 function toPositiveNumber(value: string | undefined): number | null {

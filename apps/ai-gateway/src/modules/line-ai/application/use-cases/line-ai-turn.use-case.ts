@@ -3,7 +3,7 @@
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=false → item 07 deterministic path.
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=true  → item 10B orchestrator path.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
@@ -107,10 +107,10 @@ export class LineAiTurnUseCase {
   private readonly logger = new Logger(LineAiTurnUseCase.name);
 
   constructor(
-    private readonly erpTools: ErpToolClient,
-    private readonly orchestrator: OrchestratorAgent,
-    private readonly config: AiGatewayConfigService,
-    private readonly agentcoreRuntime: AgentCoreRuntimeClient,
+    @Inject(ErpToolClient) private readonly erpTools: ErpToolClient,
+    @Inject(OrchestratorAgent) private readonly orchestrator: OrchestratorAgent,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(AgentCoreRuntimeClient) private readonly agentcoreRuntime: AgentCoreRuntimeClient,
   ) {}
 
   async execute(req: LineAiTurnRequest): Promise<LineAiTurnResponse> {
@@ -131,6 +131,12 @@ export class LineAiTurnUseCase {
       toolCount: enriched.toolsInvoked.length,
       durationMs: enriched.durationMs,
       modelLineage: enriched.modelLineage,
+      runtimeIdentity: enriched.runtimeIdentity ?? null,
+      expectedRuntimeIdentity: enriched.expectedRuntimeIdentity ?? null,
+      runtimeBinding: enriched.runtimeBinding ?? null,
+      stageDurationsMs: enriched.stageDurationsMs ?? null,
+      modelCallCount: enriched.modelCallCount ?? null,
+      errorCode: enriched.errorCode ?? null,
     });
     return enriched;
   }
@@ -200,9 +206,16 @@ export class LineAiTurnUseCase {
         intent: (result.plan.intents[0] as any)?.intent ?? 'unknown',
         agent: (result.plan.intents[0] as any)?.agent ?? 'general',
         refused: result.refused || result.plan.status === 'UNROUTABLE',
+        ...(result.refusalReason ? { refusalReason: result.refusalReason } : {}),
         toolsInvoked: toolCalls.map((tool) => tool.name),
         toolCalls,
         durationMs: result.durationMs,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+        ...(result.runtimeIdentity ? { runtimeIdentity: result.runtimeIdentity } : {}),
+        ...(result.expectedRuntimeIdentity ? { expectedRuntimeIdentity: result.expectedRuntimeIdentity } : {}),
+        ...(result.runtimeBinding ? { runtimeBinding: result.runtimeBinding } : {}),
+        ...(result.stageDurationsMs ? { stageDurationsMs: result.stageDurationsMs } : {}),
+        ...(result.modelCallCount !== undefined ? { modelCallCount: result.modelCallCount } : {}),
         // The model calls happened in the artifact's process, so the request-scoped collector saw
         // nothing: the artifact's own (coerced) rows are the only usage this path can report.
         ...(result.usage ? { usage: result.usage } : {}),
@@ -210,8 +223,19 @@ export class LineAiTurnUseCase {
     } catch (err) {
       const rawCode = (err as Record<string, unknown>)?.['code'];
       const code = typeof rawCode === 'string' ? rawCode : 'AGENTCORE_INVOKE_FAILED';
+      const runtimeBinding = (err as Record<string, unknown>)?.['runtimeBinding'];
+      const runtimeIdentity = (err as Record<string, unknown>)?.['runtimeIdentity'];
+      const expectedRuntimeIdentity = (err as Record<string, unknown>)?.['expectedRuntimeIdentity'];
+      const stageDurationsMs = (err as Record<string, unknown>)?.['stageDurationsMs'];
       this.logger.error({ msg: 'ai.provider.failure', requestId: req.requestId, code, path: 'agentcore', error: (err as Error).message });
-      return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: code };
+      return {
+        ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs),
+        errorCode: code,
+        ...(runtimeBinding ? { runtimeBinding: runtimeBinding as any } : {}),
+        ...(runtimeIdentity ? { runtimeIdentity: runtimeIdentity as any } : {}),
+        ...(expectedRuntimeIdentity ? { expectedRuntimeIdentity: expectedRuntimeIdentity as any } : {}),
+        ...(stageDurationsMs ? { stageDurationsMs: stageDurationsMs as any } : {}),
+      };
     }
   }
 

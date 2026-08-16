@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 import { DEFAULT_JWT_AUDIENCE, DEFAULT_JWT_ISSUER } from '@watchdog-bms/config';
 import { AiGatewayConfigService } from '../common/config/ai-gateway-config.service';
@@ -11,7 +11,7 @@ export type VerifiedContext = {
 
 @Injectable()
 export class WatchdogContextVerifier {
-  constructor(private readonly config: AiGatewayConfigService) {}
+  constructor(@Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService) {}
 
   verify(token: string): VerifiedContext {
     const secret = this.config.jwtSecret;

@@ -309,6 +309,12 @@ jobs:
           bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
           bash infra/security/validate-production-maintenance-release.spec.sh
           bash infra/security/sync-production-maintenance-release-pins.spec.sh
+      - name: Test immutable LINE AI release identity
+        run: |
+          bash infra/ai-gateway/line-ai-release-manifest.spec.sh
+          bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
+          bash infra/uat/agentcore-candidate-policy.spec.sh
+          bash infra/security/uat-release-passport-v2.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
@@ -583,6 +589,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: production-image-${{ needs.resolve-source.outputs.source_sha }}-*
@@ -613,11 +628,30 @@ jobs:
           for service in api-web ai-gateway workers; do
             jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" > /dev/null
           done
+      - name: Build and bind the exact AgentCore candidate
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+          VALIDATED_CI_RUN_ID: ${{ inputs.validated_ci_run_id }}
+        run: |
+          set -euo pipefail
+          bash infra/ai-gateway/build-agentcore-artifact.sh release/agentcore "$SOURCE_SHA"
+          cp packages/contracts/src/line-ai.ts release/line-ai-contract.ts
+          bash infra/ai-gateway/build-line-ai-release-manifest.sh \
+            release/line-ai-release-manifest.json release/production-image-manifest.json \
+            release/agentcore release/line-ai-contract.ts \
+            "$GITHUB_RUN_ID" "$VALIDATED_CI_RUN_ID"
+          test "$(bash infra/ai-gateway/validate-line-ai-release-manifest.sh \
+            release/line-ai-release-manifest.json release/production-image-manifest.json \
+            release/agentcore release/line-ai-contract.ts "$SOURCE_SHA")" = "$SOURCE_SHA"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: production-release-${{ needs.resolve-source.outputs.source_sha }}
           path: |
             release/production-image-manifest.json
+            release/line-ai-release-manifest.json
+            release/line-ai-contract.ts
+            release/agentcore/agentcore-artifact.json
+            release/agentcore/agentcore.zip
             release/sbom-*.spdx.json
             release/cosign-*.json
           if-no-files-found: error

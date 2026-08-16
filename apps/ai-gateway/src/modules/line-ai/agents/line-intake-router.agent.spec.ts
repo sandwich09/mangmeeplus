@@ -52,6 +52,7 @@ describe('LINE intake router – routeIntake', () => {
     assert.equal(plan.intent, 'SIGNATURE_UPLOAD_TICKET');
     assert.equal(capture.input?.images?.length, 1);
     assert.equal(capture.input?.systemPrompt, LINE_INTAKE_ROUTER_SYSTEM_PROMPT);
+    assert.match(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, /multiple independent expense transactions/);
     const payload = JSON.parse(capture.input?.messages[0]?.text ?? '{}');
     assert.equal(payload.attachments[0]?.hasImageContent, true);
     assert.ok(!capture.input?.messages[0]?.text.includes('aW1n'), 'image bytes must not leak into the text payload');

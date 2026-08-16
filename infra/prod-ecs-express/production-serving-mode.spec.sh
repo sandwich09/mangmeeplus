@@ -107,6 +107,11 @@ grep -Fq '[ "$DEPLOY_ENV" = production ] && [ "$PRODUCTION_SERVING_MODE_INPUT" =
 grep -Fq 'SERVING_MODEL_PROVIDER=disabled' "$deploy"
 grep -Fq 'production live AI rollout requires explicit MODEL_PROVIDER=bedrock or openai' "$deploy"
 grep -Fq 'production live MODEL_PROVIDER must appear in APPROVED_AI_PROVIDERS' "$deploy"
+grep -Fq 'if [[ "$log_group" == *"-api-web" ]]; then' "$deploy"
+grep -Fq -- '--filter-name line-ai-accepted' "$deploy"
+grep -Fq 'for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled' "$deploy"
+grep -Fq 'provider_unavailable timeout delivery_pending failed_terminal' "$deploy"
+grep -Fq 'metricNamespace=WatchDog/LineAI' "$deploy"
 grep -Fq -- '--arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED"' "$deploy"
 grep -Fq '{name:"AI_GATEWAY_ENABLED", value:$aiEnabled}' "$deploy"
 grep -Fq '{name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled}' "$deploy"
@@ -139,6 +144,11 @@ serving_model_provider=disabled
 serving_approved_ai_providers=''
 serving_queue_enabled=false
 serving_maintenance_active=true
+agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ
+agentcore_runtime_qualifier=candidate_production_0123456789ab
+agentcore_expected_source=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+agentcore_expected_artifact=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+agentcore_expected_contract=1
 
 api_state="$(jq -cn '{environment:({
   PRODUCTION_SERVING_MODE:"maintenance_only",
@@ -150,6 +160,12 @@ api_state="$(jq -cn '{environment:({
 ai_state="$(jq -cn '{environment:({
   PRODUCTION_SERVING_MODE:"maintenance_only",
   MODEL_PROVIDER:"disabled",
+  LINE_AI_AGENT_RUNTIME:"agentcore",
+  AGENTCORE_RUNTIME_ARN:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ",
+  AGENTCORE_RUNTIME_QUALIFIER:"candidate_production_0123456789ab",
+  AGENTCORE_EXPECTED_SOURCE_COMMIT:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  AGENTCORE_EXPECTED_ARTIFACT_SHA256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  AGENTCORE_EXPECTED_CONTRACT_VERSION:"1",
   LINE_AI_AGENT_ORCHESTRATION_ENABLED:"false",
   LINE_AI_TOOLUSE_LOOP_ENABLED:"false",
   LINE_AI_COVERAGE_CRITIC_ENABLED:"false",
@@ -171,6 +187,16 @@ verify_service_environment workers "$workers_state"
 bad_workers_state="$(jq '.environment |= map(if .name == "QUEUE_ENABLED" then .value = "true" else . end)' <<< "$workers_state")"
 if verify_service_environment workers "$bad_workers_state" 2>/dev/null; then
   echo 'maintenance verifier accepted QUEUE_ENABLED=true' >&2
+  exit 1
+fi
+bad_ai_state="$(jq '.environment |= map(if .name == "AGENTCORE_RUNTIME_QUALIFIER" then .value = "candidate_production_ffffffffffff" else . end)' <<< "$ai_state")"
+if verify_service_environment ai-gateway "$bad_ai_state" 2>/dev/null; then
+  echo 'AI verifier accepted a task bound to a different AgentCore endpoint' >&2
+  exit 1
+fi
+bad_ai_artifact_state="$(jq '.environment |= map(if .name == "AGENTCORE_EXPECTED_ARTIFACT_SHA256" then .value = ("f" * 64) else . end)' <<< "$ai_state")"
+if verify_service_environment ai-gateway "$bad_ai_artifact_state" 2>/dev/null; then
+  echo 'AI verifier accepted a task expecting a different AgentCore artifact' >&2
   exit 1
 fi
 
