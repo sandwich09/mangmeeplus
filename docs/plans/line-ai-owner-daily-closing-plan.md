@@ -105,9 +105,13 @@ Exit: no known layer remains intentionally hidden behind an earlier error and no
 - [ ] Promote the accepted develop revision to `main` through a separate reviewed PR without rebuild drift.
 - [ ] Read cloud/deployment runbooks completely; fetch remote refs; record source SHA and retained ECS/AgentCore/contract candidate manifest.
 - [ ] Dispatch exactly one UAT run and record `UAT_RUN_ID`; do not retry to discover errors.
-- [ ] Run prod-shaped AgentCore conversation, expected-concurrency p50/p95/p99, supplied-image replay, role/security matrix, persisted-state reconciliation and forced failure/paired rollback.
+- [ ] Run prod-shaped AgentCore conversation, supplied-image replay, role/security matrix, persisted-state reconciliation and forced failure/paired rollback.
+- [ ] Record hosted concurrency p50/p95/p99 as `DEFERRED`, not `PASS`, under owner approval
+      `OWNER-DIRECTIVE-2026-08-17-LINE-AI-CONCURRENCY-DEFERRED`; do not change the 20-second timeout.
 
-Exit: signed UAT evidence identifies the exact immutable bytes and passes the whole matrix. A failed gate returns to code with root-cause analysis; no partial Production promotion.
+Exit: signed UAT evidence identifies the exact immutable bytes and passes every non-deferred row. Only
+hosted concurrency is conditionally deferred; a failed executed gate returns to code with root-cause
+analysis and no partial Production promotion.
 
 ## Story 6: READY, Production and Customer OPEN
 
@@ -116,10 +120,16 @@ Exit: signed UAT evidence identifies the exact immutable bytes and passes the wh
 - [ ] Record `PRODUCTION_RUN_ID`, canary observation, active task/runtime identity and paired rollback baseline.
 - [ ] Re-run persisted reconciliation and bounded real LINE named-pilot scenarios.
 - [ ] Record owner exception `Mangmee Plus Owner Pilot – 2026-08-16` and protected pilot roster evidence.
+- [ ] Classify READY/customer `OPEN` as conditional and retain the unresolved hosted-concurrency gate;
+      never publish a general-capacity or customer-wide Production-ready claim from this release.
 - [ ] Transition durable access `CLOSED → OPEN` only after final logout acceptance; verify it remains `OPEN`.
+- [ ] After conditional `OPEN`, run hosted concurrency p50/p95/p99 against the same release and close
+      the customer gate on unexplained timeout, duplicate, permission leak or reconciliation failure.
 - [ ] Update memory/checklist with exact PRs, commits, run ids, metrics and customer acceptance.
 
-Exit: `PROMOTED_LIVE` and customer `OPEN` both pass for the named pilot, with ECS/AgentCore/source identity equal. General customer readiness is not claimed from the pilot exception.
+Exit: `PROMOTED_LIVE` and conditional customer `OPEN` both pass for the named pilot, with
+ECS/AgentCore/source identity equal. General customer/capacity readiness is not claimed until the
+deferred hosted concurrency gate passes.
 
 ## Verification Matrix
 
