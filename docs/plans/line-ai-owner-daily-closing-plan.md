@@ -52,16 +52,17 @@ Replace the generic expense-summary path with one permission-checked, bounded da
 - [x] Save user feedback separately from application instructions.
 - [x] Record verified current capability, gaps, constraints and controlled-image evidence.
 - [x] Define daily-closing bucket semantics, glossary, media rules and release gate.
-- [ ] Commit and push documentation; update memory with commit/push evidence.
+- [x] Commit and push documentation; update memory with commit/push evidence.
 
 Tests: `git diff --check`, internal wiki-link resolution, self-review against repository symbols.
 
 ## Story 1: Thai Business Vocabulary and Intent Coverage
 
-- [ ] Add bounded glossary context for `ผปก`, `คชจ`, `ลค` and punctuation variants to the semantic intake router.
-- [ ] Preserve original message and forbid glossary-driven authorization/tool bypass.
-- [ ] Add deterministic corpus rows, router tests and configured-provider real-conversation rows for expense/customer/ambiguous cases.
-- [ ] Verify non-business casual and mutation-refusal routes do not regress.
+- [x] Add bounded glossary context for `ผปก`, `คชจ`, `ลค` and punctuation variants to the semantic intake router.
+- [x] Preserve original message and forbid glossary-driven authorization/tool bypass.
+- [x] Add deterministic corpus rows and router tests for expense/customer cases.
+- [ ] Add configured-provider real-conversation rows after the daily-closing tool is registered in Story 2.
+- [x] Verify non-business casual and mutation-refusal routes do not regress.
 - [ ] Commit and push.
 
 Exit: shorthand selects the same governed tool family as its full Thai phrase, or clarifies when context is genuinely ambiguous.

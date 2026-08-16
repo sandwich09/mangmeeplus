@@ -68,6 +68,12 @@ Artifacts:
 
 Verification:
 
+- Owner daily-closing documentation baseline `65a8597` was pushed to `origin/fix-line-ai-prod`.
+- Thai business vocabulary is supplied as bounded stable context to both semantic routers while the
+  original message remains byte-for-byte unchanged. The corpus covers `ลค.` customer and `ผปก.` +
+  `คชจ.` expense routes without deterministic keyword-to-tool selection. Focused router/corpus tests
+  pass 34/34, full LINE business-coverage tests pass 391/391, AI Gateway typecheck and diff check pass.
+  Configured-provider shorthand rows remain intentionally coupled to the Story 2 daily-closing tool.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.

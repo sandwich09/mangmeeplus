@@ -531,4 +531,32 @@ describe('IntentRouterAgent – cacheable feature catalog', () => {
     assert.equal(contexts[0], contexts[1], 'a byte-unstable catalog can never produce a cache hit');
     assert.ok(contexts[0]!.length >= CACHE_MIN_CHARS, 'catalog must clear CACHE_MIN_CHARS to earn a checkpoint');
   });
+
+  it('passes bounded Thai business abbreviations to both semantic routers without rewriting the user message', async () => {
+    const inputs: ProviderInput[] = [];
+    const messageText = 'ผปก. ขอสรุป คชจ. และจำนวน ลค.';
+    const router = new IntentRouterAgent({
+      generateText: async (input) => {
+        inputs.push(input);
+        return input.usageTag === 'line.intake-route'
+          ? { ok: true as const, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.99, reason: 'คำถามข้อมูลธุรกิจ' }) }
+          : { ok: true as const, text: JSON.stringify({
+            status: 'ROUTABLE', language: 'th',
+            intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+            refusals: [], requiresHumanReview: false,
+          }) };
+      },
+    });
+
+    await router.route(messageText);
+    await router.routeIntake({ requestId: 'r1', companyId: 'c1', userId: 'u1', locale: 'th-TH', messageText, permissions: [] } as any);
+
+    const planPayload = JSON.parse(inputs.find((input) => input.usageTag === 'line.plan-route')!.messages[0]!.text);
+    const catalog = JSON.parse(inputs.find((input) => input.usageTag === 'line.plan-route')!.cacheableContext!);
+    const intakePayload = JSON.parse(inputs.find((input) => input.usageTag === 'line.intake-route')!.messages[0]!.text);
+    assert.equal(planPayload.messageText, messageText);
+    assert.equal(intakePayload.messageText, messageText);
+    assert.deepEqual(catalog.businessGlossary.map((entry: { forms: string[] }) => entry.forms), [['ผปก', 'ผปก.'], ['คชจ', 'คชจ.'], ['ลค', 'ลค.']]);
+    assert.deepEqual(intakePayload.businessGlossary, catalog.businessGlossary);
+  });
 });
