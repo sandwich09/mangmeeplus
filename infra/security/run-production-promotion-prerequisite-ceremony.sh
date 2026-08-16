@@ -223,9 +223,45 @@ for ((attempt=1; attempt<=attempts; attempt++)); do
 done
 [ -n "$session" ] || { cat "$work/assume.err" >&2; exit 1; }
 
-AWS_ACCESS_KEY_ID="$(jq -er '.Credentials.AccessKeyId' <<< "$session")" \
-AWS_SECRET_ACCESS_KEY="$(jq -er '.Credentials.SecretAccessKey' <<< "$session")" \
-AWS_SESSION_TOKEN="$(jq -er '.Credentials.SessionToken' <<< "$session")" \
+session_access_key="$(jq -er '.Credentials.AccessKeyId' <<< "$session")"
+session_secret_key="$(jq -er '.Credentials.SecretAccessKey' <<< "$session")"
+session_token="$(jq -er '.Credentials.SessionToken' <<< "$session")"
+session_aws() {
+  AWS_ACCESS_KEY_ID="$session_access_key" AWS_SECRET_ACCESS_KEY="$session_secret_key" \
+  AWS_SESSION_TOKEN="$session_token" env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE aws "$@"
+}
+prove_session_authority() {
+  case "$helper_mode" in
+    --apply)
+      test "$(session_aws rds describe-db-instances --region ap-southeast-1 \
+        --db-instance-identifier watchdog-bms-prod-db \
+        --query 'DBInstances[0].DBInstanceArn' --output text 2>/dev/null)" \
+        = "arn:aws:rds:ap-southeast-1:$account:db:watchdog-bms-prod-db" ;;
+    --apply-clone-controller)
+      test "$(session_aws iam get-role --role-name watchdog-bms-production-a5-clone \
+        --query 'Role.Arn' --output text 2>/dev/null)" \
+        = "arn:aws:iam::$account:role/watchdog-bms-production-a5-clone" ;;
+    --apply-private-endpoints)
+      test "$(session_aws ec2 describe-vpc-endpoints --region ap-southeast-1 \
+        --vpc-endpoint-ids vpce-044085e7ad8749ca4 \
+        --query 'VpcEndpoints[0].VpcEndpointId' --output text 2>/dev/null)" \
+        = vpce-044085e7ad8749ca4 ;;
+  esac
+}
+
+session_ready=0
+for ((attempt=1; attempt<=attempts; attempt++)); do
+  if prove_session_authority; then session_ready=1; break; fi
+  pause "$attempt"
+done
+[ "$session_ready" -eq 1 ] || {
+  echo 'ERROR: assumed promotion authority did not propagate before the durable helper boundary' >&2
+  exit 1
+}
+
+AWS_ACCESS_KEY_ID="$session_access_key" \
+AWS_SECRET_ACCESS_KEY="$session_secret_key" \
+AWS_SESSION_TOKEN="$session_token" \
 AWS_ACCOUNT_ID="$account" \
 PROMOTION_IAM_MAX_ATTEMPTS="$attempts" \
 PROMOTION_IAM_RETRY_SECONDS="$retry_seconds" \
