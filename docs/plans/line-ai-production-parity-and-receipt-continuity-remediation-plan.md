@@ -365,7 +365,10 @@ operation was run.
       intervening question, explicit resume, multiple open workflows, pause/cancel, 15-minute context
       expiry and concurrent web revision.
 - [ ] Add paired AgentCore/ECS rollback drill and mismatched-candidate rejection drill.
-- [ ] Add a reconciliation report: every accepted inbound reaches one terminal outcome class.
+- [x] Add a reconciliation report: every accepted inbound reaches one terminal outcome class. The
+      report reads a bounded persisted-state window, fails on in-flight/unknown rows, duplicate event
+      ids, unexplained terminal failures or payload retained after a non-replayable terminal outcome,
+      and emits only hashed event references.
 - [ ] Add a stale-doc/static check ensuring checklist/spec/readiness do not claim local-only proof as
       Production AgentCore proof.
 

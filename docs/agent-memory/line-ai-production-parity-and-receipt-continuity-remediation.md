@@ -10,9 +10,10 @@ repository story 4 (bounded delivered capability follow-up and closed prefill li
 `ad4405a`; repository story 6 (retained CodeZip/contract and pinned UAT AgentCore endpoint) is committed
 as `37b34e5`; repository story 7 (Production READY/promotion/rollback bound to that retained candidate)
 is committed as `7fb7e5b`; repository story 8 (signed expected hosted-runtime identity and fail-closed
-response verification) is committed as `d7f8f6e`. Repository story 9 adds reconciled accepted/terminal
-outcome telemetry and recovery semantics; it is verified and pending commit. No push, deployment,
-cloud or database mutation.
+response verification) is committed as `d7f8f6e`; repository story 9 (reconciled accepted/terminal
+outcome telemetry and recovery semantics) is committed as `9985770`. Repository story 10 adds the
+persisted-state reconciliation report; it is verified and pending commit. No push, deployment, cloud
+or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -189,10 +190,17 @@ Verification:
   serving-mode deploy contract, maintenance pin/validator suites, full local production-image security
   omnibus and whitespace check pass. The full Phase 5 persisted-state reconciliation report remains
   deliberately separate and pending.
+- Story 10 adds a read-only persisted-state reconciliation CLI bounded to a required time window,
+  optional company scope, 1,000-row pages and a 100,000-row safety cap. It classifies each accepted
+  durable event into the same nine terminal families as runtime telemetry and fails closed when an
+  event is still in-flight/unknown, duplicated, lacks a reason for failed-terminal, or retains replay
+  payload after a non-delivery-pending terminal outcome. Provider event ids are SHA-256 references in
+  output, never raw values. Focused reconciliation tests pass 3/3 and API typecheck passes; the command
+  was not pointed at a database because the final local persisted-state replay has not run yet.
 
 Next:
 
-- Commit repository story 9, then complete the whole-chain harness and persisted-state reconciliation
-  before the prod-shaped local conversation replay.
+- Commit repository story 10, then complete the whole-chain acceptance harness before the prod-shaped
+  local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.
