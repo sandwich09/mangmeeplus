@@ -25,4 +25,12 @@ describe('controlled image expectation comparison', () => {
       false,
     );
   });
+
+  it('can require a multi-entry ledger to omit a single grand total', () => {
+    assert.deepEqual(
+      evaluateExpectation({ fields: {} }, 'fields.grandTotalAmountAbsent', ['true']),
+      { actual: 'true', passed: true },
+    );
+    assert.equal(evaluateExpectation({ fields: { grandTotalAmount: '4214' } }, 'fields.grandTotalAmountAbsent', ['true']).passed, false);
+  });
 });

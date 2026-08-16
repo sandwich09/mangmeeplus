@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const CONTROLLED_IDS = ['royal-pizza-printed-receipt', 'handwritten-cash-bill'];
+const CONTROLLED_IDS = ['royal-pizza-printed-receipt', 'handwritten-cash-bill', 'handwritten-multi-entry-ledger'];
 const ALLOWED_EXPECTATION_PATHS = new Set([
   'status',
   'fields.grandTotalAmount',
@@ -12,8 +12,10 @@ const ALLOWED_EXPECTATION_PATHS = new Set([
   'fields.expenseDate',
   'fields.missingFieldsIncludes',
   'classification.documentKind',
+  'classification.contentKind',
   'classification.transactionState',
   'classification.requiresClarification',
+  'fields.grandTotalAmountAbsent',
 ]);
 const MONEY_EXPECTATION_PATHS = new Set(['fields.grandTotalAmount', 'fields.vatAmount']);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
@@ -52,6 +54,10 @@ export function matchesExpected(path, actual, allowed) {
 }
 
 export function evaluateExpectation(body, path, allowed) {
+  if (path === 'fields.grandTotalAmountAbsent') {
+    const actual = String(getPath(body, 'fields.grandTotalAmount') === undefined);
+    return { actual, passed: allowed.includes(actual) };
+  }
   if (path === 'fields.missingFieldsIncludes') {
     const missingFields = getPath(body, 'fields.missingFields');
     const safeFields = Array.isArray(missingFields)
@@ -139,6 +145,7 @@ async function main() {
       status: body.status,
       errorCode: body.errorCode ?? null,
       classification: body.classification ? {
+        contentKind: body.classification.contentKind,
         documentKind: body.classification.documentKind,
         transactionState: body.classification.transactionState,
         requiresClarification: body.classification.requiresClarification,

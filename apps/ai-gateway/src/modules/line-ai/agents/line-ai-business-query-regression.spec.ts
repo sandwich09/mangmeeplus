@@ -21,6 +21,11 @@ function plan(
 }
 
 describe('LINE AI mandatory business-query regression corpus', () => {
+  it('keeps the owner daily-closing shorthand row in the mandatory corpus', () => {
+    assert.ok(LINE_AI_BUSINESS_QUERY_REGRESSION_CORPUS.some((testCase) =>
+      testCase.id === 'owner-daily-closing-th-abbreviations' && testCase.tool === 'expense.get_daily_closing'));
+  });
+
   for (const testCase of LINE_AI_BUSINESS_QUERY_REGRESSION_CORPUS) {
     it(`${testCase.id}: routes and invokes the expected business source`, async () => {
       const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text: JSON.stringify(plan(testCase.tool, testCase.language, testCase.subject, testCase.agent)) }) });

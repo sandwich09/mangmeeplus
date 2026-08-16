@@ -102,6 +102,11 @@ Verification:
   removed from the side-question model payload; two simultaneous workflows produce an explicit
   selection prompt. Existing source-owned partial-field behavior and the exact 15-turn/15-minute bound
   remain covered. Focused media dispatch passes 87/87 and substitute/context suites pass 82/82.
+- The whole-chain catalog now has 22 rows: 19 repository scenarios and three source-hashed external
+  images. New mandatory rows cover owner daily-closing shorthand, the photographed multi-entry ledger
+  and pending-media side-question resume. The controlled-image harness can require `MULTI_DOCUMENT`,
+  clarification and absence of a single grand total without storing image paths/facts in git. Catalog
+  and harness contracts pass 8/8; the actual three-image provider replay remains a controlled run.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.

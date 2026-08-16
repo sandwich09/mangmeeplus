@@ -35,6 +35,33 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     ],
   },
   {
+    id: 'handwritten-multi-entry-ledger',
+    fixture: 'controlled_external_image',
+    assertions: {
+      outcome: 'stored_multi_entry_media_with_explicit_review_choice',
+      tool: 'ocr_classification_then_api_owned_multi_entry_gate',
+      mutation: 'zero_single_expense_zero_final_mutation',
+      delivery: 'one_three_way_clarification_then_review_handoff',
+    },
+    evidence: [
+      ['apps/ai-gateway/src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts', 'stage 2 must forbid collapsing a multi-entry ledger into one expense'],
+      ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', "name: 'multi-document image'"],
+    ],
+  },
+  {
+    id: 'owner-daily-closing-shorthand',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'actionable_daily_close_by_currency_and_control_bucket',
+      tool: 'one_permission_checked_expense_daily_closing_snapshot',
+      mutation: 'zero_mutation',
+      delivery: 'deterministic_sections_with_read_only_web_handoff',
+    },
+    evidence: [
+      ['apps/ai-gateway/src/modules/line-ai/agents/line-ai-business-query-regression.spec.ts', 'keeps the owner daily-closing shorthand row in the mandatory corpus'],
+    ],
+  },
+  {
     id: 'ambiguous-urgency-after-image',
     fixture: 'repository',
     assertions: {
@@ -112,6 +139,19 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     evidence: [
       ['apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts', 'answers an intervening VAT question from current source state and resumes without consuming a field'],
       ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'answers an arbitrary intervening question normally, then resumes the same substitute workflow'],
+    ],
+  },
+  {
+    id: 'intervening-question-with-pending-media',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'question_answered_then_stored_media_choice_resumes',
+      tool: 'governed_read_without_pending_media_prompt_injection',
+      mutation: 'zero_single_expense_zero_final_mutation',
+      delivery: 'business_answer_then_deterministic_media_resume_capsule',
+    },
+    evidence: [
+      ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'answers a business question beside pending media, then deterministically resumes the stored picture choice'],
     ],
   },
   {
@@ -295,6 +335,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/app.boot.spec.ts',
       'src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts',
       'src/modules/line-ai/agents/intent-router.agent.spec.ts',
+      'src/modules/line-ai/agents/line-ai-business-query-regression.spec.ts',
       'src/modules/line-ai/agents/orchestrator.agent.spec.ts',
       'src/modules/line-ai/agents/response-composer.agent.spec.ts',
       'src/modules/line-ai/application/use-cases/line-ai-turn.use-case.spec.ts',

@@ -12,12 +12,15 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EXPECTED_IDS = [
   'royal-pizza-printed-receipt',
   'handwritten-cash-bill',
+  'handwritten-multi-entry-ledger',
+  'owner-daily-closing-shorthand',
   'ambiguous-urgency-after-image',
   'receipt-choice-plus-substitute-request',
   'substitute-request-four-missing-fields',
   'partial-answers-across-turns',
   'partial-answer-plus-vat-question',
   'intervening-question-between-answers',
+  'intervening-question-with-pending-media',
   'resume-after-web-edit-or-context-expiry',
   'valid-receipt-already-exists',
   'text-instead-of-evidence-or-signature',
@@ -56,7 +59,7 @@ describe('LINE AI whole-chain acceptance catalog', () => {
 
   it('keeps raw external images and final mutations outside the automated LINE path', () => {
     const controlled = LINE_AI_WHOLE_CHAIN_SCENARIOS.filter(({ fixture }) => fixture === 'controlled_external_image');
-    assert.deepEqual(controlled.map(({ id }) => id), EXPECTED_IDS.slice(0, 2));
+    assert.deepEqual(controlled.map(({ id }) => id), EXPECTED_IDS.slice(0, 3));
     for (const scenario of controlled) {
       assert.equal('imagePath' in scenario, false);
       assert.equal('expectedExtractedFacts' in scenario, false);
