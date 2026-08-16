@@ -10,7 +10,7 @@ boot, `dfa2801`), story 13 (printed VAT annotation, `9b9834c`), story 14 (critic
 follow-up documentation `65a8597`, Thai glossary `840a195` and whole-chain test registration `f2af517`
 are pushed on `fix-line-ai-prod`. No deployment, cloud or database mutation was performed.
 
-Owner: Product owner / pending implementation owner.
+Owner: Product owner / implementation owner on `fix-line-ai-prod`.
 
 Scope: Production AgentCore/ECS source parity; prod-shaped UAT; stored-media clarification continuity;
 deterministic expense capture eligibility; grounded receipt follow-up; substitute-receipt preflight;
@@ -328,23 +328,23 @@ Verification:
   hosted UAT p95/p99/concurrency remains a hard blocker; this local sample does not justify raising
   the timeout or claiming Production capacity.
 - Story 17 makes the controlled-image harness contract part of the repository aggregate instead of
-  leaving the privacy-safe runner as an unguarded side command. The aggregate passes catalog 4/4,
-  controlled-image harness 3/3, the full API behavior suite, AI Gateway 176/176, UAT candidate policy,
+  leaving the privacy-safe runner as an unguarded side command. The current aggregate passes catalog
+  4/4, controlled-image harness 4/4, API behavior 274/274, AI Gateway 187/187, UAT candidate policy,
   Production serving-mode, Production promotion-resource and Production deploy/rollback workflow
-  contracts. The two unchanged source-hashed image rows and the real-provider conversation remain
-  separate controlled executions and both passed; no raw media or conversation content was committed.
+  contracts. The three unchanged source-hashed image rows and the real-provider conversation remain
+  separate controlled executions and passed; no raw media or conversation content was committed.
 - Final self-review did not convert local success into a live-release claim. The read-only local
   conversation intentionally created no persisted replay window, and the reconciliation CLI therefore
   was not pointed at a database. Hosted AgentCore p95/p99/concurrency, exact immutable UAT read-back,
   signed READY/Production results, LINE OA policy and customer `OPEN` are still mandatory later gates.
 - 2026-08-16 owner feedback follow-up records the operator's actual daily-close job, Thai shorthand,
   supplied handwritten/multi-entry evidence, current-code gaps and a no-guess daily-closing contract.
-  Story implementation, push/PR and hosted release evidence are pending.
+  Local implementation and source-hashed evidence are pushed; PR and hosted release evidence are pending.
 
 Next:
 
-- Commit and push the daily-closing API story, then implement the deterministic LINE answer and
-  configured-provider shorthand/continuity rows as the next verified story.
+- Open the implementation PR to `develop`, obtain CI/review approval, then promote the accepted revision
+  to `main` through the required separate reviewed PR.
 - Before any UAT action, read both mandatory cloud/deployment
   runbooks, deploy exactly one complete immutable candidate, and record the exact UAT run id.
 - Run the hosted full replay, expected-concurrency p50/p95/p99 and persisted-state reconciliation before

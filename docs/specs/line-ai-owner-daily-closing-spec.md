@@ -151,16 +151,16 @@ The composer may improve phrasing but must preserve values, currencies, bucket n
 
 ## 13. Acceptance Criteria
 
-- [ ] `ผปก`, `คชจ`, `ลค` route semantically in Thai regression and real-provider tests without keyword bypass.
+- [x] `ผปก`, `คชจ`, `ลค` route semantically in Thai regression and real-provider tests without keyword bypass.
 - [ ] Same question under owner/manager/accounting/staff and cross-company attack cases returns only authorized scope.
-- [ ] Daily closing separates expense date, upload date, due today, overdue and missing due date.
-- [ ] Rejected/voided records never enter active counts/totals/details.
-- [ ] Partial payments use outstanding amount; multi-currency is never summed or labeled as THB implicitly.
-- [ ] Details are bounded and disclose truncation.
-- [ ] Unknown never-submitted documents are disclosed as unobservable, not reported as zero.
-- [ ] Handwritten multi-entry media never creates one automatic expense.
-- [ ] Partial text answers and intervening questions preserve/resume the correct pending workflow within 15 turns.
-- [ ] Focused unit/integration/security tests and a real local configured-provider conversation pass.
+- [x] Daily closing separates expense date, upload date, due today, overdue and missing due date.
+- [x] Rejected/voided records never enter active counts/totals/details.
+- [x] Partial payments use outstanding amount; multi-currency is never summed or labeled as THB implicitly.
+- [x] Details are bounded and disclose truncation.
+- [x] Unknown never-submitted documents are disclosed as unobservable, not reported as zero.
+- [x] Handwritten multi-entry media never creates one automatic expense.
+- [x] Partial text answers and intervening questions preserve/resume the correct pending workflow within 15 turns.
+- [x] Focused unit/integration/security tests and a real local configured-provider conversation pass.
 - [ ] Hosted UAT concurrency p95/p99, persisted-state reconciliation, forced failure/rollback and exact candidate identity pass before timeout/release decisions.
 - [ ] Signed UAT, READY and Production run ids plus named-pilot customer `OPEN` acceptance are recorded.
 

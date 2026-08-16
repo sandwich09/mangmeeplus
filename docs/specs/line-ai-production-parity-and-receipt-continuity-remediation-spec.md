@@ -1,7 +1,7 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Spec
 
 Status: **OWNER-APPROVED LOCAL IMPLEMENTATION COMPLETE — repository, controlled-image and real-provider
-local evidence pass; hosted UAT/READY/Production evidence remains pending; no push or deployment**
+local evidence pass; implementation branch pushed; hosted UAT/READY/Production evidence remains pending**
 
 Date: 2026-08-16
 

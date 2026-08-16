@@ -73,7 +73,7 @@ describe('LINE AI whole-chain acceptance catalog', () => {
     const plan = await readFile(resolve(REPO_ROOT, 'docs/plans/line-ai-production-parity-and-receipt-continuity-remediation-plan.md'), 'utf8');
     assert.match(plan, /- \[ \] Run the complete replay matrix at expected UAT concurrency/);
     assert.match(plan, /4\. Run the full replay matrix through real LINE\/UAT identities/);
-    assert.match(plan, /no push or deploy/i);
+    assert.match(plan, /implementation branch pushed; no deploy/i);
     const sourceFiles = [
       'apps/api/src',
       'apps/ai-gateway/src',

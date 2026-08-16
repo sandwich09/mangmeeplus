@@ -91,11 +91,11 @@ Exit: the reported owner question returns actionable sections, not a generic men
 
 ## Story 4: Look-Forward Whole-Path Verification
 
-- [ ] Run focused API, AI Gateway, web and contract typechecks/tests.
-- [ ] Run aggregate LINE production-remediation gate and controlled source-hashed supplied-image replay.
-- [ ] Start real local services and invoke a real 15-turn configured-provider conversation covering abbreviations, daily close, partial answers, side question, media clarify, permission refusal and timeout evidence.
-- [ ] Inspect query/model/tool stage timings, query count, truncation, currency and source-state reconciliation.
-- [ ] Fix shared root causes found by the whole matrix; each independent fix gets a commit and push.
+- [x] Run focused API, AI Gateway, web and contract typechecks/tests.
+- [x] Run aggregate LINE production-remediation gate and controlled source-hashed supplied-image replay.
+- [x] Invoke a real 15-turn configured-provider conversation for abbreviations, daily close, permission refusal and provider fallback evidence; exercise partial answers, side-question resume and media clarification through the local whole-chain/API paths.
+- [x] Inspect query/model/tool stage timings, query count, truncation, currency and source-state reconciliation.
+- [x] Fix shared root causes found by the whole matrix; each independent fix gets a commit and push.
 
 Exit: no known layer remains intentionally hidden behind an earlier error and no unexpected mutation/delivery duplication occurs.
 
