@@ -1,7 +1,7 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-15 committed; controlled images pass;
-local conversation replay remains; no push or deploy**
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-16 committed; controlled images and
+15-turn local real-provider conversation pass; aggregate rerun remains; no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -372,6 +372,11 @@ operation was run.
       and emits only hashed event references.
 - [x] Add a stale-doc/static check ensuring checklist/spec/readiness do not claim local-only proof as
       Production AgentCore proof.
+- [x] Run a controlled local 15-turn conversation through the configured real provider with current
+      15-turn/15-minute context, at least three successful read turns, at least three successful
+      zero-tool turns, no user-facing unavailable turn and no non-read/final-mutation tool. Keep
+      provider throttles and local duration observations visible; they do not satisfy hosted UAT
+      latency/capacity evidence.
 
 ### Verification commands
 

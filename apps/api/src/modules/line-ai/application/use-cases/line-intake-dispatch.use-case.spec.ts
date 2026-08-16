@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isDeliveredCapabilityFollowUp } from './process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 

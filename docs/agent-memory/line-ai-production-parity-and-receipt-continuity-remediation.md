@@ -250,6 +250,24 @@ Verification:
   field remains explicitly missing, caps image size and request time, and reports only hashes, byte
   counts, bounded classifications, field keys and asserted values. Harness tests pass 3/3; the real
   unchanged-hash two-image run passes every assertion recorded in Story 14.
+- Story 16 extracts the delivered capability-follow-up check/reply into API domain logic, so the API
+  and controlled conversation use the same production function without importing a decorated Nest
+  use case into the runner. The focused API dispatch suite passes 84/84 and API/AI Gateway typechecks
+  pass after the extraction.
+- The real-provider runner stays outside both application build graphs, uses the configured Bedrock
+  provider and production Orchestrator, fixed read-only ERP results, current 15-turn/15-minute context
+  and five-second human-like cadence. It fails on any non-read category (including suggestion,
+  evidence capture or draft creation), fewer than three successful reads/zero-tool turns, empty reply,
+  user-facing provider-unavailable route, context drift or final mutation. It writes no API/DB/LINE
+  state and emits no conversation text or business/customer identifiers.
+- Strict local replay completes 15/15 turns: four read turns (expense/inventory/sales/CRM), ten
+  provider-routed zero-tool turns and one deterministic delivered-capability follow-up; zero
+  user-facing unavailable turns and zero non-read/final-mutation tools. Measured turn durations were
+  expense 19,778 ms, inventory 15,404 ms, sales 13,600 ms and CRM 9,603 ms. Bedrock still throttled
+  some internal casual/loop/critic calls and the existing deterministic/grounded fallbacks preserved
+  the turn. The expense sample has only 222 ms margin under the 20-second outer runtime timeout, so
+  hosted UAT p95/p99/concurrency remains a hard blocker; this local sample does not justify raising
+  the timeout or claiming Production capacity.
 
 Next:
 
