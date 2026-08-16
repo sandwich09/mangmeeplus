@@ -896,3 +896,29 @@ Next:
    change is required and UAT `31888441617` remains reusable.
 2. Reissue one live Readiness, require the full cleanup object and signed READY, then continue with
    the frozen-main Production V2 live promotion and durable platform opening.
+
+## Live launch closure — 2026-08-16
+
+- UAT `31901904745` completed successfully for source
+  `3c8de8777ce1f85f7a3c1c0518c81154ab6eedf1` on controller
+  `d0604d79dd5d9b97e8b36b213cbe495b39893e69`; its Passport digest is
+  `sha256:5084fe1990a06155c63258ec2642ee4269dda4835cdb93f5de0bb491e911cba7`.
+- Live Readiness `31903027707` bound owner override
+  `OWNER-DIRECTIVE-2026-08-15-LIVE`, passed exact image/runtime/IAM and migration checks, and issued
+  READY digest `sha256:c3fa10968f145706ace6579f6dc94513a6bb57269d5f136a199063e8d288fb48`.
+- Production V2 `31903336753` completed successfully. Signed result artifact digest
+  `sha256:473121865a68047431e481d4bf1b847d9276e86d55b948bb42fbfc32f4e54ebe` records
+  `PROMOTED_LIVE`, target `all`, the exact UAT/READY/Production run IDs and the exact source and
+  controller commits. All three services are `ACTIVE` with no current deployment; Production
+  alarms read `OK`.
+- Secret-safe SYSTEM_ADMIN acceptance changed durable PlatformAccess from `CLOSED` to `OPEN` only
+  after the signed live result. Readback proved serving mode `live`, protected admin identity,
+  `SYSTEM_ADMIN` and `system.launch_gate.manage`, public login state `OPEN`, system page `200`,
+  logout `204`, and post-logout `/me` `401`. Password, tokens and cookies were not printed or
+  retained.
+- `docs/runbooks/uat-production-v2-deployment.md` now records the mandatory fast release protocol,
+  the real incident/root-cause/prevention matrix and the terminal PlatformAccess acceptance. Root
+  `AGENTS.md` requires every future deploy, recovery, gate change and retry to follow that protocol.
+
+Status: Production is live and customer access is open. The historical `Next:` blocks above are
+incident checkpoints, not pending instructions.

@@ -10,6 +10,27 @@ Workflows: `deploy-uat.yml` → `production-readiness.yml` → `deploy-productio
 `production-a5-u5-promotion-ceremony.md`. การ deploy ปกติไม่แก้ Cloudflare และไม่ใช้ AWS root.
 อ่าน `cloud-environment-operations.md` ก่อนตรวจหรือเปลี่ยน AWS ทุกครั้ง.
 
+## Protocol บังคับสำหรับทุก release
+
+ความเร็วเกิดจาก **ไม่ build/test ซ้ำ, ไม่ dispatch ซ้อน และไม่เจอ error ทีละจุด** ไม่ใช่จากการข้าม
+proof. Operator และ agent ทุกคนต้องใช้ runbook นี้ก่อน UAT, READY, Production, recovery, retry หรือ
+เปิด–ปิด customer gate และต้องทำตามเงื่อนไขนี้ทุกครั้ง:
+
+1. ใช้ exact reviewed PR-head SHA ที่ required CI ผ่านเป็น UAT candidate เพื่อ reuse CI; merge SHA ที่
+   ไม่มี exact PR CI จะเสียเวลารัน validation ใหม่.
+2. ก่อน dispatch ทุกครั้งต้องพิสูจน์ว่าไม่มี run ของ flow เดียวกัน queued/running, จด run ID ทันที และ
+   monitor run เดิมจน terminal. ห้าม dispatch ซ้ำเพื่อทดลอง.
+3. Freeze `main` ตั้งแต่เริ่ม READY จน Production และ final customer acceptance จบ. Source/image หรือ
+   migration เปลี่ยนต้องเริ่ม UAT ใหม่; controller-only change ใช้ Passport เดิมได้เฉพาะ validator ยอมรับ.
+4. Production ใช้ exact immutable digest ที่ UAT build/test/sign แล้ว; ห้าม rebuild image ใน Production.
+5. Failure ต้องหยุดที่ first failing boundary, เก็บ evidence, ตรวจ sibling/ขั้นถัดไปแบบ read-only และ
+   พิสูจน์ root-cause fix ก่อน retry. ห้ามเดินต่อเพื่อหา error ต่อไปทีละตัว.
+6. `PROMOTED_LIVE` หมายถึง deployment ผ่าน แต่ลูกค้าเปิดจริงต่อเมื่อขั้น E เปลี่ยน durable
+   PlatformAccess เป็น `OPEN` และ acceptance หลัง logout ผ่านครบ. ห้ามใช้ Cloudflare แทน gate นี้.
+
+Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
+Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
+
 ## เส้นทางปกติ ฉบับคน deploy
 
 จำ flow เดียวนี้: **UAT → READY → Production**. จด ID สามตัวไว้เสมอ:
@@ -100,9 +121,33 @@ Readiness เป็นการพิสูจน์ก่อน deploy; ถ้�
      -f requested_serving_mode=live
    ```
 
-4. ผ่านเมื่อ signed result เป็น `PROMOTED_LIVE`, service ทั้งสามเป็น exact UAT digest + `live`,
-   deep DB readiness ผ่าน, public login/customer journey ผ่าน และไม่มี clone residue. เก็บ override
-   reference ไว้กับ release record; เมื่อไฟล์จากทนายกลับมาให้สร้าง verified bundle ตาม runbook แยก.
+4. Deployment phase ผ่านเมื่อ signed result เป็น `PROMOTED_LIVE`, service ทั้งสามเป็น exact UAT
+   digest + `live`, deep DB readiness ผ่านและไม่มี clone residue. นี่ยังไม่ใช่หลักฐานว่าลูกค้าเปิดใช้ได้;
+   ต้องทำขั้น E ต่อ. เก็บ override reference ไว้กับ release record; เมื่อไฟล์จากทนายกลับมาให้สร้าง
+   verified bundle ตาม runbook แยก.
+
+### E. เปิด durable customer gate และยืนยันใช้งานจริง
+
+ทำเฉพาะหลัง signed result ของ run เดียวกันเป็น `PROMOTED_LIVE`. ใช้ protected seed
+`thawatchai.watchdog` ผ่าน BFF และอ่าน password จาก
+`watchdog-bms/production/seed-system-admin-password` ใน Secrets Manager แบบ in-memory เท่านั้น:
+
+1. Login ต้องได้ `200`, `passwordChangeRequired=false`, `legalAcceptanceRequired=false` และ redirect
+   `/system/platform-access`.
+2. `/api/v1/auth/me` ต้องเป็น `seed-watchdog-system-admin`, มี role `SYSTEM_ADMIN` และ permission
+   `system.launch_gate.manage`.
+3. ก่อน mutation, `/api/v1/system/platform-access` ต้องอ่านได้, `servingMode=live` และ `canOpen=true`.
+4. ถ้า `effectiveState=CLOSED` ให้ PUT `state=OPEN` พร้อม reason ที่ผูก owner/legal reference และ
+   `PROD_RUN_ID`. ถ้าเปิดอยู่แล้วห้ามเขียนซ้ำ; ให้ตรวจ reason/readback แทน.
+5. Readback แบบไม่ใช้ session ต้องได้ `/api/v1/auth/platform-access` เป็น `OPEN`; หน้า `/login` ต้อง
+   แสดง `data-platform-access="open"`; หน้า `/system/platform-access` ด้วย session ต้องได้ `200`.
+6. Logout ต้องได้ `204`, post-logout `/api/v1/auth/me` ต้องได้ `401`, แล้วทำลาย password variable,
+   cookie jar และ header file. ห้าม `set -x`, `curl -v`, secret ใน argv/stdout/history หรือ artifact.
+7. ตรวจบริการ Production ทั้งสามเป็น `ACTIVE` โดยไม่มี current deployment และ rollback/security
+   alarms เป็น `OK`; บันทึกผลลง release ledger.
+
+Release live เสร็จจริงเมื่อขั้น E ผ่านครบเท่านั้น. ถ้าข้อใด fail ให้ปิด/คง gate ตามสถานะที่พิสูจน์ได้,
+หยุดและใช้ failure protocol; ห้ามแก้ Cloudflare เพื่อ bypass.
 
 ถ้า source/image/migration catalog เปลี่ยน ให้เริ่ม A ใหม่. ถ้าเปลี่ยนเฉพาะ controller และ Passport
 ยัง valid อาจเริ่ม B ใหม่ได้ตาม validator. ถ้าเปลี่ยนเพียงเอกสารภายใน `docs/**` ที่ไม่เข้า image/runtime
@@ -302,6 +347,18 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
   ห้ามนำ retry contract นี้ไปครอบคำสั่ง mutation.
 - ถ้า source/image/migration catalog เปลี่ยน ให้เริ่มจาก UAT และ Passport ใหม่เสมอ.
 
+### ปัญหาที่เกิดจริงและกติกาป้องกันถาวร
+
+| ปัญหา | Root cause | สิ่งที่บังคับใช้ต่อไป |
+| --- | --- | --- |
+| UAT เสียเวลารัน CI ซ้ำ | ใช้ merge SHA ที่ไม่มี successful PR CI ตรง exact head | ใช้ reviewed PR-head SHA เป็น candidate และพิสูจน์ CI reuse ก่อน fan-out |
+| Readiness ซ้อน/queued ค้าง หรือ input ไม่ครบ | auto readiness กับ manual dispatch ชนกัน; เคย dispatch live โดยขาด owner override | ตรวจ zero active runs, รอ auto run terminal ก่อน manual live, ตรวจ title/head/input ทันที และห้ามสร้าง run ที่สองขณะ run แรกยัง non-terminal |
+| Readiness ล้มด้วย `unbound variable` ทั้งที่ `bash -n` ผ่าน | same-line `local` อ้างตัวแปรก่อน assignment ภายใต้ `set -u` | shell gate ต้อง execute critical function/path ด้วย fixture ไม่ใช้ syntax/grep เป็น proof เพียงอย่างเดียว |
+| Reader bootstrap รายงาน cleanup ว่างแต่มี ACTIVE task definition | เข้าใจผิดว่า ECS `family-prefix` รับ arbitrary prefix ทั้งที่ provider ต้องการ full family | global ACTIVE list ต้อง filter ด้วย exact anchored local ARN; provider-faithful fixture และ live stable-empty readback |
+| api-web rollout rollback หลัง workers/AI ผ่าน | customer CLOSED guard คืน `503` ให้ authenticated `/v1/internal/*` machine traffic จน rollback alarm ทำงาน | internal route bypass เฉพาะ customer gate แต่ยังบังคับ machine credential; regression ต้องครอบ closed-mode deep readiness ก่อน rollout |
+| Signed `PROMOTED_LIVE` ผ่านแต่ลูกค้ายังเห็น maintenance | durable PlatformAccess ยังเป็น `CLOSED` | ขั้น E เป็น terminal release boundary; ต้องเปิดด้วย SYSTEM_ADMIN, public readback, logout และ post-logout proof |
+| GitHub run เป็น ghost shell queued และ cancel `500` | enable→dispatch ชิดเกินไปที่ control plane; run ยังไม่มี job graph | คง workflow active, ห้าม enable แล้ว dispatch ทันที, ตรวจ jobs/check-runs และห้าม dispatch duplicate จน run เดิม terminal หรือ platform incident ถูกแยกชัด |
+
 ## 7. หลักฐานอ้างอิงรอบที่ผ่านจริง
 
 รอบ 2026-08-14 พิสูจน์เส้นทางนี้ end-to-end โดยคงลูกค้าไว้ใน maintenance:
@@ -330,3 +387,17 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
   `maintenance_closed` ตามขั้นตอนด้านบน
 
 Run IDs เหล่านี้เป็น historical evidence ไม่ใช่ input สำหรับ release ใหม่.
+
+รอบ live launch 2026-08-16 พิสูจน์ flow ครบถึง customer `OPEN`:
+
+- candidate/controller: `3c8de8777ce1f85f7a3c1c0518c81154ab6eedf1` /
+  `d0604d79dd5d9b97e8b36b213cbe495b39893e69`
+- UAT/Passport: run `31901904745`, digest
+  `sha256:5084fe1990a06155c63258ec2642ee4269dda4835cdb93f5de0bb491e911cba7`
+- live READY: run `31903027707`, owner ref `OWNER-DIRECTIVE-2026-08-15-LIVE`, digest
+  `sha256:c3fa10968f145706ace6579f6dc94513a6bb57269d5f136a199063e8d288fb48`
+- Production V2: run `31903336753`, signed `PROMOTED_LIVE`, target `all`, result digest
+  `sha256:473121865a68047431e481d4bf1b847d9276e86d55b948bb42fbfc32f4e54ebe`
+- final acceptance: PlatformAccess `CLOSED→OPEN`, serving mode `live`, SYSTEM_ADMIN identity/permission,
+  public login, system page, logout/post-logout ผ่าน; services ทั้งสาม `ACTIVE`, no current deployment,
+  alarms `OK`; ไม่มี secret ถูก log หรือเก็บค้าง
