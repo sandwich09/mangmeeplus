@@ -6,8 +6,9 @@ are `f0ab272`, `62b88a4`, `a43134b`, `7ce43fd`, `ad4405a`, `37b34e5`, `7fb7e5b`,
 `9985770`, `5333bc0` and `e0f7383`. Look-forward local execution added story 12 (tsx application-graph
 boot, `dfa2801`), story 13 (printed VAT annotation, `9b9834c`), story 14 (critical-field stability,
 `74c7d70`), story 15 (controlled source-hashed image replay, `618bdb7`), story 16 (real-provider
-15-turn conversation, `2be6faa`) and story 17 (aggregate local acceptance gate, `e1d0f5a`). No push,
-deployment, cloud or database mutation was performed.
+15-turn conversation, `2be6faa`) and story 17 (aggregate local acceptance gate, `e1d0f5a`). Owner
+follow-up documentation `65a8597`, Thai glossary `840a195` and whole-chain test registration `f2af517`
+are pushed on `fix-line-ai-prod`. No deployment, cloud or database mutation was performed.
 
 Owner: Product owner / pending implementation owner.
 
@@ -74,6 +75,16 @@ Verification:
   `คชจ.` expense routes without deterministic keyword-to-tool selection. Focused router/corpus tests
   pass 34/34, full LINE business-coverage tests pass 391/391, AI Gateway typecheck and diff check pass.
   Configured-provider shorthand rows remain intentionally coupled to the Story 2 daily-closing tool.
+- The whole-chain coverage guard now recognizes the repository acceptance catalog as an owned runner,
+  and the previously orphaned terminal-outcome suite is registered in its API behavior lane. Catalog
+  tests pass 4/4 and the coverage/terminal suites pass 8/8; commit `f2af517` is pushed.
+- Story 2 registers `expense.get_daily_closing` as one permission-checked API tool. Sixteen bounded
+  aggregate/count/detail queries run in one repeatable-read snapshot and reuse current tenant, branch,
+  own and related ABAC. The output keeps occurred/upload/due/overdue/no-due lenses separate, sums exact
+  decimals per currency, exposes paid and outstanding portions of partial payments, excludes rejected/
+  voided rows from active buckets, bounds detail to 1–10 and reports truncation plus the honest
+  never-submitted limitation. Composite due/evidence indexes have a fail-fast lock policy for release
+  rehearsal. Focused business/controller tests, schema validation and API/contracts typechecks pass.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.
@@ -290,8 +301,8 @@ Verification:
 
 Next:
 
-- Commit and push the daily-closing documentation baseline, then implement the glossary, one bounded
-  daily-closing tool and the LINE answer as separate verified stories.
+- Commit and push the daily-closing API story, then implement the deterministic LINE answer and
+  configured-provider shorthand/continuity rows as the next verified story.
 - Before any UAT action, read both mandatory cloud/deployment
   runbooks, deploy exactly one complete immutable candidate, and record the exact UAT run id.
 - Run the hosted full replay, expected-concurrency p50/p95/p99 and persisted-state reconciliation before

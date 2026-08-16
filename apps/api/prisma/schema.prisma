@@ -2220,6 +2220,8 @@ model ExpenseRecord {
   @@index([companyId, vendorCounterpartyId])
   @@index([companyId, sourceReimbursementRequestId])
   @@index([companyId, paymentStatus])
+  @@index([companyId, paymentStatus, dueDate])
+  @@index([companyId, primaryAttachmentId, missingReceiptReason])
   @@index([companyId, postingStatus])
   @@index([companyId, duplicateStatus])
   @@index([companyId, lineMessageId])

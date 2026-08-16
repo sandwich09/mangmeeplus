@@ -44,6 +44,7 @@ import {
 } from '../../application/use-cases/erp-tax-tools.use-case';
 import { WorkflowExplainRunTool, WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from '../../application/use-cases/erp-workflow-tools.use-case';
 import { AccountingGetSummaryTool, AccountingListRecentDocumentsTool, ProcurementApOutstandingTool, CompanyEmployeeSummaryTool, CompanyEmployeeDetailTool, ExpenseGetBreakdownTool } from '../../application/use-cases/erp-business-tools.use-case';
+import { ExpenseGetDailyClosingTool } from '../../application/use-cases/erp-expense-daily-closing.use-case';
 import { ReportsMonthlySummaryTool } from '../../application/use-cases/erp-report-tools.use-case';
 import { ReimbursementListPendingApprovalsTool } from '../../application/use-cases/erp-reimbursement-tools.use-case';
 import { CrmGetCustomerSummaryTool, CrmSearchCustomersTool, CrmGetCustomer360Tool } from '../../application/use-cases/erp-crm-tools.use-case';
@@ -165,6 +166,7 @@ export class InternalToolsController {
     private readonly employeeSummary: CompanyEmployeeSummaryTool,
     private readonly employeeDetail: CompanyEmployeeDetailTool,
     private readonly expenseBreakdown: ExpenseGetBreakdownTool,
+    private readonly expenseDailyClosing: ExpenseGetDailyClosingTool,
     private readonly reimbursementPendingApprovals: ReimbursementListPendingApprovalsTool,
     private readonly customerSummary: CrmGetCustomerSummaryTool,
     private readonly customerSearch: CrmSearchCustomersTool,
@@ -222,6 +224,7 @@ export class InternalToolsController {
     this.toolMap.set('company.get_employee_summary', this.employeeSummary);
     this.toolMap.set('company.get_employee_detail', this.employeeDetail);
     this.toolMap.set('expense.get_breakdown', this.expenseBreakdown);
+    this.toolMap.set('expense.get_daily_closing', this.expenseDailyClosing);
     this.toolMap.set('reimbursement.list_pending_approvals', this.reimbursementPendingApprovals);
     this.toolMap.set('reimbursement.get_summary', this.reimbursementSummary);
     this.toolMap.set('reimbursement.get_detail', this.reimbursementDetail);

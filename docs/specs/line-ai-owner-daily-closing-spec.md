@@ -71,7 +71,7 @@ type BoundedItems<T> = { total: number; shown: number; remaining: number; items:
 type ExpenseDailyClosing = {
   date: string;
   timezone: string;
-  scope: { companyId: string; branchIds: string[]; scopeKind: string };
+  scope: { kind: 'all_branches' | 'restricted_branches' | 'selected_branch'; branchId?: string };
   occurredToday: {
     totals: MoneyGroup[];
     paid: MoneyGroup[];
@@ -101,7 +101,7 @@ All time boundaries use `[startOfDay, nextStartOfDay)` in the declared timezone.
 - `occurredToday`: active expense whose `expenseDate` is in the requested day
 - `submittedToday`: expense whose `uploadedAt` is in the requested day; this is not merged with occurred today
 - active expense excludes `REJECTED` and `VOIDED`
-- `paid`: payment status `PAID`; `outstanding` uses stored outstanding amount and includes `UNPAID`/`PARTIALLY_PAID` only when amount > 0
+- `paid`: stored paid amount from `PAID` and `PARTIALLY_PAID` records when amount > 0; `outstanding` uses stored outstanding amount and includes `UNPAID`/`PARTIALLY_PAID` only when amount > 0
 - `dueEndOfDay`: active outstanding expense with due date equal to requested date
 - `overdue`: active outstanding expense with due date before requested date
 - `unscheduledOutstanding`: active outstanding expense with no due date; it must not be described as “ต้องจ่ายวันนี้”

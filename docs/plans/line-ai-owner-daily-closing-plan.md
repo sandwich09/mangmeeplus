@@ -63,18 +63,18 @@ Tests: `git diff --check`, internal wiki-link resolution, self-review against re
 - [x] Add deterministic corpus rows and router tests for expense/customer cases.
 - [ ] Add configured-provider real-conversation rows after the daily-closing tool is registered in Story 2.
 - [x] Verify non-business casual and mutation-refusal routes do not regress.
-- [ ] Commit and push.
+- [x] Commit and push (`840a195`).
 
 Exit: shorthand selects the same governed tool family as its full Thai phrase, or clarifies when context is genuinely ambiguous.
 
 ## Story 2: Daily-Closing Read Contract
 
-- [ ] Register `expense.get_daily_closing` with existing expense read permissions and feature catalog.
-- [ ] Implement one bounded API use case using current membership/branch/own/related scope.
-- [ ] Separate expense/upload/due date lenses, rejected/voided, due/overdue/unscheduled, review/evidence/duplicate buckets and currencies.
-- [ ] Return exact decimal strings, bounded details and transparent truncation from one logical snapshot.
-- [ ] Add role/scope/cross-tenant, status, partial-payment, multi-currency, date-boundary and query-bound tests.
-- [ ] Commit and push.
+- [x] Register `expense.get_daily_closing` with existing expense read permissions and feature catalog.
+- [x] Implement one bounded API use case using current membership/branch/own/related scope.
+- [x] Separate expense/upload/due date lenses, rejected/voided, due/overdue/unscheduled, review/evidence/duplicate buckets and currencies.
+- [x] Return exact decimal strings, bounded details and transparent truncation from one logical snapshot.
+- [x] Add role/scope/cross-tenant, status, partial-payment, multi-currency, date-boundary and query-bound tests.
+- [x] Commit and push.
 
 Exit: contract passes focused API tests and does not scan unlimited expense history.
 
