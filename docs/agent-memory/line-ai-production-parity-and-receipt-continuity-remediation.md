@@ -1,21 +1,12 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
-Status: Implementation in progress. Documentation baseline committed as `3a06829`; repository story 1
-(stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`; repository
-story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document question
-safeguards and authenticated opaque web prefill) is committed as `62b88a4`; repository story 3 (grounded
-captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`;
-repository story 4 (bounded delivered capability follow-up and closed prefill lifecycle) is committed as
-`7ce43fd`; repository story 5 (hosted runtime evidence and real cancellation) is committed as
-`ad4405a`; repository story 6 (retained CodeZip/contract and pinned UAT AgentCore endpoint) is committed
-as `37b34e5`; repository story 7 (Production READY/promotion/rollback bound to that retained candidate)
-is committed as `7fb7e5b`; repository story 8 (signed expected hosted-runtime identity and fail-closed
-response verification) is committed as `d7f8f6e`; repository story 9 (reconciled accepted/terminal
-outcome telemetry and recovery semantics) is committed as `9985770`. Repository story 10 adds the
-persisted-state reconciliation report) is committed as `5333bc0`. Repository story 11 adds the
-whole-chain repository acceptance harness) is committed as `e0f7383`. Repository story 12 fixes the
-local AI Gateway application graph under the repository's `tsx watch` dev loader; it is verified and
-pending commit. No push, deployment, cloud or database mutation.
+Status: Local implementation complete. Documentation baseline is `3a06829`; repository stories 1-11
+are `f0ab272`, `62b88a4`, `a43134b`, `7ce43fd`, `ad4405a`, `37b34e5`, `7fb7e5b`, `d7f8f6e`,
+`9985770`, `5333bc0` and `e0f7383`. Look-forward local execution added story 12 (tsx application-graph
+boot, `dfa2801`), story 13 (printed VAT annotation, `9b9834c`), story 14 (critical-field stability,
+`74c7d70`), story 15 (controlled source-hashed image replay, `618bdb7`), story 16 (real-provider
+15-turn conversation, `2be6faa`) and story 17 (aggregate local acceptance gate, `e1d0f5a`). No push,
+deployment, cloud or database mutation was performed.
 
 Owner: Product owner / pending implementation owner.
 
@@ -268,10 +259,23 @@ Verification:
   the turn. The expense sample has only 222 ms margin under the 20-second outer runtime timeout, so
   hosted UAT p95/p99/concurrency remains a hard blocker; this local sample does not justify raising
   the timeout or claiming Production capacity.
+- Story 17 makes the controlled-image harness contract part of the repository aggregate instead of
+  leaving the privacy-safe runner as an unguarded side command. The aggregate passes catalog 4/4,
+  controlled-image harness 3/3, the full API behavior suite, AI Gateway 176/176, UAT candidate policy,
+  Production serving-mode, Production promotion-resource and Production deploy/rollback workflow
+  contracts. The two unchanged source-hashed image rows and the real-provider conversation remain
+  separate controlled executions and both passed; no raw media or conversation content was committed.
+- Final self-review did not convert local success into a live-release claim. The read-only local
+  conversation intentionally created no persisted replay window, and the reconciliation CLI therefore
+  was not pointed at a database. Hosted AgentCore p95/p99/concurrency, exact immutable UAT read-back,
+  signed READY/Production results, LINE OA policy and customer `OPEN` are still mandatory later gates.
 
 Next:
 
-- Normalize controlled money assertions to exact cents without weakening the expected values, then
-  complete both source-hashed image rows and the real-provider 15-turn local conversation replay.
-- Production remains blocked by this active gate until the full repository replay and later controlled
-  deployment phases pass; this task will not push or deploy.
+- Push only when the owner requests it. Before any UAT action, read both mandatory cloud/deployment
+  runbooks, deploy exactly one complete immutable candidate, and record the exact UAT run id.
+- Run the hosted full replay, expected-concurrency p50/p95/p99 and persisted-state reconciliation before
+  READY. The 19,778 ms local expense turn leaves only 222 ms under the current outer timeout and is a
+  measured blocker, not permission to raise the timeout.
+- Production remains closed until exact paired artifact read-back, signed READY, bounded canary,
+  terminal reconciliation and customer `OPEN` all pass. Do not unlock failures by partial deployment.

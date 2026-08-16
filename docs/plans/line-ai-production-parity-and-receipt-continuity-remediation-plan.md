@@ -1,7 +1,8 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-16 committed; controlled images and
-15-turn local real-provider conversation pass; aggregate rerun remains; no push or deploy**
+Status: **LOCAL IMPLEMENTATION COMPLETE — repository stories 1-17 committed; aggregate repository,
+controlled-image and 15-turn real-provider local evidence pass; UAT/READY/Production remain gated;
+no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -405,6 +406,14 @@ and result; a green aggregate without the named regression assertions is insuffi
 
 - All known defect tests fail against the faulty fixture/shape and pass against the candidate.
 - The complete candidate is ready for one UAT deployment; no partial Production deploy has occurred.
+
+Repository story 17 evidence: the whole-chain aggregate now includes the controlled-image harness
+contract and passes catalog 4/4, controlled-image harness 3/3, the full API behavior suite, AI Gateway
+176/176, UAT candidate policy, Production serving-mode, Production promotion-resource and Production
+deploy/rollback workflow contracts. The two external source-hashed, human-reviewed image rows passed
+separately because raw customer media is intentionally outside git. The 15-turn real-provider run also
+passed separately and remained read-only. These local results qualify the complete candidate for UAT;
+they do not satisfy hosted latency, persisted post-replay state, signed READY or customer `OPEN` gates.
 
 ## Phase 6 — Deploy the complete candidate to prod-shaped UAT
 
