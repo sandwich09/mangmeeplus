@@ -1742,6 +1742,7 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
         refused: true,
         refusalReason: 'mutation_blocked',
         runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+        expectedRuntimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1 },
         runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
         stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
         modelCallCount: 2,
@@ -1768,6 +1769,7 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
     assert.equal((aiTurns[0] as any).data.durationMs, 900);
     assert.deepEqual((aiTurns[0] as any).data.observabilityJson, {
       runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+      expectedRuntimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1 },
       runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
       stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
       modelCallCount: 2,

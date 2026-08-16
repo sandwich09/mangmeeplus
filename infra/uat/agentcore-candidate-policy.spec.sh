@@ -31,6 +31,9 @@ grep -Fq 'verify watchdog-bms-uat-ecs-ai-gateway-role watchdog-bms-uat-ai-gatewa
 grep -Fq 'DEPLOY_ENVIRONMENT: uat' "$workflow"
 grep -Fq 'validate-agentcore-candidate-binding.sh' "$workflow"
 grep -Fq 'AGENTCORE_RUNTIME_QUALIFIER=$qualifier' "$workflow"
+grep -Fq 'AGENTCORE_EXPECTED_SOURCE_COMMIT=$SOURCE_COMMIT' "$workflow"
+grep -Fq 'AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha' "$workflow"
+grep -Fq 'AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version' "$workflow"
 if grep -Fq "AGENTCORE_RUNTIME_QUALIFIER: \${{ vars.AGENTCORE_RUNTIME_QUALIFIER || 'DEFAULT' }}" "$workflow"; then
   echo 'ERROR: UAT workflow still permits a mutable DEFAULT endpoint' >&2
   exit 1

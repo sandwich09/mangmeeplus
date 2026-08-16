@@ -86,6 +86,11 @@ export type LineAiRuntimeIdentity = {
   contractVersion: number;
 };
 
+/** Identity the signed ECS candidate expects before an invocation begins. Unlike the artifact's
+ * reported identity this deliberately has no serviceVersion: it is derived from retained release
+ * evidence and therefore remains available on timeout or network failure. */
+export type LineAiExpectedRuntimeIdentity = Omit<LineAiRuntimeIdentity, 'serviceVersion'>;
+
 export const LINE_AI_RUNTIME_CONTRACT_VERSION = 1;
 
 /** Measured seams only. Optional fields keep older AgentCore artifacts wire-compatible. */
@@ -562,6 +567,7 @@ export type LineAiTurnResponse = {
   usage?: AiUsageEntry[];
   /** Additive hosted-runtime evidence. Missing identity means an older/unacceptable candidate. */
   runtimeIdentity?: LineAiRuntimeIdentity;
+  expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
   runtimeBinding?: LineAiRuntimeBinding;
   stageDurationsMs?: LineAiStageDurations;
   modelCallCount?: number;

@@ -13,7 +13,8 @@ jq -cnS --arg source "$source_sha" '
    servingMode:"maintenance_only",serviceRevisionArn:("revision/"+$s),taskDefinitionArn:("task/"+$s),
    lineAiBinding:(if $s=="ai-gateway" then {runtime:"agentcore",
      runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
-     qualifier:"DEFAULT"} else null end)})}}' \
+     qualifier:"DEFAULT",expectedSourceCommit:$source,expectedArtifactSha256:("f"*64),
+     expectedContractVersion:"1"} else null end)})}}' \
   > "$work/ready.json"
 jq -cnS --slurpfile ready "$work/ready.json" '
  {status:"PASS",services:($ready[0].productionBaseline.services|map(. as $s|{service:$s.service,
@@ -24,7 +25,10 @@ jq -cnS --slurpfile ready "$work/ready.json" '
     +(if $s.service=="ai-gateway" then [
       {name:"LINE_AI_AGENT_RUNTIME",value:$s.lineAiBinding.runtime},
       {name:"AGENTCORE_RUNTIME_ARN",value:$s.lineAiBinding.runtimeArn},
-      {name:"AGENTCORE_RUNTIME_QUALIFIER",value:$s.lineAiBinding.qualifier}] else [] end))}}]}}}}}}))}' > "$work/health.json"
+      {name:"AGENTCORE_RUNTIME_QUALIFIER",value:$s.lineAiBinding.qualifier},
+      {name:"AGENTCORE_EXPECTED_SOURCE_COMMIT",value:$s.lineAiBinding.expectedSourceCommit},
+      {name:"AGENTCORE_EXPECTED_ARTIFACT_SHA256",value:$s.lineAiBinding.expectedArtifactSha256},
+      {name:"AGENTCORE_EXPECTED_CONTRACT_VERSION",value:$s.lineAiBinding.expectedContractVersion}] else [] end))}}]}}}}}}))}' > "$work/health.json"
 jq -cnS '{schemaVersion:2,observedAtEpoch:1,securityPolicySha256:("2"*64),a5PolicySha256:("3"*64),
  promotionPrerequisitesSha256:("4"*64),clonePolicySha256:null,
  rds:{identifier:"db",status:"available",rawSha256:("4"*64)},
@@ -62,6 +66,15 @@ jq -cS '.services[]|select(.service=="ai-gateway")
 if bash "$validator" "$work/ready.json" "$work/runtime-ready.json" "$work/catalog-ready.json" \
   "$work/health-agentcore-drift.json" "$work/runtime-current.json" "$work/catalog-current.json" >/dev/null 2>&1; then
   echo 'ERROR: baseline validator accepted previous AgentCore binding drift' >&2
+  exit 1
+fi
+jq -cS '.services[]|select(.service=="ai-gateway")
+  |.rawEvidence.describeExpressGatewayService.raw.second.service.activeConfigurations[0].primaryContainer.environment
+  |=map(if .name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256" then .value=("e"*64) else . end)' \
+  "$work/health.json" > "$work/health-agentcore-artifact-drift.json"
+if bash "$validator" "$work/ready.json" "$work/runtime-ready.json" "$work/catalog-ready.json" \
+  "$work/health-agentcore-artifact-drift.json" "$work/runtime-current.json" "$work/catalog-current.json" >/dev/null 2>&1; then
+  echo 'ERROR: baseline validator accepted previous AgentCore artifact drift' >&2
   exit 1
 fi
 jq -cS '.rds.status="modifying"' "$work/runtime-current.json" > "$work/runtime-drift.json"

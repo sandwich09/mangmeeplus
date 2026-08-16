@@ -149,6 +149,15 @@ pair; controller recovery redeploys the new exact candidate globally closed. Off
 source/artifact/object-version/runtime/endpoint drift, prior-pair drift, active-task qualifier drift,
 `DEFAULT` for a new candidate and IAM/read-back mismatch. No cloud operation was run.
 
+Repository story 8 evidence: UAT and Production derive the expected hosted source, retained CodeZip
+digest and runtime contract version from their validated signed binding and inject all three into the
+AI Gateway task. The gateway fails closed when a successful AgentCore response omits or mismatches that
+identity, while failures/timeouts preserve expected identity plus endpoint binding without inventing an
+actual responder. The active-task verifier and signed Production baseline compare endpoint and expected
+identity as one unit, including negative artifact/contract/source drift cases. Focused contract,
+config, gateway, API, workflow and release-shell suites plus all four affected typechecks pass; no cloud
+operation was run.
+
 ## Phase 2 — Close media continuity and mutation authority together
 
 ### Work
@@ -306,6 +315,8 @@ source/artifact/object-version/runtime/endpoint drift, prior-pair drift, active-
       capture/read outcome and LINE delivery.
 - [x] Measure and remove unnecessary sequential model calls for deterministic commands, capture
       summaries, capability help and already-grounded responses.
+- [x] Bind each hosted invocation to the signed expected source/artifact/contract identity, reject
+      missing or mismatched successful responses, and retain expected identity on timeout/failure.
 - [ ] Run the complete replay matrix at expected UAT concurrency; record p50/p95/p99 per stage and
       total.
 - [ ] Derive any invoke/tool/HTTP timeout change from those results and record the calculation.

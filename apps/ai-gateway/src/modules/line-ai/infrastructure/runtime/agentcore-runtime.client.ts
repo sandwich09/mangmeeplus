@@ -13,6 +13,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import type {
   AiUsageEntry,
+  LineAiExpectedRuntimeIdentity,
   LineAiRefusalReason,
   LineAiRuntimeIdentity,
   LineAiStageDurations,
@@ -135,6 +136,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
   private readonly runtimeArn: string;
   private readonly qualifier: string;
   private readonly timeoutMs: number;
+  private readonly expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
   private readonly credProvider: () => Promise<AwsCreds>;
 
   constructor(config: AiGatewayConfigService) {
@@ -142,6 +144,12 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     this.runtimeArn = config.agentcoreRuntimeArn ?? '';
     this.qualifier = config.agentcoreRuntimeQualifier ?? 'DEFAULT';
     this.timeoutMs = config.agentcoreInvokeTimeoutMs;
+    const sourceCommit = config.agentcoreExpectedSourceCommit;
+    const artifactSha256 = config.agentcoreExpectedArtifactSha256;
+    const contractVersion = config.agentcoreExpectedContractVersion;
+    this.expectedRuntimeIdentity = sourceCommit && artifactSha256 && contractVersion
+      ? { sourceCommit, artifactSha256, contractVersion }
+      : undefined;
     // Reuse BedrockRuntimeClient credential chain (env vars, AWS profile, IMDS)
     this.credProvider = new BedrockRuntimeClient({ region: this.region }).config
       .credentials as unknown as () => Promise<AwsCreds>;
@@ -155,8 +163,18 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       runtimeArnHash: sha256hex(this.runtimeArn).slice(0, 16),
       qualifier: this.qualifier,
     };
-    const failure = (message: string, code: string, stageDurationsMs?: LineAiStageDurations) =>
-      Object.assign(new Error(message), { code, runtimeBinding, ...(stageDurationsMs ? { stageDurationsMs } : {}) });
+    const failure = (
+      message: string,
+      code: string,
+      stageDurationsMs?: LineAiStageDurations,
+      runtimeIdentity?: LineAiRuntimeIdentity,
+    ) => Object.assign(new Error(message), {
+      code,
+      runtimeBinding,
+      ...(this.expectedRuntimeIdentity ? { expectedRuntimeIdentity: this.expectedRuntimeIdentity } : {}),
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
+      ...(stageDurationsMs ? { stageDurationsMs } : {}),
+    });
 
     // AWS AgentCore: full ARN URL-encoded in path, qualifier as query string.
     // URL uses single-encoded ARN; SigV4 canonical URI uses double-encoded ARN (botocore behaviour).
@@ -170,7 +188,19 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     const sessionId = randomUUID();
     const body = JSON.stringify(input);
 
-    const creds = await this.credProvider();
+    let creds: AwsCreds;
+    try {
+      creds = await this.credProvider();
+    } catch (error) {
+      if (error && typeof error === 'object') {
+        Object.assign(error, {
+          runtimeBinding,
+          ...(this.expectedRuntimeIdentity ? { expectedRuntimeIdentity: this.expectedRuntimeIdentity } : {}),
+          stageDurationsMs: { agentcoreHttpMs: 0 },
+        });
+      }
+      throw error;
+    }
 
     const httpStartedAt = Date.now();
     const abort = new AbortController();
@@ -185,6 +215,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       if (error && typeof error === 'object') {
         Object.assign(error, {
           runtimeBinding,
+          ...(this.expectedRuntimeIdentity ? { expectedRuntimeIdentity: this.expectedRuntimeIdentity } : {}),
           stageDurationsMs: { agentcoreHttpMs: Date.now() - httpStartedAt },
         });
       }
@@ -240,11 +271,27 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     const errorCode = typeof rawErrorCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(rawErrorCode)
       ? rawErrorCode
       : undefined;
+    if (this.expectedRuntimeIdentity && !runtimeIdentity) {
+      throw failure('AgentCore runtime identity missing', 'RUNTIME_IDENTITY_MISSING', stageDurationsMs);
+    }
+    if (this.expectedRuntimeIdentity && runtimeIdentity && (
+      runtimeIdentity.sourceCommit !== this.expectedRuntimeIdentity.sourceCommit
+      || runtimeIdentity.artifactSha256 !== this.expectedRuntimeIdentity.artifactSha256
+      || runtimeIdentity.contractVersion !== this.expectedRuntimeIdentity.contractVersion
+    )) {
+      throw failure(
+        'AgentCore runtime identity mismatch',
+        'RUNTIME_IDENTITY_MISMATCH',
+        stageDurationsMs,
+        runtimeIdentity,
+      );
+    }
     return {
       ...rest,
       runtimeBinding,
       ...(usage ? { usage } : {}),
       ...(runtimeIdentity ? { runtimeIdentity } : {}),
+      ...(this.expectedRuntimeIdentity ? { expectedRuntimeIdentity: this.expectedRuntimeIdentity } : {}),
       stageDurationsMs,
       ...(modelCallCount !== undefined ? { modelCallCount } : {}),
       ...(refusalReason ? { refusalReason } : {}),

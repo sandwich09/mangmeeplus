@@ -98,11 +98,18 @@ jq -e --arg source "$source" --arg uat "$uat_run" --argjson uatAttempt "$uat_att
     and (.taskDefinitionArn|test("^arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"))
     and (.servingMode=="maintenance_only" or .servingMode=="live")
     and (if .service=="ai-gateway" then
-      (.lineAiBinding|exact(["qualifier","runtime","runtimeArn"]))
+      (.lineAiBinding|exact(["expectedArtifactSha256","expectedContractVersion","expectedSourceCommit",
+        "qualifier","runtime","runtimeArn"]))
       and .lineAiBinding.runtime=="agentcore"
       and (.lineAiBinding.runtimeArn|test("^arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$"))
       and (.lineAiBinding.qualifier|type=="string" and length>=1 and length<=64
         and test("^[A-Za-z0-9_-]+$"))
+      and ((.lineAiBinding.expectedSourceCommit==null
+          and .lineAiBinding.expectedArtifactSha256==null
+          and .lineAiBinding.expectedContractVersion==null)
+        or (.lineAiBinding.expectedSourceCommit==.sourceCommit
+          and (.lineAiBinding.expectedArtifactSha256|test("^[0-9a-f]{64}$"))
+          and (.lineAiBinding.expectedContractVersion|test("^[1-9][0-9]*$"))))
     else .lineAiBinding==null end))
   and (.runtimeBaseline|exact(["path","sha256"]))
   and .runtimeBaseline.path=="production-runtime.json" and (.runtimeBaseline.sha256|hash)
@@ -152,7 +159,10 @@ jq -e --slurpfile ready "$ready" '
        lineAiBinding:(if $s.service=="ai-gateway" then
          {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
           runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
-          qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0])}
+          qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0]),
+          expectedSourceCommit:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_SOURCE_COMMIT")|.value][0]),
+          expectedArtifactSha256:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256")|.value][0]),
+          expectedContractVersion:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_CONTRACT_VERSION")|.value][0])}
          else null end)}] | sort_by(.service))
     == ($ready[0].productionBaseline.services|sort_by(.service))
 ' "$health" >/dev/null

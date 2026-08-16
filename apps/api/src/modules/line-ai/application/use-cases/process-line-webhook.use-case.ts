@@ -1785,6 +1785,7 @@ export class ProcessLineWebhookUseCase {
           modelLineageJson: response.modelLineage as any,
           observabilityJson: {
             ...(response.runtimeIdentity ? { runtimeIdentity: response.runtimeIdentity } : {}),
+            ...(response.expectedRuntimeIdentity ? { expectedRuntimeIdentity: response.expectedRuntimeIdentity } : {}),
             ...(response.runtimeBinding ? { runtimeBinding: response.runtimeBinding } : {}),
             ...(response.stageDurationsMs ? { stageDurationsMs: response.stageDurationsMs } : {}),
             ...(response.modelCallCount !== undefined ? { modelCallCount: response.modelCallCount } : {}),
@@ -2415,7 +2416,7 @@ export class ProcessLineWebhookUseCase {
    *  is a carrier, `LineIntakePendingMedia` is the source of truth, and Redis fails open (§13). */
   private async ackMediaClarification(
     companyId: string,
-    event: LineTextEvent,
+    event: Pick<LineTextEvent, 'lineUserId' | 'pushTargetId'>,
     userId: string,
     pendingMediaId: string,
     outcome: 'acked' | 'followed_up',

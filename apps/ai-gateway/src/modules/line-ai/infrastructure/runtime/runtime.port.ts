@@ -1,5 +1,5 @@
 /** AgentCore Runtime invoke port – spec section 9.2. */
-import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
+import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiExpectedRuntimeIdentity, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
 
 export type AgentCoreInvokeInput = {
   turnId: string;
@@ -34,6 +34,7 @@ export type AgentCoreInvokeResult = {
   refusalReason?: LineAiRefusalReason;
   errorCode?: string;
   runtimeIdentity?: LineAiRuntimeIdentity;
+  expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
   runtimeBinding?: LineAiRuntimeBinding;
   stageDurationsMs?: LineAiStageDurations;
   modelCallCount?: number;

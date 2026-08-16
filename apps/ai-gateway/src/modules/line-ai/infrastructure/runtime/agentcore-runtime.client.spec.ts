@@ -29,6 +29,15 @@ function makeConfig(arn = 'arn:aws:bedrock-agentcore:ap-southeast-1:123:runtime/
   } as any;
 }
 
+function makeExpectedConfig() {
+  return {
+    ...makeConfig(),
+    agentcoreExpectedSourceCommit: 'a'.repeat(40),
+    agentcoreExpectedArtifactSha256: 'b'.repeat(64),
+    agentcoreExpectedContractVersion: 1,
+  } as any;
+}
+
 const validInput = {
   turnId: 'turn-1',
   companyId: 'co-1',
@@ -263,17 +272,67 @@ describe('AgentCoreRuntimeClient', () => {
     }
   });
 
+  it('accepts only the runtime identity bound by signed release evidence', async () => {
+    const orig = globalThis.fetch;
+    const identity = {
+      sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64),
+      serviceVersion: 'candidate-a', contractVersion: 1,
+    };
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      ...validResult,
+      runtimeIdentity: identity,
+    }), { status: 200 }) as any;
+    try {
+      const result = await new AgentCoreRuntimeClient(makeExpectedConfig()).invoke(validInput);
+      assert.deepEqual(result.runtimeIdentity, identity);
+      assert.deepEqual(result.expectedRuntimeIdentity, {
+        sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1,
+      });
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('fails closed when a candidate omits or mismatches its signed runtime identity', async () => {
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify(validResult), { status: 200 }) as any;
+      await assert.rejects(
+        () => new AgentCoreRuntimeClient(makeExpectedConfig()).invoke(validInput),
+        (err: any) => err.code === 'RUNTIME_IDENTITY_MISSING'
+          && err.expectedRuntimeIdentity?.sourceCommit === 'a'.repeat(40),
+      );
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        ...validResult,
+        runtimeIdentity: {
+          sourceCommit: 'c'.repeat(40), artifactSha256: 'b'.repeat(64),
+          serviceVersion: 'stale', contractVersion: 1,
+        },
+      }), { status: 200 }) as any;
+      await assert.rejects(
+        () => new AgentCoreRuntimeClient(makeExpectedConfig()).invoke(validInput),
+        (err: any) => err.code === 'RUNTIME_IDENTITY_MISMATCH'
+          && err.runtimeIdentity?.sourceCommit === 'c'.repeat(40)
+          && err.expectedRuntimeIdentity?.sourceCommit === 'a'.repeat(40),
+      );
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('aborts the in-flight HTTP request and carries binding evidence on timeout', async () => {
     const orig = globalThis.fetch;
     globalThis.fetch = async (_url: any, init?: RequestInit) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     });
     try {
-      const config = { ...makeConfig(), agentcoreInvokeTimeoutMs: 10 };
+      const config = { ...makeExpectedConfig(), agentcoreInvokeTimeoutMs: 10 };
       await assert.rejects(
         () => new AgentCoreRuntimeClient(config).invoke(validInput),
         (err: any) => err.code === 'TIMEOUT'
           && err.runtimeBinding?.qualifier === 'DEFAULT'
+          && err.expectedRuntimeIdentity?.artifactSha256 === 'b'.repeat(64)
           && typeof err.stageDurationsMs?.agentcoreHttpMs === 'number',
       );
     } finally {

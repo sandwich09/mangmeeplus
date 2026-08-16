@@ -527,10 +527,15 @@ jobs:
           qualifier="$(bash candidate/infra/ai-gateway/validate-agentcore-candidate-binding.sh \
             "$AGENTCORE_BINDING_OUTPUT" release/line-ai-release-manifest.json uat)"
           runtime_arn="$(jq -er '.runtime.arn' "$AGENTCORE_BINDING_OUTPUT")"
+          artifact_sha="$(jq -er '.artifact.sha256' "$AGENTCORE_BINDING_OUTPUT")"
+          contract_version="$(jq -er '.contractVersion' "$AGENTCORE_BINDING_OUTPUT")"
           echo "LINE_AI_AGENT_RUNTIME=agentcore" >> "$GITHUB_ENV"
           echo "AGENTCORE_REGION=$AWS_REGION" >> "$GITHUB_ENV"
           echo "AGENTCORE_RUNTIME_ARN=$runtime_arn" >> "$GITHUB_ENV"
           echo "AGENTCORE_RUNTIME_QUALIFIER=$qualifier" >> "$GITHUB_ENV"
+          echo "AGENTCORE_EXPECTED_SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
+          echo "AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha" >> "$GITHUB_ENV"
+          echo "AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version" >> "$GITHUB_ENV"
       - name: Deploy immutable UAT manifest
         env:
           TARGET: ${{ steps.target.outputs.target }}

@@ -141,6 +141,9 @@ serving_queue_enabled=false
 serving_maintenance_active=true
 agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ
 agentcore_runtime_qualifier=candidate_production_0123456789ab
+agentcore_expected_source=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+agentcore_expected_artifact=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+agentcore_expected_contract=1
 
 api_state="$(jq -cn '{environment:({
   PRODUCTION_SERVING_MODE:"maintenance_only",
@@ -155,6 +158,9 @@ ai_state="$(jq -cn '{environment:({
   LINE_AI_AGENT_RUNTIME:"agentcore",
   AGENTCORE_RUNTIME_ARN:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ",
   AGENTCORE_RUNTIME_QUALIFIER:"candidate_production_0123456789ab",
+  AGENTCORE_EXPECTED_SOURCE_COMMIT:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  AGENTCORE_EXPECTED_ARTIFACT_SHA256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  AGENTCORE_EXPECTED_CONTRACT_VERSION:"1",
   LINE_AI_AGENT_ORCHESTRATION_ENABLED:"false",
   LINE_AI_TOOLUSE_LOOP_ENABLED:"false",
   LINE_AI_COVERAGE_CRITIC_ENABLED:"false",
@@ -181,6 +187,11 @@ fi
 bad_ai_state="$(jq '.environment |= map(if .name == "AGENTCORE_RUNTIME_QUALIFIER" then .value = "candidate_production_ffffffffffff" else . end)' <<< "$ai_state")"
 if verify_service_environment ai-gateway "$bad_ai_state" 2>/dev/null; then
   echo 'AI verifier accepted a task bound to a different AgentCore endpoint' >&2
+  exit 1
+fi
+bad_ai_artifact_state="$(jq '.environment |= map(if .name == "AGENTCORE_EXPECTED_ARTIFACT_SHA256" then .value = ("f" * 64) else . end)' <<< "$ai_state")"
+if verify_service_environment ai-gateway "$bad_ai_artifact_state" 2>/dev/null; then
+  echo 'AI verifier accepted a task expecting a different AgentCore artifact' >&2
   exit 1
 fi
 

@@ -43,7 +43,7 @@ function makeOrchestrator(replyText: string = 'orchestrator reply') {
 }
 
 function makeAgentcoreRuntime(
-  result: Partial<{ replyText: string; refused: boolean; plan: any; durationMs: number; sourceRefs: any[]; webLinks: any[]; toolsInvoked: any[]; presentation: any; refusalReason: any; errorCode: string; runtimeIdentity: any; runtimeBinding: any; stageDurationsMs: any; modelCallCount: number }> | Error = {},
+  result: Partial<{ replyText: string; refused: boolean; plan: any; durationMs: number; sourceRefs: any[]; webLinks: any[]; toolsInvoked: any[]; presentation: any; refusalReason: any; errorCode: string; runtimeIdentity: any; expectedRuntimeIdentity: any; runtimeBinding: any; stageDurationsMs: any; modelCallCount: number }> | Error = {},
 ) {
   return {
     invoke: async () => {
@@ -61,6 +61,7 @@ function makeAgentcoreRuntime(
         ...(result.refusalReason ? { refusalReason: result.refusalReason } : {}),
         ...(result.errorCode ? { errorCode: result.errorCode } : {}),
         ...(result.runtimeIdentity ? { runtimeIdentity: result.runtimeIdentity } : {}),
+        ...(result.expectedRuntimeIdentity ? { expectedRuntimeIdentity: result.expectedRuntimeIdentity } : {}),
         ...(result.runtimeBinding ? { runtimeBinding: result.runtimeBinding } : {}),
         ...(result.stageDurationsMs ? { stageDurationsMs: result.stageDurationsMs } : {}),
         ...(result.modelCallCount !== undefined ? { modelCallCount: result.modelCallCount } : {}),
@@ -225,6 +226,7 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
   it('passes hosted runtime identity, binding, stage timings, and model-call count to the API', async () => {
     const evidence = {
       runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+      expectedRuntimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1 },
       runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
       stageDurationsMs: { orchestrationMs: 10, runtimeTotalMs: 12, agentcoreHttpMs: 20 },
       modelCallCount: 1,
@@ -236,6 +238,7 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
     );
     const response = await useCase.execute(validReq);
     assert.deepEqual(response.runtimeIdentity, evidence.runtimeIdentity);
+    assert.deepEqual(response.expectedRuntimeIdentity, evidence.expectedRuntimeIdentity);
     assert.deepEqual(response.runtimeBinding, evidence.runtimeBinding);
     assert.deepEqual(response.stageDurationsMs, evidence.stageDurationsMs);
     assert.equal(response.modelCallCount, 1);
@@ -376,6 +379,26 @@ describe('LineAiTurnUseCase – provider failure trace (M-02)', () => {
 
     const resp = await useCase.execute(validReq);
     assert.equal(resp.errorCode, 'AGENTCORE_INVOKE_FAILED');
+  });
+
+  it('AgentCore timeout retains the signed expected identity without claiming an actual artifact', async () => {
+    const expectedRuntimeIdentity = {
+      sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), contractVersion: 1,
+    };
+    const error = Object.assign(new Error('timeout'), {
+      code: 'TIMEOUT', expectedRuntimeIdentity,
+      runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
+      stageDurationsMs: { agentcoreHttpMs: 20000 },
+    });
+    const useCase = new LineAiTurnUseCase(
+      makeErpTools(), makeOrchestrator(),
+      { lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' } as any,
+      makeAgentcoreRuntime(error),
+    );
+    const response = await useCase.execute(validReq);
+    assert.equal(response.errorCode, 'TIMEOUT');
+    assert.deepEqual(response.expectedRuntimeIdentity, expectedRuntimeIdentity);
+    assert.equal(response.runtimeIdentity, undefined);
   });
 
   it('orchestrator failure sets ORCHESTRATOR_FAILED and emits ai.provider.failure with path=orchestrator', async () => {

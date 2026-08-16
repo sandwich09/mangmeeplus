@@ -17,6 +17,9 @@ for required in \
   'validate-production-release-ready-v2.sh' 'validate-uat-release-passport-v2.sh' \
   'validate-agentcore-candidate-binding.sh' 'agentcore-production-binding.json' \
   'AGENTCORE_RUNTIME_ARN=$runtime_arn' 'AGENTCORE_RUNTIME_QUALIFIER=$qualifier' \
+  'AGENTCORE_EXPECTED_SOURCE_COMMIT=$source_sha' \
+  'AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha' \
+  'AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version' \
   'compare-production-ready-baseline-v2.sh' 'RELEASE_DATABASE_AUTHORITY: PRODUCTION_READY_V2' \
   'RELEASE_MODE: passport-promotion' 'PRODUCTION_READY_PENDING_CATALOG_HASH' \
   'wait-production-maintenance-ingress-drain.sh' 'verify-production-maintenance.sh all' \

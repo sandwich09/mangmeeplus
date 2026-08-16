@@ -1472,6 +1472,9 @@ ai_container_json() {
   public_web_url="$(normalize_url "${PUBLIC_DOMAIN_URL:-$api_web_url}")"
   local agentcore_arn="${AGENTCORE_RUNTIME_ARN:-}"
   local agentcore_qualifier="${AGENTCORE_RUNTIME_QUALIFIER:-}"
+  local agentcore_expected_source="${AGENTCORE_EXPECTED_SOURCE_COMMIT:-}"
+  local agentcore_expected_artifact="${AGENTCORE_EXPECTED_ARTIFACT_SHA256:-}"
+  local agentcore_expected_contract="${AGENTCORE_EXPECTED_CONTRACT_VERSION:-}"
   local line_ai_runtime="${LINE_AI_AGENT_RUNTIME:-}"
   # A malformed ARN does not fail anything at deploy time - the gateway boots green and only fails
   # when a user actually sends a message, as an AgentCore invoke error with no obvious cause. The
@@ -1494,6 +1497,14 @@ ai_container_json() {
     echo 'ERROR: AgentCore qualifier belongs to a different deployment environment' >&2
     exit 2
   fi
+  [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_SOURCE_COMMIT must be the signed candidate source' >&2; exit 2; }
+  [[ "$agentcore_expected_artifact" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_ARTIFACT_SHA256 must be the retained CodeZip hash' >&2; exit 2; }
+  [[ "$agentcore_expected_contract" =~ ^[1-9][0-9]*$ ]] \
+    || { echo 'ERROR: AGENTCORE_EXPECTED_CONTRACT_VERSION must be a positive integer' >&2; exit 2; }
+  [ "$agentcore_expected_source" = "$SHA" ] \
+    || { echo 'ERROR: AgentCore expected source differs from the ECS image source' >&2; exit 2; }
   jq -n \
     --arg image "$image" \
     --arg sha "$SHA" \
@@ -1506,6 +1517,9 @@ ai_container_json() {
     --arg agentcoreRegion "${AGENTCORE_REGION:-$REGION}" \
     --arg region "$REGION" \
     --arg agentcoreQualifier "$agentcore_qualifier" \
+    --arg agentcoreExpectedSource "$agentcore_expected_source" \
+    --arg agentcoreExpectedArtifact "$agentcore_expected_artifact" \
+    --arg agentcoreExpectedContract "$agentcore_expected_contract" \
     --arg agentcoreTimeout "${AGENTCORE_INVOKE_TIMEOUT_MS:-20000}" \
     --arg agentcoreMaxBodyBytes "${AGENTCORE_MAX_BODY_BYTES:-1048576}" \
     --arg agentcoreMaxMessageChars "${AGENTCORE_MAX_MESSAGE_CHARS:-8000}" \
@@ -1565,6 +1579,9 @@ ai_container_json() {
         {name:"AGENTCORE_REGION", value:$agentcoreRegion},
         {name:"AGENTCORE_RUNTIME_ARN", value:$agentcoreArn},
         {name:"AGENTCORE_RUNTIME_QUALIFIER", value:$agentcoreQualifier},
+        {name:"AGENTCORE_EXPECTED_SOURCE_COMMIT", value:$agentcoreExpectedSource},
+        {name:"AGENTCORE_EXPECTED_ARTIFACT_SHA256", value:$agentcoreExpectedArtifact},
+        {name:"AGENTCORE_EXPECTED_CONTRACT_VERSION", value:$agentcoreExpectedContract},
         {name:"AGENTCORE_INVOKE_TIMEOUT_MS", value:$agentcoreTimeout},
         {name:"AGENTCORE_MAX_BODY_BYTES", value:$agentcoreMaxBodyBytes},
         {name:"AGENTCORE_MAX_MESSAGE_CHARS", value:$agentcoreMaxMessageChars},

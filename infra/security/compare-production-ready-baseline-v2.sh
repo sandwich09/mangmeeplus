@@ -23,7 +23,10 @@ jq -e --slurpfile ready "$ready" '
          lineAiBinding:(if $s.service=="ai-gateway" then
            {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
             runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
-            qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0])}
+            qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0]),
+            expectedSourceCommit:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_SOURCE_COMMIT")|.value][0]),
+            expectedArtifactSha256:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256")|.value][0]),
+            expectedContractVersion:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_CONTRACT_VERSION")|.value][0])}
            else null end)}] | sort_by(.service);
   .status=="PASS" and (services == ($ready[0].productionBaseline.services|sort_by(.service)))
 ' "$current_health" >/dev/null || {

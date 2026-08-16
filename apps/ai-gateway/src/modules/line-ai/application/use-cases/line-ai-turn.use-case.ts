@@ -132,6 +132,7 @@ export class LineAiTurnUseCase {
       durationMs: enriched.durationMs,
       modelLineage: enriched.modelLineage,
       runtimeIdentity: enriched.runtimeIdentity ?? null,
+      expectedRuntimeIdentity: enriched.expectedRuntimeIdentity ?? null,
       runtimeBinding: enriched.runtimeBinding ?? null,
       stageDurationsMs: enriched.stageDurationsMs ?? null,
       modelCallCount: enriched.modelCallCount ?? null,
@@ -211,6 +212,7 @@ export class LineAiTurnUseCase {
         durationMs: result.durationMs,
         ...(result.errorCode ? { errorCode: result.errorCode } : {}),
         ...(result.runtimeIdentity ? { runtimeIdentity: result.runtimeIdentity } : {}),
+        ...(result.expectedRuntimeIdentity ? { expectedRuntimeIdentity: result.expectedRuntimeIdentity } : {}),
         ...(result.runtimeBinding ? { runtimeBinding: result.runtimeBinding } : {}),
         ...(result.stageDurationsMs ? { stageDurationsMs: result.stageDurationsMs } : {}),
         ...(result.modelCallCount !== undefined ? { modelCallCount: result.modelCallCount } : {}),
@@ -222,12 +224,16 @@ export class LineAiTurnUseCase {
       const rawCode = (err as Record<string, unknown>)?.['code'];
       const code = typeof rawCode === 'string' ? rawCode : 'AGENTCORE_INVOKE_FAILED';
       const runtimeBinding = (err as Record<string, unknown>)?.['runtimeBinding'];
+      const runtimeIdentity = (err as Record<string, unknown>)?.['runtimeIdentity'];
+      const expectedRuntimeIdentity = (err as Record<string, unknown>)?.['expectedRuntimeIdentity'];
       const stageDurationsMs = (err as Record<string, unknown>)?.['stageDurationsMs'];
       this.logger.error({ msg: 'ai.provider.failure', requestId: req.requestId, code, path: 'agentcore', error: (err as Error).message });
       return {
         ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs),
         errorCode: code,
         ...(runtimeBinding ? { runtimeBinding: runtimeBinding as any } : {}),
+        ...(runtimeIdentity ? { runtimeIdentity: runtimeIdentity as any } : {}),
+        ...(expectedRuntimeIdentity ? { expectedRuntimeIdentity: expectedRuntimeIdentity as any } : {}),
         ...(stageDurationsMs ? { stageDurationsMs: stageDurationsMs as any } : {}),
       };
     }

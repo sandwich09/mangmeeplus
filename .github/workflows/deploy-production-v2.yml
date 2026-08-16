@@ -234,6 +234,8 @@ jobs:
             "$ready_root/agentcore-production-binding.json" \
             "$ready_root/line-ai-release-manifest.json" production)"
           runtime_arn="$(jq -er '.runtime.arn' "$ready_root/agentcore-production-binding.json")"
+          artifact_sha="$(jq -er '.artifact.sha256' "$ready_root/agentcore-production-binding.json")"
+          contract_version="$(jq -er '.contractVersion' "$ready_root/agentcore-production-binding.json")"
           cp "$ready_root/line-ai-release-manifest.json" release/line-ai-release-manifest.json
           cp "$ready_root/agentcore-production-binding.json" release/agentcore-production-binding.json
           test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json \
@@ -268,6 +270,9 @@ jobs:
             "LINE_AI_RELEASE_MANIFEST=$ready_root/line-ai-release-manifest.json" \
             "AGENTCORE_CANDIDATE_BINDING=$ready_root/agentcore-production-binding.json" \
             "AGENTCORE_RUNTIME_ARN=$runtime_arn" "AGENTCORE_RUNTIME_QUALIFIER=$qualifier" \
+            "AGENTCORE_EXPECTED_SOURCE_COMMIT=$source_sha" \
+            "AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha" \
+            "AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version" \
             "SOURCE_SHA=$source_sha" "READY_SHA256=$ready_hash" \
             "READY_RUN_ATTEMPT=$ready_attempt" "READY_CONTROLLER=$ready_controller" \
             "RELEASE_TASK_IMAGE=$release_image" "MIGRATION_IMAGE=$migration_image" \
@@ -431,7 +436,10 @@ jobs:
                  lineAiBinding:(if $s.service=="ai-gateway" then
                    {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
                     runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
-                    qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0])}
+                    qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0]),
+                    expectedSourceCommit:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_SOURCE_COMMIT")|.value][0]),
+                    expectedArtifactSha256:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_ARTIFACT_SHA256")|.value][0]),
+                    expectedContractVersion:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_EXPECTED_CONTRACT_VERSION")|.value][0])}
                    else null end)}]
               |sort_by(.service)==($ready[0].productionBaseline.services|sort_by(.service))
           ' "$health/current-health.json" >/dev/null

@@ -50,7 +50,8 @@ jq -cnS --arg source "$source" '["ai-gateway","api-web","workers"]|map(. as $ser
    serviceRevisionArn:("arn:aws:ecs:ap-southeast-1:311414082667:service-revision/"+$service+"/1"),
    taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$service+":1"),
    lineAiBinding:(if $service=="ai-gateway" then
-     {runtime:"agentcore",runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",qualifier:"DEFAULT"}
+     {runtime:"agentcore",runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",qualifier:"DEFAULT",
+      expectedSourceCommit:$source,expectedArtifactSha256:("f"*64),expectedContractVersion:"1"}
      else null end)})' > "$services"
 jq -cnS --slurpfile services "$services" '
  {status:"PASS",services:($services[0]|map(. as $s|{service:$s.service,
@@ -61,7 +62,10 @@ jq -cnS --slurpfile services "$services" '
        +(if $s.service=="ai-gateway" then [
          {name:"LINE_AI_AGENT_RUNTIME",value:$s.lineAiBinding.runtime},
          {name:"AGENTCORE_RUNTIME_ARN",value:$s.lineAiBinding.runtimeArn},
-         {name:"AGENTCORE_RUNTIME_QUALIFIER",value:$s.lineAiBinding.qualifier}] else [] end))}}]}}}}}}))}' > "$work/production-health.json"
+         {name:"AGENTCORE_RUNTIME_QUALIFIER",value:$s.lineAiBinding.qualifier},
+         {name:"AGENTCORE_EXPECTED_SOURCE_COMMIT",value:$s.lineAiBinding.expectedSourceCommit},
+         {name:"AGENTCORE_EXPECTED_ARTIFACT_SHA256",value:$s.lineAiBinding.expectedArtifactSha256},
+         {name:"AGENTCORE_EXPECTED_CONTRACT_VERSION",value:$s.lineAiBinding.expectedContractVersion}] else [] end))}}]}}}}}}))}' > "$work/production-health.json"
 jq -cnS --argjson now "$now" '
  {schemaVersion:2,observedAtEpoch:$now,a5PolicySha256:("5"*64),clonePolicySha256:null,
   promotionPrerequisitesSha256:("6"*64),securityPolicySha256:("7"*64),

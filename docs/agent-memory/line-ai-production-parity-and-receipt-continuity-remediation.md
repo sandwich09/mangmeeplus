@@ -8,8 +8,10 @@ captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is c
 repository story 4 (bounded delivered capability follow-up and closed prefill lifecycle) is committed as
 `7ce43fd`; repository story 5 (hosted runtime evidence and real cancellation) is committed as
 `ad4405a`; repository story 6 (retained CodeZip/contract and pinned UAT AgentCore endpoint) is committed
-as `37b34e5`. Repository story 7 binds Production READY/promotion/rollback to the same retained candidate;
-it is verified and pending commit. No push, deployment, cloud or database mutation.
+as `37b34e5`; repository story 7 (Production READY/promotion/rollback bound to that retained candidate)
+is committed as `7fb7e5b`. Repository story 8 verifies every hosted response against the signed expected
+source/artifact/contract identity and preserves that expectation on failures; it is verified and pending
+commit. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -157,10 +159,22 @@ Verification:
 - Story 7 focused verification passes candidate binding, Passport, Production promotion resources,
   runtime readiness, READY schema/baseline, readiness/deploy workflow, security preflight/bootstrap and
   serving-mode suites; shell/YAML/JSON syntax and `git diff --check` pass. No AWS call or workflow ran.
+- Story 8 injects expected AgentCore source, retained CodeZip digest and runtime contract version only
+  from the validated UAT/Production binding. AI Gateway rejects a successful response that omits or
+  mismatches that identity; timeout, credential, network and HTTP failures retain the signed expectation
+  and endpoint binding without falsely claiming which artifact answered.
+- Story 8 deployment gates reject missing/malformed expected identity, ECS/AgentCore source split and
+  active-task endpoint/artifact/contract drift. Production READY baseline now signs and rechecks all
+  expected identity fields together; it accepts an all-null previous baseline only for the first compatible
+  rollout and rejects partial/mixed identity state.
+- Story 8 focused verification passes config 115/115, AI Gateway 42/42, API 70/70, all four package
+  typechecks, UAT candidate policy, Production READY schema/baseline, Production deploy workflow and
+  serving-mode suites. Self-review also narrowed the media-clarification ack parameter to the fields it
+  actually consumes, closing a build-only TypeScript failure that the runtime unit tests did not expose.
 
 Next:
 
-- Commit repository story 7, then bind expected runtime identity into timeout/failure telemetry and
-  complete the whole-chain harness before the prod-shaped local conversation replay.
+- Commit repository story 8, then implement reconciled terminal outcome metrics and complete the
+  whole-chain harness before the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.
