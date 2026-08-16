@@ -1,6 +1,7 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
-Status: Local implementation complete. Documentation baseline is `3a06829`; repository stories 1-11
+Status: Local production-parity implementation complete; owner daily-closing follow-up is active.
+Documentation baseline is `3a06829`; repository stories 1-11
 are `f0ab272`, `62b88a4`, `a43134b`, `7ce43fd`, `ad4405a`, `37b34e5`, `7fb7e5b`, `d7f8f6e`,
 `9985770`, `5333bc0` and `e0f7383`. Look-forward local execution added story 12 (tsx application-graph
 boot, `dfa2801`), story 13 (printed VAT annotation, `9b9834c`), story 14 (critical-field stability,
@@ -44,6 +45,11 @@ Decisions:
   deletes the expense, source attachments or issued evidence.
 - Do not select a new timeout until full-candidate UAT p95/p99 exists.
 - Require the complete replay/failure/state matrix before Production; no layer-by-layer unlock.
+- Treat `ผปก`, `คชจ` and `ลค` as bounded semantic-routing glossary entries, never as permission or mutation authority.
+- Add one permission-checked daily-closing snapshot rather than composing a financial answer from multiple generic tools.
+- Separate expense date, upload date, due date, overdue and no-due-date buckets; group every amount by currency.
+- Never claim a bill that never entered the system is missing without an expected-document source of truth.
+- The owner accepts the LINE OA unverified banner only for protected-roster `Mangmee Plus Owner Pilot – 2026-08-16`; this is not a general-customer waiver.
 
 Open questions:
 
@@ -53,6 +59,9 @@ Artifacts:
 
 - `docs/specs/line-ai-production-parity-and-receipt-continuity-remediation-spec.md`
 - `docs/plans/line-ai-production-parity-and-receipt-continuity-remediation-plan.md`
+- `docs/product/line-ai-owner-daily-closing-feedback-th.md`
+- `docs/specs/line-ai-owner-daily-closing-spec.md`
+- `docs/plans/line-ai-owner-daily-closing-plan.md`
 - `docs/specs/expense-receipt-upload-spec.md` approval-mode source-of-truth alignment
 - `docs/plans/substitute-receipt-company-policy-plan.md` supersession note
 - Active cross-cutting gate in `docs/plans/master-implementation-checklist.md`
@@ -269,10 +278,15 @@ Verification:
   conversation intentionally created no persisted replay window, and the reconciliation CLI therefore
   was not pointed at a database. Hosted AgentCore p95/p99/concurrency, exact immutable UAT read-back,
   signed READY/Production results, LINE OA policy and customer `OPEN` are still mandatory later gates.
+- 2026-08-16 owner feedback follow-up records the operator's actual daily-close job, Thai shorthand,
+  supplied handwritten/multi-entry evidence, current-code gaps and a no-guess daily-closing contract.
+  Story implementation, push/PR and hosted release evidence are pending.
 
 Next:
 
-- Push only when the owner requests it. Before any UAT action, read both mandatory cloud/deployment
+- Commit and push the daily-closing documentation baseline, then implement the glossary, one bounded
+  daily-closing tool and the LINE answer as separate verified stories.
+- Before any UAT action, read both mandatory cloud/deployment
   runbooks, deploy exactly one complete immutable candidate, and record the exact UAT run id.
 - Run the hosted full replay, expected-concurrency p50/p95/p99 and persisted-state reconciliation before
   READY. The 19,778 ms local expense turn leaves only 222 ms under the current outer timeout and is a

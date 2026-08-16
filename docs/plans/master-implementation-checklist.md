@@ -16,6 +16,14 @@ Web is the full Business OS workspace. LINE is the AI assistant, summary, alert,
 
 ## Active Cross-Cutting Production Gate
 
+- [ ] LINE AI Owner Daily Closing and Thai Business Vocabulary
+  - Feedback: [[product/line-ai-owner-daily-closing-feedback-th|LINE AI สรุปค่าใช้จ่ายก่อนปิดร้าน]]
+  - Spec: [[specs/line-ai-owner-daily-closing-spec|LINE AI Owner Daily Closing Spec]]
+  - Plan: [[plans/line-ai-owner-daily-closing-plan|LINE AI Owner Daily Closing Plan]]
+  - Memory: [[agent-memory/line-ai-production-parity-and-receipt-continuity-remediation|LINE AI Production Parity and Receipt Continuity Remediation Memory]]
+  - Status 2026-08-16: docs-first baseline accepted; implementation is active. Current generic expense tools do not provide a daily-closing snapshot, bounded actionable detail, due/review/evidence buckets or safe multi-currency semantics. Controlled local evidence confirms the supplied single handwritten bill path can retain amount while leaving ambiguous date for review; supplied multi-entry handwritten media must remain clarification-only. `ผปก`, `คชจ` and `ลค` are not yet covered by router regressions.
+  - Gate: one permission-checked daily-closing read tool and truthful LINE answer; semantic Thai abbreviation coverage; multi-entry media fail-closed; partial-answer/side-question continuity; bounded query/snapshot/currency correctness; real local and hosted concurrency evidence; immutable UAT/Production identity and named-pilot customer `OPEN`.
+
 - [ ] LINE AI Production Parity and Receipt Continuity Remediation
   - Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
   - Plan: [[plans/line-ai-production-parity-and-receipt-continuity-remediation-plan|LINE AI Production Parity and Receipt Continuity Remediation Plan]]

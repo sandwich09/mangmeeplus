@@ -42,14 +42,14 @@ Status legend:
 
 ## 4. LINE AI Assistant Coverage
 
-| user group | LINE requirement | status | source docs |
-|---|---|---|---|
-| Owner | sales today/month, top products, receivables, low stock, tax, reimbursement, AI summary | Covered | `line-ai-read-only-assistant-spec.md`, `line-ai-assistant-ux-spec.md`, `dashboard-notification-spec.md`, `line-ai-channel-auth-spec.md` |
-| Sales | follow-up alerts, pipeline summary, customer status questions | Covered | `line-ai-assistant-ux-spec.md`, `crm-sales-spec.md`, `line-ai-channel-auth-spec.md` |
-| Warehouse | low-stock alerts, stockout risk, stock summary questions | Covered | `line-ai-assistant-ux-spec.md`, `inventory-mvp-spec.md`, `line-ai-channel-auth-spec.md` |
+| user group | LINE requirement | status | source docs | notes |
+|---|---|---|---|---|
+| Owner | sales today/month, top products, receivables, low stock, tax, reimbursement, actionable daily expense closing | Partial | `line-ai-read-only-assistant-spec.md`, `line-ai-assistant-ux-spec.md`, `line-ai-owner-daily-closing-spec.md`, `dashboard-notification-spec.md`, `line-ai-channel-auth-spec.md` | Daily-closing contract and Thai abbreviation coverage are specified but remain under implementation and hosted release validation. |
+| Sales | follow-up alerts, pipeline summary, customer status questions | Covered | `line-ai-assistant-ux-spec.md`, `crm-sales-spec.md`, `line-ai-channel-auth-spec.md` | — |
+| Warehouse | low-stock alerts, stockout risk, stock summary questions | Covered | `line-ai-assistant-ux-spec.md`, `inventory-mvp-spec.md`, `line-ai-channel-auth-spec.md` | — |
 | Manager | approval queue alerts and SLA-risk summaries | Partial | `line-ai-assistant-ux-spec.md`, `reimbursement-approval-spec.md`, `workflow-automation-spec.md` | Approval action happens in web. |
-| Finance/accountant | tax, expense, receivable, payable, and close-period summaries | Covered | `line-ai-assistant-ux-spec.md`, `accounting-documents-spec.md`, `tax-thailand-2026-spec.md` |
-| Employee users | LINE account linking and role-scoped AI answers | Covered | `employee-access-role-management-spec.md`, `line-ai-channel-auth-spec.md`, `permission-matrix.md` |
+| Finance/accountant | tax, expense, receivable, payable, and close-period summaries | Covered | `line-ai-assistant-ux-spec.md`, `accounting-documents-spec.md`, `tax-thailand-2026-spec.md` | — |
+| Employee users | LINE account linking and role-scoped AI answers | Covered | `employee-access-role-management-spec.md`, `line-ai-channel-auth-spec.md`, `permission-matrix.md` | — |
 
 ## 5. Web-Only / Web-First Coverage
 
