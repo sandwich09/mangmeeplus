@@ -94,7 +94,7 @@ export type LineUserContext = {
 /** Single source of truth for the short-term LINE memory window (api loader, gateway prompts,
  *  agentcore passthrough all derive from these — do not hardcode the numbers elsewhere). */
 export const LINE_AI_CONTEXT_WINDOW_MINUTES = 15;
-export const LINE_AI_CONTEXT_MAX_TURNS = 16;
+export const LINE_AI_CONTEXT_MAX_TURNS = 15;
 export const LINE_AI_ACTOR_DELEGATIONS_PER_TOOL = 8;
 
 export type LineAiConversationContextTurn = {

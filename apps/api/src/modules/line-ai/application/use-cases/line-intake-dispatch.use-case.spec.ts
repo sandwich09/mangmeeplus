@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply } from './process-line-webhook.use-case';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
+import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
 // Router-driven webhook dispatch tests (item 10B LINE Intake Router front stage).
 
@@ -120,6 +121,7 @@ function makeHarness(opts: {
   prisma?: any;
   /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
   captureLedger?: any[];
+  captureError?: Error;
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -172,6 +174,7 @@ function makeHarness(opts: {
     // captureExpenseNote
     {
       execute: async (_ctx: any, cmd: any) => {
+        if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
         return {
           expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
@@ -524,6 +527,23 @@ describe('LINE intake dispatch – text path', () => {
     assert.ok(!JSON.stringify(h.routeRequests[0]).includes('line-user-secret'));
   });
 
+  it('turns an incomplete advisory capture route into one clarification and zero drafts', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99,
+        captureHints: { amount: '590' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+      captureLedger,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'รีบทำให้หน่อย' });
+    assert.equal(h.captured.length, 0);
+    assert.match(h.replies[0] ?? '', /ยอดเงิน.*วัตถุประสงค์|ยอดเงิน.*หมวดค่าใช้จ่าย/);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+  });
+
   it('denies text capture without upload permission even when router says capture', async () => {
     const h = makeHarness({
       permissions: ['line.ai.query'],
@@ -711,8 +731,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
-  it('explicit expense caption keeps the existing manual-review draft when OCR is unavailable', async () => {
-    const { prisma, recordUpdates } = makePrisma();
+  it('explicit expense caption still clarifies when OCR cannot prove document evidence', async () => {
+    const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
@@ -723,10 +743,11 @@ describe('LINE intake dispatch – media path', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'บันทึกเป็นค่าใช้จ่าย');
 
     assert.equal(h.ocrRequests.length, 1);
-    assert.equal(h.initCalls.length, 1);
-    assert.equal(h.completeCalls.length, 1);
-    assert.equal(recordUpdates.at(-1)?.data.aiVerificationSummaryJson.status, 'NOT_CONFIGURED');
-    assert.equal(recordUpdates.at(-1)?.data.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.equal(h.initCalls.length, 0);
+    assert.equal(h.completeCalls.length, 0);
+    assert.equal(recordUpdates.length, 0);
+    assert.equal(pendingMediaRows.length, 1);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
   it('leaves a transient media-download failure reclaimable instead of terminal', async () => {

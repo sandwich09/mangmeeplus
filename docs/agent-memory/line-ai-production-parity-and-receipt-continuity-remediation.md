@@ -1,7 +1,8 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
-Status: Spec and plan refined with owner decisions and self-reviewed; no code, configuration,
-deployment or database mutation.
+Status: Implementation in progress. Documentation baseline committed as `3a06829`; repository story 1
+(stored-media continuity, final capture authority and 15-turn cap) is implemented and focused-tested.
+No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -76,8 +77,15 @@ Verification:
 - Final documentation checks passed: tracked and untracked whitespace checks, unique J/R headings,
   sequential Phase 0-7 headings and internal wiki-link resolution. Application tests were not rerun
   because this refinement changed documentation only.
+- Story 1 process proof preserves the exact pending-media id, attachment id and MIME type in both
+  intake and turn requests. The final API mutation boundary now rejects text capture unless an amount
+  is present in exact source/answered-clarification evidence and purpose/category is source-grounded;
+  unavailable OCR plus a caption now clarifies instead of creating a model-authorized manual draft.
+- Story 1 verification: 165/165 focused API tests passed; API and AI Gateway typechecks passed; `git
+  diff --check` passed. The context test now asserts exactly 15 turns.
 
 Next:
 
-- Owner reviews/approves the spec and no-layer-unlock plan.
-- Implementation begins at Plan Phase 0; Production remains blocked by this active gate until Phase 7.
+- Commit story 1, then implement the typed substitute-receipt continuation/preflight story.
+- Production remains blocked by this active gate until the full repository replay and later controlled
+  deployment phases pass; this task will not push or deploy.

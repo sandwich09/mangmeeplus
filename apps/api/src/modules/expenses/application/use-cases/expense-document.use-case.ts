@@ -3,7 +3,7 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CreateExpenseDraftUseCase } from './expense-draft.use-case';
-import { validateCaptureHints, deriveTaxEvidence, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
+import { validateCaptureHints, deriveTaxEvidence, isLineTextExpenseCaptureEligible, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import { consumptionWithinTx, type ClarificationConsumption } from '../../../line-ai/application/line-ai-consumption-marker';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import type {
@@ -14,6 +14,12 @@ import { todayCivilDate } from '@watchdog-bms/contracts';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
+}
+
+export class LineTextExpenseCaptureIncompleteError extends BadRequestException {
+  constructor() {
+    super('LINE text expense capture requires a source-grounded amount and purpose/category');
+  }
 }
 
 /**
@@ -36,6 +42,8 @@ export class CaptureLineExpenseNoteUseCase {
     cmd: {
       messageText: string;
       captureHints?: LineIntakeCaptureHints;
+      /** Exact original clarification requests resolved by this turn; never general chat history. */
+      groundingTexts?: string[];
       lineMessageId: string;
       lineEventId: string;
       /** Bounded hash of the chat this was captured in — a later correction may only target
@@ -58,6 +66,14 @@ export class CaptureLineExpenseNoteUseCase {
     }
 
     const activeCategories = await this.repo.listCategories(ctx.companyId);
+    if (!isLineTextExpenseCaptureEligible(
+      cmd.messageText,
+      cmd.captureHints ?? {},
+      new Map(activeCategories.map((category) => [category.id, category.name])),
+      cmd.groundingTexts,
+    )) {
+      throw new LineTextExpenseCaptureIncompleteError();
+    }
     const validated = validateCaptureHints(cmd.captureHints ?? {}, new Set(activeCategories.map((c) => c.id)));
 
     // Text notes are never receipts by themselves: force the note document type

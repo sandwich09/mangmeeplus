@@ -136,20 +136,20 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 ### Work
 
-- [ ] Preserve `pendingMedia` in the `openWaiting -> openClarifications` mapping and every downstream
+- [x] Preserve `pendingMedia` in the `openWaiting -> openClarifications` mapping and every downstream
       bounded contract.
 - [ ] Re-resolve pending row, attachment, expiry, company, user, membership, branch scope and current
       permissions before use.
-- [ ] Add a final API-owned capture eligibility function used by both immediate media and
+- [x] Add a final API-owned capture eligibility function used by both immediate media and
       clarification/text continuations.
-- [ ] Authorize media capture only after the existing deterministic document-evidence gate or exact
+- [x] Authorize media capture only after the existing deterministic document-evidence gate or exact
       resolved pending-media choice.
-- [ ] Authorize text-only capture only when source-grounded amount and purpose/category are both
+- [x] Authorize text-only capture only when source-grounded amount and purpose/category are both
       detectable, matching the existing Expense and Receipt Upload Spec.
 - [ ] Keep ambiguous/expired/legacy-without-media entries at clarify/no-op; never fall back to draft.
 - [ ] Preserve idempotency by LINE message id and existing source record; one retry/redelivery remains
       one attachment/draft.
-- [ ] Ack clarification only after the resolved outcome is successfully delivered.
+- [x] Ack clarification only after the resolved receipt/text-capture outcome is successfully delivered.
 
 ### Likely files
 

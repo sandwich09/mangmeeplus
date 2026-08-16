@@ -669,6 +669,7 @@ describe('ProcessLineWebhookUseCase', () => {
   });
 
 	  it('passes at most LINE_AI_CONTEXT_MAX_TURNS recent turns from the active 15-minute window to intake router and AI Gateway', async () => {
+	    assert.equal(LINE_AI_CONTEXT_MAX_TURNS, 15, 'the owner-selected history bound is exactly 15 turns');
 	    const now = Date.now();
 	    const inWindow = LINE_AI_CONTEXT_MAX_TURNS + 1; // one more than the cap
 	    const recentTurns = [
@@ -1535,6 +1536,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     ack: async (entry: any, outcome: string) => { events.push(`ack:${outcome}`); ledgerCalls.acks.push({ id: entry.id, outcome }); },
   } as any;
   const aiGatewayRequests: any[] = [];
+  const intakeRequests: any[] = [];
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
@@ -1548,6 +1550,7 @@ function makeLedgerUseCase(prisma: any, opts: {
         throw new Error('AI Gateway not expected');
       },
       requestLineIntakeRoute: async (req: any) => {
+        intakeRequests.push(req);
         if (opts.intakeRouteFn) return opts.intakeRouteFn(req);
         return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 };
       },
@@ -1564,7 +1567,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );
-  return { useCase, events, ledgerCalls, aiGatewayRequests };
+  return { useCase, events, ledgerCalls, aiGatewayRequests, intakeRequests };
 }
 
 const LEDGER_TURN_RESPONSE = {
@@ -1625,12 +1628,16 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
   it('attaches open clarifications to the turn request and consumes only the ones this turn answered', async () => {
     const { prisma } = makePrisma();
     const entryOf = (id: string, userId = 'user-1') => ({ id, key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 't0', kind: 'sub_request', userId });
-    const { useCase, ledgerCalls, aiGatewayRequests } = makeLedgerUseCase(prisma, {
+    const { useCase, ledgerCalls, aiGatewayRequests, intakeRequests } = makeLedgerUseCase(prisma, {
       aiGatewayFn: () => LEDGER_TURN_RESPONSE,
       // The router names what the message answered; the other entry is still waiting.
       intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, resolvedClarificationIds: ['7-0'] }),
       openWaiting: [
-        { id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense', askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0') },
+        {
+          id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense',
+          askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0'),
+          pendingMedia: { pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg' },
+        },
         { id: '8-0', question: 'สาขาไหน?', text: 'ยอดขายสาขา', askedAt: '2026-07-07T09:59:30.000Z', entry: entryOf('8-0') },
       ],
     });
@@ -1640,6 +1647,12 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(aiGatewayRequests[0]?.openClarifications?.length, 2);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.question, 'ปีไหน?');
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.subject, 'expense');
+    assert.deepEqual(aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia, {
+      pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg',
+    });
+    assert.deepEqual(intakeRequests[0]?.openClarifications?.[0]?.pendingMedia,
+      aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia,
+      'the same opaque stored-media handle reaches intake and turn requests');
     assert.ok(ledgerCalls.acks.some((a) => a.id === '7-0' && a.outcome === 'acked'), 'the answered entry is done waiting');
     assert.equal(ledgerCalls.acks.some((a) => a.id === '8-0'), false, 'an unanswered question must stay open');
   });

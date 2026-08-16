@@ -24,7 +24,7 @@ import {
   CompleteReceiptUploadUseCase,
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
-import { CaptureLineExpenseNoteUseCase } from '../../../expenses/application/use-cases/expense-document.use-case';
+import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -116,6 +116,7 @@ const MEDIA_CLARIFY_REPLY = [
   '1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก',
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
 ].join('\n');
+const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
@@ -213,9 +214,7 @@ function decideLineBusinessDocument(
   if (routePlan.intent !== 'EXPENSE_DOCUMENT_CAPTURE') return { outcome: 'unsupported', classification };
 
   if (ocr.status !== 'OCR_EXTRACTED_NEEDS_REVIEW' || !ocr.classification) {
-    return hasCaption
-      ? { outcome: 'expense', manualReview: true, classification }
-      : { outcome: 'clarify', persistMedia: true, classification };
+    return { outcome: 'clarify', persistMedia: true, classification };
   }
   if (isExpenseExtractionEligible(ocr.classification, ocr.fields?.grandTotalAmount)) {
     return { outcome: 'expense', manualReview: false, classification: ocr.classification };
@@ -1011,8 +1010,8 @@ export class ProcessLineWebhookUseCase {
     if (pendingMedia) {
       const decision = classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
-        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         await this.resolvePendingMediaAsReceipt(event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText);
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         return;
       }
       if (decision === 'illustration') {
@@ -1045,10 +1044,11 @@ export class ProcessLineWebhookUseCase {
       return;
     }
     const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
-      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds }) => ({
+      ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
         id, question, text, ...(subject && { subject }), askedAt,
         ...(clarifyForIntent && { clarifyForIntent }),
         ...(candidateExpenseIds?.length && { candidateExpenseIds }),
+        ...(pendingMedia && { pendingMedia }),
       }))
       : undefined;
 
@@ -1095,15 +1095,41 @@ export class ProcessLineWebhookUseCase {
         authProvider: 'line',
       };
       const capturePlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'evidence_capture');
-      const captured = await this.captureExpenseNote.execute(ctx, {
-        messageText: normalizedText,
-        captureHints: routePlan.captureHints,
-        lineMessageId: event.lineMessageId ?? event.webhookEventId,
-        lineEventId: event.webhookEventId,
-        chatKeyHash: chatKeyHashOf(event),
-        ...(capturePlan ? { consumption: capturePlan.consumption } : {}),
-      });
-      await this.ackConsumed(capturePlan, 'evidence_capture');
+      let captured: Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>>;
+      try {
+        captured = await this.captureExpenseNote.execute(ctx, {
+          messageText: normalizedText,
+          captureHints: routePlan.captureHints,
+          groundingTexts: openWaiting
+            .filter((item) => routePlan.resolvedClarificationIds?.includes(item.id)
+              && item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
+            .map((item) => item.text),
+          lineMessageId: event.lineMessageId ?? event.webhookEventId,
+          lineEventId: event.webhookEventId,
+          chatKeyHash: chatKeyHashOf(event),
+          ...(capturePlan ? { consumption: capturePlan.consumption } : {}),
+        });
+      } catch (error) {
+        if (!(error instanceof LineTextExpenseCaptureIncompleteError)) throw error;
+        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: TEXT_EXPENSE_CLARIFY_REPLY, intent: 'CLARIFY',
+        });
+        await this.ledger?.appendSubRequests({
+          companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+          userId: identity.userId,
+          items: [{
+            text: normalizedText,
+            state: 'waiting_user',
+            clarifyQuestion: TEXT_EXPENSE_CLARIFY_REPLY,
+            intent: 'CLARIFY',
+            clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+          }],
+        });
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
       const paypersReply = formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
         textOnly: true,
         amount: captured.insertedAmount,
@@ -1116,6 +1142,7 @@ export class ProcessLineWebhookUseCase {
         } as ReceiptOcrFieldResult,
       });
       await this.deliverCompletedReply(event, paypersReply, companyId, resolvedAccess);
+      await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: normalizedText, replyText: paypersReply, intent: 'EVIDENCE_CAPTURE',
