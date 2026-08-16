@@ -358,11 +358,12 @@ Next:
   to `main` through the required separate reviewed PR.
 - Before any UAT action, read both mandatory cloud/deployment
   runbooks, deploy exactly one complete immutable candidate, and record the exact UAT run id.
-- Run the hosted full replay, expected-concurrency p50/p95/p99 and persisted-state reconciliation before
-  READY. The 19,778 ms local expense turn leaves only 222 ms under the current outer timeout and is a
-  measured blocker, not permission to raise the timeout.
-- Production remains closed until exact paired artifact read-back, signed READY, bounded canary,
-  terminal reconciliation and customer `OPEN` all pass. Do not unlock failures by partial deployment.
+- Run the hosted full replay and persisted-state reconciliation before conditional READY. Record hosted
+  concurrency p50/p95/p99 as deferred under the owner directive, never as passed, and do not raise the
+  timeout from the 19,778 ms local observation.
+- Production remains closed until exact paired artifact read-back, signed conditional READY, bounded
+  canary, terminal reconciliation and named-pilot customer `OPEN` pass. Run the deferred concurrency
+  evidence after opening and close/rollback on the recorded failure conditions.
 
 ## Release continuation — 2026-08-17
 
@@ -378,3 +379,12 @@ Next:
 - The wrapper now proves the selected full/clone/endpoint session with one exact non-mutating read,
   bounded by the existing propagation budget, before invoking any durable helper. Fixtures cover
   delayed convergence, permanent failure, every mode and cleanup-before-helper behavior.
+- Owner directive `OWNER-DIRECTIVE-2026-08-17-LINE-AI-CONCURRENCY-DEFERRED` explicitly defers only
+  hosted concurrency p95/p99 until after conditional named-pilot `OPEN`. The deferred row remains
+  unresolved and may not be recorded as `PASS`; the 20-second timeout remains unchanged and the
+  measured `19,778 ms` local tail risk is accepted for this conditional pilot.
+- Exact hosted identity, role/tenant security, real LINE pilot smoke, persisted-state/accepted-inbound
+  reconciliation, forced failure and paired rollback still gate `OPEN`. After opening, the same release
+  receives the deferred concurrency run; an unexplained timeout, duplicate mutation, permission leak or
+  unreconciled terminal outcome closes the customer gate and invokes rollback. This approval does not
+  establish general-customer or capacity readiness.
