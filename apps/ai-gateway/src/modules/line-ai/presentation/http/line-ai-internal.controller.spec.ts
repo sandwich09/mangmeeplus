@@ -999,8 +999,8 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
   const TYPHOON_TEXT_WITHOUT_TOTAL = '# Starbucks Coffee\n| Sub Total | 160.00 |\n| Total Discount | -15.00 |';
   const BEDROCK_REREAD_TEXT = '# Starbucks Coffee\nSub Total 195.00\nTotal Discount -15.00\nTotal Amount 180.00\nPayment 180.00';
 
-  const classification = (total: string, requiresClarification: boolean) => ({
-    contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'TAX_INVOICE',
+  const classification = (total: string, requiresClarification: boolean, contentKind = 'DOCUMENT') => ({
+    contentKind, documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'TAX_INVOICE',
     businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID', evidenceRoles: ['EXPENSE_SUPPORT'],
     confidence: 0.9, evidenceSignals: ['Starbucks Coffee'], amountSignals: [total],
     settlementSignals: ['Payment'],
@@ -1043,6 +1043,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     secondTotal?: string;
     rereadVatAmount?: string;
     firstRequiresClarification?: boolean;
+    contentKind?: string;
   } = {}) {
     const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
     const firstTotal = options.firstTotal ?? '160.00';
@@ -1072,7 +1073,7 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
           message: {
             content: [{
               text: JSON.stringify({
-                classification: classification(total, sawRereadText ? false : (options.firstRequiresClarification ?? true)),
+                classification: classification(total, sawRereadText ? false : (options.firstRequiresClarification ?? true), options.contentKind),
                 fields,
               }),
             }],
@@ -1140,6 +1141,34 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
       assert.equal(result.fields?.vatAmount, '189.07');
       assert.ok(!result.fields?.missingFields?.includes('vatAmount'));
       assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'one bounded re-read');
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('never returns single-expense fields or vision-rereads a multi-entry ledger', async () => {
+    const restoreFetch = stubTyphoon('# สมุดค่าใช้จ่าย\nรายการ A 1000\nรายการ B 3214\nรวม 4214');
+    const bedrock = stubBedrock({
+      firstTotal: '4214',
+      firstRequiresClarification: true,
+      contentKind: 'MULTI_DOCUMENT',
+    });
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', request);
+
+      assert.equal(result.classification?.contentKind, 'MULTI_DOCUMENT');
+      assert.equal(result.classification?.requiresClarification, true);
+      assert.equal(result.fields, undefined, 'a multi-entry page cannot expose one expense draft');
+      assert.deepEqual(bedrock.calls, ['extract'], 'multi-entry classification must not be weakened by a total re-read');
     } finally {
       bedrock.restore();
       restoreFetch();

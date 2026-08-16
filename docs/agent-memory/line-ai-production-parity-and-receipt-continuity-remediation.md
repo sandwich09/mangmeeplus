@@ -117,6 +117,16 @@ Verification:
 - The conversation harness now distinguishes a correct permission refusal (expected tool in the plan,
   no invocation) from a normal read (expected tool must actually run), and emits bounded turn/expected/
   planned/invoked diagnostics on failure. It still emits no conversation text or business identifiers.
+- The first three-image provider replay found one forward contract gap: the photographed ledger was
+  correctly classified `MULTI_DOCUMENT` with clarification required, but its response still exposed one
+  `grandTotalAmount`. The shared OCR boundary now returns no single-expense `fields` for every
+  `MULTI_DOCUMENT` classification and never runs the single-total vision re-read for that content kind.
+  This protects future consumers as well as the current API mutation gate. Controller tests pass 49/49.
+- The unchanged-hash three-image replay then passes every assertion. Royal Pizza remains `2,890.00`,
+  VAT `189.07`, sale date `2026-08-15`, `ABBREVIATED_TAX_INVOICE` and `PAID`; the handwritten cash bill
+  remains `5,260.00`, `HANDWRITTEN_CASH_BILL`, `PAID` with date missing; the ledger remains
+  `MULTI_DOCUMENT`, requires clarification and exposes zero draft field keys. No raw image/OCR text or
+  customer identity was committed.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.

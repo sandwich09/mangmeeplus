@@ -200,7 +200,9 @@ export class LineAiInternalController {
     // A warped or low-resolution photo can cost Typhoon either the printed total or an explicitly
     // signalled VAT amount. Run at most one vision re-read. A replacement total must clear the full
     // gate; recovered VAT must be source-checked by that reading and carry the same exact-cent total.
-    const needsTotalReread = !hasUsableTotal(understood);
+    // A multi-entry page is intentionally not one expense. Re-reading it to recover a single total
+    // can only weaken the classification, so keep the first MULTI_DOCUMENT decision authoritative.
+    const needsTotalReread = understood.classification?.contentKind !== 'MULTI_DOCUMENT' && !hasUsableTotal(understood);
     const needsVatReread = needsPrintedVatReread(understood);
     if (!isPdf && this.config.modelProvider === 'bedrock' && (needsTotalReread || needsVatReread)) {
       const reread = await provider.generateText({
@@ -269,7 +271,10 @@ export class LineAiInternalController {
     const classification = parsed.classification
       ? gateBusinessDocumentClassification(parsed.classification, fields, documentText)
       : undefined;
-    return { ok: true, ...(fields ? { fields } : {}), ...(classification ? { classification } : {}) };
+    // ReceiptOcrResponse.fields is a single-expense draft contract. Returning one page total/vendor/
+    // date for MULTI_DOCUMENT would let a future consumer collapse the ledger despite the classifier.
+    const safeFields = classification?.contentKind === 'MULTI_DOCUMENT' ? undefined : fields;
+    return { ok: true, ...(safeFields ? { fields: safeFields } : {}), ...(classification ? { classification } : {}) };
   }
 
   @Public()
