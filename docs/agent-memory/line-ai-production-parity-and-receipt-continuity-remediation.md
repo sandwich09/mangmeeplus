@@ -6,8 +6,9 @@ story 2 (typed substitute-receipt continuation, consolidated readiness, grounded
 safeguards and authenticated opaque web prefill) is committed as `62b88a4`; repository story 3 (grounded
 captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`;
 repository story 4 (bounded delivered capability follow-up and closed prefill lifecycle) is committed as
-`7ce43fd`. Repository story 5 observability changes are verified and pending commit. No push,
-deployment, cloud or database mutation.
+`7ce43fd`; repository story 5 (hosted runtime evidence and real cancellation) is committed as
+`ad4405a`. Repository story 6 binds CI and UAT to one retained CodeZip, contract and pinned AgentCore
+endpoint; it is verified and pending commit. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -48,8 +49,8 @@ Decisions:
 
 Open questions:
 
-- Exact immutable AgentCore version/qualifier or isolated-candidate-runtime mechanism must be selected
-  after checking the installed CLI and current official AWS behavior.
+- Production must consume and roll back the retained candidate binding without rebuilding or switching
+  a mutable endpoint; the UAT mechanism is now selected and proved offline.
 - The smallest repo-native persistence seam for typed receipt continuation must be chosen after
   inventorying the existing clarification ledger, pending-media row and expense draft/revision fields;
   a generic workflow engine and larger raw context are out of scope.
@@ -128,10 +129,28 @@ Verification:
   use-case spec passes; contracts, AI Gateway and API typechecks pass; Prisma Client generation and
   `git diff --check` pass. No timeout value was changed because hosted candidate p95/p99 evidence does
   not exist yet.
+- Story 6 uses an environment-isolated AgentCore candidate runtime plus a source-specific custom
+  endpoint pinned to the immutable runtime version. This follows the installed AWS CLI `2.36.15` and
+  official versioning behavior: runtime updates create versions, custom endpoints target versions,
+  while `DEFAULT` follows latest and is therefore forbidden for accepted candidates.
+- Story 6 CI retains `production-image-manifest.json`, exact `agentcore.zip` and its artifact manifest,
+  retained `line-ai-contract.ts`, and a canonical release manifest. UAT deploys those exact bytes,
+  validates runtime `targetVersion` and `liveVersion`, configures only the UAT candidate resource
+  family for task-role invocation, and puts the exact runtime/artifact/object-version/endpoint binding
+  in signed Passport V2.
+- Story 6 negative coverage rejects split source, rebuilt/tampered CodeZip, changed image or contract,
+  source not embedded in the content-addressed object key, runtime/endpoint ARN mismatch, version
+  mismatch, mutable `DEFAULT`, extra evidence fields, and a tampered binding inside Passport. Focused
+  manifest/binding/Passport/UAT policy suites and all UAT shell specs pass; production bootstrap and
+  object-version IAM regressions also pass.
+- Story 6 self-review corrected the AWS endpoint response contract from the nonexistent
+  `agentRuntimeVersion` field to exact `targetVersion` + `liveVersion`, bound the endpoint ARN under
+  the runtime ARN, and stopped treating IAM/AgentCore read errors as absent resources. An
+  `AccessDenied` can no longer fall through into create/update and reveal the next error layer.
 
 Next:
 
-- Commit repository story 5, then close release identity/whole-chain harness gates before
-  the prod-shaped local conversation replay.
+- Commit repository story 6, then complete Production READY/promotion identity, paired rollback and
+  the whole-chain harness before the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

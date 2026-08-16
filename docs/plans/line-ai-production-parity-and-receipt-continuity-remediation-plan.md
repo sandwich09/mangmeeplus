@@ -1,6 +1,6 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — docs baseline and repository stories 1-3 complete; no deploy**
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-6 complete through the signed UAT candidate boundary; no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -92,16 +92,16 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 ### Work
 
-- [ ] Define one additive release manifest schema containing source commit, service image digests,
+- [x] Define one additive release manifest schema containing source commit, service image digests,
       AgentCore artifact digest/object version/source, contract version and producer run identity.
 - [ ] Extend CI to produce and retain the manifest alongside existing immutable images and AgentCore
-      CodeZip; production promotion downloads rather than rebuilds them.
-- [ ] Verify current AWS CLI and official AgentCore version/qualifier behavior before choosing the
+      CodeZip; CI retention is complete, while Production consumption remains open.
+- [x] Verify current AWS CLI and official AgentCore version/qualifier behavior before choosing the
       immutable binding mechanism.
-- [ ] Implement one reversible binding:
+- [x] Implement one reversible binding:
   - exact immutable runtime version/qualifier if the verified service supports it; or
   - isolated candidate runtime plus exact ARN swap if it does not.
-- [ ] Make UAT deploy/update the candidate AgentCore artifact and run the same hosted path intended
+- [x] Make UAT deploy/update the candidate AgentCore artifact and run the same hosted path intended
       for Production.
 - [ ] Remove the hard-coded approved source from promotion collection/readiness.
 - [ ] Make UAT Passport, READY and Production validation compare manifest source/artifact/digests to
@@ -131,6 +131,14 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 - An exact candidate pair can be promoted and rolled back without mutable-default ambiguity.
 - `strands-local` may still run locally but cannot satisfy signed Production UAT evidence.
+
+Repository story 6 evidence: CI retains one canonical manifest plus exact CodeZip/contract; UAT deploys
+that CodeZip to an environment-isolated runtime, creates a source-specific endpoint pinned to the
+immutable runtime version, and carries the exact binding in Passport V2. Offline gates reject changed
+bytes/source/image/contract/object key/runtime version, endpoint/runtime ARN mismatch, `DEFAULT`, and
+tampered Passport binding. Installed AWS CLI `2.36.15` proves endpoint read-back fields are
+`targetVersion`/`liveVersion`; the deploy check asserts both before UAT ECS receives the qualifier.
+Production READY/promotion binding and paired rollback remain Phase 1 blockers.
 
 ## Phase 2 — Close media continuity and mutation authority together
 

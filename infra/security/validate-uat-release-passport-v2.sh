@@ -73,7 +73,7 @@ jq -e \
     def digest: type == "string" and test("^sha256:[0-9a-f]{64}$");
     exact_keys(["schemaVersion","artifactKind","environment","repository","workflow",
       "sourceCommit","requestedTarget","resolvedTarget","issuedAtEpoch","expiresAtEpoch",
-      "validatedCiRunId","release","tools","migrationCatalog","uatProof","contentSha256"])
+      "validatedCiRunId","release","lineAiCandidate","tools","migrationCatalog","uatProof","contentSha256"])
     and .schemaVersion == 2
     and .artifactKind == "UAT_RELEASE_PASSPORT_V2"
     and .environment == "uat"
@@ -106,6 +106,16 @@ jq -e \
       and (.sbom | exact_keys(["path","sha256"])) and (.sbom.sha256 | sha256)
       and (.signature | exact_keys(["path","sha256"])) and (.signature.sha256 | sha256)
       and .attestations == {provenance:"BUILDKIT_MAX",sbom:"BUILDKIT_REGISTRY_NATIVE"})
+    and (.lineAiCandidate | exact_keys(["artifactManifestPath","artifactManifestSha256",
+      "artifactPath","bindingPath","bindingSha256","contractPath","manifestPath","manifestSha256"]))
+    and .lineAiCandidate.manifestPath == "release/line-ai-release-manifest.json"
+    and (.lineAiCandidate.manifestSha256 | sha256)
+    and .lineAiCandidate.artifactManifestPath == "release/agentcore/agentcore-artifact.json"
+    and (.lineAiCandidate.artifactManifestSha256 | sha256)
+    and .lineAiCandidate.artifactPath == "release/agentcore/agentcore.zip"
+    and .lineAiCandidate.contractPath == "release/line-ai-contract.ts"
+    and .lineAiCandidate.bindingPath == "agentcore-binding.json"
+    and (.lineAiCandidate.bindingSha256 | sha256)
     and (.tools | type == "array" and length == 2)
     and ([.tools[].purpose] | sort) == ["migration-tool","release-task"]
     and all(.tools[];
@@ -151,6 +161,21 @@ jq -e --slurpfile passport "$passport" '
       digest:$image.digest,sourceCommit:$image.sourceCommit,
       sbom:("sbom-" + $image.service + ".spdx.json")}) | sort_by(.service))
 ' "$manifest_path" >/dev/null
+
+line_ai_manifest_path="$(safe_file "$(jq -er '.lineAiCandidate.manifestPath' "$passport")" 1048576)"
+agentcore_artifact_manifest_path="$(safe_file "$(jq -er '.lineAiCandidate.artifactManifestPath' "$passport")" 1048576)"
+agentcore_artifact_path="$(safe_file "$(jq -er '.lineAiCandidate.artifactPath' "$passport")" 104857600)"
+line_ai_contract_path="$(safe_file "$(jq -er '.lineAiCandidate.contractPath' "$passport")" 1048576)"
+agentcore_binding_path="$(safe_file "$(jq -er '.lineAiCandidate.bindingPath' "$passport")" 1048576)"
+test "$(sha256_file "$line_ai_manifest_path")" = "$(jq -er '.lineAiCandidate.manifestSha256' "$passport")"
+test "$(sha256_file "$agentcore_artifact_manifest_path")" = "$(jq -er '.lineAiCandidate.artifactManifestSha256' "$passport")"
+test "$(sha256_file "$agentcore_binding_path")" = "$(jq -er '.lineAiCandidate.bindingSha256' "$passport")"
+test "$(bash "$(dirname "$0")/../ai-gateway/validate-line-ai-release-manifest.sh" \
+  "$line_ai_manifest_path" "$manifest_path" "$(dirname "$agentcore_artifact_path")" \
+  "$line_ai_contract_path" "$source_sha")" = "$source_sha"
+test "$(bash "$(dirname "$0")/../ai-gateway/validate-agentcore-candidate-binding.sh" \
+  "$agentcore_binding_path" "$line_ai_manifest_path" uat)" = \
+  "$(jq -er '.endpoint.name' "$agentcore_binding_path")"
 
 while IFS=$'\t' read -r path expected kind; do
   case "$kind" in sbom) limit=104857600 ;; signature) limit=1048576 ;; *) exit 2 ;; esac

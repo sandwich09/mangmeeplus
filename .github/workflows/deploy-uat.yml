@@ -295,7 +295,7 @@ jobs:
       LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME || 'disabled' }}
       AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
       AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
-      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER || 'DEFAULT' }}
+      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}
       AGENTCORE_INVOKE_TIMEOUT_MS: ${{ vars.AGENTCORE_INVOKE_TIMEOUT_MS || '20000' }}
       AGENTCORE_MAX_BODY_BYTES: ${{ vars.AGENTCORE_MAX_BODY_BYTES || '1048576' }}
       AGENTCORE_MAX_MESSAGE_CHARS: ${{ vars.AGENTCORE_MAX_MESSAGE_CHARS || '8000' }}
@@ -347,9 +347,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$(sha256sum infra/docker/validate-production-manifest.sh | awk '{print $1}')" = "$EXPECTED_MANIFEST_VALIDATOR_SHA256"
-          expected_entries=$'cosign-ai-gateway.json:f\ncosign-api-web.json:f\ncosign-workers.json:f\nproduction-image-manifest.json:f\nsbom-ai-gateway.spdx.json:f\nsbom-api-web.spdx.json:f\nsbom-workers.spdx.json:f'
+          expected_entries=$'agentcore:d\ncosign-ai-gateway.json:f\ncosign-api-web.json:f\ncosign-workers.json:f\nline-ai-contract.ts:f\nline-ai-release-manifest.json:f\nproduction-image-manifest.json:f\nsbom-ai-gateway.spdx.json:f\nsbom-api-web.spdx.json:f\nsbom-workers.spdx.json:f'
           test "$(find release -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected_entries"
+          test "$(find release/agentcore -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = $'agentcore-artifact.json:f\nagentcore.zip:f'
           test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$SOURCE_SHA"
+          test "$(bash infra/ai-gateway/validate-line-ai-release-manifest.sh \
+            release/line-ai-release-manifest.json release/production-image-manifest.json \
+            release/agentcore release/line-ai-contract.ts "$SOURCE_SHA")" = "$SOURCE_SHA"
           echo "UAT_RELEASE_MANIFEST_SHA256=$(sha256sum release/production-image-manifest.json | awk '{print $1}')" >> "$GITHUB_ENV"
           for service in api-web ai-gateway workers; do
             jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" >/dev/null
@@ -502,6 +506,31 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
           allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
           role-session-name: watchdog-bms-uat-target-${{ github.run_id }}
+      - name: Deploy exact AgentCore candidate to a pinned UAT endpoint
+        if: steps.target.outputs.target == 'all' || steps.target.outputs.target == 'ai-gateway'
+        env:
+          SOURCE_COMMIT: ${{ needs.resolve-release.outputs.source_sha }}
+          DEPLOY_ENVIRONMENT: uat
+          AGENTCORE_ARTIFACT_MANIFEST: ${{ github.workspace }}/release/agentcore/agentcore-artifact.json
+          AGENTCORE_BINDING_OUTPUT: ${{ runner.temp }}/agentcore-uat-binding.json
+          AGENTCORE_EXECUTION_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/watchdog-bms-uat-agentcore-execution-role
+          AGENTCORE_SECRET_PREFIX: watchdog-bms/uat
+          PUBLIC_BASE_URL: ${{ env.PUBLIC_DOMAIN_URL }}
+          WATCHDOG_JWT_ISSUER: ${{ env.PUBLIC_DOMAIN_URL }}
+          WATCHDOG_JWT_AUDIENCE: watchdog-bms-uat
+          BEDROCK_MODEL_ID: global.anthropic.claude-sonnet-4-6
+        run: |
+          set -euo pipefail
+          export ERP_CORE_INTERNAL_URL="$(aws ssm get-parameter \
+            --name /watchdog-bms/uat/erp-core-internal-url --query Parameter.Value --output text)"
+          (cd candidate && bash infra/ai-gateway/agentcore-deploy.sh)
+          qualifier="$(bash candidate/infra/ai-gateway/validate-agentcore-candidate-binding.sh \
+            "$AGENTCORE_BINDING_OUTPUT" release/line-ai-release-manifest.json uat)"
+          runtime_arn="$(jq -er '.runtime.arn' "$AGENTCORE_BINDING_OUTPUT")"
+          echo "LINE_AI_AGENT_RUNTIME=agentcore" >> "$GITHUB_ENV"
+          echo "AGENTCORE_REGION=$AWS_REGION" >> "$GITHUB_ENV"
+          echo "AGENTCORE_RUNTIME_ARN=$runtime_arn" >> "$GITHUB_ENV"
+          echo "AGENTCORE_RUNTIME_QUALIFIER=$qualifier" >> "$GITHUB_ENV"
       - name: Deploy immutable UAT manifest
         env:
           TARGET: ${{ steps.target.outputs.target }}
@@ -626,7 +655,7 @@ jobs:
         run: |
           set -euo pipefail
           manifest=release/production-image-manifest.json
-          expected_release_entries=$'cosign-ai-gateway.json:f\ncosign-api-web.json:f\ncosign-workers.json:f\nproduction-image-manifest.json:f\nsbom-ai-gateway.spdx.json:f\nsbom-api-web.spdx.json:f\nsbom-workers.spdx.json:f'
+          expected_release_entries=$'agentcore:d\ncosign-ai-gateway.json:f\ncosign-api-web.json:f\ncosign-workers.json:f\nline-ai-contract.ts:f\nline-ai-release-manifest.json:f\nproduction-image-manifest.json:f\nsbom-ai-gateway.spdx.json:f\nsbom-api-web.spdx.json:f\nsbom-workers.spdx.json:f'
           test "$(find release -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected_release_entries"
           acceptance_dir="$RUNNER_TEMP/uat-production-acceptance"
           mkdir -p "$acceptance_dir"
@@ -719,7 +748,11 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/uat-release-passport-v2"
           mkdir -p "$root/release" "$root/tools"
-          cp release/production-image-manifest.json release/sbom-*.spdx.json release/cosign-*.json "$root/release/"
+          cp release/production-image-manifest.json release/line-ai-release-manifest.json \
+            release/line-ai-contract.ts \
+            release/sbom-*.spdx.json release/cosign-*.json "$root/release/"
+          cp -R release/agentcore "$root/release/"
+          cp "$RUNNER_TEMP/agentcore-uat-binding.json" "$root/agentcore-binding.json"
           cp tools/image-*.json tools/sbom-*.spdx.json tools/cosign-*.json "$root/tools/"
 
           catalog_rows="$root/migration-catalog.rows"
@@ -743,6 +776,9 @@ jobs:
 
           manifest="$root/release/production-image-manifest.json"
           manifest_hash="$(sha256sum "$manifest" | awk '{print $1}')"
+          line_ai_manifest_hash="$(sha256sum "$root/release/line-ai-release-manifest.json" | awk '{print $1}')"
+          agentcore_artifact_manifest_hash="$(sha256sum "$root/release/agentcore/agentcore-artifact.json" | awk '{print $1}')"
+          agentcore_binding_hash="$(sha256sum "$root/agentcore-binding.json" | awk '{print $1}')"
           catalog_file_hash="$(sha256sum "$root/migration-catalog.json" | awk '{print $1}')"
           migration_count="$(jq 'length' <<< "$migrations")"
           issued_at="$(date -u +%s)"
@@ -752,6 +788,9 @@ jobs:
             --argjson attempt "$GITHUB_RUN_ATTEMPT" --arg controller "$GITHUB_WORKFLOW_SHA" \
             --arg source "$SOURCE_SHA" --arg requested "$REQUESTED_TARGET" \
             --arg validatedCiRunId "$VALIDATED_CI_RUN_ID" --arg manifestHash "$manifest_hash" \
+            --arg lineAiManifestHash "$line_ai_manifest_hash" \
+            --arg agentcoreArtifactManifestHash "$agentcore_artifact_manifest_hash" \
+            --arg agentcoreBindingHash "$agentcore_binding_hash" \
             --arg catalogFileHash "$catalog_file_hash" --arg catalogHash "$catalog_hash" \
             --arg schemaHash "$schema_hash" --argjson migrationCount "$migration_count" \
             --argjson issued "$issued_at" --argjson expires "$expires_at" \
@@ -790,6 +829,13 @@ jobs:
                release:{artifactName:("uat-accepted-release-"+$source+"-attempt-"+($attempt|tostring)),
                  manifestPath:"release/production-image-manifest.json",manifestSha256:$manifestHash,
                  images:($manifest[0].images|map(runtime(.))|sort_by(.service))},
+               lineAiCandidate:{manifestPath:"release/line-ai-release-manifest.json",
+                 manifestSha256:$lineAiManifestHash,
+                 artifactManifestPath:"release/agentcore/agentcore-artifact.json",
+                 artifactManifestSha256:$agentcoreArtifactManifestHash,
+                 artifactPath:"release/agentcore/agentcore.zip",
+                 contractPath:"release/line-ai-contract.ts",
+                 bindingPath:"agentcore-binding.json",bindingSha256:$agentcoreBindingHash},
                tools:[tool($migrationTool[0]),tool($releaseTask[0])],
                migrationCatalog:{path:"migration-catalog.json",sha256:$catalogFileHash,
                  migrationCount:$migrationCount,repositoryCatalogHash:$catalogHash,
