@@ -17,7 +17,10 @@ Decisions:
 - Primary WatchDog/Codex agent implemented. Claude CLI remained restricted to read-only dev review/test and was not allowed to edit, implement, stage, commit, or deploy.
 
 Open questions:
-- None in code. Item 09C added the company settings and fail-closed runtime policy; each production tenant still owns its actual approver selection and accountant-approved cash-evidence wording.
+- None in code. Item 09C added company settings and runtime policy; the later owner-approved mode makes
+  no policy row default `OWNER_SELF`, while `DESIGNATED_APPROVERS`, current eligibility/scope and
+  evidence requirements still fail closed. Each production tenant still owns its actual approval mode
+  and accountant-approved cash-evidence wording.
 
 Artifacts:
 - `apps/api/prisma/migrations/20260713150000_substitute_receipt_evidence_hardening/migration.sql`
@@ -48,7 +51,9 @@ Verification:
 - Fresh database `watchdog_substitute_verify_0713b`: 58/58 migrations applied and seed completed.
 - Clean production web build using the repo's actual `pnpm build` Turbopack path passed. The diagnostic webpack fallback is not the supported SVG production path and was not used as final evidence.
 - Authenticated browser smoke on the production build passed: login, Expenses manual-upload screen, Head Office branch selection, expense detail, and the `ใบรับรองแทนใบเสร็จรับเงิน` pre-sign form with tax disclaimer, payer, business purpose, source/supporting evidence requirement, and disabled prepare action when evidence is incomplete.
-- Exact payer certification and distinct approver issuance are covered by focused API lifecycle tests. The local seed contains only one payer candidate, so the browser smoke intentionally did not fabricate a second approver or create an evidence record.
+- Exact payer certification and distinct-approver issuance are covered by focused API lifecycle tests.
+  The later `OWNER_SELF` shared-role exemption is covered by the approval-mode follow-up; the original
+  local seed contained only one payer candidate, so this browser smoke did not fabricate another user.
 - Claude CLI 2.1.207 was invoked only for read-only review/test; it returned no review output and was interrupted after hanging. No workaround or code write was attempted. Independent read-only agent reviews found race, ABAC, signature binding, export, retention, and immutable-snapshot gaps; those findings were closed before verification.
 - No deploy, stage, commit, or push was performed.
 

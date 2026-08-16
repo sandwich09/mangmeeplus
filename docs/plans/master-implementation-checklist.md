@@ -16,6 +16,14 @@ Web is the full Business OS workspace. LINE is the AI assistant, summary, alert,
 
 ## Active Cross-Cutting Production Gate
 
+- [ ] LINE AI Production Parity and Receipt Continuity Remediation
+  - Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
+  - Plan: [[plans/line-ai-production-parity-and-receipt-continuity-remediation-plan|LINE AI Production Parity and Receipt Continuity Remediation Plan]]
+  - Memory: [[agent-memory/line-ai-production-parity-and-receipt-continuity-remediation|LINE AI Production Parity and Receipt Continuity Remediation Memory]]
+  - Status 2026-08-16: evidence-backed spec/plan drafted; no code/config/deployment mutation. Live read-back proves Production ECS `3c8de8777ce1f85f7a3c1c0518c81154ab6eedf1` invokes AgentCore `eaa9005a1857b3cd582ceda743977496ed955110`, UAT accepts through `strands-local`, deployed source drops `pendingMedia` at the process request mapper, an ambiguous follow-up reached text capture at confidence 0.72, and the hosted timeout fired at 20,001 ms. Owner refinements require consolidated substitute-receipt preflight, validated partial text completion, intervening-question resume, durable typed web-prefill state, strict web-only issuance and exactly 15 turns/15 minutes; self-review found the current shared context constant is 16 and added an explicit regression/fix gate.
+  - Impact: blocks Production-ready claims and new Production LINE AI promotion for affected paths across items 07, 09, 10B, 10F, 10G and 24. Verified non-AI source-module behavior remains valid.
+  - Gate: one immutable ECS/AgentCore candidate; prod-shaped UAT through AgentCore; stored-media continuity plus deterministic final capture guard; grounded receipt/mixed-intent outcomes; measured latency and typed trace evidence; complete replay/failure/idempotency/rollback matrix; signed UAT/READY/Production and customer `OPEN`. No partial Production deploy may be used to expose the next error layer.
+
 - [ ] AI Permission and Tool Production Gap Closure
   - Plan: [[plans/ai-permission-tools-production-gap-closure-plan|AI Permission and Tool Production Gap Closure Plan]]
   - Memory: [[agent-memory/ai-permission-tools-production-gap-closure|AI Permission and Tool Production Gap Closure Memory]]
