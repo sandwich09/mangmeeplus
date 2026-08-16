@@ -4,8 +4,8 @@
 
 - Roadmap/checklist item: Active Cross-Cutting Production Gate — LINE AI Owner Daily Closing and Thai Business Vocabulary
 - Owner: Product owner
-- Date: 2026-08-16
-- Status: Accepted for implementation; not Production-ready
+- Date: 2026-08-17
+- Status: Conditional named-pilot release approved; not general/capacity Production-ready
 
 ## 2. Goal
 
@@ -149,6 +149,20 @@ The composer may improve phrasing but must preserve values, currencies, bucket n
 - This exception does not waive signature verification, account linking, tenant/permission checks, immutable candidate gates or visible refusal behavior.
 - Customer-wide `OPEN` remains prohibited until OA verification policy is accepted for that audience. The named pilot may be the only customer-acceptance subject for this release.
 
+### Conditional hosted-concurrency deferment — owner directive 2026-08-17
+
+- Approval reference: `OWNER-DIRECTIVE-2026-08-17-LINE-AI-CONCURRENCY-DEFERRED`.
+- The owner explicitly defers only the hosted concurrency p95/p99 run until after conditional
+  named-pilot `OPEN`. This records `DEFERRED`, never `PASS`; it does not authorize a general-capacity
+  or customer-wide Production-ready claim.
+- The 20-second timeout remains unchanged. The measured local worst case remains `19,778 ms`, so the
+  conditional release carries a known tail-latency/timeout risk.
+- Immutable hosted candidate identity, role/tenant security, real pilot smoke, persisted-state and
+  accepted-inbound reconciliation, forced failure and paired rollback remain pre-`OPEN` gates.
+- After `OPEN`, run the deferred hosted concurrency evidence against the same release. Any unexplained
+  timeout, duplicate mutation, permission leak or unreconciled terminal outcome immediately closes the
+  customer gate and invokes the paired rollback path.
+
 ## 13. Acceptance Criteria
 
 - [x] `ผปก`, `คชจ`, `ลค` route semantically in Thai regression and real-provider tests without keyword bypass.
@@ -161,7 +175,10 @@ The composer may improve phrasing but must preserve values, currencies, bucket n
 - [x] Handwritten multi-entry media never creates one automatic expense.
 - [x] Partial text answers and intervening questions preserve/resume the correct pending workflow within 15 turns.
 - [x] Focused unit/integration/security tests and a real local configured-provider conversation pass.
-- [ ] Hosted UAT concurrency p95/p99, persisted-state reconciliation, forced failure/rollback and exact candidate identity pass before timeout/release decisions.
+- [ ] Persisted-state reconciliation, forced failure/rollback and exact hosted candidate identity pass before conditional `OPEN`.
+- [ ] Hosted UAT concurrency p95/p99 is deferred under
+      `OWNER-DIRECTIVE-2026-08-17-LINE-AI-CONCURRENCY-DEFERRED`; it remains open after the conditional
+      release and must not be reported as `PASS`.
 - [ ] Signed UAT, READY and Production run ids plus named-pilot customer `OPEN` acceptance are recorded.
 
 ## 14. Open Questions
