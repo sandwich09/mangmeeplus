@@ -1170,7 +1170,8 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.equal(h.createExpenseCalls.length, 0);
     assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
     const statuses = updates.map((u: any) => u.data?.status);
-    assert.ok(statuses.includes('completed'), `expected completed, got ${statuses.join(',')}`);
+    assert.ok(statuses.includes('clarification_required'),
+      `expected clarification_required, got ${statuses.join(',')}`);
     assert.ok(!statuses.includes('caption_deferred_to_text'), 'no longer defers the caption');
   });
 

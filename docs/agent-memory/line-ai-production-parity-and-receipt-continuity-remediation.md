@@ -12,8 +12,9 @@ as `37b34e5`; repository story 7 (Production READY/promotion/rollback bound to t
 is committed as `7fb7e5b`; repository story 8 (signed expected hosted-runtime identity and fail-closed
 response verification) is committed as `d7f8f6e`; repository story 9 (reconciled accepted/terminal
 outcome telemetry and recovery semantics) is committed as `9985770`. Repository story 10 adds the
-persisted-state reconciliation report; it is verified and pending commit. No push, deployment, cloud
-or database mutation.
+persisted-state reconciliation report) is committed as `5333bc0`. Repository story 11 adds the
+whole-chain repository acceptance harness; it is verified and pending commit. No push, deployment,
+cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -197,10 +198,22 @@ Verification:
   payload after a non-delivery-pending terminal outcome. Provider event ids are SHA-256 references in
   output, never raw values. Focused reconciliation tests pass 3/3 and API typecheck passes; the command
   was not pointed at a database because the final local persisted-state replay has not run yet.
+- Story 11 encodes all 19 mandatory replay rows with semantic outcome/tool/mutation/delivery contracts
+  and binds each row to behavioral evidence that the aggregate runner executes. Seventeen rows are
+  repository-automated; the Royal Pizza and handwritten-bill rows remain explicitly controlled external
+  image replays so raw customer paths/facts cannot enter git or become false green fixture claims.
+- The aggregate runner passes catalog 4/4, API 266/266, AI Gateway 172/172, UAT candidate policy,
+  Production serving-mode, Production promotion-resource and Production deploy/rollback workflow
+  contracts. It exercises partial answers, consolidated blockers, side questions, revision/context
+  reload, permission revocation, redelivery, timeout, exact source binding and paired recovery together.
+- Whole-chain self-review found and corrected two stale-proof gaps rather than weakening runtime behavior:
+  one response-composer fixture still advertised 16 turns, and the buffered-media clarification spec still
+  expected generic `completed` even though a visible pending-media choice correctly terminalizes as
+  `clarification_required`. The exact reported casual phrases are also asserted as zero-ERP-tool paths.
 
 Next:
 
-- Commit repository story 10, then complete the whole-chain acceptance harness before the prod-shaped
-  local conversation replay.
+- Commit repository story 11, then add the source-hashed controlled-image/local-conversation runner and
+  execute the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

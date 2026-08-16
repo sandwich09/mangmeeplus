@@ -224,6 +224,8 @@ describe('IntentRouterAgent – model routing', () => {
   it('accepts pure casual and capability-help plans without tools', async () => {
     for (const [messageText, intent] of [
       ['สวัสดี วันนี้เหนื่อยนิดหน่อย', 'casual_conversation'],
+      ['หวยแตกมาก', 'casual_conversation'],
+      ['ต่อยกันไหม', 'casual_conversation'],
       ['น้องมั่งมีทำอะไรได้บ้าง', 'capability_help'],
     ] as const) {
       const router = new IntentRouterAgent({

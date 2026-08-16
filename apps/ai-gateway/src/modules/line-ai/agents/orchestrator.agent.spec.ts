@@ -84,7 +84,7 @@ function planFor(messageText: string) {
   if (/ทำอะไรได้บ้าง|ช่วยอะไรได้บ้าง/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'capability_help', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
-  if (/^สวัสดี|^วันนี้เหนื่อย/.test(messageText) && !/ยอดขาย|รายได้|สต็อก|ค่าใช้จ่าย/.test(messageText)) {
+  if (/^สวัสดี|^วันนี้เหนื่อย|หวยแตกมาก|ต่อยกันไหม/.test(messageText) && !/ยอดขาย|รายได้|สต็อก|ค่าใช้จ่าย/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
   if (/ค่าใช้จ่าย/.test(messageText)) {
@@ -199,6 +199,19 @@ describe('OrchestratorAgent', () => {
     assert.deepEqual(result.outputs, []);
     assert.equal(result.presentation, undefined);
     assert.match(result.replyText, /น้องมั่งมี/);
+  });
+
+  it('handles the reported casual and joking-provocation phrases with zero ERP tools', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    for (const message of ['หวยแตกมาก', 'ต่อยกันไหม']) {
+      const result = await orchestrator.run(makeReq(message));
+      assert.equal(result.plan.intents[0]?.intent, 'casual_conversation');
+      assert.equal(called, false);
+      assert.deepEqual(result.outputs, []);
+      assert.equal(result.presentation, undefined);
+      assert.match(result.replyText, /น้องมั่งมี/);
+    }
   });
 
   it('gives deterministic crisis support and never calls ERP tools, even beside a business request', async () => {

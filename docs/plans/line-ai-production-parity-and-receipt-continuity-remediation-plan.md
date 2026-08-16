@@ -1,6 +1,8 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-7 complete through signed UAT/Production candidate binding; no push or deploy**
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-10 committed; whole-chain repository
+acceptance harness verified and pending commit; controlled image/local conversation replay remains;
+no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -353,23 +355,23 @@ operation was run.
 
 ### Work
 
-- [ ] Encode every mandatory replay row from the spec with outcome, tool, mutation and delivery
+- [x] Encode every mandatory replay row from the spec with outcome, tool, mutation and delivery
       assertions rather than exact stylistic wording.
 - [ ] Add privacy-approved redacted/cropped image fixtures only after human field annotation; otherwise
       keep live-image rows in the controlled UAT script with source hashes.
-- [ ] Add negative/property cases: ambiguous text never writes; unknown enum/old ledger entry degrades;
+- [x] Add negative/property cases: ambiguous text never writes; unknown enum/old ledger entry degrades;
       retry/redelivery/concurrency never duplicates; permission revocation never leaks; a side question
       never consumes a form slot; text never satisfies evidence/signature/approval; consolidated
       preflight never falls back to sequential server-error discovery.
-- [ ] Add state-machine/replay cases for partial answers, invalid-plus-valid values, same-message question,
+- [x] Add state-machine/replay cases for partial answers, invalid-plus-valid values, same-message question,
       intervening question, explicit resume, multiple open workflows, pause/cancel, 15-minute context
       expiry and concurrent web revision.
-- [ ] Add paired AgentCore/ECS rollback drill and mismatched-candidate rejection drill.
+- [x] Add paired AgentCore/ECS rollback drill and mismatched-candidate rejection drill.
 - [x] Add a reconciliation report: every accepted inbound reaches one terminal outcome class. The
       report reads a bounded persisted-state window, fails on in-flight/unknown rows, duplicate event
       ids, unexplained terminal failures or payload retained after a non-replayable terminal outcome,
       and emits only hashed event references.
-- [ ] Add a stale-doc/static check ensuring checklist/spec/readiness do not claim local-only proof as
+- [x] Add a stale-doc/static check ensuring checklist/spec/readiness do not claim local-only proof as
       Production AgentCore proof.
 
 ### Verification commands

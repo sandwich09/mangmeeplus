@@ -37,7 +37,7 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
       },
     };
     const reply = await agent.composeCasual('วันนี้เหนื่อยจัง', provider, {
-      conversationContext: { windowMinutes: 15, maxTurns: 16, recentTurns: [{ at: '2026-08-15T10:00:00.000Z', userMessagePreview: 'สวัสดี' }] },
+      conversationContext: { windowMinutes: 15, maxTurns: 15, recentTurns: [{ at: '2026-08-15T10:00:00.000Z', userMessagePreview: 'สวัสดี' }] },
     });
     assert.equal(reply, 'เหนื่อยมานิดหน่อยสินะคะ พักหายใจแป๊บหนึ่งก็ได้นะคะ 😊');
     assert.equal(capturedSystemPrompt, CASUAL_CONVERSATION_SYSTEM_PROMPT);
