@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-// The suite is a hand-maintained list of paths in package.json, so a new spec file runs only if
-// someone also adds it there. Nothing enforced that, and 52 spec files had accumulated that no
+// The default suite is a hand-maintained list of paths in package.json, while privacy-safe whole-chain
+// suites are named in the repository acceptance catalog. A new spec file runs only if one of those
+// maintained runners names it. Nothing enforced that, and 52 spec files had accumulated that no
 // script referenced at all — including the RedisRateLimitService spec that the tokenless-DI guard
 // exists for, and this module's own body-validation coverage check. Two of them had rotted silently
 // while unreferenced, which is the real cost: a spec nobody runs is worse than no spec, because it
@@ -43,9 +44,13 @@ describe('every spec file is wired into a package.json script', () => {
   const scripts: Record<string, string> = JSON.parse(
     readFileSync(join(API_ROOT, 'package.json'), 'utf8'),
   ).scripts;
-  const referenced = Object.values(scripts)
+  const packageReferences = Object.values(scripts)
     .filter((command) => command.includes('--test'))
     .join(' ');
+  const referenced = `${packageReferences} ${readFileSync(
+    join(API_ROOT, '../../scripts/line-ai-whole-chain-acceptance.catalog.mjs'),
+    'utf8',
+  )}`;
 
   it('finds the scripts it is meant to police', () => {
     assert.ok(referenced.includes('--test'), 'expected at least one spec-running script');
@@ -62,7 +67,7 @@ describe('every spec file is wired into a package.json script', () => {
     assert.deepEqual(
       orphans,
       [],
-      `these spec files never run — add them to the \`test\` script in apps/api/package.json:\n${orphans.join('\n')}`,
+      `these spec files never run — add them to an owned test runner (apps/api/package.json or the whole-chain catalog):\n${orphans.join('\n')}`,
     );
   });
 

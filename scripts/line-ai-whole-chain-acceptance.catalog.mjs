@@ -280,6 +280,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
       'src/modules/line-ai/application/line-message-buffer.service.spec.ts',
+      'src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-reconciliation.logic.spec.ts',
       'src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts',
       'src/modules/expenses/infrastructure/prisma-expense.repository.line-continuation.spec.ts',
