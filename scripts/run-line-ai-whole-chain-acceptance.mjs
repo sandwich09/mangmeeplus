@@ -14,6 +14,10 @@ const suites = [
     id: 'catalog-contract', cwd: '.', command: process.execPath,
     args: ['--test', 'scripts/line-ai-whole-chain-acceptance-catalog.spec.mjs'],
   },
+  {
+    id: 'controlled-image-harness-contract', cwd: '.', command: process.execPath,
+    args: ['--test', 'scripts/run-line-ai-controlled-image-replay.spec.mjs'],
+  },
   ...(catalogOnly ? [] : LINE_AI_WHOLE_CHAIN_SUITES),
 ];
 
