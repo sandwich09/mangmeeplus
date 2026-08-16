@@ -15,6 +15,7 @@ jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" '
 ' > "$work/release.json"
 jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" '
   {schemaVersion:1,environment:"uat",sourceCommit:$source,
+   executionRoleArn:"arn:aws:iam::123456789012:role/watchdog-bms-uat-agentcore-execution-role",
    artifact:{sha256:$artifact,bucket:"watchdog-bms-agentcore-artifacts-123456789012",
      prefix:("agentcore/watchdog_orchestrator_uat_candidate-"+$source+"-"+$artifact+".zip"),objectVersionId:"version-1"},
    runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234",
@@ -37,8 +38,24 @@ reject default-endpoint '.endpoint.name="DEFAULT"'
 reject wrong-version '.endpoint.version="8"'
 reject wrong-artifact '.artifact.sha256=("f"*64)'
 reject wrong-source '.sourceCommit=("f"*40)'
+reject wrong-execution-role '.executionRoleArn="arn:aws:iam::123456789012:role/watchdog-bms-agentcore-execution-role"'
 reject source-not-in-object-key '.artifact.prefix=("agentcore/watchdog_orchestrator_uat_candidate-"+("f"*40)+"-"+.artifact.sha256+".zip")'
 reject endpoint-not-under-runtime '.endpoint.arn="arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-ZzYyXx9876/runtime-endpoint/candidate_uat_aaaaaaaaaaaa"'
 reject missing-object-version '.artifact.objectVersionId=""'
 reject extra-field '.rawPrompt="must-not-exist"'
+
+ecs_source=3c8de8777ce1f85f7a3c1c0518c81154ab6eedf1
+stale_agentcore_source=eaa9005a1857b3cd582ceda743977496ed955110
+jq -cS --arg source "$ecs_source" \
+  '.sourceCommit=$source|.agentCore.sourceCommit=$source' "$work/release.json" \
+  > "$work/known-split-release.json"
+jq -cS --arg source "$stale_agentcore_source" '
+  .sourceCommit=$source
+  |.artifact.prefix=("agentcore/watchdog_orchestrator_uat_candidate-"+$source+"-"+.artifact.sha256+".zip")
+' "$work/binding.json" > "$work/known-split-binding.json"
+if bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
+    "$work/known-split-binding.json" "$work/known-split-release.json" uat >/dev/null 2>&1; then
+  echo 'ERROR: binding validator accepted the known ECS/AgentCore split-source pair' >&2
+  exit 1
+fi
 echo 'AgentCore candidate binding specs passed'

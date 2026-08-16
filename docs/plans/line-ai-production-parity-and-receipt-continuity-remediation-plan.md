@@ -1,6 +1,6 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-6 complete through the signed UAT candidate boundary; no push or deploy**
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-7 complete through signed UAT/Production candidate binding; no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -94,8 +94,8 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 - [x] Define one additive release manifest schema containing source commit, service image digests,
       AgentCore artifact digest/object version/source, contract version and producer run identity.
-- [ ] Extend CI to produce and retain the manifest alongside existing immutable images and AgentCore
-      CodeZip; CI retention is complete, while Production consumption remains open.
+- [x] Extend CI to produce and retain the manifest alongside existing immutable images and AgentCore
+      CodeZip; Production consumes the retained bytes without rebuilding.
 - [x] Verify current AWS CLI and official AgentCore version/qualifier behavior before choosing the
       immutable binding mechanism.
 - [x] Implement one reversible binding:
@@ -103,10 +103,11 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
   - isolated candidate runtime plus exact ARN swap if it does not.
 - [x] Make UAT deploy/update the candidate AgentCore artifact and run the same hosted path intended
       for Production.
-- [ ] Remove the hard-coded approved source from promotion collection/readiness.
-- [ ] Make UAT Passport, READY and Production validation compare manifest source/artifact/digests to
+- [x] Remove the hard-coded approved source from promotion collection/readiness.
+- [x] Make UAT Passport, READY and Production validation compare manifest source/artifact/digests to
       live ECS and AgentCore read-back.
-- [ ] Preserve the last proven paired manifest for rollback.
+- [x] Preserve the previous active ECS task definition plus its AgentCore ARN/qualifier in signed READY,
+      and preserve the new retained manifest/binding for exact closed recovery.
 
 ### Likely files
 
@@ -138,7 +139,15 @@ immutable runtime version, and carries the exact binding in Passport V2. Offline
 bytes/source/image/contract/object key/runtime version, endpoint/runtime ARN mismatch, `DEFAULT`, and
 tampered Passport binding. Installed AWS CLI `2.36.15` proves endpoint read-back fields are
 `targetVersion`/`liveVersion`; the deploy check asserts both before UAT ECS receives the qualifier.
-Production READY/promotion binding and paired rollback remain Phase 1 blockers.
+Repository story 7 evidence: Production readiness stages the retained CodeZip in a dedicated
+Production candidate runtime/execution role, pins a source-specific endpoint and signs the exact
+binding into READY. Promotion consumes that binding rather than mutable GitHub ARN/qualifier values.
+The mutation-boundary baseline now preserves and rechecks the previous AI Gateway task definition and
+its AgentCore ARN/qualifier, while post-rollout verification requires the active task to match the
+signed candidate pair. An ECS canary rollback therefore restores the previous atomic task-definition
+pair; controller recovery redeploys the new exact candidate globally closed. Offline tests reject
+source/artifact/object-version/runtime/endpoint drift, prior-pair drift, active-task qualifier drift,
+`DEFAULT` for a new candidate and IAM/read-back mismatch. No cloud operation was run.
 
 ## Phase 2 — Close media continuity and mutation authority together
 

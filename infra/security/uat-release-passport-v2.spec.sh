@@ -62,6 +62,7 @@ bash "$repo_root/infra/ai-gateway/build-line-ai-release-manifest.sh" \
   "$root/release/agentcore" "$root/release/line-ai-contract.ts" "$run_id" 99
 jq -cnS --arg source "$source_sha" --arg artifact "$agentcore_sha" '
   {schemaVersion:1,environment:"uat",sourceCommit:$source,
+   executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-uat-agentcore-execution-role",
    artifact:{sha256:$artifact,bucket:"watchdog-bms-agentcore-artifacts-311414082667",
      prefix:("agentcore/watchdog_orchestrator_uat_candidate-"+$source+"-"+$artifact+".zip"),objectVersionId:"version-1"},
    runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234",

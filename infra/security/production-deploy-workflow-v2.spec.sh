@@ -15,6 +15,8 @@ grep -Fq 'curl --silent --show-error --location "${curl_retry[@]}"' "$workflow"
 for required in \
   'UAT Release Passport V2' 'Production Readiness V2 run' \
   'validate-production-release-ready-v2.sh' 'validate-uat-release-passport-v2.sh' \
+  'validate-agentcore-candidate-binding.sh' 'agentcore-production-binding.json' \
+  'AGENTCORE_RUNTIME_ARN=$runtime_arn' 'AGENTCORE_RUNTIME_QUALIFIER=$qualifier' \
   'compare-production-ready-baseline-v2.sh' 'RELEASE_DATABASE_AUTHORITY: PRODUCTION_READY_V2' \
   'RELEASE_MODE: passport-promotion' 'PRODUCTION_READY_PENDING_CATALOG_HASH' \
   'wait-production-maintenance-ingress-drain.sh' 'verify-production-maintenance.sh all' \
@@ -27,6 +29,12 @@ for required in \
   'RECONCILIATION_MAY_BE_REQUIRED' 'run-production-release-prepare.sh'; do
   grep -Fq "$required" "$workflow" || { echo "ERROR: Production V2 workflow is missing $required" >&2; exit 1; }
 done
+
+if grep -Fq 'AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}' "$workflow" \
+    || grep -Fq 'AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}' "$workflow"; then
+  echo 'ERROR: Production deploy still accepts mutable AgentCore identity variables' >&2
+  exit 1
+fi
 
 for owner_override in \
   'legal_mode="$(jq -er' '.legal.mode' \
@@ -116,6 +124,7 @@ grep -Fq "steps.release-prepare.outcome == 'success'" "$workflow"
 grep -Fq "steps.refresh-recovery.outcome == 'success'" "$workflow"
 grep -Fq "steps.refresh-finalize.outcome == 'success'" "$workflow"
 grep -Fq 'WORKER_INTERNAL_TOKEN="$(aws secretsmanager get-secret-value' "$workflow"
+grep -Fq 'lineAiBinding:(if $s.service=="ai-gateway" then' "$workflow"
 grep -Fq 'test "$ready_controller" = "$GITHUB_WORKFLOW_SHA"' "$workflow"
 grep -Fq 'effectiveTarget:$target' "$ready_workflow"
 grep -Fq 'alternate_expected_workflow="deploy-production-v2.yml"' "$runner"

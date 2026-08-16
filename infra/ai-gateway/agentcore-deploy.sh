@@ -361,8 +361,9 @@ if [ -n "${AGENTCORE_BINDING_OUTPUT:-}" ]; then
     --arg artifactSha "$actual_sha" --arg bucket "$BUCKET" --arg prefix "$DEPLOY_KEY" \
     --arg objectVersion "$S3_VERSION" --arg runtimeArn "$RUNTIME_ARN" --arg runtimeId "$RUNTIME_ID" \
     --arg runtimeVersion "$RUNTIME_VERSION" --arg endpointName "$ENDPOINT_NAME" \
-    --arg endpointArn "$ENDPOINT_ARN" --arg envSha "$env_sha" '
+    --arg endpointArn "$ENDPOINT_ARN" --arg envSha "$env_sha" --arg roleArn "$ROLE_ARN" '
       {schemaVersion:1,environment:$environment,sourceCommit:$source,
+       executionRoleArn:$roleArn,
        artifact:{sha256:$artifactSha,bucket:$bucket,prefix:$prefix,objectVersionId:$objectVersion},
        runtime:{arn:$runtimeArn,id:$runtimeId,version:$runtimeVersion,status:"READY"},
        endpoint:{arn:$endpointArn,name:$endpointName,version:$runtimeVersion,status:"READY"},

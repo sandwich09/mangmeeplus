@@ -83,8 +83,6 @@ jobs:
       BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
       LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}
       AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
-      AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
-      AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}
       AGENTCORE_INVOKE_TIMEOUT_MS: ${{ vars.AGENTCORE_INVOKE_TIMEOUT_MS }}
       AGENTCORE_MAX_BODY_BYTES: ${{ vars.AGENTCORE_MAX_BODY_BYTES || '1048576' }}
       AGENTCORE_MAX_MESSAGE_CHARS: ${{ vars.AGENTCORE_MAX_MESSAGE_CHARS || '8000' }}
@@ -225,6 +223,19 @@ jobs:
             "$(date -u +%s)" >/dev/null
           mkdir -p release
           cp "$passport_root/release/production-image-manifest.json" release/production-image-manifest.json
+          cmp -s "$passport_root/release/line-ai-release-manifest.json" \
+            "$ready_root/line-ai-release-manifest.json"
+          test "$(bash infra/ai-gateway/validate-line-ai-release-manifest.sh \
+            "$ready_root/line-ai-release-manifest.json" \
+            "$passport_root/release/production-image-manifest.json" \
+            "$passport_root/release/agentcore" "$passport_root/release/line-ai-contract.ts" \
+            "$source_sha")" = "$source_sha"
+          qualifier="$(bash infra/ai-gateway/validate-agentcore-candidate-binding.sh \
+            "$ready_root/agentcore-production-binding.json" \
+            "$ready_root/line-ai-release-manifest.json" production)"
+          runtime_arn="$(jq -er '.runtime.arn' "$ready_root/agentcore-production-binding.json")"
+          cp "$ready_root/line-ai-release-manifest.json" release/line-ai-release-manifest.json
+          cp "$ready_root/agentcore-production-binding.json" release/agentcore-production-binding.json
           test "$(bash infra/docker/validate-production-manifest.sh release/production-image-manifest.json \
             "$AWS_ACCOUNT_ID" "$AWS_REGION")" = "$source_sha"
           release_image="$(jq -er '.tools[]|select(.purpose=="release-task")|.image' "$passport_root/passport.json")"
@@ -254,6 +265,9 @@ jobs:
           printf '%s\n' \
             "PROMOTION_ROOT=$root" "DEPLOYMENT_EVIDENCE_DIR=$evidence" \
             "READY_ROOT=$ready_root" "PASSPORT_ROOT=$passport_root" \
+            "LINE_AI_RELEASE_MANIFEST=$ready_root/line-ai-release-manifest.json" \
+            "AGENTCORE_CANDIDATE_BINDING=$ready_root/agentcore-production-binding.json" \
+            "AGENTCORE_RUNTIME_ARN=$runtime_arn" "AGENTCORE_RUNTIME_QUALIFIER=$qualifier" \
             "SOURCE_SHA=$source_sha" "READY_SHA256=$ready_hash" \
             "READY_RUN_ATTEMPT=$ready_attempt" "READY_CONTROLLER=$ready_controller" \
             "RELEASE_TASK_IMAGE=$release_image" "MIGRATION_IMAGE=$migration_image" \
@@ -413,7 +427,12 @@ jobs:
               | {service:$s.service,image:$a.primaryContainer.image,
                  sourceCommit:([$a.primaryContainer.environment[]?|select(.name=="GIT_SHA")|.value][0]),
                  servingMode:$s.servingMode,
-                 serviceRevisionArn:$s.serviceRevisionArn,taskDefinitionArn:$s.taskDefinition.arn}]
+                 serviceRevisionArn:$s.serviceRevisionArn,taskDefinitionArn:$s.taskDefinition.arn,
+                 lineAiBinding:(if $s.service=="ai-gateway" then
+                   {runtime:([$a.primaryContainer.environment[]?|select(.name=="LINE_AI_AGENT_RUNTIME")|.value][0]),
+                    runtimeArn:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_ARN")|.value][0]),
+                    qualifier:([$a.primaryContainer.environment[]?|select(.name=="AGENTCORE_RUNTIME_QUALIFIER")|.value][0])}
+                   else null end)}]
               |sort_by(.service)==($ready[0].productionBaseline.services|sort_by(.service))
           ' "$health/current-health.json" >/dev/null
 

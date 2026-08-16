@@ -9,8 +9,31 @@ source="$(printf 'a%.0s' {1..40})"; controller="$(printf 'b%.0s' {1..40})"
 now=2000000000
 sha_file() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"|awk '{print $1}'; else shasum -a 256 "$1"|awk '{print $1}'; fi; }
 sha_stream() { if command -v sha256sum >/dev/null 2>&1; then sha256sum|awk '{print $1}'; else shasum -a 256|awk '{print $1}'; fi; }
-jq -cnS --arg source "$source" --argjson expires "$((now+86400))" '
- {sourceCommit:$source,expiresAtEpoch:$expires,tools:[{purpose:"migration-tool",
+artifact_sha="$(printf '8%.0s' {1..64})"
+jq -cnS --arg source "$source" --arg artifact "$artifact_sha" '
+  {schemaVersion:1,artifactKind:"LINE_AI_RELEASE_CANDIDATE",sourceCommit:$source,
+   producerRunId:"7001",validationRunId:"7000",bindingStrategy:"isolated_runtime_pinned_endpoint",
+   imageManifest:{path:"production-image-manifest.json",sha256:("9"*64),images:[]},
+   agentCore:{artifactPath:"agentcore/agentcore.zip",artifactManifestPath:"agentcore/agentcore-artifact.json",
+     artifactSha256:$artifact,sourceCommit:$source},
+   contract:{path:"line-ai-contract.ts",sha256:("d"*64),runtimeContractVersion:1}}
+' > "$work/line-ai-release-manifest.json"
+jq -cnS --arg source "$source" --arg artifact "$artifact_sha" '
+  {schemaVersion:1,environment:"production",sourceCommit:$source,
+   executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-agentcore-candidate-execution-role",
+   artifact:{sha256:$artifact,bucket:"watchdog-bms-agentcore-artifacts-311414082667",
+     prefix:("agentcore/watchdog_orchestrator_production_candidate-"+$source+"-"+$artifact+".zip"),
+     objectVersionId:"fixture-version-001"},
+   runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234",
+     id:"watchdog_orchestrator_production_candidate-AbCdEf1234",version:"14",status:"READY"},
+   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234/runtime-endpoint/candidate_production_"+($source[0:12])),
+     name:("candidate_production_"+($source[0:12])),version:"14",status:"READY"},
+   bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:("e"*64),contractVersion:1}
+' > "$work/agentcore-production-binding.json"
+jq -cnS --arg source "$source" --argjson expires "$((now+86400))" \
+  --arg lineManifest "$(sha_file "$work/line-ai-release-manifest.json")" '
+ {sourceCommit:$source,expiresAtEpoch:$expires,
+  lineAiCandidate:{manifestSha256:$lineManifest},tools:[{purpose:"migration-tool",
   image:"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-migration-tool@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]}' \
   > "$work/passport.json"
 jq -cnS --arg source "$source" '{schemaVersion:1,sourceCommit:$source,status:"EXACT_MATCH",
@@ -25,13 +48,20 @@ jq -cnS --arg source "$source" '["ai-gateway","api-web","workers"]|map(. as $ser
   {service:$service,image:("repo/"+$service+"@sha256:"+("4"*64)),sourceCommit:$source,
    servingMode:"maintenance_only",
    serviceRevisionArn:("arn:aws:ecs:ap-southeast-1:311414082667:service-revision/"+$service+"/1"),
-   taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$service+":1")})' > "$services"
+   taskDefinitionArn:("arn:aws:ecs:ap-southeast-1:311414082667:task-definition/"+$service+":1"),
+   lineAiBinding:(if $service=="ai-gateway" then
+     {runtime:"agentcore",runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",qualifier:"DEFAULT"}
+     else null end)})' > "$services"
 jq -cnS --slurpfile services "$services" '
  {status:"PASS",services:($services[0]|map(. as $s|{service:$s.service,
    servingMode:$s.servingMode,serviceRevisionArn:$s.serviceRevisionArn,taskDefinition:{arn:$s.taskDefinitionArn},
    rawEvidence:{describeExpressGatewayService:{raw:{second:{service:{activeConfigurations:[{
-     primaryContainer:{image:$s.image,environment:[{name:"GIT_SHA",value:$s.sourceCommit},
-       {name:"PRODUCTION_SERVING_MODE",value:$s.servingMode}]}}]}}}}}}))}' > "$work/production-health.json"
+     primaryContainer:{image:$s.image,environment:([{name:"GIT_SHA",value:$s.sourceCommit},
+       {name:"PRODUCTION_SERVING_MODE",value:$s.servingMode}]
+       +(if $s.service=="ai-gateway" then [
+         {name:"LINE_AI_AGENT_RUNTIME",value:$s.lineAiBinding.runtime},
+         {name:"AGENTCORE_RUNTIME_ARN",value:$s.lineAiBinding.runtimeArn},
+         {name:"AGENTCORE_RUNTIME_QUALIFIER",value:$s.lineAiBinding.qualifier}] else [] end))}}]}}}}}}))}' > "$work/production-health.json"
 jq -cnS --argjson now "$now" '
  {schemaVersion:2,observedAtEpoch:$now,a5PolicySha256:("5"*64),clonePolicySha256:null,
   promotionPrerequisitesSha256:("6"*64),securityPolicySha256:("7"*64),
@@ -46,7 +76,7 @@ api=https://wa-11111111111111111111111111111111.ecs.ap-southeast-1.on.aws
 ai=https://wa-22222222222222222222222222222222.ecs.ap-southeast-1.on.aws
 workers=https://wa-33333333333333333333333333333333.ecs.ap-southeast-1.on.aws
 jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
-  --arg workers "$workers" '
+  --arg workers "$workers" --slurpfile binding "$work/agentcore-production-binding.json" '
   def names:[
     "AWSServiceRoleForApplicationAutoScaling_ECSService","AWSServiceRoleForECS",
     "AWSServiceRoleForElastiCache","AWSServiceRoleForElasticLoadBalancing","AWSServiceRoleForRDS",
@@ -57,7 +87,9 @@ jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
     "watchdog-bms-production-a5-apply-execution","watchdog-bms-production-a5-bootstrap-execution",
     "watchdog-bms-production-a5-clone","watchdog-bms-production-a5-clone-execution",
     "watchdog-bms-production-a5-reader-bootstrap","watchdog-bms-production-a5-readonly",
-    "watchdog-bms-production-a5-readonly-execution","watchdog-bms-production-security-readonly",
+    "watchdog-bms-production-a5-readonly-execution",
+    "watchdog-bms-production-agentcore-candidate-execution-role",
+    "watchdog-bms-production-security-readonly",
     "watchdog-bms-release-task-role"];
   def role_arn($name):
     if $name=="AWSServiceRoleForApplicationAutoScaling_ECSService" then
@@ -73,7 +105,9 @@ jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
     else "arn:aws:iam::311414082667:role/"+$name end;
   def inline($name):
     if $name=="watchdog-bms-production-a5-bootstrap-execution" then null
-    elif $name=="watchdog-bms-agentcore-execution-role" then "watchdog-bms-agentcore-permissions"
+    elif $name=="watchdog-bms-agentcore-execution-role"
+      or $name=="watchdog-bms-production-agentcore-candidate-execution-role"
+      then "watchdog-bms-agentcore-permissions"
     elif $name=="watchdog-bms-deploy-production" then "watchdog-bms-production-deploy"
     elif $name=="ecsTaskExecutionRole" then "watchdog-bms-ecs-execution-secrets"
     elif $name=="watchdog-bms-release-task-role" then "watchdog-bms-release-task-ecs-read"
@@ -118,8 +152,7 @@ jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
      requiredVariableValuesSha256:("1"*64),requiredVariables:["AWS_DEPLOY_ROLE_ARN",
        "PUBLIC_DOMAIN_URL","WORKFLOW_WEBHOOK_ALLOWED_HOSTS","CLAMAV_HOST","LOG_KMS_KEY_ID",
        "SECURITY_ALERT_TOPIC_ARN","LINE_LOGIN_CHANNEL_ID","LINE_LIFF_ID",
-       "LINE_MESSAGING_CHANNEL_ID","LINE_AI_AGENT_RUNTIME","AGENTCORE_REGION",
-       "AGENTCORE_RUNTIME_ARN","AGENTCORE_RUNTIME_QUALIFIER"],valuesExposed:false},
+       "LINE_MESSAGING_CHANNEL_ID","LINE_AI_AGENT_RUNTIME","AGENTCORE_REGION"],valuesExposed:false},
    roles:(names|map(. as $name|{roleName:$name,roleArn:role_arn($name),
      state:(if $name=="watchdog-bms-production-a5-bootstrap-execution" then "ABSENT"
        elif $name=="watchdog-bms-production-a5-reader-bootstrap" then "REVOKED" else "READY" end),
@@ -164,15 +197,17 @@ jq -cnS --arg lifecycle "$lifecycle_sha" --arg api "$api" --arg ai "$ai" \
        recentAutomatedSnapshotAgeSeconds:3600,
        snapshotKmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27",
        managedSecretKmsKeyArn:"arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a"},
-     agentCore:{runtimeArn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
-       runtimeId:"watchdog_orchestrator-6xOx1tCbz0",runtimeVersion:"14",status:"READY",
+     agentCore:{runtimeArn:$binding[0].runtime.arn,
+       runtimeId:$binding[0].runtime.id,runtimeVersion:$binding[0].runtime.version,status:"READY",
        networkMode:"PUBLIC",artifactRuntime:"NODE_22",serverProtocol:"HTTP",appEnv:"production",
        deployEnvironment:"production",requireMMDSV2:true,
-       executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role",
-       gitSha:"eaa9005a1857b3cd582ceda743977496ed955110",
-       artifactBucket:"watchdog-bms-agentcore-artifacts-311414082667",
-       artifactPrefix:("agentcore/watchdog_orchestrator-eaa9005a1857b3cd582ceda743977496ed955110-"+("4"*64)+".zip"),
-       artifactVersionId:"fixture-version-001",entryPoint:["runtime.js"]}}}
+       executionRoleArn:$binding[0].executionRoleArn,gitSha:$binding[0].sourceCommit,
+       artifactSha256:$binding[0].artifact.sha256,artifactBucket:$binding[0].artifact.bucket,
+       artifactPrefix:$binding[0].artifact.prefix,artifactVersionId:$binding[0].artifact.objectVersionId,
+       entryPoint:["runtime.js"],endpointArn:$binding[0].endpoint.arn,
+       endpointName:$binding[0].endpoint.name,endpointStatus:"READY",
+       endpointVersion:$binding[0].endpoint.version,bindingStrategy:$binding[0].bindingStrategy,
+       configurationSha256:$binding[0].configurationSha256,contractVersion:$binding[0].contractVersion}}}
 ' > "$work/promotion-prerequisites.json"
 jq -cS --arg hash "$(sha_file "$work/promotion-prerequisites.json")" \
   '.promotionPrerequisitesSha256=$hash' "$work/production-runtime.json" \
@@ -184,6 +219,8 @@ jq -cnS --arg source "$source" --arg controller "$controller" --arg passport "$p
   --arg catalog "$(sha_file "$work/catalog-result.json")" \
   --arg runtime "$(sha_file "$work/catalog-runtime.json")" --slurpfile services "$services" \
   --arg runtimeBaseline "$(sha_file "$work/production-runtime.json")" \
+  --arg lineManifest "$(sha_file "$work/line-ai-release-manifest.json")" \
+  --arg candidateBinding "$(sha_file "$work/agentcore-production-binding.json")" \
   --argjson issued "$((now-60))" --argjson expires "$((now-60+86400))" '
   {schemaVersion:2,artifactKind:"PRODUCTION_RELEASE_READY_V2",environment:"production",
    repository:"example/watchdog",workflow:{path:".github/workflows/production-readiness.yml",runId:"9001",
@@ -194,6 +231,8 @@ jq -cnS --arg source "$source" --arg controller "$controller" --arg passport "$p
    aws:{accountId:"311414082667",region:"ap-southeast-1"},issuedAtEpoch:$issued,expiresAtEpoch:$expires,
    productionBaseline:{path:"production-health.json",sha256:$health,services:$services[0]},
    runtimeBaseline:{path:"production-runtime.json",sha256:$runtimeBaseline},
+   lineAiCandidate:{releaseManifestPath:"line-ai-release-manifest.json",releaseManifestSha256:$lineManifest,
+     bindingPath:"agentcore-production-binding.json",bindingSha256:$candidateBinding},
    migration:{classificationPath:"catalog-result.json",classificationSha256:$catalog,
     runtimePath:"catalog-runtime.json",runtimeSha256:$runtime,status:"EXACT_MATCH",pendingMigrationCount:0,clone:null},
    checks:{a5Reader:"PASS",artifactIntegrity:"PASS",awsPolicies:"PASS",imageSignatures:"PASS",
@@ -226,6 +265,7 @@ reject() {
 }
 reject stale '.expiresAtEpoch=1999999999'
 reject changed-baseline '.productionBaseline.services[0].sourceCommit=("f"*40)'
+reject changed-previous-agentcore '.productionBaseline.services[]|select(.service=="ai-gateway")|.lineAiBinding.qualifier="candidate_production_ffffffffffff"'
 reject missing-clone '.migration.status="APPEND_ONLY_PENDING"|.migration.pendingMigrationCount=1'
 reject failed-check '.checks.a5Reader="FAIL"'
 reject closed-owner-override '.legal={mode:"OWNER_OVERRIDE",ownerApprovalRef:"BOARD-2026-08-15",approvedBy:"MangmeeDev"}|.checks.legalMode="OWNER_OVERRIDE"'

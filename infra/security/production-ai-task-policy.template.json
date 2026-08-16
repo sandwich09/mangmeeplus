@@ -1,7 +1,7 @@
 {
   "Version":"2012-10-17",
   "Statement":[
-    {"Effect":"Allow","Action":["bedrock-agentcore:InvokeAgentRuntime"],"Resource":["<AGENTCORE_RUNTIME_ARN>","<AGENTCORE_RUNTIME_ARN>/runtime-endpoint/*"]},
+    {"Effect":"Allow","Action":["bedrock-agentcore:InvokeAgentRuntime"],"Resource":["arn:aws:bedrock-agentcore:ap-southeast-1:<ACCOUNT_ID>:runtime/watchdog_orchestrator-6xOx1tCbz0","arn:aws:bedrock-agentcore:ap-southeast-1:<ACCOUNT_ID>:runtime/watchdog_orchestrator-6xOx1tCbz0/runtime-endpoint/*","arn:aws:bedrock-agentcore:ap-southeast-1:<ACCOUNT_ID>:runtime/watchdog_orchestrator_production_candidate-*","arn:aws:bedrock-agentcore:ap-southeast-1:<ACCOUNT_ID>:runtime/watchdog_orchestrator_production_candidate-*/runtime-endpoint/*"]},
     {"Effect":"Allow","Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],"Resource":["arn:aws:bedrock:*::foundation-model/anthropic.*","arn:aws:bedrock:ap-southeast-1:<ACCOUNT_ID>:inference-profile/apac.anthropic.*","arn:aws:bedrock:ap-southeast-1:<ACCOUNT_ID>:inference-profile/global.anthropic.*"]}
   ]
 }

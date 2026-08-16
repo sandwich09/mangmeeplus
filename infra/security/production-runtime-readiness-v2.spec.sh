@@ -71,9 +71,14 @@ for required in watchdog-bms-production-security-readonly watchdog-bms-prod-db \
   AWSServiceRoleForRDS AWSServiceRoleForElastiCache \
   requiredVariableValuesSha256 promotion-environment.json \
   PRODUCTION_POLICY_READ_TOKEN_CONFIGURED PUBLIC_DOMAIN_URL WORKFLOW_WEBHOOK_ALLOWED_HOSTS \
-  LINE_AI_AGENT_RUNTIME AGENTCORE_REGION AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_QUALIFIER; do
+  LINE_AI_AGENT_RUNTIME AGENTCORE_REGION; do
   grep -F -- "$required" "$script" "$environment_validator" "$resource_collector" >/dev/null
 done
+if sed -n '/^required_variables=(/,/)/p' "$environment_validator" \
+    | grep -F 'AGENTCORE_RUNTIME_ARN' >/dev/null; then
+  echo 'ERROR: readiness still trusts mutable GitHub AgentCore identity variables' >&2
+  exit 1
+fi
 grep -F 'record_exact_role watchdog-bms-agentcore-execution-role' "$script" >/dev/null
 grep -F 'has("PermissionsBoundary")|not' "$script" >/dev/null
 for forbidden in get-secret-value put-role-policy modify-db-instance delete-db-instance; do

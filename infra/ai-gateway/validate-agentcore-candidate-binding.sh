@@ -13,12 +13,15 @@ case "$environment" in uat|production) ;; *) exit 2 ;; esac
 jq -e --arg environment "$environment" --slurpfile release "$release_manifest" '
   def exact($expected): (keys | sort) == ($expected | sort);
   exact(["artifact","bindingStrategy","configurationSha256","contractVersion","endpoint",
-    "environment","runtime","schemaVersion","sourceCommit"])
+    "environment","executionRoleArn","runtime","schemaVersion","sourceCommit"])
   and .schemaVersion == 1
   and .environment == $environment
   and .sourceCommit == $release[0].sourceCommit
   and .bindingStrategy == $release[0].bindingStrategy
   and .bindingStrategy == "isolated_runtime_pinned_endpoint"
+  and .executionRoleArn == ("arn:aws:iam::" + (.runtime.arn | split(":")[4]) + ":role/" +
+    (if $environment == "uat" then "watchdog-bms-uat-agentcore-execution-role"
+     else "watchdog-bms-production-agentcore-candidate-execution-role" end))
   and .contractVersion == $release[0].contract.runtimeContractVersion
   and (.configurationSha256 | test("^[0-9a-f]{64}$"))
   and (.artifact | exact(["bucket","objectVersionId","prefix","sha256"]))

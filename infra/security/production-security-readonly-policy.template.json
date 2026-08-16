@@ -34,10 +34,18 @@
       "Resource": "*"
     },
     {
-      "Sid": "AllowExactAgentCoreRuntimeRead",
+      "Sid": "AllowProductionAgentCoreRead",
       "Effect": "Allow",
-      "Action": "bedrock-agentcore:GetAgentRuntime",
-      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0"
+      "Action": [
+        "bedrock-agentcore:GetAgentRuntime",
+        "bedrock-agentcore:GetAgentRuntimeEndpoint"
+      ],
+      "Resource": [
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0/runtime-endpoint/*",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-*",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-*/runtime-endpoint/*"
+      ]
     },
     {
       "Sid": "AllowReleaseImageRead",
@@ -81,6 +89,7 @@
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-agentcore-candidate-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",
@@ -103,6 +112,7 @@
       "Effect": "Deny",
       "NotAction": [
         "bedrock-agentcore:GetAgentRuntime",
+        "bedrock-agentcore:GetAgentRuntimeEndpoint",
         "cloudwatch:DescribeAlarms",
         "cloudwatch:GetMetricStatistics",
         "ecr:BatchCheckLayerAvailability",

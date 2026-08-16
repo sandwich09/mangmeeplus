@@ -7,8 +7,9 @@ safeguards and authenticated opaque web prefill) is committed as `62b88a4`; repo
 captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`;
 repository story 4 (bounded delivered capability follow-up and closed prefill lifecycle) is committed as
 `7ce43fd`; repository story 5 (hosted runtime evidence and real cancellation) is committed as
-`ad4405a`. Repository story 6 binds CI and UAT to one retained CodeZip, contract and pinned AgentCore
-endpoint; it is verified and pending commit. No push, deployment, cloud or database mutation.
+`ad4405a`; repository story 6 (retained CodeZip/contract and pinned UAT AgentCore endpoint) is committed
+as `37b34e5`. Repository story 7 binds Production READY/promotion/rollback to the same retained candidate;
+it is verified and pending commit. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -49,11 +50,6 @@ Decisions:
 
 Open questions:
 
-- Production must consume and roll back the retained candidate binding without rebuilding or switching
-  a mutable endpoint; the UAT mechanism is now selected and proved offline.
-- The smallest repo-native persistence seam for typed receipt continuation must be chosen after
-  inventorying the existing clarification ledger, pending-media row and expense draft/revision fields;
-  a generic workflow engine and larger raw context are out of scope.
 - LINE OA verification policy for a named pilot versus all customers remains an owner operational decision.
 
 Artifacts:
@@ -147,10 +143,24 @@ Verification:
   `agentRuntimeVersion` field to exact `targetVersion` + `liveVersion`, bound the endpoint ARN under
   the runtime ARN, and stopped treating IAM/AgentCore read errors as absent resources. An
   `AccessDenied` can no longer fall through into create/update and reveal the next error layer.
+- Story 7 uses a dedicated Production candidate runtime and execution role so staging cannot mutate the
+  legacy live runtime or its trust. READY signs exact retained CodeZip/object version/source/contract,
+  runtime version, endpoint target/live version and role identity; Production deploy derives its ARN and
+  qualifier only from that signed binding. Mutable GitHub AgentCore identity variables are no longer an
+  accepted promotion input.
+- Story 7 forward review closed the paired-rollback gap: signed READY now records the previous active AI
+  Gateway task definition plus its AgentCore runtime ARN/qualifier, rechecks that pair at the mutation
+  boundary, and post-deploy verification rejects an active ECS revision bound to any other qualifier.
+  ECS canary rollback restores the previous task definition atomically; bounded controller recovery uses
+  the new exact retained pair in global maintenance mode. Static/negative suites cover split source,
+  tampered artifact/object version, endpoint drift, prior-pair drift, active-task drift and IAM drift.
+- Story 7 focused verification passes candidate binding, Passport, Production promotion resources,
+  runtime readiness, READY schema/baseline, readiness/deploy workflow, security preflight/bootstrap and
+  serving-mode suites; shell/YAML/JSON syntax and `git diff --check` pass. No AWS call or workflow ran.
 
 Next:
 
-- Commit repository story 6, then complete Production READY/promotion identity, paired rollback and
-  the whole-chain harness before the prod-shaped local conversation replay.
+- Commit repository story 7, then bind expected runtime identity into timeout/failure telemetry and
+  complete the whole-chain harness before the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

@@ -139,6 +139,8 @@ serving_model_provider=disabled
 serving_approved_ai_providers=''
 serving_queue_enabled=false
 serving_maintenance_active=true
+agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ
+agentcore_runtime_qualifier=candidate_production_0123456789ab
 
 api_state="$(jq -cn '{environment:({
   PRODUCTION_SERVING_MODE:"maintenance_only",
@@ -150,6 +152,9 @@ api_state="$(jq -cn '{environment:({
 ai_state="$(jq -cn '{environment:({
   PRODUCTION_SERVING_MODE:"maintenance_only",
   MODEL_PROVIDER:"disabled",
+  LINE_AI_AGENT_RUNTIME:"agentcore",
+  AGENTCORE_RUNTIME_ARN:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ",
+  AGENTCORE_RUNTIME_QUALIFIER:"candidate_production_0123456789ab",
   LINE_AI_AGENT_ORCHESTRATION_ENABLED:"false",
   LINE_AI_TOOLUSE_LOOP_ENABLED:"false",
   LINE_AI_COVERAGE_CRITIC_ENABLED:"false",
@@ -171,6 +176,11 @@ verify_service_environment workers "$workers_state"
 bad_workers_state="$(jq '.environment |= map(if .name == "QUEUE_ENABLED" then .value = "true" else . end)' <<< "$workers_state")"
 if verify_service_environment workers "$bad_workers_state" 2>/dev/null; then
   echo 'maintenance verifier accepted QUEUE_ENABLED=true' >&2
+  exit 1
+fi
+bad_ai_state="$(jq '.environment |= map(if .name == "AGENTCORE_RUNTIME_QUALIFIER" then .value = "candidate_production_ffffffffffff" else . end)' <<< "$ai_state")"
+if verify_service_environment ai-gateway "$bad_ai_state" 2>/dev/null; then
+  echo 'AI verifier accepted a task bound to a different AgentCore endpoint' >&2
   exit 1
 fi
 

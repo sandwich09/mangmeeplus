@@ -9,14 +9,21 @@ output="$1"
 [ ! -e "$output" ]
 region=ap-southeast-1
 account=311414082667
-agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0
-agentcore_execution_role_arn=arn:aws:iam::311414082667:role/watchdog-bms-agentcore-execution-role
-agentcore_approved_source=eaa9005a1857b3cd582ceda743977496ed955110
+root="$(cd "$(dirname "$0")/../.." && pwd -P)"
+: "${AGENTCORE_CANDIDATE_BINDING:?AGENTCORE_CANDIDATE_BINDING is required}"
+: "${LINE_AI_RELEASE_MANIFEST:?LINE_AI_RELEASE_MANIFEST is required}"
+bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
+  "$AGENTCORE_CANDIDATE_BINDING" "$LINE_AI_RELEASE_MANIFEST" production >/dev/null
+agentcore_runtime_arn="$(jq -er '.runtime.arn' "$AGENTCORE_CANDIDATE_BINDING")"
+agentcore_runtime_version="$(jq -er '.runtime.version' "$AGENTCORE_CANDIDATE_BINDING")"
+agentcore_endpoint_name="$(jq -er '.endpoint.name' "$AGENTCORE_CANDIDATE_BINDING")"
+agentcore_execution_role_arn="$(jq -er '.executionRoleArn' "$AGENTCORE_CANDIDATE_BINDING")"
+agentcore_approved_source="$(jq -er '.sourceCommit' "$AGENTCORE_CANDIDATE_BINDING")"
+agentcore_artifact_sha="$(jq -er '.artifact.sha256' "$AGENTCORE_CANDIDATE_BINDING")"
 managed_secret_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/b2e68e7f-e098-4b88-a92a-5a0f4fe2924a
 snapshot_kms_key_arn=arn:aws:kms:ap-southeast-1:311414082667:key/52b4943e-e9d7-4fae-b71c-c13b0b157b27
 parameter_prefix=/watchdog-bms/production
 secret_prefix=watchdog-bms/production
-root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/production-promotion-resources.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 
@@ -209,26 +216,37 @@ jq -e --arg arn "$managed_secret_kms_key_arn" '
 agentcore_runtime_id="${agentcore_runtime_arn##*/}"
 [[ "$agentcore_runtime_id" =~ ^[a-zA-Z][a-zA-Z0-9_]{0,99}-[a-zA-Z0-9]{10}$ ]]
 aws bedrock-agentcore-control get-agent-runtime --region "$region" \
-  --agent-runtime-id "$agentcore_runtime_id" --output json > "$work/agentcore-runtime.json"
+  --agent-runtime-id "$agentcore_runtime_id" --agent-runtime-version "$agentcore_runtime_version" \
+  --output json > "$work/agentcore-runtime.json"
+aws bedrock-agentcore-control get-agent-runtime-endpoint --region "$region" \
+  --agent-runtime-id "$agentcore_runtime_id" --endpoint-name "$agentcore_endpoint_name" \
+  --output json > "$work/agentcore-endpoint.json"
 jq -e --arg arn "$agentcore_runtime_arn" --arg id "$agentcore_runtime_id" \
   --arg role "$agentcore_execution_role_arn" --arg source "$agentcore_approved_source" \
-  --arg bucket "watchdog-bms-agentcore-artifacts-$account" '
+  --arg artifactSha "$agentcore_artifact_sha" \
+  --slurpfile binding "$AGENTCORE_CANDIDATE_BINDING" '
   .agentRuntimeArn==$arn and .agentRuntimeId==$id and .status=="READY"
-  and (.agentRuntimeVersion|test("^[1-9][0-9]{0,4}$"))
+  and .agentRuntimeVersion==$binding[0].runtime.version
   and .networkConfiguration.networkMode=="PUBLIC"
   and (.agentRuntimeArtifact.codeConfiguration as $code
     | $code.runtime=="NODE_22" and $code.entryPoint==["runtime.js"]
-    and $code.code.s3.bucket==$bucket
-    and ($code.code.s3.prefix
-      |test("^agentcore/watchdog_orchestrator-"+$source+"-[0-9a-f]{64}\\.zip$"))
-    and ($code.code.s3.versionId|type=="string" and length>0))
+    and $code.code.s3.bucket==$binding[0].artifact.bucket
+    and $code.code.s3.prefix==$binding[0].artifact.prefix
+    and $code.code.s3.versionId==$binding[0].artifact.objectVersionId)
   and .protocolConfiguration.serverProtocol=="HTTP"
   and .metadataConfiguration.requireMMDSV2==true
   and .roleArn==$role
   and .environmentVariables.APP_ENV=="production"
   and .environmentVariables.DEPLOY_ENVIRONMENT=="production"
-  and .environmentVariables.GIT_SHA==$source' \
+  and .environmentVariables.GIT_SHA==$source
+  and .environmentVariables.AGENTCORE_ARTIFACT_SHA256==$artifactSha' \
   "$work/agentcore-runtime.json" >/dev/null
+jq -e --arg arn "$agentcore_runtime_arn" --arg name "$agentcore_endpoint_name" \
+  --arg version "$agentcore_runtime_version" '
+  .agentRuntimeArn==$arn and .name==$name and .status=="READY"
+  and .targetVersion==$version and .liveVersion==$version
+  and .agentRuntimeEndpointArn==($arn+"/runtime-endpoint/"+$name)
+' "$work/agentcore-endpoint.json" >/dev/null
 
 if command -v sha256sum >/dev/null 2>&1; then
   lifecycle_sha="$(sha256sum "$work/lifecycle.json" | awk '{print $1}')"
@@ -244,12 +262,16 @@ jq -cnS \
   --arg bucket "$bucket" --arg lifecycleSha "$lifecycle_sha" \
   --arg logKms "$LOG_KMS_KEY_ID" --arg topic "$SECURITY_ALERT_TOPIC_ARN" \
   --arg agentcoreArn "$agentcore_runtime_arn" --arg agentcoreRole "$agentcore_execution_role_arn" \
-  --arg agentcoreSource "$agentcore_approved_source" --arg managedSecretKms "$managed_secret_kms_key_arn" \
+  --arg agentcoreSource "$agentcore_approved_source" --arg agentcoreArtifactSha "$agentcore_artifact_sha" \
+  --arg agentcoreEndpointName "$agentcore_endpoint_name" \
+  --arg managedSecretKms "$managed_secret_kms_key_arn" \
   --arg snapshotKms "$snapshot_kms_key_arn" \
   --arg snapshotArn "$(jq -er .DBSnapshotArn <<< "$recent_snapshot")" \
   --arg snapshotTime "$(jq -er .SnapshotCreateTime <<< "$recent_snapshot")" \
   --argjson snapshotAge "$snapshot_age_seconds" \
   --slurpfile agentcore "$work/agentcore-runtime.json" \
+  --slurpfile agentcoreEndpoint "$work/agentcore-endpoint.json" \
+  --slurpfile agentcoreBinding "$AGENTCORE_CANDIDATE_BINDING" \
   --slurpfile rdsOptions "$work/orderable-db-options.json" \
   --slurpfile rdsQuotas "$work/rds-account-attributes.json" \
   --arg sourceSubnetGroup "$source_subnet_group" \
@@ -283,9 +305,16 @@ jq -cnS \
      networkMode:"PUBLIC",artifactRuntime:"NODE_22",serverProtocol:"HTTP",
      appEnv:"production",deployEnvironment:"production",requireMMDSV2:true,
      executionRoleArn:$agentcoreRole,gitSha:$agentcoreSource,
+     artifactSha256:$agentcoreArtifactSha,
      artifactBucket:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.bucket,
      artifactPrefix:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.prefix,
      artifactVersionId:$agentcore[0].agentRuntimeArtifact.codeConfiguration.code.s3.versionId,
-     entryPoint:$agentcore[0].agentRuntimeArtifact.codeConfiguration.entryPoint},
+     entryPoint:$agentcore[0].agentRuntimeArtifact.codeConfiguration.entryPoint,
+     endpointArn:$agentcoreEndpoint[0].agentRuntimeEndpointArn,
+     endpointName:$agentcoreEndpointName,endpointStatus:"READY",
+     endpointVersion:$agentcoreEndpoint[0].liveVersion,
+     bindingStrategy:$agentcoreBinding[0].bindingStrategy,
+     configurationSha256:$agentcoreBinding[0].configurationSha256,
+     contractVersion:$agentcoreBinding[0].contractVersion},
    monitoring:{logGroups:["/ecs/watchdog-bms-prod-ai-gateway","/ecs/watchdog-bms-prod-api-web","/ecs/watchdog-bms-prod-workers"],
      retentionDays:14,kmsKeyArn:$logKms,alertTopicArn:$topic}}' > "$output"

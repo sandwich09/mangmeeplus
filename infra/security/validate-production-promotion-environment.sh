@@ -8,12 +8,15 @@ fi
 output="$1"
 [ ! -e "$output" ]
 account=311414082667
+root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 required_variables=(AWS_DEPLOY_ROLE_ARN PUBLIC_DOMAIN_URL WORKFLOW_WEBHOOK_ALLOWED_HOSTS CLAMAV_HOST
   LOG_KMS_KEY_ID SECURITY_ALERT_TOPIC_ARN LINE_LOGIN_CHANNEL_ID LINE_LIFF_ID
-  LINE_MESSAGING_CHANNEL_ID LINE_AI_AGENT_RUNTIME AGENTCORE_REGION AGENTCORE_RUNTIME_ARN
-  AGENTCORE_RUNTIME_QUALIFIER)
+  LINE_MESSAGING_CHANNEL_ID LINE_AI_AGENT_RUNTIME AGENTCORE_REGION)
+candidate_variables=(AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_QUALIFIER)
 missing=()
-for key in "${required_variables[@]}"; do [ -n "${!key:-}" ] || missing+=("$key"); done
+for key in "${required_variables[@]}" "${candidate_variables[@]}"; do
+  [ -n "${!key:-}" ] || missing+=("$key")
+done
 [ "${#missing[@]}" -eq 0 ] || {
   printf 'ERROR: required Production variables are absent: %s\n' \
     "$(IFS=,; echo "${missing[*]}")" >&2
@@ -52,12 +55,17 @@ test "$LINE_AI_AGENT_RUNTIME" = agentcore || {
 test "$AGENTCORE_REGION" = ap-southeast-1 || {
   echo 'ERROR: AGENTCORE_REGION is not ap-southeast-1' >&2; exit 1;
 }
-test "$AGENTCORE_RUNTIME_ARN" = \
-  "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0" || {
-  echo 'ERROR: AGENTCORE_RUNTIME_ARN is not the exact Production runtime' >&2; exit 1;
+: "${AGENTCORE_CANDIDATE_BINDING:?AGENTCORE_CANDIDATE_BINDING is required}"
+: "${LINE_AI_RELEASE_MANIFEST:?LINE_AI_RELEASE_MANIFEST is required}"
+test -f "$AGENTCORE_CANDIDATE_BINDING" && test ! -L "$AGENTCORE_CANDIDATE_BINDING"
+test -f "$LINE_AI_RELEASE_MANIFEST" && test ! -L "$LINE_AI_RELEASE_MANIFEST"
+qualifier="$(bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
+  "$AGENTCORE_CANDIDATE_BINDING" "$LINE_AI_RELEASE_MANIFEST" production)"
+test "$AGENTCORE_RUNTIME_ARN" = "$(jq -er '.runtime.arn' "$AGENTCORE_CANDIDATE_BINDING")" || {
+  echo 'ERROR: AGENTCORE_RUNTIME_ARN differs from the staged Production candidate' >&2; exit 1;
 }
-test "$AGENTCORE_RUNTIME_QUALIFIER" = DEFAULT || {
-  echo 'ERROR: AGENTCORE_RUNTIME_QUALIFIER is not DEFAULT' >&2; exit 1;
+test "$AGENTCORE_RUNTIME_QUALIFIER" = "$qualifier" || {
+  echo 'ERROR: AGENTCORE_RUNTIME_QUALIFIER differs from the pinned candidate endpoint' >&2; exit 1;
 }
 test "${PRODUCTION_POLICY_READ_TOKEN_CONFIGURED:-}" = true || {
   echo 'ERROR: PRODUCTION_POLICY_READ_TOKEN is absent from the Production environment' >&2; exit 1;
