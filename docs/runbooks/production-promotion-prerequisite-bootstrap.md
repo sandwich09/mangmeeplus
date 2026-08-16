@@ -21,6 +21,9 @@ or an interrupt. It accepts cleanup only after all three reads converge to `NoSu
 concurrent ceremony wins the atomic role-create race, an atomic `WatchdogCeremonyId` role tag lets
 the losing process stop without deleting authority owned by the winner; the same marker also lets a
 CLI retry that received `EntityAlreadyExists` retire its own accepted first request.
+After assuming the temporary role, the wrapper also bounded-retries one exact, non-mutating provider
+read for the selected mode before the durable helper can start. An IAM control-plane readback or a
+successful `AssumeRole` alone does not prove that the role policy has reached the authorization plane.
 
 Calling either script without `--apply` validates local syntax/templates only; it makes no AWS call
 and is not a live permission/resource preflight. Before a future contract-change ceremony, repeat

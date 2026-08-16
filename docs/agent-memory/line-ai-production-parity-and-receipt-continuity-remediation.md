@@ -363,3 +363,18 @@ Next:
   measured blocker, not permission to raise the timeout.
 - Production remains closed until exact paired artifact read-back, signed READY, bounded canary,
   terminal reconciliation and customer `OPEN` all pass. Do not unlock failures by partial deployment.
+
+## Release continuation — 2026-08-17
+
+- The implementation PRs are merged through `main@911227f4813689416225091d07ed080738a81876`.
+  Local signed-webhook reconciliation accepted and terminalized 3/3 events with delta zero; the
+  successful daily-closing tools took 104 ms and 60 ms while the model loop consumed the tail budget.
+- The first live prerequisite ceremony stopped before its first durable write: the temporary role
+  policy read back exactly and policy simulation allowed `rds:DescribeDBInstances`, but the assumed
+  session immediately received `AccessDenied`. Root readback then proved the bridge, role policy and
+  role all retired as `NoSuchEntity`. The evidence excludes an RDS ARN scoping defect and is
+  consistent with authorization-plane propagation lag; the new bounded canary distinguishes
+  convergence from a permanent deny instead of assuming either one or retrying the unchanged ceremony.
+- The wrapper now proves the selected full/clone/endpoint session with one exact non-mutating read,
+  bounded by the existing propagation budget, before invoking any durable helper. Fixtures cover
+  delayed convergence, permanent failure, every mode and cleanup-before-helper behavior.
