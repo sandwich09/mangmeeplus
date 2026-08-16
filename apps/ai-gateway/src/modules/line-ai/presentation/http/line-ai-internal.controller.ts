@@ -484,7 +484,7 @@ const OCR_NUMERIC_FIELDS = ['quantity', 'unitPrice', 'subtotalAmount', 'discount
 // guards make the 13-digit window maximal so runs inside longer numbers never qualify.
 const TAX_ID_CANDIDATE_RE = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
 const HQ_BRANCH_LABEL_RE = /สำนักงานใหญ่|สนญ|HEAD OFFICE|\bHO\b|\bHQ\b/i;
-const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
+const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?:\((?:รวม|INCL(?:UDED)?|INC)\)[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
 const VAT_AMOUNT_THEN_LABEL_RE = /(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)[ \t:|=_*\-]+(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)/giu;
 const RECEIPT_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|RECEIPT\s+DATE|ISSUE\s+DATE|DOCUMENT\s+DATE|SALE\s+DATE|DATE(?:\s*\/\s*TIME)?|วันที่|วัน\s*\/\s*เวลา)\s*(?:[*_]+\s*)?(?:[:=\-]|\|)?\s*(?:[*_]+\s*)?$/i;
 // Mirrors the review-form bound so a gate-surviving value is storable as entered.

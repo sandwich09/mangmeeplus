@@ -218,10 +218,20 @@ Verification:
   unchanged. A new application-context test boots the complete auth/security/health/LINE/draft/CRM
   graph under tsx, and both that test and AI Gateway typecheck pass. A real local main process now maps
   all routes and reaches `Nest application successfully started`.
+- Story 13 was found by sending the source-hashed Royal Pizza image through the real local Typhoon +
+  configured Bedrock OCR path. The first replay returned the correct total/date/document kind but
+  omitted the explicitly printed VAT `189.07`. The deterministic cross-check accepted a VAT label,
+  optional rate and amount, but not the exact printed annotation shape `VAT 7% (รวม) 189.07`.
+- The bounded VAT parser now accepts only the known included-VAT annotations `(รวม)`, `(INCL)`,
+  `(INCLUDED)` or `(INC)` between a printed rate and adjacent decimal amount. It still rejects a rate
+  alone and multiple tax components. Focused controller/cross-check tests pass 45/45 and AI Gateway
+  typecheck passes. Replaying the unchanged source hash returns `vatAmount=189.07`, sale date
+  `2026-08-15`, `ABBREVIATED_TAX_INVOICE` and `PAID`; the harness then correctly exposed its own
+  display-format mismatch (`2,890.00` versus `2890.00`) before reaching the handwritten row.
 
 Next:
 
-- Commit repository story 12, then add the source-hashed controlled-image/local-conversation runner and
-  execute the prod-shaped local conversation replay.
+- Normalize controlled money assertions to exact cents without weakening the expected values, then
+  complete both source-hashed image rows and the real-provider 15-turn local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

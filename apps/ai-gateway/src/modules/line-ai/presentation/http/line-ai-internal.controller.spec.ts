@@ -706,6 +706,8 @@ describe('applyOcrValueCrossCheck (item 10F)', () => {
       'TOTAL VAT: THB 21.79',
       'ภาษีมูลค่าเพิ่ม ๒๑.๗๙ บาท',
       'VAT 7% 21.79',
+      'vat 7% (รวม) 21.79',
+      '| vat | 7% | (รวม) | 21.79 |',
     ]) {
       const out = applyOcrValueCrossCheck({ vatMode: 'VAT_INCLUDED', missingFields: ['vatAmount'] }, text);
       assert.equal(out.vatAmount, '21.79', text);
