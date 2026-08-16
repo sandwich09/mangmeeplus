@@ -811,6 +811,24 @@ ensure_log_group() {
   if [ -n "$LOG_KMS_KEY_ID" ]; then
     aws_cmd logs associate-kms-key --log-group-name "$log_group" --kms-key-id "$LOG_KMS_KEY_ID" --region "$REGION"
   fi
+  if [[ "$log_group" == *"-api-web" ]]; then
+    aws_cmd logs put-metric-filter \
+      --log-group-name "$log_group" \
+      --filter-name line-ai-accepted \
+      --filter-pattern '{ $.msg = "line.ai.accepted" }' \
+      --metric-transformations "metricName=${metric_name}_line_ai_accepted,metricNamespace=WatchDog/LineAI,metricValue=1,defaultValue=0" \
+      --region "$REGION"
+    local terminal_class
+    for terminal_class in delivered clarification intentional_noop permission_refusal feature_disabled \
+      provider_unavailable timeout delivery_pending failed_terminal; do
+      aws_cmd logs put-metric-filter \
+        --log-group-name "$log_group" \
+        --filter-name "line-ai-terminal-${terminal_class}" \
+        --filter-pattern "{ \$.msg = \"line.ai.terminal\" && \$.terminalClass = \"${terminal_class}\" }" \
+        --metric-transformations "metricName=${metric_name}_line_ai_${terminal_class},metricNamespace=WatchDog/LineAI,metricValue=1,defaultValue=0" \
+        --region "$REGION"
+    done
+  fi
   if [ -n "$SECURITY_ALERT_TOPIC_ARN" ]; then
     aws_cmd logs put-metric-filter \
       --log-group-name "$log_group" \

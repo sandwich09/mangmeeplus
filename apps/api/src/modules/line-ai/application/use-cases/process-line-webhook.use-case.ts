@@ -58,6 +58,12 @@ import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { LegalAcceptanceService } from '../../../auth/application/legal-acceptance.service';
+import {
+  classifyLineAiGatewayFailure,
+  classifyLineAiTerminalOutcome,
+  emitLineAiTerminalOutcome,
+  terminalStatusForLineTurn,
+} from '../../domain/logic/line-ai-terminal-outcome.logic';
 
 export type LineTextEvent = {
   webhookEventId: string;
@@ -102,6 +108,7 @@ const AI_OPT_OUT_REPLY = '🤖 คุณปิดการใช้งานผ�
 export const LEGAL_ACCEPTANCE_REQUIRED_REPLY = '📄 กรุณาเข้าสู่เว็บแอป MangmeePlus เพื่อยอมรับข้อกำหนดการใช้งานและรับทราบนโยบายความเป็นส่วนตัวก่อนใช้งานบริการนี้นะคะ';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ใช้งาน LINE AI สำหรับบริษัทนี้ค่ะ';
 const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
@@ -1200,7 +1207,7 @@ export class ProcessLineWebhookUseCase {
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
         });
-        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
       const candidate = recentCapturedExpenses[0];
@@ -1270,7 +1277,12 @@ export class ProcessLineWebhookUseCase {
             }],
           });
         }
-        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        await this.updateEventLog(
+          event.webhookEventId,
+          result.pendingQuestion ? 'clarification_required' : 'completed',
+          undefined,
+          companyId,
+        );
         return;
       }
     }
@@ -1420,7 +1432,12 @@ export class ProcessLineWebhookUseCase {
         requestId, result: 'SUCCESS', riskLevel: 'LOW',
         metadataJson: { candidateCount: recentCapturedExpenses.length, canEdit, outcome: applied.status },
       });
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      await this.updateEventLog(
+        event.webhookEventId,
+        applied.status === 'clarify' ? 'clarification_required' : 'completed',
+        undefined,
+        companyId,
+      );
       return;
     }
 
@@ -1463,7 +1480,7 @@ export class ProcessLineWebhookUseCase {
             : {}),
         }],
       });
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
       return;
     }
 
@@ -1517,8 +1534,14 @@ export class ProcessLineWebhookUseCase {
       turnResponse = await this.aiGateway.requestLineTurn(turnRequest);
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, error: (err as Error).message });
-      await this.deliverReply(event, ERROR_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'ai_error', LINE_AI_ERROR_CODES.AI_TIMEOUT);
+      const failure = classifyLineAiGatewayFailure(err);
+      await this.deliverReply(
+        event,
+        failure.replyKind === 'timeout'
+          ? formatRefusal('ai_timeout')
+          : failure.replyKind === 'rate_limited' ? RATE_LIMIT_REPLY : ERROR_REPLY,
+      );
+      await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
       // The turn entry stays unacked on purpose: the reclaim worker retries it later and
       // pushes the answer, so a gateway outage cannot silently lose the request.
       return;
@@ -1567,12 +1590,7 @@ export class ProcessLineWebhookUseCase {
         where: { id: turnId },
         data: { status: 'ERROR', errorCode: `LINE_DELIVERY_${delivery.toUpperCase()}` },
       });
-      await this.updateEventLog(
-        event.webhookEventId,
-        'delivery_pending',
-        `LINE_DELIVERY_${delivery.toUpperCase()}`,
-        companyId,
-      );
+      // deliverMessages already performed the single received/response_ready → delivery_pending CAS.
       // Keep the turn and any waiting clarification open in Redis for push retry.
       return;
     }
@@ -1584,7 +1602,12 @@ export class ProcessLineWebhookUseCase {
         errorCode: turnResponse.errorCode,
       },
     });
-    await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+    await this.updateEventLog(
+      event.webhookEventId,
+      terminalStatusForLineTurn(turnResponse),
+      turnResponse.errorCode,
+      companyId,
+    );
 
     if (substituteInterruption) {
       await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
@@ -2031,7 +2054,7 @@ export class ProcessLineWebhookUseCase {
       }
       if (event.messageType !== 'image' || !this.initSignatureUpload || !this.createSignatureAsset) {
         await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
       const uploadIntent = await this.initSignatureUpload.execute(ctx, {
@@ -2064,7 +2087,7 @@ export class ProcessLineWebhookUseCase {
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: clarifyReply, intent: 'CLARIFY',
       });
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
       return;
     }
 
@@ -2074,7 +2097,7 @@ export class ProcessLineWebhookUseCase {
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: MUTATION_REFUSAL_REPLY, intent: 'MUTATION_REQUEST', refused: true,
       });
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      await this.updateEventLog(event.webhookEventId, 'forbidden', undefined, companyId);
       return;
     }
 
@@ -2099,7 +2122,12 @@ export class ProcessLineWebhookUseCase {
             });
           }
         }
-        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        await this.updateEventLog(
+          event.webhookEventId,
+          created ? 'clarification_required' : 'duplicate_media_pending',
+          undefined,
+          companyId,
+        );
         return { outcome: 'done' };
       }
       await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access);
@@ -2156,6 +2184,7 @@ export class ProcessLineWebhookUseCase {
       const reply = decision.persistMedia
         ? MEDIA_CLARIFY_REPLY
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
+      let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {
         const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
         if (created) {
@@ -2171,10 +2200,11 @@ export class ProcessLineWebhookUseCase {
             });
           }
         }
+        if (!created) terminalStatus = 'duplicate_media_pending';
       } else {
         await this.deliverReply(event, decision.persistMedia ? MEDIA_UNSUPPORTED_REPLY : reply);
       }
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      await this.updateEventLog(event.webhookEventId, terminalStatus, undefined, companyId);
       return;
     }
     if (decision.outcome !== 'expense') return;
@@ -2762,13 +2792,13 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async updateEventLog(webhookEventId: string, status: string, errorCode?: string, companyId?: string) {
-    await this.prisma.client.lineWebhookEventLog.updateMany({
+    const result = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: {
         webhookEventId,
         // Once delivery is pending, only the delivery path itself may advance
         // the event. Callers that continue after deliverMessages must not turn
         // an unsent response into a false "completed" record.
-        ...(status === 'delivery_pending' ? {} : { status: { not: 'delivery_pending' } }),
+        status: { not: 'delivery_pending' },
       },
       // The turn reached an outcome, so the replay payload is no longer needed: dropping it here
       // is what keeps raw LINE chat ids out of the table in steady state. `delivery_pending` is
@@ -2780,22 +2810,17 @@ export class ProcessLineWebhookUseCase {
         processedAt: new Date(),
         ...(status === 'delivery_pending' ? {} : { payloadJson: Prisma.DbNull }),
       },
-    }).catch(() => {});
-    const terminalClass = ({
-      completed: 'delivered',
-      delivery_pending: 'delivery_pending',
-      ai_error: errorCode === LINE_AI_ERROR_CODES.AI_TIMEOUT ? 'timeout' : 'failed_terminal',
-      rate_limited: 'intentional_noop',
-      unavailable_delivered: 'provider_unavailable',
-      legal_acceptance_required: 'permission_refusal',
-    } as Record<string, string | undefined>)[status];
-    if (terminalClass) {
-      this.logger.log({
-        msg: 'line.ai.terminal',
+    }).catch(() => null);
+    const terminalClass = classifyLineAiTerminalOutcome(status, errorCode);
+    if (result?.count === 1) {
+      emitLineAiTerminalOutcome(this.logger, { webhookEventId, companyId, status, errorCode });
+    } else if (terminalClass) {
+      this.logger.warn({
+        msg: 'line.ai.terminal.persistence_not_advanced',
         webhookEventId,
         companyId: companyId ?? null,
+        intendedStatus: status,
         terminalClass,
-        errorCode: errorCode ?? null,
       });
     }
   }
@@ -2816,7 +2841,8 @@ export class ProcessLineWebhookUseCase {
         },
         data: { processedAt: claimedAt, errorCode: null },
       });
-      return claimed.count === 1;
+      if (claimed.count === 1) return true;
+      return false;
     }
 
     try {

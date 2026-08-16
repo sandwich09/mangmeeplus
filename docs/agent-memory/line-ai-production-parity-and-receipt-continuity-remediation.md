@@ -9,9 +9,10 @@ repository story 4 (bounded delivered capability follow-up and closed prefill li
 `7ce43fd`; repository story 5 (hosted runtime evidence and real cancellation) is committed as
 `ad4405a`; repository story 6 (retained CodeZip/contract and pinned UAT AgentCore endpoint) is committed
 as `37b34e5`; repository story 7 (Production READY/promotion/rollback bound to that retained candidate)
-is committed as `7fb7e5b`. Repository story 8 verifies every hosted response against the signed expected
-source/artifact/contract identity and preserves that expectation on failures; it is verified and pending
-commit. No push, deployment, cloud or database mutation.
+is committed as `7fb7e5b`; repository story 8 (signed expected hosted-runtime identity and fail-closed
+response verification) is committed as `d7f8f6e`. Repository story 9 adds reconciled accepted/terminal
+outcome telemetry and recovery semantics; it is verified and pending commit. No push, deployment,
+cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -171,10 +172,27 @@ Verification:
   typechecks, UAT candidate policy, Production READY schema/baseline, Production deploy workflow and
   serving-mode suites. Self-review also narrowed the media-clarification ack parameter to the fields it
   actually consumes, closing a build-only TypeScript failure that the runtime unit tests did not expose.
+- Story 9 emits `line.ai.accepted` only when the first durable event row is created and emits one bounded
+  outcome record only after its owning status CAS succeeds. Every batched bubble receives an explicit
+  intentional-noop outcome; LINE redelivery/reclaim does not increment acceptance again. Successful
+  fallback no longer emits a transient delivery-pending outcome before provider-unavailable, while a
+  failed fallback remains replayable through the orphan worker.
+- Story 9 separates monthly/rate admission, provider/network/HTTP unavailability and real timeout.
+  Permission/feature cutoffs in the ledger are acknowledged only after a visible refusal reaches LINE;
+  stale turns and delivery-cap poison entries finalize with typed failed-terminal status. Legal-acceptance
+  delivery is claimed before terminalization, releases on failed delivery, and stale claims can be safely
+  reclaimed without storing raw chat/media data.
+- Story 9 look-forward review corrected media clarification, duplicate-pending-media, safety/privacy,
+  untyped refusal and mutation-refusal outcome families instead of counting every visible reply as
+  delivered. CloudWatch installs the accepted plus nine bounded outcome filters only on the API/web log
+  group. Focused LINE outcome/buffer/drain/orphan/gateway tests pass 145/145; API/contracts typechecks,
+  serving-mode deploy contract, maintenance pin/validator suites, full local production-image security
+  omnibus and whitespace check pass. The full Phase 5 persisted-state reconciliation report remains
+  deliberately separate and pending.
 
 Next:
 
-- Commit repository story 8, then implement reconciled terminal outcome metrics and complete the
-  whole-chain harness before the prod-shaped local conversation replay.
+- Commit repository story 9, then complete the whole-chain harness and persisted-state reconciliation
+  before the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

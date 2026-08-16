@@ -320,8 +320,12 @@ operation was run.
 - [ ] Run the complete replay matrix at expected UAT concurrency; record p50/p95/p99 per stage and
       total.
 - [ ] Derive any invoke/tool/HTTP timeout change from those results and record the calculation.
-- [ ] Add terminal metrics for delivered, clarification, intentional no-op, permission refusal,
+- [x] Add terminal metrics for delivered, clarification, intentional no-op, permission refusal,
       feature-disabled, provider unavailable, timeout, delivery-pending and failed-terminal.
+      Acceptance is emitted only for the first durable event create; batch members, retry/redelivery,
+      delivery fallback and drain recovery use CAS-owned outcomes so one accepted event cannot be
+      reported as both delivered and pending. CloudWatch filters are installed only on the API/web log
+      group; the Phase 5 report still has to reconcile the persisted final snapshot end to end.
 
 ### Likely files
 

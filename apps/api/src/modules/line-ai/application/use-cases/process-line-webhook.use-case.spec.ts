@@ -595,11 +595,11 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), true);
     assert.equal(aiGatewayRequests[0]?.messageText, 'ใบกำกับภาษี ร้านทดสอบ ยอด 1,234.50 บาท');
     assert.match(replies[0] ?? '', /ฟีเจอร์นี้ยังไม่ได้เปิดใช้งาน/);
-    assert.equal((updates.at(-1) as any).data.status, 'completed');
+    assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
-	  it('keeps a failed LINE delivery retryable and never records a false completed turn', async () => {
-	    const { prisma, updates, aiTurns, aiTurnUpdates } = makePrisma();
+  it('keeps a failed LINE delivery retryable and never records a false completed turn', async () => {
+    const { prisma, updates, aiTurns, aiTurnUpdates } = makePrisma();
     const { useCase } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
       aiGatewayFn: () => ({
@@ -616,15 +616,26 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
       sendReplyFn: async () => { throw new Error('LINE 400: Invalid reply token'); },
     });
+    const logs: any[] = [];
+    (useCase as any).logger = {
+      log: (entry: unknown) => logs.push(entry),
+      warn: () => undefined,
+      error: () => undefined,
+    };
 
     // Delivery throws, but execute resolves with persisted retry state.
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-delivery-fail-1', messageText: 'มีสินค้าใกล้หมดไหม' });
 
-	    assert.equal(aiTurns.length, 1, 'turn persisted despite delivery failure');
-      assert.equal((aiTurns[0] as any).data.status, 'PROCESSING');
-      assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
-	    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
-	  });
+    assert.equal(aiTurns.length, 1, 'turn persisted despite delivery failure');
+    assert.equal((aiTurns[0] as any).data.status, 'PROCESSING');
+    assert.equal((aiTurnUpdates.at(-1) as any).data.status, 'ERROR');
+    assert.equal((updates.at(-1) as any).data.status, 'delivery_pending');
+    assert.deepEqual(
+      logs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => entry.terminalClass),
+      ['delivery_pending'],
+      'a failed delivery must never emit the delivered terminal metric',
+    );
+  });
 
   it('does not mark an employee answer completed when reply token and push both fail', async () => {
     const { prisma, updates, aiTurnUpdates } = makePrisma();
