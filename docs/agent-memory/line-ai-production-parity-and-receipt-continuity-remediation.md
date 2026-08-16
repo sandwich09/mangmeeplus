@@ -345,6 +345,12 @@ Verification:
   derived from the API eligibility and continuation guards, tell the user the next valid action, and are
   protected by focused expectations plus the source-derived launch-code coverage test. Focused error UX
   tests pass 37/37, the complete Web suite passes 944/944, and Web typecheck passes.
+- PR #110 CI run `31958602747` then proved the Web gap closed and exposed a stale security-alarm
+  contract test: it selected the first metric `--filter-pattern`, which is now the preceding
+  `line.ai.accepted` metric, instead of the named `security-high-risk` filter. The Production deploy
+  script still contains both `CRITICAL`/`HIGH` risk clauses and both explicit AI event clauses. The
+  test now locates the intended filter by its stable name before validating its pattern; no alarm or
+  deploy behavior changed. Focused security tests pass 13/13, the full API suite and API typecheck pass.
 
 Next:
 
