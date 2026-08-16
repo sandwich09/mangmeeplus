@@ -492,7 +492,7 @@ export class PrismaExpenseRepository {
     scopes: { branchIds?: string[] } = {},
   ): Promise<ExpenseRecordWithRelations | null> {
     const r = await db.expenseRecord.findFirst({
-      where: { id, companyId },
+      where: { id, companyId, ...branchScopeWhere(scopes) },
       include: {
         lines: { orderBy: { lineNumber: 'asc' } },
         payments: { orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }] },
@@ -2326,6 +2326,66 @@ export class PrismaExpenseRepository {
         message: 'Expense changed while saving the substitute-receipt continuation.',
       });
       return { updatedAt: now, continuation };
+    });
+  }
+
+  /** Record only opaque/source-owned handles after the customer actually received a capture outcome. */
+  async recordDeliveredLineReceiptContinuation(input: {
+    companyId: string;
+    expenseId: string;
+    userId: string;
+    chatKeyHash: string;
+    deliveredOutcomeId: string;
+    scopes: { branchIds?: string[] };
+  }): Promise<void> {
+    await (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:line-receipt-continuation`}))`;
+      const current = await tx.expenseRecord.findFirst({
+        where: {
+          id: input.expenseId, companyId: input.companyId, createdByUserId: input.userId,
+          captureSource: 'LINE_UPLOAD', ...branchScopeWhere(input.scopes),
+        },
+        select: {
+          status: true, updatedAt: true, sourceChannelMetadataJson: true, aiVerificationSummaryJson: true,
+          substituteReceiptEvidences: { where: { status: { not: 'SUPERSEDED' } }, select: { id: true }, take: 1 },
+        },
+      });
+      if (!current) return;
+      // Any later metadata touch would invalidate expenseUpdatedAtAtPreparation and make an already
+      // prepared/certified document fail its own unchanged-source guard. Redelivery is read-only then.
+      if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(current.status)
+        || current.substituteReceiptEvidences.length > 0) return;
+      const existing = current.sourceChannelMetadataJson && typeof current.sourceChannelMetadataJson === 'object'
+        ? current.sourceChannelMetadataJson as Record<string, unknown>
+        : {};
+      if (existing['chatKeyHash'] !== input.chatKeyHash) return;
+      const now = new Date();
+      const metadata: Record<string, unknown> = {
+        ...existing,
+        lineReceiptContinuation: {
+          kind: 'CAPTURED_EXPENSE', expenseId: input.expenseId, userId: input.userId,
+          chatKeyHash: input.chatKeyHash, deliveredOutcomeId: input.deliveredOutcomeId,
+          sourceRevision: current.updatedAt.toISOString(), lastActivityAt: now.toISOString(),
+          verificationSummaryPresent: Boolean(current.aiVerificationSummaryJson),
+        },
+      };
+      const substitute = metadata['lineSubstituteReceiptContinuation'];
+      if (substitute && typeof substitute === 'object'
+        && ['OPEN', 'PAUSED'].includes(String((substitute as any).status))
+        && (substitute as any).expenseId === input.expenseId
+        && (substitute as any).userId === input.userId) {
+        metadata['lineSubstituteReceiptContinuation'] = {
+          ...(substitute as Record<string, unknown>),
+          targetRevision: now.toISOString(),
+        };
+      }
+      const changed = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId, updatedAt: current.updatedAt },
+        data: { sourceChannelMetadataJson: metadata, updatedAt: now },
+      });
+      if (changed.count !== 1) throw new ConflictException({
+        code: 'LINE_RECEIPT_CONTINUATION_STALE', message: 'Expense changed while recording the delivered receipt outcome.',
+      });
     });
   }
 

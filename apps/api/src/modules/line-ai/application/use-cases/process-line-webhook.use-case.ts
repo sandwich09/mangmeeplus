@@ -26,9 +26,10 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
-import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, type LineSubstituteReceiptContinuationResult } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
@@ -122,6 +123,7 @@ const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรา
 const PENDING_MEDIA_TTL_MINUTES = 30;
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
 const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
+const PENDING_ILLUSTRATION_RESOLUTION = Symbol('pendingIllustrationResolution');
 
 /** Same chatKey the text path and the message buffer use: the group, else the person. */
 function mediaChatKey(event: LineReceiptUploadEvent): string {
@@ -366,6 +368,12 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   return 'ambiguous';
 }
 
+export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'illustration'; remainder: string } | null {
+  const match = normalizeLineText(text).match(/^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([12])[.)]?\s*(?:และ|พร้อม(?:กับ)?|แล้ว)\s*(.+)$/u);
+  if (!match?.[2]) return null;
+  return { decision: match[1] === '1' ? 'receipt' : 'illustration', remainder: match[2].trim() };
+}
+
 function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[]): boolean {
   if (!toolNames || toolNames.length === 0) return true;
   return toolNames.every((toolName) => {
@@ -451,6 +459,62 @@ function formatPaypersReply(
   }
   parts.push('', `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${link}`);
   return parts.join('\n');
+}
+
+export function isGroundedReceiptFollowUp(text: string): boolean {
+  const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
+  const currentReference = /(ใบนี้|ใบเสร็จนี้|เอกสารนี้|รายการนี้|อันนี้|เมื่อกี้)/u.test(normalized);
+  const receiptQuestion = /(คืออะไร|ประเภท(?:ไหน|อะไร)|เป็นค่าใช้จ่าย|ลงค่าใช้จ่าย|ใช้กับบริษัท|บันทึก.*บริษัท|vat|ภาษี|เคลม)/iu.test(normalized);
+  return currentReference && receiptQuestion;
+}
+
+export function isInterveningQuestionText(text: string): boolean {
+  return /[?？]|ไหม|หรือไม่|อะไร|อย่างไร|ยังไง|เท่าไหร่|กี่/u.test(normalizeLineText(text));
+}
+
+function receiptSummaryFields(expense: ExpenseRecordWithRelations): ReceiptOcrFieldResult {
+  const summary = expense.aiVerificationSummaryJson;
+  const recognized = summary && typeof summary === 'object' ? summary['recognizedFields'] : undefined;
+  return recognized && typeof recognized === 'object' ? recognized as ReceiptOcrFieldResult : {};
+}
+
+export function formatGroundedReceiptFollowUp(
+  webBaseUrl: string | undefined,
+  companyId: string,
+  expense: ExpenseRecordWithRelations,
+  categoryName?: string,
+): string {
+  const fields = receiptSummaryFields(expense);
+  const missing = expense.aiVerificationSummaryJson?.['missingFields'];
+  const missingFields = Array.isArray(missing) ? missing.filter((item): item is string => typeof item === 'string').slice(0, 10) : [];
+  const sourceType = SOURCE_DOC_TYPE_REPLY_LABELS[expense.sourceDocumentType] ?? expense.sourceDocumentType;
+  const amount = Number(expense.grandTotalAmount) > 0
+    ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : 'ยังไม่ระบุ';
+  const printed = [
+    `• ผู้ขาย/ผู้รับเงิน – ${fields.vendorName ?? 'ยังอ่านยืนยันไม่ได้'}`,
+    `• วันที่พิมพ์บนเอกสาร – ${formatReplyDate(fields.expenseDate) ?? 'ยังอ่านยืนยันไม่ได้'}`,
+    `• เลขที่เอกสาร – ${fields.documentNumber ?? 'ยังอ่านยืนยันไม่ได้'}`,
+    `• ยอดจากการอ่านเอกสาร – ${fields.grandTotalAmount ? Number(fields.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังอ่านยืนยันไม่ได้'}`,
+    `• VAT ที่อ่านได้ – ${fields.vatAmount ? Number(fields.vatAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังอ่านยืนยันไม่ได้'}`,
+  ];
+  return [
+    '🧾 ตอบจากรายการที่บันทึกไว้ล่าสุดในแชทนี้',
+    '',
+    'ข้อมูลที่อ่านจากหลักฐาน (ยังรอตรวจสอบ):',
+    ...printed,
+    '',
+    'สถานะในระบบตอนนี้:',
+    `• ประเภทเอกสาร – ${sourceType}`,
+    `• ยอดรายการปัจจุบัน – ${amount} ${expense.currency}`,
+    `• หมวดค่าใช้จ่าย – ${categoryName ?? expense.expenseCategoryId ?? expense.accountHintKey ?? 'ยังไม่ระบุ'}`,
+    `• สถานะหลักฐานภาษี – ${expense.taxEvidenceStatus}`,
+    ...(missingFields.length ? ['', `ยังต้องตรวจ: ${missingFields.join(', ')}`] : []),
+    '',
+    'การนำไปเป็นค่าใช้จ่ายบริษัท: ระบุวัตถุประสงค์/หมวด ตรวจยอดและหลักฐาน แล้วให้ผู้มีสิทธิ์ยืนยันในเว็บ',
+    'ข้อมูลบนใบเสร็จเพียงอย่างเดียวไม่ยืนยันนโยบายบริษัทหรือสิทธิเครดิต VAT; ใบรับรองแทนใบเสร็จภายในก็ไม่ใช่ใบกำกับภาษี',
+    `เปิดตรวจสอบรายการ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`,
+  ].join('\n');
 }
 
 /** Phase 1 correction outcome: point at the right record, create nothing. Copy depends on what
@@ -800,6 +864,26 @@ export class ProcessLineWebhookUseCase {
     }
     if (result !== 'ok') {
       await this.updateEventLog(event.webhookEventId, 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
+    } else {
+      const resolution = (event as typeof event & {
+        [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
+      })[PENDING_ILLUSTRATION_RESOLUTION];
+      if (resolution) {
+        try {
+          await this.prisma.client.lineIntakePendingMedia.updateMany({
+            where: { id: resolution.id, status: 'PENDING' },
+            data: { status: 'RESOLVED_ILLUSTRATION' },
+          });
+          await this.ackMediaClarification(resolution.companyId, event, resolution.userId, resolution.id, 'acked');
+          delete (event as typeof event & {
+            [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
+          })[PENDING_ILLUSTRATION_RESOLUTION];
+        } catch (error) {
+          // Delivery is already customer-visible. Keep the row idempotently retryable and surface
+          // the storage failure instead of converting a successful answer into another reply.
+          this.logger.warn({ msg: 'line_pending_illustration_resolution_failed', pendingMediaId: resolution.id, error: (error as Error).message });
+        }
+      }
     }
     return result;
   }
@@ -1011,15 +1095,22 @@ export class ProcessLineWebhookUseCase {
       orderBy: { createdAt: 'desc' },
     });
     if (pendingMedia) {
-      const decision = classifyPendingMediaReply(normalizedText);
+      const splitReply = splitPendingMediaReply(normalizedText);
+      const decision = splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
-        await this.resolvePendingMediaAsReceipt(event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText);
+        await this.resolvePendingMediaAsReceipt(
+          event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
+          splitReply?.remainder,
+        );
         await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
         return;
       }
       if (decision === 'illustration') {
-        await this.prisma.client.lineIntakePendingMedia.update({ where: { id: pendingMedia.id }, data: { status: 'RESOLVED_ILLUSTRATION' } });
-        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
+        // Settle only after LINE receives the deferred outcome. Until then the stored file remains
+        // retryable and cannot disappear behind a failed reply.
+        (event as LineTextEvent & {
+          [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
+        })[PENDING_ILLUSTRATION_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId };
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
         normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
       }
@@ -1060,7 +1151,44 @@ export class ProcessLineWebhookUseCase {
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
 
+    if (this.expenseRepo && isGroundedReceiptFollowUp(normalizedText) && !isSubstituteReceiptConversationText(normalizedText)) {
+      if (recentCapturedExpenses.length > 1) {
+        const reply = ['พบรายการล่าสุดมากกว่า 1 รายการ กรุณาระบุรายการก่อนค่ะ', ...recentCapturedExpenses.map((item, index) => `${index + 1}) ${item.label}`)].join('\n');
+        await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
+        });
+        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        return;
+      }
+      const candidate = recentCapturedExpenses[0];
+      if (candidate) {
+        const expense = await this.expenseRepo.findByIdWithRelations(companyId, candidate.id, undefined, resolvedAccess.scopes);
+        const receiptContinuation = expense?.sourceChannelMetadataJson?.['lineReceiptContinuation'];
+        const hasDeliveredContinuation = receiptContinuation && typeof receiptContinuation === 'object'
+          && (receiptContinuation as any).expenseId === candidate.id
+          && (receiptContinuation as any).userId === identity.userId
+          && (receiptContinuation as any).chatKeyHash === chatKeyHashOf(event)
+          && typeof (receiptContinuation as any).deliveredOutcomeId === 'string';
+        if (expense && expense.createdByUserId === identity.userId && hasDeliveredContinuation) {
+          const category = expense.expenseCategoryId
+            ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === expense.expenseCategoryId)
+            : undefined;
+          const reply = formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name);
+          await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+          await this.persistIntakeTurn({
+            userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+            userMessagePreview: normalizedText, replyText: reply, intent: 'READ_SUMMARY',
+          });
+          await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+          return;
+        }
+      }
+    }
+
     const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    let substituteInterruption: LineSubstituteReceiptContinuationResult | undefined;
     if (this.substituteReceiptContinuation
       && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification)) {
       const continuationCtx: RequestContext = {
@@ -1073,30 +1201,42 @@ export class ProcessLineWebhookUseCase {
         chatKeyHash: chatKeyHashOf(event),
         recentCandidates: recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
       });
-      await this.deliverCompletedReply(event, result.replyText, companyId, resolvedAccess);
-      await this.persistIntakeTurn({
-        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: result.replyText, intent: 'CLARIFY',
-      });
-      await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
-        openWaiting
-          .filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
-          .map((item) => item.id),
-        'business_answer');
-      if (result.pendingQuestion) {
-        await this.ledger?.appendSubRequests({
-          companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
-          userId: identity.userId,
-          items: [{
-            text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
-            clarifyQuestion: result.pendingQuestion, intent: 'CLARIFY',
-            clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
-          }],
+      const routeSideQuestion = hasSubstituteClarification
+        && !isSubstituteReceiptConversationText(normalizedText)
+        && isInterveningQuestionText(normalizedText)
+        && !result.sideQuestionAnswered;
+      if (routeSideQuestion) {
+        substituteInterruption = result;
+      } else {
+        await this.deliverCompletedReply(event, result.replyText, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: result.replyText, intent: 'CLARIFY',
         });
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+          openWaiting
+            .filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
+            .map((item) => item.id),
+          'business_answer');
+        if (result.pendingQuestion) {
+          await this.ledger?.appendSubRequests({
+            companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+            userId: identity.userId,
+            items: [{
+              text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+              clarifyQuestion: result.pendingQuestion, intent: 'CLARIFY',
+              clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+            }],
+          });
+        }
+        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        return;
       }
-      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
-      return;
     }
+
+    const aiOpenClarifications = substituteInterruption
+      ? openClarifications?.filter((item) => item.clarifyForIntent !== 'SUBSTITUTE_RECEIPT_CONTINUATION')
+      : openClarifications;
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.
@@ -1108,7 +1248,7 @@ export class ProcessLineWebhookUseCase {
       messageText: normalizedText,
       conversationContext,
       ...(valueCandidates && { valueCandidates }),
-      ...(openClarifications && { openClarifications }),
+      ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       ...(recentCapturedExpenses.length > 0 && { recentCapturedExpenses }),
     });
 
@@ -1316,7 +1456,7 @@ export class ProcessLineWebhookUseCase {
       messageText: normalizedText,
       ...(conversationContext && { conversationContext }),
       ...(valueCandidates && { valueCandidates }),
-      ...(openClarifications && { openClarifications }),
+      ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       messagePreviewHash: hashMessagePreview(event.messageText),
     };
 
@@ -1356,6 +1496,13 @@ export class ProcessLineWebhookUseCase {
         riskLevel: 'MEDIUM',
         metadataJson: { intent: turnResponse.intent },
       });
+    }
+    if (substituteInterruption?.resumeCapsule) {
+      turnResponse = {
+        ...turnResponse,
+        replyText: `${turnResponse.replyText}\n\n${substituteInterruption.resumeCapsule}`,
+        presentation: undefined,
+      };
     }
     const turnId = await this.persistTurn(
       identity.userId,
@@ -1397,6 +1544,23 @@ export class ProcessLineWebhookUseCase {
       },
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+
+    if (substituteInterruption) {
+      await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+        openWaiting.filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION').map((item) => item.id),
+        'business_answer');
+      if (substituteInterruption.pendingQuestion) {
+        await this.ledger?.appendSubRequests({
+          companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+          userId: identity.userId,
+          items: [{
+            text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+            clarifyQuestion: substituteInterruption.pendingQuestion, intent: 'CLARIFY',
+            clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+          }],
+        });
+      }
+    }
 
     // 10.5 Acknowledge work only after delivery. Clarifications and uncovered
     // sub-requests are now safe to advance because the employee saw this turn.
@@ -1513,7 +1677,7 @@ export class ProcessLineWebhookUseCase {
     webhookEventId: string;
     userMessagePreview: string;
     replyText: string;
-    intent: 'EVIDENCE_CAPTURE' | 'SIGNATURE_REQUEST' | 'CLARIFY' | 'MUTATION_REQUEST' | 'CORRECTION';
+    intent: 'READ_SUMMARY' | 'EVIDENCE_CAPTURE' | 'SIGNATURE_REQUEST' | 'CLARIFY' | 'MUTATION_REQUEST' | 'CORRECTION';
     refused?: boolean;
   }): Promise<void> {
     try {
@@ -1915,6 +2079,7 @@ export class ProcessLineWebhookUseCase {
         sourceDocumentType: existingExpense.sourceDocumentType !== 'NEEDS_REVIEW' ? existingExpense.sourceDocumentType : undefined,
       });
       await this.deliverCompletedReply(event, receiptReply, companyId, access);
+      await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, existingExpense.id, access.scopes);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
@@ -2097,6 +2262,7 @@ export class ProcessLineWebhookUseCase {
       categoryName: effectiveCategory?.name || null,
     });
     await this.deliverCompletedReply(event, receiptReply, companyId, access);
+    await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
@@ -2232,6 +2398,7 @@ export class ProcessLineWebhookUseCase {
     access: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } },
     pending: { id: string; attachmentId: string; lineMessageId: string; mimeType: string },
     userMessagePreview: string,
+    additionalText?: string,
   ): Promise<void> {
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'].some((p) => access.permissions.includes(p));
     if (!canCaptureExpense || !this.expenseRepo) {
@@ -2262,14 +2429,70 @@ export class ProcessLineWebhookUseCase {
         chatKeyHashOf(event),
       ));
     }
-    await this.prisma.client.lineIntakePendingMedia.update({ where: { id: pending.id }, data: { status: 'RESOLVED_RECEIPT' } });
-    const reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
+    let reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
+    let pendingQuestion: string | undefined;
+    if (additionalText && this.substituteReceiptContinuation && isSubstituteReceiptConversationText(additionalText)) {
+      try {
+        const continuation = await this.substituteReceiptContinuation.execute({
+          requestId, authSubject: userId, userId, companyId,
+          membershipId: access.membershipId, roles: access.roles, permissions: access.permissions,
+          scopes: access.scopes, authProvider: 'line',
+        }, {
+          messageText: additionalText,
+          chatKeyHash: chatKeyHashOf(event),
+          recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
+        });
+        reply = `${reply}\n\nผลคำขอเพิ่มเติม:\n${continuation.replyText}`;
+        pendingQuestion = continuation.pendingQuestion;
+      } catch (error) {
+        this.logger.warn({ msg: 'line_substitute_continuation_additional_outcome_failed', requestId, error: (error as Error).message });
+        reply = `${reply}\n\nผลคำขอเพิ่มเติม:\n⏳ ส่วนใบรับรองแทนใบเสร็จรับเงินยังตรวจสอบไม่ได้ชั่วคราว รายการค่าใช้จ่ายด้านบนยังบันทึกสำเร็จและตรวจสอบได้ในเว็บ`;
+      }
+    }
     await this.deliverCompletedReply(event, reply, companyId, access);
+    await this.prisma.client.lineIntakePendingMedia.updateMany({
+      where: { id: pending.id, status: 'PENDING' },
+      data: { status: 'RESOLVED_RECEIPT' },
+    });
+    await this.recordDeliveredReceiptContinuation(event, companyId, userId, expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `[ยืนยันบันทึกใบเสร็จ] ${userMessagePreview}`, replyText: reply, intent: 'EVIDENCE_CAPTURE',
     });
+    if (pendingQuestion) {
+      await this.ledger?.appendSubRequests({
+        companyId, chatKey: event.pushTargetId ?? event.lineUserId, turnId: requestId,
+        webhookEventId: event.webhookEventId, userId,
+        items: [{
+          text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+          clarifyQuestion: pendingQuestion, intent: 'CLARIFY',
+          clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        }],
+      });
+    }
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+  }
+
+  private async recordDeliveredReceiptContinuation(
+    event: { webhookEventId: string; lineUserId: string; pushTargetId?: string },
+    companyId: string,
+    userId: string,
+    expenseId: string,
+    scopes: { branchIds?: string[] },
+  ): Promise<void> {
+    if (!this.expenseRepo) return;
+    try {
+      await this.expenseRepo.recordDeliveredLineReceiptContinuation({
+        companyId, expenseId, userId, scopes,
+        chatKeyHash: chatKeyHashOf(event),
+        deliveredOutcomeId: hashMessagePreview(event.webhookEventId),
+      });
+    } catch (error) {
+      // The reply is already delivered and the source expense remains authoritative. A later
+      // source read may fall back to the normal flow, but must not turn a successful capture into
+      // a customer-visible failure or duplicate mutation.
+      this.logger.warn({ msg: 'line_receipt_continuation_record_failed', expenseId, error: (error as Error).message });
+    }
   }
 
   /** Correction candidates for this turn (spec §8 candidate scope). Structured-only labels:

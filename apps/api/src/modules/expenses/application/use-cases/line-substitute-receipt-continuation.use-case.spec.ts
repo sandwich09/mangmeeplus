@@ -84,6 +84,17 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(h.saves.length, 1);
   });
 
+  it('returns forbidden without a target-specific web link when review permission is missing', async () => {
+    const h = harness();
+    const result = await h.useCase.execute({ ...ctx(), permissions: ['expense.receipt.line_upload'] }, {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.equal(result.status, 'FORBIDDEN');
+    assert.equal(result.webPath, undefined);
+    assert.equal(result.replyText.includes('/expenses/expense-1'), false);
+  });
+
   it('accepts several labeled fields in one message, preserves them across a later partial answer, and never creates PREPARED evidence', async () => {
     const h = harness();
     const first = await h.useCase.execute(ctx(), {
@@ -164,7 +175,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       messageText: 'วัตถุประสงค์: ไปส่งสินค้า\nใบนี้เคลม VAT ได้ไหม', chatKeyHash: 'chat-hash', recentCandidates: [],
     });
     assert.ok(result.acceptedFields.includes('businessPurpose'));
-    assert.match(result.replyText, /รับข้อมูลแล้ว: วัตถุประสงค์ทางธุรกิจ/);
+    assert.match(result.replyText, /รับข้อมูลเข้าร่างแล้ว.*วัตถุประสงค์ทางธุรกิจ/);
     assert.match(result.replyText, /คำถามแทรก — VAT/);
     assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose, 'ไปส่งสินค้า');
   });
@@ -176,10 +187,11 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
     const result = await h.useCase.execute(ctx(), {
-      messageText: 'ถ้าร้านไม่ออกใบเสร็จและจ่ายเงินสด เคลม VAT ได้ไหม?', chatKeyHash: 'chat-hash', recentCandidates: [],
+      messageText: 'วัตถุประสงค์ต้องกรอกอะไรบ้าง? ถ้าร้านไม่ออกใบเสร็จและจ่ายเงินสด เคลม VAT ได้ไหม?', chatKeyHash: 'chat-hash', recentCandidates: [],
     });
     assert.equal(result.acceptedFields.includes('reasonCode'), false);
     assert.equal(result.acceptedFields.includes('paymentMethod'), false);
+    assert.equal(result.acceptedFields.includes('businessPurpose'), false);
   });
 
   it('requires target selection when several open workflows exist', async () => {

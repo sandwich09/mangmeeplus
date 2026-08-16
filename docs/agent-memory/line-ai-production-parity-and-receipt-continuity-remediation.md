@@ -1,10 +1,10 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
 Status: Implementation in progress. Documentation baseline committed as `3a06829`; repository story 1
-(stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`.
-Repository story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document
-question safeguards and authenticated opaque web prefill) is implemented and focused-tested, pending commit.
-No push, deployment, cloud or database mutation.
+(stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`; repository
+story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document question
+safeguards and authenticated opaque web prefill) is committed as `62b88a4`. Repository story 3 is
+implemented, self-reviewed and focused-tested, pending commit. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -92,11 +92,26 @@ Verification:
   PREPARED evidence so it cannot stale its own certificate, and hypothetical/intervening questions
   cannot be parsed as payment/reason answers. A web/concurrent revision mismatch fails closed even on
   explicit resume; pause/cancel remain metadata-only.
+- Story 3 adds a bounded delivered receipt reference containing only opaque ids/hashes/revision and a
+  verification-summary presence flag. A grounded Royal Pizza follow-up reads the current scoped expense
+  without invoking the model and separates printed facts, current system state, unknown review fields,
+  policy/tax caveats and web action. Multiple current targets require selection.
+- Story 3 preserves independent outcomes for the exact reported mixed turn: the pending attachment is
+  captured once, the substitute-receipt request is preflighted separately, only its unresolved question
+  remains in the ledger, and LINE performs zero PREPARED/sign/approve/issue mutation. Arbitrary side
+  questions use the normal read path with the substitute clarification removed from model input, then
+  receive a deterministic resume capsule after successful delivery.
+- Story 3 look-forward review fixed two latent failures before commit: `findByIdWithRelations` now applies
+  caller branch scope to the main expense row, and receipt/illustration pending media is not resolved or
+  acknowledged until LINE delivery succeeds. A later redelivery cannot touch the revision of an expense
+  that already has active substitute evidence, avoiding self-invalidating PREPARED/certified documents.
+- Story 3 focused verification after review: 95/95 selected continuation/dispatch/repository tests pass;
+  the larger combined regression run passes 210/210 after the delivery-order hardening; API typecheck and
+  `git diff --check` pass.
 
 Next:
 
-- Commit repository story 2, then implement grounded captured-receipt follow-up and per-subrequest
-  pending-media mixed outcomes. After that, close remaining release identity/observability gates before
-  the prod-shaped local conversation replay.
+- Commit repository story 3, then close the remaining bounded-retention/capability follow-up and release
+  identity/observability/whole-chain harness gates before the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

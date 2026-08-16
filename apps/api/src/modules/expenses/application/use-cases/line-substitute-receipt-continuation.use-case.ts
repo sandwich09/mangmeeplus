@@ -45,7 +45,7 @@ export type LineSubstituteReceiptBlocker = { code: string; message: string; coll
 
 export type LineSubstituteReceiptContinuationResult = {
   handled: true;
-  status: 'READY_FOR_WEB' | 'BLOCKED' | 'INELIGIBLE' | 'TARGET_REQUIRED' | 'PAUSED' | 'CANCELLED' | 'STALE';
+  status: 'READY_FOR_WEB' | 'BLOCKED' | 'INELIGIBLE' | 'FORBIDDEN' | 'TARGET_REQUIRED' | 'PAUSED' | 'CANCELLED' | 'STALE';
   replyText: string;
   workflowId?: string;
   expenseId?: string;
@@ -54,11 +54,13 @@ export type LineSubstituteReceiptContinuationResult = {
   pendingQuestion?: string;
   webPath?: string;
   policy?: { configured: boolean; ready: boolean; approvalMode: 'OWNER_SELF' | 'DESIGNATED_APPROVERS' };
+  sideQuestionAnswered?: boolean;
+  resumeCapsule?: string;
 };
 
 export function isSubstituteReceiptConversationText(text: string): boolean {
   const normalized = text.normalize('NFKC').toLocaleLowerCase('th-TH');
-  return /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ทำใบรับรองต่อ)/u.test(normalized);
+  return /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ใบรับรองแทนเงินสด|ทำใบรับรองต่อ)/u.test(normalized);
 }
 
 function normalizedText(value: string): string {
@@ -137,11 +139,11 @@ function extractValues(
   const declarative = nonQuestionLines(text);
   const reasonCode = reasonCodeOf(declarative);
   if (reasonCode) values.reasonCode = reasonCode;
-  const missingReceiptReason = labeled(text, 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ');
+  const missingReceiptReason = labeled(declarative, 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ');
   if (missingReceiptReason) values.missingReceiptReason = missingReceiptReason;
-  const businessPurpose = labeled(text, 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ');
+  const businessPurpose = labeled(declarative, 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ');
   if (businessPurpose) values.businessPurpose = businessPurpose;
-  const payeeName = labeled(text, 'ผู้รับเงิน|ผู้ขาย|ร้านค้า');
+  const payeeName = labeled(declarative, 'ผู้รับเงิน|ผู้ขาย|ร้านค้า');
   if (payeeName) values.payeeName = payeeName;
   if (/(ฉัน|ผม|ดิฉัน|หนู).*(เป็น|คือ).*(ผู้จ่าย|คนจ่าย)|ผู้จ่าย(?:เงิน)?\s*(?:คือ|เป็น)?\s*(ฉัน|ผม|ดิฉัน|หนู)/u.test(declarative)) {
     values.payerUserId = currentUserId;
@@ -152,16 +154,16 @@ function extractValues(
     : undefined;
   const paymentMethod = paymentMethodOf(labeledPayment ?? plainPayment ?? '');
   if (paymentMethod) values.paymentMethod = paymentMethod;
-  const paymentDate = firstPaymentDate(text);
+  const paymentDate = firstPaymentDate(declarative);
   if (paymentDate) values.paymentDate = paymentDate;
-  const itemDescription = labeled(text, 'รายการ|รายละเอียดรายการ');
+  const itemDescription = labeled(declarative, 'รายการ|รายละเอียดรายการ');
   if (itemDescription) values.itemDescription = itemDescription;
-  const amountLabel = labeled(text, 'ยอด(?:รวม)?|จำนวนเงิน');
+  const amountLabel = labeled(declarative, 'ยอด(?:รวม)?|จำนวนเงิน');
   if (amountLabel) {
     const amount = extractValueCandidates(amountLabel).amounts[0]?.value;
     if (amount) values.amount = amount;
   }
-  const categoryLabel = labeled(text, 'หมวด(?:ค่าใช้จ่าย)?');
+  const categoryLabel = labeled(declarative, 'หมวด(?:ค่าใช้จ่าย)?');
   if (categoryLabel) {
     const wanted = normalizedText(categoryLabel).toLocaleLowerCase('th-TH');
     const category = activeCategories.find((item) => normalizedText(item.name).toLocaleLowerCase('th-TH') === wanted);
@@ -290,6 +292,20 @@ function workflowLink(companyId: string, expenseId: string, workflowId: string):
   return `/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&workflow=${encodeURIComponent(workflowId)}`;
 }
 
+function resumeCapsule(
+  expense: ExpenseRecordWithRelations,
+  state: LineSubstituteReceiptContinuation,
+  acceptedFields: string[],
+  webPath?: string,
+): string {
+  const lines = [`↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ ${expense.expenseNumber ?? expense.id} ยังอยู่`];
+  if (acceptedFields.length) lines.push(`รับเพิ่มแล้ว: ${acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
+  if (state.pendingQuestion) lines.push(`ทำต่อ: ${state.pendingQuestion}`);
+  else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่วนไฟล์/การลงนาม/อนุมัติทำในเว็บ`);
+  if (webPath) lines.push(`เปิดในเว็บ: ${webPath}`);
+  return lines.join('\n');
+}
+
 function formatResult(input: {
   status: LineSubstituteReceiptContinuationResult['status'];
   expense: ExpenseRecordWithRelations;
@@ -305,7 +321,7 @@ function formatResult(input: {
     `รายการ: ${input.expense.expenseNumber ?? input.expense.id}`,
     `ยอดปัจจุบัน: ${input.expense.grandTotalAmount} ${input.expense.currency}`,
   ];
-  if (input.acceptedFields.length) lines.push(`✅ รับข้อมูลแล้ว: ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
+  if (input.acceptedFields.length) lines.push(`✅ รับข้อมูลเข้าร่างแล้ว (ยังไม่แก้รายการ): ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (input.sideAnswer) lines.push('', input.sideAnswer);
   if (input.status === 'PAUSED') return [...lines, '⏸️ พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่', 'พิมพ์ “ทำใบรับรองต่อ” เพื่อกลับมาทำต่อ'].join('\n');
   if (input.status === 'CANCELLED') return [...lines, '🛑 ยกเลิกเฉพาะขั้นตอนสนทนานี้แล้ว รายการค่าใช้จ่ายและไฟล์หลักฐานไม่ได้ถูกลบ'].join('\n');
@@ -480,12 +496,17 @@ export class LineSubstituteReceiptContinuationUseCase {
     });
     const state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
     const ineligible = blockers.some((item) => ['expense_status_ineligible', 'source_type_ineligible', 'valid_receipt_normal_path', 'classification_ineligible', 'document_kind_ineligible', 'currency_not_supported', 'active_substitute_evidence_exists'].includes(item.code));
-    const status = ineligible ? 'INELIGIBLE' as const : blockers.length ? 'BLOCKED' as const : 'READY_FOR_WEB' as const;
-    const targetPath = ineligible ? `/companies/${ctx.companyId}/expenses/${expense.id}` : workflowLink(ctx.companyId, expense.id, state.workflowId);
+    const forbidden = blockers.some((item) => item.code === 'expense_review_forbidden');
+    const status = forbidden ? 'FORBIDDEN' as const : ineligible ? 'INELIGIBLE' as const : blockers.length ? 'BLOCKED' as const : 'READY_FOR_WEB' as const;
+    const targetPath = forbidden
+      ? undefined
+      : ineligible ? `/companies/${ctx.companyId}/expenses/${expense.id}` : workflowLink(ctx.companyId, expense.id, state.workflowId);
     return {
       handled: true, status, workflowId: state.workflowId, expenseId: expense.id,
       acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath,
       policy: policyFacts,
+      sideQuestionAnswered: Boolean(sideAnswer),
+      resumeCapsule: resumeCapsule(expense, state, Object.keys(acceptedNow), targetPath),
       ...(state.pendingQuestion ? { pendingQuestion: state.pendingQuestion } : {}),
       replyText: formatResult({ status, expense, state, acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath, policy: policyFacts, sideAnswer }),
     };

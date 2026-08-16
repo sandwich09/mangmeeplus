@@ -1,6 +1,6 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — docs baseline and repository stories 1-2 complete; no deploy**
+Status: **IMPLEMENTATION IN PROGRESS — docs baseline and repository stories 1-3 complete; no deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -138,7 +138,7 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 - [x] Preserve `pendingMedia` in the `openWaiting -> openClarifications` mapping and every downstream
       bounded contract.
-- [ ] Re-resolve pending row, attachment, expiry, company, user, membership, branch scope and current
+- [x] Re-resolve pending row, attachment, expiry, company, user, membership, branch scope and current
       permissions before use.
 - [x] Add a final API-owned capture eligibility function used by both immediate media and
       clarification/text continuations.
@@ -146,8 +146,8 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
       resolved pending-media choice.
 - [x] Authorize text-only capture only when source-grounded amount and purpose/category are both
       detectable, matching the existing Expense and Receipt Upload Spec.
-- [ ] Keep ambiguous/expired/legacy-without-media entries at clarify/no-op; never fall back to draft.
-- [ ] Preserve idempotency by LINE message id and existing source record; one retry/redelivery remains
+- [x] Keep ambiguous/expired/legacy-without-media entries at clarify/no-op; never fall back to draft.
+- [x] Preserve idempotency by LINE message id and existing source record; one retry/redelivery remains
       one attachment/draft.
 - [x] Ack clarification only after the resolved receipt/text-capture outcome is successfully delivered.
 
@@ -181,16 +181,16 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 ### Work
 
-- [ ] Add a bounded continuation reference after successful/reused receipt capture: source record id,
+- [x] Add a bounded continuation reference after successful/reused receipt capture: source record id,
       safe verification summary reference and delivered outcome id; no object key/signed URL/raw OCR.
-- [ ] Resolve follow-up receipt questions through the current permission-checked expense detail or a
+- [x] Resolve follow-up receipt questions through the current permission-checked expense detail or a
       deterministic API-owned capture summary, not the disabled evidence-write tool.
-- [ ] Format printed facts, uncertain/missing fields, company-policy questions and web review action
+- [x] Format printed facts, uncertain/missing fields, company-policy questions and web review action
       separately.
-- [ ] Preserve per-subrequest outcomes so a clarification choice can complete while final issuance is
+- [x] Preserve per-subrequest outcomes so a clarification choice can complete while final issuance is
       refused/handed to web.
-- [ ] Consume only the resolved clarification ids whose outcomes were delivered.
-- [ ] Keep substitute-receipt/final document generation, confirmation, payment, VAT decision and
+- [x] Consume only the resolved clarification ids whose outcomes were delivered.
+- [x] Keep substitute-receipt/final document generation, confirmation, payment, VAT decision and
       posting web-only.
 - [x] Set `LINE_AI_CONTEXT_MAX_TURNS` to 15 and keep the 15-minute general conversation window. Assert
       the same value in contract, API loader and gateway request metadata. Add a bounded typed
@@ -205,23 +205,23 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 - [x] Reconcile preflight with the owner-approved approval modes: no policy row is default
       `OWNER_SELF` and not automatically disabled; `DESIGNATED_APPROVERS` requires an eligible configured
       approver. Return `configured` and `ready` as different facts and never invent a policy blocker.
-- [ ] Accept bounded normalized partial candidates for missing-receipt reason, business purpose, payee,
+- [x] Accept bounded normalized partial candidates for missing-receipt reason, business purpose, payee,
       payment date/method, item/amount and configured category. Stage certificate-form-only values as
       web-prefill state without creating `PREPARED` evidence; mutate expense-owned fields only through
       existing draft/correction permission, status, provenance and validation gates. Resolve
       “ฉันเป็นผู้จ่าย” only to the active linked member in current branch scope.
 - [x] Reject text as a substitute for evidence files, signatures, approver policy, approval, issued PDF,
       confirmation/posting or an issuer-created external tax invoice.
-- [ ] Validate and idempotently apply each accepted field through the API-owned mutation boundary with
+- [x] Validate and idempotently apply each accepted field through the API-owned mutation boundary with
       provenance and current-revision protection. Preserve other accepted fields when one value is
       invalid or ambiguous; echo accepted fields and list all remaining blockers after each turn.
-- [ ] Classify an intervening question separately from pending field answers. Answer it through grounded
+- [x] Classify an intervening question separately from pending field answers. Answer it through grounded
       read tools, then append a source-generated resume capsule without consuming unresolved fields.
-- [ ] Support one message containing both field values and a question as independent subrequests.
+- [x] Support one message containing both field values and a question as independent subrequests.
 - [x] Support “ทำใบรับรองต่อ”, pause and cancel: resume only one uniquely permitted current workflow;
       require selection when several match; pause keeps accepted draft data; cancel closes only the
       targeted conversation state and never deletes expense/evidence records.
-- [ ] On context expiry or a web/concurrent edit, reload the current draft, access, policy, attachments
+- [x] On context expiry or a web/concurrent edit, reload the current draft, access, policy, attachments
       and revision. Never claim unsaved text survived and never overwrite newer source state.
 - [x] Pass only an opaque workflow/expense reference in the web handoff. After web authentication,
       reload and permission/revision-check server-side prefill values; do not place normalized business
@@ -229,7 +229,7 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 - [ ] Bind typed prefill retention to the existing expense-draft/business retention boundary. Close or
       purge it on explicit cancel, successful authenticated web consumption or retention cleanup; never
       use conversation-history expiry to delete a valid draft and never resurrect expired pending media.
-- [ ] Normalize “ใบทดแทนใบเสร็จ” to `ใบรับรองแทนใบเสร็จรับเงิน`; distinguish ready, blocked,
+- [x] Normalize “ใบทดแทนใบเสร็จ” to `ใบรับรองแทนใบเสร็จรับเงิน`; distinguish ready, blocked,
       ineligible, target-ambiguous, forbidden and temporarily unavailable responses instead of generic
       feature-disabled copy.
 - [ ] Preserve immediately delivered capability context for a bounded follow-up such as “อย่างไหร่”.
