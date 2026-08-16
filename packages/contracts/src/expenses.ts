@@ -697,7 +697,28 @@ export type GenerateSubstituteReceiptInput = {
   paymentMethod?: ExpensePaymentMethod;
   idempotencyKey: string;
   expectedExpenseUpdatedAt: string;
+  /** Opaque LINE handoff id; accepted values are reloaded server-side after authentication. */
+  continuationId?: string;
   note?: string;
+};
+
+export type LineSubstituteReceiptPrefill = {
+  workflowId: string;
+  expenseId: string;
+  targetRevision: string;
+  status: 'OPEN' | 'PAUSED';
+  acceptedValues: {
+    reasonCode?: SubstituteReceiptReasonCode;
+    missingReceiptReason?: string;
+    businessPurpose?: string;
+    payerUserId?: string;
+    payeeName?: string;
+    paymentDate?: string;
+    paymentMethod?: ExpensePaymentMethod;
+    itemDescription?: string;
+    amount?: string;
+    expenseCategoryId?: string;
+  };
 };
 
 export type PreviewSubstituteReceiptInput = {

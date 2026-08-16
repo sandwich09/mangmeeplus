@@ -7,15 +7,16 @@ export default async function NewSubstituteReceiptPage({
   searchParams,
 }: {
   params: Promise<{ companyId: string }>;
-  searchParams: Promise<{ expenseId?: string }>;
+  searchParams: Promise<{ expenseId?: string; workflow?: string }>;
 }) {
   const { companyId } = await params;
-  const { expenseId } = await searchParams;
+  const { expenseId, workflow } = await searchParams;
   const session = await fetchServerSession(companyId);
   return (
     <SubstituteReceiptWizardPage
       companyId={companyId}
       initialExpenseId={expenseId}
+      workflowId={workflow}
       userId={session?.userId ?? ''}
       permissions={session?.permissions ?? []}
       canSelfApprove={hasSelfApprovalExemptRole(session?.roles)}

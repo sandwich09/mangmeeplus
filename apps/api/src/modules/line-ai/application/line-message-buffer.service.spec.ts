@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Prisma } from '../../../generated/prisma/client';
 import { LineMessageBufferService } from './line-message-buffer.service';
 import type { LineBufferEnvelope } from './line-message-buffer.service';
+import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../domain/logic/line-message-buffer.logic';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,6 +37,7 @@ function makeHarness(opts: {
   const pushes: Array<{ to: string; text: string }> = [];
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
+  const serviceLogs: any[] = [];
   const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string }> = [];
   let receiptCall = 0;
 
@@ -123,7 +125,12 @@ function makeHarness(opts: {
   } as any;
 
   const service = new LineMessageBufferService(prisma, config, audit, lineReply, useCase);
-  return { service, rows, executed, receipts, replies, replyTokens, pushes, loadingCalls, auditLogs, preflightCalls };
+  (service as any).logger = {
+    log: (entry: unknown) => serviceLogs.push(entry),
+    warn: (entry: unknown) => serviceLogs.push(entry),
+    error: (entry: unknown) => serviceLogs.push(entry),
+  };
+  return { service, rows, executed, receipts, replies, replyTokens, pushes, loadingCalls, auditLogs, serviceLogs, preflightCalls };
 }
 
 let uniq = 0;
@@ -208,6 +215,57 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(h.rows.get('legal-push')?.payloadJson, Prisma.DbNull);
   });
 
+  it('returns the claim to received and rejects the webhook when legal guidance cannot be delivered', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true, replyResult: 'failed_other' });
+
+    await assert.rejects(
+      () => h.service.enqueue(textEnv('legal-retry', 'ข้อความสำคัญ')),
+      /LINE_LEGAL_REPLY_DELIVERY_FAILED/,
+    );
+    await assert.rejects(
+      () => h.service.enqueue(textEnv('legal-retry', 'ข้อความเดิมที่ LINE ส่งซ้ำ')),
+      /LINE_LEGAL_REPLY_DELIVERY_FAILED/,
+    );
+
+    assert.equal(h.rows.get('legal-retry')?.status, 'received');
+    assert.equal(h.rows.get('legal-retry')?.errorCode, 'RETRYABLE_LEGAL_REPLY_DELIVERY_FAILED');
+    assert.equal(h.rows.get('legal-retry')?.payloadJson, Prisma.DbNull);
+    assert.equal(h.executed.length, 0);
+    assert.equal(
+      h.serviceLogs.filter((entry) => entry.msg === 'line.ai.accepted').length,
+      1,
+      'LINE redelivery retries the durable row without double-counting the unique accepted event',
+    );
+  });
+
+  it('keeps a concurrent legal reply claim retryable and reclaims it only after the orphan bound', async () => {
+    const h = makeHarness({ legalAcceptanceRequired: true });
+    const createdAt = new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1_000);
+    h.rows.set('legal-orphan', {
+      webhookEventId: 'legal-orphan',
+      status: 'response_ready',
+      errorCode: 'LINE_AI_FORBIDDEN',
+      companyId: 'company-1',
+      createdAt,
+      processedAt: new Date(),
+      payloadJson: Prisma.DbNull,
+    });
+
+    await assert.rejects(
+      () => h.service.enqueue(textEnv('legal-orphan', 'ข้อความที่ LINE ส่งซ้ำเร็วเกินไป')),
+      /LINE_LEGAL_REPLY_IN_FLIGHT/,
+    );
+    assert.equal(h.replies.length, 0);
+
+    h.rows.get('legal-orphan')!.processedAt = createdAt;
+    await h.service.enqueue(textEnv('legal-orphan', 'ข้อความที่ LINE ส่งซ้ำหลัง worker เดิมหาย'));
+
+    assert.equal(h.replies.length, 1);
+    assert.equal(h.rows.get('legal-orphan')?.status, 'legal_acceptance_required');
+    assert.equal(h.serviceLogs.filter((entry) => entry.msg === 'line.ai.accepted').length, 0,
+      'reclaiming the previously accepted id must not increment acceptance again');
+  });
+
   it('keeps company-context controls usable but memory-only while acceptance is pending', async () => {
     const h = makeHarness({ legalAcceptanceRequired: true, debounceMs: 5_000 });
     await h.service.enqueue(textEnv('legal-company', '/company 2'));
@@ -259,6 +317,11 @@ describe('LineMessageBufferService – batching', () => {
     assert.equal(h.rows.get('f1')?.status, 'batched');
     assert.equal(h.rows.get('f2')?.status, 'batched');
     assert.equal(h.rows.get('f3')?.status, 'received');
+    assert.deepEqual(
+      h.serviceLogs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => [entry.webhookEventId, entry.terminalClass]),
+      [['f1', 'intentional_noop'], ['f2', 'intentional_noop']],
+      'each accepted bubble folded into the synthesized turn receives its own terminal class',
+    );
   });
 
   it('debounce 0 keeps per-event turns but still serializes them', async () => {
@@ -442,6 +505,11 @@ describe('LineMessageBufferService – dispatch failure', () => {
     assert.match(h.replies[0] ?? '', /ระบบตอบกลับไม่ได้ชั่วคราว/);
     assert.equal(h.rows.get('dispatch-fail')?.status, 'unavailable_delivered');
     assert.equal(h.rows.get('dispatch-fail')?.errorCode, null);
+    assert.deepEqual(
+      h.serviceLogs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => entry.terminalClass),
+      ['provider_unavailable'],
+      'the transient response-ready claim must not double-count delivery-pending',
+    );
   });
 
   it('keeps the event delivery_pending when the fallback cannot reach LINE', async () => {
@@ -456,6 +524,10 @@ describe('LineMessageBufferService – dispatch failure', () => {
 
     assert.equal(h.rows.get('dispatch-pending')?.status, 'delivery_pending');
     assert.equal(h.rows.get('dispatch-pending')?.errorCode, 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED');
+    assert.deepEqual(
+      h.serviceLogs.filter((entry) => entry.msg === 'line.ai.terminal').map((entry) => entry.terminalClass),
+      ['delivery_pending'],
+    );
   });
 });
 

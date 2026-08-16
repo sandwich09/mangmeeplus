@@ -1475,6 +1475,7 @@ def e0_h3_environment_evidence:
 
 def e0_h3_read_actions: [
   "bedrock-agentcore:GetAgentRuntime",
+  "bedrock-agentcore:GetAgentRuntimeEndpoint",
   "cloudwatch:DescribeAlarms","cloudwatch:GetMetricStatistics",
   "ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:DescribeImageScanFindings",
   "ecr:DescribeImages","ecr:GetAuthorizationToken","ecr:GetDownloadUrlForLayer",
@@ -1507,9 +1508,14 @@ def e0_h3_inline_policy: {
       "s3:GetBucketVersioning","secretsmanager:DescribeSecret","ssm:GetParameters",
       "sts:GetCallerIdentity"
     ],Resource:"*"},
-    {Sid:"AllowExactAgentCoreRuntimeRead",Effect:"Allow",
-      Action:"bedrock-agentcore:GetAgentRuntime",
-      Resource:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0"},
+    {Sid:"AllowProductionAgentCoreRead",Effect:"Allow",
+      Action:["bedrock-agentcore:GetAgentRuntime","bedrock-agentcore:GetAgentRuntimeEndpoint"],
+      Resource:[
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0/runtime-endpoint/*",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-*",
+        "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-*/runtime-endpoint/*"
+      ]},
     {Sid:"AllowReleaseImageRead",Effect:"Allow",Action:[
       "ecr:BatchCheckLayerAvailability","ecr:BatchGetImage","ecr:DescribeImageScanFindings",
       "ecr:DescribeImages","ecr:GetDownloadUrlForLayer"
@@ -1536,6 +1542,7 @@ def e0_h3_inline_policy: {
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-reader-bootstrap",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-a5-readonly-execution",
+        "arn:aws:iam::311414082667:role/watchdog-bms-production-agentcore-candidate-execution-role",
         "arn:aws:iam::311414082667:role/watchdog-bms-production-security-readonly",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS",
         "arn:aws:iam::311414082667:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService",

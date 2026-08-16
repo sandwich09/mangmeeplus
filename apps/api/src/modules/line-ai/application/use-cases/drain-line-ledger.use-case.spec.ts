@@ -157,13 +157,15 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
   });
 
   it('parks an entry past the delivery cap instead of looping (poison protection)', async () => {
-    const { useCase, acks, turnRequests } = makeUseCase({
-      claims: [{ entry: entry(), deliveryCount: 4, idleMs: 5000 }],
+    const { useCase, acks, turnRequests, eventUpdates } = makeUseCase({
+      claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 4, idleMs: 5000 }],
     });
     const result = await useCase.execute(20, NOW);
     assert.equal(result.parked, 1);
     assert.equal(turnRequests.length, 0, 'parked entries never reach the gateway');
     assert.deepEqual(acks, [{ id: '1-0', outcome: 'parked' }]);
+    assert.equal(eventUpdates[0]?.data.status, 'failed_terminal');
+    assert.equal(eventUpdates[0]?.data.errorCode, 'LINE_LEDGER_DELIVERY_CAP_EXCEEDED');
   });
 
   // Freeze in place (owner decision 2026-08-04): `ai_line_assistant` can now really be switched off
@@ -199,6 +201,7 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
       'the same Thai refusal the synchronous webhook sends');
     assert.deepEqual(inWindow.acks, [{ id: '1-0', outcome: 'refused' }], 'still terminal');
     assert.deepEqual(inWindow.ackReasons, ['feature_disabled']);
+    assert.equal(inWindow.eventUpdates[0]?.data.status, 'feature_disabled');
 
     // Past the context window nobody is waiting — an unsolicited push would be pure noise.
     const stale = makeUseCase({
@@ -216,6 +219,19 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal((await stale.useCase.execute(20, NOW)).refused, 1);
     assert.equal(stale.pushes.length, 0, 'out-of-window turns keep the old silent behaviour');
     assert.deepEqual(stale.acks, [{ id: '1-0', outcome: 'refused' }]);
+    assert.equal(stale.eventUpdates[0]?.data.status, 'failed_terminal');
+  });
+
+  it('does not acknowledge a disabled in-window turn when its refusal cannot reach LINE', async () => {
+    const h = makeUseCase({
+      claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 5000 }],
+      entitlements: [{ featureKey: 'ai_line_assistant', enabled: false }],
+      pushResult: 'failed_other',
+    });
+
+    assert.equal((await h.useCase.execute(20, NOW)).refused, 0);
+    assert.equal(h.acks.length, 0, 'delivery failure remains reclaimable');
+    assert.equal(h.eventUpdates.length, 0, 'source stays nonterminal until the refusal is visible');
   });
 
   it('still runs for a legacy company with no entitlement rows at all (fail-open)', async () => {
@@ -229,13 +245,15 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
   });
 
   it('refuses safely when permission was revoked between turn and follow-up', async () => {
-    const { useCase, acks, pushes } = makeUseCase({
-      claims: [{ entry: entry(), deliveryCount: 1, idleMs: 5000 }],
+    const { useCase, acks, pushes, eventUpdates } = makeUseCase({
+      claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 5000 }],
       permissions: ['dashboard.read'],
     });
     const result = await useCase.execute(20, NOW);
     assert.equal(result.refused, 1);
-    assert.equal(pushes.length, 0, 'no data pushed to a revoked user');
+    assert.equal(pushes.length, 1, 'the waiting user gets a bounded refusal, never business data');
+    assert.equal(pushes[0]?.text, REFUSAL_MESSAGES.forbidden);
+    assert.equal(eventUpdates[0]?.data.status, 'forbidden');
     assert.deepEqual(acks, [{ id: '1-0', outcome: 'refused' }]);
   });
 

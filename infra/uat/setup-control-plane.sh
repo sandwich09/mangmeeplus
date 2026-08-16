@@ -159,13 +159,23 @@ ensure_role "$ai_role" "$task_trust"
 # branch in infra/prod-ecs-express/deploy.sh). Keep this in step with the AI policy
 # there — deploy.sh rewrites this same policy name on every UAT deploy, so a narrower
 # list here only bites in the window between bootstrap and first deploy.
-jq -n --arg account "$account_id" '{
+jq -n --arg region "$region" --arg account "$account_id" '{
   Version:"2012-10-17",
-  Statement:[{
-    Effect:"Allow",
-    Action:["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
-    Resource:["arn:aws:bedrock:*::foundation-model/anthropic.*",("arn:aws:bedrock:*:"+$account+":inference-profile/apac.anthropic.*"),("arn:aws:bedrock:*:"+$account+":inference-profile/global.anthropic.*")]
-  }]
+  Statement:[
+    {
+      Effect:"Allow",
+      Action:["bedrock-agentcore:InvokeAgentRuntime"],
+      Resource:[
+        ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*"),
+        ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*/runtime-endpoint/*")
+      ]
+    },
+    {
+      Effect:"Allow",
+      Action:["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
+      Resource:["arn:aws:bedrock:*::foundation-model/anthropic.*",("arn:aws:bedrock:*:"+$account+":inference-profile/apac.anthropic.*"),("arn:aws:bedrock:*:"+$account+":inference-profile/global.anthropic.*")]
+    }
+  ]
 }' > "$tmp_dir/ai-policy.json"
 aws_cmd iam put-role-policy --role-name "$ai_role" --policy-name watchdog-bms-uat-ai-gateway-runtime --policy-document "file://$tmp_dir/ai-policy.json"
 

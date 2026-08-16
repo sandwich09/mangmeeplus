@@ -15,18 +15,22 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-southeast-1}"
-RUNTIME_NAME="watchdog_orchestrator"
+: "${DEPLOY_ENVIRONMENT:=production}"
+case "$DEPLOY_ENVIRONMENT" in uat|production) ;; *) echo 'ERROR: DEPLOY_ENVIRONMENT must be uat or production' >&2; exit 1 ;; esac
+RUNTIME_NAME="${AGENTCORE_RUNTIME_NAME:-watchdog_orchestrator_${DEPLOY_ENVIRONMENT}_candidate}"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region "$REGION")
-BUCKET="watchdog-bms-agentcore-artifacts-${ACCOUNT_ID}"
+BUCKET="${AGENTCORE_ARTIFACT_BUCKET:-watchdog-bms-agentcore-artifacts-${ACCOUNT_ID}}"
 SOURCE_COMMIT="${SOURCE_COMMIT:-$(git rev-parse HEAD)}"
 if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || [ "$(git rev-parse HEAD)" != "$SOURCE_COMMIT" ]; then
   echo "ERROR: SOURCE_COMMIT must be the exact checked-out commit" >&2
   exit 1
 fi
 GIT_SHA="$SOURCE_COMMIT"
-ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/watchdog-bms-agentcore-execution-role"
+ROLE_ARN="${AGENTCORE_EXECUTION_ROLE_ARN:-arn:aws:iam::${ACCOUNT_ID}:role/watchdog-bms-agentcore-execution-role}"
+ROLE_NAME="${ROLE_ARN##*/}"
+SECRET_PREFIX="${AGENTCORE_SECRET_PREFIX:-watchdog-bms/${DEPLOY_ENVIRONMENT}}"
 AI_GATEWAY_SECRET_ARN=$(aws secretsmanager describe-secret \
-  --secret-id watchdog-bms/production/ai-gateway-internal-secret \
+  --secret-id "$SECRET_PREFIX/ai-gateway-internal-secret" \
   --query ARN --output text --region "$REGION")
 # The runtime loads the shared aiGatewayConfigSchema, which always carries
 # JWT_CLOCK_TOLERANCE_SECONDS - and validateProductionConfig requires the JWT trio of anything that
@@ -34,7 +38,7 @@ AI_GATEWAY_SECRET_ARN=$(aws secretsmanager describe-secret \
 # stops it booting: every invocation returns 500 from config validation, and AgentCore has no log
 # group by default to say so.
 WATCHDOG_JWT_SECRET_SOURCE_ARN=$(aws secretsmanager describe-secret \
-  --secret-id watchdog-bms/production/watchdog-jwt-secret \
+  --secret-id "$SECRET_PREFIX/watchdog-jwt-secret" \
   --query ARN --output text --region "$REGION")
 
 # ── Required env vars ──────────────────────────────────────────────────────────
@@ -96,15 +100,21 @@ fi
 # ── 3. Execution role (create if missing) ─────────────────────────────────────
 echo "[agentcore-deploy] ensuring execution role..."
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
-  -e "s|<AGENTCORE_RUNTIME_ARN>|arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/watchdog_orchestrator-*|g" \
+  -e "s|<AGENTCORE_RUNTIME_ARN>|arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/${RUNTIME_NAME}-*|g" \
   infra/ai-gateway/agentcore-execution-role-trust.template.json > "$STAGING/trust.json"
-if ! aws iam get-role --role-name watchdog-bms-agentcore-execution-role 2>/dev/null; then
+if aws iam get-role --role-name "$ROLE_NAME" >"$STAGING/execution-role.json" 2>"$STAGING/execution-role.err"; then
+  :
+elif grep -qE 'NoSuchEntity|cannot be found' "$STAGING/execution-role.err"; then
   aws iam create-role \
-    --role-name watchdog-bms-agentcore-execution-role \
+    --role-name "$ROLE_NAME" \
     --assume-role-policy-document "file://$STAGING/trust.json"
+else
+  cat "$STAGING/execution-role.err" >&2
+  echo 'ERROR: cannot read the AgentCore execution role; refusing to guess that it is absent' >&2
+  exit 1
 fi
 aws iam update-assume-role-policy \
-  --role-name watchdog-bms-agentcore-execution-role \
+  --role-name "$ROLE_NAME" \
   --policy-document "file://$STAGING/trust.json"
 # Replace placeholder before applying
 sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
@@ -117,7 +127,7 @@ if grep -q '<[A-Z_]*>' "$STAGING/policy.json"; then
   exit 1
 fi
 aws iam put-role-policy \
-  --role-name watchdog-bms-agentcore-execution-role \
+  --role-name "$ROLE_NAME" \
   --policy-name watchdog-bms-agentcore-permissions \
   --policy-document "file://$STAGING/policy.json"
 
@@ -148,10 +158,11 @@ EOF
 ENV_VARS=$(cat <<EOF
 {
   "APP_ENV": "production",
-  "DEPLOY_ENVIRONMENT": "production",
+  "DEPLOY_ENVIRONMENT": "${DEPLOY_ENVIRONMENT}",
   "SERVICE_NAME": "watchdog-agentcore-orchestrator",
   "SERVICE_VERSION": "${SERVICE_VERSION}",
   "GIT_SHA": "${GIT_SHA}",
+  "AGENTCORE_ARTIFACT_SHA256": "${actual_sha}",
   "PUBLIC_BASE_URL": "${PUBLIC_BASE_URL}",
   "CORS_ALLOWED_ORIGINS": "${PUBLIC_BASE_URL}",
   "PORT": "8080",
@@ -188,7 +199,7 @@ EOF
 # ── 5. Create or update runtime ────────────────────────────────────────────────
 EXISTING_ID=$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \
   --query "agentRuntimes[?agentRuntimeName=='$RUNTIME_NAME'].agentRuntimeId" \
-  --output text 2>/dev/null || echo "")
+  --output text)
 
 if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
   echo "[agentcore-deploy] creating new runtime..."
@@ -201,6 +212,7 @@ if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
     --metadata-configuration '{"requireMMDSV2":true}' \
     --protocol-configuration '{"serverProtocol":"HTTP"}' \
     --environment-variables "$ENV_VARS" \
+    --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
     --description "WatchDog BMS LINE AI orchestrator – item 10B")
   RUNTIME_ID=$(echo "$RESULT" | jq -r '.agentRuntimeId')
   echo "[agentcore-deploy] created runtime id=$RUNTIME_ID"
@@ -218,6 +230,7 @@ else
   RUNTIME_ID="$EXISTING_ID"
   echo "[agentcore-deploy] updated runtime id=$RUNTIME_ID"
 fi
+[[ "$RUNTIME_ID" =~ ^[A-Za-z][A-Za-z0-9_]{0,99}-[A-Za-z0-9]{10}$ ]]
 
 RUNTIME_ARN="arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/${RUNTIME_ID}"
 echo "[agentcore-deploy] ARN: $RUNTIME_ARN"
@@ -225,7 +238,7 @@ sed -e "s|<ACCOUNT_ID>|$ACCOUNT_ID|g" \
   -e "s|<AGENTCORE_RUNTIME_ARN>|$RUNTIME_ARN|g" \
   infra/ai-gateway/agentcore-execution-role-trust.template.json > "$STAGING/trust.json"
 aws iam update-assume-role-policy \
-  --role-name watchdog-bms-agentcore-execution-role \
+  --role-name "$ROLE_NAME" \
   --policy-document "file://$STAGING/trust.json"
 
 # ── 6. Wait for READY status ───────────────────────────────────────────────────
@@ -234,7 +247,7 @@ for i in $(seq 1 30); do
   STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
     --region "$REGION" \
     --agent-runtime-id "$RUNTIME_ID" \
-    --query 'status' --output text 2>/dev/null || echo "UNKNOWN")
+    --query 'status' --output text)
   echo "[agentcore-deploy] status=$STATUS (attempt $i/30)"
   if [ "$STATUS" = "READY" ]; then break; fi
   if [ "$STATUS" = "FAILED" ]; then
@@ -249,6 +262,57 @@ if [ "$STATUS" != "READY" ]; then
   exit 1
 fi
 
+# Every runtime update creates an immutable version. Bind this candidate to a source-specific custom
+# endpoint; DEFAULT follows latest and can silently move Production before ECS is promoted.
+RUNTIME_VERSION=$(aws bedrock-agentcore-control get-agent-runtime \
+  --region "$REGION" --agent-runtime-id "$RUNTIME_ID" \
+  --query agentRuntimeVersion --output text)
+[[ "$RUNTIME_VERSION" =~ ^[1-9][0-9]{0,4}$ ]]
+ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}"
+if endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
+    --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" \
+    --output json 2>"$STAGING/endpoint.err"); then
+  test "$(jq -er '.targetVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION" || {
+    echo 'ERROR: source-specific endpoint already exists for a different runtime version' >&2
+    exit 1
+  }
+elif grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGING/endpoint.err"; then
+  endpoint_json=$(aws bedrock-agentcore-control create-agent-runtime-endpoint \
+    --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --name "$ENDPOINT_NAME" \
+    --agent-runtime-version "$RUNTIME_VERSION" \
+    --description "WatchDog LINE AI ${DEPLOY_ENVIRONMENT} candidate ${SOURCE_COMMIT}" \
+    --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}" \
+    --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
+    --output json)
+else
+  cat "$STAGING/endpoint.err" >&2
+  echo 'ERROR: cannot read the candidate endpoint; refusing to guess that it is absent' >&2
+  exit 1
+fi
+for i in $(seq 1 30); do
+  endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
+    --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" --output json)
+  ENDPOINT_STATUS=$(jq -er '.status' <<< "$endpoint_json")
+  [ "$ENDPOINT_STATUS" = READY ] && break
+  case "$ENDPOINT_STATUS" in
+    CREATE_FAILED|UPDATE_FAILED)
+      jq -r '.failureReason // "candidate endpoint failed without a reason"' <<< "$endpoint_json" >&2
+      exit 1
+      ;;
+    DELETING)
+      echo 'ERROR: source-specific candidate endpoint is being deleted' >&2
+      exit 1
+      ;;
+  esac
+  sleep 10
+done
+test "$ENDPOINT_STATUS" = READY
+ENDPOINT_ARN=$(jq -er '.agentRuntimeEndpointArn' <<< "$endpoint_json")
+test "$ENDPOINT_ARN" = "$RUNTIME_ARN/runtime-endpoint/$ENDPOINT_NAME"
+test "$(jq -er '.targetVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION"
+test "$(jq -er '.liveVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION"
+test "$(jq -er '.agentRuntimeArn' <<< "$endpoint_json")" = "$RUNTIME_ARN"
+
 # A smoke result that is only printed is not a check. Both invocations below used to swallow their
 # exit status with `|| true` and let the script reach "Deploy Complete" and exit 0 - which is how a
 # runtime that answered 500 to every request was reported as a successful deploy. `invoke-agent-runtime`
@@ -260,7 +324,7 @@ smoke_invoke() {
   if ! result=$(aws bedrock-agentcore invoke-agent-runtime \
     --region "$REGION" \
     --agent-runtime-arn "$RUNTIME_ARN" \
-    --qualifier "DEFAULT" \
+    --qualifier "$ENDPOINT_NAME" \
     --content-type "application/json" \
     --accept "application/json" \
     --cli-binary-format raw-in-base64-out \
@@ -289,12 +353,32 @@ echo "[agentcore-deploy] smoke: mutation refusal..."
 MUTATION_PAYLOAD='{"turnId":"smoke-mutation-01","companyId":"smoke-company","userId":"smoke-user","messageText":"อนุมัติจ่ายเงิน 50000 บาท","locale":"th-TH","permissions":["finance.approve"]}'
 smoke_invoke mutation "$MUTATION_PAYLOAD" "$STAGING/mutation-invoke.out"
 
+if [ -n "${AGENTCORE_BINDING_OUTPUT:-}" ]; then
+  [ ! -e "$AGENTCORE_BINDING_OUTPUT" ]
+  env_sha=$(printf '%s' "$ENV_VARS" | jq -cS . | shasum -a 256 | awk '{print $1}')
+  jq -cS -n \
+    --arg environment "$DEPLOY_ENVIRONMENT" --arg source "$SOURCE_COMMIT" \
+    --arg artifactSha "$actual_sha" --arg bucket "$BUCKET" --arg prefix "$DEPLOY_KEY" \
+    --arg objectVersion "$S3_VERSION" --arg runtimeArn "$RUNTIME_ARN" --arg runtimeId "$RUNTIME_ID" \
+    --arg runtimeVersion "$RUNTIME_VERSION" --arg endpointName "$ENDPOINT_NAME" \
+    --arg endpointArn "$ENDPOINT_ARN" --arg envSha "$env_sha" --arg roleArn "$ROLE_ARN" '
+      {schemaVersion:1,environment:$environment,sourceCommit:$source,
+       executionRoleArn:$roleArn,
+       artifact:{sha256:$artifactSha,bucket:$bucket,prefix:$prefix,objectVersionId:$objectVersion},
+       runtime:{arn:$runtimeArn,id:$runtimeId,version:$runtimeVersion,status:"READY"},
+       endpoint:{arn:$endpointArn,name:$endpointName,version:$runtimeVersion,status:"READY"},
+       bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:$envSha,
+       contractVersion:1}
+    ' > "$AGENTCORE_BINDING_OUTPUT"
+fi
+
 # ── Summary ────────────────────────────────────────────────────────────────────
 echo ""
 echo "==== AgentCore Runtime Deploy Complete ===="
 echo "  Runtime ARN:  $RUNTIME_ARN"
 echo "  Runtime ID:   $RUNTIME_ID"
-echo "  Qualifier:    DEFAULT"
+echo "  Version:      $RUNTIME_VERSION"
+echo "  Qualifier:    $ENDPOINT_NAME"
 echo "  Region:       $REGION"
 echo "  Model:        $BEDROCK_MODEL_ID"
 echo "  SHA:          $GIT_SHA"
@@ -303,4 +387,4 @@ echo "  S3 version:   ${S3_VERSION:-not-returned}"
 echo "  Status:       $STATUS"
 echo ""
 echo "Record these in docs/agent-memory/ai-runtime-production-integration.md."
-echo "Set AGENTCORE_RUNTIME_ARN=$RUNTIME_ARN in AI Gateway task definition (§11.4)."
+echo "Set AGENTCORE_RUNTIME_ARN=$RUNTIME_ARN and AGENTCORE_RUNTIME_QUALIFIER=$ENDPOINT_NAME in the AI Gateway task definition."

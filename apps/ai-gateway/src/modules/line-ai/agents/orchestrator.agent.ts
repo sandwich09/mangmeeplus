@@ -5,7 +5,7 @@
  * otherwise. Specialists still shape facts deterministically (grounding). No direct DB access;
  * all data via ErpToolClient.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, AgentIntentPlan, AgentFact, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
 import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
@@ -269,8 +269,8 @@ export class OrchestratorAgent {
   private readonly logger = new Logger(OrchestratorAgent.name);
 
   constructor(
-    private readonly erpTools: ErpToolClient,
-    private readonly config: AiGatewayConfigService,
+    @Inject(ErpToolClient) private readonly erpTools: ErpToolClient,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
   ) {}
 
   async run(req: LineAiTurnRequest): Promise<AgentRunResult> {

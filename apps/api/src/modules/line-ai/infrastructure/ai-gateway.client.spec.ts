@@ -3,7 +3,66 @@ import assert from 'node:assert/strict';
 import { HttpException } from '@nestjs/common';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
-import { AiGatewayClient } from './ai-gateway.client';
+import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
+
+const baseTurnRequest: LineAiTurnRequest = {
+  requestId: 'request-1',
+  webhookEventId: 'event-1',
+  userContext: {
+    lineUserId: '[REDACTED]',
+    internalUserId: 'user-1',
+    companyId: 'company-1',
+    membershipId: 'membership-1',
+    permissions: [],
+    roles: ['INVENTORY'],
+    locale: 'th-TH',
+  },
+  messageText: 'สินค้าไหนใกล้หมด',
+  messagePreviewHash: 'hash',
+};
+
+describe('AiGatewayClient failure classification', () => {
+  const createClient = () => new AiGatewayClient(
+    {
+      aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
+      aiGatewayInternalSecret: 'workload-secret',
+    } as any,
+    { issue: () => 'signed' } as any,
+  );
+
+  async function expectFetchFailure(
+    fetchImpl: typeof fetch,
+    expectedCode: AiGatewayRequestError['code'],
+  ): Promise<void> {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchImpl;
+    try {
+      await assert.rejects(
+        createClient().requestLineTurn(baseTurnRequest),
+        (error: unknown) => error instanceof AiGatewayRequestError && error.code === expectedCode,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+
+  it('classifies aborts and platform timeouts as retryable gateway timeouts', async () => {
+    const timeout = new Error('request expired');
+    timeout.name = 'TimeoutError';
+    await expectFetchFailure(async () => { throw timeout; }, 'AI_GATEWAY_TIMEOUT');
+  });
+
+  it('classifies network failures as provider unavailable rather than timeout', async () => {
+    await expectFetchFailure(async () => { throw new TypeError('fetch failed'); }, 'AI_GATEWAY_UNAVAILABLE');
+  });
+
+  it('classifies non-success HTTP responses as provider unavailable', async () => {
+    await expectFetchFailure(
+      async () => ({ ok: false, status: 503 } as Response),
+      'AI_GATEWAY_UNAVAILABLE',
+    );
+  });
+});
 
 describe('AiGatewayClient actor delegation', () => {
   it('issues and forwards a bounded API-signed delegation pool per permitted tool', async () => {

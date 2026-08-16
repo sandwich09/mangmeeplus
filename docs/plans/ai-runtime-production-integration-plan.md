@@ -1,5 +1,7 @@
 # AI Runtime Production Integration Plan
 
+Active production remediation plan: [[plans/line-ai-production-parity-and-receipt-continuity-remediation-plan|LINE AI Production Parity and Receipt Continuity Remediation Plan]]. Do not execute the older AgentCore deployment phases independently for LINE AI; the complete parity/continuity candidate and release gate now apply.
+
 ## Status
 
 Ready for implementation handoff. This plan implements [[specs/ai-runtime-production-integration-spec|AI Runtime Production Integration Spec]].

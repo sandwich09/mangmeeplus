@@ -78,11 +78,19 @@ describe('emitSecurityEvent', () => {
 // ── Static alarm-coverage guard ───────────────────────────────────────────────
 
 /** Whitespace-tolerant so reformatting deploy.sh cannot break this test. */
+function securityAlarmFilterLine(): string {
+  const lines = readFileSync(DEPLOY_SCRIPT, 'utf8').split('\n');
+  const filterNameIndex = lines.findIndex((line) => line.includes('--filter-name security-high-risk'));
+  assert.ok(filterNameIndex >= 0, 'deploy.sh must still create the named security metric filter');
+  const filterLine = lines.slice(filterNameIndex, filterNameIndex + 4)
+    .find((line) => line.includes('--filter-pattern'));
+  assert.ok(filterLine, 'security-high-risk must still declare a metric filter pattern');
+  return filterLine;
+}
+
 function alarmMsgLiterals(): string[] {
-  const script = readFileSync(DEPLOY_SCRIPT, 'utf8');
-  const filterLine = script.split('\n').find((line) => line.includes('--filter-pattern'));
-  assert.ok(filterLine, 'deploy.sh must still create the security metric filter');
-  return [...filterLine.matchAll(/\$\s*\.\s*msg\s*=\s*"([^"]+)"/g)].map((match) => match[1]!);
+  return [...securityAlarmFilterLine().matchAll(/\$\s*\.\s*msg\s*=\s*"([^"]+)"/g)]
+    .map((match) => match[1]!);
 }
 
 function appSourceText(): string {
@@ -147,8 +155,7 @@ describe('production security alarm coverage (infra/prod-ecs-express/deploy.sh)'
   const emitted = emittedEventNames(source);
 
   it('still keys on riskLevel, so every emitSecurityEvent line is alarmed with no infra change', () => {
-    const script = readFileSync(DEPLOY_SCRIPT, 'utf8');
-    const filterLine = script.split('\n').find((line) => line.includes('--filter-pattern'))!;
+    const filterLine = securityAlarmFilterLine();
     for (const risk of ['CRITICAL', 'HIGH']) {
       assert.match(
         filterLine,

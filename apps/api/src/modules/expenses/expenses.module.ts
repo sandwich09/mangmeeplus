@@ -69,6 +69,7 @@ import { TaxModule } from '../tax/tax.module';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
 import { DeleteExpenseUseCase } from './application/use-cases/delete-expense.use-case';
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
+import { LineSubstituteReceiptContinuationUseCase } from './application/use-cases/line-substitute-receipt-continuation.use-case';
 
 @Module({
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule],
@@ -98,6 +99,7 @@ import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-
     ListExpenseCategoriesUseCase,
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
+    LineSubstituteReceiptContinuationUseCase,
     ListCompanySubstituteReceiptsUseCase,
     PrepareSubstituteReceiptUseCase,
     PreviewSubstituteReceiptUseCase,
@@ -137,6 +139,7 @@ import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-
     CompleteReceiptUploadUseCase,
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
+    LineSubstituteReceiptContinuationUseCase,
     ConfirmExpenseUseCase,
     VoidExpenseUseCase,
     InitSignatureUploadUseCase,

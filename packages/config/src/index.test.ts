@@ -325,9 +325,26 @@ describe('validateProductionConfig', () => {
           AI_PROMPT_LOGGING_ENABLED: false,
           AI_GATEWAY_INTERNAL_SECRET: 'internal-secret',
           LINE_AI_AGENT_RUNTIME: 'agentcore',
-          // AGENTCORE_REGION, AGENTCORE_RUNTIME_ARN, AGENTCORE_RUNTIME_QUALIFIER intentionally missing
+          // Runtime binding and expected signed identity intentionally missing.
         }),
       /AGENTCORE_REGION/,
+    );
+  });
+
+  it('rejects AgentCore production without signed expected artifact identity', () => {
+    assert.throws(
+      () => validateProductionConfig({
+        ...validProduction,
+        SERVICE_NAME: 'ai-gateway',
+        AI_GATEWAY_ENABLED: true,
+        AI_TOOL_POLICY_ENFORCED: true,
+        AI_TOOL_AUDIT_ENABLED: true,
+        LINE_AI_AGENT_RUNTIME: 'agentcore',
+        AGENTCORE_REGION: 'ap-southeast-1',
+        AGENTCORE_RUNTIME_ARN: 'arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/test-AbCdEf1234',
+        AGENTCORE_RUNTIME_QUALIFIER: 'candidate_production_aaaaaaaaaaaa',
+      }),
+      /AGENTCORE_EXPECTED_SOURCE_COMMIT/,
     );
   });
 
@@ -617,10 +634,14 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
       AGENTCORE_REGION: 'ap-southeast-1',
       AGENTCORE_RUNTIME_ARN: 'arn:aws:bedrock-agentcore:ap-southeast-1:123:runtime/abc',
       AGENTCORE_RUNTIME_QUALIFIER: 'DEFAULT',
+      AGENTCORE_EXPECTED_SOURCE_COMMIT: 'a'.repeat(40),
+      AGENTCORE_EXPECTED_ARTIFACT_SHA256: 'b'.repeat(64),
+      AGENTCORE_EXPECTED_CONTRACT_VERSION: '1',
     });
     assert.equal(result.success, true);
     assert.equal(result.data?.AGENTCORE_REGION, 'ap-southeast-1');
     assert.equal(result.data?.AGENTCORE_RUNTIME_QUALIFIER, 'DEFAULT');
+    assert.equal(result.data?.AGENTCORE_EXPECTED_CONTRACT_VERSION, 1);
   });
 });
 

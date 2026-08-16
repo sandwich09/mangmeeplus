@@ -12,6 +12,8 @@ for required in \
   'workflow_run:' 'workflows: [UAT Deploy]' 'workflow_dispatch:' \
   'uat-release-passport-v2-' 'validate-uat-release-passport-v2.sh' \
   'collect-production-runtime-readiness-v2.sh' 'collect-production-a5-current-health.sh' \
+  'Stage and read back the exact Production AgentCore candidate' \
+  'validate-agentcore-candidate-binding.sh' 'agentcore-production-binding.json' \
   'run-production-migration-catalog-readiness.sh' 'APPEND_ONLY_PENDING' \
   'run-production-a5-clone.sh' \
   'validate-production-release-ready-v2.sh' 'PRODUCTION_RELEASE_READY_V2' \
@@ -34,12 +36,16 @@ for required in \
   'TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}' \
   'LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}' \
   'AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}' \
-  'AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}' \
-  'AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}' \
   'timeout-minutes: 150' \
   'PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true'; do
   grep -F -- "$required" "$workflow" >/dev/null
 done
+
+if grep -F 'AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}' "$workflow" >/dev/null \
+    || grep -F 'AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}' "$workflow" >/dev/null; then
+  echo 'ERROR: readiness still accepts mutable GitHub AgentCore candidate identity' >&2
+  exit 1
+fi
 
 for forbidden in \
   'pnpm test' 'pnpm typecheck' 'docker/build-push-action' 'docker build' \
@@ -60,10 +66,12 @@ fi
 line() { grep -n -F -- "$1" "$workflow" | head -n1 | cut -d: -f1; }
 passport="$(line 'Bind protected controller and download exact Passport V2')"
 security="$(line 'Configure read-only Production security credentials')"
+candidate="$(line 'Stage and read back the exact Production AgentCore candidate')"
 catalog="$(line 'Prove current services and classify Production migration ledger')"
 clone="$(line 'Rehearse exact pending migration suffix and prove cleanup')"
 ready="$(line 'Build, validate and sign Production READY V2')"
-[ "$passport" -lt "$security" ] && [ "$security" -lt "$catalog" ] \
+[ "$passport" -lt "$candidate" ] && [ "$candidate" -lt "$security" ] \
+  && [ "$security" -lt "$catalog" ] \
   && [ "$catalog" -lt "$clone" ] && [ "$clone" -lt "$ready" ]
 
 # Closed mode validates the technical maintenance controller; live mode validates the complete

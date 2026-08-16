@@ -4,7 +4,7 @@
  * model (Bedrock via its provider port) on the bounded evidence the API supplies — it
  * never reads the database.
  */
-import { Controller, Post, Body, Headers, BadRequestException, HttpCode, UseInterceptors } from '@nestjs/common';
+import { Controller, Post, Body, Headers, BadRequestException, HttpCode, Inject, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AiUsageInterceptor } from '../../common/usage/ai-usage.interceptor';
 import { Public } from '../../common/security/public.decorator';
@@ -19,8 +19,8 @@ import type { AiDraftGenerationRequest, AiDraftGenerationResult } from '@watchdo
 @UseInterceptors(AiUsageInterceptor)
 export class AiDraftInternalController {
   constructor(
-    private readonly config: AiGatewayConfigService,
-    private readonly generateDraft: GenerateDraftUseCase,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(GenerateDraftUseCase) private readonly generateDraft: GenerateDraftUseCase,
   ) {}
 
   @Public()

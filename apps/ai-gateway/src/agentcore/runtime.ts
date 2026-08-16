@@ -14,6 +14,7 @@ import {
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   LINE_AI_CONTEXT_WINDOW_MINUTES,
   LINE_AI_CONTEXT_MAX_TURNS,
+  LINE_AI_RUNTIME_CONTRACT_VERSION,
 } from '@watchdog-bms/contracts';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from '../modules/line-ai/agents/agent-types';
@@ -357,6 +358,8 @@ async function handleInvocation(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
+  const runtimeStartedAt = Date.now();
+  const bodyReadStartedAt = runtimeStartedAt;
   let rawBody: string;
   try {
     rawBody = await readBody(req, maxBodyBytes());
@@ -368,7 +371,9 @@ async function handleInvocation(
     json(res, 400, { error: 'BODY_READ_ERROR' });
     return;
   }
+  const bodyReadMs = Date.now() - bodyReadStartedAt;
 
+  const validationStartedAt = Date.now();
   let body: unknown;
   try {
     body = JSON.parse(rawBody);
@@ -382,28 +387,48 @@ async function handleInvocation(
     json(res, 400, { error: 'INVALID_PAYLOAD', message: 'turnId, companyId, userId, and messageText are required' });
     return;
   }
+  const payloadValidationMs = Date.now() - validationStartedAt;
 
   try {
     const turnReq = payloadToTurnRequest(payload);
     // This entrypoint runs outside the gateway's HTTP stack, so it opens its own collector —
     // otherwise a rebuilt artifact would report no usage at all and the API could never meter the
     // agentcore runtime. An older artifact simply omits the field (metering spec §7.2).
+    const orchestrationStartedAt = Date.now();
     const { result, usage } = await runWithUsageContext({ companyId: payload.companyId }, async () => {
       const run = await orchestrator.run(turnReq);
       return { result: run, usage: drainUsage() };
     });
+    const orchestrationMs = Date.now() - orchestrationStartedAt;
+    const sourceCommit = process.env['GIT_SHA'];
+    const artifactSha256 = process.env['AGENTCORE_ARTIFACT_SHA256'];
+    const serviceVersion = process.env['SERVICE_VERSION'];
+    const runtimeIdentity = sourceCommit && artifactSha256 && serviceVersion
+      ? { sourceCommit, artifactSha256, serviceVersion, contractVersion: LINE_AI_RUNTIME_CONTRACT_VERSION }
+      : undefined;
     json(res, 200, {
       turnId: payload.turnId,
       replyText: result.replyText,
       plan: result.plan,
       durationMs: result.durationMs,
       refused: result.plan.status === 'UNROUTABLE',
+      ...(result.plan.status === 'UNROUTABLE' && result.plan.refusals[0]?.reason
+        ? { refusalReason: result.plan.refusals[0].reason }
+        : {}),
       sourceRefs: result.sourceRefs,
       webLinks: result.webLinks,
       ...(result.presentation ? { presentation: result.presentation } : {}),
       // AgentRunResult exposes sources only in aggregate; do not fabricate per-tool attribution.
       toolsInvoked: result.outputs.flatMap((output) => output.toolCalls),
       ...(usage.length > 0 ? { usage } : {}),
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
+      stageDurationsMs: {
+        bodyReadMs,
+        payloadValidationMs,
+        orchestrationMs,
+        runtimeTotalMs: Date.now() - runtimeStartedAt,
+      },
+      modelCallCount: usage.length,
     });
   } catch (err) {
     console.error('[agentcore-runtime] invocation error:', (err as Error).message);

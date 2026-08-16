@@ -21,6 +21,18 @@ jq -n --arg region "$region" --arg account "$account_id" '{
     {Effect:"Allow",Action:["ssm:GetParameter","ssm:PutParameter"],Resource:("arn:aws:ssm:"+$region+":"+$account+":parameter/watchdog-bms/uat/ecs-express-*-service-arn")}
   ]
 }' | jq -S . > "$tmp_dir/release-expected.json"
+jq -n --arg region "$region" --arg account "$account_id" '{
+  Version:"2012-10-17",
+  Statement:[
+    {Effect:"Allow",Action:["bedrock-agentcore:InvokeAgentRuntime"],Resource:[
+      ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*"),
+      ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*/runtime-endpoint/*")]},
+    {Effect:"Allow",Action:["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],Resource:[
+      "arn:aws:bedrock:*::foundation-model/anthropic.*",
+      ("arn:aws:bedrock:*:"+$account+":inference-profile/apac.anthropic.*"),
+      ("arn:aws:bedrock:*:"+$account+":inference-profile/global.anthropic.*")]}
+  ]
+}' | jq -S . > "$tmp_dir/ai-expected.json"
 
 verify() {
   local role="$1" policy="$2" expected="$3"
@@ -38,4 +50,5 @@ verify() {
 
 verify watchdog-bms-deploy-uat watchdog-bms-uat-deploy "$tmp_dir/deploy-expected.json"
 verify watchdog-bms-uat-release-task-role watchdog-bms-uat-release-task-ecs-read "$tmp_dir/release-expected.json"
+verify watchdog-bms-uat-ecs-ai-gateway-role watchdog-bms-uat-ai-gateway-runtime "$tmp_dir/ai-expected.json"
 echo "UAT control-plane policies verified before mutation"

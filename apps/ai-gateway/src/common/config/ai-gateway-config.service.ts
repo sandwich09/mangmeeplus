@@ -70,6 +70,9 @@ export class AiGatewayConfigService {
   get agentcoreRegion(): string | undefined { return this.config.AGENTCORE_REGION; }
   get agentcoreRuntimeArn(): string | undefined { return this.config.AGENTCORE_RUNTIME_ARN; }
   get agentcoreRuntimeQualifier(): string | undefined { return this.config.AGENTCORE_RUNTIME_QUALIFIER; }
+  get agentcoreExpectedSourceCommit(): string | undefined { return this.config.AGENTCORE_EXPECTED_SOURCE_COMMIT; }
+  get agentcoreExpectedArtifactSha256(): string | undefined { return this.config.AGENTCORE_EXPECTED_ARTIFACT_SHA256; }
+  get agentcoreExpectedContractVersion(): number | undefined { return this.config.AGENTCORE_EXPECTED_CONTRACT_VERSION; }
   get agentcoreInvokeTimeoutMs(): number { return this.config.AGENTCORE_INVOKE_TIMEOUT_MS; }
   // L-12: AgentCore invocation bounds (byte cap enforced while streaming, never after buffering)
   get agentcoreMaxBodyBytes(): number { return this.config.AGENTCORE_MAX_BODY_BYTES; }

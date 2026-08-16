@@ -5,7 +5,7 @@
  * zero ERP tools. Boundary (hard): this controller is registered in the gateway app module
  * and is NEVER imported by LineAiModule (or vice versa); routes are namespaced `crm-*`.
  */
-import { Controller, Post, Body, Headers, BadRequestException, HttpCode, Logger, UseInterceptors } from '@nestjs/common';
+import { Controller, Post, Body, Headers, BadRequestException, HttpCode, Inject, Logger, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AiUsageInterceptor } from '../../common/usage/ai-usage.interceptor';
 import { Public } from '../../common/security/public.decorator';
@@ -46,15 +46,15 @@ export class CrmCustomerAiInternalController {
   private readonly logger = new Logger(CrmCustomerAiInternalController.name);
 
   constructor(
-    private readonly config: AiGatewayConfigService,
-    private readonly bookingExtract: CrmBookingExtractUseCase,
-    private readonly intake: CrmIntakeUseCase,
-    private readonly replyDraft: CrmReplyDraftUseCase,
-    private readonly trustScore: CrmTrustScoreUseCase,
-    private readonly summary: CrmSummaryUseCase,
-    private readonly insights: CrmInsightsUseCase,
-    private readonly broadcast: CrmBroadcastUseCase,
-    private readonly customerProfileExtract: CrmCustomerProfileExtractUseCase,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(CrmBookingExtractUseCase) private readonly bookingExtract: CrmBookingExtractUseCase,
+    @Inject(CrmIntakeUseCase) private readonly intake: CrmIntakeUseCase,
+    @Inject(CrmReplyDraftUseCase) private readonly replyDraft: CrmReplyDraftUseCase,
+    @Inject(CrmTrustScoreUseCase) private readonly trustScore: CrmTrustScoreUseCase,
+    @Inject(CrmSummaryUseCase) private readonly summary: CrmSummaryUseCase,
+    @Inject(CrmInsightsUseCase) private readonly insights: CrmInsightsUseCase,
+    @Inject(CrmBroadcastUseCase) private readonly broadcast: CrmBroadcastUseCase,
+    @Inject(CrmCustomerProfileExtractUseCase) private readonly customerProfileExtract: CrmCustomerProfileExtractUseCase,
   ) {}
 
   @Public()

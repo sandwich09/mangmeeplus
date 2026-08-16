@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Inject } from '@nestjs/common';
 import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../../../common/security/public.decorator';
 import { GetHealthUseCase } from '../../application/use-cases/get-health.use-case';
@@ -7,7 +7,7 @@ import { GetHealthUseCase } from '../../application/use-cases/get-health.use-cas
 @Public()
 @Controller('health')
 export class HealthController {
-  constructor(private readonly getHealthUseCase: GetHealthUseCase) {}
+  constructor(@Inject(GetHealthUseCase) private readonly getHealthUseCase: GetHealthUseCase) {}
 
   @Get()
   @ApiOkResponse({ description: 'AI Gateway health status.' })

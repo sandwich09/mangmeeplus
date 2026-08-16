@@ -13,6 +13,7 @@ import { resolvePeriodInput, currentMonthRange, SalesGetSalesSummaryTool } from 
 import { InventoryGetStockBalanceTool, InventoryListLowStockTool, InventorySearchProductsTool } from './erp-tools.use-case';
 import { NotificationsListOpenAlertsTool } from './erp-dashboard-tools.use-case';
 import { WorkflowListAssignedTasksTool, WorkflowListRecentFailuresTool, WorkflowSummarizeRuleHealthTool } from './erp-workflow-tools.use-case';
+import { ExpenseGetDailyClosingTool } from './erp-expense-daily-closing.use-case';
 
 const baseCtx = { companyId: 'c1', userId: 'u1', locale: 'th-TH' } as any;
 
@@ -311,5 +312,155 @@ describe('LINE read-tool empty-result grounding', () => {
     const health = await new WorkflowSummarizeRuleHealthTool({ execute: async () => ({ items: [], total: 0 }) } as any)
       .execute({ ...baseCtx, permissions: ['workflow.rule.read'] });
     [tasks, failures, health].forEach(assertGroundedZero);
+  });
+});
+
+const dailyClosingCtx = {
+  companyId: 'c1', userId: 'u1', membershipId: 'm1', permissions: ['expense.read'],
+  branchIds: ['b1'], locationIds: [], locale: 'th-TH', requestId: 'r1',
+};
+
+function dailyClosingDetail(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'e1', expenseNumber: 'EXP-1', vendorNameSnapshot: 'ร้านทดสอบ',
+    expenseDate: new Date('2026-08-16T00:00:00.000Z'), dueDate: new Date('2026-08-16T00:00:00.000Z'),
+    currency: 'THB', grandTotalAmount: '200.0000', paidAmount: '50.0000', outstandingAmount: '150.0000',
+    status: 'NEEDS_REVIEW', paymentStatus: 'PARTIALLY_PAID', primaryAttachmentId: 'a1',
+    missingReceiptReason: null, taxEvidenceStatus: 'SUPPORTING_ONLY', duplicateStatus: 'NO_MATCH',
+    expenseCategory: { name: 'วัตถุดิบ' },
+    ...overrides,
+  };
+}
+
+function makeDailyClosingPrisma() {
+  const groupResults = [
+    [
+      { currency: 'THB', paymentStatus: 'PAID', _count: { _all: 1 }, _sum: { grandTotalAmount: '100.0000', paidAmount: '100.0000', outstandingAmount: '0' } },
+      { currency: 'THB', paymentStatus: 'PARTIALLY_PAID', _count: { _all: 1 }, _sum: { grandTotalAmount: '200.0000', paidAmount: '50.0000', outstandingAmount: '150.0000' } },
+      { currency: 'USD', paymentStatus: 'UNPAID', _count: { _all: 1 }, _sum: { grandTotalAmount: '10.0000', paidAmount: '0', outstandingAmount: '10.0000' } },
+    ],
+    [{ currency: 'THB', _count: { _all: 1 }, _sum: { outstandingAmount: '150.0000' } }],
+    [{ currency: 'THB', _count: { _all: 2 }, _sum: { outstandingAmount: '20.0000' } }],
+    [{ currency: 'USD', _count: { _all: 1 }, _sum: { outstandingAmount: '30.0000' } }],
+    [{ status: 'REJECTED', _count: { _all: 1 } }, { status: 'VOIDED', _count: { _all: 1 } }],
+  ];
+  const countResults = [4, 3, 2, 1];
+  const findResults = [
+    [dailyClosingDetail(), dailyClosingDetail({ id: 'e2', currency: 'USD', grandTotalAmount: '10.0000', paidAmount: '0', outstandingAmount: '10.0000', paymentStatus: 'UNPAID' })],
+    [dailyClosingDetail()],
+    [dailyClosingDetail({ id: 'overdue-1', dueDate: new Date('2026-08-15T00:00:00.000Z'), outstandingAmount: '10.0000' })],
+    [dailyClosingDetail({ id: 'no-due-1', dueDate: null, currency: 'USD', outstandingAmount: '30.0000' })],
+    [dailyClosingDetail({ id: 'pending-1' })],
+    [dailyClosingDetail({ id: 'evidence-1', primaryAttachmentId: null, taxEvidenceStatus: 'NEEDS_REVIEW' })],
+    [dailyClosingDetail({ id: 'duplicate-1', duplicateStatus: 'POSSIBLE_DUPLICATE' })],
+  ];
+  const calls = { groupBy: [] as any[], count: [] as any[], findMany: [] as any[], isolationLevel: '' };
+  let groupIndex = 0;
+  let countIndex = 0;
+  let findIndex = 0;
+  const db = {
+    expenseRecord: {
+      groupBy: async (args: unknown) => { calls.groupBy.push(args); return groupResults[groupIndex++] ?? []; },
+      count: async (args: unknown) => { calls.count.push(args); return countResults[countIndex++] ?? 0; },
+      findMany: async (args: any) => {
+        calls.findMany.push(args);
+        return (findResults[findIndex++] ?? []).slice(0, args.take);
+      },
+    },
+  };
+  const prisma = {
+    client: {
+      $transaction: async (fn: (tx: typeof db) => unknown, options: { isolationLevel: string }) => {
+        calls.isolationLevel = options.isolationLevel;
+        return fn(db);
+      },
+    },
+  };
+  return { prisma: prisma as any, calls };
+}
+
+describe('ExpenseGetDailyClosingTool', () => {
+  it('fails before querying for missing permission, invalid date, or out-of-scope branch', async () => {
+    const { prisma, calls } = makeDailyClosingPrisma();
+    const tool = new ExpenseGetDailyClosingTool(prisma);
+    assert.equal((await tool.execute({ ...dailyClosingCtx, permissions: [] }, { date: '2026-08-16' })).status, 'forbidden');
+    assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-02-30' })).errorCode, 'INVALID_DATE');
+    assert.equal((await tool.execute(dailyClosingCtx, { date: '2026-08-16', branchId: 'b2' })).status, 'forbidden');
+    assert.equal(calls.groupBy.length, 0);
+  });
+
+  it('returns one repeatable-read, bounded, multi-currency daily-closing snapshot', async () => {
+    const { prisma, calls } = makeDailyClosingPrisma();
+    const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, { date: '2026-08-16', detailLimit: 1 });
+    assert.equal(result.status, 'ok');
+    const data = result.data as any;
+    assert.equal(calls.isolationLevel, 'RepeatableRead');
+    assert.equal(calls.groupBy.length + calls.count.length + calls.findMany.length, 16);
+    assert.deepEqual(data.occurredToday.totals, [
+      { currency: 'THB', count: 2, total: '300.0000' },
+      { currency: 'USD', count: 1, total: '10.0000' },
+    ]);
+    assert.deepEqual(data.occurredToday.paid, [{ currency: 'THB', count: 2, total: '150.0000' }]);
+    assert.deepEqual(data.occurredToday.outstanding, [
+      { currency: 'THB', count: 1, total: '150.0000' },
+      { currency: 'USD', count: 1, total: '10.0000' },
+    ]);
+    assert.deepEqual(data.dueEndOfDay.totals, [{ currency: 'THB', count: 1, total: '150.0000' }]);
+    assert.deepEqual(data.overdue.totals, [{ currency: 'THB', count: 2, total: '20.0000' }]);
+    assert.deepEqual(data.unscheduledOutstanding.totals, [{ currency: 'USD', count: 1, total: '30.0000' }]);
+    assert.deepEqual(data.excluded, { rejected: 1, voided: 1 });
+    assert.deepEqual(data.occurredToday.items, {
+      total: 3, shown: 1, remaining: 2,
+      items: data.occurredToday.items.items,
+    });
+    assert.equal(data.occurredToday.items.items[0].category, 'วัตถุดิบ');
+    assert.equal(data.evidenceBlockers.items.items[0].evidenceAttention, true);
+    assert.equal(data.duplicateRisks.items.items[0].duplicateRisk, true);
+    assert.equal(data.limitations.neverSubmittedDocumentsObservable, false);
+    assert.equal(data.observability.queryCount, 16);
+    assert.equal(data.observability.truncated, true);
+    assert.deepEqual(data.scope, { kind: 'restricted_branches' });
+    assert.ok(!JSON.stringify(data.occurredToday.totals).includes('บาท'));
+    assert.match(result.sourceRefs[0]?.webPath ?? '', /^\/companies\/c1\/expenses$/);
+
+    const occurredWhere = calls.groupBy[0].where.AND[1].expenseDate;
+    assert.equal(occurredWhere.gte.toISOString(), '2026-08-16T00:00:00.000Z');
+    assert.equal(occurredWhere.lt.toISOString(), '2026-08-17T00:00:00.000Z');
+    const submittedWhere = calls.count[0].where.AND[1].uploadedAt;
+    assert.equal(submittedWhere.gte.toISOString(), '2026-08-15T17:00:00.000Z');
+    assert.equal(submittedWhere.lt.toISOString(), '2026-08-16T17:00:00.000Z');
+  });
+
+  it('applies tenant, branch, and own/related ABAC to every snapshot query', async () => {
+    for (const permissions of [['expense.read_own'], ['expense.read_related']]) {
+      const { prisma, calls } = makeDailyClosingPrisma();
+      await new ExpenseGetDailyClosingTool(prisma).execute({ ...dailyClosingCtx, permissions }, { date: '2026-08-16' });
+      const queries = [...calls.groupBy, ...calls.count, ...calls.findMany].map((query) => JSON.stringify(query));
+      assert.equal(queries.length, 16);
+      for (const query of queries) {
+        assert.match(query, /"companyId":"c1"/);
+        assert.match(query, /"branchId":\{"in":\["b1"\]\}/);
+        assert.match(query, /"branchId":null/);
+        if (permissions.includes('expense.read_own')) assert.match(query, /"createdByUserId":"u1"/);
+        else {
+          assert.match(query, /"substituteReceiptEvidences"/);
+          assert.match(query, /"payerUserId":"u1"/);
+        }
+      }
+    }
+  });
+
+  it('uses an explicitly selected in-scope branch without widening to company-central rows', async () => {
+    const { prisma, calls } = makeDailyClosingPrisma();
+    const result = await new ExpenseGetDailyClosingTool(prisma).execute(dailyClosingCtx, {
+      date: '2026-08-16', branchId: 'b1', detailLimit: 99,
+    });
+    assert.deepEqual((result.data as any).scope, { kind: 'selected_branch', branchId: 'b1' });
+    for (const query of [...calls.groupBy, ...calls.count, ...calls.findMany].map((value) => JSON.stringify(value))) {
+      assert.match(query, /"companyId":"c1"/);
+      assert.match(query, /"branchId":"b1"/);
+      assert.doesNotMatch(query, /"branchId":null/);
+    }
+    assert.equal(calls.findMany[0].take, 10);
   });
 });

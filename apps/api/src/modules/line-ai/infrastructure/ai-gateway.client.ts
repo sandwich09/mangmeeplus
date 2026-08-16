@@ -25,6 +25,13 @@ const LINE_TURN_TIMEOUT_MS = 120_000;
 const LINE_INTAKE_TIMEOUT_MS = 30_000;
 const RECEIPT_OCR_TIMEOUT_MS = 120_000;
 
+export class AiGatewayRequestError extends Error {
+  constructor(public readonly code: 'AI_GATEWAY_TIMEOUT' | 'AI_GATEWAY_UNAVAILABLE', message: string) {
+    super(message);
+    this.name = 'AiGatewayRequestError';
+  }
+}
+
 @Injectable()
 export class AiGatewayClient {
   private readonly logger = new Logger(AiGatewayClient.name);
@@ -129,7 +136,7 @@ export class AiGatewayClient {
     const url = `${this.config.aiGatewayInternalUrl}${path}`;
     const secret = this.config.aiGatewayInternalSecret;
     if (!secret) {
-      throw new Error('AI_GATEWAY_INTERNAL_SECRET_NOT_CONFIGURED');
+      throw new AiGatewayRequestError('AI_GATEWAY_UNAVAILABLE', 'AI Gateway is not configured');
     }
 
     const headers: Record<string, string> = {
@@ -148,13 +155,17 @@ export class AiGatewayClient {
       });
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway request failed', error: (err as Error).message, requestId });
-      throw new Error('AI_GATEWAY_TIMEOUT');
+      const name = (err as { name?: string }).name;
+      throw new AiGatewayRequestError(
+        name === 'TimeoutError' || name === 'AbortError' ? 'AI_GATEWAY_TIMEOUT' : 'AI_GATEWAY_UNAVAILABLE',
+        name === 'TimeoutError' || name === 'AbortError' ? 'AI Gateway request timed out' : 'AI Gateway is unavailable',
+      );
     }
 
     if (!response.ok) {
       // The downstream response must never be able to reflect delegation material into logs.
       this.logger.error({ msg: 'AI Gateway error response', status: response.status, requestId });
-      throw new Error(`AI_GATEWAY_ERROR:${response.status}`);
+      throw new AiGatewayRequestError('AI_GATEWAY_UNAVAILABLE', `AI Gateway returned HTTP ${response.status}`);
     }
 
     const result = (await response.json()) as T;

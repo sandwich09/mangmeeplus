@@ -13,6 +13,29 @@ for file in "$collector" "$secret_validator" "$parameter_validator" "$environmen
   bash -n "$file"
 done
 
+source_sha="$(printf a%.0s {1..40})"
+artifact_sha="$(printf b%.0s {1..64})"
+runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234
+qualifier=candidate_production_aaaaaaaaaaaa
+jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" '
+  {schemaVersion:1,artifactKind:"LINE_AI_RELEASE_CANDIDATE",sourceCommit:$source,
+   producerRunId:"42",validationRunId:"41",bindingStrategy:"isolated_runtime_pinned_endpoint",
+   imageManifest:{path:"production-image-manifest.json",sha256:("c"*64),images:[]},
+   agentCore:{artifactPath:"agentcore/agentcore.zip",artifactManifestPath:"agentcore/agentcore-artifact.json",
+     artifactSha256:$artifact,sourceCommit:$source},
+   contract:{path:"line-ai-contract.ts",sha256:("d"*64),runtimeContractVersion:1}}
+' > "$work/line-ai-release-manifest.json"
+jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" --arg runtime "$runtime_arn" \
+  --arg qualifier "$qualifier" '
+  {schemaVersion:1,environment:"production",sourceCommit:$source,
+   executionRoleArn:"arn:aws:iam::311414082667:role/watchdog-bms-production-agentcore-candidate-execution-role",
+   artifact:{sha256:$artifact,bucket:"watchdog-bms-agentcore-artifacts-311414082667",
+     prefix:("agentcore/watchdog_orchestrator_production_candidate-"+$source+"-"+$artifact+".zip"),objectVersionId:"v1"},
+   runtime:{arn:$runtime,id:"watchdog_orchestrator_production_candidate-AbCdEf1234",version:"7",status:"READY"},
+   endpoint:{arn:($runtime+"/runtime-endpoint/"+$qualifier),name:$qualifier,version:"7",status:"READY"},
+   bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:("e"*64),contractVersion:1}
+' > "$work/agentcore-production-binding.json"
+
 promotion_env=(
   AWS_DEPLOY_ROLE_ARN=arn:aws:iam::311414082667:role/watchdog-bms-deploy-production
   PUBLIC_DOMAIN_URL=https://mangmeeplus.com WORKFLOW_WEBHOOK_ALLOWED_HOSTS=none
@@ -22,12 +45,14 @@ promotion_env=(
   LINE_LOGIN_CHANNEL_ID=123456789 LINE_LIFF_ID=123456789-abc_DEF
   LINE_MESSAGING_CHANNEL_ID=987654321 LINE_AI_AGENT_RUNTIME=agentcore
   AGENTCORE_REGION=ap-southeast-1
-  AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0
-  AGENTCORE_RUNTIME_QUALIFIER=DEFAULT PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true
+  AGENTCORE_RUNTIME_ARN="$runtime_arn" AGENTCORE_RUNTIME_QUALIFIER="$qualifier"
+  AGENTCORE_CANDIDATE_BINDING="$work/agentcore-production-binding.json"
+  LINE_AI_RELEASE_MANIFEST="$work/line-ai-release-manifest.json"
+  PRODUCTION_POLICY_READ_TOKEN_CONFIGURED=true
 )
 env "${promotion_env[@]}" bash "$environment_validator" "$work/environment.json"
 jq -e '.allConfigured==true and .valuesExposed==false
-  and (.requiredVariables|length)==13 and (.requiredVariableValuesSha256|test("^[0-9a-f]{64}$"))' \
+  and (.requiredVariables|length)==11 and (.requiredVariableValuesSha256|test("^[0-9a-f]{64}$"))' \
   "$work/environment.json" >/dev/null
 while IFS= read -r key; do
   if env "${promotion_env[@]}" env -u "$key" bash "$environment_validator" \
@@ -35,6 +60,13 @@ while IFS= read -r key; do
     echo "ERROR: promotion environment accepted missing $key" >&2; exit 1
   fi
 done < <(jq -r '.requiredVariables[]' "$work/environment.json")
+for key in AGENTCORE_RUNTIME_ARN AGENTCORE_RUNTIME_QUALIFIER; do
+  if env "${promotion_env[@]}" env -u "$key" bash "$environment_validator" \
+      "$work/missing-$key.json" >/dev/null 2>&1; then
+    echo "ERROR: promotion environment accepted missing signed candidate identity $key" >&2
+    exit 1
+  fi
+done
 if env "${promotion_env[@]}" PUBLIC_DOMAIN_URL=https://wrong.example \
     bash "$environment_validator" "$work/wrong-origin.json" >/dev/null 2>&1; then
   echo 'ERROR: promotion environment accepted a wrong Production origin' >&2; exit 1
@@ -157,9 +189,10 @@ jq -e '
     and (.Action|index("rds:DescribeDBSnapshots"))!=null
     and (.Action|index("rds:DescribeDBSubnetGroups"))!=null
     and (.Action|index("rds:DescribeOptionGroups"))!=null)
-  and any(.Statement[];.Sid=="AllowExactAgentCoreRuntimeRead"
-    and .Action=="bedrock-agentcore:GetAgentRuntime"
-    and .Resource=="arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0")
+  and any(.Statement[];.Sid=="AllowProductionAgentCoreRead"
+    and (.Action|index("bedrock-agentcore:GetAgentRuntime"))!=null
+    and (.Action|index("bedrock-agentcore:GetAgentRuntimeEndpoint"))!=null
+    and (.Resource|index("arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-*"))!=null)
 ' "$policy" >/dev/null
 for exact in '.Engine=="postgres" and .EngineVersion=="18.3"' \
   'and .KmsKeyId==$kms' \
@@ -167,7 +200,8 @@ for exact in '.Engine=="postgres" and .EngineVersion=="18.3"' \
   'agentcore_runtime_id="${agentcore_runtime_arn##*/}"' \
   '.metadataConfiguration.requireMMDSV2==true' \
   '.environmentVariables.DEPLOY_ENVIRONMENT=="production"' \
-  '.roleArn==$role' 'entryPoint==["runtime.js"]' 'versionId|type=="string"'; do
+  '.environmentVariables.AGENTCORE_ARTIFACT_SHA256==$artifactSha' \
+  '.roleArn==$role' 'entryPoint==["runtime.js"]' '.targetVersion==$version'; do
   grep -F "$exact" "$collector" >/dev/null
 done
 jq -nS -L "$root/infra/security" 'include "evidence-contracts"; e0_h3_inline_policy' \

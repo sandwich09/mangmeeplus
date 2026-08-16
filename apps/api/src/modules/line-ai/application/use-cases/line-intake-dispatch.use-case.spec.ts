@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply } from './process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
+import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
 // Router-driven webhook dispatch tests (item 10B LINE Intake Router front stage).
 
@@ -80,6 +82,11 @@ function makePrisma() {
         },
         create: async (args: any) => { const row = { id: `pm-${pendingMediaRows.length + 1}`, ...args.data }; pendingMediaRows.push(row); return row; },
         update: async (args: any) => { const row = pendingMediaRows.find((r) => r.id === args.where.id); if (row) Object.assign(row, args.data); return row; },
+        updateMany: async (args: any) => {
+          const rows = pendingMediaRows.filter((r) => r.id === args.where.id && (!args.where.status || r.status === args.where.status));
+          rows.forEach((row) => Object.assign(row, args.data));
+          return { count: rows.length };
+        },
       },
     },
   } as any;
@@ -103,6 +110,8 @@ type Harness = {
   createExpenseCalls: any[];
   linkAttachmentCalls: any[];
   updateExpenseCalls: any[];
+  substituteCalls: any[];
+  receiptContinuationCalls: any[];
 };
 
 function makeHarness(opts: {
@@ -120,6 +129,11 @@ function makeHarness(opts: {
   prisma?: any;
   /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
   captureLedger?: any[];
+  captureError?: Error;
+  substituteResult?: any;
+  expenseDetail?: any;
+  lineReplyResult?: 'ok' | 'failed_token' | 'failed_other';
+  conversationTurns?: any[];
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -136,7 +150,10 @@ function makeHarness(opts: {
   const correctionCalls: any[] = [];
   const linkAttachmentCalls: any[] = [];
   const updateExpenseCalls: any[] = [];
+  const substituteCalls: any[] = [];
+  const receiptContinuationCalls: any[] = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
+  if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
@@ -160,7 +177,11 @@ function makeHarness(opts: {
     } as any,
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
-      sendReply: async (_token: string, messages: unknown[]) => { replies.push(replyAssertionText(messages[0])); return 'ok'; },
+      sendReply: async (_token: string, messages: unknown[]) => {
+        replies.push(replyAssertionText(messages[0]));
+        return opts.lineReplyResult ?? 'ok';
+      },
+      sendPush: async () => opts.lineReplyResult ?? 'ok',
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     { assertClean: async () => undefined } as any,
@@ -172,6 +193,7 @@ function makeHarness(opts: {
     // captureExpenseNote
     {
       execute: async (_ctx: any, cmd: any) => {
+        if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
         return {
           expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
@@ -195,6 +217,7 @@ function makeHarness(opts: {
     {
       listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
       listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
+      recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
       findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
       runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
         const matched = await detectWithinTx({ marker: 'tx' });
@@ -203,7 +226,7 @@ function makeHarness(opts: {
       createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
       linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
       updateExpense: async (input: any) => { updateExpenseCalls.push(input); return { id: input.id }; },
-      findByIdWithRelations: async (_companyId: string, expenseId: string) => ({
+      findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
         id: expenseId,
         primaryAttachmentId: 'pending-att-1',
         attachments: [{
@@ -217,6 +240,7 @@ function makeHarness(opts: {
         expenseDate: new Date('2026-07-29T00:00:00.000Z'),
         grandTotalAmount: '0',
         vendorCounterpartyId: null,
+        createdByUserId: 'user-1',
       }),
       findNearDuplicates: async () => [],
       findExpenseIdsByAttachmentChecksum: async () => [],
@@ -244,6 +268,7 @@ function makeHarness(opts: {
         return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
       },
     } as any,
+    (opts.substituteResult ? { execute: async (_ctx: any, input: any) => { substituteCalls.push(input); return opts.substituteResult; } } : undefined) as any,
   );
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   (useCase as any).downloadLineMedia = async () => opts.mediaDownloadFails ? null : ({
@@ -254,7 +279,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls };
+  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, receiptContinuationCalls };
 }
 
 const TEXT_EVENT = {
@@ -478,6 +503,88 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
 });
 
 describe('LINE intake dispatch – text path', () => {
+  it('keeps an immediate vague follow-up attached to the delivered capability answer without another model call', async () => {
+    const h = makeHarness({
+      permissions: ['line.ai.query'],
+      conversationTurns: [{
+        createdAt: new Date(), userMessagePreview: 'ทำอะไรได้บ้าง',
+        replyPreview: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ',
+        intent: 'UNKNOWN', agent: 'general', refused: false, toolInvocations: [],
+      }],
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อย่างไหร่' });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.match(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
+    assert.match(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
+    assert.match(h.replies[0] ?? '', /ขั้นสุดท้ายยังทำในเว็บ/);
+  });
+
+  it('does not treat the same vague text as capability follow-up without the delivered capability marker', () => {
+    assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', undefined), false);
+    assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', {
+      windowMinutes: 15, maxTurns: 15,
+      recentTurns: [{ at: new Date().toISOString(), assistantReplyPreview: 'สรุปยอดขายแล้ว', refused: false }],
+    }), false);
+  });
+
+  it('answers a receipt follow-up from the current captured expense without invoking the model or inventing purpose/tax policy', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      scopes: { branchIds: ['branch-1'] },
+      recentCaptures: [{
+        id: 'expense-royal', expenseDate: new Date('2026-08-15T00:00:00.000Z'), grandTotalAmount: '2890.00',
+        sourceDocumentType: 'RECEIPT', createdAt: new Date(),
+      }],
+      expenseDetail: {
+        id: 'expense-royal', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1',
+        sourceDocumentType: 'RECEIPT', grandTotalAmount: '2890.00', currency: 'THB',
+        expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
+        sourceChannelMetadataJson: {
+          lineReceiptContinuation: {
+            kind: 'CAPTURED_EXPENSE', expenseId: 'expense-royal', userId: 'user-1',
+            chatKeyHash: '20cb92ee125850e6', deliveredOutcomeId: 'opaque-outcome',
+          },
+        },
+        aiVerificationSummaryJson: {
+          recognizedFields: {
+            vendorName: 'Royal Pizza Bravo BKK', expenseDate: '2026-08-15', documentNumber: '04003692',
+            grandTotalAmount: '2890.00', vatAmount: '189.07',
+          },
+          missingFields: ['category', 'businessPurpose'],
+        },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อ่านใบเสร็จนี้ให้หน่อยว่าเป็นประเภทไหน และจะนำมาเป็นค่าใช้จ่ายของบริษัทอย่างไร' });
+
+    assert.equal(h.routeRequests.length, 0, 'grounded follow-up never reaches the model router');
+    assert.equal(h.captured.length, 0);
+    assert.match(h.replies[0] ?? '', /Royal Pizza Bravo BKK/);
+    assert.match(h.replies[0] ?? '', /2,890\.00 THB/);
+    assert.match(h.replies[0] ?? '', /189\.07/);
+    assert.match(h.replies[0] ?? '', /ไม่ยืนยันนโยบายบริษัทหรือสิทธิเครดิต VAT/);
+    assert.doesNotMatch(h.replies[0] ?? '', /ประชุม|รับรองลูกค้า|เคลมได้/);
+  });
+
+  it('requires target selection instead of silently reading one of several recent receipts', async () => {
+    const recent = (id: string) => ({
+      id, expenseDate: new Date('2026-08-15T00:00:00.000Z'), grandTotalAmount: '100.00',
+      sourceDocumentType: 'RECEIPT', createdAt: new Date(),
+    });
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      recentCaptures: [recent('expense-1'), recent('expense-2')],
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบนี้เป็นเอกสารประเภทอะไร' });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.match(h.replies[0] ?? '', /มากกว่า 1 รายการ/);
+    assert.match(h.replies[0] ?? '', /1\).*100\.00[\s\S]*2\).*100\.00/);
+  });
+
   it('a concurrent duplicate event-log claim processes exactly one turn', async () => {
     const { prisma } = makePrisma();
     let claimed = false;
@@ -522,6 +629,95 @@ describe('LINE intake dispatch – text path', () => {
     // Router received the active category catalog and permissions, never the raw LINE user id.
     assert.equal(h.routeRequests[0].activeCategories[0].id, 'cat-meals');
     assert.ok(!JSON.stringify(h.routeRequests[0]).includes('line-user-secret'));
+  });
+
+  it('turns an incomplete advisory capture route into one clarification and zero drafts', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99,
+        captureHints: { amount: '590' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+      captureLedger,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'รีบทำให้หน่อย' });
+    assert.equal(h.captured.length, 0);
+    assert.match(h.replies[0] ?? '', /ยอดเงิน.*วัตถุประสงค์|ยอดเงิน.*หมวดค่าใช้จ่าย/);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+  });
+
+  it('handles a substitute-receipt request through typed preflight before any model or final mutation', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      recentCaptures: [{
+        id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '200.00',
+        sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date(),
+      }],
+      substituteResult: {
+        handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-1',
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• เหตุผล\n• หลักฐาน\nLINE ยังไม่ได้ออกเอกสาร',
+        acceptedFields: [], blockers: [{ code: 'reason_code_required' }], pendingQuestion: 'เหตุผลคืออะไร?',
+      },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ช่วยทำใบทดแทนใบเสร็จให้หน่อย' });
+    assert.equal(h.routeRequests.length, 0, 'deterministic workflow boundary skips the model router');
+    assert.equal(h.captured.length, 0);
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+  });
+
+  it('answers an arbitrary intervening question normally, then resumes the same substitute workflow', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'sub-clarify-1', question: 'เหตุผลคืออะไร?', text: 'ทำใบรับรองต่อ', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      captureLedger,
+      substituteResult: {
+        handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-1',
+        replyText: 'preflight not directly delivered', acceptedFields: [], blockers: [],
+        pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', sideQuestionAnswered: false,
+        resumeCapsule: '↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ EXP-001 ยังอยู่\nทำต่อ: เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
+
+    assert.equal(h.substituteCalls.length, 1);
+    assert.equal(h.routeRequests.length, 1, 'the side question still uses the normal read path');
+    assert.equal(h.routeRequests[0].openClarifications, undefined, 'pending substitute fields are not exposed as instructions to the side-question router');
+    assert.match(h.replies[0] ?? '', /turn-answer/);
+    assert.match(h.replies[0] ?? '', /งานใบรับรองแทนใบเสร็จรับเงิน.*ยังอยู่/);
+    assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
+  });
+
+  it('answers a business question beside pending media, then deterministically resumes the stored picture choice', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ไฟล์ที่ผู้ใช้ส่งมา', askedAt: new Date().toISOString(),
+        pendingMedia: { pendingMediaId: 'pending-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
+        entry: { id: 'media-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      prisma,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-media-side-question', messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
+
+    assert.match(h.replies[0] ?? '', /turn-answer/);
+    assert.match(h.replies[0] ?? '', /รูปที่รอจำแนกยังเก็บไว้อยู่/);
+    assert.match(h.replies[0] ?? '', /3\) สรุปหลายรายการ/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    assert.equal(h.routeRequests[0].openClarifications, undefined, 'the side-question model never receives pending media as an instruction');
   });
 
   it('denies text capture without upload permission even when router says capture', async () => {
@@ -711,8 +907,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
-  it('explicit expense caption keeps the existing manual-review draft when OCR is unavailable', async () => {
-    const { prisma, recordUpdates } = makePrisma();
+  it('explicit expense caption still clarifies when OCR cannot prove document evidence', async () => {
+    const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
@@ -723,10 +919,11 @@ describe('LINE intake dispatch – media path', () => {
     await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'บันทึกเป็นค่าใช้จ่าย');
 
     assert.equal(h.ocrRequests.length, 1);
-    assert.equal(h.initCalls.length, 1);
-    assert.equal(h.completeCalls.length, 1);
-    assert.equal(recordUpdates.at(-1)?.data.aiVerificationSummaryJson.status, 'NOT_CONFIGURED');
-    assert.equal(recordUpdates.at(-1)?.data.aiVerificationStatus, 'NEEDS_REVIEW');
+    assert.equal(h.initCalls.length, 0);
+    assert.equal(h.completeCalls.length, 0);
+    assert.equal(recordUpdates.length, 0);
+    assert.equal(pendingMediaRows.length, 1);
+    assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
   });
 
   it('leaves a transient media-download failure reclaimable instead of terminal', async () => {
@@ -819,14 +1016,14 @@ describe('LINE intake dispatch – media path', () => {
       fields: {},
     },
     {
-      name: 'multi-document image', expected: /พบเอกสารมากกว่า 1 ฉบับ/,
+      name: 'multi-document image', expected: /สรุปหลายรายการ/,
       intent: 'EXPENSE_DOCUMENT_CAPTURE' as const,
       classification: businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] }),
       fields: { grandTotalAmount: '900.00' },
     },
   ]) {
     it(`${scenario.name} returns bounded guidance with no expense mutation`, async () => {
-      const { prisma, recordUpdates } = makePrisma();
+      const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
       const h = makeHarness({
         permissions: ['expense.receipt.line_upload'],
         routePlan: { status: 'ROUTED', intent: scenario.intent, language: 'th', confidence: 0.95, documentClassification: scenario.classification },
@@ -840,7 +1037,9 @@ describe('LINE intake dispatch – media path', () => {
       assert.equal(h.initCalls.length, 0);
       assert.equal(h.completeCalls.length, 0);
       assert.equal(recordUpdates.length, 0);
-      assert.equal(h.uploads.length, 0);
+      const preservesMultiple = scenario.classification.contentKind === 'MULTI_DOCUMENT';
+      assert.equal(h.uploads.length, preservesMultiple ? 1 : 0);
+      assert.equal(pendingMediaRows.length, preservesMultiple ? 1 : 0);
       assert.match(h.replies[0] ?? '', scenario.expected);
     });
   }
@@ -952,6 +1151,10 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(turnCreates.length, 1);
     assert.equal(turnCreates[0].data.intent, 'EVIDENCE_CAPTURE');
     assert.match(turnCreates[0].data.replyPreview, /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.equal(h.receiptContinuationCalls.length, 1);
+    assert.equal(h.receiptContinuationCalls[0].expenseId, 'expense-1');
+    assert.ok(h.receiptContinuationCalls[0].chatKeyHash && !h.receiptContinuationCalls[0].chatKeyHash.includes('line-user-secret'));
+    assert.ok(h.receiptContinuationCalls[0].deliveredOutcomeId && !h.receiptContinuationCalls[0].deliveredOutcomeId.includes('evt-media'));
   });
 });
 
@@ -993,7 +1196,8 @@ describe('LINE intake dispatch – buffered caption (message buffering spec §8)
     assert.equal(h.createExpenseCalls.length, 0);
     assert.match(h.replies[0] ?? '', /1\).*ใบเสร็จ[\s\S]*2\).*ภาพประกอบ/);
     const statuses = updates.map((u: any) => u.data?.status);
-    assert.ok(statuses.includes('completed'), `expected completed, got ${statuses.join(',')}`);
+    assert.ok(statuses.includes('clarification_required'),
+      `expected clarification_required, got ${statuses.join(',')}`);
     assert.ok(!statuses.includes('caption_deferred_to_text'), 'no longer defers the caption');
   });
 
@@ -1074,6 +1278,38 @@ function seedPendingRow(pendingMediaRows: any[], overrides: Partial<Record<strin
 }
 
 describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
+  it('completes choice 1 and returns the web-only substitute outcome in the same delivered turn', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'expense.confirm', 'line.ai.query'],
+      prisma,
+      captureLedger,
+      substituteResult: {
+        handled: true, status: 'BLOCKED', workflowId: 'workflow-1', expenseId: 'expense-clarified-1',
+        acceptedFields: [], blockers: [{ code: 'supporting_evidence_required' }],
+        pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nLINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร\nเปิดตรวจสอบในเว็บ: /opaque-workflow',
+      },
+    });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT,
+      webhookEventId: 'evt-choice-and-substitute',
+      messageText: 'ข้อ 1 และออกใบรับรองแทนเงินสดให้ฉัน',
+    });
+
+    assert.equal(h.createExpenseCalls.length, 1, 'the permitted receipt outcome completes once');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.equal(h.substituteCalls.length, 1, 'the additional clause is evaluated independently');
+    assert.equal(h.substituteCalls[0].recentCandidates[0].id, 'expense-clarified-1');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.match(h.replies[0] ?? '', /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.equal(captureLedger.length, 1, 'only the unresolved substitute question remains in the ledger');
+  });
+
   it('"ใช่ ใบเสร็จ" builds the draft from the STORED attachment (original message id) and marks the row RESOLVED_RECEIPT', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows);
@@ -1111,6 +1347,26 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.equal(h.updateExpenseCalls.some((update) => 'duplicateStatus' in update), false);
     assert.equal(h.updateExpenseCalls.at(-1).aiVerificationSummaryJson.duplicateWarning, true);
     assert.match(h.replies[0] ?? '', /อาจซ้ำ/);
+  });
+
+  it('keeps a receipt choice pending when the capture outcome cannot be delivered', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 },
+      prisma,
+      lineReplyResult: 'failed_other',
+    });
+
+    await assert.rejects(h.useCase.execute({
+      ...TEXT_EVENT,
+      webhookEventId: 'evt-receipt-delivery-fail',
+      messageText: 'ใช่ ใบเสร็จ',
+    }));
+
+    assert.equal(h.createExpenseCalls.length, 1, 'the idempotent draft may exist for retry');
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'stored media is not consumed before delivery');
   });
 
   it('a redelivered receipt confirmation reuses the existing draft (findByLineMessageId) instead of creating a second', async () => {
@@ -1174,6 +1430,42 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     // The stored caption — not the "just an illustration" reply — is what reaches the intake route + AI turn.
     assert.match(h.routeRequests.at(-1)?.messageText ?? '', /ยอดขาย/);
     assert.match(h.replies[0] ?? '', /turn-answer/);
+  });
+
+  it('"สรุปหลายรายการ" preserves the file, creates no expense, and closes the pending review choice after delivery', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      prisma,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-multiple', messageText: 'สรุปหลายรายการ' });
+
+    assert.equal(h.createExpenseCalls.length, 0, 'multiple transactions never collapse into one draft');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_MULTI_ENTRY_REVIEW');
+    assert.match(h.replies[0] ?? '', /ยังไม่ได้สร้างค่าใช้จ่ายรายการเดียว/);
+    assert.match(h.replies[0] ?? '', /\/companies\/company-1\/expenses/);
+    assert.equal(h.routeRequests.length, 0, 'the model cannot reinterpret the safe multi-entry decision');
+  });
+
+  it('keeps an illustration choice pending until the deferred answer is delivered', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 },
+      prisma,
+      lineReplyResult: 'failed_other',
+    });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT,
+      webhookEventId: 'evt-illustration-delivery-fail',
+      messageText: 'แค่ภาพประกอบ',
+    });
+
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
   });
 
   it('an ambiguous follow-up leaves the row PENDING and routes the reply normally', async () => {
@@ -1267,6 +1559,12 @@ describe('media clarify carries its file into the next turn', () => {
 });
 
 describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
+  it('splits a numbered clarification outcome from an independent trailing request', () => {
+    assert.deepEqual(splitPendingMediaReply('ข้อ 1 และออกใบรับรองแทนเงินสดให้ฉัน'), {
+      decision: 'receipt', remainder: 'ออกใบรับรองแทนเงินสดให้ฉัน',
+    });
+    assert.equal(splitPendingMediaReply('จ่ายไป 2 ใบ'), null);
+  });
   it('affirmative / receipt words → receipt', () => {
     for (const t of ['ใช่ ใบเสร็จ', 'บันทึกเลย', 'receipt please', 'บิลค่าอาหาร', 'สลิปโอน']) {
       assert.equal(classifyPendingMediaReply(t), 'receipt', t);
@@ -1275,6 +1573,11 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
   it('illustration / negation words → illustration', () => {
     for (const t of ['แค่ภาพประกอบ', 'ไม่ใช่', 'แค่ถามเฉยๆ', 'just an illustration', 'no']) {
       assert.equal(classifyPendingMediaReply(t), 'illustration', t);
+    }
+  });
+  it('multiple-entry words → safe multi-entry review', () => {
+    for (const t of ['สรุปหลายรายการ', 'หลายรายการ', 'multiple entries']) {
+      assert.equal(classifyPendingMediaReply(t), 'multiple', t);
     }
   });
   it('"ไม่ใช่" resolves to illustration even though it contains "ใช่"', () => {
@@ -1305,6 +1608,9 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
     }
     for (const t of ['2', '2)', 'ข้อ 2', 'สอง', 'อันที่สอง']) {
       assert.equal(classifyPendingMediaReply(t), 'illustration', t);
+    }
+    for (const t of ['3', '3)', 'ข้อ 3', 'สาม', 'อันที่สาม']) {
+      assert.equal(classifyPendingMediaReply(t), 'multiple', t);
     }
   });
 

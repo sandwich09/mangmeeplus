@@ -2,7 +2,7 @@
  * Internal AI Gateway endpoint for LINE AI turns.
  * Protected by X-Internal-Secret; not exposed to public internet.
  */
-import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Logger, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Inject, Logger, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { Public } from '../../../../common/security/public.decorator';
@@ -36,6 +36,39 @@ function hasUsableTotal(understanding: ReceiptUnderstanding): boolean {
     && understanding.classification?.requiresClarification === false;
 }
 
+function needsPrintedVatReread(understanding: ReceiptUnderstanding): boolean {
+  if (!understanding.ok || !hasUsableTotal(understanding) || understanding.fields?.vatAmount) return false;
+  return understanding.fields?.vatMode === 'VAT_INCLUDED'
+    || understanding.fields?.vatMode === 'VAT_EXCLUDED'
+    || !!understanding.fields?.vatRate;
+}
+
+function moneyMinorUnits(value: string | undefined): bigint | null {
+  const normalized = value?.trim().replace(/,/g, '');
+  if (!normalized || !/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const [whole, fraction = ''] = normalized.split('.');
+  return BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'));
+}
+
+function sameUsableTotal(first: ReceiptUnderstanding, second: ReceiptUnderstanding): boolean {
+  if (!first.ok || !second.ok || !hasUsableTotal(first) || !hasUsableTotal(second)) return false;
+  const firstTotal = moneyMinorUnits(first.fields?.grandTotalAmount);
+  const secondTotal = moneyMinorUnits(second.fields?.grandTotalAmount);
+  return firstTotal !== null && secondTotal === firstTotal;
+}
+
+function withRecoveredPrintedVat(
+  first: Extract<ReceiptUnderstanding, { ok: true }>,
+  second: Extract<ReceiptUnderstanding, { ok: true }>,
+): Extract<ReceiptUnderstanding, { ok: true }> {
+  const fields = { ...first.fields, vatAmount: second.fields!.vatAmount! };
+  if (fields.missingFields) {
+    fields.missingFields = fields.missingFields.filter((field) => field !== 'vatAmount');
+    if (fields.missingFields.length === 0) delete fields.missingFields;
+  }
+  return { ...first, fields };
+}
+
 @ApiTags('internal')
 @Controller('internal/ai')
 @UseInterceptors(AiUsageInterceptor)
@@ -43,8 +76,8 @@ export class LineAiInternalController {
   private readonly logger = new Logger(LineAiInternalController.name);
 
   constructor(
-    private readonly config: AiGatewayConfigService,
-    private readonly turnUseCase: LineAiTurnUseCase,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(LineAiTurnUseCase) private readonly turnUseCase: LineAiTurnUseCase,
   ) {}
 
   @Public()
@@ -164,11 +197,14 @@ export class LineAiInternalController {
     let understood = await this.understandReceiptText(provider, documentText, activeCategories);
     if (!understood.ok) return { status: 'failed', errorCode: understood.errorCode };
 
-    // A warped or low-resolution photo regularly costs Typhoon the printed total line, which
-    // fails the deterministic total gate and leaves the whole draft blank. One Bedrock vision
-    // re-read of the same image recovers it; a re-read that is still unusable is discarded so
-    // the first (weaker but honest) result and its lineage survive.
-    if (!isPdf && this.config.modelProvider === 'bedrock' && !hasUsableTotal(understood)) {
+    // A warped or low-resolution photo can cost Typhoon either the printed total or an explicitly
+    // signalled VAT amount. Run at most one vision re-read. A replacement total must clear the full
+    // gate; recovered VAT must be source-checked by that reading and carry the same exact-cent total.
+    // A multi-entry page is intentionally not one expense. Re-reading it to recover a single total
+    // can only weaken the classification, so keep the first MULTI_DOCUMENT decision authoritative.
+    const needsTotalReread = understood.classification?.contentKind !== 'MULTI_DOCUMENT' && !hasUsableTotal(understood);
+    const needsVatReread = needsPrintedVatReread(understood);
+    if (!isPdf && this.config.modelProvider === 'bedrock' && (needsTotalReread || needsVatReread)) {
       const reread = await provider.generateText({
         systemPrompt: bedrockOcrPrompt('image'),
         messages: [{ role: 'user', text: 'Transcribe the attached document.' }],
@@ -179,9 +215,16 @@ export class LineAiInternalController {
       const rereadText = reread.ok ? parseTyphoonNaturalText(reread.text) : null;
       if (rereadText) {
         const second = await this.understandReceiptText(provider, rereadText, activeCategories);
-        if (second.ok && hasUsableTotal(second)) {
+        if (second.ok && needsTotalReread && hasUsableTotal(second)) {
           understood = second;
           stageOneLineage = modelLineage(this.config, 'receipt_ocr_read', extractionModelId);
+        } else if (
+          second.ok
+          && needsVatReread
+          && !!second.fields?.vatAmount
+          && sameUsableTotal(understood, second)
+        ) {
+          understood = withRecoveredPrintedVat(understood, second);
         }
       }
     }
@@ -228,7 +271,10 @@ export class LineAiInternalController {
     const classification = parsed.classification
       ? gateBusinessDocumentClassification(parsed.classification, fields, documentText)
       : undefined;
-    return { ok: true, ...(fields ? { fields } : {}), ...(classification ? { classification } : {}) };
+    // ReceiptOcrResponse.fields is a single-expense draft contract. Returning one page total/vendor/
+    // date for MULTI_DOCUMENT would let a future consumer collapse the ledger despite the classifier.
+    const safeFields = classification?.contentKind === 'MULTI_DOCUMENT' ? undefined : fields;
+    return { ok: true, ...(safeFields ? { fields: safeFields } : {}), ...(classification ? { classification } : {}) };
   }
 
   @Public()
@@ -398,6 +444,7 @@ Return compact JSON only, no markdown:
 Allowed reason codes: NO_DOCUMENT_STRUCTURE, UNREADABLE_OR_CROPPED, MULTIPLE_DOCUMENTS, LOW_CLASSIFICATION_CONFIDENCE, CONTRADICTORY_SIGNALS, QUANTITY_ONLY, MISSING_MONETARY_AMOUNT, MISSING_TRANSACTION_TOTAL, MISSING_PAYMENT_EVIDENCE, ORDER_ONLY, MISSING_VENDOR, MISSING_DOCUMENT_NUMBER, MISSING_VENDOR_TAX_ID, MISSING_TAX_BASE_OR_VAT, QUOTATION_NOT_TRANSACTION, PAYMENT_EVIDENCE_ONLY, MISSING_SCHEDULED_TIME, MISSING_PARTY_OR_PROVIDER, MISSING_BOOKING_REFERENCE, AMBIGUOUS_BUSINESS_DIRECTION, CHANNEL_SCOPE_MISMATCH, TARGET_PERMISSION_MISSING, TARGET_MODULE_DISABLED, OCR_UNAVAILABLE, HUMAN_REVIEW_REQUIRED.
 Evidence, amount, and settlement signals must be short exact spans copied from OCR text. Empty arrays are valid. Never return raw OCR text or reasoning.
 Receipt requires a positive transaction-specific total, explicit receipt/paid/settlement evidence, and issuer/date/reference anchor. Item names or quantities without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. A total without settlement evidence is a bill/order, not RECEIPT. Quotations, appointments, bookings, reservations, signatures, and non-financial images are never expense receipts even when an amount is visible.
+A ledger, notebook page, phone screenshot, or handwritten summary containing multiple independent expense transactions or per-row totals is MULTI_DOCUMENT with MULTIPLE_DOCUMENTS even when it is physically one page. Never collapse its grand total into one expense and do not extract a single expense draft from it.
 Settlement evidence INCLUDES the document's own title. ใบเสร็จรับเงิน / ใบรับเงิน / ใบเสร็จ / RECEIPT and บิลเงินสด / CASH SALE / CASH BILL are issued only when money is received (Thai Revenue Code s.105): such a title plus a positive total IS settlement evidence even without a separate paid stamp. A document titled plainly BILL / บิล is settlement evidence on the same footing (owner decision 2026-08-15): Thai POS systems print the customer's paid copy under that heading, so a bare BILL title plus a positive total is settled — copy the title span into settlementSignals and set transactionState PAID. That covers the bare word only. ใบวางบิล, เช็คบิล, and ใบแจ้งหนี้ each contain it yet stay the unpaid anti-signals listed below, and a printed credit term or due date always outranks the title. ใบกำกับภาษีอย่างย่อ is a retail point-of-sale document — treat it as settled, and as definitively settled when its title is combined with ใบเสร็จรับเงิน. A standalone full ใบกำกับภาษี for goods is NOT settlement evidence by itself. Body settlement signals: ได้รับเงิน/รับเงินแล้ว, ชำระแล้ว, จ่ายแล้ว, PAID, ชำระเงินสด, payment method เงินสด/โอน/บัตร, เงินทอน (change), ผู้รับเงิน signature. Anti-signals (unpaid document): ใบแจ้งหนี้, ใบวางบิล, ใบเสนอราคา, ใบส่งของ, ใบสั่งซื้อ, เช็คบิล, กำหนดชำระ / credit terms / due date.
 When a settlement title or signal is present, set transactionState to PAID and copy the exact span (e.g. the title) into settlementSignals.
 ABBREVIATED_TAX_INVOICE vs TAX_INVOICE: use ABBREVIATED_TAX_INVOICE whenever the document titles itself ใบกำกับภาษีอย่างย่อ / TAX INVOICE (ABB) / TAX INV (ABB) / ABB, or is a retail point-of-sale slip that shows the seller's tax id and a VAT amount but identifies NO buyer. Use TAX_INVOICE only for the full form, which names the BUYER (ชื่อ/ที่อยู่ผู้ซื้อ) as well as the seller. Buyer identification is the discriminator, and the printed title decides on its own when present. This is a form distinction, not a completeness gap: a missing buyer name on an abbreviated invoice is not a missing field and never a reason code.
@@ -419,7 +466,7 @@ discountAmount is ONLY a printed reduction of what the buyer paid: a line labell
 Use strings for all money and quantity fields with 2 decimals where visible.
 Copy every money value exactly as printed in the OCR text (Thai digits ๐-๙ read as 0-9; Thai number words read as their numeric value). Never compute, convert, or round a value that is not printed.
 grandTotalAmount is the transaction total from the รวมเงิน/รวมทั้งสิ้น/TOTAL box; handwritten values count as printed — copy the total exactly as written and do not leave grandTotalAmount empty when a total is visible in the OCR text.
-expenseDate: accept numeric dates plus full or abbreviated Thai/English month names in either day-first or month-first order. OCR may drop punctuation, so ก.ค./กค and ส.ค./สค are the same month evidence, as are Aug./Aug. Thai named months anchor a 2-digit year to พ.ศ. 25xx (23 สค 69 → 2026-08-23); English named months anchor it to ค.ศ. 20xx (Aug 23 26 → 2026-08-23). Thai Buddhist Era 4-digit years (พ.ศ., e.g. 2569) must be converted by subtracting 543. Return ISO YYYY-MM-DD.
+expenseDate: accept numeric dates plus full or abbreviated Thai/English month names in either day-first or month-first order. OCR may drop punctuation, so ก.ค./กค and ส.ค./สค are the same month evidence, as are Aug./Aug. Thai named months anchor a 2-digit year to พ.ศ. 25xx (23 สค 69 → 2026-08-23); English named months anchor it to ค.ศ. 20xx (Aug 23 26 → 2026-08-23). Thai Buddhist Era 4-digit years (พ.ศ., e.g. 2569) must be converted by subtracting 543. When a POS receipt prints both เวลาขาย/SALE DATE/TRANSACTION DATE and a later เวลาออก/ISSUE DATE/print timestamp, use the sale/transaction date. Return ISO YYYY-MM-DD.
 vatMode must be one of NO_VAT, VAT_INCLUDED, VAT_EXCLUDED, EXEMPT, NEEDS_REVIEW.
 vatAmount is the printed VAT/TAX MONEY AMOUNT, independent of vatRate. Amount labels may precede or follow it: VAT/TAX AMT, AMOUNT, TTL, TOTAL, TOTAL VAT/TAX, ภาษี, ยอดภาษี, ภาษีมูลค่าเพิ่ม (VAT AMT 21.79 / 21.79 VAT TTL → vatAmount "21.79"). Extract the printed amount even when no percentage is printed; never interpret a baht amount as a percent and never compute an unprinted amount.
 vatRate is only the printed VAT percentage as a decimal fraction string (TAX RATE 7% / VAT 7% → "0.07"). vatAmount may exist while vatRate is omitted. Retail slips and card sale slips often print a tax block (e.g. TAX RATE / TAX AMT / TAX Exclude, or VAT TTL / Net TTL): map the ex-VAT base to taxableAmount, the printed VAT money to vatAmount, and grandTotalAmount to the amount actually paid including VAT; use vatMode VAT_EXCLUDED when extracted prices are the ex-VAT base, VAT_INCLUDED when they already include VAT.
@@ -484,9 +531,10 @@ const OCR_NUMERIC_FIELDS = ['quantity', 'unitPrice', 'subtotalAmount', 'discount
 // guards make the 13-digit window maximal so runs inside longer numbers never qualify.
 const TAX_ID_CANDIDATE_RE = /(?<!\d)\d(?:[- ]?\d){12}(?!\d)/g;
 const HQ_BRANCH_LABEL_RE = /สำนักงานใหญ่|สนญ|HEAD OFFICE|\bHO\b|\bHQ\b/i;
-const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
+const VAT_LABEL_THEN_AMOUNT_RE = /(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)[ \t:|=_*\-]+(?:\d{1,2}(?:\.\d+)?[ \t]*%[ \t:|=_*\-]*)?(?:\((?:รวม|INCL(?:UDED)?|INC)\)[ \t:|=_*\-]*)?(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)/giu;
 const VAT_AMOUNT_THEN_LABEL_RE = /(?<amount>(?:฿[ \t]*|THB[ \t]*)?\d[\d,]*\.\d{1,2}(?:[ \t]*(?:บาท|THB))?)(?![\d.,]|[ \t]*%)[ \t:|=_*\-]+(?:\b(?:VAT|TAX)[ ._-]*(?:AMT|AMOUNT|TTL|TOTAL)\b|\bTOTAL[ ._-]*(?:VAT|TAX)\b|\b(?:VAT|TAX)\b|ภาษีมูลค่าเพิ่ม|ยอดภาษี|ภาษี)/giu;
 const RECEIPT_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|RECEIPT\s+DATE|ISSUE\s+DATE|DOCUMENT\s+DATE|SALE\s+DATE|DATE(?:\s*\/\s*TIME)?|วันที่|วัน\s*\/\s*เวลา)\s*(?:[*_]+\s*)?(?:[:=\-]|\|)?\s*(?:[*_]+\s*)?$/i;
+const RECEIPT_TRANSACTION_DATE_LABEL_RE = /(?:^|\|)\s*(?:[#*_]+\s*)?(?:TRANSACTION\s+DATE|TRANS\s+DATE|TXN\s+DATE|SALE\s+DATE|วันที่ขาย|เวลาขาย)\s*(?:[*_]+\s*)?(?:[:=\-]|\|)?\s*(?:[*_]+\s*)?$/i;
 // Mirrors the review-form bound so a gate-surviving value is storable as entered.
 const MAX_DOCUMENT_NUMBER_CHARS = 50;
 
@@ -508,7 +556,7 @@ function singlePrintedVatAmount(documentText: string): string | null {
   return values.size === 1 ? [...values][0]! : null;
 }
 
-function hasExplicitReceiptDateLabel(documentText: string, span: string): boolean {
+function hasReceiptDateLabel(documentText: string, span: string, labelPattern: RegExp): boolean {
   const mappedText = mapThaiDigits(documentText);
   const mappedSpan = mapThaiDigits(span);
   if (/^วันที่/.test(mappedSpan.trim())) return true;
@@ -517,10 +565,14 @@ function hasExplicitReceiptDateLabel(documentText: string, span: string): boolea
     const at = mappedText.indexOf(mappedSpan, from);
     if (at < 0) return false;
     const lineStart = mappedText.lastIndexOf('\n', at - 1) + 1;
-    if (RECEIPT_DATE_LABEL_RE.test(mappedText.slice(lineStart, at))) return true;
+    if (labelPattern.test(mappedText.slice(lineStart, at))) return true;
     from = at + Math.max(1, mappedSpan.length);
   }
   return false;
+}
+
+function hasExplicitReceiptDateLabel(documentText: string, span: string): boolean {
+  return hasReceiptDateLabel(documentText, span, RECEIPT_DATE_LABEL_RE);
 }
 
 /** Collapses dash/space separators between digits so 0-9940-0016-30-11 equals its solid form. */
@@ -606,7 +658,21 @@ export function applyOcrValueCrossCheck(
 
   const usableDates = candidates.dates.filter((d) =>
     !isAmbiguousDateCandidate(d) && !d.assumptions.includes(VALUE_ASSUMPTIONS.monthPeriodBoundary));
-  if (out.expenseDate) {
+  // POS documents may print both the sale/transaction date and a later issue/print timestamp.
+  // When exactly one source date is explicitly transaction-labeled, it deterministically wins;
+  // otherwise a model can alternate between two text-backed but semantically different dates.
+  const transactionDates = new Set(
+    usableDates
+      .filter((candidate) => hasReceiptDateLabel(documentText, candidate.span, RECEIPT_TRANSACTION_DATE_LABEL_RE))
+      .map((candidate) => candidate.isoDate),
+  );
+  if (transactionDates.size === 1) {
+    out.expenseDate = [...transactionDates][0]!;
+    missing.delete('expenseDate');
+  } else if (transactionDates.size > 1) {
+    delete out.expenseDate;
+    missing.add('expenseDate');
+  } else if (out.expenseDate) {
     if (!usableDates.some((d) => d.isoDate === out.expenseDate)) {
       delete out.expenseDate;
       missing.add('expenseDate');

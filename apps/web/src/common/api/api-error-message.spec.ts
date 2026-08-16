@@ -129,6 +129,24 @@ test('translates the substitute-receipt eligibility refusals', () => {
   );
   assert.ok(refusal);
   assert.match(refusal!, /ใบรับรองแทนใบเสร็จ/);
+
+  for (const [code, expected] of [
+    ['expense_status_ineligible', /ตรวจสถานะรายการ/],
+    ['source_type_ineligible', /เลือกประเภทเอกสาร/],
+    ['valid_receipt_normal_path', /ขั้นตอนปกติ/],
+    ['classification_ineligible', /แนบหลักฐานค่าใช้จ่าย/],
+    ['document_kind_ineligible', /ใช้จัดทำ.*ไม่ได้/],
+    ['currency_not_supported', /เงินบาท \(THB\)/],
+    ['reviewed_total_required', /ยืนยันยอดรวม/],
+    ['reviewed_items_required', /รายละเอียดรายการค่าใช้จ่าย/],
+    ['reviewed_category_required', /เลือกหมวดค่าใช้จ่ายหรือบัญชี/],
+    ['tax_evidence_review_required', /ตรวจสถานะหลักฐานภาษี/],
+    ['tax_evidence_nonclaimable', /ขอคืนภาษีซื้อไม่ได้/],
+    ['LINE_RECEIPT_CONTINUATION_STALE', /เปิดรายการล่าสุด/],
+    ['LINE_SUBSTITUTE_CONTINUATION_STALE', /เริ่มขั้นตอนนี้ใหม่/],
+  ] as const) {
+    assert.match(translateApiError(code)!, expected, code);
+  }
 });
 
 test('maps substitute-receipt render limits to stable actionable Thai copy', () => {

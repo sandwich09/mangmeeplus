@@ -41,8 +41,14 @@ render "$root/infra/security/production-ecs-execution-policy.template.json" "$wo
 render "$root/infra/security/production-release-task-policy.template.json" "$work/release-policy.json"
 render "$root/infra/security/production-api-task-policy.template.json" "$work/api-policy.json"
 render "$root/infra/security/production-ai-task-policy.template.json" "$work/ai-policy.json"
-render "$root/infra/ai-gateway/agentcore-execution-role-trust.template.json" \
-  "$work/agentcore-trust.json"
+legacy_agentcore_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator-6xOx1tCbz0
+candidate_agentcore_arn="$(jq -er '.runtime.arn' "$AGENTCORE_CANDIDATE_BINDING")"
+sed "s|<ACCOUNT_ID>|$account|g;s|<AGENTCORE_RUNTIME_ARN>|$legacy_agentcore_arn|g" \
+  "$root/infra/ai-gateway/agentcore-execution-role-trust.template.json" \
+  > "$work/agentcore-trust.json"
+sed "s|<ACCOUNT_ID>|$account|g;s|<AGENTCORE_RUNTIME_ARN>|$candidate_agentcore_arn|g" \
+  "$root/infra/ai-gateway/agentcore-execution-role-trust.template.json" \
+  > "$work/agentcore-candidate-trust.json"
 agentcore_ai_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
   --secret-id watchdog-bms/production/ai-gateway-internal-secret --query ARN --output text)"
 agentcore_jwt_secret_arn="$(aws secretsmanager describe-secret --region "$region" \
@@ -149,6 +155,9 @@ record_exact_role watchdog-bms-deploy-production watchdog-bms-production-deploy 
   "$work/deploy-trust.json" "$work/deploy-policy.json" 7200
 record_exact_role watchdog-bms-agentcore-execution-role watchdog-bms-agentcore-permissions \
   "$work/agentcore-trust.json" "$work/agentcore-policy.json" 3600
+record_exact_role watchdog-bms-production-agentcore-candidate-execution-role \
+  watchdog-bms-agentcore-permissions "$work/agentcore-candidate-trust.json" \
+  "$work/agentcore-policy.json" 3600
 record_exact_role watchdog-bms-production-security-readonly watchdog-bms-production-security-readonly \
   "$root/infra/security/production-security-readonly-trust.template.json" \
   "$root/infra/security/production-security-readonly-policy.template.json" 3600

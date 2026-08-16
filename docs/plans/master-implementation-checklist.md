@@ -16,6 +16,22 @@ Web is the full Business OS workspace. LINE is the AI assistant, summary, alert,
 
 ## Active Cross-Cutting Production Gate
 
+- [ ] LINE AI Owner Daily Closing and Thai Business Vocabulary
+  - Feedback: [[product/line-ai-owner-daily-closing-feedback-th|LINE AI สรุปค่าใช้จ่ายก่อนปิดร้าน]]
+  - Spec: [[specs/line-ai-owner-daily-closing-spec|LINE AI Owner Daily Closing Spec]]
+  - Plan: [[plans/line-ai-owner-daily-closing-plan|LINE AI Owner Daily Closing Plan]]
+  - Memory: [[agent-memory/line-ai-production-parity-and-receipt-continuity-remediation|LINE AI Production Parity and Receipt Continuity Remediation Memory]]
+  - Status 2026-08-16: docs-first baseline accepted; implementation is active. Current generic expense tools do not provide a daily-closing snapshot, bounded actionable detail, due/review/evidence buckets or safe multi-currency semantics. Controlled local evidence confirms the supplied single handwritten bill path can retain amount while leaving ambiguous date for review; supplied multi-entry handwritten media must remain clarification-only. `ผปก`, `คชจ` and `ลค` are not yet covered by router regressions.
+  - Gate: one permission-checked daily-closing read tool and truthful LINE answer; semantic Thai abbreviation coverage; multi-entry media fail-closed; partial-answer/side-question continuity; bounded query/snapshot/currency correctness; real local and hosted concurrency evidence; immutable UAT/Production identity and named-pilot customer `OPEN`.
+
+- [ ] LINE AI Production Parity and Receipt Continuity Remediation
+  - Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
+  - Plan: [[plans/line-ai-production-parity-and-receipt-continuity-remediation-plan|LINE AI Production Parity and Receipt Continuity Remediation Plan]]
+  - Memory: [[agent-memory/line-ai-production-parity-and-receipt-continuity-remediation|LINE AI Production Parity and Receipt Continuity Remediation Memory]]
+  - Status 2026-08-16: owner-approved local implementation is complete and pushed on `fix-line-ai-prod`. The aggregate repository gate, three controlled source-hashed image replays and a read-only 15-turn configured-provider conversation pass; no cloud mutation or deployment occurred. The run covered stored-media/final-capture authority, consolidated substitute preflight, validated partial answers plus side-question resume, strict web-only final actions, exactly 15 turns/15 minutes, immutable ECS/AgentCore binding, typed terminal reconciliation, Royal Pizza printed VAT/date stability, handwritten-date uncertainty and deterministic rejection of a single-expense draft for the multi-entry ledger. The latest owner daily-close read took 16,723 ms, while the worst retained local expense sample remains 19,778 ms—only 222 ms under the outer timeout—so the checkbox remains open for reviewed PRs, one complete hosted UAT candidate, role/security and concurrency p95/p99, persisted-state reconciliation, signed READY/Production and customer `OPEN`.
+  - Impact: blocks Production-ready claims and new Production LINE AI promotion for affected paths across items 07, 09, 10B, 10F, 10G and 24. Verified non-AI source-module behavior remains valid.
+  - Gate: one immutable ECS/AgentCore candidate; prod-shaped UAT through AgentCore; stored-media continuity plus deterministic final capture guard; grounded receipt/mixed-intent outcomes; measured latency and typed trace evidence; complete replay/failure/idempotency/rollback matrix; signed UAT/READY/Production and customer `OPEN`. No partial Production deploy may be used to expose the next error layer.
+
 - [ ] AI Permission and Tool Production Gap Closure
   - Plan: [[plans/ai-permission-tools-production-gap-closure-plan|AI Permission and Tool Production Gap Closure Plan]]
   - Memory: [[agent-memory/ai-permission-tools-production-gap-closure|AI Permission and Tool Production Gap Closure Memory]]

@@ -8,6 +8,7 @@ import type {
   CreateExpenseDraftInput,
   ExpenseExtractionResult,
   GenerateSubstituteReceiptInput,
+  LineSubstituteReceiptPrefill,
   PreviewSubstituteReceiptInput,
   SourceDocumentType,
   SubstituteReceiptEvidenceSummary,
@@ -347,6 +348,14 @@ export async function listCompanySubstituteReceipts(
 
 export async function generateSubstituteReceipt(companyId: string, expenseId: string, body: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function loadLineSubstituteReceiptPrefill(
+  companyId: string,
+  expenseId: string,
+  workflowId: string,
+): Promise<LineSubstituteReceiptPrefill> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/continuations/${encodeURIComponent(workflowId)}`);
 }
 
 export async function downloadSubstituteReceiptPdf(

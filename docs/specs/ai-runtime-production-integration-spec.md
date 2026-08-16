@@ -1,5 +1,7 @@
 # AI Runtime Production Integration Spec
 
+Active production remediation: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]. For LINE AI promotion it supersedes older wording that allows local-only UAT proof or a hosted artifact source different from the ECS candidate.
+
 ## 1. Status
 
 Ready for implementation handoff. This spec is the production-use addendum for:

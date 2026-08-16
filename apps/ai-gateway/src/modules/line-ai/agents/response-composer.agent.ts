@@ -224,6 +224,9 @@ export class ResponseComposerAgent {
     opts: { planLanguage?: string; locale?: string; currentDate?: string; conversationContext?: LineAiConversationContext; valueCandidates?: LineAiValueCandidates } = {},
   ): Promise<string> {
     if (toolData.length === 0) return groundedFallback;
+    // Daily closing bucket labels carry accounting semantics (due is not approval; currencies
+    // must stay separate). Keep the permission-checked deterministic answer authoritative.
+    if (toolData.some((entry) => entry.tool === 'expense.get_daily_closing')) return groundedFallback;
     const annotatedToolData = toolData.map((entry) => ({ ...entry, state: isExplicitEmptyData(entry.data) ? 'empty' : 'data' }));
     const hasEmptyResults = annotatedToolData.some((entry) => entry.state === 'empty');
     const language = detectReplyLanguage(question, opts.planLanguage ?? 'th', opts.locale ?? 'th-TH');

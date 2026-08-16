@@ -124,6 +124,18 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(enqueued[0].item.webhookEventId, 'e3');
   });
 
+  it('replays a response claim interrupted before the fallback delivery result was persisted', async () => {
+    const { useCase, enqueued } = makeHarness([
+      rowAt('e3-claimed', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, {
+        status: 'response_ready',
+        errorCode: 'RETRYABLE_LINE_BUFFER_DISPATCH_FAILED',
+      }),
+    ]);
+    const result = await useCase.execute();
+    assert.equal(result.replayed, 1);
+    assert.equal(enqueued[0].item.webhookEventId, 'e3-claimed');
+  });
+
   it('parks an over-age row instead of answering a stale question, and drops its payload', async () => {
     const { useCase, store, enqueued } = makeHarness([rowAt('e4', ORPHAN_REPLAY_MAX_AGE_MS + 60_000)]);
     const result = await useCase.execute();
