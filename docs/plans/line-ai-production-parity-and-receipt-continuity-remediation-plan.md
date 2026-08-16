@@ -1,6 +1,6 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **READY FOR OWNER REVIEW — documentation only; implementation not started**
+Status: **IMPLEMENTATION IN PROGRESS — docs baseline and repository stories 1-2 complete; no deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 
@@ -192,17 +192,17 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 - [ ] Consume only the resolved clarification ids whose outcomes were delivered.
 - [ ] Keep substitute-receipt/final document generation, confirmation, payment, VAT decision and
       posting web-only.
-- [ ] Set `LINE_AI_CONTEXT_MAX_TURNS` to 15 and keep the 15-minute general conversation window. Assert
+- [x] Set `LINE_AI_CONTEXT_MAX_TURNS` to 15 and keep the 15-minute general conversation window. Assert
       the same value in contract, API loader and gateway request metadata. Add a bounded typed
       continuation state that references the current company/user/expense/workflow,
       normalized accepted values and per-field provenance, resolved/missing field keys, attachment
       ids, pending question, target revision and last activity; do not copy raw prompt/OCR text or
       treat `AiTurn` history as accepted field state.
-- [ ] Add one API-owned, permission/branch-filtered substitute-readiness preflight that reuses existing
+- [x] Add one API-owned, permission/branch-filtered substitute-readiness preflight that reuses existing
       eligibility and validation rules and returns every currently knowable actionable blocker in one
       response. Target selection is the only allowed earlier clarification when no unique expense can
       be resolved.
-- [ ] Reconcile preflight with the owner-approved approval modes: no policy row is default
+- [x] Reconcile preflight with the owner-approved approval modes: no policy row is default
       `OWNER_SELF` and not automatically disabled; `DESIGNATED_APPROVERS` requires an eligible configured
       approver. Return `configured` and `ready` as different facts and never invent a policy blocker.
 - [ ] Accept bounded normalized partial candidates for missing-receipt reason, business purpose, payee,
@@ -210,7 +210,7 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
       web-prefill state without creating `PREPARED` evidence; mutate expense-owned fields only through
       existing draft/correction permission, status, provenance and validation gates. Resolve
       “ฉันเป็นผู้จ่าย” only to the active linked member in current branch scope.
-- [ ] Reject text as a substitute for evidence files, signatures, approver policy, approval, issued PDF,
+- [x] Reject text as a substitute for evidence files, signatures, approver policy, approval, issued PDF,
       confirmation/posting or an issuer-created external tax invoice.
 - [ ] Validate and idempotently apply each accepted field through the API-owned mutation boundary with
       provenance and current-revision protection. Preserve other accepted fields when one value is
@@ -218,12 +218,12 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 - [ ] Classify an intervening question separately from pending field answers. Answer it through grounded
       read tools, then append a source-generated resume capsule without consuming unresolved fields.
 - [ ] Support one message containing both field values and a question as independent subrequests.
-- [ ] Support “ทำใบรับรองต่อ”, pause and cancel: resume only one uniquely permitted current workflow;
+- [x] Support “ทำใบรับรองต่อ”, pause and cancel: resume only one uniquely permitted current workflow;
       require selection when several match; pause keeps accepted draft data; cancel closes only the
       targeted conversation state and never deletes expense/evidence records.
 - [ ] On context expiry or a web/concurrent edit, reload the current draft, access, policy, attachments
       and revision. Never claim unsaved text survived and never overwrite newer source state.
-- [ ] Pass only an opaque workflow/expense reference in the web handoff. After web authentication,
+- [x] Pass only an opaque workflow/expense reference in the web handoff. After web authentication,
       reload and permission/revision-check server-side prefill values; do not place normalized business
       values, attachment ids or customer facts in the URL.
 - [ ] Bind typed prefill retention to the existing expense-draft/business retention boundary. Close or

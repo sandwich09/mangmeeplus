@@ -11,6 +11,7 @@ import {
   fetchAttachmentPreviewBlob,
   fetchSubstituteReceiptPdfBlob,
   initPersonalSignatureUpload,
+  loadLineSubstituteReceiptPrefill,
   normalizeApiBase,
   resolveUploadUrl,
   uploadReceiptFile,
@@ -95,6 +96,23 @@ describe('expenses.api URL helpers', () => {
       mimeType: 'image/png',
       byteSize: 4,
     });
+  });
+
+  it('loads LINE prefill by opaque path without putting accepted business values in the URL', async () => {
+    let requested = '';
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requested = String(input);
+      return new Response(JSON.stringify({
+        workflowId: 'workflow-opaque', expenseId: 'exp-1', targetRevision: '2026-08-16T00:00:00.000Z',
+        status: 'OPEN', acceptedValues: { businessPurpose: 'ไปพบลูกค้า' },
+      }), { headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const result = await loadLineSubstituteReceiptPrefill('co-1', 'exp-1', 'workflow-opaque');
+
+    assert.equal(requested, '/api/v1/companies/co-1/expenses/exp-1/substitute-receipt/continuations/workflow-opaque');
+    assert.equal(requested.includes('ไปพบลูกค้า'), false);
+    assert.equal(result.acceptedValues.businessPurpose, 'ไปพบลูกค้า');
   });
 
   it('masks file-server failures behind upload-safe messages', async () => {

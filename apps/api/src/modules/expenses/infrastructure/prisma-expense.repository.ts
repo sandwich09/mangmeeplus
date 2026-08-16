@@ -1106,6 +1106,7 @@ export class PrismaExpenseRepository {
     payeeTaxId: string | null;
     preparedByUserId: string;
     idempotencyKey: string;
+    lineContinuation?: { workflowId: string; userId: string };
   }): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -1135,6 +1136,32 @@ export class PrismaExpenseRepository {
       if (!expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()) {
         throw new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review. Reload before preparing substitute evidence.' });
       }
+      const preparedAt = new Date();
+      let sourceChannelMetadataJson: Record<string, unknown> | undefined;
+      if (input.lineContinuation) {
+        const metadata = expense.sourceChannelMetadataJson && typeof expense.sourceChannelMetadataJson === 'object'
+          ? { ...expense.sourceChannelMetadataJson }
+          : {};
+        const state = (metadata as any).lineSubstituteReceiptContinuation;
+        if (!state || state.kind !== 'SUBSTITUTE_RECEIPT'
+          || state.workflowId !== input.lineContinuation.workflowId
+          || state.companyId !== input.companyId || state.expenseId !== input.expenseId
+          || state.userId !== input.lineContinuation.userId
+          || !['OPEN', 'PAUSED'].includes(state.status)
+          || state.targetRevision !== input.expectedExpenseUpdatedAt.toISOString()) {
+          throw new ConflictException({
+            code: 'LINE_SUBSTITUTE_CONTINUATION_STALE',
+            message: 'LINE substitute-receipt continuation is stale, closed, or outside the current user scope.',
+          });
+        }
+        (metadata as any).lineSubstituteReceiptContinuation = {
+          ...state,
+          status: 'CONSUMED',
+          targetRevision: preparedAt.toISOString(),
+          lastActivityAt: preparedAt.toISOString(),
+        };
+        sourceChannelMetadataJson = metadata as Record<string, unknown>;
+      }
       const safeUpdate = await tx.expenseRecord.updateMany({
         where: {
           id: input.expenseId,
@@ -1147,6 +1174,8 @@ export class PrismaExpenseRepository {
           inputVatClaimStatus: 'NON_CLAIMABLE',
           taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
           updatedByUserId: input.preparedByUserId,
+          updatedAt: preparedAt,
+          ...(sourceChannelMetadataJson ? { sourceChannelMetadataJson } : {}),
         },
       });
       if (safeUpdate.count !== 1) throw new Error('Expense changed after review. Reload before preparing substitute evidence.');
@@ -1163,7 +1192,6 @@ export class PrismaExpenseRepository {
         where: { companyId: input.companyId, expenseId: input.expenseId }, orderBy: { version: 'desc' }, select: { version: true },
       });
       const version = (latest?.version ?? 0) + 1;
-      const preparedAt = new Date();
       const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: input.companyId,
         branchId: input.branchId ?? undefined,
@@ -2223,6 +2251,82 @@ export class PrismaExpenseRepository {
       sourceDocumentType: row.sourceDocumentType ?? null,
       createdAt: row.createdAt,
     }));
+  }
+
+  /** Bounded discovery for the expense-specific LINE substitute-receipt continuation. */
+  async listLineSubstituteContinuationRows(input: {
+    companyId: string;
+    userId: string;
+    chatKeyHash: string;
+    scopes: { branchIds?: string[] };
+    take?: number;
+  }): Promise<Array<{ id: string; updatedAt: Date; sourceChannelMetadataJson: Record<string, unknown> | null }>> {
+    const rows = await this.prisma.client.expenseRecord.findMany({
+      where: {
+        companyId: input.companyId,
+        status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any },
+        sourceChannelMetadataJson: {
+          path: ['lineSubstituteReceiptContinuation', 'userId'],
+          equals: input.userId,
+        },
+        ...branchScopeWhere(input.scopes),
+      },
+      select: { id: true, updatedAt: true, sourceChannelMetadataJson: true },
+      orderBy: { updatedAt: 'desc' },
+      take: Math.min(10, Math.max(1, input.take ?? 5)),
+    });
+    return rows
+      .filter((row: any) => row.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation?.chatKeyHash === input.chatKeyHash)
+      .map((row: any) => ({
+        id: row.id,
+        updatedAt: row.updatedAt,
+        sourceChannelMetadataJson: row.sourceChannelMetadataJson as Record<string, unknown> | null,
+      }));
+  }
+
+  /**
+   * Compare-and-set a typed continuation together with the expense revision it represents.
+   * This intentionally updates metadata only; certificate preparation/issuance remains web-only.
+   */
+  async saveLineSubstituteContinuation(input: {
+    companyId: string;
+    expenseId: string;
+    actorUserId: string;
+    expectedUpdatedAt: Date;
+    scopes: { branchIds?: string[] };
+    continuation: Record<string, unknown>;
+  }): Promise<{ updatedAt: Date; continuation: Record<string, unknown> }> {
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:line-substitute-continuation`}))`;
+      const current = await tx.expenseRecord.findFirst({
+        where: {
+          id: input.expenseId,
+          companyId: input.companyId,
+          updatedAt: input.expectedUpdatedAt,
+          ...branchScopeWhere(input.scopes),
+        },
+        select: { sourceChannelMetadataJson: true },
+      });
+      if (!current) throw new ConflictException({
+        code: 'LINE_SUBSTITUTE_CONTINUATION_STALE',
+        message: 'Expense changed. Reload current data before continuing the substitute receipt.',
+      });
+      const now = new Date();
+      const continuation = { ...input.continuation, targetRevision: now.toISOString(), lastActivityAt: now.toISOString() };
+      const metadata = current.sourceChannelMetadataJson && typeof current.sourceChannelMetadataJson === 'object'
+        ? { ...current.sourceChannelMetadataJson }
+        : {};
+      metadata.lineSubstituteReceiptContinuation = continuation;
+      const changed = await tx.expenseRecord.updateMany({
+        where: { id: input.expenseId, companyId: input.companyId, updatedAt: input.expectedUpdatedAt },
+        data: { sourceChannelMetadataJson: metadata, updatedByUserId: input.actorUserId, updatedAt: now },
+      });
+      if (changed.count !== 1) throw new ConflictException({
+        code: 'LINE_SUBSTITUTE_CONTINUATION_STALE',
+        message: 'Expense changed while saving the substitute-receipt continuation.',
+      });
+      return { updatedAt: now, continuation };
+    });
   }
 
   /**

@@ -1,7 +1,9 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
 Status: Implementation in progress. Documentation baseline committed as `3a06829`; repository story 1
-(stored-media continuity, final capture authority and 15-turn cap) is implemented and focused-tested.
+(stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`.
+Repository story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document
+question safeguards and authenticated opaque web prefill) is implemented and focused-tested, pending commit.
 No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
@@ -83,9 +85,18 @@ Verification:
   unavailable OCR plus a caption now clarifies instead of creating a model-authorized manual draft.
 - Story 1 verification: 165/165 focused API tests passed; API and AI Gateway typechecks passed; `git
   diff --check` passed. The context test now asserts exactly 15 turns.
+- Story 2 focused API tests: 102/102 pass across continuation, substitute preparation/repository and
+  LINE dispatch suites. Web API focused tests: 15/15 pass. API and web typechecks pass after rebuilding
+  the local contracts package; `git diff --check` passes.
+- Story 2 self-review prevented two forward failures: web consumption now occurs atomically with
+  PREPARED evidence so it cannot stale its own certificate, and hypothetical/intervening questions
+  cannot be parsed as payment/reason answers. A web/concurrent revision mismatch fails closed even on
+  explicit resume; pause/cancel remain metadata-only.
 
 Next:
 
-- Commit story 1, then implement the typed substitute-receipt continuation/preflight story.
+- Commit repository story 2, then implement grounded captured-receipt follow-up and per-subrequest
+  pending-media mixed outcomes. After that, close remaining release identity/observability gates before
+  the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

@@ -122,6 +122,7 @@ function makeHarness(opts: {
   /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
   captureLedger?: any[];
   captureError?: Error;
+  substituteResult?: any;
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -247,6 +248,7 @@ function makeHarness(opts: {
         return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
       },
     } as any,
+    (opts.substituteResult ? { execute: async () => opts.substituteResult } : undefined) as any,
   );
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   (useCase as any).downloadLineMedia = async () => opts.mediaDownloadFails ? null : ({
@@ -542,6 +544,26 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.captured.length, 0);
     assert.match(h.replies[0] ?? '', /ยอดเงิน.*วัตถุประสงค์|ยอดเงิน.*หมวดค่าใช้จ่าย/);
     assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+  });
+
+  it('handles a substitute-receipt request through typed preflight before any model or final mutation', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      recentCaptures: [{
+        id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '200.00',
+        sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date(),
+      }],
+      substituteResult: {
+        handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-1',
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• เหตุผล\n• หลักฐาน\nLINE ยังไม่ได้ออกเอกสาร',
+        acceptedFields: [], blockers: [{ code: 'reason_code_required' }], pendingQuestion: 'เหตุผลคืออะไร?',
+      },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ช่วยทำใบทดแทนใบเสร็จให้หน่อย' });
+    assert.equal(h.routeRequests.length, 0, 'deterministic workflow boundary skips the model router');
+    assert.equal(h.captured.length, 0);
+    assert.equal(h.createExpenseCalls.length, 0);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
   });
 
   it('denies text capture without upload permission even when router says capture', async () => {

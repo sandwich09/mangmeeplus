@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 import {
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
   type ExpensePaymentMethod,
+  type LineSubstituteReceiptPrefill,
   type SubstituteReceiptEvidenceSummary,
   type SubstituteReceiptReasonCode,
   type SubstituteReceiptRuntimePolicy,
@@ -39,6 +40,7 @@ import {
   listExpenses,
   listSubstituteReceiptHistory,
   listSubstituteReceiptPayers,
+  loadLineSubstituteReceiptPrefill,
   previewSubstituteReceipt,
   supersedeSubstituteReceipt,
   updateExpenseReviewFields,
@@ -420,6 +422,7 @@ export function SubstituteReceiptWizardPage({
   permissions,
   canSelfApprove,
   initialExpenseId,
+  workflowId,
   evidenceId,
 }: {
   companyId: string;
@@ -427,6 +430,7 @@ export function SubstituteReceiptWizardPage({
   permissions: string[];
   canSelfApprove: boolean;
   initialExpenseId?: string;
+  workflowId?: string;
   evidenceId?: string;
 }) {
   const locale = useWorkspaceLocale();
@@ -445,6 +449,7 @@ export function SubstituteReceiptWizardPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [linePrefill, setLinePrefill] = useState<LineSubstituteReceiptPrefill | null>(null);
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<ExpenseDetail[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(!evidenceId);
@@ -683,13 +688,27 @@ export function SubstituteReceiptWizardPage({
           setSupportingIds(target.supportingAttachmentIds);
           setPaymentIds(target.paymentEvidenceAttachmentIds);
         } else if (initialExpenseId) {
-          const nextDetail = await getExpense(companyId, initialExpenseId);
+          const [nextDetail, nextLinePrefill] = await Promise.all([
+            getExpense(companyId, initialExpenseId),
+            workflowId ? loadLineSubstituteReceiptPrefill(companyId, initialExpenseId, workflowId) : Promise.resolve(null),
+          ]);
           if (cancelled) return;
           if (nextDetail.substituteReceiptEvidence && nextDetail.substituteReceiptEvidence.status !== 'SUPERSEDED') {
             router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(nextDetail.substituteReceiptEvidence.id)}`);
             return;
           }
           initializeDraft(nextDetail);
+          if (nextLinePrefill) {
+            const values = nextLinePrefill.acceptedValues;
+            if (values.reasonCode) setReasonCode(values.reasonCode);
+            if (values.missingReceiptReason) setMissingReason(values.missingReceiptReason);
+            if (values.businessPurpose) setBusinessPurpose(values.businessPurpose);
+            if (values.payeeName) setPayeeName(values.payeeName);
+            if (values.payerUserId) setPayerId(values.payerUserId);
+            if (values.paymentMethod) setPaymentMethod(values.paymentMethod);
+            if (values.paymentDate) setPaymentDate(values.paymentDate);
+            setLinePrefill(nextLinePrefill);
+          }
           setEntryMode('existing');
         }
       } catch (cause) {
@@ -699,7 +718,7 @@ export function SubstituteReceiptWizardPage({
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId, evidenceId, initialExpenseId, initializeDraft, locale, router]);
+  }, [companyId, evidenceId, initialExpenseId, initializeDraft, locale, router, workflowId]);
 
   useEffect(() => {
     if (evidenceId) return;
@@ -979,6 +998,7 @@ export function SubstituteReceiptWizardPage({
       paymentMethod,
       idempotencyKey: `sub-${detail.id}-${detail.updatedAt}-v${detail.substituteReceiptEvidence?.version ?? 0}`.slice(0, 128),
       expectedExpenseUpdatedAt: detail.updatedAt,
+      ...(workflowId ? { continuationId: workflowId } : {}),
     });
     setReceiptEvidence(result);
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
@@ -2245,6 +2265,9 @@ export function SubstituteReceiptWizardPage({
           <div className="space-y-4">
             {error && <div role="alert" aria-live="assertive" aria-atomic="true"><ErrorBanner message={error} /></div>}
             {info && <InfoBanner message={info} />}
+            {linePrefill && <InfoBanner message={locale === 'th'
+              ? `โหลดข้อมูลที่ยืนยันผ่าน LINE แล้ว ${Object.keys(linePrefill.acceptedValues).length} ช่อง${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? ' · รายการ ยอด และหมวดเป็นข้อมูลเสนอ ต้องตรวจและแก้รายการค่าใช้จ่ายในเว็บก่อน' : ''}`
+              : `Loaded ${Object.keys(linePrefill.acceptedValues).length} accepted LINE fields${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? '; review proposed item, amount, and category values against the expense before preparing' : ''}`} />}
             <MangmeeCard className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div>

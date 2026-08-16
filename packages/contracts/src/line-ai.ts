@@ -322,6 +322,7 @@ export type LineIntakeRouteIntent =
   | 'EXPENSE_DOCUMENT_CAPTURE'
   /** Correcting a field of a record this assistant already captured — never a new capture. */
   | 'EXPENSE_CAPTURE_CORRECTION'
+  | 'SUBSTITUTE_RECEIPT_CONTINUATION'
   | 'BUSINESS_DOCUMENT_REFERENCE'
   | 'SIGNATURE_UPLOAD_TICKET'
   | 'BUSINESS_READ_QUESTION'

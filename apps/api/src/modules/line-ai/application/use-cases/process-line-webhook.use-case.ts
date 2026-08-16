@@ -26,6 +26,7 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
+import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
@@ -610,6 +611,8 @@ export class ProcessLineWebhookUseCase {
     @Optional() private readonly completeAttachmentUpload?: CompleteAttachmentUploadUseCase,
     // Phase 2: applies a correction to the record the user meant. Absent → guidance only.
     @Optional() private readonly correctExpense?: CorrectLineCapturedExpenseUseCase,
+    // Receipt continuity: read/preflight and typed web-prefill only; no prepare/issue mutation.
+    @Optional() private readonly substituteReceiptContinuation?: LineSubstituteReceiptContinuationUseCase,
   ) {}
 
   /**
@@ -1056,6 +1059,44 @@ export class ProcessLineWebhookUseCase {
     const recentCapturedExpenses = canCaptureExpense
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
+
+    const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    if (this.substituteReceiptContinuation
+      && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification)) {
+      const continuationCtx: RequestContext = {
+        requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+        permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+      };
+      const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
+        messageText: normalizedText,
+        chatKeyHash: chatKeyHashOf(event),
+        recentCandidates: recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
+      });
+      await this.deliverCompletedReply(event, result.replyText, companyId, resolvedAccess);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: result.replyText, intent: 'CLARIFY',
+      });
+      await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+        openWaiting
+          .filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
+          .map((item) => item.id),
+        'business_answer');
+      if (result.pendingQuestion) {
+        await this.ledger?.appendSubRequests({
+          companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+          userId: identity.userId,
+          items: [{
+            text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+            clarifyQuestion: result.pendingQuestion, intent: 'CLARIFY',
+            clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+          }],
+        });
+      }
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.

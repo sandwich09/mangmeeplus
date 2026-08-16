@@ -140,42 +140,64 @@ function assertSubstituteReceiptSnapshotRenderable(snapshot: SubstituteReceiptSn
   assertSubstituteReceiptEvidenceRenderable(snapshot.evidence);
 }
 
-function validateEligibility(expense: ExpenseRecordWithRelations, reasonCode?: string): void {
+export type SubstituteReceiptEligibilityIssue = { code: string; message: string };
+
+/** All target-level eligibility failures knowable from one current expense snapshot. */
+export function collectSubstituteReceiptEligibilityIssues(
+  expense: ExpenseRecordWithRelations,
+  reasonCode?: string,
+): SubstituteReceiptEligibilityIssue[] {
+  const issues: SubstituteReceiptEligibilityIssue[] = [];
   if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
-    throw new BadRequestException(`Cannot prepare substitute evidence in status ${expense.status}.`);
+    issues.push({ code: 'expense_status_ineligible', message: `Cannot prepare substitute evidence in status ${expense.status}.` });
   }
   if (ALWAYS_INELIGIBLE_SOURCE_TYPES.has(expense.sourceDocumentType)) {
-    throw new BadRequestException('Legacy substitute markers and unreviewed source types are not eligible.');
+    issues.push({ code: 'source_type_ineligible', message: 'Legacy substitute markers and unreviewed source types are not eligible.' });
   }
   if (['RECEIPT', 'TAX_INVOICE'].includes(expense.sourceDocumentType)
     && !['RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE'].includes(reasonCode ?? '')) {
-    throw new BadRequestException('A receipt or tax invoice is eligible only when it is unavailable or materially incomplete; a valid document must use the normal path.');
+    issues.push({ code: 'valid_receipt_normal_path', message: 'A receipt or tax invoice is eligible only when it is unavailable or materially incomplete; a valid document must use the normal path.' });
   }
   if (hasBlockingNonExpenseClassification(expense.aiVerificationSummaryJson)) {
-    throw new BadRequestException('Quotation, order-only, appointment, booking, reservation, non-business, unreadable, or ambiguous images are not eligible.');
+    issues.push({ code: 'classification_ineligible', message: 'Quotation, order-only, appointment, booking, reservation, non-business, unreadable, or ambiguous images are not eligible.' });
   }
   const classification = expense.aiVerificationSummaryJson?.['classification'];
   const rawDocumentKind = classification && typeof classification === 'object'
     ? (classification as Record<string, unknown>)['documentKind']
     : null;
   if (typeof rawDocumentKind === 'string' && INELIGIBLE_CLASSIFICATION_KINDS.has(rawDocumentKind)) {
-    throw new BadRequestException('A finance override does not make a quotation, order, appointment, booking, reservation, or non-expense image eligible for substitute evidence.');
+    issues.push({ code: 'document_kind_ineligible', message: 'A finance override does not make a quotation, order, appointment, booking, reservation, or non-expense image eligible for substitute evidence.' });
   }
-  if (expense.currency !== 'THB') throw new BadRequestException('ใบรับรองแทนใบเสร็จรับเงิน currently supports THB expenses only.');
-  if (!(Number(expense.grandTotalAmount) > 0)) throw new BadRequestException('A positive reviewed total is required.');
+  if (expense.currency !== 'THB') issues.push({ code: 'currency_not_supported', message: 'ใบรับรองแทนใบเสร็จรับเงิน currently supports THB expenses only.' });
+  if (!(Number(expense.grandTotalAmount) > 0)) issues.push({ code: 'reviewed_total_required', message: 'A positive reviewed total is required.' });
   if (!expense.lines.length || expense.lines.some((line) => !line.description.trim())) {
-    throw new BadRequestException('Reviewed expense item details are required.');
+    issues.push({ code: 'reviewed_items_required', message: 'Reviewed expense item details are required.' });
   }
-  assertSubstituteReceiptLinesRenderable(expense.lines);
+  if (expense.lines.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines) {
+    issues.push({ code: 'substitute_receipt_too_many_lines', message: `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.` });
+  }
+  if (expense.lines.some((line) => line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength)) {
+    issues.push({ code: 'substitute_receipt_line_description_too_long', message: `Each substitute-receipt expense description must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} characters.` });
+  }
   if (!expense.expenseCategoryId && !expense.accountHintKey && expense.lines.some((line) => !line.expenseCategoryId && !line.accountHintKey)) {
-    throw new BadRequestException('A reviewed expense category or account hint is required.');
+    issues.push({ code: 'reviewed_category_required', message: 'A reviewed expense category or account hint is required.' });
   }
   if (expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
-    throw new BadRequestException('Tax evidence status must be reviewed first.');
+    issues.push({ code: 'tax_evidence_review_required', message: 'Tax evidence status must be reviewed first.' });
   }
   if (expense.taxEvidenceStatus === 'USABLE_FOR_TAX') {
-    throw new BadRequestException('Internal substitute evidence cannot preserve input VAT. Set it to supporting/non-claimable or request an issuer-created replacement tax invoice.');
+    issues.push({ code: 'tax_evidence_nonclaimable', message: 'Internal substitute evidence cannot preserve input VAT. Set it to supporting/non-claimable or request an issuer-created replacement tax invoice.' });
   }
+  return issues;
+}
+
+function validateEligibility(expense: ExpenseRecordWithRelations, reasonCode?: string): void {
+  const issue = collectSubstituteReceiptEligibilityIssues(expense, reasonCode)[0];
+  if (!issue) return;
+  if (issue.code === 'substitute_receipt_too_many_lines' || issue.code === 'substitute_receipt_line_description_too_long') {
+    throw renderabilityError(issue.code, issue.message);
+  }
+  throw new BadRequestException(issue.message);
 }
 
 async function buildSnapshot(
@@ -357,6 +379,9 @@ export class PrepareSubstituteReceiptUseCase {
     const purpose = requiredText(input.businessPurpose, 'businessPurpose', 500);
     const payerUserId = requiredText(input.payerUserId, 'payerUserId', 100);
     const idempotencyKey = requiredText(input.idempotencyKey, 'idempotencyKey', 128);
+    const continuationId = input.continuationId === undefined
+      ? undefined
+      : requiredText(input.continuationId, 'continuationId', 100);
     const note = input.note === undefined ? null : requiredText(input.note, 'note', 500);
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
@@ -438,6 +463,7 @@ export class PrepareSubstituteReceiptUseCase {
         payeeTaxId,
         preparedByUserId: ctx.userId,
         idempotencyKey,
+        ...(continuationId ? { lineContinuation: { workflowId: continuationId, userId: ctx.userId } } : {}),
       });
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.prepare',
