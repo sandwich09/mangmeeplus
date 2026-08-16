@@ -6,6 +6,7 @@
 - Do not implement major features without relevant spec and plan.
 - Record task state in `docs/agent-memory/<task>.md` when work spans multiple turns, touches multiple modules, or changes docs and code together.
 - Before touching the cloud environment — starting or stopping a service, reading what is deployed, or investigating AWS cost — read `docs/runbooks/cloud-environment-operations.md` first. It carries the live inventory, the start/stop procedures, and the specific ways the AWS CLI misreports ECS Express Mode. Reading it is faster than re-deriving any of that from the scripts, and it is where the next such finding belongs.
+- Before every UAT or Production deploy, promotion, recovery, customer-gate change, or retry, read and follow the mandatory protocol in `docs/runbooks/uat-production-v2-deployment.md`. Record the exact UAT, READY, and Production run IDs; never dispatch a duplicate run to discover the next error; and do not call a live release complete until the signed result and customer `OPEN` acceptance both pass.
 
 ## Default Workflow
 
