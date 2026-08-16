@@ -3,7 +3,7 @@
  * AI Gateway never accesses DB directly; all data goes through ERP core.
  * Governed path: policy decision → audit record → execute.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
 import { ToolPolicyEnforcerService } from '../../../common/ai/tool-policy-enforcer.service';
 import type { ToolResult, ToolMeta } from '@watchdog-bms/contracts';
@@ -81,8 +81,8 @@ export class ErpToolClient {
   private readonly logger = new Logger(ErpToolClient.name);
 
   constructor(
-    private readonly config: AiGatewayConfigService,
-    private readonly policyEnforcer: ToolPolicyEnforcerService,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(ToolPolicyEnforcerService) private readonly policyEnforcer: ToolPolicyEnforcerService,
   ) {}
 
   /**

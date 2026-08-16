@@ -3,7 +3,7 @@
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=false → item 07 deterministic path.
  * Feature flag: LINE_AI_AGENT_ORCHESTRATION_ENABLED=true  → item 10B orchestrator path.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
@@ -107,10 +107,10 @@ export class LineAiTurnUseCase {
   private readonly logger = new Logger(LineAiTurnUseCase.name);
 
   constructor(
-    private readonly erpTools: ErpToolClient,
-    private readonly orchestrator: OrchestratorAgent,
-    private readonly config: AiGatewayConfigService,
-    private readonly agentcoreRuntime: AgentCoreRuntimeClient,
+    @Inject(ErpToolClient) private readonly erpTools: ErpToolClient,
+    @Inject(OrchestratorAgent) private readonly orchestrator: OrchestratorAgent,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(AgentCoreRuntimeClient) private readonly agentcoreRuntime: AgentCoreRuntimeClient,
   ) {}
 
   async execute(req: LineAiTurnRequest): Promise<LineAiTurnResponse> {

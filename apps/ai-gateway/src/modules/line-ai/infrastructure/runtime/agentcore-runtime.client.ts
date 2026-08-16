@@ -7,7 +7,7 @@
  * ponytail: endpoint URL format must be confirmed against AWS AgentCore docs at deploy time.
  * LINE and web must never call this adapter or the runtime endpoint directly.
  */
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
@@ -139,7 +139,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
   private readonly expectedRuntimeIdentity?: LineAiExpectedRuntimeIdentity;
   private readonly credProvider: () => Promise<AwsCreds>;
 
-  constructor(config: AiGatewayConfigService) {
+  constructor(@Inject(AiGatewayConfigService) config: AiGatewayConfigService) {
     this.region = config.agentcoreRegion ?? config.bedrockRegion ?? 'ap-southeast-1';
     this.runtimeArn = config.agentcoreRuntimeArn ?? '';
     this.qualifier = config.agentcoreRuntimeQualifier ?? 'DEFAULT';

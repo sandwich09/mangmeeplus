@@ -2,7 +2,7 @@
  * Internal AI Gateway endpoint for LINE AI turns.
  * Protected by X-Internal-Secret; not exposed to public internet.
  */
-import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Logger, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, Inject, Logger, UseInterceptors } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { Public } from '../../../../common/security/public.decorator';
@@ -43,8 +43,8 @@ export class LineAiInternalController {
   private readonly logger = new Logger(LineAiInternalController.name);
 
   constructor(
-    private readonly config: AiGatewayConfigService,
-    private readonly turnUseCase: LineAiTurnUseCase,
+    @Inject(AiGatewayConfigService) private readonly config: AiGatewayConfigService,
+    @Inject(LineAiTurnUseCase) private readonly turnUseCase: LineAiTurnUseCase,
   ) {}
 
   @Public()

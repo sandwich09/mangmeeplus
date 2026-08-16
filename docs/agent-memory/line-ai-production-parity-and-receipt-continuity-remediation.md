@@ -13,8 +13,9 @@ is committed as `7fb7e5b`; repository story 8 (signed expected hosted-runtime id
 response verification) is committed as `d7f8f6e`; repository story 9 (reconciled accepted/terminal
 outcome telemetry and recovery semantics) is committed as `9985770`. Repository story 10 adds the
 persisted-state reconciliation report) is committed as `5333bc0`. Repository story 11 adds the
-whole-chain repository acceptance harness; it is verified and pending commit. No push, deployment,
-cloud or database mutation.
+whole-chain repository acceptance harness) is committed as `e0f7383`. Repository story 12 fixes the
+local AI Gateway application graph under the repository's `tsx watch` dev loader; it is verified and
+pending commit. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -210,10 +211,17 @@ Verification:
   one response-composer fixture still advertised 16 turns, and the buffered-media clarification spec still
   expected generic `completed` even though a visible pending-media choice correctly terminalizes as
   `clarification_required`. The exact reported casual phrases are also asserted as zero-ERP-tool paths.
+- Story 12 was found by starting the real local service before conversation replay. The configured
+  `tsx watch` loader does not emit TypeScript constructor metadata, so Nest created the first typed
+  provider with an undefined config and the gateway could not boot. All Nest-created gateway
+  constructors now declare explicit injection tokens; manually constructed provider/agent helpers are
+  unchanged. A new application-context test boots the complete auth/security/health/LINE/draft/CRM
+  graph under tsx, and both that test and AI Gateway typecheck pass. A real local main process now maps
+  all routes and reaches `Nest application successfully started`.
 
 Next:
 
-- Commit repository story 11, then add the source-hashed controlled-image/local-conversation runner and
+- Commit repository story 12, then add the source-hashed controlled-image/local-conversation runner and
   execute the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

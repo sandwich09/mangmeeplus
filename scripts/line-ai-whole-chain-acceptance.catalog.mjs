@@ -291,6 +291,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     cwd: 'apps/ai-gateway',
     command: '../../node_modules/.bin/tsx',
     args: ['--test',
+      'src/app.boot.spec.ts',
       'src/modules/line-ai/presentation/http/line-ai-internal.controller.spec.ts',
       'src/modules/line-ai/agents/intent-router.agent.spec.ts',
       'src/modules/line-ai/agents/orchestrator.agent.spec.ts',
