@@ -107,6 +107,16 @@ Verification:
   and pending-media side-question resume. The controlled-image harness can require `MULTI_DOCUMENT`,
   clarification and absence of a single grand total without storing image paths/facts in git. Catalog
   and harness contracts pass 8/8; the actual three-image provider replay remains a controlled run.
+- The updated configured-Bedrock conversation completes all 15 turns with four permission-checked
+  reads (daily close, customer, low stock and sales), nine zero-tool turns, one deterministic capability
+  follow-up and one denied daily-close request. The denied request plans the correct tool but invokes no
+  ERP source, returns `PERMISSION_DENIED` and leaks none of the fixture totals. There are zero non-read or
+  final-mutation calls and zero user-facing unavailable turns. Daily close took 16,723 ms; the other reads
+  took 10,730–13,323 ms. Internal timeout/throttle events recovered through existing grounded fallbacks,
+  so hosted concurrency p95/p99 remains mandatory rather than being hidden by this successful sample.
+- The conversation harness now distinguishes a correct permission refusal (expected tool in the plan,
+  no invocation) from a normal read (expected tool must actually run), and emits bounded turn/expected/
+  planned/invoked diagnostics on failure. It still emits no conversation text or business identifiers.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.
