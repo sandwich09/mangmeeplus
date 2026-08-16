@@ -993,14 +993,14 @@ describe('LINE intake dispatch – media path', () => {
       fields: {},
     },
     {
-      name: 'multi-document image', expected: /พบเอกสารมากกว่า 1 ฉบับ/,
+      name: 'multi-document image', expected: /สรุปหลายรายการ/,
       intent: 'EXPENSE_DOCUMENT_CAPTURE' as const,
       classification: businessClassification({ contentKind: 'MULTI_DOCUMENT', documentKind: 'NEEDS_REVIEW', requiresClarification: true, missingRequiredSignals: ['MULTIPLE_DOCUMENTS'] }),
       fields: { grandTotalAmount: '900.00' },
     },
   ]) {
     it(`${scenario.name} returns bounded guidance with no expense mutation`, async () => {
-      const { prisma, recordUpdates } = makePrisma();
+      const { prisma, recordUpdates, pendingMediaRows } = makePrisma();
       const h = makeHarness({
         permissions: ['expense.receipt.line_upload'],
         routePlan: { status: 'ROUTED', intent: scenario.intent, language: 'th', confidence: 0.95, documentClassification: scenario.classification },
@@ -1014,7 +1014,9 @@ describe('LINE intake dispatch – media path', () => {
       assert.equal(h.initCalls.length, 0);
       assert.equal(h.completeCalls.length, 0);
       assert.equal(recordUpdates.length, 0);
-      assert.equal(h.uploads.length, 0);
+      const preservesMultiple = scenario.classification.contentKind === 'MULTI_DOCUMENT';
+      assert.equal(h.uploads.length, preservesMultiple ? 1 : 0);
+      assert.equal(pendingMediaRows.length, preservesMultiple ? 1 : 0);
       assert.match(h.replies[0] ?? '', scenario.expected);
     });
   }
@@ -1407,6 +1409,23 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.match(h.replies[0] ?? '', /turn-answer/);
   });
 
+  it('"สรุปหลายรายการ" preserves the file, creates no expense, and closes the pending review choice after delivery', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      prisma,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-multiple', messageText: 'สรุปหลายรายการ' });
+
+    assert.equal(h.createExpenseCalls.length, 0, 'multiple transactions never collapse into one draft');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_MULTI_ENTRY_REVIEW');
+    assert.match(h.replies[0] ?? '', /ยังไม่ได้สร้างค่าใช้จ่ายรายการเดียว/);
+    assert.match(h.replies[0] ?? '', /\/companies\/company-1\/expenses/);
+    assert.equal(h.routeRequests.length, 0, 'the model cannot reinterpret the safe multi-entry decision');
+  });
+
   it('keeps an illustration choice pending until the deferred answer is delivered', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows);
@@ -1533,6 +1552,11 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
       assert.equal(classifyPendingMediaReply(t), 'illustration', t);
     }
   });
+  it('multiple-entry words → safe multi-entry review', () => {
+    for (const t of ['สรุปหลายรายการ', 'หลายรายการ', 'multiple entries']) {
+      assert.equal(classifyPendingMediaReply(t), 'multiple', t);
+    }
+  });
   it('"ไม่ใช่" resolves to illustration even though it contains "ใช่"', () => {
     assert.equal(classifyPendingMediaReply('ไม่ใช่'), 'illustration');
   });
@@ -1561,6 +1585,9 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
     }
     for (const t of ['2', '2)', 'ข้อ 2', 'สอง', 'อันที่สอง']) {
       assert.equal(classifyPendingMediaReply(t), 'illustration', t);
+    }
+    for (const t of ['3', '3)', 'ข้อ 3', 'สาม', 'อันที่สาม']) {
+      assert.equal(classifyPendingMediaReply(t), 'multiple', t);
     }
   });
 

@@ -123,15 +123,16 @@ const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรั�
  *  with a business-question caption, instead of silently discarding the image. */
 const MEDIA_CLARIFY_REPLY = [
   '🤔 รูปนี้เป็นอะไรคะ ตอบเลขข้อได้เลยนะคะ',
-  '1) ใบเสร็จ/เอกสารค่าใช้จ่ายที่ต้องการบันทึก',
+  '1) ใบเสร็จ/เอกสารค่าใช้จ่ายรายการเดียวที่ต้องการบันทึก',
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
+  '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
 ].join('\n');
 const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
 const MEDIA_PENDING_REQUEST_TEXT = 'ไฟล์ที่ผู้ใช้ส่งมาโดยยังไม่ได้ระบุคำถาม';
-const PENDING_ILLUSTRATION_RESOLUTION = Symbol('pendingIllustrationResolution');
+const PENDING_MEDIA_RESOLUTION = Symbol('pendingMediaResolution');
 
 /** Same chatKey the text path and the message buffer use: the group, else the person. */
 function mediaChatKey(event: LineReceiptUploadEvent): string {
@@ -223,6 +224,10 @@ function decideLineBusinessDocument(
   }
   if (routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE') return { outcome: 'reference', classification };
   if (routePlan.intent !== 'EXPENSE_DOCUMENT_CAPTURE') return { outcome: 'unsupported', classification };
+
+  if (classification?.contentKind === 'MULTI_DOCUMENT') {
+    return { outcome: 'clarify', persistMedia: true, classification };
+  }
 
   if (ocr.status !== 'OCR_EXTRACTED_NEEDS_REVIEW' || !ocr.classification) {
     return { outcome: 'clarify', persistMedia: true, classification };
@@ -348,15 +353,16 @@ export function toAiTurnIntent(rawIntent: string, refusalReason?: string): (type
  *  normally (never consume the pending row on a guess).
  *  ponytail: substring match over a fixed keyword set — enough for the short yes/no follow-up;
  *  swap for the intake router only if free-form replies start slipping through. */
-export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'ambiguous' {
+export function classifyPendingMediaReply(text: string): 'receipt' | 'illustration' | 'multiple' | 'ambiguous' {
   const t = (text ?? '').toLowerCase().trim();
   // The question is numbered, so a lone choice is unambiguous. Anchored to the whole reply on
   // purpose: a bare '1' is an answer, but '1500' or 'จ่ายไป 2 ใบ' is not.
-  const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([12])[.)]?$/.exec(t);
-  if (numbered) return numbered[1] === '1' ? 'receipt' : 'illustration';
+  const numbered = /^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([123])[.)]?$/.exec(t);
+  if (numbered) return numbered[1] === '1' ? 'receipt' : numbered[1] === '2' ? 'illustration' : 'multiple';
   // Thai ordinals are the same answer spelled out, and just as unambiguous against a numbered list.
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:แรก|หนึ่ง)$/.test(t)) return 'receipt';
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สอง|ที่สอง)$/.test(t)) return 'illustration';
+  if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สาม|ที่สาม)$/.test(t)) return 'multiple';
   // Detect a refusal FIRST: receipt keywords like 'บันทึก' are substrings of refusals such as
   // 'ไม่ต้องบันทึก' ("no need to save"), so a plain keyword scan would build a draft from an
   // explicit "no". Thai negation is 'ไม่' (NOT the yes/no question particle 'ไหม'); English
@@ -364,6 +370,7 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   // receipt — treat it as an illustration and answer the original caption instead.
   const negation = /ไม่|ยกเลิก|\b(?:no|don't|do not|cancel)\b/.test(t);
   const illustration = negation || ['ภาพประกอบ', 'แค่ถาม', 'illustration'].some((k) => t.includes(k));
+  const multiple = !negation && ['สรุปหลายรายการ', 'หลายรายการ', 'multiple entries'].some((k) => t.includes(k));
   const receipt = !negation && [
     'ใบเสร็จ', 'บันทึก', 'ใช่', 'receipt', 'บิล', 'สลิป',
     // Named documents. 'เอกสารค่าใช้จ่าย' and 'ค่าใช้จ่าย' are the words the question itself uses —
@@ -371,15 +378,16 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
     'ใบกำกับภาษี', 'ใบแจ้งหนี้', 'ใบส่งของ', 'ใบวางบิล', 'เอกสารค่าใช้จ่าย', 'ค่าใช้จ่าย',
     'invoice', 'bill', 'slip', 'tax invoice',
   ].some((k) => t.includes(k));
-  if (receipt && !illustration) return 'receipt';
-  if (illustration && !receipt) return 'illustration';
+  if (receipt && !illustration && !multiple) return 'receipt';
+  if (illustration && !receipt && !multiple) return 'illustration';
+  if (multiple && !receipt && !illustration) return 'multiple';
   return 'ambiguous';
 }
 
-export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'illustration'; remainder: string } | null {
-  const match = normalizeLineText(text).match(/^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([12])[.)]?\s*(?:และ|พร้อม(?:กับ)?|แล้ว)\s*(.+)$/u);
+export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'illustration' | 'multiple'; remainder: string } | null {
+  const match = normalizeLineText(text).match(/^(?:(?:อัน|ข้อ|ตัว)?\s*(?:ที่)?\s*)?([123])[.)]?\s*(?:และ|พร้อม(?:กับ)?|แล้ว)\s*(.+)$/u);
   if (!match?.[2]) return null;
-  return { decision: match[1] === '1' ? 'receipt' : 'illustration', remainder: match[2].trim() };
+  return { decision: match[1] === '1' ? 'receipt' : match[1] === '2' ? 'illustration' : 'multiple', remainder: match[2].trim() };
 }
 
 function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[]): boolean {
@@ -874,22 +882,22 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
     } else {
       const resolution = (event as typeof event & {
-        [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
-      })[PENDING_ILLUSTRATION_RESOLUTION];
+        [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
+      })[PENDING_MEDIA_RESOLUTION];
       if (resolution) {
         try {
           await this.prisma.client.lineIntakePendingMedia.updateMany({
             where: { id: resolution.id, status: 'PENDING' },
-            data: { status: 'RESOLVED_ILLUSTRATION' },
+            data: { status: resolution.status },
           });
           await this.ackMediaClarification(resolution.companyId, event, resolution.userId, resolution.id, 'acked');
           delete (event as typeof event & {
-            [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
-          })[PENDING_ILLUSTRATION_RESOLUTION];
+            [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
+          })[PENDING_MEDIA_RESOLUTION];
         } catch (error) {
           // Delivery is already customer-visible. Keep the row idempotently retryable and surface
           // the storage failure instead of converting a successful answer into another reply.
-          this.logger.warn({ msg: 'line_pending_illustration_resolution_failed', pendingMediaId: resolution.id, error: (error as Error).message });
+          this.logger.warn({ msg: 'line_pending_media_resolution_failed', pendingMediaId: resolution.id, error: (error as Error).message });
         }
       }
     }
@@ -1096,8 +1104,8 @@ export class ProcessLineWebhookUseCase {
 
     // RECEIPT-05 (owner decision 2026-07-12): if this user has an unresolved media-clarify
     // question, their reply decides it deterministically BEFORE any AI routing — receipt →
-    // build the draft from the already-stored attachment; illustration → finally answer the
-    // original caption question; ambiguous → leave it PENDING and route the reply normally.
+    // build the draft from the stored attachment; illustration → answer the original caption;
+    // multiple → retain for review without collapsing rows; ambiguous → leave it PENDING.
     const pendingMedia = await this.prisma.client.lineIntakePendingMedia.findFirst({
       where: { companyId, userId: identity.userId, status: 'PENDING', expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
@@ -1117,10 +1125,27 @@ export class ProcessLineWebhookUseCase {
         // Settle only after LINE receives the deferred outcome. Until then the stored file remains
         // retryable and cannot disappear behind a failed reply.
         (event as LineTextEvent & {
-          [PENDING_ILLUSTRATION_RESOLUTION]?: { id: string; companyId: string; userId: string };
-        })[PENDING_ILLUSTRATION_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId };
+          [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
+        })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_ILLUSTRATION' };
         // Route on the stored caption instead of the yes/no reply — the deferred question is answered now.
         normalizedText = normalizeLineText(pendingMedia.caption ?? normalizedText);
+      }
+      if (decision === 'multiple') {
+        (event as LineTextEvent & {
+          [PENDING_MEDIA_RESOLUTION]?: { id: string; companyId: string; userId: string; status: 'RESOLVED_ILLUSTRATION' | 'RESOLVED_MULTI_ENTRY_REVIEW' };
+        })[PENDING_MEDIA_RESOLUTION] = { id: pendingMedia.id, companyId, userId: identity.userId, status: 'RESOLVED_MULTI_ENTRY_REVIEW' };
+        const reply = [
+          '📋 เก็บไฟล์สรุปหลายรายการไว้ตรวจแล้ว และยังไม่ได้สร้างค่าใช้จ่ายรายการเดียวจากยอดรวมค่ะ',
+          'ระบบ LINE ยังไม่รองรับการแยกหลายรายการอัตโนมัติ กรุณาส่งเอกสารแยกรายการ หรือบันทึก/ตรวจในเว็บแอป:',
+          absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`),
+        ].join('\n');
+        await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: reply, intent: 'CLARIFY',
+        });
+        await this.updateEventLog(event.webhookEventId, 'multi_entry_review', undefined, companyId);
+        return;
       }
       // ambiguous → fall through with the original reply; the row stays PENDING. Unlike before, the
       // ledger now carries this question as an open clarification WITH the stored file, so the turn

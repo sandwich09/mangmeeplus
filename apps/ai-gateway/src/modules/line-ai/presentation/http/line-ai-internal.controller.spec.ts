@@ -175,6 +175,7 @@ describe('LineAiInternalController', () => {
     let typhoonBody: any = {};
     let typhoonAuth = '';
     let extractionInput = '';
+    let extractionInstructions = '';
     globalThis.fetch = (async (url: any, init: any) => {
       const requestedUrl = String(url);
       if (requestedUrl.includes('api.opentyphoon.ai')) {
@@ -189,7 +190,9 @@ describe('LineAiInternalController', () => {
         };
       }
       // Stage 2: OpenAI provider (Responses API) maps OCR markdown -> draft fields.
-      extractionInput = JSON.stringify(JSON.parse(init.body).input);
+      const extractionBody = JSON.parse(init.body);
+      extractionInput = JSON.stringify(extractionBody.input);
+      extractionInstructions = String(extractionBody.instructions ?? '');
       return {
         ok: true,
         status: 200,
@@ -272,6 +275,7 @@ describe('LineAiInternalController', () => {
       assert.equal(typhoonBody.temperature, 0.1);
       assert.ok(String(typhoonBody.messages[0].content[0].text).includes('natural_text'), 'stage 1 must use the official Typhoon prompt');
       assert.ok(extractionInput.includes('ใบเสร็จ ร้านกาแฟ'), 'stage 2 must receive the OCR markdown, not the image');
+      assert.ok(extractionInstructions.includes('multiple independent expense transactions'), 'stage 2 must forbid collapsing a multi-entry ledger into one expense');
       assert.ok(extractionInput.includes('cat-meals'), 'stage 2 must receive the bounded active category catalogue');
       assert.ok(!extractionInput.includes('ZmFrZQ=='), 'image bytes must not reach stage 2');
     } finally {

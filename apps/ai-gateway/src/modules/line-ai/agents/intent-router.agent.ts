@@ -170,6 +170,7 @@ For EXPENSE_DOCUMENT_CAPTURE or BUSINESS_DOCUMENT_REFERENCE images, include docu
   "missingRequiredSignals": [], "contradictionSignals": [], "requiresClarification": false
 }
 Classification is advisory. Quantity/items without a transaction total are ORDER_OR_CHECK_BILL, never RECEIPT. Quotations, appointments, bookings, reservations, and non-financial images are never expense receipts because they show an amount.
+A ledger, notebook page, phone screenshot, or handwritten summary containing multiple independent expense transactions or per-row totals is MULTI_DOCUMENT with MULTIPLE_DOCUMENTS even when it is physically one page. Route it as EXPENSE_DOCUMENT_CAPTURE for safe clarification; never collapse its grand total into one expense.
 captureHints (EXPENSE_DOCUMENT_CAPTURE only; omit unknown fields, never invent values):
 {
   "sourceDocumentType": "RECEIPT"|"TAX_INVOICE"|"TRANSFER_SLIP"|"HANDWRITTEN_CASH_BILL"|"SUPPLIER_BILL"|"MARKETPLACE_ORDER_SCREENSHOT"|"EXPENSE_NOTE_TEXT"|"OTHER_EXPENSE_DOCUMENT"|"NEEDS_REVIEW",

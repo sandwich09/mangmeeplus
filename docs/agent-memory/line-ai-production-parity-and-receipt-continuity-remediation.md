@@ -91,6 +91,11 @@ Verification:
   action rows and the never-submitted limitation. Daily closing deliberately skips the model rewrite
   because `due` must never mutate into approval/payment language. LINE business coverage passes
   397/397 including shorthand routing, THB+USD separation, full owner sections and read-only web link.
+- Multi-entry ledger/notebook/phone images are now explicitly classified as `MULTI_DOCUMENT`, retained
+  behind one three-way clarification and never collapsed into a single expense. Choosing “สรุปหลาย
+  รายการ” creates no expense, returns an honest web/review handoff and changes the retained media to
+  `RESOLVED_MULTI_ENTRY_REVIEW` only after successful LINE delivery. The focused API flow passes 86/86;
+  Prisma schema validation passes and both intake/OCR prompts have regression assertions for the rule.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.
