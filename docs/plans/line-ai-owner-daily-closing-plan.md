@@ -80,9 +80,9 @@ Exit: contract passes focused API tests and does not scan unlimited expense hist
 
 ## Story 3: LINE Answer and Conversation Continuity
 
-- [ ] Enable the new tool for the accounting specialist/router catalog.
-- [ ] Add deterministic daily-closing reply; constrain model composition to value/currency/bucket-equal tool facts.
-- [ ] Include actionable read-only web links and honest `never submitted is unobservable` limitation.
+- [x] Enable the new tool for the accounting specialist/router catalog.
+- [x] Add deterministic daily-closing reply; constrain model composition to value/currency/bucket-equal tool facts.
+- [x] Include actionable read-only web links and honest `never submitted is unobservable` limitation.
 - [ ] Preserve partial text answers, intervening-question answer + resume and exactly 15-turn context.
 - [ ] Ensure multi-entry handwritten media asks type clarification and creates no single expense.
 - [ ] Add orchestrator/composer/API dispatch tests; commit and push.

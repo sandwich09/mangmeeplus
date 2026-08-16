@@ -252,6 +252,19 @@ describe('ResponseComposerAgent.composeAnswer (model-composed grounded answer)',
     assert.equal(out, FALLBACK);
     assert.equal(called, false);
   });
+
+  it('keeps daily-closing bucket semantics deterministic without a model rewrite', async () => {
+    let called = false;
+    const fallback = '• ถึงกำหนดวันนี้ (ไม่ได้แปลว่าอนุมัติให้จ่าย): 500.00 THB';
+    const out = await agent.composeAnswer(
+      'วันนี้ต้องจ่ายอะไรบ้าง',
+      [{ tool: 'expense.get_daily_closing', data: { dueEndOfDay: { totals: [{ currency: 'THB', count: 1, total: '500' }] } } }],
+      fallback,
+      { async generateText() { called = true; return { ok: true, text: 'อนุมัติให้จ่ายแล้ว 500 บาท' }; } },
+    );
+    assert.equal(out, fallback);
+    assert.equal(called, false);
+  });
 });
 
 describe('ResponseComposerAgent.composeAnswer – multi-turn context grounding', () => {

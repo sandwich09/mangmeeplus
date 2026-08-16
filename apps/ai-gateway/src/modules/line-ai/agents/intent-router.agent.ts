@@ -50,6 +50,7 @@ Set subject to the user's business entity or meaning. Choose tools only when the
 Never substitute a nearby subject: customer is not employee; sale/payment is not ledger/accounting_document; booking is not customer/employee.
 Do not choose disabled tools.
 For SAP Tax Code questions, use tax.get_tax_code_profile. Never infer an external code without company profile and effective date; legacy SAP ERP O1 can differ from current S/4HANA O1.
+For an owner daily-closing question about what expenses occurred today, what remains payable, or what must be checked before closing the shop, use expense.get_daily_closing instead of a generic expense total.
 Treat domestic sale/purchase, import goods, imported services/PP36, export, zero-rated, exempt, and non-taxable questions as tax read requests. Tax configuration changes, recompute, filing, payment, and issue resolution are mutations and stay blocked.
 Do not use accounting/ledger tools to answer sales, CRM, tax, payroll, bank, or weather questions unless the enabled catalog explicitly says they match.
 Use receipt/evidence capture only when hasAttachment is true or the user clearly asks to record/review receipt evidence.
@@ -82,6 +83,7 @@ export const ROUTER_ENABLED_TOOLS = new Set([
   'expense.list_recent',
   'expense.get_detail',
   'expense.get_breakdown',
+  'expense.get_daily_closing',
   'sales.get_sales_summary',
   'crm.get_customer_summary',
   'crm.search_customers',

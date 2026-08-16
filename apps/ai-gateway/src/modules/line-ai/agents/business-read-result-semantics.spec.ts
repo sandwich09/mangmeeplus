@@ -31,6 +31,18 @@ function emptyData(name: string): unknown {
     case 'ledger.get_report_summary': return { currency: null, profitAndLoss: { revenue: '0', netProfit: '0' } };
     case 'expense.list_recent': return { total: 0, summary: { totalAmount: 0, pendingAmount: 0, draftAmount: 0, confirmedAmount: 0, paidAmount: 0, unpaidAmount: 0 }, items: [] };
     case 'expense.get_breakdown': return { totalCount: 0, totalAmount: '0', byCategory: [], byBranch: [] };
+    case 'expense.get_daily_closing': return {
+      date: '2026-08-16', timezone: 'Asia/Bangkok', scope: { kind: 'all_branches' },
+      occurredToday: { totals: [], paid: [], outstanding: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      submittedToday: { count: 0 },
+      dueEndOfDay: { totals: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      overdue: { totals: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      unscheduledOutstanding: { totals: [], items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      pendingReview: { count: 0, items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      evidenceBlockers: { count: 0, items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      duplicateRisks: { count: 0, items: { total: 0, shown: 0, remaining: 0, items: [] } },
+      excluded: { rejected: 0, voided: 0 }, limitations: { neverSubmittedDocumentsObservable: false },
+    };
     case 'sales.get_sales_summary': return { totalSales: '0', transactionCount: 0, totalsByCurrency: [] };
     case 'procurement.get_summary': return { total: 0, monetarySummaryAvailable: false };
     case 'procurement.search_suppliers': return { total: 0, items: [] };

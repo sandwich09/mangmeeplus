@@ -18,6 +18,7 @@ export const ALLOWED_TOOLS = new Set([
   'expense.list_recent',
   'expense.get_detail',
   'expense.get_breakdown',
+  'expense.get_daily_closing',
   'procurement.get_ap_outstanding',
   'procurement.get_summary',
   'procurement.search_suppliers',
@@ -84,6 +85,7 @@ const TOOL_FACT_LABELS: Record<string, string> = {
   'accounting.get_summary': 'สรุปเอกสารบัญชี',
   'accounting.list_recent_documents': 'เอกสารบัญชีล่าสุด',
   'expense.get_breakdown': 'สรุปค่าใช้จ่ายแยกกลุ่ม',
+  'expense.get_daily_closing': 'สรุปปิดร้าน',
   'procurement.get_ap_outstanding': 'เจ้าหนี้ค้างจ่าย',
   'procurement.get_summary': 'สรุปใบสั่งซื้อ',
   'procurement.search_suppliers': 'รายชื่อผู้ขาย',
@@ -110,6 +112,79 @@ function formatMoney(value: unknown): string {
   return Number.isFinite(amount)
     ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : '0.00';
+}
+
+function dailyClosingFacts(data: Record<string, unknown>): Array<{ label: string; value: string }> | undefined {
+  const occurred = data['occurredToday'] as Record<string, unknown> | undefined;
+  const due = data['dueEndOfDay'] as Record<string, unknown> | undefined;
+  const overdue = data['overdue'] as Record<string, unknown> | undefined;
+  const unscheduled = data['unscheduledOutstanding'] as Record<string, unknown> | undefined;
+  const submitted = data['submittedToday'] as Record<string, unknown> | undefined;
+  const pending = data['pendingReview'] as Record<string, unknown> | undefined;
+  const evidence = data['evidenceBlockers'] as Record<string, unknown> | undefined;
+  const duplicates = data['duplicateRisks'] as Record<string, unknown> | undefined;
+  const scope = data['scope'] as Record<string, unknown> | undefined;
+  if (typeof data['date'] !== 'string' || !occurred || !due || !overdue || !unscheduled
+    || typeof submitted?.['count'] !== 'number' || typeof pending?.['count'] !== 'number'
+    || typeof evidence?.['count'] !== 'number' || typeof duplicates?.['count'] !== 'number' || !scope) return undefined;
+
+  const money = (value: unknown): string | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const groups: string[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== 'object') return undefined;
+      const group = item as Record<string, unknown>;
+      if (typeof group['currency'] !== 'string' || typeof group['total'] !== 'string' || typeof group['count'] !== 'number') return undefined;
+      groups.push(`${formatMoney(group['total'])} ${group['currency']} (${group['count']} รายการ)`);
+    }
+    return groups.length > 0 ? groups.join(', ') : 'ไม่มี';
+  };
+  const bounded = (value: unknown): Record<string, unknown> | undefined => {
+    if (!value || typeof value !== 'object') return undefined;
+    const bucket = value as Record<string, unknown>;
+    return typeof bucket['total'] === 'number' && Array.isArray(bucket['items']) ? bucket : undefined;
+  };
+  const itemLines = (value: unknown, amountField: 'grandTotalAmount' | 'outstandingAmount'): string => {
+    const bucket = bounded(value);
+    if (!bucket) return '';
+    const lines = (bucket['items'] as Array<Record<string, unknown>>).slice(0, 3).map((item) => {
+      const party = String(item['vendorName'] ?? item['categoryName'] ?? item['expenseNumber'] ?? 'ไม่ระบุรายการ');
+      const payment = item['paymentStatus'] === 'PAID' ? 'จ่ายแล้ว'
+        : item['paymentStatus'] === 'PARTIALLY_PAID' ? 'จ่ายบางส่วน'
+          : item['paymentStatus'] === 'UNPAID' ? 'ยังไม่จ่าย' : undefined;
+      const review = ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(String(item['status'] ?? '')) ? 'รอตรวจ' : undefined;
+      return `${party} ${formatMoney(item[amountField])} ${String(item['currency'] ?? '')}${payment ? ` · ${payment}` : ''}${review ? ` · ${review}` : ''}`.trim();
+    });
+    const remaining = typeof bucket['remaining'] === 'number' ? bucket['remaining'] : Math.max(0, Number(bucket['total']) - lines.length);
+    return lines.length > 0 ? ` — ${lines.join('; ')}${remaining > 0 ? `; อีก ${remaining} รายการ` : ''}` : '';
+  };
+  const occurredItems = bounded(occurred['items']);
+  const totals = money(occurred['totals']);
+  const paid = money(occurred['paid']);
+  const outstanding = money(occurred['outstanding']);
+  const dueTotals = money(due['totals']);
+  const overdueTotals = money(overdue['totals']);
+  const unscheduledTotals = money(unscheduled['totals']);
+  if (!occurredItems || totals === undefined || paid === undefined || outstanding === undefined
+    || dueTotals === undefined || overdueTotals === undefined || unscheduledTotals === undefined
+    || !bounded(due['items']) || !bounded(overdue['items']) || !bounded(unscheduled['items'])) return undefined;
+
+  const scopeLabel = scope['kind'] === 'all_branches' ? 'ทุกสาขาของบริษัท'
+    : scope['kind'] === 'restricted_branches' ? 'เฉพาะสาขาตามสิทธิ์'
+      : scope['kind'] === 'selected_branch' ? 'เฉพาะสาขาที่เลือก' : undefined;
+  if (!scopeLabel) return undefined;
+  return [
+    { label: `สรุปปิดร้านวันที่ ${data['date']}`, value: scopeLabel },
+    { label: 'ค่าใช้จ่ายที่เกิดวันนี้', value: `${occurredItems['total']} รายการ — ${totals}${itemLines(occurred['items'], 'grandTotalAmount')}` },
+    { label: 'จ่ายแล้ว', value: paid },
+    { label: 'ยังค้างจากรายการวันนี้', value: outstanding },
+    { label: 'ถึงกำหนดวันนี้ (ไม่ได้แปลว่าอนุมัติให้จ่าย)', value: `${dueTotals}${itemLines(due['items'], 'outstandingAmount')}` },
+    { label: 'เกินกำหนด', value: `${overdueTotals}${itemLines(overdue['items'], 'outstandingAmount')}` },
+    { label: 'ยังไม่มีกำหนดจ่าย', value: `${unscheduledTotals}${itemLines(unscheduled['items'], 'outstandingAmount')}` },
+    { label: 'ส่งเข้าระบบวันนี้', value: `${submitted['count']} รายการ` },
+    { label: 'งานที่ต้องตรวจ', value: `รอตรวจ ${pending['count']} รายการ, หลักฐานต้องตาม ${evidence['count']} รายการ, เสี่ยงซ้ำ ${duplicates['count']} รายการ` },
+    { label: 'ขอบเขตข้อมูล', value: 'ระบบไม่สามารถรู้บิลที่ไม่เคยส่งเข้าระบบได้' },
+  ];
 }
 
 function hasExplicitShape(data: unknown): boolean {
@@ -278,6 +353,10 @@ export class AccountingSummaryAgent {
           label: 'ค่าใช้จ่าย',
           value: `${String(data['totalCount'])} รายการ รวม ${formatMoney(data['totalAmount'])} บาท`,
         });
+      } else if (tool.name === 'expense.get_daily_closing') {
+        const dailyFacts = dailyClosingFacts(data);
+        if (!dailyFacts) { readFailed = true; toolData.pop(); continue; }
+        pushFacts(...dailyFacts);
       } else {
         // Generic shaping for the wider read-tool set (tax/workflow/AP/...): surface count/total
         // style fields for the deterministic fallback; the model answer layer gets the full raw
@@ -311,13 +390,13 @@ export class AccountingSummaryAgent {
     }
     if (readFailed && facts.length === 0) {
       return {
-        ...stub('accounting', 'FAILED', requested.has('expense.list_recent')
+        ...stub('accounting', 'FAILED', requested.has('expense.list_recent') || requested.has('expense.get_daily_closing')
           ? 'ไม่สามารถดึงรายการค่าใช้จ่ายได้ในขณะนี้'
           : 'ไม่สามารถดึงข้อมูลได้ในขณะนี้'),
         toolCalls,
       };
     }
-    if (requested.has('expense.list_recent') && facts.length === 0) {
+    if ((requested.has('expense.list_recent') || requested.has('expense.get_daily_closing')) && facts.length === 0) {
       return { ...stub('accounting', 'UNSUPPORTED', 'ไม่พบรายการค่าใช้จ่ายที่พร้อมแสดง หรือไม่สามารถดึงรายการค่าใช้จ่ายได้ในขณะนี้'), toolCalls };
     }
 

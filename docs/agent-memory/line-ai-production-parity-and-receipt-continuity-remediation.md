@@ -85,6 +85,12 @@ Verification:
   voided rows from active buckets, bounds detail to 1–10 and reports truncation plus the honest
   never-submitted limitation. Composite due/evidence indexes have a fail-fast lock policy for release
   rehearsal. Focused business/controller tests, schema validation and API/contracts typechecks pass.
+- Story 3 now exposes that tool through the accounting/CFO catalog, semantic router and accounting
+  specialist. Its deterministic LINE answer preserves scope, date, per-currency totals, paid versus
+  outstanding, due-today versus overdue versus no-due, review/evidence/duplicate counts, bounded
+  action rows and the never-submitted limitation. Daily closing deliberately skips the model rewrite
+  because `due` must never mutate into approval/payment language. LINE business coverage passes
+  397/397 including shorthand routing, THB+USD separation, full owner sections and read-only web link.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.

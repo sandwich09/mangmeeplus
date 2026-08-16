@@ -47,6 +47,9 @@ describe('LINE AI mandatory business-query regression corpus', () => {
 
       const composed = new ResponseComposerAgent().compose(routed, [output], testCase.message, testCase.language === 'th' ? 'th-TH' : 'en-US');
       assert.match(composed.replyText, new RegExp(testCase.expectedData));
+      if ('expectedReply' in testCase) {
+        for (const expected of testCase.expectedReply) assert.ok(composed.replyText.includes(expected), expected);
+      }
       assert.equal(composed.webLinks[0]?.path, testCase.sourceRef.webPath);
       assert.ok(!composed.replyText.includes('/companies/'), 'data answer is primary; link remains secondary metadata');
     });
