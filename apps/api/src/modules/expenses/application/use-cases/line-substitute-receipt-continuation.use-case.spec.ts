@@ -226,6 +226,8 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     const cancelled = await h.useCase.execute(ctx(), { messageText: 'ยกเลิก', chatKeyHash: 'chat-hash', recentCandidates: [] });
     assert.equal(cancelled.status, 'CANCELLED');
     assert.equal(h.getExpense().id, 'expense-1');
+    const afterCancel = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(afterCancel.status, 'TARGET_REQUIRED', 'closed values are not resurrected as active conversation state');
   });
 
   it('routes a valid receipt to normal review unless unavailability/incompleteness is proven', async () => {

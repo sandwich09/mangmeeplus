@@ -226,13 +226,13 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 - [x] Pass only an opaque workflow/expense reference in the web handoff. After web authentication,
       reload and permission/revision-check server-side prefill values; do not place normalized business
       values, attachment ids or customer facts in the URL.
-- [ ] Bind typed prefill retention to the existing expense-draft/business retention boundary. Close or
+- [x] Bind typed prefill retention to the existing expense-draft/business retention boundary. Close or
       purge it on explicit cancel, successful authenticated web consumption or retention cleanup; never
       use conversation-history expiry to delete a valid draft and never resurrect expired pending media.
 - [x] Normalize “ใบทดแทนใบเสร็จ” to `ใบรับรองแทนใบเสร็จรับเงิน`; distinguish ready, blocked,
       ineligible, target-ambiguous, forbidden and temporarily unavailable responses instead of generic
       feature-disabled copy.
-- [ ] Preserve immediately delivered capability context for a bounded follow-up such as “อย่างไหร่”.
+- [x] Preserve immediately delivered capability context for a bounded follow-up such as “อย่างไหร่”.
 
 ### Likely files
 

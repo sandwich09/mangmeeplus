@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isDeliveredCapabilityFollowUp } from './process-line-webhook.use-case';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
@@ -132,6 +132,7 @@ function makeHarness(opts: {
   substituteResult?: any;
   expenseDetail?: any;
   lineReplyResult?: 'ok' | 'failed_token' | 'failed_other';
+  conversationTurns?: any[];
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -151,6 +152,7 @@ function makeHarness(opts: {
   const substituteCalls: any[] = [];
   const receiptContinuationCalls: any[] = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
+  if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
@@ -500,6 +502,32 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
 });
 
 describe('LINE intake dispatch – text path', () => {
+  it('keeps an immediate vague follow-up attached to the delivered capability answer without another model call', async () => {
+    const h = makeHarness({
+      permissions: ['line.ai.query'],
+      conversationTurns: [{
+        createdAt: new Date(), userMessagePreview: 'ทำอะไรได้บ้าง',
+        replyPreview: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ',
+        intent: 'UNKNOWN', agent: 'general', refused: false, toolInvocations: [],
+      }],
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อย่างไหร่' });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.match(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
+    assert.match(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
+    assert.match(h.replies[0] ?? '', /ขั้นสุดท้ายยังทำในเว็บ/);
+  });
+
+  it('does not treat the same vague text as capability follow-up without the delivered capability marker', () => {
+    assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', undefined), false);
+    assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', {
+      windowMinutes: 15, maxTurns: 15,
+      recentTurns: [{ at: new Date().toISOString(), assistantReplyPreview: 'สรุปยอดขายแล้ว', refused: false }],
+    }), false);
+  });
+
   it('answers a receipt follow-up from the current captured expense without invoking the model or inventing purpose/tax policy', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],

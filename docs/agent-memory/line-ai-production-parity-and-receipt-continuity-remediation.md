@@ -3,8 +3,9 @@
 Status: Implementation in progress. Documentation baseline committed as `3a06829`; repository story 1
 (stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`; repository
 story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document question
-safeguards and authenticated opaque web prefill) is committed as `62b88a4`. Repository story 3 is
-implemented, self-reviewed and focused-tested, pending commit. No push, deployment, cloud or database mutation.
+safeguards and authenticated opaque web prefill) is committed as `62b88a4`; repository story 3 (grounded
+captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`.
+Repository story 4 is in progress. No push, deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -108,10 +109,15 @@ Verification:
 - Story 3 focused verification after review: 95/95 selected continuation/dispatch/repository tests pass;
   the larger combined regression run passes 210/210 after the delivery-order hardening; API typecheck and
   `git diff --check` pass.
+- Story 4 preserves the fixed capability answer only after its turn is `COMPLETED`, then handles an
+  immediately bounded vague follow-up such as “อย่างไหร่” deterministically with examples and the web-only
+  final-action boundary. The same text without the delivered capability marker remains on the normal route.
+  Typed substitute prefill is lifecycle-bound to its expense row; cancel and atomic web preparation close
+  it as `CANCELLED`/`CONSUMED`, and closed values are not resurrected by explicit resume.
 
 Next:
 
-- Commit repository story 3, then close the remaining bounded-retention/capability follow-up and release
-  identity/observability/whole-chain harness gates before the prod-shaped local conversation replay.
+- Commit repository story 4, then close release identity/observability/whole-chain harness gates before
+  the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.
