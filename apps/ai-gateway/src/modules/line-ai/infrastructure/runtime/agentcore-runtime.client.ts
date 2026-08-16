@@ -11,7 +11,12 @@ import { Injectable } from '@nestjs/common';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
-import type { AiUsageEntry } from '@watchdog-bms/contracts';
+import type {
+  AiUsageEntry,
+  LineAiRefusalReason,
+  LineAiRuntimeIdentity,
+  LineAiStageDurations,
+} from '@watchdog-bms/contracts';
 import type { AgentCoreInvokeInput, AgentCoreInvokeResult, IAgentCoreRuntime } from './runtime.port';
 
 type AwsCreds = { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
@@ -73,6 +78,57 @@ function coerceUsage(value: unknown): AiUsageEntry[] | undefined {
     durationMs: entry.durationMs,
   }));
 }
+
+const REFUSAL_REASONS = new Set<LineAiRefusalReason>([
+  'mutation_blocked', 'safety_crisis', 'privacy_rumor', 'unsupported_module', 'forbidden',
+  'unlinked_user', 'ambiguous_company', 'tool_unavailable', 'feature_disabled', 'ai_timeout',
+  'line_delivery_failure',
+]);
+
+function coerceRuntimeIdentity(value: unknown): LineAiRuntimeIdentity | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const identity = value as Record<string, unknown>;
+  if (
+    typeof identity['sourceCommit'] !== 'string'
+    || !/^[0-9a-f]{40}$/.test(identity['sourceCommit'])
+    || typeof identity['artifactSha256'] !== 'string'
+    || !/^[0-9a-f]{64}$/.test(identity['artifactSha256'])
+    || typeof identity['serviceVersion'] !== 'string'
+    || identity['serviceVersion'].length === 0
+    || identity['serviceVersion'].length > 128
+    || !Number.isInteger(identity['contractVersion'])
+    || Number(identity['contractVersion']) <= 0
+  ) return undefined;
+  return {
+    sourceCommit: identity['sourceCommit'],
+    artifactSha256: identity['artifactSha256'],
+    serviceVersion: identity['serviceVersion'],
+    contractVersion: Number(identity['contractVersion']),
+  };
+}
+
+const STAGE_KEYS = [
+  'bodyReadMs', 'payloadValidationMs', 'orchestrationMs', 'runtimeTotalMs', 'agentcoreHttpMs',
+] as const;
+
+function coerceStageDurations(value: unknown): LineAiStageDurations | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const entries = STAGE_KEYS.flatMap((key) => {
+    const duration = raw[key];
+    return typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
+      ? [[key, Math.round(duration)] as const]
+      : [];
+  });
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function coerceRefusalReason(value: unknown): LineAiRefusalReason | undefined {
+  return typeof value === 'string' && REFUSAL_REASONS.has(value as LineAiRefusalReason)
+    ? value as LineAiRefusalReason
+    : undefined;
+}
+
 @Injectable()
 export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
   private readonly region: string;
@@ -95,6 +151,12 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     if (!this.runtimeArn) {
       throw Object.assign(new Error('AGENTCORE_RUNTIME_ARN not configured'), { code: 'RUNTIME_NOT_CONFIGURED' });
     }
+    const runtimeBinding = {
+      runtimeArnHash: sha256hex(this.runtimeArn).slice(0, 16),
+      qualifier: this.qualifier,
+    };
+    const failure = (message: string, code: string, stageDurationsMs?: LineAiStageDurations) =>
+      Object.assign(new Error(message), { code, runtimeBinding, ...(stageDurationsMs ? { stageDurationsMs } : {}) });
 
     // AWS AgentCore: full ARN URL-encoded in path, qualifier as query string.
     // URL uses single-encoded ARN; SigV4 canonical URI uses double-encoded ARN (botocore behaviour).
@@ -110,26 +172,36 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
 
     const creds = await this.credProvider();
 
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(Object.assign(new Error('AgentCore invoke timed out'), { code: 'TIMEOUT' })),
-        this.timeoutMs,
-      ),
-    );
-
-    const response = await Promise.race([
-      this.signedPost(url, host, canonicalPath, canonicalQs, sessionId, body, creds),
-      timeout,
-    ]);
+    const httpStartedAt = Date.now();
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), this.timeoutMs);
+    let response: Response;
+    try {
+      response = await this.signedPost(url, host, canonicalPath, canonicalQs, sessionId, body, creds, abort.signal);
+    } catch (error) {
+      if (abort.signal.aborted) {
+        throw failure('AgentCore invoke timed out', 'TIMEOUT', { agentcoreHttpMs: Date.now() - httpStartedAt });
+      }
+      if (error && typeof error === 'object') {
+        Object.assign(error, {
+          runtimeBinding,
+          stageDurationsMs: { agentcoreHttpMs: Date.now() - httpStartedAt },
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    const agentcoreHttpMs = Date.now() - httpStartedAt;
 
     if (!response.ok) {
       if (response.status === 404)
-        throw Object.assign(new Error('AgentCore runtime not found'), { code: 'RUNTIME_NOT_FOUND' });
+        throw failure('AgentCore runtime not found', 'RUNTIME_NOT_FOUND', { agentcoreHttpMs });
       if (response.status === 429)
-        throw Object.assign(new Error('AgentCore throttled'), { code: 'THROTTLED' });
+        throw failure('AgentCore throttled', 'THROTTLED', { agentcoreHttpMs });
       if (response.status === 400)
-        throw Object.assign(new Error('AgentCore invalid payload'), { code: 'INVALID_PAYLOAD' });
-      throw Object.assign(new Error(`AgentCore invoke failed: ${response.status}`), { code: 'INVOKE_ERROR' });
+        throw failure('AgentCore invalid payload', 'INVALID_PAYLOAD', { agentcoreHttpMs });
+      throw failure(`AgentCore invoke failed: ${response.status}`, 'INVOKE_ERROR', { agentcoreHttpMs });
     }
 
     const raw = (await response.json().catch(() => null)) as Record<string, unknown> | null;
@@ -142,12 +214,42 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       !Array.isArray(raw['toolsInvoked']) ||
       (raw['presentation'] !== undefined && !isAnswerPresentation(raw['presentation']))
     ) {
-      throw Object.assign(new Error('Malformed AgentCore response'), { code: 'MALFORMED_RESPONSE' });
+      throw failure('Malformed AgentCore response', 'MALFORMED_RESPONSE', { agentcoreHttpMs });
     }
 
-    const { usage: rawUsage, ...rest } = raw;
+    const {
+      usage: rawUsage,
+      runtimeIdentity: rawRuntimeIdentity,
+      stageDurationsMs: rawStageDurations,
+      modelCallCount: rawModelCallCount,
+      refusalReason: rawRefusalReason,
+      errorCode: rawErrorCode,
+      ...rest
+    } = raw;
     const usage = coerceUsage(rawUsage);
-    return { ...rest, ...(usage ? { usage } : {}) } as unknown as AgentCoreInvokeResult;
+    const runtimeIdentity = coerceRuntimeIdentity(rawRuntimeIdentity);
+    const stageDurationsMs = {
+      ...coerceStageDurations(rawStageDurations),
+      agentcoreHttpMs,
+    };
+    const modelCallCount = Number.isInteger(rawModelCallCount) && Number(rawModelCallCount) >= 0
+      && Number(rawModelCallCount) <= 100
+      ? Number(rawModelCallCount)
+      : undefined;
+    const refusalReason = coerceRefusalReason(rawRefusalReason);
+    const errorCode = typeof rawErrorCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(rawErrorCode)
+      ? rawErrorCode
+      : undefined;
+    return {
+      ...rest,
+      runtimeBinding,
+      ...(usage ? { usage } : {}),
+      ...(runtimeIdentity ? { runtimeIdentity } : {}),
+      stageDurationsMs,
+      ...(modelCallCount !== undefined ? { modelCallCount } : {}),
+      ...(refusalReason ? { refusalReason } : {}),
+      ...(errorCode ? { errorCode } : {}),
+    } as unknown as AgentCoreInvokeResult;
   }
 
   private async signedPost(
@@ -158,6 +260,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
     sessionId: string,
     body: string,
     creds: AwsCreds,
+    signal: AbortSignal,
   ): Promise<Response> {
     const now = new Date();
     const amzDate = now.toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
@@ -190,6 +293,7 @@ export class AgentCoreRuntimeClient implements IAgentCoreRuntime {
       method: 'POST',
       headers: Object.fromEntries([...rawHdrs, ['Authorization', authorization]]),
       body,
+      signal,
     });
   }
 }

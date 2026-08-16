@@ -1783,6 +1783,12 @@ export class ProcessLineWebhookUseCase {
           modelRegion: response.modelLineage?.[0]?.region,
           modelPurpose: response.modelLineage?.[0]?.purpose,
           modelLineageJson: response.modelLineage as any,
+          observabilityJson: {
+            ...(response.runtimeIdentity ? { runtimeIdentity: response.runtimeIdentity } : {}),
+            ...(response.runtimeBinding ? { runtimeBinding: response.runtimeBinding } : {}),
+            ...(response.stageDurationsMs ? { stageDurationsMs: response.stageDurationsMs } : {}),
+            ...(response.modelCallCount !== undefined ? { modelCallCount: response.modelCallCount } : {}),
+          } as any,
         },
     });
     // M-02 G4: real per-tool status/duration/errorCode when the gateway measured them; older
@@ -2774,6 +2780,23 @@ export class ProcessLineWebhookUseCase {
         ...(status === 'delivery_pending' ? {} : { payloadJson: Prisma.DbNull }),
       },
     }).catch(() => {});
+    const terminalClass = ({
+      completed: 'delivered',
+      delivery_pending: 'delivery_pending',
+      ai_error: errorCode === LINE_AI_ERROR_CODES.AI_TIMEOUT ? 'timeout' : 'failed_terminal',
+      rate_limited: 'intentional_noop',
+      unavailable_delivered: 'provider_unavailable',
+      legal_acceptance_required: 'permission_refusal',
+    } as Record<string, string | undefined>)[status];
+    if (terminalClass) {
+      this.logger.log({
+        msg: 'line.ai.terminal',
+        webhookEventId,
+        companyId: companyId ?? null,
+        terminalClass,
+        errorCode: errorCode ?? null,
+      });
+    }
   }
 
   private async claimWebhookEvent(webhookEventId: string, lineUserId: string): Promise<boolean> {

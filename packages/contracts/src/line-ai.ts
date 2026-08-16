@@ -77,6 +77,32 @@ export type LineAiRefusalReason =
   | 'ai_timeout'
   | 'line_delivery_failure';
 
+/** Identity reported by the executing AgentCore artifact itself. All fields are immutable build
+ * evidence; an older artifact omits the whole object rather than inventing partial identity. */
+export type LineAiRuntimeIdentity = {
+  sourceCommit: string;
+  artifactSha256: string;
+  serviceVersion: string;
+  contractVersion: number;
+};
+
+export const LINE_AI_RUNTIME_CONTRACT_VERSION = 1;
+
+/** Measured seams only. Optional fields keep older AgentCore artifacts wire-compatible. */
+export type LineAiStageDurations = {
+  bodyReadMs?: number;
+  payloadValidationMs?: number;
+  orchestrationMs?: number;
+  runtimeTotalMs?: number;
+  agentcoreHttpMs?: number;
+};
+
+export type LineAiRuntimeBinding = {
+  /** SHA-256 prefix of the configured runtime ARN; enough to correlate without logging an ARN. */
+  runtimeArnHash: string;
+  qualifier: string;
+};
+
 /** Server-derived LINE user context – never populated from LINE user text. */
 export type LineUserContext = {
   lineUserId: string;
@@ -534,6 +560,11 @@ export type LineAiTurnResponse = {
   coverage?: LineAiCoverageItem[];
   /** One entry per model call this turn made; absent from an older gateway or AgentCore artifact. */
   usage?: AiUsageEntry[];
+  /** Additive hosted-runtime evidence. Missing identity means an older/unacceptable candidate. */
+  runtimeIdentity?: LineAiRuntimeIdentity;
+  runtimeBinding?: LineAiRuntimeBinding;
+  stageDurationsMs?: LineAiStageDurations;
+  modelCallCount?: number;
 };
 
 // ─── Item 10B agent orchestration types ──────────────────────────────────────

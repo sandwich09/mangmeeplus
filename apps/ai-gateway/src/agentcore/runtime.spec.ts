@@ -303,6 +303,50 @@ describe('AgentCore Runtime – HTTP endpoints', () => {
     }
   });
 
+  it('reports complete artifact identity, measured stages, normalized refusal, and model-call count', async () => {
+    const saved = {
+      GIT_SHA: process.env['GIT_SHA'],
+      AGENTCORE_ARTIFACT_SHA256: process.env['AGENTCORE_ARTIFACT_SHA256'],
+      SERVICE_VERSION: process.env['SERVICE_VERSION'],
+    };
+    process.env['GIT_SHA'] = 'a'.repeat(40);
+    process.env['AGENTCORE_ARTIFACT_SHA256'] = 'b'.repeat(64);
+    process.env['SERVICE_VERSION'] = 'candidate-a';
+    const server = makeHttpServer({
+      run: async () => ({
+        ...(await stubOrchestrator.run({})),
+        plan: {
+          status: 'UNROUTABLE' as const,
+          language: 'th', intents: [],
+          refusals: [{ request: 'จ่ายเงิน', reason: 'mutation_blocked' as const }],
+          requiresHumanReview: false,
+        },
+      }),
+    } as any);
+    await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+    try {
+      const res = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/invocations`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turnId: 'turn-evidence', companyId: 'company-1', userId: 'user-1', messageText: 'จ่ายเงิน' }),
+      });
+      const body = await res.json() as Record<string, any>;
+      assert.deepEqual(body['runtimeIdentity'], {
+        sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64),
+        serviceVersion: 'candidate-a', contractVersion: 1,
+      });
+      assert.equal(body['refusalReason'], 'mutation_blocked');
+      assert.equal(body['modelCallCount'], 0);
+      for (const key of ['bodyReadMs', 'payloadValidationMs', 'orchestrationMs', 'runtimeTotalMs']) {
+        assert.equal(typeof body['stageDurationsMs'][key], 'number');
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    }
+  });
+
   it('POST /invocations accepts playground prompt shorthand', async () => {
     const res = await fetch(`${serverUrl}/invocations`, {
       method: 'POST',

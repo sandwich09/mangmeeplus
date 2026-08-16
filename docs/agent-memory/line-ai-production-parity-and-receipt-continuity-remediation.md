@@ -4,8 +4,10 @@ Status: Implementation in progress. Documentation baseline committed as `3a06829
 (stored-media continuity, final capture authority and 15-turn cap) is committed as `f0ab272`; repository
 story 2 (typed substitute-receipt continuation, consolidated readiness, grounded VAT/document question
 safeguards and authenticated opaque web prefill) is committed as `62b88a4`; repository story 3 (grounded
-captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`.
-Repository story 4 is in progress. No push, deployment, cloud or database mutation.
+captured-receipt follow-up, mixed outcomes and delivery-gated continuation) is committed as `a43134b`;
+repository story 4 (bounded delivered capability follow-up and closed prefill lifecycle) is committed as
+`7ce43fd`. Repository story 5 observability changes are verified and pending commit. No push,
+deployment, cloud or database mutation.
 
 Owner: Product owner / pending implementation owner.
 
@@ -114,10 +116,22 @@ Verification:
   final-action boundary. The same text without the delivered capability marker remains on the normal route.
   Typed substitute prefill is lifecycle-bound to its expense row; cancel and atomic web preparation close
   it as `CANCELLED`/`CONSUMED`, and closed values are not resurrected by explicit resume.
+- Story 5 adds an optional, bounded AgentCore evidence contract: artifact source/digest/service and
+  contract version, hashed runtime binding plus qualifier, measured body/validation/orchestration/HTTP
+  durations, model-call count, normalized refusal and error code. Older artifacts remain callable but
+  omit identity, so release readiness can reject them without breaking an in-flight compatibility window.
+- Story 5 persists only the bounded evidence object on `AiTurn`; prompts, OCR text, media bytes/object
+  keys, signed URLs and raw LINE ids have no field in this schema. The runtime client now aborts the
+  actual HTTP invocation at the existing 20-second timeout instead of allowing the losing `Promise.race`
+  request to continue and overlap a retry.
+- Story 5 focused verification: AgentCore runtime/client/turn suites pass 72/72; the full LINE webhook
+  use-case spec passes; contracts, AI Gateway and API typechecks pass; Prisma Client generation and
+  `git diff --check` pass. No timeout value was changed because hosted candidate p95/p99 evidence does
+  not exist yet.
 
 Next:
 
-- Commit repository story 4, then close release identity/observability/whole-chain harness gates before
+- Commit repository story 5, then close release identity/whole-chain harness gates before
   the prod-shaped local conversation replay.
 - Production remains blocked by this active gate until the full repository replay and later controlled
   deployment phases pass; this task will not push or deploy.

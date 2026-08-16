@@ -281,13 +281,13 @@ not prove artifact parity, idempotency or no false draft; all cells for the affe
 
 ### Work
 
-- [ ] Extend the additive AgentCore result/turn contract with normalized refusal/error reason,
+- [x] Extend the additive AgentCore result/turn contract with normalized refusal/error reason,
       artifact source/version and per-stage durations/model-call counts.
-- [ ] Preserve compatibility when an older artifact omits new fields; readiness still prevents that
+- [x] Preserve compatibility when an older artifact omits new fields; readiness still prevents that
       artifact from becoming the accepted candidate.
-- [ ] Link sanitized webhook event, buffered turn, intake request, AgentCore invocation, tool calls,
+- [x] Link sanitized webhook event, buffered turn, intake request, AgentCore invocation, tool calls,
       capture/read outcome and LINE delivery.
-- [ ] Measure and remove unnecessary sequential model calls for deterministic commands, capture
+- [x] Measure and remove unnecessary sequential model calls for deterministic commands, capture
       summaries, capability help and already-grounded responses.
 - [ ] Run the complete replay matrix at expected UAT concurrency; record p50/p95/p99 per stage and
       total.

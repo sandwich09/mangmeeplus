@@ -220,6 +220,67 @@ describe('AgentCoreRuntimeClient', () => {
     }
   });
 
+  it('keeps bounded runtime evidence and drops malformed optional evidence', async () => {
+    const orig = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        ...validResult,
+        refusalReason: 'mutation_blocked',
+        errorCode: 'SAFE_ERROR',
+        runtimeIdentity: {
+          sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64),
+          serviceVersion: 'candidate-a', contractVersion: 1,
+        },
+        stageDurationsMs: { bodyReadMs: 1, orchestrationMs: 12, runtimeTotalMs: 14, rawPrompt: 'must-drop' },
+        modelCallCount: 2,
+      }), { status: 200 }) as any;
+      const result = await new AgentCoreRuntimeClient(makeConfig()).invoke(validInput);
+      assert.equal(result.runtimeIdentity?.artifactSha256, 'b'.repeat(64));
+      assert.equal(result.runtimeBinding?.qualifier, 'DEFAULT');
+      assert.match(result.runtimeBinding?.runtimeArnHash ?? '', /^[0-9a-f]{16}$/);
+      assert.equal(result.stageDurationsMs?.orchestrationMs, 12);
+      assert.ok(!('rawPrompt' in (result.stageDurationsMs as any)));
+      assert.equal(result.modelCallCount, 2);
+      assert.equal(result.refusalReason, 'mutation_blocked');
+      assert.equal(result.errorCode, 'SAFE_ERROR');
+
+      globalThis.fetch = async () => new Response(JSON.stringify({
+        ...validResult,
+        runtimeIdentity: { sourceCommit: 'not-a-sha', artifactSha256: 'secret' },
+        stageDurationsMs: { orchestrationMs: -1 },
+        modelCallCount: 1000,
+        refusalReason: 'invented_reason',
+        errorCode: 'unsafe error text',
+      }), { status: 200 }) as any;
+      const malformed = await new AgentCoreRuntimeClient(makeConfig()).invoke(validInput);
+      assert.equal(malformed.runtimeIdentity, undefined);
+      assert.equal(malformed.stageDurationsMs?.orchestrationMs, undefined);
+      assert.equal(malformed.modelCallCount, undefined);
+      assert.equal(malformed.refusalReason, undefined);
+      assert.equal(malformed.errorCode, undefined);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('aborts the in-flight HTTP request and carries binding evidence on timeout', async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = async (_url: any, init?: RequestInit) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    });
+    try {
+      const config = { ...makeConfig(), agentcoreInvokeTimeoutMs: 10 };
+      await assert.rejects(
+        () => new AgentCoreRuntimeClient(config).invoke(validInput),
+        (err: any) => err.code === 'TIMEOUT'
+          && err.runtimeBinding?.qualifier === 'DEFAULT'
+          && typeof err.stageDurationsMs?.agentcoreHttpMs === 'number',
+      );
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
   it('extracts runtime id from ARN correctly (last path segment)', async () => {
     const orig = globalThis.fetch;
     let capturedUrl = '';

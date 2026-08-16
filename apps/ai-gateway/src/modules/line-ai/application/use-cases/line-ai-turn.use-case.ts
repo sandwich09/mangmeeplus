@@ -131,6 +131,11 @@ export class LineAiTurnUseCase {
       toolCount: enriched.toolsInvoked.length,
       durationMs: enriched.durationMs,
       modelLineage: enriched.modelLineage,
+      runtimeIdentity: enriched.runtimeIdentity ?? null,
+      runtimeBinding: enriched.runtimeBinding ?? null,
+      stageDurationsMs: enriched.stageDurationsMs ?? null,
+      modelCallCount: enriched.modelCallCount ?? null,
+      errorCode: enriched.errorCode ?? null,
     });
     return enriched;
   }
@@ -200,9 +205,15 @@ export class LineAiTurnUseCase {
         intent: (result.plan.intents[0] as any)?.intent ?? 'unknown',
         agent: (result.plan.intents[0] as any)?.agent ?? 'general',
         refused: result.refused || result.plan.status === 'UNROUTABLE',
+        ...(result.refusalReason ? { refusalReason: result.refusalReason } : {}),
         toolsInvoked: toolCalls.map((tool) => tool.name),
         toolCalls,
         durationMs: result.durationMs,
+        ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+        ...(result.runtimeIdentity ? { runtimeIdentity: result.runtimeIdentity } : {}),
+        ...(result.runtimeBinding ? { runtimeBinding: result.runtimeBinding } : {}),
+        ...(result.stageDurationsMs ? { stageDurationsMs: result.stageDurationsMs } : {}),
+        ...(result.modelCallCount !== undefined ? { modelCallCount: result.modelCallCount } : {}),
         // The model calls happened in the artifact's process, so the request-scoped collector saw
         // nothing: the artifact's own (coerced) rows are the only usage this path can report.
         ...(result.usage ? { usage: result.usage } : {}),
@@ -210,8 +221,15 @@ export class LineAiTurnUseCase {
     } catch (err) {
       const rawCode = (err as Record<string, unknown>)?.['code'];
       const code = typeof rawCode === 'string' ? rawCode : 'AGENTCORE_INVOKE_FAILED';
+      const runtimeBinding = (err as Record<string, unknown>)?.['runtimeBinding'];
+      const stageDurationsMs = (err as Record<string, unknown>)?.['stageDurationsMs'];
       this.logger.error({ msg: 'ai.provider.failure', requestId: req.requestId, code, path: 'agentcore', error: (err as Error).message });
-      return { ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs), errorCode: code };
+      return {
+        ...this.buildRefusedResponse(req, 'tool_unavailable', ERROR_REPLY, startMs),
+        errorCode: code,
+        ...(runtimeBinding ? { runtimeBinding: runtimeBinding as any } : {}),
+        ...(stageDurationsMs ? { stageDurationsMs: stageDurationsMs as any } : {}),
+      };
     }
   }
 

@@ -1741,6 +1741,10 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
         ...TOOL_TURN_RESPONSE,
         refused: true,
         refusalReason: 'mutation_blocked',
+        runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+        runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
+        stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
+        modelCallCount: 2,
         toolCalls: [
           { name: 'sales.get_sales_summary', status: 'ok', durationMs: 11 },
           { name: 'inventory.list_low_stock', status: 'error', durationMs: 233, errorCode: 'TOOL_EXECUTION_ERROR' },
@@ -1762,6 +1766,12 @@ describe('ProcessLineWebhookUseCase – per-tool invocation records (M-02)', () 
     // Each row carries its own measured duration, not the whole-turn duration.
     assert.deepEqual(toolInvocations.map((row) => row.durationMs), [11, 233]);
     assert.equal((aiTurns[0] as any).data.durationMs, 900);
+    assert.deepEqual((aiTurns[0] as any).data.observabilityJson, {
+      runtimeIdentity: { sourceCommit: 'a'.repeat(40), artifactSha256: 'b'.repeat(64), serviceVersion: 'candidate-a', contractVersion: 1 },
+      runtimeBinding: { runtimeArnHash: 'c'.repeat(16), qualifier: 'candidate-1' },
+      stageDurationsMs: { orchestrationMs: 700, runtimeTotalMs: 710, agentcoreHttpMs: 850 },
+      modelCallCount: 2,
+    });
     assert.deepEqual(toolInvocations.map((row) => row.status), ['ok', 'error']);
     assert.deepEqual(toolInvocations.map((row) => row.errorCode), [null, 'TOOL_EXECUTION_ERROR']);
   });

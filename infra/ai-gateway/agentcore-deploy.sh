@@ -152,6 +152,7 @@ ENV_VARS=$(cat <<EOF
   "SERVICE_NAME": "watchdog-agentcore-orchestrator",
   "SERVICE_VERSION": "${SERVICE_VERSION}",
   "GIT_SHA": "${GIT_SHA}",
+  "AGENTCORE_ARTIFACT_SHA256": "${actual_sha}",
   "PUBLIC_BASE_URL": "${PUBLIC_BASE_URL}",
   "CORS_ALLOWED_ORIGINS": "${PUBLIC_BASE_URL}",
   "PORT": "8080",
