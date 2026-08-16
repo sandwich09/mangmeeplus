@@ -1,6 +1,6 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-14 committed; controlled images pass;
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-15 committed; controlled images pass;
 local conversation replay remains; no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
@@ -356,7 +356,7 @@ operation was run.
 
 - [x] Encode every mandatory replay row from the spec with outcome, tool, mutation and delivery
       assertions rather than exact stylistic wording.
-- [ ] Add privacy-approved redacted/cropped image fixtures only after human field annotation; otherwise
+- [x] Add privacy-approved redacted/cropped image fixtures only after human field annotation; otherwise
       keep live-image rows in the controlled UAT script with source hashes.
 - [x] Add negative/property cases: ambiguous text never writes; unknown enum/old ledger entry degrades;
       retry/redelivery/concurrency never duplicates; permission revocation never leaks; a side question

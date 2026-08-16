@@ -243,6 +243,13 @@ Verification:
   bill returns total `5,260.00`, `HANDWRITTEN_CASH_BILL`, `PAID`, and explicitly reports
   `expenseDate` missing alongside review fields. No raw image, OCR text or customer identity entered
   repository evidence.
+- Story 15 adds the reusable controlled-image gate without putting either supplied customer image in
+  git. It requires both known scenario ids, an exact SHA-256 for each external file, an explicit
+  human-reviewed marker and field-level expectations before making any call. It compares money as
+  exact minor units (so comma formatting cannot create a false failure), can assert that an ambiguous
+  field remains explicitly missing, caps image size and request time, and reports only hashes, byte
+  counts, bounded classifications, field keys and asserted values. Harness tests pass 3/3; the real
+  unchanged-hash two-image run passes every assertion recorded in Story 14.
 
 Next:
 
