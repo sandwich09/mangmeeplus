@@ -179,6 +179,7 @@ if grep -Eq 'delete-role|delete-role-policy|detach-role-policy' "$bootstrap"; th
 fi
 grep -Fq 'PROMOTION_ROOT_EXCEPTION_APPROVAL_REF' "$ceremony"
 grep -Fq 'prove_exact_authority' "$ceremony"
+grep -Fq 'prove_session_authority' "$ceremony"
 grep -Fq 'trap cleanup EXIT' "$ceremony"
 grep -Fq 'wait_absent bridge' "$ceremony"
 grep -Fq 'wait_absent role-policy' "$ceremony"
@@ -271,6 +272,25 @@ if [ "$service $operation" = 'sts assume-role' ]; then
   fi
   jq -cn '{Credentials:{AccessKeyId:"ASIAFIXTURE",SecretAccessKey:"fixture-secret",
     SessionToken:"fixture-token",Expiration:"2099-01-01T00:00:00Z"}}'
+  exit 0
+fi
+if [ -z "${AWS_PROFILE:-}" ]; then
+  count="$(counter "$FAKE_AWS_STATE/session-policy.count")"
+  if [ "$count" -le "${FAKE_SESSION_POLICY_FAILURES:-0}" ]; then
+    echo 'An error occurred (AccessDenied) while the session policy propagates' >&2; exit 254
+  fi
+  case "$service $operation" in
+    'rds describe-db-instances')
+      [[ " $* " == *' --db-instance-identifier watchdog-bms-prod-db '* ]]
+      printf '%s\n' 'arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db' ;;
+    'iam get-role')
+      [[ " $* " == *' --role-name watchdog-bms-production-a5-clone '* ]]
+      printf '%s\n' 'arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone' ;;
+    'ec2 describe-vpc-endpoints')
+      [[ " $* " == *' --vpc-endpoint-ids vpce-044085e7ad8749ca4 '* ]]
+      printf '%s\n' 'vpce-044085e7ad8749ca4' ;;
+    *) echo "unsupported fake session AWS command: $*" >&2; exit 2 ;;
+  esac
   exit 0
 fi
 
@@ -377,20 +397,33 @@ assert_mutation_order() {
 }
 
 reset_fake
-FAKE_CREATE_STALE_READS=1 FAKE_DELETE_STALE_READS=1 FAKE_ASSUME_FAILURES=1 run_ceremony
+FAKE_CREATE_STALE_READS=1 FAKE_DELETE_STALE_READS=1 FAKE_ASSUME_FAILURES=1 \
+  FAKE_SESSION_POLICY_FAILURES=2 run_ceremony
 test -f "$fixture/state/helper-ran"
 test "$(<"$fixture/state/helper-mode")" = --apply
 test "$(grep -Fc 'watchdog-bedrock sts assume-role' "$fixture/state/calls")" -eq 2
+test "$(grep -Fc 'session rds describe-db-instances' "$fixture/state/calls")" -eq 3
 assert_mutation_order
 
 reset_fake
 CEREMONY_MODE=--apply-clone-controller run_ceremony
 test "$(<"$fixture/state/helper-mode")" = --apply-clone-controller
+test "$(grep -Fc 'session iam get-role' "$fixture/state/calls")" -eq 1
 assert_mutation_order
 
 reset_fake
 CEREMONY_MODE=--apply-private-endpoints run_ceremony
 test "$(<"$fixture/state/helper-mode")" = --apply-private-endpoints
+test "$(grep -Fc 'session ec2 describe-vpc-endpoints' "$fixture/state/calls")" -eq 1
+assert_mutation_order
+
+reset_fake
+set +e
+FAKE_SESSION_POLICY_FAILURES=8 run_ceremony >/dev/null 2>&1
+session_policy_status=$?
+set -e
+test "$session_policy_status" -ne 0
+test ! -f "$fixture/state/helper-ran"
 assert_mutation_order
 
 reset_fake
