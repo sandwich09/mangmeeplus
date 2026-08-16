@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
-Status: Local production-parity implementation complete; owner daily-closing follow-up is active.
+Status: Local production-parity and owner daily-closing implementation complete; PR #110 integration is active.
 Documentation baseline is `3a06829`; repository stories 1-11
 are `f0ab272`, `62b88a4`, `a43134b`, `7ce43fd`, `ad4405a`, `37b34e5`, `7fb7e5b`, `d7f8f6e`,
 `9985770`, `5333bc0` and `e0f7383`. Look-forward local execution added story 12 (tsx application-graph
@@ -340,6 +340,11 @@ Verification:
 - 2026-08-16 owner feedback follow-up records the operator's actual daily-close job, Thai shorthand,
   supplied handwritten/multi-entry evidence, current-code gaps and a no-guess daily-closing contract.
   Local implementation and source-hashed evidence are pushed; PR and hosted release evidence are pending.
+- PR #110's first full CI run found one shared launch-surface gap rather than a runtime regression:
+  thirteen expense/substitute-receipt API codes had no customer-safe Thai renderer. Their mappings are
+  derived from the API eligibility and continuation guards, tell the user the next valid action, and are
+  protected by focused expectations plus the source-derived launch-code coverage test. Focused error UX
+  tests pass 37/37, the complete Web suite passes 944/944, and Web typecheck passes.
 
 Next:
 
