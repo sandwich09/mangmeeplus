@@ -94,8 +94,14 @@ Verification:
 - Multi-entry ledger/notebook/phone images are now explicitly classified as `MULTI_DOCUMENT`, retained
   behind one three-way clarification and never collapsed into a single expense. Choosing “สรุปหลาย
   รายการ” creates no expense, returns an honest web/review handoff and changes the retained media to
-  `RESOLVED_MULTI_ENTRY_REVIEW` only after successful LINE delivery. The focused API flow passes 86/86;
+  `RESOLVED_MULTI_ENTRY_REVIEW` only after successful LINE delivery. The focused API flow passes 87/87;
   Prisma schema validation passes and both intake/OCR prompts have regression assertions for the rule.
+- Conversation continuity is now symmetric: substitute receipt and pending-media work both answer an
+  intervening business question through the normal governed route, keep the pending source state open,
+  and append a deterministic resume capsule after the answer. Pending-media clarification data is
+  removed from the side-question model payload; two simultaneous workflows produce an explicit
+  selection prompt. Existing source-owned partial-field behavior and the exact 15-turn/15-minute bound
+  remain covered. Focused media dispatch passes 87/87 and substitute/context suites pass 82/82.
 - Evidence review used live sanitized ECS/AgentCore/CloudWatch read-back, deployed source inspection and
   focused current-source tests: AI Gateway 84/84; API/LINE 143/143.
 - `git diff --check` passed after the document patch.

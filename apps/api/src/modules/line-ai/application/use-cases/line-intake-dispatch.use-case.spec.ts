@@ -697,6 +697,29 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
   });
 
+  it('answers a business question beside pending media, then deterministically resumes the stored picture choice', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows);
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ไฟล์ที่ผู้ใช้ส่งมา', askedAt: new Date().toISOString(),
+        pendingMedia: { pendingMediaId: 'pending-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
+        entry: { id: 'media-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      prisma,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-media-side-question', messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
+
+    assert.match(h.replies[0] ?? '', /turn-answer/);
+    assert.match(h.replies[0] ?? '', /รูปที่รอจำแนกยังเก็บไว้อยู่/);
+    assert.match(h.replies[0] ?? '', /3\) สรุปหลายรายการ/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    assert.equal(h.routeRequests[0].openClarifications, undefined, 'the side-question model never receives pending media as an instruction');
+  });
+
   it('denies text capture without upload permission even when router says capture', async () => {
     const h = makeHarness({
       permissions: ['line.ai.query'],

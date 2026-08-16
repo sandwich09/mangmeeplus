@@ -1101,6 +1101,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     let normalizedText = normalizeLineText(event.messageText);
+    let mediaResumeCapsule: string | undefined;
 
     // RECEIPT-05 (owner decision 2026-07-12): if this user has an unresolved media-clarify
     // question, their reply decides it deterministically BEFORE any AI routing — receipt →
@@ -1146,6 +1147,9 @@ export class ProcessLineWebhookUseCase {
         });
         await this.updateEventLog(event.webhookEventId, 'multi_entry_review', undefined, companyId);
         return;
+      }
+      if (decision === 'ambiguous' && isInterveningQuestionText(normalizedText)) {
+        mediaResumeCapsule = `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${MEDIA_CLARIFY_REPLY}`;
       }
       // ambiguous → fall through with the original reply; the row stays PENDING. Unlike before, the
       // ledger now carries this question as an open clarification WITH the stored file, so the turn
@@ -1283,9 +1287,9 @@ export class ProcessLineWebhookUseCase {
       }
     }
 
-    const aiOpenClarifications = substituteInterruption
-      ? openClarifications?.filter((item) => item.clarifyForIntent !== 'SUBSTITUTE_RECEIPT_CONTINUATION')
-      : openClarifications;
+    const aiOpenClarifications = openClarifications?.filter((item) =>
+      !(substituteInterruption && item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
+      && !(mediaResumeCapsule && item.pendingMedia));
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.
@@ -1557,10 +1561,14 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { intent: turnResponse.intent },
       });
     }
-    if (substituteInterruption?.resumeCapsule) {
+    const resumeCapsules = [substituteInterruption?.resumeCapsule, mediaResumeCapsule].filter((item): item is string => !!item);
+    if (resumeCapsules.length > 0) {
+      const resumeText = resumeCapsules.length === 1
+        ? resumeCapsules[0]
+        : `↩️ ยังมีงานค้าง ${resumeCapsules.length} งาน กรุณาเลือกงานที่จะทำต่อค่ะ\n${resumeCapsules.map((item, index) => `${index + 1}) ${item.replace(/^↩️\s*/, '')}`).join('\n')}`;
       turnResponse = {
         ...turnResponse,
-        replyText: `${turnResponse.replyText}\n\n${substituteInterruption.resumeCapsule}`,
+        replyText: `${turnResponse.replyText}\n\n${resumeText}`,
         presentation: undefined,
       };
     }
