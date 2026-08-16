@@ -922,3 +922,28 @@ Next:
 
 Status: Production is live and customer access is open. The historical `Next:` blocks above are
 incident checkpoints, not pending instructions.
+
+## LINE AI release prerequisite checkpoint — 2026-08-17
+
+- AWS admin and operator identities were reauthenticated. The first full prerequisite ceremony failed
+  before durable mutation because the temporary role's `rds:DescribeDBInstances` permission had not yet
+  propagated; the bounded session-authority canary was added, reviewed and merged as
+  `main@1c78a57c85c6423b4ed9dd6379c1144b2f8ecd0d`.
+- The next ceremony passed that canary but exited silently at the clone restore verifier. Read-only live
+  comparison proved the source DB still uses subnet `watchdog-bms-prod-db-subnets`, parameter group
+  `watchdog-bms-prod-pg18` and option group `default:postgres-18`; the policy correctly contained those
+  five provider resources plus the deterministic manual snapshot
+  `snapshot:watchdog-a5-clone-*`. Both duplicated verifiers still expected only the older five-resource
+  contract introduced before current-Production snapshots were added.
+- Temporary bridge, temporary inline role policy and temporary bootstrap role were independently read
+  back as `NoSuchEntity`. The S3 lifecycle matched the reviewed template. No UAT, READY or Production run
+  was dispatched from either failed prerequisite attempt.
+- The scoped correction keeps the six-resource least-privilege policy unchanged, updates both the full
+  prerequisite and clone-bootstrap live-derived verifiers, makes mismatch failure explicit, and adds
+  regression checks so the same stale verifier cannot become the next hosted readiness failure.
+
+Next:
+
+1. Merge the verifier correction only after focused and aggregate security checks plus exact-head review.
+2. Run one full prerequisite ceremony from the resulting exact `main`, prove exact durable readback and
+   temporary authority `NoSuchEntity`, then continue with one immutable UAT dispatch.
