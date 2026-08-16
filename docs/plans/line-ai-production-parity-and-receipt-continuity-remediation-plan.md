@@ -1,7 +1,7 @@
 # LINE AI Production Parity and Receipt Continuity Remediation Plan
 
-Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-13 committed; controlled image/local
-conversation replay remains; no push or deploy**
+Status: **IMPLEMENTATION IN PROGRESS — repository stories 1-14 committed; controlled images pass;
+local conversation replay remains; no push or deploy**
 
 Spec: [[specs/line-ai-production-parity-and-receipt-continuity-remediation-spec|LINE AI Production Parity and Receipt Continuity Remediation Spec]]
 

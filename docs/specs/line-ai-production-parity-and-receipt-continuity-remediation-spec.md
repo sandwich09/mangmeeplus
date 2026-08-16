@@ -395,6 +395,19 @@ source-backed fields and uncertainty. Golden fixtures do not assert unsupported 
 tax treatment. Low-confidence/contradictory fields remain `NEEDS_REVIEW` and never become stronger
 because a language model produced fluent copy.
 
+When a receipt prints one source-backed sale/transaction date and a later issue/print timestamp,
+`expenseDate` is the sale/transaction date. More than one surviving transaction-labeled date remains
+explicitly missing; the model may not choose between them. A handwritten numeric date whose day and
+month can be swapped likewise stays a reviewable missing field unless stronger source locale evidence
+disambiguates it.
+
+A printed VAT amount may follow its label/rate through a bounded included-VAT annotation such as
+`VAT 7% (รวม) 189.07`; it is not computed from the total. If the first image reading has a usable total
+and explicitly signals VAT mode/rate but loses the VAT amount, the Bedrock image path may perform at
+most one re-read. It may merge only a VAT amount cross-checked against that second reading and only
+when both readings carry the same exact-cent total. A differing total, rate-only reading, multiple tax
+components or failed re-read remains reviewable and never starts a retry loop.
+
 ### R-14 — Customer trust status
 
 The release evidence records whether the shared LINE OA is verified. A screenshot showing LINE's

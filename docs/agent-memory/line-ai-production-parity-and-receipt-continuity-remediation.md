@@ -228,6 +228,21 @@ Verification:
   typecheck passes. Replaying the unchanged source hash returns `vatAmount=189.07`, sale date
   `2026-08-15`, `ABBREVIATED_TAX_INVOICE` and `PAID`; the harness then correctly exposed its own
   display-format mismatch (`2,890.00` versus `2890.00`) before reaching the handwritten row.
+- Story 14's repeated unchanged-hash replay exposed two forward nondeterminism gaps rather than a new
+  expected-value exception. Royal Pizza alternated between sale date `2026-08-15` and later print date
+  `2026-08-16`; its VAT also disappeared when Typhoon's first reading retained the VAT rate/mode but
+  lost the amount. The cross-check now deterministically prioritizes exactly one transaction/sale-
+  labeled date and leaves multiple such dates missing. A handwritten `7-6-69` remains explicitly
+  missing because both D/M readings are possible under ADR-0011.
+- The existing one-shot Bedrock image re-read now also covers a missing VAT amount only when the first
+  result has a usable total and explicit VAT context. It merges only a second-reading VAT value whose
+  cross-checked total equals the first in exact minor units; it never computes VAT, replaces unrelated
+  first-pass fields or loops. Focused tests pass 48/48 and AI Gateway typecheck passes.
+- The final unchanged-source replay passes both controlled rows end to end. Royal Pizza returns total
+  `2,890.00`, VAT `189.07`, sale date `2026-08-15`, `ABBREVIATED_TAX_INVOICE`, `PAID`; the handwritten
+  bill returns total `5,260.00`, `HANDWRITTEN_CASH_BILL`, `PAID`, and explicitly reports
+  `expenseDate` missing alongside review fields. No raw image, OCR text or customer identity entered
+  repository evidence.
 
 Next:
 

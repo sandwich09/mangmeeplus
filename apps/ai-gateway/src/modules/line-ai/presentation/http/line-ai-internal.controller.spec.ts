@@ -693,10 +693,32 @@ describe('applyOcrValueCrossCheck (item 10F)', () => {
     assert.equal(unlabeled.expenseDate, undefined);
     const multiple = applyOcrValueCrossCheck(
       { missingFields: ['expenseDate'] },
-      'Receipt Date Aug 23 26\nTransaction Date Aug 24 26\nTOTAL 333.00',
+      'Receipt Date Aug 23 26\nIssue Date Aug 24 26\nTOTAL 333.00',
     );
     assert.equal(multiple.expenseDate, undefined);
     assert.ok(multiple.missingFields?.includes('expenseDate'));
+  });
+
+  it('prefers the one printed sale date over a later issue or print date', () => {
+    for (const text of [
+      'เวลาขาย: 15-08-2569 13:37\nเวลาออก: 16-08-2569 11:23',
+      '| Sale Date | Aug 15 26 |\n| Issue Date | Aug 16 26 |',
+    ]) {
+      const corrected = applyOcrValueCrossCheck({ expenseDate: '2026-08-16' }, text);
+      assert.equal(corrected.expenseDate, '2026-08-15', text);
+      const recovered = applyOcrValueCrossCheck({ missingFields: ['expenseDate'] }, text);
+      assert.equal(recovered.expenseDate, '2026-08-15', text);
+      assert.ok(!recovered.missingFields?.includes('expenseDate'), text);
+    }
+  });
+
+  it('does not guess when more than one transaction-labeled date survives', () => {
+    const out = applyOcrValueCrossCheck(
+      { expenseDate: '2026-08-15' },
+      'Sale Date Aug 15 26\nTransaction Date Aug 16 26',
+    );
+    assert.equal(out.expenseDate, undefined);
+    assert.ok(out.missingFields?.includes('expenseDate'));
   });
 
   it('recovers one printed VAT money amount without requiring a percentage', () => {
@@ -967,7 +989,7 @@ describe('business document classification gate', () => {
   });
 });
 
-describe('receipt OCR image re-read when the printed total is unusable', () => {
+describe('receipt OCR image re-read for missing critical printed money', () => {
   // Typhoon reads a warped photo and loses the printed total line; stage 2 can only report an
   // ambiguous number, which the API's expense gate refuses. The receipt's real total is 180.00.
   const TYPHOON_TEXT_WITHOUT_TOTAL = '# Starbucks Coffee\n| Sub Total | 160.00 |\n| Total Discount | -15.00 |';
@@ -982,7 +1004,7 @@ describe('receipt OCR image re-read when the printed total is unusable', () => {
     contradictionSignals: [], requiresClarification,
   });
 
-  function stubTyphoon() {
+  function stubTyphoon(documentText = TYPHOON_TEXT_WITHOUT_TOTAL) {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (url: any, init: any) => {
       const requested = String(url);
@@ -990,7 +1012,7 @@ describe('receipt OCR image re-read when the printed total is unusable', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ choices: [{ message: { content: JSON.stringify({ natural_text: TYPHOON_TEXT_WITHOUT_TOTAL }) } }] }),
+          json: async () => ({ choices: [{ message: { content: JSON.stringify({ natural_text: documentText }) } }] }),
         };
       }
       // OpenAI stage 2 over whatever text it was given.
@@ -1011,7 +1033,16 @@ describe('receipt OCR image re-read when the printed total is unusable', () => {
   }
 
   /** Bedrock serves both roles here: the vision re-read (image block) and stage 2 (text only). */
-  function stubBedrock() {
+  function stubBedrock(options: {
+    rereadText?: string;
+    firstTotal?: string;
+    secondTotal?: string;
+    rereadVatAmount?: string;
+    firstRequiresClarification?: boolean;
+  } = {}) {
+    const rereadText = options.rereadText ?? BEDROCK_REREAD_TEXT;
+    const firstTotal = options.firstTotal ?? '160.00';
+    const secondTotal = options.secondTotal ?? '180.00';
     const original = BedrockRuntimeClient.prototype.send;
     const calls: string[] = [];
     (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
@@ -1019,17 +1050,26 @@ describe('receipt OCR image re-read when the printed total is unusable', () => {
       const isRead = content.some((block: any) => block.image);
       calls.push(isRead ? 'read' : 'extract');
       if (isRead) {
-        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: BEDROCK_REREAD_TEXT }) }] } } };
+        return { output: { message: { content: [{ text: JSON.stringify({ natural_text: rereadText }) }] } } };
       }
-      const sawRereadText = JSON.stringify(content).includes('Total Amount 180.00');
-      const total = sawRereadText ? '180.00' : '160.00';
+      const rereadMarker = options.rereadVatAmount ?? 'Total Amount 180.00';
+      const sawRereadText = JSON.stringify(content).includes(rereadMarker);
+      const total = sawRereadText ? secondTotal : firstTotal;
+      const fields = {
+        vendorName: 'Starbucks Coffee',
+        grandTotalAmount: total,
+        ...(options.rereadVatAmount ? {
+          vatMode: 'VAT_INCLUDED', vatRate: '0.07',
+          ...(sawRereadText ? { vatAmount: options.rereadVatAmount } : { missingFields: ['vatAmount'] }),
+        } : {}),
+      };
       return {
         output: {
           message: {
             content: [{
               text: JSON.stringify({
-                classification: classification(total, !sawRereadText),
-                fields: { vendorName: 'Starbucks Coffee', grandTotalAmount: total },
+                classification: classification(total, sawRereadText ? false : (options.firstRequiresClarification ?? true)),
+                fields,
               }),
             }],
           },
@@ -1064,6 +1104,38 @@ describe('receipt OCR image re-read when the printed total is unusable', () => {
       assert.equal(result.fields?.grandTotalAmount, '180.00');
       assert.equal(result.classification?.requiresClarification, false);
       assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'exactly one re-read, never a loop');
+    } finally {
+      bedrock.restore();
+      restoreFetch();
+    }
+  });
+
+  it('recovers one printed VAT amount only when the re-read confirms the same total', async () => {
+    const firstText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม)\nPayment 2890.00';
+    const rereadText = '# Royal Pizza\nTotal 2890.00\nVAT 7% (รวม) 189.07\nPayment 2890.00';
+    const restoreFetch = stubTyphoon(firstText);
+    const bedrock = stubBedrock({
+      rereadText,
+      firstTotal: '2890.00',
+      secondTotal: '2,890.00',
+      rereadVatAmount: '189.07',
+      firstRequiresClarification: false,
+    });
+    try {
+      const controller = new LineAiInternalController(
+        {
+          aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: 'typhoon-key', aiToolTimeoutMs: 1000,
+          modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', documentAiModelId: 'test-model',
+        } as any,
+        { execute: async () => { throw new Error('should not execute'); } } as any,
+      );
+
+      const result = await controller.receiptOcr('secret', request);
+
+      assert.equal(result.fields?.grandTotalAmount, '2890.00', 'retain the first cross-checked display value');
+      assert.equal(result.fields?.vatAmount, '189.07');
+      assert.ok(!result.fields?.missingFields?.includes('vatAmount'));
+      assert.deepEqual(bedrock.calls, ['extract', 'read', 'extract'], 'one bounded re-read');
     } finally {
       bedrock.restore();
       restoreFetch();
