@@ -56,8 +56,29 @@ Implementation review (2026-08-18, Fable 5 reviewing Opus 5):
   lacks ecr:DescribeImages on migration-tool; newest ECR entries are OCI
   indexes so imageSizeInBytes is manifest size). Plan: capture ECS task
   provision/pull/execute timing live during the upcoming promote run.
-- Phase 3 in progress (stacked on phase 1), carrying the readiness env-map
-  hotfix forward.
+- Phase 3 APPROVED: commit `3a81694` on `feat/deploy-speed-phase-3` (5 files,
+  +209/−14). Load-bearing design: readiness runs as a reusable-workflow call
+  (`uses: ./.github/workflows/production-readiness.yml`) so the Fulcio
+  signing subject stays production-readiness.yml@refs/heads/main and NO
+  validator changes; artifact/run-id contract satisfied because a called
+  workflow reports the caller's run id. readiness_run_id now optional —
+  supplied = exact today's behavior (rollback path, no code revert); omitted =
+  inline READY, steps 9/11/13 (READY-duplicate rechecks) skipped,
+  mutation-boundary steps 15/22 unconditional with a spec assertion that
+  fails if they ever gain an `if:`. Mutation-tested. Suite RC=0 re-run by
+  reviewer. Merge note: phase-3 adds the same
+  AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF env line as the standalone hotfix
+  but after APPROVED_AI_REGIONS (hotfix: after AGENTCORE_REGION) — dedupe to
+  one line when rebasing onto post-hotfix main. Rehearsal gate (one
+  maintenance_closed combined promote before any live use) still required.
+- As-built timing honesty (arithmetic from measured components): UAT redeploy
+  ~9–10m ✓ target; UAT first dispatch ~14–15m; prod combined maintenance
+  ~24–26m; prod combined live ~30m. Prod ≤10m is NOT reached by phases 1–3
+  as scoped. Remaining levers, each a deliberate deferred owner decision:
+  (a) single-wave production rollout like UAT (−6–7m; wave spec §4.2
+  serialization rationale), (b) §5.3 fence/retire slimming (−3m; measure
+  during next promote), (c) readiness parallel to the DB fence (−4–5m;
+  larger promote restructure). (a)+(b)+(c) ≈ prod ~9–12m.
 Next:
 - After stage E OPEN: merge order = hotfix (already ahead) → phase 1 → phase 2
   → phase 3, each with its verification run per plan; main→develop sync after
