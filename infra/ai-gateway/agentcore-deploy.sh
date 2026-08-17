@@ -246,6 +246,37 @@ wait_for_runtime_ready() {
   return 1
 }
 
+create_agent_runtime_with_role_retry() {
+  local attempt status result error="$STAGING/create-runtime.err"
+  local attempts="${AGENTCORE_IAM_PROPAGATION_ATTEMPTS:-12}"
+  local retry_seconds="${AGENTCORE_IAM_PROPAGATION_RETRY_SECONDS:-5}"
+  [[ "$attempts" =~ ^[1-9][0-9]*$ && "$retry_seconds" =~ ^[0-9]+$ ]] || return 2
+  for ((attempt=1; attempt<=attempts; attempt++)); do
+    if result="$(aws bedrock-agentcore-control create-agent-runtime \
+      --region "$REGION" \
+      --agent-runtime-name "$RUNTIME_NAME" \
+      --agent-runtime-artifact "$ARTIFACT_JSON" \
+      --role-arn "$ROLE_ARN" \
+      --network-configuration '{"networkMode":"PUBLIC"}' \
+      --protocol-configuration '{"serverProtocol":"HTTP"}' \
+      --environment-variables "$ENV_VARS" \
+      --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-create" \
+      --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
+      --description "WatchDog BMS LINE AI orchestrator – item 10B" 2>"$error")"; then
+      printf '%s' "$result"
+      return 0
+    else
+      status=$?
+    fi
+    if ! grep -Fq "Role validation failed" "$error" || [ "$attempt" -eq "$attempts" ]; then
+      cat "$error" >&2
+      return "$status"
+    fi
+    echo "[agentcore-deploy] execution role is still propagating; retry $((attempt + 1))/$attempts in ${retry_seconds}s" >&2
+    sleep "$retry_seconds"
+  done
+}
+
 runtime_matches_intent() {
   jq -e \
     --arg arn "$RUNTIME_ARN" --arg role "$ROLE_ARN" \
@@ -261,17 +292,7 @@ runtime_matches_intent() {
 
 if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
   echo "[agentcore-deploy] creating new runtime..."
-  RESULT=$(aws bedrock-agentcore-control create-agent-runtime \
-    --region "$REGION" \
-    --agent-runtime-name "$RUNTIME_NAME" \
-    --agent-runtime-artifact "$ARTIFACT_JSON" \
-    --role-arn "$ROLE_ARN" \
-    --network-configuration '{"networkMode":"PUBLIC"}' \
-    --protocol-configuration '{"serverProtocol":"HTTP"}' \
-    --environment-variables "$ENV_VARS" \
-    --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-create" \
-    --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
-    --description "WatchDog BMS LINE AI orchestrator – item 10B")
+  RESULT="$(create_agent_runtime_with_role_retry)"
   RUNTIME_ID=$(echo "$RESULT" | jq -r '.agentRuntimeId')
   echo "[agentcore-deploy] created runtime id=$RUNTIME_ID"
 else
