@@ -336,6 +336,10 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
 - Failure หลังปิดหรือเริ่ม durable operation: ห้าม dispatch Production ซ้ำจน controller evidence และ
   database/platform state พิสูจน์ terminal state. ใช้ `recover-release-intent.yml` เฉพาะ mode/identity
   ที่ evidence ระบุ (`PRE_INTENT`, intent UUID, `ORPHAN` หรือ `BOOTSTRAP_CLOSED`).
+- UAT recovery checkpoint ที่ไม่เปลี่ยน code อาจ reuse PostgreSQL recovery proof `32002605508` ได้โดย
+  `recover-release-intent.yml` เท่านั้น: exact checkpoint CI ต้องสำเร็จและ skip `Typecheck and Test`,
+  proof SHA ต้องเป็น ancestor และ Git diff ของ `apps/api/prisma` พร้อม package/lock/workspace/tsconfig
+  inputs ต้องว่างทุก byte. เงื่อนไขใดไม่ตรงให้ fail closed; ข้อยกเว้นนี้ใช้กับ Production ไม่ได้.
 - `BOOTSTRAP_CLOSED` ใช้ได้เฉพาะ failed Production V2 ที่ไม่มี api-web intent และมี exact failed-run
   artifact. แบบเดิมรองรับ zero intents; แบบ partial-closed รองรับเฉพาะ non-api intents ที่ทุกตัวเป็น
   `BOUND`, ไม่มี cleanup ค้าง และ evidence ตรงกับ append-only rollout history ใน artifact ทุก byte.

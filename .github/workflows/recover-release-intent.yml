@@ -76,6 +76,10 @@ jobs:
       # The repository was imported with the reviewed UAT recovery implementation already present;
       # pin the first reachable commit in this repository, not its pre-import historical SHA.
       RECOVERY_FIX_BASELINE_UAT: 668a2d0827921257d6412a5edc0598d5aeb9a0fa
+      # UAT recovery code is byte-identical to this successful PostgreSQL proof. A later
+      # code-neutral develop checkpoint may reuse it only while every recovery input stays equal.
+      RECOVERY_CI_PROOF_REF_UAT: 33266c1220b3a71cfae86cbd3aeb5b0ad6607118
+      RECOVERY_CI_PROOF_RUN_UAT: "32002605508"
       # This is that pin commit for production. dc9081a5 is not an arbitrary "latest main": it is
       # the first commit at which production recovery can succeed at all. Recovery has to prove the
       # platform state from two agreeing exhaustive ListServiceDeployments reads, and the AWS CLI
@@ -190,7 +194,7 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
-          jq -e '
+          if jq -e '
             .total_count == (.jobs | length)
             and ([.jobs[] | select(.name == "Typecheck and Test")] | length) == 1
             and ([.jobs[] | select(.name == "Typecheck and Test")][0].conclusion == "success")
@@ -198,7 +202,59 @@ jobs:
               | select(.name == "Typecheck and test durable release recovery against PostgreSQL")] | length) == 1
             and ([.jobs[] | select(.name == "Typecheck and Test") | .steps[]
               | select(.name == "Typecheck and test durable release recovery against PostgreSQL")][0].conclusion == "success")
+          ' <<< "$jobs" >/dev/null; then
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Reuse the exact prior PostgreSQL proof only for a code-neutral UAT checkpoint and only
+          # while Git proves every executable/test/dependency input is byte-identical. Production
+          # recovery deliberately has no such exception.
+          test "$DEPLOY_ENV" = uat
+          jq -e '
+            .total_count == (.jobs | length)
+            and ([.jobs[] | select(.name == "Resolve Source")] | length) == 1
+            and ([.jobs[] | select(.name == "Resolve Source")][0].conclusion == "success")
+            and ([.jobs[] | select(.name == "Typecheck and Test")] | length) == 1
+            and ([.jobs[] | select(.name == "Typecheck and Test")][0].conclusion == "skipped")
           ' <<< "$jobs" >/dev/null
+          proof_ref="$RECOVERY_CI_PROOF_REF_UAT"
+          proof_run_id="$RECOVERY_CI_PROOF_RUN_UAT"
+          [[ "$proof_ref" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$proof_run_id" =~ ^[1-9][0-9]*$ ]]
+          git merge-base --is-ancestor "$proof_ref" "$RECOVERY_REF"
+          git diff --quiet "$proof_ref" "$RECOVERY_REF" -- \
+            apps/api/prisma \
+            apps/api/package.json \
+            apps/api/tsconfig.json \
+            package.json \
+            pnpm-lock.yaml \
+            pnpm-workspace.yaml \
+            tsconfig.base.json
+          proof="$(curl --fail --silent --show-error "${curl_retry[@]}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$proof_run_id")"
+          jq -e --arg sha "$proof_ref" '
+            .head_sha == $sha
+            and .head_branch == "develop"
+            and .event == "pull_request"
+            and .path == ".github/workflows/ci.yml"
+            and .conclusion == "success"
+          ' <<< "$proof" >/dev/null
+          proof_jobs="$(curl --fail --silent --show-error "${curl_retry[@]}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$proof_run_id/jobs?per_page=100")"
+          jq -e '
+            .total_count == (.jobs | length)
+            and ([.jobs[] | select(.name == "Typecheck and Test")] | length) == 1
+            and ([.jobs[] | select(.name == "Typecheck and Test")][0].conclusion == "success")
+            and ([.jobs[] | select(.name == "Typecheck and Test") | .steps[]
+              | select(.name == "Typecheck and test durable release recovery against PostgreSQL")][0].conclusion == "success")
+          ' <<< "$proof_jobs" >/dev/null
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
