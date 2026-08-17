@@ -20,7 +20,30 @@ jq -e '.Statement==[{Effect:"Allow",Principal:{Service:"bedrock-agentcore.amazon
     ArnLike:{"aws:SourceArn":"<AGENTCORE_RUNTIME_ARN>"}}}]' "$trust" >/dev/null
 grep -Fq 'agentcore-execution-role-trust.template.json' "$agentcore"
 grep -Fq 's|<AGENTCORE_RUNTIME_ARN>|$RUNTIME_ARN|g' "$agentcore"
-grep -Fq -- "--metadata-configuration '{\"requireMMDSV2\":true}'" "$agentcore"
+create_block="$(sed -n '/RESULT=$(aws bedrock-agentcore-control create-agent-runtime/,/--description .*item 10B/p' "$agentcore")"
+update_block="$(sed -n '/RESULT=$(aws bedrock-agentcore-control update-agent-runtime/,/--client-token .*mmdsv2/p' "$agentcore")"
+if grep -Fq -- '--metadata-configuration' <<< "$create_block"; then
+  echo 'CreateAgentRuntime has no metadataConfiguration input; MMDSv2 belongs on the settled update' >&2
+  exit 1
+fi
+grep -Fq -- '--client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-create"' <<< "$create_block"
+grep -Fq -- "--metadata-configuration '{\"requireMMDSV2\":true}'" <<< "$update_block"
+grep -Fq -- '--client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-mmdsv2"' <<< "$update_block"
+grep -Fq 'CREATE_FAILED|UPDATE_FAILED|FAILED)' "$agentcore"
+grep -Fq '.metadataConfiguration.requireMMDSV2 == true' "$agentcore"
+create_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control create-agent-runtime' "$agentcore" | cut -d: -f1)"
+create_ready_line="$(grep -n 'wait_for_runtime_ready create ' "$agentcore" | cut -d: -f1)"
+update_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control update-agent-runtime' "$agentcore" | cut -d: -f1)"
+update_ready_line="$(grep -n 'wait_for_runtime_ready mmdsv2-update ' "$agentcore" | cut -d: -f1)"
+readback_line="$(grep -n 'RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime' "$agentcore" | cut -d: -f1)"
+endpoint_line="$(grep -n 'get-agent-runtime-endpoint' "$agentcore" | head -1 | cut -d: -f1)"
+smoke_line="$(grep -n 'smoke_invoke safe ' "$agentcore" | cut -d: -f1)"
+test "$create_line" -lt "$create_ready_line"
+test "$create_ready_line" -lt "$update_line"
+test "$update_line" -lt "$update_ready_line"
+test "$update_ready_line" -lt "$readback_line"
+test "$readback_line" -lt "$endpoint_line"
+test "$endpoint_line" -lt "$smoke_line"
 grep -Fq 'refusing a mutable runtime reference' "$agentcore"
 grep -Fq '"versionId": "${S3_VERSION}"' "$agentcore"
 jq -e '.Statement[]|select(.Sid=="BedrockAgentCoreReadArtifact")
