@@ -1,5 +1,5 @@
 name: Production Deploy V2
-run-name: Promote READY ${{ inputs.readiness_run_id }} → ${{ inputs.requested_serving_mode }}
+run-name: Promote READY ${{ inputs.readiness_run_id || 'inline' }} → ${{ inputs.requested_serving_mode }}
 
 on:
   workflow_dispatch:
@@ -9,8 +9,8 @@ on:
         required: true
         type: string
       readiness_run_id:
-        description: Exact successful Production Readiness V2 run
-        required: true
+        description: Exact successful Production Readiness V2 run; leave empty to prove READY in this run
+        required: false
         type: string
       requested_serving_mode:
         description: Must exactly match the signed READY certificate
@@ -20,6 +20,10 @@ on:
         options:
           - maintenance_closed
           - live
+      owner_legal_override_ref:
+        description: Owner approval reference for an auditable live legal-evidence override (inline READY only)
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -31,8 +35,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # One dispatch, one signed chain. The reusable call runs the same readiness job with the same
+  # steps, so the Fulcio subject stays production-readiness.yml@refs/heads/main and the artifact is
+  # named for THIS run. Supplying readiness_run_id skips this job and consumes a standalone READY
+  # exactly as before — the rollback path needs no code revert.
+  readiness:
+    name: Prove Production READY inside this promotion run
+    if: inputs.readiness_run_id == ''
+    uses: ./.github/workflows/production-readiness.yml
+    with:
+      uat_run_id: ${{ inputs.uat_run_id }}
+      requested_serving_mode: ${{ inputs.requested_serving_mode }}
+      owner_legal_override_ref: ${{ inputs.owner_legal_override_ref }}
+    secrets: inherit
+
   promote:
     name: Promote exact UAT Passport through signed Production READY
+    needs: readiness
+    if: >-
+      !cancelled() &&
+      (inputs.readiness_run_id != '' || needs.readiness.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 360
     environment: production
@@ -104,7 +126,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_POLICY_READ_TOKEN: ${{ secrets.PRODUCTION_POLICY_READ_TOKEN }}
           INPUT_UAT_RUN_ID: ${{ inputs.uat_run_id }}
-          INPUT_READY_RUN_ID: ${{ inputs.readiness_run_id }}
+          INPUT_READY_RUN_ID: ${{ inputs.readiness_run_id || github.run_id }}
+          READY_SOURCE: ${{ inputs.readiness_run_id && 'standalone' || 'inline' }}
           INPUT_MODE: ${{ inputs.requested_serving_mode }}
         run: |
           set -euo pipefail
@@ -133,13 +156,25 @@ jobs:
             and .allow_force_pushes.enabled==false and .allow_deletions.enabled==false' \
             "$root/main-protection.json" >/dev/null
 
+          # Inline READY is this very run, so it is necessarily still executing: assert the run is
+          # unfinished instead of successful. Anything but the exact literal 'inline' takes the
+          # unchanged standalone branch, so an unexpected value fails closed.
           ready_run="$root/readiness-run.json"
+          ready_path=.github/workflows/production-readiness.yml
+          inline=false
+          if [ "$READY_SOURCE" = inline ]; then
+            test "$INPUT_READY_RUN_ID" = "$GITHUB_RUN_ID"
+            ready_path=.github/workflows/deploy-production-v2.yml
+            inline=true
+          fi
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$INPUT_READY_RUN_ID" > "$ready_run"
-          jq -e --arg id "$INPUT_READY_RUN_ID" --arg repository "$GITHUB_REPOSITORY" '
-            (.id|tostring)==$id and .status=="completed" and .conclusion=="success"
-            and .path==".github/workflows/production-readiness.yml" and .head_branch=="main"
+          jq -e --arg id "$INPUT_READY_RUN_ID" --arg repository "$GITHUB_REPOSITORY" \
+            --arg path "$ready_path" --argjson inline "$inline" '
+            (.id|tostring)==$id and .path==$path and .head_branch=="main"
             and (.event=="workflow_run" or .event=="workflow_dispatch")
             and .repository.full_name==$repository
+            and (if $inline then .conclusion==null
+              else .status=="completed" and .conclusion=="success" end)
           ' "$ready_run" >/dev/null
           ready_attempt="$(jq -er '.run_attempt|select(type=="number" and floor==. and .>=1)' "$ready_run")"
           ready_controller="$(jq -er '.head_sha|select(test("^[0-9a-f]{40}$"))' "$ready_run")"
@@ -274,6 +309,7 @@ jobs:
             "AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha" \
             "AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version" \
             "SOURCE_SHA=$source_sha" "READY_SHA256=$ready_hash" \
+            "READY_RUN_ID=$INPUT_READY_RUN_ID" \
             "READY_RUN_ATTEMPT=$ready_attempt" "READY_CONTROLLER=$ready_controller" \
             "RELEASE_TASK_IMAGE=$release_image" "MIGRATION_IMAGE=$migration_image" \
             "MIGRATION_STATUS=$migration_status" "PENDING_MIGRATION_COUNT=$pending" \
@@ -327,7 +363,10 @@ jobs:
           allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
           role-session-name: production-v2-security-${{ github.run_id }}
           unset-current-credentials: true
+      # Duplicate of READY. Inline READY read exactly this ground minutes ago in this same run, so
+      # these three read-only rechecks only run when READY came from a separate, older run.
       - name: Recheck exact image availability and hard runtime baseline
+        if: inputs.readiness_run_id != ''
         run: |
           set -euo pipefail
           while IFS=$'\t' read -r repository digest; do
@@ -351,7 +390,7 @@ jobs:
           role-session-name: production-v2-clone-policy-${{ github.run_id }}
           unset-current-credentials: true
       - name: Recheck exact clone policy for a pending migration
-        if: env.MIGRATION_STATUS == 'APPEND_ONLY_PENDING'
+        if: inputs.readiness_run_id != '' && env.MIGRATION_STATUS == 'APPEND_ONLY_PENDING'
         run: |
           set -euo pipefail
           role=watchdog-bms-production-a5-clone
@@ -381,6 +420,7 @@ jobs:
           role-session-name: production-v2-reader-${{ github.run_id }}
           unset-current-credentials: true
       - name: Recheck service, IAM and migration baselines before deploy authority
+        if: inputs.readiness_run_id != ''
         run: |
           set -euo pipefail
           role=watchdog-bms-production-a5-readonly
@@ -539,7 +579,7 @@ jobs:
           bash infra/security/validate-production-release-ready-v2.sh "$READY_ROOT/ready.json" \
             "$READY_ROOT" "$PASSPORT_ROOT/passport.json" "$SOURCE_SHA" \
             "${{ inputs.uat_run_id }}" "$(jq -er '.passportRef.runAttempt' "$READY_ROOT/ready.json")" \
-            "${{ inputs.readiness_run_id }}" "$READY_RUN_ATTEMPT" "$READY_CONTROLLER" \
+            "$READY_RUN_ID" "$READY_RUN_ATTEMPT" "$READY_CONTROLLER" \
             "$GITHUB_REPOSITORY" "$(date -u +%s)" >/dev/null
           if [ "${{ inputs.requested_serving_mode }}" = live ] \
               && [ "$LEGAL_MODE" = VERIFIED_BUNDLE ]; then
@@ -759,7 +799,7 @@ jobs:
           fi
           completed="$(date -u +%s)"
           jq -cnS --arg source "$SOURCE_SHA" --arg state "$state" --arg mode "${{ inputs.requested_serving_mode }}" \
-            --arg uat "${{ inputs.uat_run_id }}" --arg ready "${{ inputs.readiness_run_id }}" \
+            --arg uat "${{ inputs.uat_run_id }}" --arg ready "$READY_RUN_ID" \
             --arg readySha "$READY_SHA256" --arg controller "$GITHUB_WORKFLOW_SHA" \
             --arg run "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
             --arg manifestSha "$manifest_hash" --arg target "$EFFECTIVE_TARGET" \
@@ -778,7 +818,7 @@ jobs:
             "$PROMOTION_ROOT/result-body.json" > "$result"
           bash infra/security/validate-production-release-result-v2.sh "$result" \
             release/production-image-manifest.json "$READY_ROOT/ready.json" "$SOURCE_SHA" \
-            "${{ inputs.uat_run_id }}" "${{ inputs.readiness_run_id }}" "$GITHUB_RUN_ID" \
+            "${{ inputs.uat_run_id }}" "$READY_RUN_ID" "$GITHUB_RUN_ID" \
             "$GITHUB_RUN_ATTEMPT" "$GITHUB_WORKFLOW_SHA" "$GITHUB_REPOSITORY" "$(date -u +%s)" \
             "$maintenance_proof"
           cosign sign-blob --yes --bundle "$result_dir/result.bundle" "$result"

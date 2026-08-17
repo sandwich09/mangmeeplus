@@ -50,6 +50,69 @@ for owner_override in \
   }
 done
 
+# Phase 3 — one dispatch proves READY and promotes. The inline readiness job calls
+# production-readiness.yml verbatim, so the READY signing identity, artifact name and ready.json
+# contract are unchanged; readiness_run_id stays optional so the two-dispatch path still works.
+for inline in \
+  "if: inputs.readiness_run_id == ''" \
+  'uses: ./.github/workflows/production-readiness.yml' \
+  'secrets: inherit' \
+  'owner_legal_override_ref: ${{ inputs.owner_legal_override_ref }}' \
+  'INPUT_READY_RUN_ID: ${{ inputs.readiness_run_id || github.run_id }}' \
+  "READY_SOURCE: \${{ inputs.readiness_run_id && 'standalone' || 'inline' }}" \
+  'test "$INPUT_READY_RUN_ID" = "$GITHUB_RUN_ID"' \
+  'ready_path=.github/workflows/deploy-production-v2.yml' \
+  '"READY_RUN_ID=$INPUT_READY_RUN_ID"' \
+  "(inputs.readiness_run_id != '' || needs.readiness.result == 'success')"; do
+  grep -Fq -- "$inline" "$workflow" || {
+    echo "ERROR: Production V2 workflow is missing the inline READY contract: $inline" >&2
+    exit 1
+  }
+done
+ruby - "$workflow" <<'RUBY'
+require "yaml"
+
+workflow = YAML.load_file(ARGV.fetch(0))
+triggers = workflow[true] || workflow.fetch("on")
+inputs = triggers.fetch("workflow_dispatch").fetch("inputs")
+abort "uat_run_id must stay required" unless inputs.fetch("uat_run_id").fetch("required")
+abort "requested_serving_mode must stay required" unless inputs.fetch("requested_serving_mode").fetch("required")
+["readiness_run_id", "owner_legal_override_ref"].each do |name|
+  abort "#{name} must stay optional" if inputs.fetch(name).fetch("required")
+end
+jobs = workflow.fetch("jobs")
+readiness = jobs.fetch("readiness")
+abort "inline readiness must call the standalone readiness workflow" unless
+  readiness["uses"] == "./.github/workflows/production-readiness.yml"
+abort "inline readiness must be skipped when a standalone READY run is supplied" unless
+  readiness["if"] == "inputs.readiness_run_id == ''"
+abort "inline readiness must forward the exact dispatch inputs" unless readiness.fetch("with") == {
+  "uat_run_id" => "${{ inputs.uat_run_id }}",
+  "requested_serving_mode" => "${{ inputs.requested_serving_mode }}",
+  "owner_legal_override_ref" => "${{ inputs.owner_legal_override_ref }}",
+}
+promote = jobs.fetch("promote")
+abort "promote must gate on the inline readiness job" unless promote.fetch("needs") == "readiness"
+by_name = promote.fetch("steps").each_with_object({}) { |step, all| all[step["name"]] = step }
+{
+  "Recheck exact image availability and hard runtime baseline" =>
+    "inputs.readiness_run_id != ''",
+  "Recheck exact clone policy for a pending migration" =>
+    "inputs.readiness_run_id != '' && env.MIGRATION_STATUS == 'APPEND_ONLY_PENDING'",
+  "Recheck service, IAM and migration baselines before deploy authority" =>
+    "inputs.readiness_run_id != ''",
+}.each do |name, condition|
+  abort "missing READY-duplicate recheck step: #{name}" unless by_name.key?(name)
+  abort "wrong dedup condition on: #{name}" unless by_name.fetch(name)["if"] == condition
+end
+# Mutation-boundary proofs never become conditional on where the signed READY came from.
+["Recheck stable service identity at the mutation boundary",
+ "Recheck signed READY migration authority inside the durable database fence"].each do |name|
+  abort "missing mutation-boundary step: #{name}" unless by_name.key?(name)
+  abort "mutation-boundary step became conditional: #{name}" if by_name.fetch(name).key?("if")
+end
+RUBY
+
 for forbidden in 'pnpm ' 'npm ' 'yarn ' 'docker build' 'build-push-action' 'anchore/sbom-action' \
   'cosign sign ' 'cosign attest' 'uses: ./.github/workflows/ci.yml' 'prisma validate'; do
   if grep -Fq "$forbidden" "$workflow"; then
@@ -196,8 +259,11 @@ test $((release_prepare + rollout + verification)) -lt "$credential_budget"
 test "$closed_recovery" -lt "$credential_budget"
 test "$finalization" -lt "$credential_budget"
 
+# Every external action stays pinned to an immutable commit. The one local reusable-workflow call
+# carries no pin because a './' reference always resolves to this exact controller commit.
+test "$(grep -Ec '^[[:space:]]+(- )?uses: \./' "$workflow")" = 1
 test "$(grep -Ec 'uses: [^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)' "$workflow")" = \
-  "$(grep -Ec '^[[:space:]]+(- )?uses:' "$workflow")"
+  "$(($(grep -Ec '^[[:space:]]+(- )?uses:' "$workflow") - 1))"
 ruby -e 'require "yaml"; ARGV.each { |path| YAML.load(File.read(path)) }' "$workflow" "$recovery"
 bash -n "$runner" "$deploy" "$maintenance"
 echo 'Production deploy workflow V2 contract: PASS'

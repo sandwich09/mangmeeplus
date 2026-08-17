@@ -21,6 +21,23 @@ on:
         description: Owner approval reference for an auditable live legal-evidence override
         required: false
         type: string
+  # Same job, same steps, same signing identity — called by deploy-production-v2.yml so one
+  # dispatch proves READY and promotes. workflow_call has no choice type; the resolve step
+  # already rejects any mode outside maintenance_closed|live.
+  workflow_call:
+    inputs:
+      uat_run_id:
+        description: Exact successful resolved-all UAT run carrying Passport V2
+        required: true
+        type: string
+      requested_serving_mode:
+        description: Customer serving state bound into READY
+        required: true
+        type: string
+      owner_legal_override_ref:
+        description: Owner approval reference for an auditable live legal-evidence override
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -117,6 +134,7 @@ jobs:
       LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}
       APPROVED_AI_PROVIDERS: ${{ vars.APPROVED_AI_PROVIDERS }}
       APPROVED_AI_REGIONS: ${{ vars.APPROVED_AI_REGIONS }}
+      AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
       TYPHOON_PROCESSING_REGION: ${{ vars.TYPHOON_PROCESSING_REGION }}
       LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME }}
       AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
