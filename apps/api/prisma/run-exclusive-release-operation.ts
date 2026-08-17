@@ -407,6 +407,25 @@ async function hasCompleteReleaseServiceCoverage(
   return canonicalJson([...new Set(observed)].sort()) === canonicalJson(expected);
 }
 
+async function hasRecoveredPartialAllTargetCoverage(
+  client: Client,
+  operationId: string,
+  releaseDeployTarget: string | null,
+): Promise<boolean> {
+  if (releaseDeployTarget !== 'all') return false;
+  const expected = new Set(expectedReleaseServices(releaseDeployTarget));
+  const result = await client.query<{ serviceKey: string; recovererControllerJson: unknown }>(`
+    SELECT "serviceKey", "recovererControllerJson"
+      FROM "RemoteReleaseMutationIntent"
+     WHERE "operationId" = $1
+  `, [operationId]);
+  if (result.rows.length === 0) return false;
+  const observed = new Set(result.rows.map((row) => row.serviceKey));
+  return observed.size < expected.size
+    && [...observed].every((service) => expected.has(service))
+    && result.rows.every((row) => row.recovererControllerJson !== null);
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   if (value && typeof value === 'object') {
@@ -2610,8 +2629,10 @@ export async function recoverRemoteReleaseMutationIntent(
   if (intent.expectedServiceArn !== input.expectedServiceArn || intent.ssmParameterName !== input.ssmParameterName) {
     throw new RemoteReleaseOperationBlocked('recovery controller did not name the intent-owned ECS/SSM identities');
   }
-  const replayParent = await client.query<{ status: string; mode: string; buildReleaseId: string }>(`
-    SELECT "status", "mode", "buildReleaseId" FROM "RemoteReleaseOperation"
+  const replayParent = await client.query<{
+    status: string; mode: string; buildReleaseId: string; ecsTaskArn: string;
+  }>(`
+    SELECT "status", "mode", "buildReleaseId", "ecsTaskArn" FROM "RemoteReleaseOperation"
      WHERE "id" = $1 AND "targetEnvironment" = $2
   `, [input.operationId, input.targetEnvironment]);
   const replayParentRow = replayParent.rows[0];
@@ -2810,6 +2831,38 @@ export async function recoverRemoteReleaseMutationIntent(
     }
     const cleanupRequired = failedBuildCleanupRequiredAt !== null
       || decision.failedBuildCleanupRequired;
+    await client.query('BEGIN');
+    try {
+      const marked = await client.query(`
+        UPDATE "RemoteReleaseMutationIntent"
+           SET "recovererControllerJson" = $2::jsonb, "updatedAt" = CURRENT_TIMESTAMP
+         WHERE "id" = $1 AND "status" <> 'OPEN' AND "recovererControllerJson" IS NULL
+         RETURNING "id"
+      `, [input.intentId, JSON.stringify(input.controller)]);
+      if (marked.rowCount === 1) {
+        await client.query(`
+          INSERT INTO "AuditLog" (
+            "id", "companyId", "actorType", "actorUserId", "actorRefId", "action", "targetType",
+            "targetId", "requestId", "result", "riskLevel", "metadataJson", "createdAt"
+          ) VALUES ($1,NULL,'SERVICE',NULL,$2,'system.release_operation.revalidate_remote_mutation',
+                    'RemoteReleaseMutationIntent',$3,$4,'SUCCESS','CRITICAL',$5::jsonb,CURRENT_TIMESTAMP)
+        `, [randomUUID(), input.recovererTaskArn, input.intentId,
+          `release-intent-revalidation:${input.intentId}`,
+          JSON.stringify({
+            decision,
+            targetBuildReleaseId: input.buildReleaseId,
+            recoveryExecutorBuildReleaseId: input.recoveryExecutorBuildReleaseId,
+            recoveryExecutorImage: input.recoveryExecutorImage,
+            recoveryValidatedCiRunId: input.recoveryValidatedCiRunId,
+            originalTaskArn: replayParentRow.ecsTaskArn,
+            controller: input.controller,
+          })]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    }
     return {
       ...decision,
       legacyRollback: decision.legacyRollback
@@ -3315,7 +3368,11 @@ export async function terminalizeRecoveredReleaseIfReady(
       // exact api-web pre-intent cleanup therefore proves an all-target rollout never started.
       allTargetStoppedBeforeAnyIntent = (intentCount.rows[0]?.count ?? 0) === 0;
     }
-    if (!completeServiceCoverage && !allTargetStoppedBeforeAnyIntent) {
+    const recoveredPartialAllTarget = !completeServiceCoverage
+      && await hasRecoveredPartialAllTargetCoverage(
+        client, input.operationId, parent.rows[0].releaseDeployTarget,
+      );
+    if (!completeServiceCoverage && !allTargetStoppedBeforeAnyIntent && !recoveredPartialAllTarget) {
       await client.query('COMMIT');
       return false;
     }
@@ -3332,14 +3389,22 @@ export async function terminalizeRecoveredReleaseIfReady(
              "reconciledAt" = CURRENT_TIMESTAMP, "reconciledByActorRef" = $3,
              "reconciledByTaskArn" = $4,
              "reconciliationEvidenceRef" = $5,
-             "reconciliationReason" = 'controller stopped during remote mutation; every durable intent was exactly recovered and a clean retry is required',
-             "outcomeReason" = 'FAILED_CONFIRMED after exact remote-intent recovery; retry release for health verification',
+             "reconciliationReason" = $6,
+             "outcomeReason" = $7,
              "updatedAt" = CURRENT_TIMESTAMP
        WHERE "id" = $1 AND "targetEnvironment" = $2 AND "status" = 'UNKNOWN'
     `, [input.operationId, input.targetEnvironment, actorRef, input.recovererTaskArn,
       preIntentRecovered
         ? `RemoteReleasePreIntentCleanup:${input.operationId}`
-        : `RemoteReleaseMutationIntent:${input.operationId}`]);
+        : recoveredPartialAllTarget
+          ? `RemoteReleasePartialIntentRecovery:${input.operationId}`
+          : `RemoteReleaseMutationIntent:${input.operationId}`,
+      recoveredPartialAllTarget
+        ? 'controller stopped before every all-target service intent; each existing intent was exactly revalidated and missing services had no pre-mutation intent'
+        : 'controller stopped during remote mutation; every durable intent was exactly recovered and a clean retry is required',
+      recoveredPartialAllTarget
+        ? 'FAILED_CONFIRMED after partial all-target exact-intent recovery; clean release retry required'
+        : 'FAILED_CONFIRMED after exact remote-intent recovery; retry release for health verification']);
     if (updated.rowCount !== 1) throw new RemoteReleaseOperationBlocked('recovery parent moved before terminalization');
     await client.query(`
       INSERT INTO "AuditLog" (
@@ -3348,7 +3413,12 @@ export async function terminalizeRecoveredReleaseIfReady(
       ) VALUES ($1,NULL,'SERVICE',NULL,$2,'system.release_operation.recovery_terminalize',
                 'RemoteReleaseOperation',$3,$4,'SUCCESS','CRITICAL',$5::jsonb,CURRENT_TIMESTAMP)
     `, [randomUUID(), actorRef, input.operationId, `release-recovery-terminalize:${input.operationId}`,
-      JSON.stringify({ originalTaskArn: parent.rows[0].ecsTaskArn, recovererTaskArn: input.recovererTaskArn, controller: input.controller })]);
+      JSON.stringify({
+        originalTaskArn: parent.rows[0].ecsTaskArn,
+        recovererTaskArn: input.recovererTaskArn,
+        recoveredPartialAllTarget,
+        controller: input.controller,
+      })]);
     await client.query('COMMIT');
     return true;
   } catch (error) {

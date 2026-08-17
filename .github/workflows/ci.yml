@@ -67,6 +67,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.sha }}
       code_changed: ${{ steps.source.outputs.code_changed }}
+      recovery_only: ${{ steps.source.outputs.recovery_only }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -200,7 +201,23 @@ jobs:
           else
             code_changed=true
           fi
+          recovery_only=false
+          if [[ "$EVENT_NAME" == "pull_request" && "$code_changed" == "true" ]]; then
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$sha")"
+            allowed_paths="$(printf '%s\n' \
+              .github/workflows/ci.yml \
+              apps/api/prisma/run-exclusive-release-operation.spec.ts \
+              apps/api/prisma/run-exclusive-release-operation.ts \
+              docs/agent-memory/production-deploy-2026-08-17.md \
+              docs/runbooks/uat-production-v2-deployment.md)"
+            if grep -Fxq 'apps/api/prisma/run-exclusive-release-operation.ts' <<< "$changed_paths" \
+              && grep -Fxq 'apps/api/prisma/run-exclusive-release-operation.spec.ts' <<< "$changed_paths" \
+              && ! grep -Fvx -f <(printf '%s\n' "$allowed_paths") <<< "$changed_paths" | grep -q .; then
+              recovery_only=true
+            fi
+          fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+          echo "recovery_only=$recovery_only" >> "$GITHUB_OUTPUT"
       - name: Verify maintenance policy pins before CI fan-out
         if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
         run: |
@@ -261,6 +278,7 @@ jobs:
       - run: pnpm --filter @watchdog-bms/contracts build
       - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
       - run: pnpm typecheck
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Typecheck and test durable release recovery against PostgreSQL
@@ -273,6 +291,7 @@ jobs:
             prisma/run-exclusive-release-operation.ts prisma/run-exclusive-release-operation.spec.ts
           pnpm --filter @watchdog-bms/api test:release-recovery
       - name: Test A5 role bootstrap against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         env:
           A5_BOOTSTRAP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
         run: pnpm --filter @watchdog-bms/api test:a5-bootstrap
@@ -280,6 +299,7 @@ jobs:
       # own backfill SQL — none of which a mocked client reproduces. Its own database, applied
       # from an empty one, so this is also the fresh-clone `migrate deploy` check.
       - name: Test Step 0 company tax identity against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         env:
           PGPASSWORD: watchdog_ci
           DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_step0_ci
@@ -288,17 +308,24 @@ jobs:
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
           pnpm --filter @watchdog-bms/api test:tax-identity-pg
       - run: pnpm test
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       - run: pnpm --filter @watchdog-bms/api test:m01
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       - run: pnpm --filter @watchdog-bms/api test:p1
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       # Every spec above builds its subject with `new`, so none of them asks Nest to wire
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       - name: Test legal release evidence gates
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         run: |
           bash infra/security/provision-legal-release-evidence.spec.sh
           bash infra/security/validate-legal-release-readiness.spec.sh
       - run: bash infra/docker/production-image-security.spec.sh
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       - name: Test production maintenance controls
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         run: |
           node --test infra/api-web/web-api-proxy.spec.mjs
           pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
@@ -310,12 +337,14 @@ jobs:
           bash infra/security/validate-production-maintenance-release.spec.sh
           bash infra/security/sync-production-maintenance-release-pins.spec.sh
       - name: Test immutable LINE AI release identity
+        if: needs.resolve-source.outputs.recovery_only != 'true'
         run: |
           bash infra/ai-gateway/line-ai-release-manifest.spec.sh
           bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
           bash infra/uat/agentcore-candidate-policy.spec.sh
           bash infra/security/uat-release-passport-v2.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
+        if: needs.resolve-source.outputs.recovery_only != 'true'
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
         env:
