@@ -233,7 +233,9 @@ jobs:
                 infra/ai-gateway/h15-trust-boundary.spec.sh|\
                 infra/ai-gateway/validate-agentcore-candidate-binding.sh|\
                 infra/prod-ecs-express/deploy.sh|\
+                infra/prod-ecs-express/lib-uat-fast-rollout.sh|\
                 infra/prod-ecs-express/production-serving-mode.spec.sh|\
+                infra/prod-ecs-express/uat-fast-rollout.spec.sh|\
                 infra/prod-ecs-express/verify-deployment.sh|\
                 infra/security/production-promotion-resources.spec.sh|\
                 infra/security/production-release-ready-v2.spec.sh|\
@@ -257,7 +259,12 @@ jobs:
               infra/prod-ecs-express/production-serving-mode.spec.sh; do
               grep -Fxq "$required" <<< "$changed_paths" || ecs_binding_bundle=false
             done
-            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true ]] \
+            uat_rollout_bundle=true
+            for required in infra/prod-ecs-express/lib-uat-fast-rollout.sh \
+              infra/prod-ecs-express/uat-fast-rollout.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || uat_rollout_bundle=false
+            done
+            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true || "$uat_rollout_bundle" == true ]] \
               || release_controller_only=false
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
@@ -337,6 +344,7 @@ jobs:
           bash infra/ai-gateway/h15-trust-boundary.spec.sh
           bash infra/uat/agentcore-candidate-policy.spec.sh
           bash infra/prod-ecs-express/production-serving-mode.spec.sh
+          bash infra/prod-ecs-express/uat-fast-rollout.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
           git diff --check HEAD^ HEAD
       - run: pnpm typecheck
