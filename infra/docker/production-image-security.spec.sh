@@ -1913,6 +1913,13 @@ jq -e '
 
 # Both deploy workflows: exact evidence, and finalization/retirement that runs on success AND failure.
 for caller in "$deploy_workflow" "$uat_workflow"; do
+  grep -Fq 'id: deploy-services' "$caller"
+  grep -Fq 'if [ ! -f "$evidence" ]; then' "$caller"
+  grep -Fq '${{ steps.deploy-services.outcome }}' "$caller"
+  grep -Fq 'requires exact PRE_INTENT recovery after it becomes UNKNOWN' "$caller"
+  missing_evidence_line="$(grep -n 'if \[ ! -f "$evidence" \]; then' "$caller" | tail -1 | cut -d: -f1)"
+  retirement_evidence_line="$(grep -n 'validated="$(bash infra/prod-ecs-express/retirement-evidence.sh' "$caller" | tail -1 | cut -d: -f1)"
+  test "$missing_evidence_line" -lt "$retirement_evidence_line"
   grep -Fq 'retirement-evidence.sh \' "$caller"
   grep -Fq -- '--file "$evidence" --service-arn "$arn" --source-sha "$SOURCE_SHA" \' "$caller"
   grep -Fq -- '--target-revision-arn "$target_revision_arn" "${legacy_args[@]}")"' "$caller"

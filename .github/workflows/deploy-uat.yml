@@ -543,6 +543,7 @@ jobs:
           echo "AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha" >> "$GITHUB_ENV"
           echo "AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version" >> "$GITHUB_ENV"
       - name: Deploy immutable UAT manifest
+        id: deploy-services
         env:
           TARGET: ${{ steps.target.outputs.target }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
@@ -589,6 +590,14 @@ jobs:
           # durable parent stays unresolved until an operator reconciles its recorded task/evidence.
           rc=0
           evidence="$DEPLOYMENT_EVIDENCE_DIR/api-web.json"
+          if [ ! -f "$evidence" ]; then
+            if [ "${{ steps.deploy-services.outcome }}" = "skipped" ]; then
+              echo "ERROR: service rollout never started; parent ${RELEASE_PARENT_OPERATION_ID:-unknown} requires exact PRE_INTENT recovery after it becomes UNKNOWN" >&2
+            else
+              echo "ERROR: api-web rollout evidence is absent after service deploy outcome=${{ steps.deploy-services.outcome }}; recover every durable intent, then PRE_INTENT when applicable" >&2
+            fi
+            exit 1
+          fi
           cluster="${ECS_CLUSTER_NAME:-watchdog-bms-uat}"
           validated="$(bash infra/prod-ecs-express/retirement-evidence.sh \
             --file "$evidence" --service-arn "$arn" --source-sha "$SOURCE_SHA" \

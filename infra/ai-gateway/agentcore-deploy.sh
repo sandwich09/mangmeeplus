@@ -195,11 +195,38 @@ ENV_VARS=$(cat <<EOF
 }
 EOF
 )
+ENV_SHA=$(printf '%s' "$ENV_VARS" | jq -cS . | shasum -a 256 | awk '{print $1}')
+[[ "$ENV_SHA" =~ ^[0-9a-f]{64}$ ]]
 
 # ── 5. Create or update runtime ────────────────────────────────────────────────
 EXISTING_ID=$(aws bedrock-agentcore-control list-agent-runtimes --region "$REGION" \
   --query "agentRuntimes[?agentRuntimeName=='$RUNTIME_NAME'].agentRuntimeId" \
   --output text)
+
+wait_for_runtime_ready() {
+  local phase="$1" runtime_id="$2" status="" runtime_json=""
+  echo "[agentcore-deploy] waiting for ${phase} READY status (up to 5 min)..."
+  for i in $(seq 1 30); do
+    runtime_json=$(aws bedrock-agentcore-control get-agent-runtime \
+      --region "$REGION" --agent-runtime-id "$runtime_id" --output json)
+    status=$(jq -er '.status' <<< "$runtime_json")
+    echo "[agentcore-deploy] ${phase} status=$status (attempt $i/30)"
+    case "$status" in
+      READY) return 0 ;;
+      CREATE_FAILED|UPDATE_FAILED|FAILED)
+        jq -r '.failureReason // "runtime failed without a reason"' <<< "$runtime_json" >&2
+        return 1
+        ;;
+      DELETING)
+        echo "ERROR: runtime entered DELETING during ${phase}" >&2
+        return 1
+        ;;
+    esac
+    sleep 10
+  done
+  echo "ERROR: runtime did not reach READY during ${phase} (status=${status:-unknown})" >&2
+  return 1
+}
 
 if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
   echo "[agentcore-deploy] creating new runtime..."
@@ -209,26 +236,15 @@ if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
     --agent-runtime-artifact "$ARTIFACT_JSON" \
     --role-arn "$ROLE_ARN" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
-    --metadata-configuration '{"requireMMDSV2":true}' \
     --protocol-configuration '{"serverProtocol":"HTTP"}' \
     --environment-variables "$ENV_VARS" \
+    --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-create" \
     --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
     --description "WatchDog BMS LINE AI orchestrator – item 10B")
   RUNTIME_ID=$(echo "$RESULT" | jq -r '.agentRuntimeId')
   echo "[agentcore-deploy] created runtime id=$RUNTIME_ID"
 else
-  echo "[agentcore-deploy] updating existing runtime id=$EXISTING_ID..."
-  RESULT=$(aws bedrock-agentcore-control update-agent-runtime \
-    --region "$REGION" \
-    --agent-runtime-id "$EXISTING_ID" \
-    --agent-runtime-artifact "$ARTIFACT_JSON" \
-    --role-arn "$ROLE_ARN" \
-    --network-configuration '{"networkMode":"PUBLIC"}' \
-    --metadata-configuration '{"requireMMDSV2":true}' \
-    --protocol-configuration '{"serverProtocol":"HTTP"}' \
-    --environment-variables "$ENV_VARS")
   RUNTIME_ID="$EXISTING_ID"
-  echo "[agentcore-deploy] updated runtime id=$RUNTIME_ID"
 fi
 [[ "$RUNTIME_ID" =~ ^[A-Za-z][A-Za-z0-9_]{0,99}-[A-Za-z0-9]{10}$ ]]
 
@@ -241,32 +257,45 @@ aws iam update-assume-role-policy \
   --role-name "$ROLE_NAME" \
   --policy-document "file://$STAGING/trust.json"
 
-# ── 6. Wait for READY status ───────────────────────────────────────────────────
-echo "[agentcore-deploy] waiting for READY status (up to 5 min)..."
-for i in $(seq 1 30); do
-  STATUS=$(aws bedrock-agentcore-control get-agent-runtime \
-    --region "$REGION" \
-    --agent-runtime-id "$RUNTIME_ID" \
-    --query 'status' --output text)
-  echo "[agentcore-deploy] status=$STATUS (attempt $i/30)"
-  if [ "$STATUS" = "READY" ]; then break; fi
-  if [ "$STATUS" = "FAILED" ]; then
-    echo "ERROR: Runtime entered FAILED status"
-    exit 1
-  fi
-  sleep 10
-done
-
-if [ "$STATUS" != "READY" ]; then
-  echo "WARN: Runtime not READY after 5 min (status=$STATUS). Check AWS console."
-  exit 1
+if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
+  # CreateAgentRuntime has no metadataConfiguration input. AWS requires MMDSv2 to be enabled through
+  # UpdateAgentRuntime before invocation, so the first create must settle before this mandatory update.
+  wait_for_runtime_ready create "$RUNTIME_ID"
 fi
+
+echo "[agentcore-deploy] applying full runtime configuration with MMDSv2..."
+RESULT=$(aws bedrock-agentcore-control update-agent-runtime \
+  --region "$REGION" \
+  --agent-runtime-id "$RUNTIME_ID" \
+  --agent-runtime-artifact "$ARTIFACT_JSON" \
+  --role-arn "$ROLE_ARN" \
+  --network-configuration '{"networkMode":"PUBLIC"}' \
+  --metadata-configuration '{"requireMMDSV2":true}' \
+  --protocol-configuration '{"serverProtocol":"HTTP"}' \
+  --environment-variables "$ENV_VARS" \
+  --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-mmdsv2")
+test "$(jq -er '.agentRuntimeId' <<< "$RESULT")" = "$RUNTIME_ID"
+wait_for_runtime_ready mmdsv2-update "$RUNTIME_ID"
+
+# Never mint a binding from intended values alone. Read the complete provider state back before the
+# endpoint or either smoke invocation can make the candidate appear usable.
+RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime \
+  --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --output json)
+RUNTIME_STATUS=$(jq -er '.status' <<< "$RUNTIME_JSON")
+jq -e \
+  --arg arn "$RUNTIME_ARN" --arg role "$ROLE_ARN" \
+  --argjson artifact "$ARTIFACT_JSON" --argjson environment "$ENV_VARS" '
+    .agentRuntimeArn == $arn and .roleArn == $role and .status == "READY"
+    and .networkConfiguration.networkMode == "PUBLIC"
+    and .protocolConfiguration.serverProtocol == "HTTP"
+    and .metadataConfiguration.requireMMDSV2 == true
+    and .agentRuntimeArtifact == $artifact
+    and .environmentVariables == $environment
+  ' <<< "$RUNTIME_JSON" >/dev/null
 
 # Every runtime update creates an immutable version. Bind this candidate to a source-specific custom
 # endpoint; DEFAULT follows latest and can silently move Production before ECS is promoted.
-RUNTIME_VERSION=$(aws bedrock-agentcore-control get-agent-runtime \
-  --region "$REGION" --agent-runtime-id "$RUNTIME_ID" \
-  --query agentRuntimeVersion --output text)
+RUNTIME_VERSION=$(jq -er '.agentRuntimeVersion' <<< "$RUNTIME_JSON")
 [[ "$RUNTIME_VERSION" =~ ^[1-9][0-9]{0,4}$ ]]
 ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}"
 if endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
@@ -355,13 +384,12 @@ smoke_invoke mutation "$MUTATION_PAYLOAD" "$STAGING/mutation-invoke.out"
 
 if [ -n "${AGENTCORE_BINDING_OUTPUT:-}" ]; then
   [ ! -e "$AGENTCORE_BINDING_OUTPUT" ]
-  env_sha=$(printf '%s' "$ENV_VARS" | jq -cS . | shasum -a 256 | awk '{print $1}')
   jq -cS -n \
     --arg environment "$DEPLOY_ENVIRONMENT" --arg source "$SOURCE_COMMIT" \
     --arg artifactSha "$actual_sha" --arg bucket "$BUCKET" --arg prefix "$DEPLOY_KEY" \
     --arg objectVersion "$S3_VERSION" --arg runtimeArn "$RUNTIME_ARN" --arg runtimeId "$RUNTIME_ID" \
     --arg runtimeVersion "$RUNTIME_VERSION" --arg endpointName "$ENDPOINT_NAME" \
-    --arg endpointArn "$ENDPOINT_ARN" --arg envSha "$env_sha" --arg roleArn "$ROLE_ARN" '
+    --arg endpointArn "$ENDPOINT_ARN" --arg envSha "$ENV_SHA" --arg roleArn "$ROLE_ARN" '
       {schemaVersion:1,environment:$environment,sourceCommit:$source,
        executionRoleArn:$roleArn,
        artifact:{sha256:$artifactSha,bucket:$bucket,prefix:$prefix,objectVersionId:$objectVersion},
@@ -384,7 +412,7 @@ echo "  Model:        $BEDROCK_MODEL_ID"
 echo "  SHA:          $GIT_SHA"
 echo "  Artifact SHA: $actual_sha"
 echo "  S3 version:   ${S3_VERSION:-not-returned}"
-echo "  Status:       $STATUS"
+echo "  Status:       $RUNTIME_STATUS"
 echo ""
 echo "Record these in docs/agent-memory/ai-runtime-production-integration.md."
 echo "Set AGENTCORE_RUNTIME_ARN=$RUNTIME_ARN and AGENTCORE_RUNTIME_QUALIFIER=$ENDPOINT_NAME in the AI Gateway task definition."
