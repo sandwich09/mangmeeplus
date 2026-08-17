@@ -224,6 +224,7 @@ jobs:
             while IFS= read -r path; do
               case "$path" in
                 docs/*|.github/workflows/ci.yml|.github/workflows/deploy-uat.yml|\
+                .github/workflows/production-readiness.yml|\
                 .github/workflows/deploy-production.yml|\
                 .github/workflows/recover-release-intent.yml|\
                 infra/ai-gateway/build-agentcore-artifact.sh|\
@@ -238,6 +239,7 @@ jobs:
                 infra/prod-ecs-express/uat-fast-rollout.spec.sh|\
                 infra/prod-ecs-express/verify-deployment.sh|\
                 infra/security/production-promotion-resources.spec.sh|\
+                infra/security/production-readiness-workflow-v2.spec.sh|\
                 infra/security/production-release-ready-v2.spec.sh|\
                 infra/security/uat-release-passport-v2.spec.sh|\
                 infra/security/validate-production-maintenance-release.sh|\
@@ -264,7 +266,13 @@ jobs:
               infra/prod-ecs-express/uat-fast-rollout.spec.sh; do
               grep -Fxq "$required" <<< "$changed_paths" || uat_rollout_bundle=false
             done
-            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true || "$uat_rollout_bundle" == true ]] \
+            readiness_controller_bundle=true
+            for required in .github/workflows/production-readiness.yml \
+              infra/security/production-readiness-workflow-v2.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || readiness_controller_bundle=false
+            done
+            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true \
+              || "$uat_rollout_bundle" == true || "$readiness_controller_bundle" == true ]] \
               || release_controller_only=false
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
@@ -345,6 +353,7 @@ jobs:
           bash infra/uat/agentcore-candidate-policy.spec.sh
           bash infra/prod-ecs-express/production-serving-mode.spec.sh
           bash infra/prod-ecs-express/uat-fast-rollout.spec.sh
+          bash infra/security/production-readiness-workflow-v2.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
           git diff --check HEAD^ HEAD
       - run: pnpm typecheck
@@ -432,7 +441,10 @@ jobs:
 
   security-audit:
     name: Security Audit
-    if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
     needs: resolve-source
     runs-on: ubuntu-latest
     steps:
@@ -514,7 +526,10 @@ jobs:
 
   config-validation:
     name: Production Config Validation
-    if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
     needs: resolve-source
     runs-on: ubuntu-latest
     steps:
@@ -531,7 +546,10 @@ jobs:
 
   migration-review:
     name: Migration Review
-    if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
     needs: resolve-source
     runs-on: ubuntu-latest
     steps:

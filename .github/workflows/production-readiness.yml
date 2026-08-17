@@ -243,7 +243,7 @@ jobs:
           unset-current-credentials: true
       - name: Stage and read back the exact Production AgentCore candidate
         env:
-          AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ env.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
+          AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
         run: |
           set -euo pipefail
           test -n "$AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF"
