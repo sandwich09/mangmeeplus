@@ -522,3 +522,20 @@ bounded release repair; no unchanged UAT retry is allowed.
   diagnostic; post-intent retirement behavior remains unchanged.
 - Live readback proves no candidate runtime was left by failed run `31983841413`, no ECS service rollout
   occurred, and the failed parent was exactly reconciled before retry.
+
+## Release repair — AgentCore runtime/endpoint tags
+
+- [x] Record the primary failure from UAT run `31987845249`: AWS denied
+      `bedrock-agentcore:TagResource` during tagged `CreateAgentRuntime`; do not treat the following
+      missing-rollout cleanup diagnostic as the primary cause.
+- [x] Add `TagResource` to the reviewed UAT and Production AgentCore candidate policy statements;
+      retain the release provenance tags on runtime and endpoint creation.
+- [x] Extend the executable policy contract to require the complete tagging authorization in both
+      environments so UAT cannot pass with a Production-only latent failure.
+- [ ] Promote the policy contract through exact-head CI and reviewed `develop`/`main` merges.
+- [ ] Run the scoped `--apply-uat-runtime` ceremony and exact-read the live UAT policy.
+- [ ] Confirm the failed release task is stopped, recover parent
+      `2f1da83a-71ec-4202-83c4-3c43d709a5d2` once through `PRE_INTENT`, and require terminal
+      reconciliation before dispatch.
+- [ ] Dispatch one UAT `all` retry only; complete passport, persisted-state and real-conversation
+      evidence before conditional READY/Production.
