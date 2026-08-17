@@ -340,6 +340,10 @@ Secrets Manager ผ่าน stdin/in-memory เท่านั้น และ�
   `recover-release-intent.yml` เท่านั้น: exact checkpoint CI ต้องสำเร็จและ skip `Typecheck and Test`,
   proof SHA ต้องเป็น ancestor และ Git diff ของ `apps/api/prisma` พร้อม package/lock/workspace/tsconfig
   inputs ต้องว่างทุก byte. เงื่อนไขใดไม่ตรงให้ fail closed; ข้อยกเว้นนี้ใช้กับ Production ไม่ได้.
+- ถ้า target=`all` fail ก่อนบาง service สร้าง intent ให้ recover exact intent ที่มีอยู่ทุกตัวก่อน.
+  Parent terminalize เป็น `FAILED_CONFIRMED` ได้เมื่อไม่มี OPEN/cleanup ค้าง, ทุก intent ที่มีถูก revalidate
+  จาก platform+SSM สองรอบและมี `recovererControllerJson`, และ service ที่ขาดไม่มี intent เลย เพราะ
+  `deploy.sh` บันทึก intent ก่อน ECS mutation เสมอ. ห้ามใช้ binder-BOUND อย่างเดียวเป็น recovery proof.
 - `BOOTSTRAP_CLOSED` ใช้ได้เฉพาะ failed Production V2 ที่ไม่มี api-web intent และมี exact failed-run
   artifact. แบบเดิมรองรับ zero intents; แบบ partial-closed รองรับเฉพาะ non-api intents ที่ทุกตัวเป็น
   `BOUND`, ไม่มี cleanup ค้าง และ evidence ตรงกับ append-only rollout history ใน artifact ทุก byte.

@@ -591,13 +591,89 @@ describe('durable remote release operation (real PostgreSQL)', () => {
       targetEnvironment: 'uat',
       recovererTaskArn: TASK_B,
       controller: GITHUB_CONTROLLER,
-    }), false, 'an all-target parent cannot terminalize while AI/workers have no intent or orphan evidence');
+    }), false, 'missing all-target intents cannot terminalize before every existing intent has exact recovery proof');
     await first.query(`
       UPDATE "RemoteReleaseOperation"
          SET "status" = 'RECONCILED_FAILED_CONFIRMED', "completedAt" = CURRENT_TIMESTAMP
        WHERE "id" = $1 AND "status" = 'UNKNOWN'
     `, [cancelledId]);
     await releaseRemoteWriterFence(first);
+  });
+
+  it('terminalizes partial all-target coverage only after exact revalidation of every existing intent', async (t) => {
+    if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
+    const releaseId = randomUUID();
+    const intentId = randomUUID();
+    const incoming = activeConfiguration(REVISION, SHA_A);
+    const evidence = {
+      service: 'api-web', serviceArn: SERVICE, deploymentArn: DEPLOYMENT,
+      targetRevisionArn: REVISION, sourceSha: SHA_A, noOp: false,
+    } as const;
+    await beginRemoteReleaseOperation(first, {
+      ...operation(releaseId, TASK_A), mode: 'release', releaseDeployTarget: 'all',
+    });
+    await holdRemoteReleaseOperation(first, releaseId, TASK_A);
+    await prepareRemoteReleaseMutationIntent(first, {
+      operationId: releaseId, targetEnvironment: 'uat', buildReleaseId: SHA_A,
+      preparerTaskArn: TASK_B, controller: GITHUB_CONTROLLER,
+      intent: { ...intent(intentId, 'api-web', SERVICE), desiredConfigHash: configurationHash(incoming) },
+    });
+    await bindRemoteReleaseDeployment(first, {
+      id: releaseId, targetEnvironment: 'uat', buildReleaseId: SHA_A,
+      binderTaskArn: TASK_B, controller: GITHUB_CONTROLLER, intentId, evidence,
+    });
+    await first.query(`
+      UPDATE "RemoteReleaseOperation"
+         SET "status" = 'UNKNOWN', "unknownAt" = CURRENT_TIMESTAMP,
+             "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
+       WHERE "id" = $1
+    `, [releaseId]);
+    assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
+      operationId: releaseId, targetEnvironment: 'uat', recovererTaskArn: TASK_C,
+      controller: GITHUB_CONTROLLER,
+    }), false, 'a binder-BOUND row alone is not exact recovery evidence');
+
+    const requestStartedAt = (await first.query<{ requestStartedAt: Date }>(`
+      SELECT "requestStartedAt" FROM "RemoteReleaseMutationIntent" WHERE "id" = $1
+    `, [intentId])).rows[0]!.requestStartedAt;
+    const deployments = { serviceDeployments: [{
+      ...recoveryDeployment(SERVICE, REVISION),
+      createdAt: new Date(requestStartedAt.getTime() + 1_000).toISOString(),
+    }] };
+    const recovered = await recoverRemoteReleaseMutationIntent(first, {
+      operationId: releaseId, intentId, targetEnvironment: 'uat', buildReleaseId: SHA_A,
+      recoveryExecutorBuildReleaseId: SHA_B,
+      recoveryExecutorImage: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:${'f'.repeat(64)}`,
+      recoveryValidatedCiRunId: '987654', recovererTaskArn: TASK_C,
+      controller: GITHUB_CONTROLLER, region: 'ap-southeast-1', networkEvidence: null,
+      observedSsmServiceArn: SERVICE, expectedServiceArn: SERVICE,
+      ssmParameterName: '/watchdog-bms/uat/ecs-express-api-web-service-arn',
+      readPlatform: async () => ({
+        deployments,
+        service: recoveryService(SERVICE, incoming, DEPLOYMENT),
+      }),
+      readSsmServiceArn: async () => SERVICE,
+      ensureSsmIdentity: async () => undefined,
+    });
+    assert.equal(recovered.replay, true);
+    assert.deepEqual((await first.query(`
+      SELECT "recovererControllerJson" FROM "RemoteReleaseMutationIntent" WHERE "id" = $1
+    `, [intentId])).rows[0].recovererControllerJson, GITHUB_CONTROLLER);
+    assert.equal((await first.query(`
+      SELECT count(*)::int AS count FROM "AuditLog"
+       WHERE "action" = 'system.release_operation.revalidate_remote_mutation' AND "targetId" = $1
+    `, [intentId])).rows[0].count, 1);
+    assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
+      operationId: releaseId, targetEnvironment: 'uat', recovererTaskArn: TASK_C,
+      controller: GITHUB_CONTROLLER,
+    }), true);
+    const parent = (await first.query(`
+      SELECT "status", "reconciliationEvidenceRef", "outcomeReason"
+        FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0];
+    assert.equal(parent.status, 'RECONCILED_FAILED_CONFIRMED');
+    assert.equal(parent.reconciliationEvidenceRef, `RemoteReleasePartialIntentRecovery:${releaseId}`);
+    assert.match(parent.outcomeReason, /partial all-target exact-intent recovery/);
   });
 
   it('reclaims an unexpired rollout hold only for its exact stopped parent task', async (t) => {
