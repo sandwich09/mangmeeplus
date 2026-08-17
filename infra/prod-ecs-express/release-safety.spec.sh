@@ -276,7 +276,9 @@ test "$(grep -c 'ecs list-service-deployments' "$repo_root/infra/prod-ecs-expres
 wait_reset
 wait_service_state "[\"$wait_old\",\"$wait_target\"]" > "${FAKE_WAIT_SERVICE_PREFIX}-default.json"
 assert_exit 1 'waiter persistent dual-active state' wait_run
-test "$(grep -c 'describe-service-deployments' "$FAKE_WAIT_CALL_LOG")" -eq 3
+# The ceiling is still WAIT_POLL_ATTEMPTS x 20s = 60s; inside it the waiter now polls every 5s
+# (infra/prod-ecs-express/prod-rollout-config.spec.sh pins the whole schedule).
+test "$(grep -c 'describe-service-deployments' "$FAKE_WAIT_CALL_LOG")" -eq 12
 
 for invalid_attempts in 0 00 invalid; do
   wait_reset

@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+# State transitions cluster at rollout start and end; the long middle is bake and drain. Poll fast
+# through the first two minutes, then back off. Pure on purpose so the schedule is checkable without
+# waiting for it.
+deployment_poll_delay() {
+  if [ "$1" -lt 120 ]; then printf 5; else printf 15; fi
+}
+
 # Source-only helper. The caller provides aws_cmd, service_url, AWS_BIN and REGION.
 wait_for_service_url() {
   local arn="$1"
@@ -17,7 +24,10 @@ wait_for_service_url() {
       return 2
       ;;
   esac
-  for _ in $(seq 1 "$poll_attempts"); do
+  # Elapsed is the accumulated poll budget, not wall clock, so the ceiling stays exactly
+  # DEPLOYMENT_POLL_ATTEMPTS x 20 seconds however slow the AWS reads are.
+  local elapsed=0 poll_delay
+  while [ "$elapsed" -lt "$((poll_attempts * 20))" ]; do
     local status deployment_status deployment
     if ! status="$(aws_cmd ecs describe-express-gateway-service --service-arn "$arn" --query 'service.status.statusCode' --output text --region "$REGION")"; then
       echo "ERROR: cannot read ECS Express service status; AWS credentials may have expired" >&2
@@ -182,7 +192,9 @@ wait_for_service_url() {
       aws_cmd ecs describe-express-gateway-service --service-arn "$arn" \
         --query 'service.activeConfigurations[0].ingressPaths' --output json --region "$REGION" >&2 || true
     fi
-    sleep 20
+    poll_delay="$(deployment_poll_delay "$elapsed")"
+    sleep "$poll_delay"
+    elapsed=$((elapsed + poll_delay))
   done
   echo "ERROR: ECS Express service did not become a stable ACTIVE singleton with a ${access_type} URL: $arn" >&2
   exit 1
