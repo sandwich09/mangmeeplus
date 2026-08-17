@@ -6,6 +6,8 @@ agentcore="$repo_root/infra/ai-gateway/agentcore-deploy.sh"
 ecs="$repo_root/infra/prod-ecs-express/deploy.sh"
 template="$repo_root/infra/ai-gateway/task-definition.template.json"
 trust="$repo_root/infra/ai-gateway/agentcore-execution-role-trust.template.json"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/agentcore-role-propagation.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 bash -n "$agentcore"
 bash -n "$ecs"
@@ -20,7 +22,7 @@ jq -e '.Statement==[{Effect:"Allow",Principal:{Service:"bedrock-agentcore.amazon
     ArnLike:{"aws:SourceArn":"<AGENTCORE_RUNTIME_ARN>"}}}]' "$trust" >/dev/null
 grep -Fq 'agentcore-execution-role-trust.template.json' "$agentcore"
 grep -Fq 's|<AGENTCORE_RUNTIME_ARN>|$RUNTIME_ARN|g' "$agentcore"
-create_block="$(sed -n '/RESULT=$(aws bedrock-agentcore-control create-agent-runtime/,/--description .*item 10B/p' "$agentcore")"
+create_block="$(sed -n '/^create_agent_runtime_with_role_retry()/,/^}/p' "$agentcore")"
 update_block="$(sed -n '/RESULT=$(aws bedrock-agentcore-control update-agent-runtime/,/--client-token .*mmdsv2/p' "$agentcore")"
 if grep -Fq -- '--metadata-configuration' <<< "$create_block"; then
   echo 'CreateAgentRuntime has no metadataConfiguration input; MMDSv2 belongs on the settled update' >&2
@@ -31,7 +33,7 @@ grep -Fq -- "--metadata-configuration '{\"requireMMDSV2\":true}'" <<< "$update_b
 grep -Fq -- '--client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-mmdsv2"' <<< "$update_block"
 grep -Fq 'CREATE_FAILED|UPDATE_FAILED|FAILED)' "$agentcore"
 grep -Fq '.metadataConfiguration.requireMMDSV2 == true' "$agentcore"
-create_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control create-agent-runtime' "$agentcore" | cut -d: -f1)"
+create_line="$(grep -n 'RESULT="$(create_agent_runtime_with_role_retry)"' "$agentcore" | cut -d: -f1)"
 create_ready_line="$(grep -n 'wait_for_runtime_ready create ' "$agentcore" | cut -d: -f1)"
 update_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control update-agent-runtime' "$agentcore" | cut -d: -f1)"
 update_ready_line="$(grep -n 'wait_for_runtime_ready mmdsv2-update ' "$agentcore" | cut -d: -f1)"
@@ -44,6 +46,27 @@ test "$update_line" -lt "$update_ready_line"
 test "$update_ready_line" -lt "$readback_line"
 test "$readback_line" -lt "$endpoint_line"
 test "$endpoint_line" -lt "$smoke_line"
+printf '%s\n' "$create_block" > "$tmp_dir/create-runtime.sh"
+(
+  set -euo pipefail
+  STAGING="$tmp_dir/staging"; mkdir "$STAGING"
+  REGION=ap-southeast-1 RUNTIME_NAME=watchdog_orchestrator_production_candidate
+  ARTIFACT_JSON='{}' ROLE_ARN=arn:aws:iam::311414082667:role/candidate ENV_VARS='{}'
+  DEPLOY_ENVIRONMENT=production SOURCE_COMMIT="$(printf 'a%.0s' {1..40})"
+  actual_sha="$(printf 'b%.0s' {1..64})" ENV_SHA="$(printf 'c%.0s' {1..64})"
+  AGENTCORE_IAM_PROPAGATION_ATTEMPTS=2 AGENTCORE_IAM_PROPAGATION_RETRY_SECONDS=0
+  aws() {
+    local count=0
+    [ ! -f "$tmp_dir/attempts" ] || count="$(cat "$tmp_dir/attempts")"
+    count=$((count + 1)); printf '%s' "$count" > "$tmp_dir/attempts"
+    if [ "$count" -eq 1 ]; then echo 'Role validation failed' >&2; return 254; fi
+    printf '%s' '{"agentRuntimeId":"runtime-AbCdEf1234"}'
+  }
+  source "$tmp_dir/create-runtime.sh"
+  result="$(create_agent_runtime_with_role_retry)"
+  test "$result" = '{"agentRuntimeId":"runtime-AbCdEf1234"}'
+  test "$(cat "$tmp_dir/attempts")" = 2
+)
 grep -Fq 'refusing a mutable runtime reference' "$agentcore"
 grep -Fq '"versionId": "${S3_VERSION}"' "$agentcore"
 grep -Fq -- "--if-none-match '*'" "$agentcore"

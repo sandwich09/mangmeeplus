@@ -25,6 +25,21 @@ Artifacts:
   READY. The absent Production candidate execution role is expected first-stage state: the scoped
   deploy policy and `agentcore-deploy.sh` create it, then replace its name-bound wildcard trust with
   the exact runtime ARN before the runtime is accepted.
+- The owner-approved prerequisite ceremony exact-applied and read back the Production deploy policy,
+  including both endpoint actions, under the non-root `thawatchai` principal. It left the one-time A5
+  reader bootstrap controller intentionally armed; after the next signed UAT Passport, run
+  `production-a5-reader-bootstrap.yml` once and prove it self-revokes before issuing the live READY.
+- The first real Production AgentCore stage exposed an AWS IAM propagation boundary: immediately after
+  creating the candidate execution role, `CreateAgentRuntime` returned `Role validation failed`. The
+  controller now retries only that provider error with a bounded 12 x 5-second policy and fails every
+  other error immediately. The focused shell fixture proves one transient failure followed by exactly
+  one successful retry.
+- A real replay with the patched controller then created Production runtime
+  `watchdog_orchestrator_production_candidate-FWHp0D4V34` and endpoint
+  `candidate_production_30718c34a566`; both reached `READY`. Hosted safe-read and mutation-refusal
+  smokes returned HTTP 200 with exact source `30718c34a5668ac0d942567260b55d2db32b4609` and artifact
+  `ef0c34be5fbf464e8487706dde22414dbc7fdafdf1bd92777b771260d1d6a6c4`. The readiness workflow can
+  therefore reuse the exact staged identity rather than cross the new-role propagation window again.
 - Failed UAT runs: `32004507684`, `32007029995`, `32007856084`, `32009924946`.
 - UAT `32009924946` deployed api-web/workers but failed before the ai-gateway intent because `deploy.sh` compared the 40-character AgentCore expected source with the 12-character ECS label. Parent operation `ffb80c83-401f-4995-a7a0-871e82bd9ee9` is being closed by exact PRE_INTENT recovery run `32011940733` using stopped parent task `arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/76a7a21e421046c68754631f54f35a7d`.
 - Root fix merged as `a877cfe61534b110c3c2b35c3fbca26005b55a71`. Recovery run `32011940733` made no AWS mutation because its executor was older than the held release. UAT recovery may reuse exact successful PostgreSQL CI `32002605508` only while Git proves all recovery executable, test and dependency inputs are byte-identical to `33266c1220b3a71cfae86cbd3aeb5b0ad6607118`; Production remains strict.
@@ -83,12 +98,14 @@ Verification:
   policy actions, endpoint selection fixture, AgentCore-before-release ordering and pre-parent cleanup.
 - The complete non-TypeScript production image security aggregate passes after the lifecycle repair;
   workflow YAML parses, maintenance pins remain current and `git diff --check` passes.
+- `bash -n infra/ai-gateway/agentcore-deploy.sh`, `bash infra/ai-gateway/h15-trust-boundary.spec.sh`
+  and `bash infra/uat/agentcore-candidate-policy.spec.sh` pass for the bounded IAM propagation repair;
+  the real Production stage is the provider-side proof of that path.
 - Live read-only proof exact-hashed S3 object version `cFg.n5jIOA8DKy9rOQNzqen_ihB93W59` to
   `762f9e79f030edd444d22f30e0133831fd16b8018cda9046c99f68de96e8dbbd`, equal to runtime v4/source
   `c64e091...`; active ECS protects zero endpoints and the reviewed selector identifies exactly the two
   stale UAT candidate endpoints.
 Next:
-- Finish the atomic S3 conditional-write and token-free endpoint-lifecycle controller repair as one
-  reviewed no-TypeScript batch. Exact-read the already READY manual AgentCore state, retry UAT once,
-  then continue signed READY, Production promotion, live parity/conversation verification and customer
-  `OPEN` without redispatching a terminal stage merely to discover its next error.
+- Merge the bounded IAM propagation controller fix without re-running unchanged application TypeScript,
+  dispatch UAT once, run the armed one-time A5 bootstrap, issue signed live READY, promote the exact UAT
+  digests to Production, complete durable customer `OPEN`, then run live parity/conversation verification.
