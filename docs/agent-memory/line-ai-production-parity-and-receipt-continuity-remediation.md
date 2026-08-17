@@ -497,3 +497,27 @@ Verification:
 - `bash infra/docker/production-image-security.spec.sh` — PASS, including 26/26 final migration and
   READY authority tests.
 - Both policy templates parse with `jq`; `git diff --check` passes.
+
+## Release continuation — AgentCore workload-identity authorization
+
+Status: primary failure isolated; exact recovery complete; repository repair verified locally.
+
+- UAT run `31993914163` passed exact UAT preflight, published immutable artifacts and completed the
+  release task with held parent `4e1df918-72fd-46b1-a315-33c7899a4b0d`. AWS then denied
+  `bedrock-agentcore:CreateWorkloadIdentity` during first `CreateAgentRuntime`; no ECS rollout began.
+- Live readback proved release task `0c14a694d49e45ec95382dc5b77663bc` is STOPPED, no matching runtime
+  or workload identity exists, and `AWSServiceRoleForBedrockAgentCoreRuntimeIdentity` already exists.
+- AWS documents that Runtime automatically creates a workload identity. The repair adds only that
+  action to both UAT and Production candidate policy statements and extends their shared executable
+  contract; it does not attach broad managed access or grant workload token APIs.
+- Exact `PRE_INTENT` recovery run `31994699200` completed once with the stopped parent-task proof and
+  terminalized the held parent. No UAT retry is allowed until exact-head CI/merge, scoped ceremony and
+  live readback pass.
+
+Verification:
+
+- `bash infra/uat/agentcore-candidate-policy.spec.sh` — PASS for both UAT and Production.
+- `bash infra/security/production-promotion-bootstrap.spec.sh` — PASS.
+- `bash infra/docker/production-image-security.spec.sh` — PASS, including 26/26 final migration and
+  READY authority tests.
+- Both policies parse with `jq`; `git diff --check` passes.
