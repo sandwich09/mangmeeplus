@@ -241,12 +241,9 @@ jq -e --arg arn "$agentcore_runtime_arn" --arg id "$agentcore_runtime_id" \
   and .environmentVariables.GIT_SHA==$source
   and .environmentVariables.AGENTCORE_ARTIFACT_SHA256==$artifactSha' \
   "$work/agentcore-runtime.json" >/dev/null
-jq -e --arg arn "$agentcore_runtime_arn" --arg name "$agentcore_endpoint_name" \
-  --arg version "$agentcore_runtime_version" '
-  .agentRuntimeArn==$arn and .name==$name and .status=="READY"
-  and .targetVersion==$version and .liveVersion==$version
-  and .agentRuntimeEndpointArn==($arn+"/runtime-endpoint/"+$name)
-' "$work/agentcore-endpoint.json" >/dev/null
+bash infra/ai-gateway/validate-agentcore-endpoint-readback.sh \
+  "$work/agentcore-endpoint.json" "$agentcore_runtime_arn" "$agentcore_endpoint_name" \
+  "$agentcore_runtime_version" ready
 
 if command -v sha256sum >/dev/null 2>&1; then
   lifecycle_sha="$(sha256sum "$work/lifecycle.json" | awk '{print $1}')"

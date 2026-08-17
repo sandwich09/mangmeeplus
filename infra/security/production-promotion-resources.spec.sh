@@ -201,7 +201,8 @@ for exact in '.Engine=="postgres" and .EngineVersion=="18.3"' \
   '.metadataConfiguration.requireMMDSV2==true' \
   '.environmentVariables.DEPLOY_ENVIRONMENT=="production"' \
   '.environmentVariables.AGENTCORE_ARTIFACT_SHA256==$artifactSha' \
-  '.roleArn==$role' 'entryPoint==["runtime.js"]' '.targetVersion==$version'; do
+  '.roleArn==$role' 'entryPoint==["runtime.js"]' \
+  'validate-agentcore-endpoint-readback.sh'; do
   grep -F "$exact" "$collector" >/dev/null
 done
 jq -nS -L "$root/infra/security" 'include "evidence-contracts"; e0_h3_inline_policy' \

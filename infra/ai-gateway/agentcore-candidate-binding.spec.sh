@@ -58,4 +58,35 @@ if bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
   echo 'ERROR: binding validator accepted the known ECS/AgentCore split-source pair' >&2
   exit 1
 fi
+
+runtime_arn='arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234'
+endpoint_name='candidate_uat_aaaaaaaaaaaa'
+endpoint_arn="$runtime_arn/runtime-endpoint/$endpoint_name"
+endpoint_validator="$root/infra/ai-gateway/validate-agentcore-endpoint-readback.sh"
+jq -cnS --arg arn "$runtime_arn" --arg endpointArn "$endpoint_arn" --arg name "$endpoint_name" \
+  '{agentRuntimeArn:$arn,agentRuntimeEndpointArn:$endpointArn,name:$name,status:"READY",liveVersion:"7"}' \
+  > "$work/endpoint-ready.json"
+bash "$endpoint_validator" "$work/endpoint-ready.json" "$runtime_arn" "$endpoint_name" 7 intended
+bash "$endpoint_validator" "$work/endpoint-ready.json" "$runtime_arn" "$endpoint_name" 7 ready
+
+jq '.status="UPDATING"|.targetVersion="7"|.liveVersion="6"' "$work/endpoint-ready.json" \
+  > "$work/endpoint-updating.json"
+bash "$endpoint_validator" "$work/endpoint-updating.json" "$runtime_arn" "$endpoint_name" 7 intended
+if bash "$endpoint_validator" "$work/endpoint-updating.json" \
+    "$runtime_arn" "$endpoint_name" 7 ready >/dev/null 2>&1; then
+  echo 'ERROR: endpoint validator accepted an unsettled endpoint as READY' >&2; exit 1
+fi
+
+reject_endpoint() {
+  jq "$2" "$work/endpoint-ready.json" > "$work/endpoint-$1.json"
+  if bash "$endpoint_validator" "$work/endpoint-$1.json" \
+      "$runtime_arn" "$endpoint_name" 7 "$3" >/dev/null 2>&1; then
+    echo "ERROR: endpoint validator accepted $1" >&2; exit 1
+  fi
+}
+reject_endpoint wrong-live-version '.liveVersion="8"' ready
+reject_endpoint conflicting-settled-target '.targetVersion="8"' ready
+reject_endpoint conflicting-intended-target '.targetVersion="8"' intended
+reject_endpoint wrong-endpoint-arn '.agentRuntimeEndpointArn="arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/other/runtime-endpoint/other"' ready
+
 echo 'AgentCore candidate binding specs passed'
