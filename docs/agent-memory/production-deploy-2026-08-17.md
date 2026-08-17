@@ -10,6 +10,21 @@ Decisions:
 Open questions:
 - None for the current UAT dispatch. Customer `OPEN` and deferred concurrency remain post-promotion state transitions.
 Artifacts:
+- UAT `32023560885` deployed exact candidate `30718c34a5668ac0d942567260b55d2db32b4609`
+  successfully to all three ECS Express services and passed both hosted AgentCore smokes. The run
+  failed only because `verify-deployment.sh` compared the signed AgentCore source to `commit` before
+  assigning `commit` (`line 64: commit: unbound variable`). The durable parent
+  `9d6fb59a-75fd-451b-9c4f-3f41912768d9` was reconciled to `FAILED_CONFIRMED` by the workflow.
+- Manual read-only replay of the patched verifier against live UAT passed exact image/source,
+  serving-mode and public health for api-web, ai-gateway and workers. Secret-safe deep readiness also
+  returned `{service:"api",status:"ok",db:"ok"}`. Production uses the same verifier, so the fix and
+  maintenance pins cover both UAT and Production callers.
+- Looking-forward Production readback found one prerequisite drift before READY: the live Production
+  deploy role lacks only `UpdateAgentRuntimeEndpoint` and `DeleteAgentRuntimeEndpoint` from the
+  reviewed template. The already-approved full prerequisite ceremony will exact-apply this before
+  READY. The absent Production candidate execution role is expected first-stage state: the scoped
+  deploy policy and `agentcore-deploy.sh` create it, then replace its name-bound wildcard trust with
+  the exact runtime ARN before the runtime is accepted.
 - Failed UAT runs: `32004507684`, `32007029995`, `32007856084`, `32009924946`.
 - UAT `32009924946` deployed api-web/workers but failed before the ai-gateway intent because `deploy.sh` compared the 40-character AgentCore expected source with the 12-character ECS label. Parent operation `ffb80c83-401f-4995-a7a0-871e82bd9ee9` is being closed by exact PRE_INTENT recovery run `32011940733` using stopped parent task `arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/76a7a21e421046c68754631f54f35a7d`.
 - Root fix merged as `a877cfe61534b110c3c2b35c3fbca26005b55a71`. Recovery run `32011940733` made no AWS mutation because its executor was older than the held release. UAT recovery may reuse exact successful PostgreSQL CI `32002605508` only while Git proves all recovery executable, test and dependency inputs are byte-identical to `33266c1220b3a71cfae86cbd3aeb5b0ad6607118`; Production remains strict.
@@ -53,6 +68,10 @@ Artifacts:
   application TypeScript skipped while all non-application gates remain enabled.
   No DB parent or ECS rollout was created by the failed run.
 Verification:
+- `bash infra/prod-ecs-express/production-serving-mode.spec.sh` passes with an ordering assertion that
+  prevents AgentCore source comparison before manifest/source resolution.
+- Patched `verify-deployment.sh` passes against the three live UAT services at candidate `30718c...`;
+  UAT deep database readiness passes separately without exposing the worker token.
 - `bash infra/docker/ecr-scan-blocking-findings.spec.sh` passes.
 - `bash infra/security/production-security-preflight.spec.sh` passes, including accepted exact waiver and rejected forged waiver.
 - Live AWS scan JSON for api-web runnable digest is fully covered (1 raw HIGH, 1 exact waiver, 0 blocking); `infra/docker/verify-ecr-scan.sh` passes that digest.
