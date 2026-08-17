@@ -110,8 +110,20 @@ done
 counts="$(jq -c '.imageScanFindings.findingSeverityCounts // {}' <<<"$scan_json")"
 critical="$(jq -r '.CRITICAL // 0' <<<"$counts")"
 high="$(jq -r '.HIGH // 0' <<<"$counts")"
-if [ "$critical" -gt 0 ] || [ "$high" -gt 0 ]; then
-  echo "ERROR: ECR scan gate rejected $repository@$release_digest (scanned=$digest critical=$critical high=$high)" >&2
+policy_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ecr-scan-blocking-findings.jq"
+policy_result="$(jq -ce -f "$policy_file" <<<"$scan_json")"
+jq -e '.coverageComplete == true' <<<"$policy_result" >/dev/null || {
+  echo "ERROR: ECR scan finding details do not cover the provider HIGH/CRITICAL counts" >&2
+  exit 1
+}
+blocking="$(jq -r '.blocking|length' <<<"$policy_result")"
+if [ "$blocking" -gt 0 ]; then
+  jq -c '.blocking[]' <<<"$policy_result" >&2
+  echo "ERROR: ECR scan gate rejected $repository@$release_digest (scanned=$digest critical=$critical high=$high blocking=$blocking)" >&2
   exit 1
 fi
-echo "ECR scan gate passed: $repository@$release_digest (scanned=$digest)"
+waived="$(jq -r '.waivers|length' <<<"$policy_result")"
+if [ "$waived" -gt 0 ]; then
+  jq -c '.waivers[]' <<<"$policy_result" >&2
+fi
+echo "ECR scan gate passed: $repository@$release_digest (scanned=$digest critical=$critical high=$high waived=$waived)"

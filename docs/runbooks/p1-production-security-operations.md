@@ -63,3 +63,25 @@ generates SBOM and max-mode provenance, and rejects final ECR artifacts with
 Critical or High findings. Any exception must name the exact digest/CVE,
 reachability evidence, compensating control, approver, and expiry; it must not
 silently lower the gate.
+
+### Temporary ECR mapping exception: CVE-2026-14456
+
+Until `2026-08-25T00:00:00Z`, release scanning may waive only the exact AWS ECR
+finding `CVE-2026-14456`, severity `HIGH`, source package `openssl`, version
+`3.0.20-1~deb12u2`, when the provider description contains its own statement that
+the issue is present since OpenSSL 3.5 when QUIC server support was added. The
+scanned 3.0.20 package predates that implementation; this is provider reachability
+evidence, not a general CVE bypass. Initial observations were runnable digests
+`sha256:f9b5cf18a53487487e823a7e1e443359e0a7eaef4c953e26f1f2bdc970ecfc63`
+and `sha256:b89651b3b19cbc00a3bd9bf1ddfb545bf04a1db198f6d9d29f0f6d3b8fb56dc7`.
+
+`infra/docker/ecr-scan-blocking-findings.jq` is the compensating control. It
+requires the exact CVE, severity, package, version and provider statement, binds
+each emitted waiver to the exact scanned digest, records owner approval
+`CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS` and expiry `1787616000`, and
+fails closed when detailed findings do not cover the provider's aggregate
+HIGH/CRITICAL count. Every other HIGH/CRITICAL finding remains blocking. The
+Production Security Preflight retains the raw provider counts and embeds the
+digest-bound waiver in signed evidence. Delete the exception when AWS corrects
+the mapping or before extending the expiry; an extension requires new evidence
+and explicit approval.

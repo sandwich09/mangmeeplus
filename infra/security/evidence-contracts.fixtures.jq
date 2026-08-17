@@ -339,7 +339,7 @@ def e0_fixture_h3_migration_tool_verification($source):
        issuer:$tool.signature.issuer,outputSha256:e0_fixture_hash},
      scan:{requestedDigest:$tool.digest,resolvedDigest:$tool.registryBinding.runnableDigest,
        status:"COMPLETE",providerStatus:"COMPLETE",providerDescription:"fixture",
-       enhancedFindingsArray:true,severityCounts:{LOW:1},critical:0,high:0,
+       enhancedFindingsArray:true,severityCounts:{LOW:1},waivers:[],critical:0,high:0,
        imagePushedAtEpoch:1699999000,scanCompletedAtEpoch:1699999500}};
 
 def e0_fixture_reimbursement_compatibility: {
@@ -573,7 +573,7 @@ def e0_fixture_h3_service($service; $source):
     scanRequestedDigest:("sha256:" + e0_fixture_hash),scanResolvedDigest:("sha256:" + e0_fixture_hash),
     scanStatus:"COMPLETE",scanProviderStatus:"COMPLETE",
     scanProviderDescription:"The scan was completed successfully.",scanEnhancedFindingsArray:false,
-    scanSeverityCounts:{},critical:0,high:0,imagePushedAtEpoch:1000,scanCompletedAtEpoch:1001};
+    scanSeverityCounts:{},scanWaivers:[],critical:0,high:0,imagePushedAtEpoch:1000,scanCompletedAtEpoch:1001};
 
 def e0_fixture_h3_runtime($source):
   (e0_fixture_h3_service("api-web";$source)) as $api
