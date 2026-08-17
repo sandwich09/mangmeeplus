@@ -157,6 +157,7 @@
       "Effect": "Allow",
       "Action": [
         "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:CreateWorkloadIdentity",
         "bedrock-agentcore:UpdateAgentRuntime",
         "bedrock-agentcore:GetAgentRuntime",
         "bedrock-agentcore:ListAgentRuntimes",
