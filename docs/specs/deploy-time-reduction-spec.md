@@ -142,16 +142,22 @@ Evidence basis:
   `services-stable` convergence wait.
 - MEASURED: bake is the only difference between UAT's 476s wave and
   production's ~13m/wave (see §1.3).
-- VERIFY-FIRST (blocking, done at phase-1 implementation): read back the live
-  values for the three production services
-  (`aws ecs describe-services --cluster watchdog-bms-prod --services …`,
-  field `deploymentConfiguration`; counts in the same output are unreliable for
-  Express Mode per `docs/runbooks/cloud-environment-operations.md` §2) and the
-  `RollbackAlarm` metric/period
-  (`aws cloudwatch describe-alarms --alarm-names "watchdog-bms-prod/<svc>/RollbackAlarm"`).
-  If the alarm's evaluation window exceeds the retained 3-minute live bake,
-  surface to owner before merging (a bake shorter than the alarm window is
-  silently equivalent to 0).
+- MEASURED (live read-back 2026-08-17, read-only, profile `watchdog-bedrock`):
+  all three production services report `strategy=CANARY`, `canaryPercent=5`,
+  `canaryBakeTimeInMinutes=3`, `bakeTimeInMinutes=3`, alarms
+  `rollback:true,enable:true`, circuit breaker
+  `enable:true,rollback:true,resetOnHealthyTask:true,BOUNDED_PERCENT 50`,
+  `rolloutState=COMPLETED`. Each `RollbackAlarm` is an ELB target-group
+  error-rate expression (4XX+5XX vs RequestCountPerTarget), `Period=60`,
+  `EvaluationPeriods=3`, `DatapointsToAlarm=2`, `threshold >1`,
+  `TreatMissingData=notBreaching`. Consequences: (a) the alarm needs ≥2
+  breaching one-minute datapoints, so 3 minutes is the MINIMUM meaningful bake
+  — the retained live post-shift value must not go lower; (b) the alarm reads
+  whole-target-group metrics and stays armed through the post-shift bake, so
+  zeroing the canary bake removes no detection the alarm could actually
+  deliver during a 5% window; (c) `notBreaching` on missing data means
+  zero-traffic maintenance windows cannot false-fire, confirming
+  maintenance-mode bake=0 is safe.
 
 Expected effect: closed promotes lose ~12m of fixed bake; live promotes lose
 ~6m (the two canary bakes) and keep 2×3m post-shift.

@@ -15,9 +15,8 @@ Decisions:
 - Live post-shift bake (3m) is retained in phase 1; only canary bakes and
   maintenance-mode bakes go to 0. Owner may revisit with traffic growth.
 Open questions:
-- Live production bake values + RollbackAlarm period read-back (phase-1 step 1)
-  — blocking, not yet performed (no local AWS credentials; use read-only path
-  when GitHub/AWS access available).
+- None blocking phase 1. Phase-2 Fargate fence/retire latency split still to be
+  measured from run logs (plan §2 step 1).
 Artifacts:
 - Evidence run set: UAT `31901904745` (22m, step table), UAT `31816168613`
   (32m full-CI), READY `31903027707` (6m), prod live `31903336753` (38m, step
@@ -26,6 +25,12 @@ Artifacts:
 Verification:
 - Spec §1 tables derived from GitHub Actions job/step timestamps via `gh api`
   on 2026-08-17.
+- Phase-1 read-back evidence (2026-08-17, read-only, `watchdog-bedrock`):
+  prod ×3 services `CANARY canaryPct=5 canaryBake=3 bake=3`, alarms+circuit
+  breaker enabled, rollout COMPLETED. RollbackAlarm: ELB target-group
+  error-rate, Period=60, EvaluationPeriods=3, DatapointsToAlarm=2,
+  threshold>1, TreatMissingData=notBreaching. Rollback reference for phase-1
+  revert: restore canaryBake=3, bake=3 on all three services.
 Next:
 - After stage E OPEN: phase 1 per plan §1 (read-back first), Opus 5 implements,
   Fable 5 reviews, admin merge, verify on next real promote.
