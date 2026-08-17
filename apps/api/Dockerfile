@@ -56,7 +56,8 @@ FROM system AS migration-tool
 COPY --from=build --chown=node:node /app /app
 RUN cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
   && apt-get purge -y --auto-remove fontconfig fonts-noto-core \
-  && apt-get purge -y --allow-remove-essential perl-base openssl ca-certificates \
+  && apt-get purge -y openssl ca-certificates \
+  && apt-get purge -y --allow-remove-essential perl-base \
   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
   && test -s /etc/ssl/certs/ca-certificates.crt \
   && dpkg-query -W libssl3 \
