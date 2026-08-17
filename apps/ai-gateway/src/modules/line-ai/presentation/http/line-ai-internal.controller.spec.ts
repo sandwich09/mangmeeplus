@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { LineAiInternalController } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -1194,5 +1194,16 @@ describe('receipt OCR image re-read for missing critical printed money', () => {
     } finally {
       restoreFetch();
     }
+  });
+
+  it('grants the 16mb body limit to every base64-media route and nothing else', () => {
+    for (const path of [
+      '/v1/internal/ai/receipt-ocr',
+      '/v1/internal/ai/bank-statement-extract',
+      '/v1/internal/ai/line-intake-route',
+    ]) {
+      assert.ok(BASE64_MEDIA_ROUTES.test(path), `${path} must accept base64 media payloads`);
+    }
+    assert.ok(!BASE64_MEDIA_ROUTES.test('/v1/internal/ai/line-turn'), 'text turns stay at HTTP_BODY_LIMIT');
   });
 });

@@ -15,6 +15,11 @@ import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
 import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
+// JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
+// (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
+// HTTP_BODY_LIMIT. A media-carrying route missing here 413s on real camera photos.
+export const BASE64_MEDIA_ROUTES = /^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract|line-intake-route)$/;
+
 // Document OCR needs its own budget: a dense real-photo receipt regularly takes
 // Typhoon past the 15s ERP tool-call timeout (prod failures 2026-07-14), while the
 // API-side ReceiptOcrClient waits up to 60s. Keep under that outer wrapper.
