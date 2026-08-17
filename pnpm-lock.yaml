@@ -8,6 +8,7 @@ overrides:
   '@svgr/plugin-svgo>svgo': 3.3.4
   '@swc/cli>minimatch': 10.2.5
   brace-expansion: 5.0.9
+  deepmerge-ts: '>=8.0.0'
   js-yaml: 4.3.1
   multer: 2.2.0
   nanoid: ^3.3.17
@@ -2833,8 +2834,8 @@ packages:
     resolution: {integrity: sha512-aW35yZM6Bb/4oJlZncMH2LCoZtJXTRxES17vE3hoRiowU2kWHaJKFkSBDnDR+cm9J+9QhXmREyIfv0pji9ejCQ==}
     engines: {node: '>=10'}
 
-  deepmerge-ts@7.1.5:
-    resolution: {integrity: sha512-HOJkrhaYsweh+W+e74Yn7YStZOilkoPb6fycpwNLKzSPtruFs48nYis0zy5yJz1+ktUhHxoRDJ27RQAWLIJVJw==}
+  deepmerge-ts@8.0.1:
+    resolution: {integrity: sha512-szCXE7YLCvLKR9bFPJcvsezOShdalctSvrgN/LM/QGUEPZQajwjmsMObZ6/DuANT5lxzM/wtO8Feubwdkz8myA==}
     engines: {node: '>=16.0.0'}
 
   deepmerge@4.3.1:
@@ -6006,7 +6007,7 @@ snapshots:
   '@prisma/config@7.8.0':
     dependencies:
       c12: 3.3.4
-      deepmerge-ts: 7.1.5
+      deepmerge-ts: 8.0.1
       effect: 3.20.0
       empathic: 2.0.0
     transitivePeerDependencies:
@@ -7077,7 +7078,7 @@ snapshots:
     dependencies:
       mimic-response: 3.1.0
 
-  deepmerge-ts@7.1.5: {}
+  deepmerge-ts@8.0.1: {}
 
   deepmerge@4.3.1: {}
 
