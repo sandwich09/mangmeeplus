@@ -26,8 +26,8 @@ jq -cnS --arg source "$source" --arg artifact "$artifact_sha" '
      objectVersionId:"fixture-version-001"},
    runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234",
      id:"watchdog_orchestrator_production_candidate-AbCdEf1234",version:"14",status:"READY"},
-   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234/runtime-endpoint/candidate_production_"+($source[0:12])),
-     name:("candidate_production_"+($source[0:12])),version:"14",status:"READY"},
+   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234/runtime-endpoint/candidate_production_"+($source[0:12])+"_"+($artifact[0:8])),
+     name:("candidate_production_"+($source[0:12])+"_"+($artifact[0:8])),version:"14",status:"READY"},
    bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:("e"*64),contractVersion:1}
 ' > "$work/agentcore-production-binding.json"
 jq -cnS --arg source "$source" --argjson expires "$((now+86400))" \

@@ -10,6 +10,42 @@ Decisions:
 Open questions:
 - None for the current UAT dispatch. Customer `OPEN` and deferred concurrency remain post-promotion state transitions.
 Artifacts:
+- UAT `32023560885` deployed exact candidate `30718c34a5668ac0d942567260b55d2db32b4609`
+  successfully to all three ECS Express services and passed both hosted AgentCore smokes. The run
+  failed only because `verify-deployment.sh` compared the signed AgentCore source to `commit` before
+  assigning `commit` (`line 64: commit: unbound variable`). The durable parent
+  `9d6fb59a-75fd-451b-9c4f-3f41912768d9` was reconciled to `FAILED_CONFIRMED` by the workflow.
+- Manual read-only replay of the patched verifier against live UAT passed exact image/source,
+  serving-mode and public health for api-web, ai-gateway and workers. Secret-safe deep readiness also
+  returned `{service:"api",status:"ok",db:"ok"}`. Production uses the same verifier, so the fix and
+  maintenance pins cover both UAT and Production callers.
+- Looking-forward Production readback found one prerequisite drift before READY: the live Production
+  deploy role lacks only `UpdateAgentRuntimeEndpoint` and `DeleteAgentRuntimeEndpoint` from the
+  reviewed template. The already-approved full prerequisite ceremony will exact-apply this before
+  READY. The absent Production candidate execution role is expected first-stage state: the scoped
+  deploy policy and `agentcore-deploy.sh` create it, then replace its name-bound wildcard trust with
+  the exact runtime ARN before the runtime is accepted.
+- The owner-approved prerequisite ceremony exact-applied and read back the Production deploy policy,
+  including both endpoint actions, under the non-root `thawatchai` principal. It left the one-time A5
+  reader bootstrap controller intentionally armed; after the next signed UAT Passport, run
+  `production-a5-reader-bootstrap.yml` once and prove it self-revokes before issuing the live READY.
+- The first real Production AgentCore stage exposed an AWS IAM propagation boundary: immediately after
+  creating the candidate execution role, `CreateAgentRuntime` returned `Role validation failed`. The
+  controller now retries only that provider error with a bounded 12 x 5-second policy and fails every
+  other error immediately. The focused shell fixture proves one transient failure followed by exactly
+  one successful retry.
+- A real replay with the patched controller then created Production runtime
+  `watchdog_orchestrator_production_candidate-FWHp0D4V34` and endpoint
+  `candidate_production_30718c34a566`; both reached `READY`. Hosted safe-read and mutation-refusal
+  smokes returned HTTP 200 with exact source `30718c34a5668ac0d942567260b55d2db32b4609` and artifact
+  `ef0c34be5fbf464e8487706dde22414dbc7fdafdf1bd92777b771260d1d6a6c4`. The readiness workflow can
+  therefore reuse the exact staged identity rather than cross the new-role propagation window again.
+- UAT `32028628294` stopped before its durable release task and before any ECS/DB mutation. Rebuilding
+  the exact source produced different ZIP bytes (`f2189d69...` versus the active `ef0c34be...`) because
+  ZIP retained esbuild's current output mtime, while the endpoint identity contained only the source.
+  The active ECS service correctly protected that endpoint from being repointed. Normalize the ZIP
+  input mtime and bind new endpoint names to both source and artifact prefixes; this preserves the old
+  live endpoint through service drain and makes every subsequent rebuild of one source byte-identical.
 - Failed UAT runs: `32004507684`, `32007029995`, `32007856084`, `32009924946`.
 - UAT `32009924946` deployed api-web/workers but failed before the ai-gateway intent because `deploy.sh` compared the 40-character AgentCore expected source with the 12-character ECS label. Parent operation `ffb80c83-401f-4995-a7a0-871e82bd9ee9` is being closed by exact PRE_INTENT recovery run `32011940733` using stopped parent task `arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/76a7a21e421046c68754631f54f35a7d`.
 - Root fix merged as `a877cfe61534b110c3c2b35c3fbca26005b55a71`. Recovery run `32011940733` made no AWS mutation because its executor was older than the held release. UAT recovery may reuse exact successful PostgreSQL CI `32002605508` only while Git proves all recovery executable, test and dependency inputs are byte-identical to `33266c1220b3a71cfae86cbd3aeb5b0ad6607118`; Production remains strict.
@@ -53,6 +89,10 @@ Artifacts:
   application TypeScript skipped while all non-application gates remain enabled.
   No DB parent or ECS rollout was created by the failed run.
 Verification:
+- `bash infra/prod-ecs-express/production-serving-mode.spec.sh` passes with an ordering assertion that
+  prevents AgentCore source comparison before manifest/source resolution.
+- Patched `verify-deployment.sh` passes against the three live UAT services at candidate `30718c...`;
+  UAT deep database readiness passes separately without exposing the worker token.
 - `bash infra/docker/ecr-scan-blocking-findings.spec.sh` passes.
 - `bash infra/security/production-security-preflight.spec.sh` passes, including accepted exact waiver and rejected forged waiver.
 - Live AWS scan JSON for api-web runnable digest is fully covered (1 raw HIGH, 1 exact waiver, 0 blocking); `infra/docker/verify-ecr-scan.sh` passes that digest.
@@ -64,12 +104,14 @@ Verification:
   policy actions, endpoint selection fixture, AgentCore-before-release ordering and pre-parent cleanup.
 - The complete non-TypeScript production image security aggregate passes after the lifecycle repair;
   workflow YAML parses, maintenance pins remain current and `git diff --check` passes.
+- `bash -n infra/ai-gateway/agentcore-deploy.sh`, `bash infra/ai-gateway/h15-trust-boundary.spec.sh`
+  and `bash infra/uat/agentcore-candidate-policy.spec.sh` pass for the bounded IAM propagation repair;
+  the real Production stage is the provider-side proof of that path.
 - Live read-only proof exact-hashed S3 object version `cFg.n5jIOA8DKy9rOQNzqen_ihB93W59` to
   `762f9e79f030edd444d22f30e0133831fd16b8018cda9046c99f68de96e8dbbd`, equal to runtime v4/source
   `c64e091...`; active ECS protects zero endpoints and the reviewed selector identifies exactly the two
   stale UAT candidate endpoints.
 Next:
-- Finish the atomic S3 conditional-write and token-free endpoint-lifecycle controller repair as one
-  reviewed no-TypeScript batch. Exact-read the already READY manual AgentCore state, retry UAT once,
-  then continue signed READY, Production promotion, live parity/conversation verification and customer
-  `OPEN` without redispatching a terminal stage merely to discover its next error.
+- Merge the bounded IAM propagation controller fix without re-running unchanged application TypeScript,
+  dispatch UAT once, run the armed one-time A5 bootstrap, issue signed live READY, promote the exact UAT
+  digests to Production, complete durable customer `OPEN`, then run live parity/conversation verification.

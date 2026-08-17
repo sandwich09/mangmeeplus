@@ -40,7 +40,8 @@ jq -e --arg environment "$environment" --slurpfile release "$release_manifest" '
   and (.endpoint | exact(["arn","name","status","version"]))
   and .endpoint.status == "READY"
   and .endpoint.version == .runtime.version
-  and (.endpoint.name | test("^candidate_" + $environment + "_[0-9a-f]{12}$"))
+  and (.endpoint.name | test("^candidate_" + $environment + "_[0-9a-f]{12}_[0-9a-f]{8}$"))
+  and .endpoint.name == ("candidate_" + $environment + "_" + (.sourceCommit[0:12]) + "_" + (.artifact.sha256[0:8]))
   and .endpoint.name != "DEFAULT"
   and .endpoint.arn == (.runtime.arn + "/runtime-endpoint/" + .endpoint.name)
 ' "$binding" >/dev/null

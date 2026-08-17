@@ -67,8 +67,8 @@ jq -cnS --arg source "$source_sha" --arg artifact "$agentcore_sha" '
      prefix:("agentcore/watchdog_orchestrator_uat_candidate-"+$source+"-"+$artifact+".zip"),objectVersionId:"version-1"},
    runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234",
      id:"watchdog_orchestrator_uat_candidate-AbCdEf1234",version:"7",status:"READY"},
-   endpoint:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234/runtime-endpoint/candidate_uat_aaaaaaaaaaaa",
-     name:"candidate_uat_aaaaaaaaaaaa",version:"7",status:"READY"},
+   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234/runtime-endpoint/candidate_uat_"+($source[0:12])+"_"+($artifact[0:8])),
+     name:("candidate_uat_"+($source[0:12])+"_"+($artifact[0:8])),version:"7",status:"READY"},
    bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:("e"*64),contractVersion:1}
 ' > "$root/agentcore-binding.json"
 
