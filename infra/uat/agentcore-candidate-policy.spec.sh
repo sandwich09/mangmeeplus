@@ -9,6 +9,7 @@ verify="$root/infra/uat/verify-control-plane-policies.sh"
 workflow="$root/.github/workflows/deploy-uat.yml"
 ci_workflow="$root/.github/workflows/ci.yml"
 agentcore_deploy="$root/infra/ai-gateway/agentcore-deploy.sh"
+artifact_build="$root/infra/ai-gateway/build-agentcore-artifact.sh"
 ai_policy="$root/infra/uat/ai-task-policy.template.json"
 bootstrap="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 ceremony="$root/infra/security/run-production-promotion-prerequisite-ceremony.sh"
@@ -101,6 +102,8 @@ grep -Fq 'exact runtime configuration is already READY' "$agentcore_deploy"
 grep -Fq 'reusing existing content-addressed object version' "$agentcore_deploy"
 grep -Fq 'pinned content-addressed AgentCore object has different bytes' "$agentcore_deploy"
 grep -Fq -- "--if-none-match '*'" "$agentcore_deploy"
+grep -Fq 'ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}_${actual_sha:0:8}"' "$agentcore_deploy"
+grep -Fq 'TZ=UTC touch -t 198001010000.00 "$staging/runtime.js"' "$artifact_build"
 if sed -n '/bedrock-agentcore-control \(create\|update\|delete\)-agent-runtime-endpoint/,/--output json/p' \
     "$agentcore_deploy" | grep -Fq -- '--client-token'; then
   echo 'ERROR: endpoint lifecycle still uses a provider-tombstoned client token' >&2

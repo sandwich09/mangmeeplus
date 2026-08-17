@@ -20,12 +20,12 @@ jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" '
      prefix:("agentcore/watchdog_orchestrator_uat_candidate-"+$source+"-"+$artifact+".zip"),objectVersionId:"version-1"},
    runtime:{arn:"arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234",
      id:"watchdog_orchestrator_uat_candidate-AbCdEf1234",version:"7",status:"READY"},
-   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234/runtime-endpoint/candidate_uat_aaaaaaaaaaaa"),
-     name:"candidate_uat_aaaaaaaaaaaa",version:"7",status:"READY"},
+   endpoint:{arn:("arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234/runtime-endpoint/candidate_uat_aaaaaaaaaaaa_bbbbbbbb"),
+     name:"candidate_uat_aaaaaaaaaaaa_bbbbbbbb",version:"7",status:"READY"},
    bindingStrategy:"isolated_runtime_pinned_endpoint",configurationSha256:("e"*64),contractVersion:1}
 ' > "$work/binding.json"
 test "$(bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
-  "$work/binding.json" "$work/release.json" uat)" = candidate_uat_aaaaaaaaaaaa
+  "$work/binding.json" "$work/release.json" uat)" = candidate_uat_aaaaaaaaaaaa_bbbbbbbb
 
 reject() {
   jq "$2" "$work/binding.json" > "$work/$1.json"
@@ -40,7 +40,9 @@ reject wrong-artifact '.artifact.sha256=("f"*64)'
 reject wrong-source '.sourceCommit=("f"*40)'
 reject wrong-execution-role '.executionRoleArn="arn:aws:iam::123456789012:role/watchdog-bms-agentcore-execution-role"'
 reject source-not-in-object-key '.artifact.prefix=("agentcore/watchdog_orchestrator_uat_candidate-"+("f"*40)+"-"+.artifact.sha256+".zip")'
-reject endpoint-not-under-runtime '.endpoint.arn="arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-ZzYyXx9876/runtime-endpoint/candidate_uat_aaaaaaaaaaaa"'
+reject endpoint-not-under-runtime '.endpoint.arn="arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-ZzYyXx9876/runtime-endpoint/candidate_uat_aaaaaaaaaaaa_bbbbbbbb"'
+reject source-only-endpoint '.endpoint.name="candidate_uat_aaaaaaaaaaaa"|.endpoint.arn=(.runtime.arn+"/runtime-endpoint/"+.endpoint.name)'
+reject wrong-artifact-endpoint '.endpoint.name="candidate_uat_aaaaaaaaaaaa_ffffffff"|.endpoint.arn=(.runtime.arn+"/runtime-endpoint/"+.endpoint.name)'
 reject missing-object-version '.artifact.objectVersionId=""'
 reject extra-field '.rawPrompt="must-not-exist"'
 
@@ -60,7 +62,7 @@ if bash "$root/infra/ai-gateway/validate-agentcore-candidate-binding.sh" \
 fi
 
 runtime_arn='arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/watchdog_orchestrator_uat_candidate-AbCdEf1234'
-endpoint_name='candidate_uat_aaaaaaaaaaaa'
+endpoint_name='candidate_uat_aaaaaaaaaaaa_bbbbbbbb'
 endpoint_arn="$runtime_arn/runtime-endpoint/$endpoint_name"
 endpoint_validator="$root/infra/ai-gateway/validate-agentcore-endpoint-readback.sh"
 jq -cnS --arg arn "$runtime_arn" --arg endpointArn "$endpoint_arn" --arg name "$endpoint_name" \

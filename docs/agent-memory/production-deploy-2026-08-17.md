@@ -40,6 +40,12 @@ Artifacts:
   smokes returned HTTP 200 with exact source `30718c34a5668ac0d942567260b55d2db32b4609` and artifact
   `ef0c34be5fbf464e8487706dde22414dbc7fdafdf1bd92777b771260d1d6a6c4`. The readiness workflow can
   therefore reuse the exact staged identity rather than cross the new-role propagation window again.
+- UAT `32028628294` stopped before its durable release task and before any ECS/DB mutation. Rebuilding
+  the exact source produced different ZIP bytes (`f2189d69...` versus the active `ef0c34be...`) because
+  ZIP retained esbuild's current output mtime, while the endpoint identity contained only the source.
+  The active ECS service correctly protected that endpoint from being repointed. Normalize the ZIP
+  input mtime and bind new endpoint names to both source and artifact prefixes; this preserves the old
+  live endpoint through service drain and makes every subsequent rebuild of one source byte-identical.
 - Failed UAT runs: `32004507684`, `32007029995`, `32007856084`, `32009924946`.
 - UAT `32009924946` deployed api-web/workers but failed before the ai-gateway intent because `deploy.sh` compared the 40-character AgentCore expected source with the 12-character ECS label. Parent operation `ffb80c83-401f-4995-a7a0-871e82bd9ee9` is being closed by exact PRE_INTENT recovery run `32011940733` using stopped parent task `arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-uat/76a7a21e421046c68754631f54f35a7d`.
 - Root fix merged as `a877cfe61534b110c3c2b35c3fbca26005b55a71`. Recovery run `32011940733` made no AWS mutation because its executor was older than the held release. UAT recovery may reuse exact successful PostgreSQL CI `32002605508` only while Git proves all recovery executable, test and dependency inputs are byte-identical to `33266c1220b3a71cfae86cbd3aeb5b0ad6607118`; Production remains strict.
