@@ -216,7 +216,15 @@ jobs:
             and ([.jobs[] | select(.name == "Resolve Source")] | length) == 1
             and ([.jobs[] | select(.name == "Resolve Source")][0].conclusion == "success")
             and ([.jobs[] | select(.name == "Typecheck and Test")] | length) == 1
-            and ([.jobs[] | select(.name == "Typecheck and Test")][0].conclusion == "skipped")
+            and (([.jobs[] | select(.name == "Typecheck and Test")][0]) as $job
+              | ($job.conclusion == "skipped") or (
+                $job.conclusion == "success"
+                and ([$job.steps[] | select(.name == "Test AgentCore release controller without application TypeScript"
+                  and .conclusion == "success")] | length) == 1
+                and (["Run pnpm install --frozen-lockfile", "Run pnpm typecheck",
+                  "Typecheck and test durable release recovery against PostgreSQL", "Run pnpm test"]
+                  | all(. as $name | ([$job.steps[] | select(.name == $name and .conclusion == "skipped")] | length) == 1))
+              ))
           ' <<< "$jobs" >/dev/null
           proof_ref="$RECOVERY_CI_PROOF_REF_UAT"
           proof_run_id="$RECOVERY_CI_PROOF_RUN_UAT"

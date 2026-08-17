@@ -22,6 +22,12 @@ Artifacts:
   `candidate_<environment>_<source12>_<artifact8>` identity emitted and signed by the AgentCore
   binding, including an exact source/artifact comparison. This closes both the observed UAT failure
   and the equivalent later Production deploy/verification failure rather than relaxing the check.
+- Recovery `32033671870` stopped before AWS credentials or mutation because the code-neutral UAT
+  proof understood only an entirely skipped `Typecheck and Test` job. CI `32030400724` instead ran
+  one successful release-controller shell step while skipping install, TypeScript, PostgreSQL and
+  application tests. The recovery gate now accepts that exact shape only after its existing Git
+  byte-diff proves all recovery executable/dependency inputs unchanged; the release-controller CI
+  classifier also covers the shared ECS AgentCore deploy/verify bundle and runs its focused shell spec.
 - UAT `32023560885` deployed exact candidate `30718c34a5668ac0d942567260b55d2db32b4609`
   successfully to all three ECS Express services and passed both hosted AgentCore smokes. The run
   failed only because `verify-deployment.sh` compared the signed AgentCore source to `commit` before

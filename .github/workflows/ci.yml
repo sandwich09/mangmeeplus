@@ -225,12 +225,14 @@ jobs:
               case "$path" in
                 docs/*|.github/workflows/ci.yml|.github/workflows/deploy-uat.yml|\
                 .github/workflows/deploy-production.yml|\
+                .github/workflows/recover-release-intent.yml|\
                 infra/ai-gateway/build-agentcore-artifact.sh|\
                 infra/ai-gateway/agentcore-deploy.sh|\
                 infra/ai-gateway/agentcore-candidate-binding.spec.sh|\
                 infra/ai-gateway/select-retirable-agentcore-endpoints.jq|\
                 infra/ai-gateway/h15-trust-boundary.spec.sh|\
                 infra/ai-gateway/validate-agentcore-candidate-binding.sh|\
+                infra/prod-ecs-express/deploy.sh|\
                 infra/prod-ecs-express/production-serving-mode.spec.sh|\
                 infra/prod-ecs-express/verify-deployment.sh|\
                 infra/security/production-promotion-resources.spec.sh|\
@@ -243,11 +245,20 @@ jobs:
                 *) release_controller_only=false ;;
               esac
             done <<< "$changed_paths"
+            agentcore_bundle=true
             for required in infra/ai-gateway/agentcore-deploy.sh \
               infra/ai-gateway/h15-trust-boundary.spec.sh \
               infra/uat/agentcore-candidate-policy.spec.sh; do
-              grep -Fxq "$required" <<< "$changed_paths" || release_controller_only=false
+              grep -Fxq "$required" <<< "$changed_paths" || agentcore_bundle=false
             done
+            ecs_binding_bundle=true
+            for required in infra/prod-ecs-express/deploy.sh \
+              infra/prod-ecs-express/verify-deployment.sh \
+              infra/prod-ecs-express/production-serving-mode.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || ecs_binding_bundle=false
+            done
+            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true ]] \
+              || release_controller_only=false
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
           echo "recovery_only=$recovery_only" >> "$GITHUB_OUTPUT"
@@ -325,6 +336,7 @@ jobs:
             infra/prod-ecs-express/github-deploy-role-policy.template.json
           bash infra/ai-gateway/h15-trust-boundary.spec.sh
           bash infra/uat/agentcore-candidate-policy.spec.sh
+          bash infra/prod-ecs-express/production-serving-mode.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
           git diff --check HEAD^ HEAD
       - run: pnpm typecheck
