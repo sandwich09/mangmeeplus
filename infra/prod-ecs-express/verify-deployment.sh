@@ -61,8 +61,8 @@ if [ "$target" = all ] || [ "$target" = ai-gateway ]; then
     || { echo "ERROR: exact AGENTCORE_RUNTIME_ARN is required to verify AI Gateway" >&2; exit 2; }
   [[ "$agentcore_runtime_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}$ ]] \
     || { echo "ERROR: exact source-specific AGENTCORE_RUNTIME_QUALIFIER is required to verify AI Gateway" >&2; exit 2; }
-  [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ && "$agentcore_expected_source" = "$commit" ]] \
-    || { echo "ERROR: signed AgentCore source must equal the active ECS source" >&2; exit 2; }
+  [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ ]] \
+    || { echo "ERROR: signed AgentCore source must be a full commit" >&2; exit 2; }
   [[ "$agentcore_expected_artifact" =~ ^[0-9a-f]{64}$ ]] \
     || { echo "ERROR: signed AgentCore artifact hash is required" >&2; exit 2; }
   [[ "$agentcore_expected_contract" =~ ^[1-9][0-9]*$ ]] \
@@ -74,6 +74,10 @@ curl_bin="${CURL_BIN:-curl}"
 curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
 account_id="$(env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY "$aws_bin" sts get-caller-identity --query Account --output text --region "$region")"
 commit="$(bash infra/docker/validate-production-manifest.sh "$manifest" "$account_id" "$region")"
+if [ "$target" = all ] || [ "$target" = ai-gateway ]; then
+  [ "$agentcore_expected_source" = "$commit" ] \
+    || { echo "ERROR: signed AgentCore source must equal the active ECS source" >&2; exit 2; }
+fi
 
 aws_cmd() {
   env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy "$aws_bin" "$@"
