@@ -9,7 +9,8 @@ grep -Fq 'curl --silent --show-error --location "${curl_retry[@]}"' "$workflow"
 ruby -e 'require "yaml"; value=YAML.load_file(ARGV[0]); abort unless value.is_a?(Hash)' "$workflow"
 
 for required in \
-  'workflow_run:' 'workflows: [UAT Deploy]' 'workflow_dispatch:' \
+  'workflow_run:' 'workflows: [UAT Deploy]' 'workflow_dispatch:' 'workflow_call:' \
+  'AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}' \
   'uat-release-passport-v2-' 'validate-uat-release-passport-v2.sh' \
   'collect-production-runtime-readiness-v2.sh' 'collect-production-a5-current-health.sh' \
   'Stage and read back the exact Production AgentCore candidate' \
@@ -85,5 +86,21 @@ override="$(line 'Bind explicit owner legal override for live mode')"
 
 grep -Fq "needs.discover.outputs.legal_mode == 'VERIFIED_BUNDLE'" "$workflow"
 grep -Fq "needs.discover.outputs.legal_mode == 'OWNER_OVERRIDE'" "$workflow"
+
+# deploy-production-v2.yml calls this same workflow so one dispatch proves READY and promotes.
+# The call surface must accept exactly the manual dispatch surface, or the combined path would
+# silently drop an input the standalone path enforces (owner override in particular).
+ruby - "$workflow" <<'RUBY'
+require "yaml"
+
+triggers = (YAML.load_file(ARGV.fetch(0))[true] or abort "no trigger block")
+dispatch = triggers.fetch("workflow_dispatch").fetch("inputs")
+call = triggers.fetch("workflow_call").fetch("inputs")
+abort "workflow_call input set drifted from workflow_dispatch" unless call.keys.sort == dispatch.keys.sort
+call.each do |name, spec|
+  abort "#{name} required flag drifted" unless spec.fetch("required") == dispatch.fetch(name).fetch("required")
+  abort "#{name} must be a workflow_call string input" unless spec.fetch("type") == "string"
+end
+RUBY
 
 echo 'Production readiness V2 workflow contract: PASS'

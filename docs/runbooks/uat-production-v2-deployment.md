@@ -5,6 +5,7 @@ Status: canonical operator runbook for repeatable UAT and Production deployment
 Default Production outcome: `PROMOTED_CLOSED` (`maintenance_closed`)
 
 Workflows: `deploy-uat.yml` → `production-readiness.yml` → `deploy-production-v2.yml`
+(หรือ `deploy-uat.yml` → `deploy-production-v2.yml` แบบ single dispatch ตามหัวข้อ 5.2)
 
 เอกสารนี้เป็นคำสั่ง deploy ปัจจุบัน แทน ceremony V1 ใน
 `production-a5-u5-promotion-ceremony.md`. การ deploy ปกติไม่แก้ Cloudflare และไม่ใช้ AWS root.
@@ -294,7 +295,27 @@ gh workflow run production-readiness.yml -R "$repo" --ref main \
 ถ้า Readiness fail จะยังไม่มี Production service/DB mutation. แก้ root cause แล้วออก READY ใหม่ได้
 โดยไม่ rerun UAT เฉพาะเมื่อ Passport ยัง valid และ source/image/catalog ไม่เปลี่ยน.
 
+`production-readiness.yml` ยังเป็น entry point เต็มรูปแบบสำหรับ standalone READY (controller-only
+re-READY, rehearsal, live READY ที่ต้องตรวจก่อน promote) และเป็นเส้นทาง rollback ของ single-dispatch
+ในหัวข้อ 5.2 โดยไม่ต้อง revert code. `deploy-production-v2.yml` เรียก workflow ไฟล์เดียวกันนี้เป็น
+`workflow_call` เมื่อ dispatch แบบ single จึงได้ readiness job, check ชุดเดียวกัน, signing identity
+`production-readiness.yml@refs/heads/main` เดิม และ `ready.json` schema เดิมทุก field.
+
 ## 5. Deploy Production แบบปิดลูกค้า
+
+มีสองเส้นทางที่ใช้ validator, signed artifact และ mutation gate ชุดเดียวกันทุกข้อ. ต่างกันเฉพาะว่า
+READY ถูกพิสูจน์ใน run แยกหรือใน run เดียวกับ promote:
+
+| เส้นทาง | `readiness_run_id` | READY artifact | ใช้เมื่อ |
+| --- | --- | --- | --- |
+| 5.1 two-dispatch | ส่งค่า `READY_RUN_ID` | จาก READY run แยก (เก่ากว่า) | live promote ที่ต้องตรวจ READY ก่อน, controller-only re-READY, rollback ของ 5.2 |
+| 5.2 single-dispatch | เว้นว่าง | สร้างใน run นี้เอง (`READY_RUN_ID == PROD_RUN_ID`) | เส้นทางปกติหลังผ่าน rehearsal gate |
+
+ทั้งสองเส้นทางบังคับเหมือนกัน: Passport/READY signature + expiry + baseline drift rejection,
+stable service identity ที่ mutation boundary, และ READY migration authority ใน durable database
+fence. Production ห้าม build/test/sign application image ใหม่ทั้งสองเส้นทาง.
+
+### 5.1 Two-dispatch: READY run แยก แล้ว promote
 
 ก่อน dispatch ตรวจอีกครั้งว่า `origin/main` ยังเท่ากับ READY controller. จากนั้น:
 
@@ -309,7 +330,39 @@ gh workflow run deploy-production-v2.yml -R "$repo" --ref main \
 `Promote READY <READY_RUN_ID> → maintenance_closed` และ `head_sha` เท่ากับ READY controller.
 Workflow จะตรวจ Passport/READY/current baseline ซ้ำก่อนรับ deploy authority, ใช้ image digest เดิม,
 apply เฉพาะ pending migration ที่ READY อนุญาต, rollout, ตรวจ deep DB readiness, พิสูจน์ global
-maintenance และ finalization. Production ห้าม build/test/sign application image ใหม่.
+maintenance และ finalization. เพราะ READY มาจาก run เก่ากว่า เส้นทางนี้ยังรัน read-only recheck
+ทั้งสามขั้น (image availability + runtime baseline, clone policy, service/IAM/migration baseline)
+ก่อนรับ deploy authority.
+
+### 5.2 Single-dispatch: พิสูจน์ READY แล้ว promote ใน run เดียว
+
+เว้น `readiness_run_id` ว่างไว้. `deploy-production-v2.yml` จะรัน readiness job จาก
+`production-readiness.yml` เป็น job แรกของ run เดียวกัน แล้ว promote job ใช้ READY artifact
+ของ run นั้น:
+
+```sh
+gh workflow run deploy-production-v2.yml -R "$repo" --ref main \
+  -f uat_run_id="$UAT_RUN_ID" \
+  -f requested_serving_mode=maintenance_closed
+```
+
+live ด้วย owner override ใช้ dispatch เดียวกันโดยเพิ่ม `-f owner_legal_override_ref="$OWNER_OVERRIDE_REF"`;
+actor ต้องเป็น `MangmeeDev` และ inline readiness บังคับ owner/legal contract เดียวกับหัวข้อ D ทุกข้อ.
+
+กติกาบังคับของเส้นทางนี้:
+
+- **Rehearsal gate**: การใช้ single-dispatch ครั้งแรกหลัง controller เปลี่ยนต้องเป็น
+  `maintenance_closed` บน candidate จริงและต้องจบสำเร็จ ก่อนใช้ `live` กับเส้นทางนี้.
+- title จะเป็น `Promote READY inline → <mode>`; ไม่มี `READY_RUN_ID` แยก. บันทึกใน ledger ว่า
+  `READY_RUN_ID = PROD_RUN_ID` และเก็บ digest ของ artifact
+  `production-release-ready-v2-<candidate>-run-<PROD_RUN_ID>-attempt-<attempt>`.
+- ตรวจให้ครบทั้ง readiness job และ promote job; readiness fail = promote ไม่รัน และไม่มี
+  Production service/DB mutation.
+- read-only recheck ทั้งสามขั้นของ 5.1 ถูกข้าม เพราะ inline readiness เพิ่งอ่าน ground ชุดเดียวกัน
+  ใน run นี้เมื่อไม่กี่นาทีก่อน. mutation-boundary gate ไม่ถูกข้ามข้อใดเลย.
+- Rollback: กลับไปใช้ 5.1 ได้ทันทีโดยส่ง `readiness_run_id` ไม่ต้อง revert commit.
+- ห้าม dispatch single-dispatch ขณะที่ auto readiness run ของ `UAT_RUN_ID` เดียวกันยัง non-terminal
+  (Protocol ข้อ 2); readiness concurrency group เป็นตัว UAT run จึงจะรอคิวแทนที่จะรันซ้อน.
 
 เรียกว่าสำเร็จได้เมื่อทุกข้อต่อไปนี้จริง:
 
@@ -317,6 +370,7 @@ maintenance และ finalization. Production ห้าม build/test/sign appl
 - มี signed artifact `production-release-result-v2-<candidate>-attempt-<attempt>` เพียงหนึ่งชุด
 - `result.json`: `state=="PROMOTED_CLOSED"`, source/UAT/READY/Production/controller ตรงทั้งหมด,
   `requestedServingMode=="maintenance_closed"` และ `effectiveTarget=="all"`
+  (เส้นทาง 5.2 ต้องได้ `readinessRunId == productionRunId == PROD_RUN_ID`)
 - `maintenance-proof.json`: `deploymentState=="DEPLOYED_NOT_LAUNCHED"`, `target=="all"`, services
   สามตัวเป็น exact source/digest และ `maintenance_only`
 - secret-safe SYSTEM_ADMIN acceptance ผ่าน: BFF login `200`, redirect `/system/platform-access`,
