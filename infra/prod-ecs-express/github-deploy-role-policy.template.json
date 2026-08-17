@@ -14,6 +14,7 @@
         "ecs:DescribeClusters",
         "ecs:DescribeExpressGatewayService",
         "ecs:UpdateExpressGatewayService",
+        "ecs:UpdateService",
         "ecs:RegisterTaskDefinition",
         "ecs:DeregisterTaskDefinition",
         "ecs:DescribeTaskDefinition",
@@ -23,6 +24,7 @@
         "ecs:ListTasks",
         "ecs:DescribeTasks",
         "ecs:ListServiceDeployments",
+        "ecs:DescribeServices",
         "ecs:DescribeServiceDeployments",
         "ecs:DescribeServiceRevisions"
       ],
