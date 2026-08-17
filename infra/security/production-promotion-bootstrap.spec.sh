@@ -7,6 +7,7 @@ ceremony="$root/infra/security/run-production-promotion-prerequisite-ceremony.sh
 principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 endpoint_principal="$root/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
+uat_runtime_principal="$root/infra/security/production-promotion-uat-runtime-principal-policy.template.json"
 trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
 user_bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 deploy="$root/infra/prod-ecs-express/github-deploy-role-policy.template.json"
@@ -15,7 +16,7 @@ security="$root/infra/security/production-security-readonly-policy.template.json
 reader_bootstrap="$root/infra/security/production-a5-reader-bootstrap-policy.template.json"
 
 bash -n "$bootstrap" "$ceremony"
-jq -e . "$principal" "$clone_principal" "$endpoint_principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
+jq -e . "$principal" "$clone_principal" "$endpoint_principal" "$uat_runtime_principal" "$trust" "$user_bridge" "$deploy" "$uat_deploy" "$security" "$reader_bootstrap" \
   >/dev/null
 
 jq -e '
@@ -62,6 +63,18 @@ jq -e '.Statement==[
       "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-098bd832f02b47922",
       "arn:aws:ec2:ap-southeast-1:311414082667:vpc-endpoint/vpce-0b9af85905e446695"]}
 ]' "$endpoint_principal" >/dev/null
+jq -e '
+  ([.Statement[]|select(.Effect=="Allow")|.Action|if type=="array" then .[] else . end]|unique|sort)
+  == ["bedrock-agentcore:ListAgentRuntimes","iam:CreateRole","iam:GetRole","iam:GetRolePolicy",
+      "iam:ListAttachedRolePolicies","iam:ListRolePolicies","iam:PutRolePolicy",
+      "iam:UpdateAssumeRolePolicy","iam:UpdateRole","s3:GetBucketVersioning",
+      "s3:PutBucketVersioning","secretsmanager:DescribeSecret"]
+  and any(.Statement[];.Sid=="WriteExactUatRuntimePolicies" and (.Resource|length)==3)
+  and any(.Statement[];.Sid=="CreateOnlyMissingUatAgentCoreRole"
+    and .Resource=="arn:aws:iam::311414082667:role/watchdog-bms-uat-agentcore-execution-role")
+  and any(.Statement[];.Sid=="RepairExactAgentCoreArtifactVersioning"
+    and .Resource=="arn:aws:s3:::watchdog-bms-agentcore-artifacts-311414082667")
+' "$uat_runtime_principal" >/dev/null
 
 jq -e '.Statement==[{Sid:"ExactNonRootBootstrapOperator",Effect:"Allow",
   Principal:{AWS:"arn:aws:iam::311414082667:user/watchdog-bedrock-dev"},Action:"sts:AssumeRole"}]' \
@@ -167,6 +180,7 @@ grep -Fq 'retry_mutation()' "$bootstrap"
 grep -Fq 'retry_admin_mutation()' "$ceremony"
 grep -Fq -- '--apply-clone-controller) principal="$clone_principal"' "$ceremony"
 grep -Fq -- '--apply-private-endpoints) principal="$endpoint_principal"' "$ceremony"
+grep -Fq -- '--apply-uat-runtime) principal="$uat_runtime_principal"' "$ceremony"
 grep -Fq 'retry_exact assert_clone_controller_shape' "$bootstrap"
 grep -Fq 'retry_mutation aws iam put-role-policy --role-name watchdog-bms-production-a5-clone' "$bootstrap"
 grep -Fq 'retry_exact assert_clone_controller_exact' "$bootstrap"
@@ -203,11 +217,12 @@ cp "$trust" "$fixture/repo/infra/security/production-promotion-bootstrap-trust.t
 cp "$principal" "$fixture/repo/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 cp "$clone_principal" "$fixture/repo/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 cp "$endpoint_principal" "$fixture/repo/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
+cp "$uat_runtime_principal" "$fixture/repo/infra/security/production-promotion-uat-runtime-principal-policy.template.json"
 cp "$user_bridge" "$fixture/repo/infra/security/production-promotion-bootstrap-user-policy.template.json"
 cat > "$fixture/repo/infra/security/bootstrap-production-promotion-prerequisites.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-}" in --apply|--apply-clone-controller|--apply-private-endpoints) ;; *) exit 2 ;; esac
+case "${1:-}" in --apply|--apply-clone-controller|--apply-private-endpoints|--apply-uat-runtime) ;; *) exit 2 ;; esac
 test "${AWS_ACCOUNT_ID:-}" = 311414082667
 test -z "${AWS_PROFILE:-}"
 test -z "${AWS_DEFAULT_PROFILE:-}"
@@ -287,11 +302,18 @@ if [ -z "${AWS_PROFILE:-}" ]; then
       [[ " $* " == *' --db-instance-identifier watchdog-bms-prod-db '* ]]
       printf '%s\n' 'arn:aws:rds:ap-southeast-1:311414082667:db:watchdog-bms-prod-db' ;;
     'iam get-role')
-      [[ " $* " == *' --role-name watchdog-bms-production-a5-clone '* ]]
-      printf '%s\n' 'arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone' ;;
+      if [[ " $* " == *' --role-name watchdog-bms-production-a5-clone '* ]]; then
+        printf '%s\n' 'arn:aws:iam::311414082667:role/watchdog-bms-production-a5-clone'
+      else
+        [[ " $* " == *' --role-name watchdog-bms-uat-ecs-ai-gateway-role '* ]]
+        printf '%s\n' 'arn:aws:iam::311414082667:role/watchdog-bms-uat-ecs-ai-gateway-role'
+      fi ;;
     'ec2 describe-vpc-endpoints')
       [[ " $* " == *' --vpc-endpoint-ids vpce-044085e7ad8749ca4 '* ]]
       printf '%s\n' 'vpce-044085e7ad8749ca4' ;;
+    'bedrock-agentcore-control list-agent-runtimes')
+      [[ " $* " == *' --region ap-southeast-1 '* ]]
+      printf '%s\n' '1' ;;
     *) echo "unsupported fake session AWS command: $*" >&2; exit 2 ;;
   esac
   exit 0
@@ -386,6 +408,7 @@ run_ceremony() {
   local mode="${CEREMONY_MODE:---apply}" selected_principal="$principal"
   [ "$mode" != --apply-clone-controller ] || selected_principal="$clone_principal"
   [ "$mode" != --apply-private-endpoints ] || selected_principal="$endpoint_principal"
+  [ "$mode" != --apply-uat-runtime ] || selected_principal="$uat_runtime_principal"
   PATH="$fixture/bin:$PATH" FAKE_AWS_STATE="$fixture/state" \
     FAKE_TRUST="$trust" FAKE_PRINCIPAL="$selected_principal" FAKE_BRIDGE="$user_bridge" \
     AWS_ACCOUNT_ID=311414082667 PROMOTION_ADMIN_PROFILE=platform-admin \
@@ -418,6 +441,12 @@ reset_fake
 CEREMONY_MODE=--apply-private-endpoints run_ceremony
 test "$(<"$fixture/state/helper-mode")" = --apply-private-endpoints
 test "$(grep -Fc 'session ec2 describe-vpc-endpoints' "$fixture/state/calls")" -eq 1
+assert_mutation_order
+
+reset_fake
+CEREMONY_MODE=--apply-uat-runtime run_ceremony
+test "$(<"$fixture/state/helper-mode")" = --apply-uat-runtime
+test "$(grep -Fc 'session bedrock-agentcore-control list-agent-runtimes' "$fixture/state/calls")" -eq 1
 assert_mutation_order
 
 reset_fake

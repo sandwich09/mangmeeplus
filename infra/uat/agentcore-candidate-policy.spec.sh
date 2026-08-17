@@ -7,6 +7,15 @@ setup="$root/infra/uat/setup-control-plane.sh"
 verify="$root/infra/uat/verify-control-plane-policies.sh"
 workflow="$root/.github/workflows/deploy-uat.yml"
 agentcore_deploy="$root/infra/ai-gateway/agentcore-deploy.sh"
+ai_policy="$root/infra/uat/ai-task-policy.template.json"
+bootstrap="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
+ceremony="$root/infra/security/run-production-promotion-prerequisite-ceremony.sh"
+
+jq -e '
+  .Statement[0].Resource==["<AGENTCORE_RUNTIME_ARN>","<AGENTCORE_RUNTIME_ARN>/runtime-endpoint/*"]
+  and (.Statement[1].Resource|index("arn:aws:bedrock:*:<ACCOUNT_ID>:inference-profile/apac.anthropic.*"))!=null
+  and (.Statement[1].Resource|index("arn:aws:bedrock:*:<ACCOUNT_ID>:inference-profile/global.anthropic.*"))!=null
+' "$ai_policy" >/dev/null
 
 jq -e '
   any(.Statement[];
@@ -18,15 +27,26 @@ jq -e '
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
       "bedrock-agentcore:InvokeAgentRuntime"])))
   and any(.Statement[];
-    .Action=="iam:GetRolePolicy"
+    ((.Action|if type=="array" then index("iam:GetRolePolicy") else .=="iam:GetRolePolicy" end))
     and (.Resource|index("arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role")))
+  and any(.Statement[];
+    .Sid=="ManageOnlyUatAgentCoreExecutionRole"
+    and ([.Action[]]|contains(["iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies"])))
 ' "$deploy_policy" >/dev/null
 
 for file in "$setup" "$verify"; do
   grep -Fq 'runtime/watchdog_orchestrator_uat_candidate-*' "$file"
-  grep -Fq 'runtime/watchdog_orchestrator_uat_candidate-*/runtime-endpoint/*' "$file"
+  grep -Fq 'ai-task-policy.template.json' "$file"
 done
-grep -Fq 'verify watchdog-bms-uat-ecs-ai-gateway-role watchdog-bms-uat-ai-gateway-runtime' "$verify"
+grep -Fq 'verify_exact_role watchdog-bms-uat-ecs-ai-gateway-role watchdog-bms-uat-ai-gateway-runtime' "$verify"
+grep -Fq 'verify_exact_role watchdog-bms-uat-agentcore-execution-role watchdog-bms-agentcore-permissions' "$verify"
+grep -Fq 'ensure_role "$agentcore_role" "$tmp_dir/agentcore-trust.json"' "$setup"
+grep -Fq 'APPLIED_BUT_UNVERIFIED: role=${agentcore_role} policy=watchdog-bms-agentcore-permissions' "$setup"
+grep -Fq 'get-bucket-versioning' "$verify"
+grep -Fq 'list-agent-runtimes' "$verify"
+grep -Fq 'PUBLIC_DOMAIN_URL is not the canonical UAT origin' "$workflow"
+grep -Fq -- '--apply-uat-runtime' "$bootstrap"
+grep -Fq -- '--apply-uat-runtime' "$ceremony"
 
 grep -Fq 'DEPLOY_ENVIRONMENT: uat' "$workflow"
 grep -Fq 'validate-agentcore-candidate-binding.sh' "$workflow"

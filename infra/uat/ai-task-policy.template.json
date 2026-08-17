@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:InvokeAgentRuntime"
+      ],
+      "Resource": [
+        "<AGENTCORE_RUNTIME_ARN>",
+        "<AGENTCORE_RUNTIME_ARN>/runtime-endpoint/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/anthropic.*",
+        "arn:aws:bedrock:*:<ACCOUNT_ID>:inference-profile/apac.anthropic.*",
+        "arn:aws:bedrock:*:<ACCOUNT_ID>:inference-profile/global.anthropic.*"
+      ]
+    }
+  ]
+}

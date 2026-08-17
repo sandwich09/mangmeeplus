@@ -196,6 +196,9 @@ runtime, IAM, migration, health และ recovery gates ยังบังค�
 4. ถ้า IAM, trust, runtime resource หรือ S3 lifecycle เปลี่ยน ให้ใช้
    `production-promotion-prerequisite-bootstrap.md` และ exact-readback ก่อน UAT/READY. ห้ามแก้ IAM
    ระหว่าง deploy.
+   สำหรับ UAT AgentCore ให้ใช้ scoped `--apply-uat-runtime`; mode นี้ต้องพิสูจน์ deploy role,
+   ECS AI role, AgentCore execution role, secret metadata, runtime zero-or-one/READY และ artifact
+   bucket versioning พร้อมกัน ห้ามซ่อมเฉพาะ policy แรกที่ workflow รายงานแล้ว dispatch ซ้ำ.
 5. `main` ต้องมี controller ที่ review แล้ว; candidate ต้องเป็น lowercase full SHA ที่ reachable จาก
    `develop`. สำหรับ cost path ให้ใช้ exact PR head ที่มี successful pull-request CI. Merge SHA ที่ไม่มี
    exact CI อาจถูกต้อง แต่ UAT จะรัน validation ทั้งชุดใหม่. UAT `all` ยังบังคับให้ candidate มี blob

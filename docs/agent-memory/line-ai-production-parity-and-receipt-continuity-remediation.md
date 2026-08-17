@@ -388,3 +388,46 @@ Next:
   receives the deferred concurrency run; an unexplained timeout, duplicate mutation, permission leak or
   unreconciled terminal outcome closes the customer gate and invokes rollback. This approval does not
   establish general-customer or capacity readiness.
+- UAT run `31979696132` (candidate `3904b1f92e7520b10c5d72ea8cf5e8a0957d34ae`, controller
+  `48db8b139b15b6266b674b3c60374d6f6e06f960`) failed before image publication or environment
+  mutation because `watchdog-bms-uat-ai-gateway-runtime` still had the pre-AgentCore policy. No
+  unchanged retry was dispatched.
+- The look-forward audit found two sibling prerequisites that a one-policy repair would have missed:
+  the new UAT AgentCore execution role had not yet been established, and GitHub environment `uat`
+  had lost `PUBLIC_DOMAIN_URL`. Live readback proved no UAT candidate runtime exists yet, both exact
+  UAT secret metadata records exist, `https://uat.mangmeeplus.com/v1/health` responds, and the
+  canonical environment variable was restored and exact-read without exposing secrets.
+- The remediation adds one scoped non-root `--apply-uat-runtime` ceremony. Before any UAT retry it
+  resolves the valid zero-runtime first-deploy state or one unique `READY` steady-state runtime,
+  exact-applies/reads the UAT deploy, ECS AI and AgentCore execution roles, checks both secret ARNs,
+  and repairs/reads artifact-bucket versioning. UAT preflight repeats the same exact role/policy/trust,
+  runtime, secrets and bucket checks before publication. This also prevents the next UAT from falsely
+  expecting a broad candidate wildcard after the first deploy has narrowed the task policy to the
+  stable exact runtime ARN.
+
+## Release continuation — UAT control-plane repair
+
+Status: implementation and local contract checks complete; merge/ceremony pending and no second UAT dispatched.
+
+Artifacts:
+
+- Failed pre-mutation UAT: `31979696132`.
+- Restored environment value: `PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com` (GitHub environment
+  exact readback passed).
+- Scoped durable boundary: `infra/security/run-production-promotion-prerequisite-ceremony.sh
+  --apply-uat-runtime`.
+
+Verification:
+
+- `bash infra/uat/agentcore-candidate-policy.spec.sh` — PASS.
+- `bash infra/security/production-promotion-bootstrap.spec.sh` — PASS, including scoped-mode
+  authority selection/canary/cleanup.
+- `bash infra/docker/production-image-security.spec.sh` — PASS after updating its exact UAT IAM
+  least-privilege assertion and fail-closed provider fixture for the new preflight reads.
+- Shell syntax, JSON parsing and `git diff --check` — PASS.
+
+Next:
+
+- Merge the reviewed controller to `develop` and `main`, run the scoped ceremony once with exact
+  cleanup proof, then dispatch one fresh UAT `all` candidate. Do not dispatch before the ceremony
+  exact-readback succeeds.
