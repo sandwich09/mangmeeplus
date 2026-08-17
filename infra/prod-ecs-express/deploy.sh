@@ -977,6 +977,8 @@ service_url() {
 . "$(dirname "$0")/lib-wait-for-service-url.sh"
 # shellcheck source=infra/prod-ecs-express/lib-uat-fast-rollout.sh
 . "$(dirname "$0")/lib-uat-fast-rollout.sh"
+# shellcheck source=infra/prod-ecs-express/lib-prod-rollout-config.sh
+. "$(dirname "$0")/lib-prod-rollout-config.sh"
 
 record_deployment_evidence() {
   local service_name="$1" service_arn="$2" deployment_arn="$3" target_revision="$4" proven_noop="$5"
@@ -1234,6 +1236,7 @@ deploy_express_service() {
     target_revision="$(jq -r '.targetRevisionArn' <<< "$create_bound")"
   else
     ensure_uat_fast_rollout_configuration "$service_name" || return $?
+    ensure_prod_rollout_configuration "$service_name" || return $?
     AWS_BIN="$AWS_BIN" AWS_REGION="$REGION" \
       bash "$(dirname "$0")/list-service-deployments-all.sh" \
         --service-arn "$service_arn" > "$before_deployments_response" || return $?
@@ -1321,6 +1324,7 @@ deploy_express_service() {
     bind_release_operation_evidence "$service_name" "$mutation_intent_id" || return $?
   fi
   verify_uat_fast_rollout_configuration "$service_name" || return $?
+  verify_prod_rollout_configuration "$service_name" || return $?
 }
 
 api_container_json() {
