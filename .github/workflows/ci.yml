@@ -295,6 +295,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.resolve-source.outputs.source_sha }}
+          fetch-depth: 2
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         if: needs.resolve-source.outputs.release_controller_only != 'true'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -317,7 +318,7 @@ jobs:
           bash infra/ai-gateway/h15-trust-boundary.spec.sh
           bash infra/uat/agentcore-candidate-policy.spec.sh
           node infra/security/sync-production-maintenance-release-pins.mjs --check
-          git show --check --format= HEAD
+          git diff --check HEAD^ HEAD
       - run: pnpm typecheck
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
