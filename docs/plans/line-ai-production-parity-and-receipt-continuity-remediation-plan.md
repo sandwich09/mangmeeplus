@@ -593,7 +593,18 @@ bounded release repair; no unchanged UAT retry is allowed.
       do not run the unchanged application TypeScript suite.
 - [x] Terminalize parent `1412bcbf-d8a4-4c1b-9d9a-1dbed0725558` once with exact `PRE_INTENT` run
       `32018662895`.
-- [ ] Merge one reviewed batch, apply/read back UAT prerequisites, then dispatch exactly one UAT `all`
-      run.
+- [x] Merge one reviewed batch, apply/read back UAT prerequisites, then dispatch exactly one UAT `all`
+      run `32021165284`; it stopped before the durable release task on a missing-key `HeadObject 403`.
+- [x] Continue the isolated AgentCore path manually with the exact run artifact to expose downstream
+      failures before another retry: reach runtime/endpoint `READY`, pass safe-read plus
+      mutation-refusal smokes, then reproduce the provider client-token tombstone after endpoint delete.
+- [x] Replace the ambiguous S3 existence probe with atomic create-only `If-None-Match: *`, version/hash
+      readback and token-free deterministic endpoint lifecycle; run focused non-TypeScript controller
+      checks and a live reversible proof through both hosted smokes.
+- [x] Generalize the reviewed CI controller-only classifier for a follow-up that changes the controller
+      plus both focused contracts, so unchanged application TypeScript remains skipped without weakening
+      secret, security, config or migration gates.
+- [ ] Commit and merge this single reviewed controller batch, verify exact candidate/controller identity,
+      then dispatch one UAT retry without rebuilding an unchanged application validation suite.
 - [ ] Before that dispatch, preflight the remaining READY/Production prerequisites from repository and
       live AWS together so the successful Passport proceeds without discovering one gate at a time.

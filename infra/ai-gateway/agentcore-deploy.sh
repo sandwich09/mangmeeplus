@@ -86,23 +86,19 @@ aws s3api put-bucket-versioning \
   --bucket "$BUCKET" \
   --versioning-configuration Status=Enabled \
   --region "$REGION"
-if object_json=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
-    --region "$REGION" --output json 2>"$STAGING/head-object.err"); then
+if put_json=$(aws s3api put-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
+    --body "$STAGING/agentcore.zip" --if-none-match '*' --region "$REGION" --output json \
+    2>"$STAGING/put-object.err"); then
+  S3_VERSION=$(jq -r '.VersionId // empty' <<< "$put_json")
+  echo "[agentcore-deploy] uploaded new content-addressed object version $S3_VERSION"
+elif grep -qE 'PreconditionFailed|412' "$STAGING/put-object.err"; then
+  object_json=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
+    --region "$REGION" --output json)
   S3_VERSION=$(jq -er '.VersionId' <<< "$object_json")
-  aws s3api get-object --bucket "$BUCKET" --key "$DEPLOY_KEY" --version-id "$S3_VERSION" \
-    --region "$REGION" "$STAGING/existing-agentcore.zip" >/dev/null
-  test "$(shasum -a 256 "$STAGING/existing-agentcore.zip" | awk '{print $1}')" = "$actual_sha" || {
-    echo 'ERROR: existing content-addressed AgentCore object has different bytes' >&2
-    exit 1
-  }
   echo "[agentcore-deploy] reusing existing content-addressed object version $S3_VERSION"
-elif grep -qE 'Not Found|NotFound|NoSuchKey|404' "$STAGING/head-object.err"; then
-  aws s3 cp "$STAGING/agentcore.zip" "s3://${BUCKET}/${DEPLOY_KEY}" --region "$REGION"
-  S3_VERSION=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
-    --query VersionId --output text --region "$REGION")
 else
-  cat "$STAGING/head-object.err" >&2
-  echo 'ERROR: cannot read the content-addressed AgentCore object; refusing to overwrite it' >&2
+  cat "$STAGING/put-object.err" >&2
+  echo 'ERROR: conditional AgentCore artifact write failed; refusing an unproven overwrite' >&2
   exit 1
 fi
 if [ "$S3_VERSION" = "None" ] || [ "$S3_VERSION" = "null" ]; then
@@ -112,6 +108,12 @@ if [ -z "$S3_VERSION" ]; then
   echo "ERROR: AgentCore artifact has no S3 version ID; refusing a mutable runtime reference" >&2
   exit 1
 fi
+aws s3api get-object --bucket "$BUCKET" --key "$DEPLOY_KEY" --version-id "$S3_VERSION" \
+  --region "$REGION" "$STAGING/pinned-agentcore.zip" >/dev/null
+test "$(shasum -a 256 "$STAGING/pinned-agentcore.zip" | awk '{print $1}')" = "$actual_sha" || {
+  echo 'ERROR: pinned content-addressed AgentCore object has different bytes' >&2
+  exit 1
+}
 
 # ── 3. Execution role (create if missing) ─────────────────────────────────────
 echo "[agentcore-deploy] ensuring execution role..."
@@ -376,7 +378,6 @@ if endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
       --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" \
       --agent-runtime-version "$RUNTIME_VERSION" \
       --description "WatchDog LINE AI ${DEPLOY_ENVIRONMENT} candidate ${SOURCE_COMMIT}" \
-      --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-update" \
       --output json)
   fi
 elif grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGING/endpoint.err"; then
@@ -391,7 +392,6 @@ elif grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGI
     echo "[agentcore-deploy] retiring stale endpoint $stale_endpoint"
     aws bedrock-agentcore-control delete-agent-runtime-endpoint \
       --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$stale_endpoint" \
-      --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${stale_endpoint}-delete" \
       --output json >/dev/null
     deleted=false
     for i in $(seq 1 30); do
@@ -415,7 +415,6 @@ elif grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGI
     --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --name "$ENDPOINT_NAME" \
     --agent-runtime-version "$RUNTIME_VERSION" \
     --description "WatchDog LINE AI ${DEPLOY_ENVIRONMENT} candidate ${SOURCE_COMMIT}" \
-    --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}" \
     --tags "Environment=$DEPLOY_ENVIRONMENT,ManagedBy=watchdog-release" \
     --output json)
 else

@@ -233,11 +233,9 @@ jobs:
                 *) release_controller_only=false ;;
               esac
             done <<< "$changed_paths"
-            for required in .github/workflows/deploy-uat.yml \
-              infra/ai-gateway/agentcore-deploy.sh \
-              infra/ai-gateway/select-retirable-agentcore-endpoints.jq \
-              infra/uat/github-deploy-role-policy.template.json \
-              infra/prod-ecs-express/github-deploy-role-policy.template.json; do
+            for required in infra/ai-gateway/agentcore-deploy.sh \
+              infra/ai-gateway/h15-trust-boundary.spec.sh \
+              infra/uat/agentcore-candidate-policy.spec.sh; do
               grep -Fxq "$required" <<< "$changed_paths" || release_controller_only=false
             done
           fi
