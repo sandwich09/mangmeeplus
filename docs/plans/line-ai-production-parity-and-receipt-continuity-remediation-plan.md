@@ -486,3 +486,39 @@ back the paired ECS/AgentCore manifest.
 - No known bug is merely hidden behind a longer timeout, generic refusal or different UAT runtime.
 - No partial production unlock was used as a diagnostic step.
 - All documentation and runtime evidence agree on source, artifact, outcome and remaining gaps.
+
+## Release repair — AgentCore MMDSv2 first create
+
+Evidence from UAT run `31983841413` and the current AWS API/CLI contract fixes the next work to one
+bounded release repair; no unchanged UAT retry is allowed.
+
+### Work
+
+- [x] Split the AgentCore first-create path into create without metadata, wait `READY`, full update with
+      `requireMMDSV2=true`, wait `READY`, and exact MMDSv2 readback before endpoint creation.
+- [x] Keep the existing-runtime path on the same full update/readback contract.
+- [x] Extend the shell contract test so it fails if metadata is passed to create, omitted from update,
+      or endpoint/smoke can occur before the exact MMDSv2 readback.
+- [x] Make the UAT failure cleanup distinguish pre-rollout from post-intent failures. When deployment
+      evidence was never created, emit the parent operation/run/task ids and require exact `PRE_INTENT`
+      recovery instead of invoking retirement with a missing `api-web.json`.
+- [x] Verify shell syntax, focused AgentCore/UAT policy tests, Production release workflow contracts and
+      the complete whole-chain aggregate affected by these shared release paths.
+- [ ] Commit and promote through successful exact-head CI. The owner's standing approval may bypass only
+      GitHub's last-pusher approval deadlock, with immediate branch-rule restoration and readback; it
+      does not bypass CI, UAT, reconciliation, signed results, rollback, or customer `OPEN`.
+- [ ] Wait for parent `8bbb4b6e-460c-4d82-afd1-4428299f40a4` from UAT run `31983841413` to become
+      `UNKNOWN`, dispatch the existing exact `PRE_INTENT` recovery once, and require
+      `RECONCILED_FAILED_CONFIRMED` before the next release.
+- [ ] Run the UAT prerequisite exact readback again, then dispatch one UAT `all` retry. Continue to
+      conditional READY/Production only from its signed accepted passport.
+
+### Verification evidence required before retry
+
+- Current `create-agent-runtime` input contains no metadata field and current `update-agent-runtime`
+  contains `metadataConfiguration.requireMMDSV2`.
+- First-create and existing-runtime fixtures prove the AWS command order and failure stops.
+- Pre-rollout failure fixture proves no missing-evidence retirement call and an explicit recovery-needed
+  diagnostic; post-intent retirement behavior remains unchanged.
+- Live readback proves no candidate runtime was left by failed run `31983841413`, no ECS service rollout
+  occurred, and the failed parent was exactly reconciled before retry.

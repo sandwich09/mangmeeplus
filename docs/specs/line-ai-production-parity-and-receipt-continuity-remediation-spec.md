@@ -542,3 +542,39 @@ passing local tests alone is insufficient.
 - Measured timeout and latency SLO after the complete UAT candidate exists.
 - Whether OA verification is required for all customers or an owner-approved named pilot may run with
   the warning. This does not alter any software safety gate.
+
+## 15. Conditional named-pilot release amendment — 2026-08-17
+
+Owner directive `OWNER-DIRECTIVE-2026-08-17-LINE-AI-CONCURRENCY-DEFERRED` defers only the hosted
+concurrency p95/p99 run until after a conditional named-pilot `OPEN`. The row remains `DEFERRED`, never
+`PASS`; the 20-second timeout remains unchanged. Exact hosted identity, tenant/role enforcement, real
+LINE pilot smoke, persisted-state reconciliation, forced failure, paired rollback, signed UAT/READY/
+Production results and customer `OPEN` still gate live use. Any unexplained timeout, duplicate mutation,
+permission leak or unreconciled accepted event after opening closes the customer gate and invokes the
+paired rollback. This is not general-customer or capacity readiness.
+
+## 16. AgentCore first-create and pre-rollout failure contract — 2026-08-17
+
+UAT run `31983841413` failed before an AgentCore runtime or ECS service rollout was created. AWS CLI
+2.36 rejected `--metadata-configuration` on `create-agent-runtime` with exit 252. The current AWS
+CreateAgentRuntime API has no metadata input, while AWS requires MMDSv2 to be enabled through
+UpdateAgentRuntime before invocation from 30 June 2026. Therefore a first create must:
+
+1. create the runtime without a metadata argument;
+2. wait for the created runtime to reach `READY` and reject `CREATE_FAILED`;
+3. update that exact runtime with `metadataConfiguration.requireMMDSV2=true` and the complete intended
+   runtime configuration;
+4. wait for the update to reach `READY`, reject `UPDATE_FAILED`, and exact-read
+   `metadataConfiguration.requireMMDSV2=true`; then
+5. bind and verify the source-specific endpoint before either smoke invocation or ECS rollout.
+
+An existing runtime continues through the update path and the same exact readback. A failed create or
+update produces no accepted binding file and cannot advance to ECS.
+
+The same UAT run exposed a separate failure-path gap: the post-run retirement step attempted to read
+`api-web.json` even though the AgentCore failure preceded all ECS intent/evidence creation. A failure
+before `Deploy immutable UAT manifest` must report the exact pre-rollout state and leave the durable
+parent for the existing exact `PRE_INTENT` recovery after its lease becomes `UNKNOWN`; it must not run
+retirement against fabricated/missing deployment evidence, mark the parent successful, or hide the
+primary failure with a `jq` file error. A retry is forbidden until the exact parent is terminalized
+`RECONCILED_FAILED_CONFIRMED` and the AgentCore create/update contract is locally verified.

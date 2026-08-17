@@ -1,6 +1,6 @@
 # Agent Memory: LINE AI production parity and receipt continuity remediation
 
-Status: Local production-parity and owner daily-closing implementation complete; PR #110 integration is active.
+Status: Release repair in progress after pre-rollout UAT run `31983841413` failed at AgentCore first create.
 Documentation baseline is `3a06829`; repository stories 1-11
 are `f0ab272`, `62b88a4`, `a43134b`, `7ce43fd`, `ad4405a`, `37b34e5`, `7fb7e5b`, `d7f8f6e`,
 `9985770`, `5333bc0` and `e0f7383`. Look-forward local execution added story 12 (tsx application-graph
@@ -431,3 +431,42 @@ Next:
 - Merge the reviewed controller to `develop` and `main`, run the scoped ceremony once with exact
   cleanup proof, then dispatch one fresh UAT `all` candidate. Do not dispatch before the ceremony
   exact-readback succeeds.
+
+## Release continuation — AgentCore first-create failure
+
+- Candidate `9c5cd40fe77a3cdcc26e11077048bebf429af2e3` passed exact PR CI run `31981271392`; controller
+  `1e01510e35ecb16d0b1247774a663147e482cc74` dispatched UAT run `31983841413` after the scoped UAT
+  prerequisite ceremony passed and cleaned up its temporary authority.
+- The run published immutable service/tool artifacts and the AgentCore zip
+  `d64692dcf2f6a74b013b8726b09d100e5098476e4bc5ffdaa96296ac74dc7716`, applied three migrations and
+  held parent operation `8bbb4b6e-460c-4d82-afd1-4428299f40a4`. It then stopped before AgentCore
+  creation and before every ECS rollout.
+- Primary evidence is AWS CLI exit 252: `create-agent-runtime` rejected the unsupported
+  `--metadata-configuration` option. AWS CreateAgentRuntime currently has no metadata input; AWS
+  documents UpdateAgentRuntime as the required operation for `requireMMDSV2=true` before invocation.
+- No UAT candidate runtime exists after the failure. The live UAT services remain on their prior stable
+  source/runtime and the release task `8ebe018c5f4646f897e20b44a11c3fc3` stopped with exit 0 after
+  creating the held parent. No Production mutation occurred.
+- Look-forward review found the independent cleanup defect: retirement attempted
+  `$DEPLOYMENT_EVIDENCE_DIR/api-web.json` although the AgentCore failure preceded service deployment.
+  The repair must preserve post-intent retirement while routing this pre-rollout state to the existing
+  exact `PRE_INTENT` recovery requirement; skipping the file alone would leave the parent unresolved.
+- Standing owner authorization permits bypassing only the GitHub last-push-approval deadlock after
+  exact-head CI/review proof, with immediate restoration/readback. UAT, signed evidence, exact state,
+  rollback and customer gates are never bypassed.
+
+Verification pending:
+
+- AgentCore first-create/update command-order, terminal-failure and MMDSv2 exact-readback contracts pass
+  in `infra/ai-gateway/h15-trust-boundary.spec.sh`. The installed AWS CLI input skeleton independently
+  proves metadata is absent from CreateAgentRuntime and present on UpdateAgentRuntime.
+- Live read-only Production output-shape evidence confirms `GetAgentRuntime` returns the artifact,
+  environment, network, protocol, role, status/version and `metadataConfiguration.requireMMDSV2=true`
+  fields used by the new exact readback; no secret values were printed.
+- Pre-rollout cleanup diagnostic plus unchanged post-intent retirement contracts pass in
+  `infra/docker/production-image-security.spec.sh`; the complete scanner exits 0.
+- Whole-chain repository acceptance exits 0: catalog 4/4, controlled-image contract 4/4, API 274/274,
+  AI Gateway 187/187, UAT candidate, serving-mode, promotion-resource and Production V2 contracts.
+- Shell syntax, workflow YAML parsing and `git diff --check` pass.
+- Exact recovery of parent `8bbb4b6e-460c-4d82-afd1-4428299f40a4` after lease expiry.
+- One new UAT run only after merge, prerequisite readback and recovery.
