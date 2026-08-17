@@ -493,18 +493,6 @@ jobs:
             migration_digest="$(jq -er '.digest|select(test("^sha256:[0-9a-f]{64}$"))' tools/image-migration-tool.json)"
             echo "MIGRATION_DIGEST=$migration_digest" >> "$GITHUB_ENV"
           fi
-      - name: Verify and run UAT release task
-        env:
-          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          RELEASE_DEPLOY_TARGET: ${{ steps.target.outputs.target }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          release_image="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
-          docker pull --platform linux/amd64 "$release_image"
-          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image")" = "$SOURCE_SHA"
-          docker run --rm --entrypoint /bin/sh "$release_image" -lc 'cd /app/apps/api && ./node_modules/.bin/prisma validate --schema prisma/schema.prisma'
-          bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
       - name: Refresh AWS UAT credentials for deployment
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
@@ -542,6 +530,18 @@ jobs:
           echo "AGENTCORE_EXPECTED_SOURCE_COMMIT=$SOURCE_COMMIT" >> "$GITHUB_ENV"
           echo "AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha" >> "$GITHUB_ENV"
           echo "AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version" >> "$GITHUB_ENV"
+      - name: Verify and run UAT release task
+        env:
+          SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
+          RELEASE_DEPLOY_TARGET: ${{ steps.target.outputs.target }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          release_image="$ECR_REGISTRY/watchdog-bms-api@$RELEASE_DIGEST"
+          docker pull --platform linux/amd64 "$release_image"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$release_image")" = "$SOURCE_SHA"
+          docker run --rm --entrypoint /bin/sh "$release_image" -lc 'cd /app/apps/api && ./node_modules/.bin/prisma validate --schema prisma/schema.prisma'
+          bash infra/prod-ecs-express/run-release-task.sh "$release_image" "$SOURCE_SHA"
       - name: Deploy immutable UAT manifest
         id: deploy-services
         env:
@@ -574,6 +574,10 @@ jobs:
           set -euo pipefail
           if [ -z "${RELEASE_DIGEST:-}" ]; then
             echo "[retire] the release task image was never built, so no build was pre-attested — nothing to retire"
+            exit 0
+          fi
+          if [ -z "${RELEASE_PARENT_OPERATION_ID:-}" ]; then
+            echo "[retire] AgentCore failed before the durable release task; no rollout parent exists"
             exit 0
           fi
           mode=retire

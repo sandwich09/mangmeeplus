@@ -639,3 +639,43 @@ passes. The held parent `b11a489a-eeea-445b-80d3-0d412492c8d1` requires one exac
 recovery using stopped task `8ca8da2b665f48b1a2325b7cdcd8d8c3` after its lease becomes
 `UNKNOWN`; the existing READY candidate runtime is reconciled by exact readback/update on the next
 single UAT run, not guessed absent or deleted merely to clear the error.
+
+## 20. Bounded AgentCore endpoint retention and pre-release ordering — 2026-08-17
+
+UAT run `32016996071` exact-read candidate runtime
+`watchdog_orchestrator_uat_candidate-NwJNiqG5Jd` at source
+`c64e0910049f9adec533cc05bd0c8f38705487de` and runtime version `4`, then failed
+`CreateAgentRuntimeEndpoint` with AWS `maxEndpointsPerAgent`. Live provider readback proved the runtime
+already had three endpoints: provider-managed `DEFAULT` plus source endpoints
+`candidate_uat_85f98ed6b442` and `candidate_uat_2a9cec123ed4`. Live ECS readback proved the active UAT
+AI Gateway referenced neither: it still used runtime `watchdog_orchestrator-6xOx1tCbz0`, qualifier
+`DEFAULT` and `LINE_AI_AGENT_RUNTIME=strands-local`.
+
+This is a lifecycle defect, not a reason to request an unbounded quota or manually delete one endpoint
+per release. Candidate deployment must therefore:
+
+1. exact-read every active AI Gateway configuration and protect every custom endpoint referenced under
+   the candidate runtime, including overlapping rollout configurations;
+2. reuse the existing S3 object version only after downloading and hashing the content-addressed object,
+   then reuse an exact READY runtime configuration instead of creating a redundant immutable version
+   on an idempotent retry;
+3. reuse an intended source endpoint when it already targets the intended version;
+4. before creating an absent intended endpoint, delete only same-environment managed candidate
+   endpoints under that isolated runtime which are neither intended nor protected by live ECS, wait
+   until provider deletion is observable, and leave `DEFAULT` and unknown endpoint names untouched;
+5. update an existing intended endpoint only when it is not live-protected; never repoint a serving
+   endpoint as a readiness side effect; and
+6. fail before endpoint creation when live ECS state cannot be read or protected endpoints still consume
+   the bounded window.
+
+Both UAT and Production deploy roles require only the additional scoped
+`UpdateAgentRuntimeEndpoint`/`DeleteAgentRuntimeEndpoint` actions in their existing candidate-runtime
+statement. The prerequisite ceremony and exact policy readback must complete before the next UAT; no
+managed full-access policy is permitted.
+
+The same run also proved the durable release task was started before AgentCore candidate validation,
+creating parent `1412bcbf-d8a4-4c1b-9d9a-1dbed0725558` even though no ECS service intent or rollout was
+started. AgentCore binding/smoke must precede the durable release task. A failure before that task must
+perform no retirement or recovery ceremony; a failure after a parent exists keeps the existing exact
+recovery contract. The held zero-intent parent requires one exact `PRE_INTENT` recovery using stopped
+task `0b4cf52780924717a3c7afcbd65de9ef` before another UAT dispatch.

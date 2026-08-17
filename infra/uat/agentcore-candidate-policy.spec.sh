@@ -7,6 +7,7 @@ production_deploy_policy="$root/infra/prod-ecs-express/github-deploy-role-policy
 setup="$root/infra/uat/setup-control-plane.sh"
 verify="$root/infra/uat/verify-control-plane-policies.sh"
 workflow="$root/.github/workflows/deploy-uat.yml"
+ci_workflow="$root/.github/workflows/ci.yml"
 agentcore_deploy="$root/infra/ai-gateway/agentcore-deploy.sh"
 ai_policy="$root/infra/uat/ai-task-policy.template.json"
 bootstrap="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
@@ -26,6 +27,8 @@ jq -e '
       "bedrock-agentcore:CreateWorkloadIdentity",
       "bedrock-agentcore:UpdateAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+      "bedrock-agentcore:UpdateAgentRuntimeEndpoint",
+      "bedrock-agentcore:DeleteAgentRuntimeEndpoint",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
       "bedrock-agentcore:TagResource",
       "bedrock-agentcore:InvokeAgentRuntime"])))
@@ -45,6 +48,8 @@ jq -e '
       "bedrock-agentcore:CreateWorkloadIdentity",
       "bedrock-agentcore:UpdateAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+      "bedrock-agentcore:UpdateAgentRuntimeEndpoint",
+      "bedrock-agentcore:DeleteAgentRuntimeEndpoint",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
       "bedrock-agentcore:TagResource",
       "bedrock-agentcore:InvokeAgentRuntime"])))
@@ -70,6 +75,16 @@ grep -Fq 'AGENTCORE_RUNTIME_QUALIFIER=$qualifier' "$workflow"
 grep -Fq 'AGENTCORE_EXPECTED_SOURCE_COMMIT=$SOURCE_COMMIT' "$workflow"
 grep -Fq 'AGENTCORE_EXPECTED_ARTIFACT_SHA256=$artifact_sha' "$workflow"
 grep -Fq 'AGENTCORE_EXPECTED_CONTRACT_VERSION=$contract_version' "$workflow"
+agentcore_line="$(grep -n 'name: Deploy exact AgentCore candidate' "$workflow" | cut -d: -f1)"
+release_task_line="$(grep -n 'name: Verify and run UAT release task' "$workflow" | cut -d: -f1)"
+service_deploy_line="$(grep -n 'name: Deploy immutable UAT manifest' "$workflow" | cut -d: -f1)"
+test "$agentcore_line" -lt "$release_task_line"
+test "$release_task_line" -lt "$service_deploy_line"
+grep -Fq 'AgentCore failed before the durable release task; no rollout parent exists' "$workflow"
+grep -Fq 'release_controller_only: ${{ steps.source.outputs.release_controller_only }}' "$ci_workflow"
+grep -Fq 'name: Test AgentCore release controller without application TypeScript' "$ci_workflow"
+grep -Fq "if: needs.resolve-source.outputs.release_controller_only == 'true'" "$ci_workflow"
+grep -Fq "if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'" "$ci_workflow"
 if grep -Fq "AGENTCORE_RUNTIME_QUALIFIER: \${{ vars.AGENTCORE_RUNTIME_QUALIFIER || 'DEFAULT' }}" "$workflow"; then
   echo 'ERROR: UAT workflow still permits a mutable DEFAULT endpoint' >&2
   exit 1
@@ -79,5 +94,17 @@ fi
 # must use the same lifecycle-aware exact validator as Production readiness.
 grep -Fq 'validate-agentcore-endpoint-readback.sh' "$agentcore_deploy"
 grep -Fq 'refusing to guess that it is absent' "$agentcore_deploy"
+grep -Fq 'describe-express-gateway-service' "$agentcore_deploy"
+grep -Fq 'preserving live endpoint' "$agentcore_deploy"
+grep -Fq 'delete-agent-runtime-endpoint' "$agentcore_deploy"
+grep -Fq 'exact runtime configuration is already READY' "$agentcore_deploy"
+grep -Fq 'reusing existing content-addressed object version' "$agentcore_deploy"
+grep -Fq 'existing content-addressed AgentCore object has different bytes' "$agentcore_deploy"
+
+endpoint_fixture='{"runtimeEndpoints":[{"name":"DEFAULT"},{"name":"candidate_uat_old000000001"},{"name":"candidate_uat_live00000001"},{"name":"candidate_production_other000001"},{"name":"foreign"}]}'
+test "$(jq -r --arg environment uat --arg intended candidate_uat_new000000001 \
+  --argjson protected '["candidate_uat_live00000001"]' \
+  -f "$root/infra/ai-gateway/select-retirable-agentcore-endpoints.jq" \
+  <<< "$endpoint_fixture")" = candidate_uat_old000000001
 
 echo 'UAT AgentCore candidate policy contract: PASS'

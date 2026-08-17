@@ -576,3 +576,24 @@ bounded release repair; no unchanged UAT retry is allowed.
       `8ca8da2b665f48b1a2325b7cdcd8d8c3`.
 - [ ] Exact-read the retained READY UAT runtime/endpoint and dispatch only one new UAT `all` run. Do
       not begin the approved full Production prerequisite ceremony until that run signs a Passport.
+
+## Release repair — bounded AgentCore endpoint retention and idempotent retry
+
+- [x] Record failed UAT run `32016996071`, runtime/version/source, all three live endpoints, and the
+      active UAT AI Gateway runtime/qualifier proving both custom UAT candidate endpoints are stale.
+- [x] Reuse byte-verified content-addressed S3 object versions and make identical runtime configuration
+      a provider no-op so a retry does not mint another object/runtime version.
+- [x] Protect qualifiers from every active ECS AI Gateway configuration; retire only unprotected,
+      same-environment candidate endpoints before an absent source endpoint is created.
+- [x] Add scoped endpoint update/delete actions to both deploy-role templates and executable policy
+      contract; apply them only through the prerequisite ceremony and exact readback.
+- [x] Move AgentCore bind/smoke before the durable release task and make pre-parent failure cleanup a
+      true no-op, while retaining exact post-parent recovery behavior.
+- [x] Run one focused endpoint lifecycle/policy check, workflow syntax/security aggregate and pin sync;
+      do not run the unchanged application TypeScript suite.
+- [x] Terminalize parent `1412bcbf-d8a4-4c1b-9d9a-1dbed0725558` once with exact `PRE_INTENT` run
+      `32018662895`.
+- [ ] Merge one reviewed batch, apply/read back UAT prerequisites, then dispatch exactly one UAT `all`
+      run.
+- [ ] Before that dispatch, preflight the remaining READY/Production prerequisites from repository and
+      live AWS together so the successful Passport proceeds without discovering one gate at a time.

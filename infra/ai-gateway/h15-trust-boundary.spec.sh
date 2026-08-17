@@ -35,7 +35,7 @@ create_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control create-agent-runt
 create_ready_line="$(grep -n 'wait_for_runtime_ready create ' "$agentcore" | cut -d: -f1)"
 update_line="$(grep -n 'RESULT=$(aws bedrock-agentcore-control update-agent-runtime' "$agentcore" | cut -d: -f1)"
 update_ready_line="$(grep -n 'wait_for_runtime_ready mmdsv2-update ' "$agentcore" | cut -d: -f1)"
-readback_line="$(grep -n 'RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime' "$agentcore" | cut -d: -f1)"
+readback_line="$(grep -n 'RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime' "$agentcore" | tail -1 | cut -d: -f1)"
 endpoint_line="$(grep -n 'get-agent-runtime-endpoint' "$agentcore" | head -1 | cut -d: -f1)"
 smoke_line="$(grep -n 'smoke_invoke safe ' "$agentcore" | cut -d: -f1)"
 test "$create_line" -lt "$create_ready_line"
