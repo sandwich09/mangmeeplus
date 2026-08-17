@@ -553,3 +553,29 @@ not yet applied for this release.
 - The full ceremony's S3 lifecycle exact-read already matches the reviewed contract, but its
   noncurrent-version retention effect still requires the owner's explicit recorded approval before
   `--apply`. Hosted concurrency remains owner-deferred and is not represented as PASS.
+
+## Release continuation — AgentCore endpoint lifecycle readback
+
+Status: UAT run `32000951480` failed after provider convergence; endpoint validator repair verified
+locally; no retry or Production mutation dispatched.
+
+- Exact controller `9a258f5853e8a401d9e93597a32329cbb6a0d140` dispatched candidate
+  `85f98ed6b4424c8c64ec3ca11365b9c009cdd5fb` once. Immutable images/tools, signatures, SBOMs,
+  release task and zero-pending migration check passed.
+- The release task `8ca8da2b665f48b1a2325b7cdcd8d8c3` is associated with held parent
+  `b11a489a-eeea-445b-80d3-0d412492c8d1`; no ECS rollout began.
+- Sanitized live AWS readback proves candidate runtime `watchdog_orchestrator_uat_candidate-NwJNiqG5Jd`
+  is `READY`, version `2`, MMDSv2-required, and its source-specific endpoint is `READY` with
+  `liveVersion="2"`. The settled endpoint payload has no `targetVersion` key.
+- Root cause is the repository verifier's unconditional `jq -er .targetVersion` after convergence.
+  This also affects the shared Production resource collector, so fixing only the UAT line would leave
+  a predictable later READY failure.
+- Required repair is one shared lifecycle-aware exact validator, provider-shaped regression fixtures,
+  exact recovery after the parent lease becomes `UNKNOWN`, reviewed merge, and one UAT retry only.
+- The shared validator accepts the sanitized live UAT endpoint response for exact runtime/name/version
+  `2`. Focused candidate-binding, H-15, UAT policy and Production-resource specs pass. Whole-chain
+  repository acceptance exits `0`: catalog 4/4, controlled-image contract 4/4, API 274/274, AI
+  Gateway 187/187 and all four release contracts pass.
+- The owner explicitly approved the full Production prerequisite ceremony's data-retention effect as
+  `CHAT-OWNER-APPROVAL-2026-08-17-DATA-RETENTION`. This approval authorizes that ceremony after a
+  successful Passport; it does not convert the failed UAT run into evidence or waive recovery/READY.

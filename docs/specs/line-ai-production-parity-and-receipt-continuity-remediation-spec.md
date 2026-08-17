@@ -613,3 +613,29 @@ The held parent `4e1df918-72fd-46b1-a315-33c7899a4b0d` must be terminalized by o
 recovery using stopped release task `0c14a694d49e45ec95382dc5b77663bc`. The following retirement
 failure is the expected fail-closed missing-rollout diagnostic, not a second root cause. No new UAT run
 may start until recovery, reviewed merge, scoped UAT ceremony and exact live policy readback all pass.
+
+## 19. AgentCore endpoint lifecycle readback contract — 2026-08-17
+
+UAT run `32000951480` proved the complete first-create authorization and MMDSv2 sequence: AWS created
+runtime `watchdog_orchestrator_uat_candidate-NwJNiqG5Jd`, advanced it to version `2`, exact-read it
+`READY` with `requireMMDSV2=true`, and created source endpoint `candidate_uat_85f98ed6b442`. The
+settled `GetAgentRuntimeEndpoint` response is `READY` with `liveVersion="2"` and omits
+`targetVersion`. The deploy script incorrectly required `.targetVersion` after settlement, so it
+exited before smoke, ECS rollout, binding and Passport even though the provider resources succeeded.
+
+Endpoint verification must follow the provider lifecycle rather than require every phase-specific
+field at once:
+
+1. while an endpoint is converging, a present `targetVersion` must equal the intended immutable
+   runtime version; an older `liveVersion` may remain until cutover;
+2. once status is `READY`, `liveVersion` must equal the intended version;
+3. `targetVersion` may be absent/null after settlement, but if present it must not conflict;
+4. runtime ARN, endpoint ARN and endpoint name must exact-match in both phases; and
+5. deploy and Production readiness must use the same executable validator so UAT cannot pass with a
+   latent Production readback failure.
+
+No candidate binding, smoke, ECS rollout or signed evidence may be accepted until the settled rule
+passes. The held parent `b11a489a-eeea-445b-80d3-0d412492c8d1` requires one exact `PRE_INTENT`
+recovery using stopped task `8ca8da2b665f48b1a2325b7cdcd8d8c3` after its lease becomes
+`UNKNOWN`; the existing READY candidate runtime is reconciled by exact readback/update on the next
+single UAT run, not guessed absent or deleted merely to clear the error.

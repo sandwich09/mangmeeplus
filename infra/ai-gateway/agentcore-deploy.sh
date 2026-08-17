@@ -301,7 +301,9 @@ ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}"
 if endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
     --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" \
     --output json 2>"$STAGING/endpoint.err"); then
-  test "$(jq -er '.targetVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION" || {
+  printf '%s\n' "$endpoint_json" > "$STAGING/endpoint.json"
+  bash infra/ai-gateway/validate-agentcore-endpoint-readback.sh \
+    "$STAGING/endpoint.json" "$RUNTIME_ARN" "$ENDPOINT_NAME" "$RUNTIME_VERSION" intended || {
     echo 'ERROR: source-specific endpoint already exists for a different runtime version' >&2
     exit 1
   }
@@ -335,12 +337,10 @@ for i in $(seq 1 30); do
   esac
   sleep 10
 done
-test "$ENDPOINT_STATUS" = READY
+printf '%s\n' "$endpoint_json" > "$STAGING/endpoint.json"
+bash infra/ai-gateway/validate-agentcore-endpoint-readback.sh \
+  "$STAGING/endpoint.json" "$RUNTIME_ARN" "$ENDPOINT_NAME" "$RUNTIME_VERSION" ready
 ENDPOINT_ARN=$(jq -er '.agentRuntimeEndpointArn' <<< "$endpoint_json")
-test "$ENDPOINT_ARN" = "$RUNTIME_ARN/runtime-endpoint/$ENDPOINT_NAME"
-test "$(jq -er '.targetVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION"
-test "$(jq -er '.liveVersion' <<< "$endpoint_json")" = "$RUNTIME_VERSION"
-test "$(jq -er '.agentRuntimeArn' <<< "$endpoint_json")" = "$RUNTIME_ARN"
 
 # A smoke result that is only printed is not a check. Both invocations below used to swallow their
 # exit status with `|| true` and let the script reach "Deploy Complete" and exit 0 - which is how a

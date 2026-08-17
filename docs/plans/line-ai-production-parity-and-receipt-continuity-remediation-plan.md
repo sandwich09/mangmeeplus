@@ -557,3 +557,22 @@ bounded release repair; no unchanged UAT retry is allowed.
       prerequisite ceremony, and prove the full first-create action set with live readback/simulation.
 - [ ] Dispatch exactly one UAT `all` run and continue only from its signed passport; install and
       exact-read the matching Production policy before conditional READY.
+
+## Release repair — AgentCore endpoint lifecycle readback
+
+- [x] Record UAT run `32000951480` and sanitized AWS readback proving runtime v2/MMDSv2 and the pinned
+      endpoint reached `READY`, while the settled endpoint returned `liveVersion="2"` without
+      `targetVersion`.
+- [x] Add one executable provider-readback validator: transition accepts the intended
+      `targetVersion`; settled `READY` requires the intended `liveVersion`; an absent settled target
+      is valid and a conflicting present target fails closed.
+- [x] Reuse that validator in candidate deploy and Production promotion-resource collection, including
+      exact runtime/name/endpoint ARN checks.
+- [x] Add provider-shaped fixtures for transition, settled-without-target, conflicting target, wrong
+      live version and wrong identity; run focused AgentCore, UAT policy, Production security and
+      whole-chain checks.
+- [ ] Commit, pass exact-head CI, merge through `develop`/`main`, then exact-recover parent
+      `b11a489a-eeea-445b-80d3-0d412492c8d1` once using stopped task
+      `8ca8da2b665f48b1a2325b7cdcd8d8c3`.
+- [ ] Exact-read the retained READY UAT runtime/endpoint and dispatch only one new UAT `all` run. Do
+      not begin the approved full Production prerequisite ceremony until that run signs a Passport.

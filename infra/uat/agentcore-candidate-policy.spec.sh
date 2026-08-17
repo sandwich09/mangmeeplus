@@ -75,12 +75,9 @@ if grep -Fq "AGENTCORE_RUNTIME_QUALIFIER: \${{ vars.AGENTCORE_RUNTIME_QUALIFIER 
   exit 1
 fi
 
-# AWS CLI 2.36 exposes targetVersion/liveVersion for endpoint read-back. There is no
-# agentRuntimeVersion field on get-agent-runtime-endpoint output.
-grep -Fq "'.targetVersion'" "$agentcore_deploy"
-grep -Fq "'.liveVersion'" "$agentcore_deploy"
-grep -Fq "'.agentRuntimeArn'" "$agentcore_deploy"
+# Settled AWS endpoint read-back can omit targetVersion and retain only liveVersion. Candidate deploy
+# must use the same lifecycle-aware exact validator as Production readiness.
+grep -Fq 'validate-agentcore-endpoint-readback.sh' "$agentcore_deploy"
 grep -Fq 'refusing to guess that it is absent' "$agentcore_deploy"
-grep -Fq 'test "$ENDPOINT_ARN" = "$RUNTIME_ARN/runtime-endpoint/$ENDPOINT_NAME"' "$agentcore_deploy"
 
 echo 'UAT AgentCore candidate policy contract: PASS'
