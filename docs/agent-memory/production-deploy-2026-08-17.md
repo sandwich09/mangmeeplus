@@ -34,6 +34,24 @@ Artifacts:
 - Exact zero-intent recovery run `32018662895` succeeded and terminalized the held parent; no new UAT
   may start until the batched controller/policy repair is merged and exact-applied.
 - Last successful no-TypeScript CI: `32007755936`; prior release checkpoint `9ec9f59889c6c939959d453e6cac77beaee313aa`.
+- PR `#135` merged the batched lifecycle/order controller as main `c251e43441cb285553357f65c5f46ce9f4424d49`;
+  reviewed candidate `19a495c6f6a77988a4529a0e788b751366eda8a4` passed CI `32020554160` with the
+  application TypeScript suite skipped. UAT prerequisite ceremony and exact readiness passed before the
+  only dispatch, UAT run `32021165284`.
+- UAT `32021165284` failed before the durable release task because S3 returned `403` for a missing
+  content-addressed key under a no-ListBucket deploy role. Manual continuation with its exact signed
+  artifact exposed the next controller defect: underscores in the stale endpoint name made the delete
+  client token invalid. After manual deletion with provider-valid tokens, runtime v5 and endpoint
+  `candidate_uat_19a495c6f6a7` reached READY; safe-read and mutation-refusal hosted smokes both returned
+  HTTP 200 with exact source/artifact identity. A reversible second proof then showed AWS tombstones even
+  a valid create token after endpoint deletion and returns `ConflictException` instructing a retry without
+  that token. Endpoint lifecycle must use deterministic identity/readback without optional client tokens.
+  The patched controller then reused exact S3 version `Ugs0dQHWIujNHrgd2HUgnRlnSbGDQWq_`, runtime v5,
+  recreated the source endpoint and passed both hosted smokes against AWS; this is controller proof, not
+  a signed UAT Passport. The CI controller-only classifier now requires this shell controller and both
+  focused contracts rather than unrelated files from the already-merged first batch, keeping unchanged
+  application TypeScript skipped while all non-application gates remain enabled.
+  No DB parent or ECS rollout was created by the failed run.
 Verification:
 - `bash infra/docker/ecr-scan-blocking-findings.spec.sh` passes.
 - `bash infra/security/production-security-preflight.spec.sh` passes, including accepted exact waiver and rejected forged waiver.
@@ -51,6 +69,7 @@ Verification:
   `c64e091...`; active ECS protects zero endpoints and the reviewed selector identifies exactly the two
   stale UAT candidate endpoints.
 Next:
-- Finish one batched AgentCore lifecycle/order repair, focused non-TypeScript proof, one reviewed merge
-  and one scoped prerequisite ceremony. Then run exactly one UAT, signed READY, Production promotion,
-  live parity/conversation verification and customer `OPEN`.
+- Finish the atomic S3 conditional-write and token-free endpoint-lifecycle controller repair as one
+  reviewed no-TypeScript batch. Exact-read the already READY manual AgentCore state, retry UAT once,
+  then continue signed READY, Production promotion, live parity/conversation verification and customer
+  `OPEN` without redispatching a terminal stage merely to discover its next error.

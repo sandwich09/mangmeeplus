@@ -46,6 +46,25 @@ test "$readback_line" -lt "$endpoint_line"
 test "$endpoint_line" -lt "$smoke_line"
 grep -Fq 'refusing a mutable runtime reference' "$agentcore"
 grep -Fq '"versionId": "${S3_VERSION}"' "$agentcore"
+grep -Fq -- "--if-none-match '*'" "$agentcore"
+grep -Fq "PreconditionFailed|412" "$agentcore"
+grep -Fq 'pinned content-addressed AgentCore object has different bytes' "$agentcore"
+if grep -Fq 'aws s3 cp "$STAGING/agentcore.zip"' "$agentcore"; then
+  echo 'AgentCore artifacts must use an atomic create-only write, not an existence probe followed by overwrite' >&2
+  exit 1
+fi
+conditional_put_line="$(grep -n -- "--if-none-match '\*'" "$agentcore" | cut -d: -f1)"
+head_read_line="$(grep -n 'object_json=$(aws s3api head-object' "$agentcore" | cut -d: -f1)"
+test "$conditional_put_line" -lt "$head_read_line"
+endpoint_create_block="$(sed -n '/endpoint_json=$(aws bedrock-agentcore-control create-agent-runtime-endpoint/,/--output json)/p' "$agentcore")"
+endpoint_update_block="$(sed -n '/endpoint_json=$(aws bedrock-agentcore-control update-agent-runtime-endpoint/,/--output json)/p' "$agentcore")"
+endpoint_delete_block="$(sed -n '/aws bedrock-agentcore-control delete-agent-runtime-endpoint/,/--output json/p' "$agentcore")"
+for endpoint_block in "$endpoint_create_block" "$endpoint_update_block" "$endpoint_delete_block"; do
+  if grep -Fq -- '--client-token' <<< "$endpoint_block"; then
+    echo 'AgentCore endpoint lifecycle must use deterministic identity/readback, not tombstoned client tokens' >&2
+    exit 1
+  fi
+done
 jq -e '.Statement[]|select(.Sid=="BedrockAgentCoreReadArtifact")
   |(.Action|sort)==["s3:GetObject","s3:GetObjectVersion"]' \
   "$repo_root/infra/ai-gateway/agentcore-execution-role-policy.json" >/dev/null

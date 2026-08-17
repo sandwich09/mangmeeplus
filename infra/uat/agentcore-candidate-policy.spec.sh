@@ -99,7 +99,13 @@ grep -Fq 'preserving live endpoint' "$agentcore_deploy"
 grep -Fq 'delete-agent-runtime-endpoint' "$agentcore_deploy"
 grep -Fq 'exact runtime configuration is already READY' "$agentcore_deploy"
 grep -Fq 'reusing existing content-addressed object version' "$agentcore_deploy"
-grep -Fq 'existing content-addressed AgentCore object has different bytes' "$agentcore_deploy"
+grep -Fq 'pinned content-addressed AgentCore object has different bytes' "$agentcore_deploy"
+grep -Fq -- "--if-none-match '*'" "$agentcore_deploy"
+if sed -n '/bedrock-agentcore-control \(create\|update\|delete\)-agent-runtime-endpoint/,/--output json/p' \
+    "$agentcore_deploy" | grep -Fq -- '--client-token'; then
+  echo 'ERROR: endpoint lifecycle still uses a provider-tombstoned client token' >&2
+  exit 1
+fi
 
 endpoint_fixture='{"runtimeEndpoints":[{"name":"DEFAULT"},{"name":"candidate_uat_old000000001"},{"name":"candidate_uat_live00000001"},{"name":"candidate_production_other000001"},{"name":"foreign"}]}'
 test "$(jq -r --arg environment uat --arg intended candidate_uat_new000000001 \

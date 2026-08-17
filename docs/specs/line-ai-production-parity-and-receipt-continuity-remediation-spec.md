@@ -668,6 +668,34 @@ per release. Candidate deployment must therefore:
 6. fail before endpoint creation when live ECS state cannot be read or protected endpoints still consume
    the bounded window.
 
+UAT run `32021165284` then proved two retry-controller edge cases before the durable release task.
+First, S3 returns `403 Forbidden` for a missing key when the caller has exact object read/write authority
+but no bucket-list authority, so a `HeadObject` existence probe cannot distinguish absence from denial.
+Artifact publication must instead use atomic `PutObject If-None-Match: *`: success creates one version;
+`412 PreconditionFailed` permits exact version readback; every accepted path downloads that version and
+hashes its bytes before runtime use. Second, endpoint names contain underscores but AgentCore idempotency
+tokens forbid them. Live continuation also proved that even a grammar-valid token becomes a provider
+tombstone after its endpoint is deleted: recreating the same deterministic endpoint with that token fails
+`ConflictException` and AWS explicitly requires retry without the token. Candidate endpoint
+create/update/delete must therefore omit the optional client token and obtain idempotency from the exact
+deterministic endpoint identity plus provider readback before and after each mutation. Runtime tokens stay
+pinned because the isolated runtime is retained rather than deleted.
+
+The isolated manual continuation used the exact signed artifact from run `32021165284`, source
+`19a495c6f6a77988a4529a0e788b751366eda8a4` and SHA-256
+`643ad94262bcd0a9cb6adb47e256f1ae6b1067bcad0809040a7606a2720940d7`. It proved runtime version `5`
+and endpoint `candidate_uat_19a495c6f6a7` reached `READY`; safe read and mutation-refusal invocations both
+returned HTTP `200` with matching runtime identity. A reversible second proof then exposed the provider
+token tombstone before CI. This bounds the repair to S3 conditional publication and token-free endpoint
+lifecycle;
+it is not a UAT Passport or permission to bypass the signed workflow.
+
+The patched controller was then run against that same live isolated state. It observed the existing
+object through `412`, exact-read and hashed version `Ugs0dQHWIujNHrgd2HUgnRlnSbGDQWq_`, reused runtime
+version `5`, recreated `candidate_uat_19a495c6f6a7` without a tombstoned token and passed both hosted
+smokes again. This is direct provider evidence for the repair, while the next signed UAT remains the
+only source of Passport evidence.
+
 Both UAT and Production deploy roles require only the additional scoped
 `UpdateAgentRuntimeEndpoint`/`DeleteAgentRuntimeEndpoint` actions in their existing candidate-runtime
 statement. The prerequisite ceremony and exact policy readback must complete before the next UAT; no
