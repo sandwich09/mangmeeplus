@@ -54,8 +54,13 @@ RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f \
 # base must match the native Prisma schema engine installed in the Debian build stage.
 FROM system AS migration-tool
 COPY --from=build --chown=node:node /app /app
-RUN apt-get purge -y --auto-remove fontconfig fonts-noto-core \
-  && apt-get purge -y --allow-remove-essential perl-base \
+RUN cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
+  && apt-get purge -y --auto-remove fontconfig fonts-noto-core \
+  && apt-get purge -y --allow-remove-essential perl-base openssl ca-certificates \
+  && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
+  && test -s /etc/ssl/certs/ca-certificates.crt \
+  && dpkg-query -W libssl3 \
+  && ! dpkg-query -W openssl ca-certificates >/dev/null 2>&1 \
   && rm -rf /var/lib/apt/lists/* \
   && chmod 1777 /tmp
 VOLUME ["/tmp"]

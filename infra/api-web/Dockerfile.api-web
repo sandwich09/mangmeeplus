@@ -88,7 +88,12 @@ RUN apt-get update -y \
   && find /usr/share/fonts/truetype/noto -type f ! -name 'NotoSansThai*' ! -name 'NotoSans-Regular*' ! -name 'NotoSans-Bold*' -delete \
   && mkdir -p /etc/fonts \
   && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf \
-  && apt-get purge -y --allow-remove-essential perl-base \
+  && cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt \
+  && apt-get purge -y --allow-remove-essential perl-base openssl ca-certificates \
+  && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt \
+  && test -s /etc/ssl/certs/ca-certificates.crt \
+  && dpkg-query -W libssl3 \
+  && ! dpkg-query -W openssl ca-certificates >/dev/null 2>&1 \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV HOST=0.0.0.0
