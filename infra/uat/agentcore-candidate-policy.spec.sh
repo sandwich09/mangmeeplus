@@ -23,6 +23,7 @@ jq -e '
     .Sid=="ManageUatAgentCoreCandidate"
     and ([.Action[]]|contains([
       "bedrock-agentcore:CreateAgentRuntime",
+      "bedrock-agentcore:CreateWorkloadIdentity",
       "bedrock-agentcore:UpdateAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
@@ -41,6 +42,7 @@ jq -e '
     .Sid=="ManageProductionAgentCoreCandidate"
     and ([.Action[]]|contains([
       "bedrock-agentcore:CreateAgentRuntime",
+      "bedrock-agentcore:CreateWorkloadIdentity",
       "bedrock-agentcore:UpdateAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",

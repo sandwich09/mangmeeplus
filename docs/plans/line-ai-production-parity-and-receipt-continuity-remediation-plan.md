@@ -539,3 +539,21 @@ bounded release repair; no unchanged UAT retry is allowed.
       reconciliation before dispatch.
 - [ ] Dispatch one UAT `all` retry only; complete passport, persisted-state and real-conversation
       evidence before conditional READY/Production.
+
+## Release repair — AgentCore automatic workload identity
+
+- [x] Record UAT run `31993914163` as failed before runtime/ECS creation: AWS denied
+      `bedrock-agentcore:CreateWorkloadIdentity` during first `CreateAgentRuntime`; classify the later
+      missing-rollout cleanup failure as the existing fail-closed recovery diagnostic.
+- [x] Prove no source-specific runtime or workload identity remains, the release task is stably stopped,
+      and the account Runtime Identity service-linked role already exists.
+- [x] Add only `CreateWorkloadIdentity` to the reviewed UAT and Production AgentCore candidate policy
+      statements; do not add managed FullAccess or unused token permissions.
+- [x] Extend the executable policy contract across UAT and Production so a UAT repair cannot leave a
+      latent Production first-create failure.
+- [x] Complete exact `PRE_INTENT` recovery for parent `4e1df918-72fd-46b1-a315-33c7899a4b0d` using the
+      stopped task proof from `0c14a694d49e45ec95382dc5b77663bc`.
+- [ ] Promote through exact-head CI and reviewed `develop`/`main` merges, exact-apply the scoped UAT
+      prerequisite ceremony, and prove the full first-create action set with live readback/simulation.
+- [ ] Dispatch exactly one UAT `all` run and continue only from its signed passport; install and
+      exact-read the matching Production policy before conditional READY.

@@ -594,3 +594,22 @@ exact-apply and read back the UAT policy, and the failed parent
 `2f1da83a-71ec-4202-83c4-3c43d709a5d2` must be terminalized by exact `PRE_INTENT` recovery. A Production
 promotion may not start unless the signed runtime-readiness evidence exact-reads the corresponding
 Production policy containing the same action.
+
+## 18. AgentCore automatic workload-identity authorization contract — 2026-08-17
+
+UAT run `31993914163` passed policy/dependency preflight, immutable publication and the durable release
+task, then AWS rejected the first `CreateAgentRuntime` because `watchdog-bms-deploy-uat` lacked
+`bedrock-agentcore:CreateWorkloadIdentity`. AWS Runtime creates and associates a workload identity
+automatically for a new runtime; this is a first-create dependency, not an application call that can be
+removed. Live readback proved the account-level Runtime Identity service-linked role already exists,
+and the failed call left neither the source-specific runtime nor workload identity.
+
+The UAT and Production deploy-role policies must allow `CreateWorkloadIdentity` in the existing scoped
+AgentCore candidate statement. They must not attach `BedrockAgentCoreFullAccess` or grant workload
+access-token actions. The executable policy contract must assert both environments together, and the
+live policy simulator/readback must prove the complete first-create action set before dispatch.
+
+The held parent `4e1df918-72fd-46b1-a315-33c7899a4b0d` must be terminalized by one exact `PRE_INTENT`
+recovery using stopped release task `0c14a694d49e45ec95382dc5b77663bc`. The following retirement
+failure is the expected fail-closed missing-rollout diagnostic, not a second root cause. No new UAT run
+may start until recovery, reviewed merge, scoped UAT ceremony and exact live policy readback all pass.

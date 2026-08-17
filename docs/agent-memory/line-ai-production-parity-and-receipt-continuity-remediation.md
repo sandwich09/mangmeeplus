@@ -497,3 +497,59 @@ Verification:
 - `bash infra/docker/production-image-security.spec.sh` — PASS, including 26/26 final migration and
   READY authority tests.
 - Both policy templates parse with `jq`; `git diff --check` passes.
+
+## Release continuation — AgentCore workload-identity authorization
+
+Status: primary failure isolated; exact recovery complete; repository repair verified locally.
+
+- UAT run `31993914163` passed exact UAT preflight, published immutable artifacts and completed the
+  release task with held parent `4e1df918-72fd-46b1-a315-33c7899a4b0d`. AWS then denied
+  `bedrock-agentcore:CreateWorkloadIdentity` during first `CreateAgentRuntime`; no ECS rollout began.
+- Live readback proved release task `0c14a694d49e45ec95382dc5b77663bc` is STOPPED, no matching runtime
+  or workload identity exists, and `AWSServiceRoleForBedrockAgentCoreRuntimeIdentity` already exists.
+- AWS documents that Runtime automatically creates a workload identity. The repair adds only that
+  action to both UAT and Production candidate policy statements and extends their shared executable
+  contract; it does not attach broad managed access or grant workload token APIs.
+- Exact `PRE_INTENT` recovery run `31994699200` completed once with the stopped parent-task proof and
+  terminalized the held parent. No UAT retry is allowed until exact-head CI/merge, scoped ceremony and
+  live readback pass.
+
+Verification:
+
+- `bash infra/uat/agentcore-candidate-policy.spec.sh` — PASS for both UAT and Production.
+- `bash infra/security/production-promotion-bootstrap.spec.sh` — PASS.
+- `bash infra/docker/production-image-security.spec.sh` — PASS, including 26/26 final migration and
+  READY authority tests.
+- Both policies parse with `jq`; `git diff --check` passes.
+
+## Release continuation — Production look-forward audit
+
+Status: exact-head CI passed; Production remains stable/open; promotion prerequisites are ordered but
+not yet applied for this release.
+
+- PR-head CI run `31998020876` attempt 2 passed for develop SHA
+  `a11d2dfcbac418e377ed33ece8492bec30784489`. Attempt 1 failed only at the bounded
+  release-prepare timing spec; the same exact tests passed locally and attempt 2 passed without a
+  source change. Security, migration, Production config and secret scanning all passed.
+- Production live readback shows all three ECS Express services `ACTIVE`, singleton, capacity `1/2`,
+  source `3c8de8777ce1f85f7a3c1c0518c81154ab6eedf1`, serving mode `live`, and no current deployment.
+  RDS is available/encrypted/Multi-AZ/deletion-protected with 35-day backup; Redis is available with
+  two members, encryption/auth/failover; all 15 Production alarms are healthy. Public PlatformAccess
+  and login markup both read `OPEN`.
+- Current Production AgentCore runtime is `READY`, version 14, MMDSv2 enabled, with its exact
+  versioned S3 artifact. The artifact bucket is in `ap-southeast-1` with versioning enabled; the
+  Runtime Identity service-linked role and both required secret metadata records exist. The future
+  candidate execution role is correctly absent before first READY creation, while live policy
+  simulation allows its create/update/pass-role path and all required S3 actions.
+- Exact policy comparison found only two Production deploy-role gaps:
+  `bedrock-agentcore:TagResource` and `bedrock-agentcore:CreateWorkloadIdentity`. Production AI-task
+  and security-readonly policies already match the reviewed templates. UAT deploy policy lacks only
+  `CreateWorkloadIdentity`, and no UAT candidate runtime exists.
+- READY would currently fail a later boundary because the one-time A5 reader-bootstrap controller is
+  armed and `watchdog-bms-production-a5-bootstrap-execution` still exists. Required order is one new
+  successful UAT Passport, full approved Production prerequisite ceremony, one
+  `production-a5-reader-bootstrap.yml` run using that exact Passport until self-revocation/role
+  absence is proven, then one live READY. Running READY before this cleanup is prohibited.
+- The full ceremony's S3 lifecycle exact-read already matches the reviewed contract, but its
+  noncurrent-version retention effect still requires the owner's explicit recorded approval before
+  `--apply`. Hosted concurrency remains owner-deferred and is not represented as PASS.
