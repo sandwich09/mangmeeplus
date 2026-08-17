@@ -1506,8 +1506,8 @@ ai_container_json() {
     echo 'ERROR: deployed AI Gateway must use the signed AgentCore candidate path' >&2
     exit 2
   fi
-  if [[ ! "$agentcore_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}$ ]]; then
-    echo 'ERROR: AGENTCORE_RUNTIME_QUALIFIER must be a source-specific candidate endpoint' >&2
+  if [[ ! "$agentcore_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}_[0-9a-f]{8}$ ]]; then
+    echo 'ERROR: AGENTCORE_RUNTIME_QUALIFIER must be a source-and-artifact-specific candidate endpoint' >&2
     exit 2
   fi
   if { [ "$DEPLOY_ENV" = production ] && [[ "$agentcore_qualifier" != candidate_production_* ]]; } \
@@ -1523,6 +1523,8 @@ ai_container_json() {
     || { echo 'ERROR: AGENTCORE_EXPECTED_CONTRACT_VERSION must be a positive integer' >&2; exit 2; }
   [ "$agentcore_expected_source" = "$COMMIT" ] \
     || { echo 'ERROR: AgentCore expected source differs from the ECS image source' >&2; exit 2; }
+  [ "$agentcore_qualifier" = "candidate_${DEPLOY_ENV}_${agentcore_expected_source:0:12}_${agentcore_expected_artifact:0:8}" ] \
+    || { echo 'ERROR: AgentCore qualifier differs from the signed source and artifact' >&2; exit 2; }
   jq -n \
     --arg image "$image" \
     --arg sha "$SHA" \

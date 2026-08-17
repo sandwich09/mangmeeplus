@@ -10,6 +10,24 @@ Decisions:
 Open questions:
 - None for the current UAT dispatch. Customer `OPEN` and deferred concurrency remain post-promotion state transitions.
 Artifacts:
+- UAT `32031052119` built and rolled exact candidate `ed8ce3b4b3b5329ed83922b8f1841e8471bbdb16`
+  to api-web and workers, but ai-gateway stopped before durable intent or ECS mutation. AgentCore had
+  correctly issued artifact-bound qualifier `candidate_uat_ed8ce3b4b3b5_053c8938`; the shared ECS
+  deploy and verifier still accepted only the superseded source-only shape. Parent operation
+  `dbc89233-8108-43f8-bcad-0503b2063ed1` therefore has bound api-web intent
+  `48811bcc-69c5-4471-bfb0-c22053b853e2` and workers intent
+  `110a2d8d-3ebb-4b60-b5e3-c955392a9623`, with no ai-gateway intent. Exact partial all-target recovery
+  is required before a new UAT dispatch.
+- The shared UAT/Production ECS deploy and verifier now require the same
+  `candidate_<environment>_<source12>_<artifact8>` identity emitted and signed by the AgentCore
+  binding, including an exact source/artifact comparison. This closes both the observed UAT failure
+  and the equivalent later Production deploy/verification failure rather than relaxing the check.
+- Recovery `32033671870` stopped before AWS credentials or mutation because the code-neutral UAT
+  proof understood only an entirely skipped `Typecheck and Test` job. CI `32030400724` instead ran
+  one successful release-controller shell step while skipping install, TypeScript, PostgreSQL and
+  application tests. The recovery gate now accepts that exact shape only after its existing Git
+  byte-diff proves all recovery executable/dependency inputs unchanged; the release-controller CI
+  classifier also covers the shared ECS AgentCore deploy/verify bundle and runs its focused shell spec.
 - UAT `32023560885` deployed exact candidate `30718c34a5668ac0d942567260b55d2db32b4609`
   successfully to all three ECS Express services and passed both hosted AgentCore smokes. The run
   failed only because `verify-deployment.sh` compared the signed AgentCore source to `commit` before
@@ -89,6 +107,11 @@ Artifacts:
   application TypeScript skipped while all non-application gates remain enabled.
   No DB parent or ECS rollout was created by the failed run.
 Verification:
+- `bash infra/prod-ecs-express/production-serving-mode.spec.sh` passes with the artifact-bound
+  AgentCore qualifier in deploy and verifier fixtures.
+- `bash infra/docker/production-image-security.spec.sh` passes end to end after pin sync: all UAT,
+  A5, READY, Production V2, signed-result and 26 Node migration/authority tests pass without the
+  application TypeScript suite.
 - `bash infra/prod-ecs-express/production-serving-mode.spec.sh` passes with an ordering assertion that
   prevents AgentCore source comparison before manifest/source resolution.
 - Patched `verify-deployment.sh` passes against the three live UAT services at candidate `30718c...`;
@@ -112,6 +135,8 @@ Verification:
   `c64e091...`; active ECS protects zero endpoints and the reviewed selector identifies exactly the two
   stale UAT candidate endpoints.
 Next:
-- Merge the bounded IAM propagation controller fix without re-running unchanged application TypeScript,
-  dispatch UAT once, run the armed one-time A5 bootstrap, issue signed live READY, promote the exact UAT
-  digests to Production, complete durable customer `OPEN`, then run live parity/conversation verification.
+- Reconcile both exact intents of UAT parent `dbc89233-8108-43f8-bcad-0503b2063ed1`, merge the shared
+  qualifier-contract repair with unchanged application TypeScript skipped, then dispatch UAT once.
+  After its signed Passport: run the armed one-time A5 bootstrap, issue signed live READY, promote the
+  exact UAT digests to Production, complete durable customer `OPEN`, then run live parity/conversation
+  verification.
