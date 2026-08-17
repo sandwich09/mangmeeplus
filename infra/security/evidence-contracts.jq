@@ -1269,6 +1269,7 @@ def e0_security_service($source):
   and .critical == 0 and .high == 0;
 
 def e0_h3_validator_paths: [
+  "infra/docker/ecr-scan-blocking-findings.jq",
   "infra/docker/validate-production-manifest.sh",
   "infra/docker/validate-uat-deployment-acceptance.sh",
   "infra/security/collect-production-a5-migration-tool-registry-evidence.sh",
@@ -1278,6 +1279,22 @@ def e0_h3_validator_paths: [
   "infra/security/verify-production-a5-migration-tool.sh",
   "infra/security/verify-production-security-baseline.sh"
 ];
+
+def e0_ecr_cve_2026_14456_waiver($digest):
+  e0_exact_keys(["approvedBy","compensatingControl","cve","expiresAtEpoch","id","packageName",
+    "packageVersion","providerStatement","reachabilityEvidence","scannedDigest","severity"])
+  and .id == "AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING"
+  and .cve == "CVE-2026-14456" and .severity == "HIGH"
+  and .packageName == "openssl" and .packageVersion == "3.0.20-1~deb12u2"
+  and .scannedDigest == $digest
+  and .reachabilityEvidence
+    == "Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20."
+  and .compensatingControl
+    == "Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking."
+  and .approvedBy == "CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS"
+  and .expiresAtEpoch == 1787616000
+  and .providerStatement
+    == "The issue is present since OpenSSL 3.5 when the QUIC server implementation was added.";
 
 def e0_h3_release_files: [
   "cosign-ai-gateway.json","cosign-api-web.json","cosign-workers.json",
@@ -1306,7 +1323,7 @@ def e0_h3_security_service_evidence($source; $repository):
       "liveIssuer","liveSignatureOutputSha256","liveSignedDigest","liveSignerIdentity",
       "ociRevision","repository","sbomFile","sbomSha256","sbomSpdxVersion",
       "scanCompletedAtEpoch","scanEnhancedFindingsArray","scanProviderDescription",
-      "scanProviderStatus","scanRequestedDigest","scanResolvedDigest","scanSeverityCounts",
+      "scanProviderStatus","scanRequestedDigest","scanResolvedDigest","scanSeverityCounts","scanWaivers",
       "scanStatus","service","sourceCommit"])
   and (.service == "ai-gateway" or .service == "api-web" or .service == "workers")
   and .repository == (if .service == "api-web" then "watchdog-bms-api"
@@ -1337,7 +1354,9 @@ def e0_h3_security_service_evidence($source; $repository):
         or .key == "CRITICAL" or .key == "UNDEFINED")
       and (.value | e0_integer)))
   and (.scanSeverityCounts.CRITICAL // 0) == .critical
-  and (.scanSeverityCounts.HIGH // 0) == .high
+  and (.scanWaivers | type == "array" and length <= 1
+    and all(.[]; e0_ecr_cve_2026_14456_waiver($service.scanResolvedDigest)))
+  and (.scanSeverityCounts.HIGH // 0) == (.high + (.scanWaivers | length))
   and (if .scanProviderStatus == "COMPLETE" then true
     elif .scanProviderStatus == "ACTIVE" then
       .scanProviderDescription == "Continuous scan is selected for image."
@@ -1385,7 +1404,7 @@ def e0_h3_migration_tool_verification($evidence; $expected):
   and (.scan
     | e0_exact_keys(["critical","enhancedFindingsArray","high","imagePushedAtEpoch",
         "providerDescription","providerStatus","requestedDigest","resolvedDigest",
-        "scanCompletedAtEpoch","severityCounts","status"])
+        "scanCompletedAtEpoch","severityCounts","status","waivers"])
       and .requestedDigest == $expected.digest
       and .resolvedDigest == $expected.registryBinding.runnableDigest
       and .status == "COMPLETE" and .critical == 0 and .high == 0
@@ -1397,7 +1416,9 @@ def e0_h3_migration_tool_verification($evidence; $expected):
             or .key == "CRITICAL" or .key == "UNDEFINED")
           and (.value | e0_integer)))
       and (.severityCounts.CRITICAL // 0) == .critical
-      and (.severityCounts.HIGH // 0) == .high
+      and (.waivers | type == "array" and length <= 1
+        and all(.[]; e0_ecr_cve_2026_14456_waiver($live.scan.resolvedDigest)))
+      and (.severityCounts.HIGH // 0) == (.high + (.waivers | length))
       and (if .providerStatus == "COMPLETE" then true
         elif .providerStatus == "ACTIVE" then
           .providerDescription == "Continuous scan is selected for image."

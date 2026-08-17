@@ -369,6 +369,21 @@ mutate_facts active-without-enhanced-findings '.artifactIntegrity.services[0].sc
 mutate_facts nonterminal-scan-provider '.artifactIntegrity.services[0].scanProviderStatus="PENDING"'
 mutate_facts mismatched-scan-counts '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1'
 mutate_facts unknown-scan-severity '.artifactIntegrity.services[0].scanSeverityCounts.UNKNOWN=1'
+waiver='{"id":"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING","cve":"CVE-2026-14456","severity":"HIGH","packageName":"openssl","packageVersion":"3.0.20-1~deb12u2","scannedDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reachabilityEvidence":"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.","compensatingControl":"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.","approvedBy":"CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS","expiresAtEpoch":1787616000,"providerStatement":"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}'
+waived_facts="$fixture/waived-scan.json"
+jq -cS --argjson waiver "$waiver" \
+  '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1
+   | .artifactIntegrity.services[0].scanWaivers=[$waiver]' "$facts" > "$waived_facts"
+security_preflight_build_payload "$waived_facts" "$h2" "$clone" "$clone_ref" \
+  "$fixture/waived-payload.json"
+mutate_facts forged-scan-waiver '.artifactIntegrity.services[0].scanSeverityCounts.HIGH=1
+  | .artifactIntegrity.services[0].scanWaivers=[{
+    id:"AWS-ECR-CVE-2026-14456-OPENSSL-PRE35-MAPPING",cve:"CVE-2026-14456",severity:"HIGH",
+    packageName:"openssl",packageVersion:"3.5.0",scannedDigest:.artifactIntegrity.services[0].scanResolvedDigest,
+    reachabilityEvidence:"Provider states the issue begins in OpenSSL 3.5 QUIC server; the scanned package is 3.0.20.",
+    compensatingControl:"Exact CVE, severity, package, version and provider statement match; all mismatches remain blocking.",
+    approvedBy:"CHAT-OWNER-DIRECTIVE-2026-08-17-BYPASS-ALWAYS",expiresAtEpoch:1787616000,
+    providerStatement:"The issue is present since OpenSSL 3.5 when the QUIC server implementation was added."}]'
 mutate_facts runtime-rds-single-az '.runtimeSecurityBaseline.rds.multiAZ=false'
 mutate_facts runtime-redis-single-node '.runtimeSecurityBaseline.redis.nodeCount=1'
 mutate_facts runtime-no-human-delivery '.runtimeSecurityBaseline.alerting.deliveredNotificationCount=0'
@@ -525,6 +540,8 @@ grep -Fq 'verify-production-a5-migration-tool.sh "$tool_image" "$SOURCE_SHA"' "$
 grep -Fq 'describe-image-scan-findings --repository-name watchdog-bms-migration-tool' "$workflow"
 grep -Fq '.payload.migrationTool as $expected | $observed[0] as $live' "$workflow"
 grep -Fq 'aws ecr describe-image-scan-findings' "$workflow"
+grep -Fq 'jq -cer -f infra/docker/ecr-scan-blocking-findings.jq' "$workflow"
+grep -Fq 'scanWaivers:$scanWaivers' "$workflow"
 grep -Fq -- '--image-ids "imageDigest=$scan_digest" --output json > "$pushed"' "$workflow"
 grep -Fq '.imageDetails[0].imageDigest == $digest' "$workflow"
 grep -Fq '.imageId.imageDigest == $digest' "$workflow"

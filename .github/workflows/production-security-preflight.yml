@@ -475,8 +475,11 @@ jobs:
             esac
             scan_status=COMPLETE
             severity_counts="$(jq -cer '.imageScanFindings.findingSeverityCounts|select(type=="object")' "$scan")"
-            critical="$(jq -r '.CRITICAL // 0' <<< "$severity_counts")"
-            high="$(jq -r '.HIGH // 0' <<< "$severity_counts")"
+            scan_policy="$(jq -cer -f infra/docker/ecr-scan-blocking-findings.jq "$scan")"
+            test "$(jq -r '.coverageComplete' <<< "$scan_policy")" = true
+            scan_waivers="$(jq -cer '.waivers' <<< "$scan_policy")"
+            critical="$(jq -r '[.blocking[]|select(.severity=="CRITICAL")]|length' <<< "$scan_policy")"
+            high="$(jq -r '[.blocking[]|select(.severity=="HIGH")]|length' <<< "$scan_policy")"
             test "$critical" = 0
             test "$high" = 0
             pushed_epoch="$(date -u -d "$(jq -er '.imageDetails[0].imagePushedAt' "$pushed")" +%s)"
@@ -493,6 +496,7 @@ jobs:
               --argjson providerDescription "$scan_provider_description_json" \
               --argjson enhancedFindingsArray "$scan_enhanced_findings_array" \
               --argjson severityCounts "$severity_counts" \
+              --argjson scanWaivers "$scan_waivers" \
               --argjson critical "$critical" --argjson high "$high" \
               --argjson pushed "$pushed_epoch" --argjson completed "$scan_epoch" '
                 {service:$service,repository:$repository,image:$image,digest:$digest,sourceCommit:$source,
@@ -505,6 +509,7 @@ jobs:
                  scanProviderStatus:$providerStatus,scanProviderDescription:$providerDescription,
                  scanEnhancedFindingsArray:$enhancedFindingsArray,
                  scanSeverityCounts:$severityCounts,
+                 scanWaivers:$scanWaivers,
                  critical:$critical,high:$high,imagePushedAtEpoch:$pushed,scanCompletedAtEpoch:$completed}
               ' > "$EVIDENCE_ROOT/services/${service}-facts.json"
           done
@@ -573,8 +578,11 @@ jobs:
             *) echo "ERROR: migration-tool ECR scan is not complete or continuously active" >&2; exit 1 ;;
           esac
           tool_severity_counts="$(jq -cer '.imageScanFindings.findingSeverityCounts|select(type=="object")' "$tool_scan")"
-          tool_critical="$(jq -r '.CRITICAL // 0' <<< "$tool_severity_counts")"
-          tool_high="$(jq -r '.HIGH // 0' <<< "$tool_severity_counts")"
+          tool_scan_policy="$(jq -cer -f infra/docker/ecr-scan-blocking-findings.jq "$tool_scan")"
+          test "$(jq -r '.coverageComplete' <<< "$tool_scan_policy")" = true
+          tool_scan_waivers="$(jq -cer '.waivers' <<< "$tool_scan_policy")"
+          tool_critical="$(jq -r '[.blocking[]|select(.severity=="CRITICAL")]|length' <<< "$tool_scan_policy")"
+          tool_high="$(jq -r '[.blocking[]|select(.severity=="HIGH")]|length' <<< "$tool_scan_policy")"
           test "$tool_critical" = 0
           test "$tool_high" = 0
           tool_pushed_epoch="$(date -u -d "$(jq -er '.imageDetails[0].imagePushedAt' "$tool_pushed")" +%s)"
@@ -587,6 +595,7 @@ jobs:
             --argjson providerDescription "$tool_provider_description_json" \
             --argjson enhancedFindingsArray "$tool_enhanced_findings" \
             --argjson severityCounts "$tool_severity_counts" \
+            --argjson scanWaivers "$tool_scan_waivers" \
             --argjson critical "$tool_critical" --argjson high "$tool_high" \
             --argjson pushed "$tool_pushed_epoch" --argjson completed "$tool_scan_epoch" '
               $registryFacts[0] + {
@@ -595,6 +604,7 @@ jobs:
                 scan:{requestedDigest:$registryFacts[0].digest,resolvedDigest:$scanDigest,status:"COMPLETE",
                   providerStatus:$providerStatus,providerDescription:$providerDescription,
                   enhancedFindingsArray:$enhancedFindingsArray,severityCounts:$severityCounts,
+                  waivers:$scanWaivers,
                   critical:$critical,high:$high,imagePushedAtEpoch:$pushed,
                   scanCompletedAtEpoch:$completed}}
             ' > "$EVIDENCE_ROOT/migration-tool-verification.json"
@@ -632,6 +642,7 @@ jobs:
             = "$(git rev-parse "$SOURCE_SHA:.github/workflows/production-security-preflight.yml")"
           validators="$EVIDENCE_ROOT/validators.json"
           for path in \
+            infra/docker/ecr-scan-blocking-findings.jq \
             infra/docker/validate-production-manifest.sh \
             infra/docker/validate-uat-deployment-acceptance.sh \
             infra/security/collect-production-a5-migration-tool-registry-evidence.sh \
