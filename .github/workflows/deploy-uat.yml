@@ -40,6 +40,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.release.outputs.source_sha }}
       validated_ci_run_id: ${{ steps.validation.outputs.run_id }}
+      published_release_run_id: ${{ steps.published-release.outputs.run_id }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -129,6 +130,70 @@ jobs:
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "Reusing validation evidence from CI run $run_id"
+      - name: Reuse the exact published release when safe
+        id: published-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          echo "run_id=" >> "$GITHUB_OUTPUT"
+          release_artifact="production-release-$SOURCE_SHA"
+          tools_artifact="production-release-tools-$SOURCE_SHA"
+          task_artifact="production-tool-$SOURCE_SHA-release-task"
+          curl_retry=(--retry 2 --retry-delay 2 --retry-max-time 70 --retry-all-errors)
+          api() {
+            curl --fail --silent --show-error "${curl_retry[@]}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/$1"
+          }
+          if ! artifacts="$(api "actions/artifacts?name=$release_artifact&per_page=100")"; then
+            echo "::notice::Published-release lookup failed; publishing this release."
+            exit 0
+          fi
+          run_id="$(jq -r --arg name "$release_artifact" '
+            [.artifacts[] | select(.name == $name and .expired == false) | .workflow_run.id]
+            | max // empty
+          ' <<< "$artifacts")"
+          if [[ ! "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "::notice::No unexpired published release for $SOURCE_SHA; publishing this release."
+            exit 0
+          fi
+          if ! run_json="$(api "actions/runs/$run_id")" ||
+            ! run_artifacts="$(api "actions/runs/$run_id/artifacts?per_page=100")"; then
+            echo "::notice::Published-release run lookup failed; publishing this release."
+            exit 0
+          fi
+          # Exactly the trust shape deploy-production.yml already requires of a promoted UAT run:
+          # this repository, a successful workflow_dispatch of this controller from main. A
+          # production publish of the same SHA writes an identically named artifact against the
+          # production registry, so accepting one here would fail manifest validation downstream.
+          if ! jq -e --arg repository "$GITHUB_REPOSITORY" --argjson runId "$run_id" '
+            .id == $runId
+            and .status == "completed"
+            and .conclusion == "success"
+            and .event == "workflow_dispatch"
+            and .path == ".github/workflows/deploy-uat.yml"
+            and .head_branch == "main"
+            and .repository.full_name == $repository
+          ' <<< "$run_json" >/dev/null; then
+            echo "::notice::Run $run_id is not a successful UAT release publisher; publishing this release."
+            exit 0
+          fi
+          # Only a complete all-target publish is reusable: partial sets fall back to a full publish
+          # rather than letting a later step discover a missing tool.
+          if ! jq -e --arg release "$release_artifact" --arg tools "$tools_artifact" \
+            --arg task "$task_artifact" '
+            [.artifacts[] | select(.expired == false) | .name] as $names
+            | ([$release, $tools, $task] - $names) == []
+          ' <<< "$run_artifacts" >/dev/null; then
+            echo "::notice::Run $run_id does not hold the complete published release; publishing this release."
+            exit 0
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Reusing the published release from UAT run $run_id"
 
   validate-config:
     name: Validate UAT Environment
@@ -218,6 +283,10 @@ jobs:
 
   build_and_publish:
     name: Test and Publish Immutable UAT Release
+    # Skipped only when the exact source SHA already holds a complete published release from a
+    # prior successful UAT run. The deploy job re-proves every artifact, digest and signature it
+    # deploys either way, so reuse moves provenance to an earlier run without moving any check.
+    if: needs.resolve-release.outputs.published_release_run_id == ''
     needs:
       - resolve-release
       - validate-config
@@ -235,6 +304,17 @@ jobs:
 
   deploy:
     name: Deploy UAT/${{ inputs.target }}
+    # A skipped build_and_publish is only acceptable when the resolved source SHA already has a
+    # reusable published release; every other skip or failure must still block the deploy. Unlike
+    # deploy-production.yml this keeps `!cancelled()` rather than `always()`, so a cancelled run
+    # still stops before the deploy job mutates UAT — the behaviour the implicit success() had.
+    if: >-
+      !cancelled() &&
+      needs.resolve-release.result == 'success' &&
+      needs.validate-config.result == 'success' &&
+      (needs.build_and_publish.result == 'success' ||
+      (needs.build_and_publish.result == 'skipped' &&
+      needs.resolve-release.outputs.published_release_run_id != ''))
     needs:
       - resolve-release
       - validate-config
@@ -331,20 +411,29 @@ jobs:
             echo "ERROR: checked-out source is no longer reachable from develop" >&2
             exit 1
           }
+      # ci.yml names every published artifact after the source SHA alone, so the reused name is the
+      # name this run would have produced; only the run holding it moves. An empty github-token is
+      # exactly the current-run download this workflow has always performed.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ needs.build_and_publish.outputs.release_artifact }}
+          name: ${{ needs.build_and_publish.outputs.release_artifact || format('production-release-{0}', needs.resolve-release.outputs.source_sha) }}
           path: release
+          run-id: ${{ needs.resolve-release.outputs.published_release_run_id || github.run_id }}
+          github-token: ${{ needs.resolve-release.outputs.published_release_run_id != '' && github.token || '' }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.validate-config.outputs.resolved_target == 'all'
         with:
-          name: ${{ needs.build_and_publish.outputs.release_tools_artifact }}
+          name: ${{ needs.build_and_publish.outputs.release_tools_artifact || format('production-release-tools-{0}', needs.resolve-release.outputs.source_sha) }}
           path: tools
+          run-id: ${{ needs.resolve-release.outputs.published_release_run_id || github.run_id }}
+          github-token: ${{ needs.resolve-release.outputs.published_release_run_id != '' && github.token || '' }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: needs.validate-config.outputs.resolved_target != 'all'
         with:
-          name: ${{ needs.build_and_publish.outputs.release_task_artifact }}
+          name: ${{ needs.build_and_publish.outputs.release_task_artifact || format('production-tool-{0}-release-task', needs.resolve-release.outputs.source_sha) }}
           path: tools
+          run-id: ${{ needs.resolve-release.outputs.published_release_run_id || github.run_id }}
+          github-token: ${{ needs.resolve-release.outputs.published_release_run_id != '' && github.token || '' }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Validate release artifact
         env:
