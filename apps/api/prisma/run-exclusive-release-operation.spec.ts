@@ -600,6 +600,7 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     await releaseRemoteWriterFence(first);
   });
 
+  // This is the hosted PostgreSQL proof required before recovering a partially-started UAT wave.
   it('terminalizes partial all-target coverage only after exact revalidation of every existing intent', async (t) => {
     if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
     const releaseId = randomUUID();
