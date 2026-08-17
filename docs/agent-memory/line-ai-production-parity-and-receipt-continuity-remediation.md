@@ -470,3 +470,30 @@ Verification pending:
 - Shell syntax, workflow YAML parsing and `git diff --check` pass.
 - Exact recovery of parent `8bbb4b6e-460c-4d82-afd1-4428299f40a4` after lease expiry.
 - One new UAT run only after merge, prerequisite readback and recovery.
+
+## Release continuation — AgentCore tagging authorization
+
+Status: primary failure isolated; repository repair in progress; no retry dispatched.
+
+- UAT run `31987845249` reached the corrected AgentCore first-create path and failed at
+  `CreateAgentRuntime` with AWS `AccessDeniedException`: the session for
+  `watchdog-bms-deploy-uat` was not authorized for `bedrock-agentcore:TagResource` on the runtime.
+- The script passes `Environment` and `ManagedBy` tags to both runtime and endpoint create commands.
+  The UAT and Production deploy policy templates both covered every adjacent AgentCore action but
+  omitted `TagResource`; this is a shared release-policy gap, not a UAT-only provider incident.
+- The release task `52a66935fdde4ece83fccba9168a4ce1` created held parent
+  `2f1da83a-71ec-4202-83c4-3c43d709a5d2`; the failure occurred before ECS rollout evidence. Exact
+  `PRE_INTENT` recovery is required before the one allowed retry.
+- The repair retains resource provenance tags, adds the missing action to both reviewed policy
+  templates and extends the executable policy test across both environments. Live IAM/AgentCore/task
+  readback is pending renewed AWS login; no Production mutation occurred.
+
+Verification:
+
+- `bash infra/uat/agentcore-candidate-policy.spec.sh` — PASS; both UAT and Production policies require
+  `TagResource` with the complete runtime/endpoint action set.
+- `bash infra/ai-gateway/h15-trust-boundary.spec.sh` — PASS.
+- `bash infra/security/production-promotion-bootstrap.spec.sh` — PASS.
+- `bash infra/docker/production-image-security.spec.sh` — PASS, including 26/26 final migration and
+  READY authority tests.
+- Both policy templates parse with `jq`; `git diff --check` passes.
