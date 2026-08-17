@@ -114,6 +114,11 @@ grep -Fq 'provider_unavailable timeout delivery_pending failed_terminal' "$deplo
 grep -Fq 'metricNamespace=WatchDog/LineAI' "$deploy"
 grep -Fq -- '--arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED"' "$deploy"
 grep -Fq '{name:"AI_GATEWAY_ENABLED", value:$aiEnabled}' "$deploy"
+grep -Fq '[ "$agentcore_expected_source" = "$COMMIT" ]' "$deploy"
+if grep -Fq '[ "$agentcore_expected_source" = "$SHA" ]' "$deploy"; then
+  echo 'AgentCore full source is still compared with the 12-character deployment label' >&2
+  exit 1
+fi
 grep -Fq '{name:"LINE_AI_LEDGER_ENABLED", value:$aiEnabled}' "$deploy"
 grep -Fq -- '--arg modelProvider "$SERVING_MODEL_PROVIDER"' "$deploy"
 for flag in \

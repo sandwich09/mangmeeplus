@@ -1521,7 +1521,7 @@ ai_container_json() {
     || { echo 'ERROR: AGENTCORE_EXPECTED_ARTIFACT_SHA256 must be the retained CodeZip hash' >&2; exit 2; }
   [[ "$agentcore_expected_contract" =~ ^[1-9][0-9]*$ ]] \
     || { echo 'ERROR: AGENTCORE_EXPECTED_CONTRACT_VERSION must be a positive integer' >&2; exit 2; }
-  [ "$agentcore_expected_source" = "$SHA" ] \
+  [ "$agentcore_expected_source" = "$COMMIT" ] \
     || { echo 'ERROR: AgentCore expected source differs from the ECS image source' >&2; exit 2; }
   jq -n \
     --arg image "$image" \
