@@ -28,6 +28,11 @@ Artifacts:
   application tests. The recovery gate now accepts that exact shape only after its existing Git
   byte-diff proves all recovery executable/dependency inputs unchanged; the release-controller CI
   classifier also covers the shared ECS AgentCore deploy/verify bundle and runs its focused shell spec.
+- Recovery attempts `32034504773`, `32034578189` and `32034911876` also stopped before AWS mutation:
+  the first pair lacked a CI run whose head branch matched the UAT recovery contract; the exact
+  develop checkpoint `32034753695` fixed that identity but correctly proved the current recovery
+  executable differs from the older PostgreSQL proof. Refresh the focused hosted PostgreSQL proof;
+  do not run the unrelated application TypeScript/test suite.
 - UAT `32023560885` deployed exact candidate `30718c34a5668ac0d942567260b55d2db32b4609`
   successfully to all three ECS Express services and passed both hosted AgentCore smokes. The run
   failed only because `verify-deployment.sh` compared the signed AgentCore source to `commit` before
@@ -135,6 +140,11 @@ Verification:
   `c64e091...`; active ECS protects zero endpoints and the reviewed selector identifies exactly the two
   stale UAT candidate endpoints.
 Next:
+- Retry UAT only after the post-`services-stable` standard ECS view requires two agreeing
+  stable snapshots. Run `32036388019` proved the Express deployments and the finalizer were
+  healthy, but workers was read 159 ms after its steady-state event and the one-shot verifier
+  incorrectly classified that transient view as drift. Persistent transition remains bounded;
+  reviewed-control drift still fails immediately.
 - Reconcile both exact intents of UAT parent `dbc89233-8108-43f8-bcad-0503b2063ed1`, merge the shared
   qualifier-contract repair with unchanged application TypeScript skipped, then dispatch UAT once.
   After its signed Passport: run the armed one-time A5 bootstrap, issue signed live READY, promote the

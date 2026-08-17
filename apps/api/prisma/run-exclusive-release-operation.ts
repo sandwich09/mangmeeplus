@@ -3368,6 +3368,8 @@ export async function terminalizeRecoveredReleaseIfReady(
       // exact api-web pre-intent cleanup therefore proves an all-target rollout never started.
       allTargetStoppedBeforeAnyIntent = (intentCount.rows[0]?.count ?? 0) === 0;
     }
+    // Recovery proof checkpoint: partial all-target terminalization stays behind exact revalidation
+    // of every intent that exists; a service missing its pre-mutation intent is never synthesized.
     const recoveredPartialAllTarget = !completeServiceCoverage
       && await hasRecoveredPartialAllTargetCoverage(
         client, input.operationId, parent.rows[0].releaseDeployTarget,
