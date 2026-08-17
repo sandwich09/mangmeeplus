@@ -85,6 +85,7 @@ grep -Fq 'AgentCore failed before the durable release task; no rollout parent ex
 grep -Fq 'release_controller_only: ${{ steps.source.outputs.release_controller_only }}' "$ci_workflow"
 grep -Fq 'name: Test AgentCore release controller without application TypeScript' "$ci_workflow"
 grep -Fq "if: needs.resolve-source.outputs.release_controller_only == 'true'" "$ci_workflow"
+grep -Fq 'bash infra/prod-ecs-express/production-serving-mode.spec.sh' "$ci_workflow"
 grep -Fq "if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'" "$ci_workflow"
 if grep -Fq "AGENTCORE_RUNTIME_QUALIFIER: \${{ vars.AGENTCORE_RUNTIME_QUALIFIER || 'DEFAULT' }}" "$workflow"; then
   echo 'ERROR: UAT workflow still permits a mutable DEFAULT endpoint' >&2
