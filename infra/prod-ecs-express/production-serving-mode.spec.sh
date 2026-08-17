@@ -115,6 +115,8 @@ grep -Fq 'metricNamespace=WatchDog/LineAI' "$deploy"
 grep -Fq -- '--arg crmAutoReplyEnabled "$SERVING_CRM_AUTO_REPLY_ENABLED"' "$deploy"
 grep -Fq '{name:"AI_GATEWAY_ENABLED", value:$aiEnabled}' "$deploy"
 grep -Fq '[ "$agentcore_expected_source" = "$COMMIT" ]' "$deploy"
+grep -Fq 'candidate_${DEPLOY_ENV}_${agentcore_expected_source:0:12}_${agentcore_expected_artifact:0:8}' "$deploy"
+grep -Fq 'candidate_${deploy_env}_${agentcore_expected_source:0:12}_${agentcore_expected_artifact:0:8}' "$verify"
 if grep -Fq '[ "$agentcore_expected_source" = "$SHA" ]' "$deploy"; then
   echo 'AgentCore full source is still compared with the 12-character deployment label' >&2
   exit 1
@@ -154,7 +156,7 @@ serving_approved_ai_providers=''
 serving_queue_enabled=false
 serving_maintenance_active=true
 agentcore_runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ
-agentcore_runtime_qualifier=candidate_production_0123456789ab
+agentcore_runtime_qualifier=candidate_production_aaaaaaaaaaaa_bbbbbbbb
 agentcore_expected_source=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 agentcore_expected_artifact=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 agentcore_expected_contract=1
@@ -171,7 +173,7 @@ ai_state="$(jq -cn '{environment:({
   MODEL_PROVIDER:"disabled",
   LINE_AI_AGENT_RUNTIME:"agentcore",
   AGENTCORE_RUNTIME_ARN:"arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-ABCDEFGHIJ",
-  AGENTCORE_RUNTIME_QUALIFIER:"candidate_production_0123456789ab",
+  AGENTCORE_RUNTIME_QUALIFIER:"candidate_production_aaaaaaaaaaaa_bbbbbbbb",
   AGENTCORE_EXPECTED_SOURCE_COMMIT:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   AGENTCORE_EXPECTED_ARTIFACT_SHA256:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   AGENTCORE_EXPECTED_CONTRACT_VERSION:"1",
@@ -198,7 +200,7 @@ if verify_service_environment workers "$bad_workers_state" 2>/dev/null; then
   echo 'maintenance verifier accepted QUEUE_ENABLED=true' >&2
   exit 1
 fi
-bad_ai_state="$(jq '.environment |= map(if .name == "AGENTCORE_RUNTIME_QUALIFIER" then .value = "candidate_production_ffffffffffff" else . end)' <<< "$ai_state")"
+bad_ai_state="$(jq '.environment |= map(if .name == "AGENTCORE_RUNTIME_QUALIFIER" then .value = "candidate_production_aaaaaaaaaaaa_ffffffff" else . end)' <<< "$ai_state")"
 if verify_service_environment ai-gateway "$bad_ai_state" 2>/dev/null; then
   echo 'AI verifier accepted a task bound to a different AgentCore endpoint' >&2
   exit 1

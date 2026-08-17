@@ -59,8 +59,8 @@ fi
 if [ "$target" = all ] || [ "$target" = ai-gateway ]; then
   [[ "$agentcore_runtime_arn" =~ ^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/[A-Za-z0-9_]+-[A-Za-z0-9]{10}$ ]] \
     || { echo "ERROR: exact AGENTCORE_RUNTIME_ARN is required to verify AI Gateway" >&2; exit 2; }
-  [[ "$agentcore_runtime_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}$ ]] \
-    || { echo "ERROR: exact source-specific AGENTCORE_RUNTIME_QUALIFIER is required to verify AI Gateway" >&2; exit 2; }
+  [[ "$agentcore_runtime_qualifier" =~ ^candidate_(uat|production)_[0-9a-f]{12}_[0-9a-f]{8}$ ]] \
+    || { echo "ERROR: exact source-and-artifact-specific AGENTCORE_RUNTIME_QUALIFIER is required to verify AI Gateway" >&2; exit 2; }
   [[ "$agentcore_expected_source" =~ ^[0-9a-f]{40}$ ]] \
     || { echo "ERROR: signed AgentCore source must be a full commit" >&2; exit 2; }
   [[ "$agentcore_expected_artifact" =~ ^[0-9a-f]{64}$ ]] \
@@ -77,6 +77,8 @@ commit="$(bash infra/docker/validate-production-manifest.sh "$manifest" "$accoun
 if [ "$target" = all ] || [ "$target" = ai-gateway ]; then
   [ "$agentcore_expected_source" = "$commit" ] \
     || { echo "ERROR: signed AgentCore source must equal the active ECS source" >&2; exit 2; }
+  [ "$agentcore_runtime_qualifier" = "candidate_${deploy_env}_${agentcore_expected_source:0:12}_${agentcore_expected_artifact:0:8}" ] \
+    || { echo "ERROR: AgentCore qualifier differs from the signed source and artifact" >&2; exit 2; }
 fi
 
 aws_cmd() {
