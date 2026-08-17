@@ -31,6 +31,35 @@ Verification:
   error-rate, Period=60, EvaluationPeriods=3, DatapointsToAlarm=2,
   threshold>1, TreatMissingData=notBreaching. Rollback reference for phase-1
   revert: restore canaryBake=3, bake=3 on all three services.
+Implementation review (2026-08-18, Fable 5 reviewing Opus 5):
+- Phase 1 APPROVED: commit `7e8e60b` on `feat/deploy-speed-phase-1` (8 files,
+  +340/−5). lib-prod-rollout-config.sh reuses the UAT shape validators (one
+  contract, no copy-drift); live=0/3, maintenance=0/0, unknown mode fails
+  closed; adaptive poll keeps ceiling attempts×20 exactly
+  (75→1500s, 90→1800s asserted). All gates green incl. full
+  production-image-security suite + pin cascade resync
+  (validatorSha256 7486173c…, expected_deploy 278cd4ac…). Decision: ci.yml
+  release_controller_only allowlist NOT extended — the one phase-1 PR accepts
+  a full-CI run (fails safe) instead of widening the most blob-sensitive file.
+  Live alarm names confirmed against 2026-08-17 read-back (exact match).
+- Phase 2 APPROVED with scope cut: commit `6a00906` on
+  `feat/deploy-speed-phase-2` (deploy-uat.yml only, +90/−3): publish-reuse
+  gate, fail-open decision table, all needs.build_and_publish references
+  traced, download run-id/github-token pattern precedented by
+  deploy-production.yml:325. Full suite RC=0 re-run by reviewer after
+  pnpm install + prisma generate. §5.2 publish-on-develop REJECTED on
+  evidence: uat environment branch policy = main only; cosign identity
+  ci.yml@refs/heads/develop cannot satisfy the @refs/heads/main pin; develop
+  merge-commit heads have no exact PR CI. Spec §5.2 rewritten accordingly;
+  UAT first-dispatch target revised to ~14–15m, redeploy ~9–10m.
+- §5.3 fence/retire measurement: blocked locally (watchdog-bedrock profile
+  lacks ecr:DescribeImages on migration-tool; newest ECR entries are OCI
+  indexes so imageSizeInBytes is manifest size). Plan: capture ECS task
+  provision/pull/execute timing live during the upcoming promote run.
+- Phase 3 in progress (stacked on phase 1), carrying the readiness env-map
+  hotfix forward.
 Next:
-- After stage E OPEN: phase 1 per plan §1 (read-back first), Opus 5 implements,
-  Fable 5 reviews, admin merge, verify on next real promote.
+- After stage E OPEN: merge order = hotfix (already ahead) → phase 1 → phase 2
+  → phase 3, each with its verification run per plan; main→develop sync after
+  workflow-file merges; first phase-1 verification candidate = camera-fix PR
+  head via full chain.
