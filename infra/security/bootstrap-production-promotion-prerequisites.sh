@@ -6,6 +6,8 @@ account=311414082667
 region=ap-southeast-1
 deploy_role=watchdog-bms-deploy-production
 uat_deploy_role=watchdog-bms-deploy-uat
+uat_ai_role=watchdog-bms-uat-ecs-ai-gateway-role
+uat_agentcore_role=watchdog-bms-uat-agentcore-execution-role
 security_role=watchdog-bms-production-security-readonly
 workers_role=watchdog-bms-ecs-express-workers-role
 agentcore_role=watchdog-bms-agentcore-execution-role
@@ -16,6 +18,7 @@ workers_policy_name=watchdog-bms-prod-workers-object-version-cleanup
 deploy_trust="$root/infra/prod-ecs-express/github-deploy-role-trust.template.json"
 deploy_policy="$root/infra/prod-ecs-express/github-deploy-role-policy.template.json"
 uat_deploy_policy="$root/infra/uat/github-deploy-role-policy.template.json"
+uat_ai_policy="$root/infra/uat/ai-task-policy.template.json"
 security_trust="$root/infra/security/production-security-readonly-trust.template.json"
 security_policy="$root/infra/security/production-security-readonly-policy.template.json"
 execution_trust="$root/infra/security/production-a5-readonly-execution-trust.template.json"
@@ -59,7 +62,7 @@ execution_policies=(
   "$root/infra/security/production-a5-clone-execution-policy.template.json"
 )
 
-jq -e . "$deploy_trust" "$deploy_policy" "$uat_deploy_policy" "$security_trust" "$security_policy" \
+jq -e . "$deploy_trust" "$deploy_policy" "$uat_deploy_policy" "$uat_ai_policy" "$security_trust" "$security_policy" \
   "$execution_trust" "$clone_trust" "$workers_policy" "${controller_trusts[@]}" \
   "${controller_policies[@]}" "${execution_policies[@]}" "$task_trust" "$infra_trust" \
   "$agentcore_trust" "$agentcore_policy" "$ecr_endpoint_policy" "$logs_endpoint_policy" \
@@ -70,11 +73,12 @@ jq -e . "$deploy_trust" "$deploy_policy" "$uat_deploy_policy" "$security_trust" 
   "$root/infra/security/production-ai-task-policy.template.json" >/dev/null
 mode="${1:-}"
 if [ "$mode" != --apply ] && [ "$mode" != --apply-clone-controller ] \
-    && [ "$mode" != --apply-private-endpoints ]; then
+    && [ "$mode" != --apply-private-endpoints ] && [ "$mode" != --apply-uat-runtime ]; then
   echo 'Dry run only. An owner must create the temporary exact bootstrap role and assume-role bridge; then rerun with --apply under AWS_PROFILE=watchdog-bedrock.'
   echo 'This helper rejects the AWS root principal, changes only seventeen durable IAM roles, and read-checks five service-linked roles.'
   echo 'Use --apply-clone-controller to update and exact-read only the existing clone controller policy.'
   echo 'Use --apply-private-endpoints to update and exact-read only the four existing interface endpoint policies.'
+  echo 'Use --apply-uat-runtime to repair and prove the complete UAT AgentCore control plane.'
   exit 0
 fi
 
@@ -115,6 +119,148 @@ retry_mutation() {
   echo "ERROR: idempotent prerequisite mutation did not converge after $max attempts: $*" >&2
   return 1
 }
+
+if [ "$mode" = --apply-uat-runtime ]; then
+  runtime_list="$(aws bedrock-agentcore-control list-agent-runtimes --region "$region" --output json)"
+  runtime_count="$(jq '[.agentRuntimes[]? | select(.agentRuntimeName=="watchdog_orchestrator_uat_candidate")]|length' <<< "$runtime_list")"
+  case "$runtime_count" in
+    0) uat_runtime_arn="arn:aws:bedrock-agentcore:${region}:${account}:runtime/watchdog_orchestrator_uat_candidate-*" ;;
+    1)
+      uat_runtime_arn="$(jq -er '
+        .agentRuntimes[] | select(.agentRuntimeName=="watchdog_orchestrator_uat_candidate")
+        | select(.status=="READY") | .agentRuntimeArn
+        | select(test("^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/watchdog_orchestrator_uat_candidate-[A-Za-z0-9]{10}$"))
+      ' <<< "$runtime_list")" ;;
+    *) echo 'ERROR: more than one UAT AgentCore candidate runtime exists' >&2; exit 1 ;;
+  esac
+
+  sed "s/<ACCOUNT_ID>/$account/g" "$uat_deploy_policy" > "$work/uat-deploy-policy.json"
+  sed -e "s|<ACCOUNT_ID>|$account|g" -e "s|<AGENTCORE_RUNTIME_ARN>|$uat_runtime_arn|g" \
+    "$uat_ai_policy" > "$work/uat-ai-policy.json"
+  sed -e "s|<ACCOUNT_ID>|$account|g" -e "s|<AGENTCORE_RUNTIME_ARN>|$uat_runtime_arn|g" \
+    "$agentcore_trust" > "$work/uat-agentcore-trust.json"
+
+  read_uat_secret_metadata() {
+    local name="$1" output="$2"
+    aws secretsmanager describe-secret --region "$region" --secret-id "$name" --output json \
+      > "$output" || return 1
+    jq -e --arg name "$name" --arg prefix "arn:aws:secretsmanager:$region:$account:secret:$name-" '
+      .Name==$name and (.ARN|startswith($prefix)) and (.ARN|length)==($prefix|length)+6
+      and (has("DeletedDate")|not)
+    ' "$output" >/dev/null
+  }
+  retry_exact read_uat_secret_metadata watchdog-bms/uat/ai-gateway-internal-secret \
+    "$work/uat-agentcore-ai-secret.json"
+  retry_exact read_uat_secret_metadata watchdog-bms/uat/watchdog-jwt-secret \
+    "$work/uat-agentcore-jwt-secret.json"
+  uat_agentcore_ai_secret_arn="$(jq -er .ARN "$work/uat-agentcore-ai-secret.json")"
+  uat_agentcore_jwt_secret_arn="$(jq -er .ARN "$work/uat-agentcore-jwt-secret.json")"
+  sed -e "s|<ACCOUNT_ID>|$account|g" \
+    -e "s|<AI_GATEWAY_SECRET_ARN>|$uat_agentcore_ai_secret_arn|g" \
+    -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|$uat_agentcore_jwt_secret_arn|g" \
+    "$agentcore_policy" > "$work/uat-agentcore-policy.json"
+  jq -e . "$work/uat-deploy-policy.json" "$work/uat-ai-policy.json" \
+    "$work/uat-agentcore-trust.json" "$work/uat-agentcore-policy.json" >/dev/null
+  if grep -q '<[A-Z_]*>' "$work/uat-deploy-policy.json" "$work/uat-ai-policy.json" \
+      "$work/uat-agentcore-trust.json" "$work/uat-agentcore-policy.json"; then
+    echo 'ERROR: UAT runtime prerequisite contains an unsubstituted placeholder' >&2
+    exit 1
+  fi
+
+  preflight_uat_role() {
+    local role="$1" allowed_policy="$2" allow_missing="${3:-false}"
+    local role_json="$work/preflight-$role.json" error="$work/preflight-$role.err"
+    if ! aws iam get-role --role-name "$role" --output json > "$role_json" 2> "$error"; then
+      [ "$allow_missing" = true ] && grep -Fq NoSuchEntity "$error" && return 0
+      cat "$error" >&2
+      return 1
+    fi
+    jq -e --arg arn "arn:aws:iam::$account:role/$role" '
+      .Role.Arn==$arn and .Role.Path=="/" and (.Role|has("PermissionsBoundary")|not)
+    ' "$role_json" >/dev/null || return 1
+    test "$(aws iam list-attached-role-policies --role-name "$role" --output json | jq -cS '.AttachedPolicies')" = '[]' \
+      || return 1
+    inline="$(aws iam list-role-policies --role-name "$role" --output json | jq -cS '.PolicyNames|sort')"
+    if [ "$allow_missing" = true ]; then
+      [ "$inline" = '[]' ] || [ "$inline" = "$(jq -cnS --arg name "$allowed_policy" '[$name]')" ]
+    else
+      [ "$inline" = "$(jq -cnS --arg name "$allowed_policy" '[$name]')" ]
+    fi
+  }
+  retry_exact preflight_uat_role "$uat_deploy_role" "$uat_deploy_policy_name"
+  retry_exact preflight_uat_role "$uat_ai_role" watchdog-bms-uat-ai-gateway-runtime
+  retry_exact preflight_uat_role "$uat_agentcore_role" watchdog-bms-agentcore-permissions true
+  aws s3api get-bucket-versioning --region "$region" \
+    --bucket "watchdog-bms-agentcore-artifacts-$account" --output json \
+    > "$work/uat-agentcore-bucket-versioning-before.json"
+
+  create_uat_agentcore_role() {
+    local status=0 error="$work/create-uat-agentcore-role.err"
+    aws iam create-role --role-name "$uat_agentcore_role" --max-session-duration 3600 \
+      --assume-role-policy-document "file://$work/uat-agentcore-trust.json" \
+      >/dev/null 2> "$error" || status=$?
+    [ "$status" -eq 0 ] || grep -Fq EntityAlreadyExists "$error" || return "$status"
+  }
+  if ! aws iam get-role --role-name "$uat_agentcore_role" >/dev/null 2>&1; then
+    retry_mutation create_uat_agentcore_role
+  fi
+  retry_mutation aws iam put-role-policy --role-name "$uat_deploy_role" \
+    --policy-name "$uat_deploy_policy_name" --policy-document "file://$work/uat-deploy-policy.json"
+  retry_mutation aws iam update-assume-role-policy --role-name "$uat_ai_role" \
+    --policy-document "file://$task_trust"
+  retry_mutation aws iam update-role --role-name "$uat_ai_role" --max-session-duration 3600 >/dev/null
+  retry_mutation aws iam put-role-policy --role-name "$uat_ai_role" \
+    --policy-name watchdog-bms-uat-ai-gateway-runtime \
+    --policy-document "file://$work/uat-ai-policy.json"
+  retry_mutation aws iam update-assume-role-policy --role-name "$uat_agentcore_role" \
+    --policy-document "file://$work/uat-agentcore-trust.json"
+  retry_mutation aws iam update-role --role-name "$uat_agentcore_role" --max-session-duration 3600 >/dev/null
+  retry_mutation aws iam put-role-policy --role-name "$uat_agentcore_role" \
+    --policy-name watchdog-bms-agentcore-permissions \
+    --policy-document "file://$work/uat-agentcore-policy.json"
+  if [ "$(jq -r '.Status // ""' "$work/uat-agentcore-bucket-versioning-before.json")" != Enabled ]; then
+    retry_mutation aws s3api put-bucket-versioning --region "$region" \
+      --bucket "watchdog-bms-agentcore-artifacts-$account" \
+      --versioning-configuration Status=Enabled >/dev/null
+  fi
+
+  assert_uat_policy_role() {
+    local role="$1" policy="$2" expected_policy="$3"
+    local role_json="$work/$role.json" policy_json="$work/$role-policy.json"
+    aws iam get-role --role-name "$role" --output json > "$role_json" || return 1
+    aws iam get-role-policy --role-name "$role" --policy-name "$policy" \
+      --output json > "$policy_json" || return 1
+    jq -e --arg arn "arn:aws:iam::$account:role/$role" '
+      .Role.Arn==$arn and .Role.Path=="/" and (.Role|has("PermissionsBoundary")|not)
+    ' "$role_json" >/dev/null || return 1
+    jq -e --arg name "$policy" --slurpfile expected "$expected_policy" '
+      .PolicyName==$name and .PolicyDocument==$expected[0]
+    ' "$policy_json" >/dev/null || return 1
+    test "$(aws iam list-role-policies --role-name "$role" --output json | jq -cS '.PolicyNames|sort')" \
+      = "$(jq -cnS --arg name "$policy" '[$name]')" || return 1
+    test "$(aws iam list-attached-role-policies --role-name "$role" --output json | jq -cS '.AttachedPolicies')" = '[]'
+  }
+  assert_uat_exact_role() {
+    local role="$1" policy="$2" trust="$3" expected_policy="$4"
+    assert_uat_policy_role "$role" "$policy" "$expected_policy" || return 1
+    jq -e --slurpfile expected "$trust" '
+      .Role.MaxSessionDuration==3600 and .Role.AssumeRolePolicyDocument==$expected[0]
+    ' "$work/$role.json" >/dev/null
+  }
+  assert_uat_bucket_versioning() {
+    test "$(aws s3api get-bucket-versioning --region "$region" \
+      --bucket "watchdog-bms-agentcore-artifacts-$account" --query Status --output text)" = Enabled
+  }
+  retry_exact assert_uat_policy_role "$uat_deploy_role" "$uat_deploy_policy_name" \
+    "$work/uat-deploy-policy.json"
+  retry_exact assert_uat_exact_role "$uat_ai_role" watchdog-bms-uat-ai-gateway-runtime \
+    "$task_trust" "$work/uat-ai-policy.json"
+  retry_exact assert_uat_exact_role "$uat_agentcore_role" watchdog-bms-agentcore-permissions \
+    "$work/uat-agentcore-trust.json" "$work/uat-agentcore-policy.json"
+  retry_exact assert_uat_bucket_versioning
+  echo 'UAT deploy, AI task, AgentCore execution, secret metadata, and artifact versioning prerequisites applied and exact-read back under a scoped non-root principal.'
+  exit 0
+fi
 
 if [ "$mode" = --apply-private-endpoints ]; then
   endpoint_ids=(

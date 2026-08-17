@@ -150,14 +150,20 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}
+          AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF: ${{ vars.AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF }}
           LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}
           LINE_LIFF_ID: ${{ vars.LINE_LIFF_ID }}
           LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}
         run: |
           set -euo pipefail
-          for key in AWS_ACCOUNT_ID AWS_REGION AWS_ROLE_ARN AWS_DEPLOY_ROLE_ARN LINE_LOGIN_CHANNEL_ID LINE_LIFF_ID LINE_MESSAGING_CHANNEL_ID; do
+          for key in AWS_ACCOUNT_ID AWS_REGION AWS_ROLE_ARN AWS_DEPLOY_ROLE_ARN PUBLIC_DOMAIN_URL AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF LINE_LOGIN_CHANNEL_ID LINE_LIFF_ID LINE_MESSAGING_CHANNEL_ID; do
             test -n "${!key}" || { echo "ERROR: missing UAT variable: $key" >&2; exit 1; }
           done
+          test "$PUBLIC_DOMAIN_URL" = https://uat.mangmeeplus.com || {
+            echo "ERROR: PUBLIC_DOMAIN_URL is not the canonical UAT origin" >&2
+            exit 1
+          }
       - name: Configure AWS UAT preflight credentials
         uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
         with:
