@@ -86,9 +86,25 @@ aws s3api put-bucket-versioning \
   --bucket "$BUCKET" \
   --versioning-configuration Status=Enabled \
   --region "$REGION"
-aws s3 cp "$STAGING/agentcore.zip" "s3://${BUCKET}/${DEPLOY_KEY}" --region "$REGION"
-S3_VERSION=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
-  --query VersionId --output text --region "$REGION" 2>/dev/null || echo "")
+if object_json=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
+    --region "$REGION" --output json 2>"$STAGING/head-object.err"); then
+  S3_VERSION=$(jq -er '.VersionId' <<< "$object_json")
+  aws s3api get-object --bucket "$BUCKET" --key "$DEPLOY_KEY" --version-id "$S3_VERSION" \
+    --region "$REGION" "$STAGING/existing-agentcore.zip" >/dev/null
+  test "$(shasum -a 256 "$STAGING/existing-agentcore.zip" | awk '{print $1}')" = "$actual_sha" || {
+    echo 'ERROR: existing content-addressed AgentCore object has different bytes' >&2
+    exit 1
+  }
+  echo "[agentcore-deploy] reusing existing content-addressed object version $S3_VERSION"
+elif grep -qE 'Not Found|NotFound|NoSuchKey|404' "$STAGING/head-object.err"; then
+  aws s3 cp "$STAGING/agentcore.zip" "s3://${BUCKET}/${DEPLOY_KEY}" --region "$REGION"
+  S3_VERSION=$(aws s3api head-object --bucket "$BUCKET" --key "$DEPLOY_KEY" \
+    --query VersionId --output text --region "$REGION")
+else
+  cat "$STAGING/head-object.err" >&2
+  echo 'ERROR: cannot read the content-addressed AgentCore object; refusing to overwrite it' >&2
+  exit 1
+fi
 if [ "$S3_VERSION" = "None" ] || [ "$S3_VERSION" = "null" ]; then
   S3_VERSION=""
 fi
@@ -228,6 +244,19 @@ wait_for_runtime_ready() {
   return 1
 }
 
+runtime_matches_intent() {
+  jq -e \
+    --arg arn "$RUNTIME_ARN" --arg role "$ROLE_ARN" \
+    --argjson artifact "$ARTIFACT_JSON" --argjson environment "$ENV_VARS" '
+      .agentRuntimeArn == $arn and .roleArn == $role and .status == "READY"
+      and .networkConfiguration.networkMode == "PUBLIC"
+      and .protocolConfiguration.serverProtocol == "HTTP"
+      and .metadataConfiguration.requireMMDSV2 == true
+      and .agentRuntimeArtifact == $artifact
+      and .environmentVariables == $environment
+    ' >/dev/null
+}
+
 if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
   echo "[agentcore-deploy] creating new runtime..."
   RESULT=$(aws bedrock-agentcore-control create-agent-runtime \
@@ -263,51 +292,125 @@ if [ -z "$EXISTING_ID" ] || [ "$EXISTING_ID" = "None" ]; then
   wait_for_runtime_ready create "$RUNTIME_ID"
 fi
 
-echo "[agentcore-deploy] applying full runtime configuration with MMDSv2..."
-RESULT=$(aws bedrock-agentcore-control update-agent-runtime \
-  --region "$REGION" \
-  --agent-runtime-id "$RUNTIME_ID" \
-  --agent-runtime-artifact "$ARTIFACT_JSON" \
-  --role-arn "$ROLE_ARN" \
-  --network-configuration '{"networkMode":"PUBLIC"}' \
-  --metadata-configuration '{"requireMMDSV2":true}' \
-  --protocol-configuration '{"serverProtocol":"HTTP"}' \
-  --environment-variables "$ENV_VARS" \
-  --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-mmdsv2")
-test "$(jq -er '.agentRuntimeId' <<< "$RESULT")" = "$RUNTIME_ID"
-wait_for_runtime_ready mmdsv2-update "$RUNTIME_ID"
+RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime \
+  --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --output json)
+if [ "$(jq -er '.status' <<< "$RUNTIME_JSON")" != READY ]; then
+  wait_for_runtime_ready existing-runtime "$RUNTIME_ID"
+  RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime \
+    --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --output json)
+fi
+if runtime_matches_intent <<< "$RUNTIME_JSON"; then
+  echo "[agentcore-deploy] exact runtime configuration is already READY; reusing its immutable version"
+else
+  echo "[agentcore-deploy] applying full runtime configuration with MMDSv2..."
+  RESULT=$(aws bedrock-agentcore-control update-agent-runtime \
+    --region "$REGION" \
+    --agent-runtime-id "$RUNTIME_ID" \
+    --agent-runtime-artifact "$ARTIFACT_JSON" \
+    --role-arn "$ROLE_ARN" \
+    --network-configuration '{"networkMode":"PUBLIC"}' \
+    --metadata-configuration '{"requireMMDSV2":true}' \
+    --protocol-configuration '{"serverProtocol":"HTTP"}' \
+    --environment-variables "$ENV_VARS" \
+    --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-${ENV_SHA:0:16}-mmdsv2")
+  test "$(jq -er '.agentRuntimeId' <<< "$RESULT")" = "$RUNTIME_ID"
+  wait_for_runtime_ready mmdsv2-update "$RUNTIME_ID"
+fi
 
 # Never mint a binding from intended values alone. Read the complete provider state back before the
 # endpoint or either smoke invocation can make the candidate appear usable.
 RUNTIME_JSON=$(aws bedrock-agentcore-control get-agent-runtime \
   --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --output json)
 RUNTIME_STATUS=$(jq -er '.status' <<< "$RUNTIME_JSON")
-jq -e \
-  --arg arn "$RUNTIME_ARN" --arg role "$ROLE_ARN" \
-  --argjson artifact "$ARTIFACT_JSON" --argjson environment "$ENV_VARS" '
-    .agentRuntimeArn == $arn and .roleArn == $role and .status == "READY"
-    and .networkConfiguration.networkMode == "PUBLIC"
-    and .protocolConfiguration.serverProtocol == "HTTP"
-    and .metadataConfiguration.requireMMDSV2 == true
-    and .agentRuntimeArtifact == $artifact
-    and .environmentVariables == $environment
-  ' <<< "$RUNTIME_JSON" >/dev/null
+runtime_matches_intent <<< "$RUNTIME_JSON"
 
 # Every runtime update creates an immutable version. Bind this candidate to a source-specific custom
 # endpoint; DEFAULT follows latest and can silently move Production before ECS is promoted.
 RUNTIME_VERSION=$(jq -er '.agentRuntimeVersion' <<< "$RUNTIME_JSON")
 [[ "$RUNTIME_VERSION" =~ ^[1-9][0-9]{0,4}$ ]]
 ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}"
+
+# AWS counts DEFAULT in its per-runtime endpoint quota. Preserve every qualifier referenced by any
+# active ECS configuration and retire only old endpoints inside this environment's isolated runtime.
+service_arn=$(aws ssm get-parameter --region "$REGION" \
+  --name "/watchdog-bms/${DEPLOY_ENVIRONMENT}/ecs-express-ai-gateway-service-arn" \
+  --query Parameter.Value --output text)
+[[ "$service_arn" == arn:aws:ecs:${REGION}:${ACCOUNT_ID}:service/* ]]
+service_json=$(aws ecs describe-express-gateway-service \
+  --region "$REGION" --service "$service_arn" --output json)
+jq -e '.service.activeConfigurations | type == "array" and length > 0' \
+  <<< "$service_json" >/dev/null
+PROTECTED_ENDPOINT_NAMES_JSON=$(jq -ce --arg runtime "$RUNTIME_ARN" '
+  [.service.activeConfigurations[] | (.primaryContainer.environment // [] | from_entries)
+      | select(.AGENTCORE_RUNTIME_ARN == $runtime)
+      | .AGENTCORE_RUNTIME_QUALIFIER
+      | select(type == "string" and length > 0)]
+  | unique
+' <<< "$service_json")
+endpoint_is_protected() {
+  jq -e --arg endpoint "$1" 'index($endpoint) != null' \
+    <<< "$PROTECTED_ENDPOINT_NAMES_JSON" >/dev/null
+}
+
 if endpoint_json=$(aws bedrock-agentcore-control get-agent-runtime-endpoint \
     --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" \
     --output json 2>"$STAGING/endpoint.err"); then
   printf '%s\n' "$endpoint_json" > "$STAGING/endpoint.json"
-  bash infra/ai-gateway/validate-agentcore-endpoint-readback.sh \
-    "$STAGING/endpoint.json" "$RUNTIME_ARN" "$ENDPOINT_NAME" "$RUNTIME_VERSION" intended || {
-    echo 'ERROR: source-specific endpoint already exists for a different runtime version' >&2
-    exit 1
-  }
+  if ! bash infra/ai-gateway/validate-agentcore-endpoint-readback.sh \
+      "$STAGING/endpoint.json" "$RUNTIME_ARN" "$ENDPOINT_NAME" "$RUNTIME_VERSION" intended \
+      2>"$STAGING/endpoint-validation.err"; then
+    jq -e --arg arn "$RUNTIME_ARN" --arg name "$ENDPOINT_NAME" '
+      .agentRuntimeArn == $arn
+      and .agentRuntimeEndpointArn == ($arn + "/runtime-endpoint/" + $name)
+      and .name == $name
+    ' "$STAGING/endpoint.json" >/dev/null || {
+      cat "$STAGING/endpoint-validation.err" >&2
+      echo 'ERROR: refusing to update an endpoint with mismatched provider identity' >&2
+      exit 1
+    }
+    if endpoint_is_protected "$ENDPOINT_NAME"; then
+      echo 'ERROR: refusing to repoint the source endpoint while active ECS still references it' >&2
+      exit 1
+    fi
+    endpoint_json=$(aws bedrock-agentcore-control update-agent-runtime-endpoint \
+      --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$ENDPOINT_NAME" \
+      --agent-runtime-version "$RUNTIME_VERSION" \
+      --description "WatchDog LINE AI ${DEPLOY_ENVIRONMENT} candidate ${SOURCE_COMMIT}" \
+      --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${actual_sha:0:16}-update" \
+      --output json)
+  fi
 elif grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGING/endpoint.err"; then
+  endpoints_json=$(aws bedrock-agentcore-control list-agent-runtime-endpoints \
+    --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --max-results 100 --output json)
+  while IFS= read -r stale_endpoint; do
+    [ -n "$stale_endpoint" ] || continue
+    if endpoint_is_protected "$stale_endpoint"; then
+      echo "[agentcore-deploy] preserving live endpoint $stale_endpoint"
+      continue
+    fi
+    echo "[agentcore-deploy] retiring stale endpoint $stale_endpoint"
+    aws bedrock-agentcore-control delete-agent-runtime-endpoint \
+      --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$stale_endpoint" \
+      --client-token "watchdog-${DEPLOY_ENVIRONMENT}-${SOURCE_COMMIT}-${stale_endpoint}-delete" \
+      --output json >/dev/null
+    deleted=false
+    for i in $(seq 1 30); do
+      if ! aws bedrock-agentcore-control get-agent-runtime-endpoint \
+          --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --endpoint-name "$stale_endpoint" \
+          --output json >"$STAGING/deleting-endpoint.json" 2>"$STAGING/deleting-endpoint.err"; then
+        if grep -qE 'ResourceNotFoundException|does not exist|cannot be found' "$STAGING/deleting-endpoint.err"; then
+          deleted=true
+          break
+        fi
+        cat "$STAGING/deleting-endpoint.err" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    [ "$deleted" = true ] || { echo "ERROR: stale endpoint $stale_endpoint did not delete" >&2; exit 1; }
+  done < <(jq -r --arg environment "$DEPLOY_ENVIRONMENT" --arg intended "$ENDPOINT_NAME" \
+    --argjson protected "$PROTECTED_ENDPOINT_NAMES_JSON" \
+    -f infra/ai-gateway/select-retirable-agentcore-endpoints.jq <<< "$endpoints_json")
   endpoint_json=$(aws bedrock-agentcore-control create-agent-runtime-endpoint \
     --region "$REGION" --agent-runtime-id "$RUNTIME_ID" --name "$ENDPOINT_NAME" \
     --agent-runtime-version "$RUNTIME_VERSION" \

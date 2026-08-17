@@ -68,6 +68,7 @@ jobs:
       source_sha: ${{ steps.source.outputs.sha }}
       code_changed: ${{ steps.source.outputs.code_changed }}
       recovery_only: ${{ steps.source.outputs.recovery_only }}
+      release_controller_only: ${{ steps.source.outputs.release_controller_only }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -216,8 +217,33 @@ jobs:
               recovery_only=true
             fi
           fi
+          release_controller_only=false
+          if [[ "$EVENT_NAME" == "pull_request" && "$code_changed" == "true" ]]; then
+            release_controller_only=true
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$sha")"
+            while IFS= read -r path; do
+              case "$path" in
+                docs/*|.github/workflows/ci.yml|.github/workflows/deploy-uat.yml|\
+                infra/ai-gateway/agentcore-deploy.sh|\
+                infra/ai-gateway/select-retirable-agentcore-endpoints.jq|\
+                infra/ai-gateway/h15-trust-boundary.spec.sh|\
+                infra/uat/agentcore-candidate-policy.spec.sh|\
+                infra/uat/github-deploy-role-policy.template.json|\
+                infra/prod-ecs-express/github-deploy-role-policy.template.json) ;;
+                *) release_controller_only=false ;;
+              esac
+            done <<< "$changed_paths"
+            for required in .github/workflows/deploy-uat.yml \
+              infra/ai-gateway/agentcore-deploy.sh \
+              infra/ai-gateway/select-retirable-agentcore-endpoints.jq \
+              infra/uat/github-deploy-role-policy.template.json \
+              infra/prod-ecs-express/github-deploy-role-policy.template.json; do
+              grep -Fxq "$required" <<< "$changed_paths" || release_controller_only=false
+            done
+          fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
           echo "recovery_only=$recovery_only" >> "$GITHUB_OUTPUT"
+          echo "release_controller_only=$release_controller_only" >> "$GITHUB_OUTPUT"
       - name: Verify maintenance policy pins before CI fan-out
         if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
         run: |
@@ -270,18 +296,34 @@ jobs:
         with:
           ref: ${{ needs.resolve-source.outputs.source_sha }}
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
         with:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/contracts build
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: Test AgentCore release controller without application TypeScript
+        if: needs.resolve-source.outputs.release_controller_only == 'true'
+        run: |
+          bash -n infra/ai-gateway/agentcore-deploy.sh
+          jq empty infra/uat/github-deploy-role-policy.template.json \
+            infra/prod-ecs-express/github-deploy-role-policy.template.json
+          bash infra/ai-gateway/h15-trust-boundary.spec.sh
+          bash infra/uat/agentcore-candidate-policy.spec.sh
+          node infra/security/sync-production-maintenance-release-pins.mjs --check
+          git show --check --format= HEAD
       - run: pnpm typecheck
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Typecheck and test durable release recovery against PostgreSQL
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
         run: |
@@ -291,7 +333,7 @@ jobs:
             prisma/run-exclusive-release-operation.ts prisma/run-exclusive-release-operation.spec.ts
           pnpm --filter @watchdog-bms/api test:release-recovery
       - name: Test A5 role bootstrap against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           A5_BOOTSTRAP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
         run: pnpm --filter @watchdog-bms/api test:a5-bootstrap
@@ -299,7 +341,7 @@ jobs:
       # own backfill SQL — none of which a mocked client reproduces. Its own database, applied
       # from an empty one, so this is also the fresh-clone `migrate deploy` check.
       - name: Test Step 0 company tax identity against PostgreSQL
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         env:
           PGPASSWORD: watchdog_ci
           DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_step0_ci
@@ -308,24 +350,24 @@ jobs:
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
           pnpm --filter @watchdog-bms/api test:tax-identity-pg
       - run: pnpm test
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/api test:m01
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - run: pnpm --filter @watchdog-bms/api test:p1
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       # Every spec above builds its subject with `new`, so none of them asks Nest to wire
       # anything: a DI mistake passes the whole suite and only fails when the container starts.
       - run: pnpm --filter @watchdog-bms/api test:boot
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Test legal release evidence gates
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |
           bash infra/security/provision-legal-release-evidence.spec.sh
           bash infra/security/validate-legal-release-readiness.spec.sh
       - run: bash infra/docker/production-image-security.spec.sh
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Test production maintenance controls
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |
           node --test infra/api-web/web-api-proxy.spec.mjs
           pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
@@ -337,14 +379,14 @@ jobs:
           bash infra/security/validate-production-maintenance-release.spec.sh
           bash infra/security/sync-production-maintenance-release-pins.spec.sh
       - name: Test immutable LINE AI release identity
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |
           bash infra/ai-gateway/line-ai-release-manifest.spec.sh
           bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
           bash infra/uat/agentcore-candidate-policy.spec.sh
           bash infra/security/uat-release-passport-v2.spec.sh
       - run: bash infra/security/production-a5-current-health.spec.sh
-        if: needs.resolve-source.outputs.recovery_only != 'true'
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
       - name: Build immutable AgentCore artifact
         if: github.event_name != 'pull_request'
         env:
