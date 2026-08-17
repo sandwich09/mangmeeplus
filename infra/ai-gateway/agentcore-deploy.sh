@@ -351,7 +351,7 @@ runtime_matches_intent <<< "$RUNTIME_JSON"
 # endpoint; DEFAULT follows latest and can silently move Production before ECS is promoted.
 RUNTIME_VERSION=$(jq -er '.agentRuntimeVersion' <<< "$RUNTIME_JSON")
 [[ "$RUNTIME_VERSION" =~ ^[1-9][0-9]{0,4}$ ]]
-ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}"
+ENDPOINT_NAME="candidate_${DEPLOY_ENVIRONMENT}_${SOURCE_COMMIT:0:12}_${actual_sha:0:8}"
 
 # AWS counts DEFAULT in its per-runtime endpoint quota. Preserve every qualifier referenced by any
 # active ECS configuration and retire only old endpoints inside this environment's isolated runtime.

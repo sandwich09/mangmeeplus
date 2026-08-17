@@ -16,7 +16,7 @@ done
 source_sha="$(printf a%.0s {1..40})"
 artifact_sha="$(printf b%.0s {1..64})"
 runtime_arn=arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_production_candidate-AbCdEf1234
-qualifier=candidate_production_aaaaaaaaaaaa
+qualifier=candidate_production_aaaaaaaaaaaa_bbbbbbbb
 jq -cnS --arg source "$source_sha" --arg artifact "$artifact_sha" '
   {schemaVersion:1,artifactKind:"LINE_AI_RELEASE_CANDIDATE",sourceCommit:$source,
    producerRunId:"42",validationRunId:"41",bindingStrategy:"isolated_runtime_pinned_endpoint",

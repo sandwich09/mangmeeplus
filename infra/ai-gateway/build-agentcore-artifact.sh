@@ -37,6 +37,9 @@ node_modules/.pnpm/esbuild@0.28.1/node_modules/esbuild/bin/esbuild \
   --outfile="$staging/runtime.js" \
   --log-level=warning
 
+# ZIP stores the input mtime even with -X. Normalize it so rebuilding one exact
+# source commit cannot produce a second artifact identity and endpoint rollout.
+TZ=UTC touch -t 198001010000.00 "$staging/runtime.js"
 (cd "$staging" && zip -Xq "$output_dir/agentcore.zip" runtime.js)
 artifact_sha="$(shasum -a 256 "$output_dir/agentcore.zip" | awk '{print $1}')"
 jq -n \
