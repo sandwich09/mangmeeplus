@@ -578,3 +578,19 @@ parent for the existing exact `PRE_INTENT` recovery after its lease becomes `UNK
 retirement against fabricated/missing deployment evidence, mark the parent successful, or hide the
 primary failure with a `jq` file error. A retry is forbidden until the exact parent is terminalized
 `RECONCILED_FAILED_CONFIRMED` and the AgentCore create/update contract is locally verified.
+
+## 17. AgentCore tagging authorization contract — 2026-08-17
+
+UAT run `31987845249` proved the MMDSv2 command sequence advanced to the next real provider boundary,
+then AWS rejected `CreateAgentRuntime` because the assumed UAT deploy role lacked
+`bedrock-agentcore:TagResource`. The deploy script deliberately sends the governed
+`Environment`/`ManagedBy` tags on both runtime and source-specific endpoint creation, so removing the
+tags would weaken resource provenance rather than repair the reviewed command contract.
+
+Both UAT and Production deploy-role policies must therefore allow `TagResource` in the same scoped
+AgentCore management statement as create/update/get/endpoint/invoke. The repository contract must
+assert both environments together. Before another UAT dispatch, the scoped prerequisite ceremony must
+exact-apply and read back the UAT policy, and the failed parent
+`2f1da83a-71ec-4202-83c4-3c43d709a5d2` must be terminalized by exact `PRE_INTENT` recovery. A Production
+promotion may not start unless the signed runtime-readiness evidence exact-reads the corresponding
+Production policy containing the same action.

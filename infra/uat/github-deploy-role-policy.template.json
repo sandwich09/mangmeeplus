@@ -163,6 +163,7 @@
         "bedrock-agentcore:CreateAgentRuntimeEndpoint",
         "bedrock-agentcore:GetAgentRuntimeEndpoint",
         "bedrock-agentcore:ListAgentRuntimeEndpoints",
+        "bedrock-agentcore:TagResource",
         "bedrock-agentcore:InvokeAgentRuntime"
       ],
       "Resource": "*"

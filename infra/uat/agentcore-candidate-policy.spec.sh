@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd -P)"
 deploy_policy="$root/infra/uat/github-deploy-role-policy.template.json"
+production_deploy_policy="$root/infra/prod-ecs-express/github-deploy-role-policy.template.json"
 setup="$root/infra/uat/setup-control-plane.sh"
 verify="$root/infra/uat/verify-control-plane-policies.sh"
 workflow="$root/.github/workflows/deploy-uat.yml"
@@ -25,6 +26,7 @@ jq -e '
       "bedrock-agentcore:UpdateAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
+      "bedrock-agentcore:TagResource",
       "bedrock-agentcore:InvokeAgentRuntime"])))
   and any(.Statement[];
     ((.Action|if type=="array" then index("iam:GetRolePolicy") else .=="iam:GetRolePolicy" end))
@@ -33,6 +35,18 @@ jq -e '
     .Sid=="ManageOnlyUatAgentCoreExecutionRole"
     and ([.Action[]]|contains(["iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies"])))
 ' "$deploy_policy" >/dev/null
+
+jq -e '
+  any(.Statement[];
+    .Sid=="ManageProductionAgentCoreCandidate"
+    and ([.Action[]]|contains([
+      "bedrock-agentcore:CreateAgentRuntime",
+      "bedrock-agentcore:UpdateAgentRuntime",
+      "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+      "bedrock-agentcore:GetAgentRuntimeEndpoint",
+      "bedrock-agentcore:TagResource",
+      "bedrock-agentcore:InvokeAgentRuntime"])))
+' "$production_deploy_policy" >/dev/null
 
 for file in "$setup" "$verify"; do
   grep -Fq 'runtime/watchdog_orchestrator_uat_candidate-*' "$file"
