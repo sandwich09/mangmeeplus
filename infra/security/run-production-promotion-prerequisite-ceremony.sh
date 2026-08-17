@@ -11,18 +11,22 @@ trust="$root/infra/security/production-promotion-bootstrap-trust.template.json"
 full_principal="$root/infra/security/production-promotion-bootstrap-principal-policy.template.json"
 clone_principal="$root/infra/security/production-promotion-clone-controller-principal-policy.template.json"
 endpoint_principal="$root/infra/security/production-promotion-private-endpoint-principal-policy.template.json"
+uat_runtime_principal="$root/infra/security/production-promotion-uat-runtime-principal-policy.template.json"
 bridge="$root/infra/security/production-promotion-bootstrap-user-policy.template.json"
 helper="$root/infra/security/bootstrap-production-promotion-prerequisites.sh"
 
-jq -e . "$trust" "$full_principal" "$clone_principal" "$endpoint_principal" "$bridge" >/dev/null
+jq -e . "$trust" "$full_principal" "$clone_principal" "$endpoint_principal" \
+  "$uat_runtime_principal" "$bridge" >/dev/null
 case "${1:-}" in
   --apply) principal="$full_principal"; helper_mode=--apply ;;
   --apply-clone-controller) principal="$clone_principal"; helper_mode=--apply-clone-controller ;;
   --apply-private-endpoints) principal="$endpoint_principal"; helper_mode=--apply-private-endpoints ;;
+  --apply-uat-runtime) principal="$uat_runtime_principal"; helper_mode=--apply-uat-runtime ;;
   *)
     echo 'Dry run only. This wrapper creates, proves, uses, retires, and proves absence of the exact temporary promotion authority.'
     echo 'Use --apply-clone-controller when only the reviewed clone controller policy changed.'
     echo 'Use --apply-private-endpoints when only the reviewed interface endpoint policies changed.'
+    echo 'Use --apply-uat-runtime for the exact UAT deploy, AI task, AgentCore role, secrets, and artifact prerequisites.'
     exit 0 ;;
 esac
 
@@ -246,6 +250,10 @@ prove_session_authority() {
         --vpc-endpoint-ids vpce-044085e7ad8749ca4 \
         --query 'VpcEndpoints[0].VpcEndpointId' --output text 2>/dev/null)" \
         = vpce-044085e7ad8749ca4 ;;
+    --apply-uat-runtime)
+      [[ "$(session_aws bedrock-agentcore-control list-agent-runtimes \
+        --region ap-southeast-1 --max-results 1 \
+        --query 'length(agentRuntimes)' --output text 2>/dev/null)" =~ ^[0-9]+$ ]] ;;
   esac
 }
 

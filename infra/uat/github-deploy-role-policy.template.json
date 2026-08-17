@@ -144,6 +144,9 @@
       "Action": [
         "iam:CreateRole",
         "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
         "iam:PutRolePolicy",
         "iam:UpdateAssumeRolePolicy"
       ],
@@ -184,12 +187,17 @@
     {
       "Sid": "VerifyUatReleaseTaskRolePolicy",
       "Effect": "Allow",
-      "Action": "iam:GetRolePolicy",
+      "Action": [
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
       "Resource": [
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
         "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
-        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role"
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-agentcore-execution-role"
       ]
     },
     {

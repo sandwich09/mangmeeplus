@@ -37,7 +37,7 @@ probe_inline_policy_read() {
 }
 
 render() {
-  sed "s/<ACCOUNT_ID>/${account_id}/g" "$1" > "$2"
+  sed "s|<ACCOUNT_ID>|${account_id}|g;s|<AWS_REGION>|${region}|g" "$1" > "$2"
 }
 
 ensure_role() {
@@ -69,6 +69,7 @@ execution_role="watchdog-bms-uat-ecs-execution-role"
 infra_role="watchdog-bms-uat-ecs-infrastructure-role"
 api_role="watchdog-bms-uat-ecs-api-role"
 ai_role="watchdog-bms-uat-ecs-ai-gateway-role"
+agentcore_role="watchdog-bms-uat-agentcore-execution-role"
 workers_role="watchdog-bms-uat-ecs-workers-role"
 workers_cleanup_policy_name="watchdog-bms-uat-workers-object-version-cleanup"
 release_role="watchdog-bms-uat-release-task-role"
@@ -126,6 +127,7 @@ fi
 probe_inline_policy_read "$deploy_role" watchdog-bms-uat-deploy
 probe_inline_policy_read "$release_role" watchdog-bms-uat-release-task-ecs-read
 probe_inline_policy_read "$workers_role" "$workers_cleanup_policy_name"
+probe_inline_policy_read "$agentcore_role" watchdog-bms-agentcore-permissions
 
 ensure_role "$execution_role" "$task_trust"
 aws_cmd iam attach-role-policy --role-name "$execution_role" --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy >/dev/null
@@ -154,30 +156,51 @@ jq -n --arg region "$region" --arg account "$account_id" '{
 aws_cmd iam put-role-policy --role-name "$api_role" --policy-name watchdog-bms-uat-api-runtime --policy-document "file://$tmp_dir/api-policy.json"
 
 ensure_role "$ai_role" "$task_trust"
-# Both inference-profile families: UAT runs the regional profile by default and mirrors
-# production's global one when an approval reference is supplied (see the DEPLOY_ENV
-# branch in infra/prod-ecs-express/deploy.sh). Keep this in step with the AI policy
-# there — deploy.sh rewrites this same policy name on every UAT deploy, so a narrower
-# list here only bites in the window between bootstrap and first deploy.
-jq -n --arg region "$region" --arg account "$account_id" '{
-  Version:"2012-10-17",
-  Statement:[
-    {
-      Effect:"Allow",
-      Action:["bedrock-agentcore:InvokeAgentRuntime"],
-      Resource:[
-        ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*"),
-        ("arn:aws:bedrock-agentcore:"+$region+":"+$account+":runtime/watchdog_orchestrator_uat_candidate-*/runtime-endpoint/*")
-      ]
-    },
-    {
-      Effect:"Allow",
-      Action:["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
-      Resource:["arn:aws:bedrock:*::foundation-model/anthropic.*",("arn:aws:bedrock:*:"+$account+":inference-profile/apac.anthropic.*"),("arn:aws:bedrock:*:"+$account+":inference-profile/global.anthropic.*")]
-    }
-  ]
-}' > "$tmp_dir/ai-policy.json"
+runtime_list="$(aws_cmd bedrock-agentcore-control list-agent-runtimes --region "$region" --output json)"
+runtime_count="$(jq '[.agentRuntimes[]? | select(.agentRuntimeName=="watchdog_orchestrator_uat_candidate")]|length' <<< "$runtime_list")"
+case "$runtime_count" in
+  0) agentcore_runtime_arn="arn:aws:bedrock-agentcore:${region}:${account_id}:runtime/watchdog_orchestrator_uat_candidate-*" ;;
+  1)
+    agentcore_runtime_arn="$(jq -er '
+      .agentRuntimes[] | select(.agentRuntimeName=="watchdog_orchestrator_uat_candidate")
+      | select(.status=="READY") | .agentRuntimeArn
+      | select(test("^arn:aws:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime/watchdog_orchestrator_uat_candidate-[A-Za-z0-9]{10}$"))
+    ' <<< "$runtime_list")" ;;
+  *) echo "ERROR: more than one UAT AgentCore candidate runtime exists" >&2; exit 1 ;;
+esac
+sed -e "s|<ACCOUNT_ID>|${account_id}|g" \
+  -e "s|<AGENTCORE_RUNTIME_ARN>|${agentcore_runtime_arn}|g" \
+  infra/uat/ai-task-policy.template.json > "$tmp_dir/ai-policy.json"
 aws_cmd iam put-role-policy --role-name "$ai_role" --policy-name watchdog-bms-uat-ai-gateway-runtime --policy-document "file://$tmp_dir/ai-policy.json"
+
+sed -e "s|<ACCOUNT_ID>|${account_id}|g" \
+  -e "s|<AGENTCORE_RUNTIME_ARN>|${agentcore_runtime_arn}|g" \
+  infra/ai-gateway/agentcore-execution-role-trust.template.json > "$tmp_dir/agentcore-trust.json"
+agentcore_ai_secret_arn="$(aws_cmd secretsmanager describe-secret \
+  --secret-id watchdog-bms/uat/ai-gateway-internal-secret --query ARN --output text --region "$region")"
+agentcore_jwt_secret_arn="$(aws_cmd secretsmanager describe-secret \
+  --secret-id watchdog-bms/uat/watchdog-jwt-secret --query ARN --output text --region "$region")"
+[[ "$agentcore_ai_secret_arn" == arn:aws:secretsmanager:"${region}":"${account_id}":secret:watchdog-bms/uat/ai-gateway-internal-secret-* ]]
+[[ "$agentcore_jwt_secret_arn" == arn:aws:secretsmanager:"${region}":"${account_id}":secret:watchdog-bms/uat/watchdog-jwt-secret-* ]]
+sed -e "s|<ACCOUNT_ID>|${account_id}|g" \
+  -e "s|<AI_GATEWAY_SECRET_ARN>|${agentcore_ai_secret_arn}|g" \
+  -e "s|<WATCHDOG_JWT_SECRET_SOURCE_ARN>|${agentcore_jwt_secret_arn}|g" \
+  infra/ai-gateway/agentcore-execution-role-policy.json > "$tmp_dir/agentcore-policy.json"
+ensure_role "$agentcore_role" "$tmp_dir/agentcore-trust.json"
+aws_cmd iam put-role-policy --role-name "$agentcore_role" \
+  --policy-name watchdog-bms-agentcore-permissions \
+  --policy-document "file://$tmp_dir/agentcore-policy.json"
+if ! aws_cmd iam get-role-policy --role-name "$agentcore_role" \
+    --policy-name watchdog-bms-agentcore-permissions --query PolicyDocument --output json \
+    | jq -S . > "$tmp_dir/agentcore-policy-actual.json"; then
+  echo "APPLIED_BUT_UNVERIFIED: role=${agentcore_role} policy=watchdog-bms-agentcore-permissions" >&2
+  exit 1
+fi
+jq -S . "$tmp_dir/agentcore-policy.json" > "$tmp_dir/agentcore-policy-expected.json"
+cmp -s "$tmp_dir/agentcore-policy-actual.json" "$tmp_dir/agentcore-policy-expected.json" || {
+  echo "APPLIED_BUT_UNVERIFIED: role=${agentcore_role} policy=watchdog-bms-agentcore-permissions (readback mismatch)" >&2
+  exit 1
+}
 
 ensure_role "$workers_role" "$task_trust"
 workers_cleanup_policy="$tmp_dir/workers-object-version-cleanup-policy.json"

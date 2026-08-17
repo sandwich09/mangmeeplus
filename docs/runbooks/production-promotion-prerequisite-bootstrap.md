@@ -68,6 +68,28 @@ readback before UAT is allowed to run. All durable IAM, clone-pointer and lifecy
 for up to 12 attempts at 5-second intervals so normal IAM/provider propagation is not reported as
 contract drift.
 
+When the UAT controller adds or changes AgentCore runtime prerequisites, use the scoped mode below
+before dispatching UAT. It resolves zero-or-one `watchdog_orchestrator_uat_candidate` runtime,
+repairs and exact-reads the deploy role, ECS AI task role and AgentCore execution role, resolves only
+the two required UAT secret ARNs, and enables/read-checks versioning on the existing shared AgentCore
+artifact bucket. Zero runtime is the valid first-deploy state and uses the reviewed candidate ARN
+prefix; an existing runtime must be unique and `READY`, after which the narrower exact ARN is used.
+The mode cannot create/update a runtime, read secret values, mutate ECS/SSM/RDS, or touch Production
+roles:
+
+```sh
+PROMOTION_ADMIN_PROFILE=thawatchai \
+PROMOTION_ROOT_EXCEPTION_APPROVAL_REF=<current-written-approval-reference> \
+AWS_ACCOUNT_ID=311414082667 \
+  bash infra/security/run-production-promotion-prerequisite-ceremony.sh \
+    --apply-uat-runtime
+```
+
+Do not retry UAT after only repairing the first failed inline policy. The same scoped ceremony and
+`infra/uat/verify-control-plane-policies.sh` must prove the complete state above before image
+publication; GitHub environment validation must also exact-read the canonical
+`PUBLIC_DOMAIN_URL=https://uat.mangmeeplus.com` and the recorded global-profile approval reference.
+
 When the only changed durable contract is
 `watchdog-bms-production-a5-clone`'s inline controller policy, do not run the full ceremony: it
 would intentionally re-arm the one-time reader-bootstrap controller and execution role. Use the

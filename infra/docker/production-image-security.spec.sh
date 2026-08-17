@@ -898,14 +898,13 @@ for policy in "$repo_root"/infra/uat/*.json; do
     exit 1
   fi
 done
-# Exact list, so it stays a least-privilege pin rather than drifting open. The workers role belongs
-# here because deploy.sh reads that role's object-version-cleanup policy back before it mutates the
-# environment; without the grant the deploy dies at the readback, which is how UAT ended up migrated
-# but not rolled out.
+# Exact actions/resources, so the preflight can prove sole inline policies and no attached policy on
+# both UAT AI roles without turning the deploy controller into a general IAM reader.
 jq -e '.Statement[] | select(.Sid == "VerifyUatReleaseTaskRolePolicy")
-  | .Action == "iam:GetRolePolicy"
+  | ((.Action | sort) == ["iam:GetRolePolicy","iam:ListAttachedRolePolicies","iam:ListRolePolicies"])
     and ((.Resource | sort) == [
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-deploy-uat",
+      "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-agentcore-execution-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-ai-gateway-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-ecs-workers-role",
       "arn:aws:iam::<ACCOUNT_ID>:role/watchdog-bms-uat-release-task-role"
@@ -938,6 +937,14 @@ cat > "$policy_preflight_fake" <<'FAKE_POLICY_PREFLIGHT_AWS'
 set -euo pipefail
 case "$1 $2" in
   'sts get-caller-identity') printf '311414082667\n' ;;
+  'bedrock-agentcore-control list-agent-runtimes') printf '{"agentRuntimes":[]}\n' ;;
+  'secretsmanager describe-secret')
+    name=''
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --secret-id ]; then name="$2"; break; fi
+      shift
+    done
+    printf 'arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:%s-aaaaaa\n' "$name" ;;
   'iam get-role-policy') echo 'AccessDenied: test policy read refusal' >&2; exit 254 ;;
   *) echo "unexpected policy-preflight aws call: $*" >&2; exit 64 ;;
 esac
