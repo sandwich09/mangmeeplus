@@ -624,7 +624,8 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     });
     await first.query(`
       UPDATE "RemoteReleaseOperation"
-         SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
+         SET "status" = 'UNKNOWN', "unknownAt" = CURRENT_TIMESTAMP,
+             "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second'
        WHERE "id" = $1
     `, [releaseId]);
     assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
