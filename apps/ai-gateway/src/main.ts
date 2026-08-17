@@ -9,6 +9,7 @@ import { AiGatewayConfigService } from './common/config/ai-gateway-config.servic
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { parseProductionServingMode, productionMaintenanceMiddleware } from './common/http/production-maintenance.middleware';
 import { NestPinoLoggerBridge, createLogger } from './common/logger/logger.service';
+import { BASE64_MEDIA_ROUTES } from './modules/line-ai/presentation/http/line-ai-internal.controller';
 
 function getAllowedOrigins(config: AiGatewayConfigService): string[] {
   if (config.corsAllowedOrigins.length > 0) {
@@ -48,9 +49,8 @@ async function bootstrap() {
       contentSecurityPolicy: isProduction ? undefined : false,
     }),
   );
-  // Internal OCR endpoints carry base64 media (receipts, bank statements) that can
-  // exceed the global limit; scope a larger limit to those routes only.
-  app.use(/^\/v1\/internal\/ai\/(receipt-ocr|bank-statement-extract)$/, json({ limit: '16mb' }));
+  // Base64-media routes exceed the global limit; scope the larger parser to exactly them.
+  app.use(BASE64_MEDIA_ROUTES, json({ limit: '16mb' }));
   app.use(json({ limit: bodyLimit }));
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
   app.enableCors({
