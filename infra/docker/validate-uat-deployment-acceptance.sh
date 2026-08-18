@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 11 ]; then
-  echo "Usage: $0 <acceptance.json> <release-manifest.json> <source-sha> <run-id> <run-attempt> <controller-sha> <repository> <ci-workflow-blob> <deploy-workflow-blob> <validator-sha256> <now-epoch>" >&2
+if [ "$#" -lt 11 ] || [ "$#" -gt 12 ]; then
+  echo "Usage: $0 <acceptance.json> <release-manifest.json> <source-sha> <run-id> <run-attempt> <controller-sha> <repository> <ci-workflow-blob> <deploy-workflow-blob> <validator-sha256> <now-epoch> [publishing-run-id]" >&2
   exit 2
 fi
 
@@ -50,6 +50,17 @@ sha256_stream() {
 [ -f "$acceptance" ] && [ ! -L "$acceptance" ] && [ "$(wc -c < "$acceptance")" -le 262144 ]
 [ -f "$manifest" ] && [ ! -L "$manifest" ] && [ "$(wc -c < "$manifest")" -le 1048576 ]
 
+# The publishing run is the run whose ci.yml publish wrote this manifest; it is the signing run
+# unless deploy-uat.yml reused an already published release. Its trust anchor on the reuse path is
+# that gate itself: it proved the run is a successful workflow_dispatch deploy-uat run of this
+# repository from main holding the complete artifact set for this exact source SHA, and the deploy
+# job then downloaded and cosign-verified every artifact and digest from it. The signing run passes
+# what its gate resolved; callers that hold no publisher knowledge of their own (production
+# promote, A5 clone, security preflight) take the run from the signed acceptance, which the
+# contract below binds to the manifest bytes those callers present.
+publishing_run_id="${12:-$(jq -er '.publishedByRunId // .workflowRunId' "$acceptance")}"
+[[ "$publishing_run_id" =~ ^[1-9][0-9]*$ ]]
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 self_validator_sha256="$(sha256_file "$script_dir/validate-uat-deployment-acceptance.sh")"
 manifest_validator_sha256="$(sha256_file "$script_dir/validate-production-manifest.sh")"
@@ -76,6 +87,7 @@ jq -e \
   --arg deployWorkflowBlob "$deploy_workflow_blob" \
   --arg validatorHash "$validator_sha256" \
   --arg manifestValidatorHash "$manifest_validator_sha256" \
+  --arg publishingRun "$publishing_run_id" \
   --arg contentHash "$content_sha256" \
   --arg manifestHash "$manifest_sha256" \
   --argjson now "$now_epoch" \
@@ -91,13 +103,18 @@ jq -e \
       "manifestValidatorSha256","contentSha256","issuedAtEpoch","expiresAtEpoch",
       "target","healthVerified","releaseFinalized","releaseArtifactName",
       "releaseManifestSha256","images"
-    ])
+    ] + (if has("publishedByRunId") then ["publishedByRunId"] else [] end))
     and .schemaVersion == 1
     and .acceptanceKind == "UAT_DEPLOYMENT_ACCEPTANCE"
     and .environment == "uat"
     and .repository == $repository
     and .workflowPath == ".github/workflows/deploy-uat.yml"
     and .workflowRunId == $run
+    and (if has("publishedByRunId")
+      then (.publishedByRunId | type == "string" and test("^[1-9][0-9]*$"))
+        and .publishedByRunId != .workflowRunId
+        and .publishedByRunId == $publishingRun
+      else $publishingRun == $run end)
     and .workflowRunAttempt == $attempt
     and .controllerRef == "refs/heads/main"
     and .controllerCommit == $controller
@@ -130,7 +147,7 @@ jq -e \
     and ($manifest[0] | exact_keys(["schemaVersion","sourceCommit","workflowRunId","validationRunId","images"]))
     and $manifest[0].schemaVersion == 1
     and ($manifest[0].sourceCommit | sha40) and $manifest[0].sourceCommit == $source
-    and $manifest[0].workflowRunId == $run
+    and $manifest[0].workflowRunId == $publishingRun
     and ($manifest[0].validationRunId | type == "string" and test("^$|^[1-9][0-9]*$"))
     and ($manifest[0].images | type) == "array"
     and ($manifest[0].images | length) == 3

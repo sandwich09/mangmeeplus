@@ -52,7 +52,7 @@ grep -Fq 'if [ "$source_ci" != "$caller_ci" ]; then' "$workflow"
 release_validation_line="$(line_of 'name: Validate release artifact')"
 aws_credentials_line="$(line_of 'name: Configure AWS UAT deploy credentials')"
 test "$release_validation_line" -lt "$aws_credentials_line"
-grep -Fq "expected_entries=\$'cosign-ai-gateway.json:f\\ncosign-api-web.json:f\\ncosign-workers.json:f\\nproduction-image-manifest.json:f\\nsbom-ai-gateway.spdx.json:f\\nsbom-api-web.spdx.json:f\\nsbom-workers.spdx.json:f'" "$workflow"
+grep -Fq "expected_entries=\$'agentcore:d\\ncosign-ai-gateway.json:f\\ncosign-api-web.json:f\\ncosign-workers.json:f\\nline-ai-contract.ts:f\\nline-ai-release-manifest.json:f\\nproduction-image-manifest.json:f\\nsbom-ai-gateway.spdx.json:f\\nsbom-api-web.spdx.json:f\\nsbom-workers.spdx.json:f'" "$workflow"
 grep -Fq 'echo "UAT_RELEASE_MANIFEST_SHA256=$(sha256sum release/production-image-manifest.json' "$workflow"
 grep -Fq 'test "$manifest_sha256" = "$UAT_RELEASE_MANIFEST_SHA256"' "$workflow"
 
@@ -64,8 +64,11 @@ test "$(line_of 'name: Finalize non-api UAT release operation')" -lt "$acceptanc
 test "$(line_of 'bash infra/docker/validate-uat-deployment-acceptance.sh')" -lt "$(line_of 'cosign sign-blob --yes')"
 test "$(line_of 'cosign sign-blob --yes')" -lt "$(line_of 'cosign verify-blob')"
 grep -Fq '. + {contentSha256:$contentHash}' "$workflow"
+grep -Fq 'publishing_run_id="${PUBLISHED_RELEASE_RUN_ID:-$GITHUB_RUN_ID}"' "$workflow"
+grep -Fq '+ (if $publishedByRunId == "" then {} else {publishedByRunId: $publishedByRunId} end)' "$workflow"
+grep -Fq '"$publishing_run_id"' "$workflow"
 grep -Fq "expected_entries=\$'uat-deployment-acceptance.bundle:f\\nuat-deployment-acceptance.json:f'" "$workflow"
-test "$(grep -Fc "expected_release_entries=\$'cosign-ai-gateway.json:f" "$workflow")" -eq 1
+test "$(grep -Fc "expected_release_entries=\$'agentcore:d\\ncosign-ai-gateway.json:f" "$workflow")" -eq 1
 grep -Fq -- '--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-uat.yml@refs/heads/main"' "$workflow"
 grep -Fq -- '--certificate-oidc-issuer "https://token.actions.githubusercontent.com"' "$workflow"
 grep -Fq -- '--certificate-github-workflow-repository "$GITHUB_REPOSITORY"' "$workflow"
@@ -153,7 +156,8 @@ rehash_acceptance() {
 
 validate() {
   "$validator" "$1" "$2" "$source_sha" "$run_id" "$run_attempt" \
-    "$controller_sha" "$repository" "$ci_blob" "$deploy_blob" "$validator_hash" "${3:-$now}"
+    "$controller_sha" "$repository" "$ci_blob" "$deploy_blob" "$validator_hash" "${3:-$now}" \
+    ${4:+"$4"}
 }
 
 mutate_and_reject() {
@@ -204,5 +208,29 @@ expect_reject manifest-repository validate "$fixture/manifest-repository-accepta
 jq '.images=([.images[2],.images[1],.images[0]])' "$manifest" > "$fixture/manifest-unsorted.json"
 write_acceptance "$fixture/manifest-unsorted.json" "$fixture/manifest-unsorted-acceptance.json"
 expect_reject manifest-order validate "$fixture/manifest-unsorted-acceptance.json" "$fixture/manifest-unsorted.json"
+
+# Reused publish: build_and_publish is skipped, so the manifest carries the earlier publishing run
+# and the acceptance must attest it. Every other conjunct stays exactly as strict on both paths.
+publishing_run=987654321
+foreign_run=987654322
+reuse_manifest="$fixture/reuse-manifest.json"
+reuse_acceptance="$fixture/reuse-acceptance.json"
+jq -cS --arg run "$publishing_run" '.workflowRunId=$run' "$manifest" > "$reuse_manifest"
+write_acceptance "$reuse_manifest" "$fixture/reuse-unattested.json"
+jq -cS --arg publisher "$publishing_run" '.publishedByRunId=$publisher' \
+  "$fixture/reuse-unattested.json" > "$fixture/reuse-attested.json"
+rehash_acceptance "$fixture/reuse-attested.json" "$reuse_acceptance"
+jq -cS --arg publisher "$foreign_run" '.publishedByRunId=$publisher' \
+  "$fixture/reuse-unattested.json" > "$fixture/reuse-foreign.json"
+rehash_acceptance "$fixture/reuse-foreign.json" "$fixture/reuse-foreign-rehashed.json"
+
+validate "$acceptance" "$manifest" "$now" "$run_id"
+validate "$reuse_acceptance" "$reuse_manifest" "$now" "$publishing_run"
+validate "$reuse_acceptance" "$reuse_manifest"
+expect_reject reuse-unattested validate "$fixture/reuse-unattested.json" "$reuse_manifest"
+expect_reject reuse-manifest-publisher validate "$fixture/reuse-foreign-rehashed.json" "$reuse_manifest"
+expect_reject reuse-forged-publisher validate "$reuse_acceptance" "$reuse_manifest" "$now" "$run_id"
+expect_reject nonreuse-foreign-publisher validate "$acceptance" "$manifest" "$now" "$publishing_run"
+mutate_and_reject redundant-publisher '.publishedByRunId="123456789"'
 
 echo 'UAT deployment acceptance specs passed'
