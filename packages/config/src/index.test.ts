@@ -645,6 +645,18 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
   });
 });
 
+describe('apiConfigSchema LINE expense draft rollout gate', () => {
+  const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local', S3_BUCKET: 'local' };
+
+  it('defaults the unproven LINE expense conversation off', () => {
+    assert.equal(apiConfigSchema.parse(base).LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED, false);
+  });
+
+  it('accepts an explicit UAT enable', () => {
+    assert.equal(apiConfigSchema.parse({ ...base, LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: 'true' }).LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED, true);
+  });
+});
+
 describe('apiConfigSchema CRM AI confidence', () => {
   const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://localhost/test', S3_BUCKET: 'test' };
 

@@ -351,6 +351,8 @@ export type ReceiptOcrResponse = {
 
 export type LineIntakeRouteIntent =
   | 'EXPENSE_DOCUMENT_CAPTURE'
+  /** Answers an already-persisted LINE expense draft; never creates a second record. */
+  | 'EXPENSE_DRAFT_CONTINUATION'
   /** Correcting a field of a record this assistant already captured — never a new capture. */
   | 'EXPENSE_CAPTURE_CORRECTION'
   | 'SUBSTITUTE_RECEIPT_CONTINUATION'
@@ -369,9 +371,36 @@ export const AI_TURN_INTENT_VALUES = [
 ] as const;
 export type AiTurnIntentValue = (typeof AI_TURN_INTENT_VALUES)[number];
 
+export const LINE_EXPENSE_ACCOUNTING_CLASSES = ['OPEX', 'ASSET', 'INVENTORY', 'LIABILITY', 'REVENUE', 'UNKNOWN'] as const;
+export type LineExpenseAccountingClass = (typeof LINE_EXPENSE_ACCOUNTING_CLASSES)[number];
+export const LINE_EXPENSE_ITEM_BEHAVIORS = ['STOCKABLE', 'NON_STOCK', 'SERVICE', 'UNKNOWN'] as const;
+export type LineExpenseItemBehavior = (typeof LINE_EXPENSE_ITEM_BEHAVIORS)[number];
+
+/** One source-grounded item candidate. Values remain advisory until the API validates them. */
+export type LineIntakeExpenseItemHint = {
+  /** Stable question/item ref from an active draft (for example I01); omit for a new item. */
+  itemRef?: string;
+  /** Exact short span from this message naming the item. */
+  sourceText?: string;
+  description?: string;
+  quantity?: string;
+  unit?: string;
+  unitPrice?: string;
+  totalAmount?: string;
+  /** Must be an id from LineIntakeRouteRequest.activeCategories. */
+  expenseCategoryId?: string;
+  accountingClass?: LineExpenseAccountingClass;
+  itemBehavior?: LineExpenseItemBehavior;
+  taxTreatment?: string;
+  confidence?: number;
+  missingFields?: string[];
+};
+
 /** Bounded semantic capture hints for EXPENSE_DOCUMENT_CAPTURE handoff.
  * All values are AI suggestions; deterministic API guards decide insertion. */
 export type LineIntakeCaptureHints = {
+  /** Active draft selected only from LineIntakeRouteRequest.activeExpenseDrafts. */
+  targetExpenseId?: string;
   sourceDocumentType?: string;
   sourceDocumentLanguage?: string;
   vendorName?: string;
@@ -381,8 +410,18 @@ export type LineIntakeCaptureHints = {
   vatMode?: 'NO_VAT' | 'VAT_INCLUDED' | 'VAT_EXCLUDED' | 'EXEMPT' | 'NEEDS_REVIEW';
   /** Must be an id from LineIntakeRouteRequest.activeCategories to be inserted. */
   expenseCategoryId?: string;
+  businessPurpose?: string;
+  items?: LineIntakeExpenseItemHint[];
   confidence?: number;
   missingFields?: string[];
+};
+
+/** Bounded database-backed context for semantic routing only. The API reloads and authorizes it. */
+export type LineExpenseDraftRouteContext = {
+  expenseId: string;
+  label: string;
+  status: 'OPEN' | 'PAUSED' | 'PAUSED_INTERRUPTED' | 'INPUT_ENDED_COMPLETE' | 'INPUT_ENDED_INCOMPLETE';
+  questions: Array<{ id: string; prompt: string; itemRef?: string }>;
 };
 
 export type LineIntakeRouteRequest = {
@@ -408,6 +447,8 @@ export type LineIntakeRouteRequest = {
    *  (bounded ≤ 5, newest first). Labels are built from structured fields only — no vendor or
    *  category free text — so the payload stays injection-inert. DATA, never instructions. */
   recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
+  /** Resumable persistent drafts for this linked user/company/personal chat (bounded <= 5). */
+  activeExpenseDrafts?: LineExpenseDraftRouteContext[];
 };
 
 /** One correction target offered to the router. The model may only select from this list. */

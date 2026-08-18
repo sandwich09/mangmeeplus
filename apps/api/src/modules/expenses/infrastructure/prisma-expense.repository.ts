@@ -756,7 +756,7 @@ export class PrismaExpenseRepository {
       throw new UnprocessableEntityException('Use voidExpenseTrueReversal for voids');
     }
     const data: any = {};
-    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
@@ -2011,8 +2011,10 @@ export class PrismaExpenseRepository {
     });
   }
 
-  async deleteDraftExpense(companyId: string, id: string): Promise<void> {
-    await this.prisma.client.expenseRecord.deleteMany({ where: { id, companyId, status: 'DRAFT' as any } });
+  async deleteDraftExpense(companyId: string, id: string, expectedUpdatedAt?: Date): Promise<void> {
+    await this.prisma.client.expenseRecord.deleteMany({
+      where: { id, companyId, status: 'DRAFT' as any, ...(expectedUpdatedAt ? { updatedAt: expectedUpdatedAt } : {}) },
+    });
   }
 
   async listCategories(companyId: string): Promise<ExpenseCategorySummary[]> {
@@ -2284,6 +2286,60 @@ export class PrismaExpenseRepository {
       }));
   }
 
+  /** Durable expense-draft conversations are independent of the bounded AI turn window. */
+  async listLineExpenseDraftContinuationRows(input: {
+    companyId: string;
+    userId: string;
+    chatKeyHash: string;
+    scopes: { branchIds?: string[] };
+    take?: number;
+  }): Promise<Array<{
+    id: string;
+    expenseNumber: string | null;
+    expenseDate: Date | null;
+    vendorNameSnapshot: string | null;
+    note: string | null;
+    grandTotalAmount: string;
+    updatedAt: Date;
+    sourceChannelMetadataJson: Record<string, unknown> | null;
+  }>> {
+    const rows = await this.prisma.client.expenseRecord.findMany({
+      where: {
+        companyId: input.companyId,
+        captureSource: 'LINE_UPLOAD',
+        status: 'DRAFT',
+        AND: [
+          { sourceChannelMetadataJson: { path: ['lineExpenseDraftContinuation', 'userId'], equals: input.userId } },
+          { sourceChannelMetadataJson: { path: ['lineExpenseDraftContinuation', 'chatKeyHash'], equals: input.chatKeyHash } },
+          {
+            OR: ['OPEN', 'PAUSED', 'PAUSED_INTERRUPTED', 'INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE']
+              .map((status) => ({ sourceChannelMetadataJson: { path: ['lineExpenseDraftContinuation', 'status'], equals: status } })),
+          },
+        ],
+        ...branchScopeWhere(input.scopes),
+      },
+      select: {
+        id: true, expenseNumber: true, expenseDate: true, vendorNameSnapshot: true,
+        note: true, grandTotalAmount: true,
+        updatedAt: true, sourceChannelMetadataJson: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: Math.min(10, Math.max(1, input.take ?? 5)),
+    });
+    return rows.filter((row: any) =>
+      row.sourceChannelMetadataJson?.lineExpenseDraftContinuation?.chatKeyHash === input.chatKeyHash)
+      .map((row: any) => ({
+        id: row.id,
+        expenseNumber: row.expenseNumber ?? null,
+        expenseDate: row.expenseDate ?? null,
+        vendorNameSnapshot: row.vendorNameSnapshot ?? null,
+        note: row.note ?? null,
+        grandTotalAmount: row.grandTotalAmount?.toString() ?? '0',
+        updatedAt: row.updatedAt,
+        sourceChannelMetadataJson: row.sourceChannelMetadataJson as Record<string, unknown> | null,
+      }));
+  }
+
   /**
    * Compare-and-set a typed continuation together with the expense revision it represents.
    * This intentionally updates metadata only; certificate preparation/issuance remains web-only.
@@ -2376,6 +2432,20 @@ export class PrismaExpenseRepository {
         && (substitute as any).userId === input.userId) {
         metadata['lineSubstituteReceiptContinuation'] = {
           ...(substitute as Record<string, unknown>),
+          targetRevision: now.toISOString(),
+        };
+      }
+      const expenseDraft = metadata['lineExpenseDraftContinuation'];
+      if (expenseDraft && typeof expenseDraft === 'object'
+        && ['OPEN', 'PAUSED', 'PAUSED_INTERRUPTED', 'INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(String((expenseDraft as any).status))
+        && (expenseDraft as any).expenseId === input.expenseId
+        && (expenseDraft as any).userId === input.userId
+        && (expenseDraft as any).chatKeyHash === input.chatKeyHash
+        // Only advance a continuation that represented the row before this delivery write. A
+        // mismatch means a real intervening edit and must remain stale rather than being rebased.
+        && (expenseDraft as any).targetRevision === current.updatedAt.toISOString()) {
+        metadata['lineExpenseDraftContinuation'] = {
+          ...(expenseDraft as Record<string, unknown>),
           targetRevision: now.toISOString(),
         };
       }

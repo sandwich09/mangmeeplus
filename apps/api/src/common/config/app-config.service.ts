@@ -66,6 +66,7 @@ export class AppConfigService {
   get lineAiBufferDebounceMs(): number { return this.config.LINE_AI_BUFFER_DEBOUNCE_MS; }
   get lineAiBufferMaxWaitMs(): number { return this.config.LINE_AI_BUFFER_MAX_WAIT_MS; }
   get lineAiLoadingAnimationEnabled(): boolean { return this.config.LINE_AI_LOADING_ANIMATION_ENABLED; }
+  get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }
   get s3Bucket(): string { return this.config.S3_BUCKET; }

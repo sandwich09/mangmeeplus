@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 
 const VERSION = '2026-08-09T12:00:00.000Z';
@@ -65,5 +65,115 @@ describe('UpdateExpenseDraftUseCase optimistic concurrency', () => {
     }, { requireExpectedUpdatedAt: true });
 
     assert.deepEqual(events, ['header.cas', 'lines.upsert']);
+  });
+});
+
+describe('UpdateExpenseDraftUseCase LINE draft collection authority', () => {
+  const continuation = {
+    sourceChannelMetadataJson: { lineExpenseDraftContinuation: { status: 'COLLECTING' } },
+    aiVerificationSummaryJson: { lineExpenseDraftConversation: { status: 'COLLECTING' } },
+    nextUpdatedAt: new Date('2026-08-09T12:00:00.001Z'),
+  };
+  const lineRecord = { ...record, captureSource: 'LINE_UPLOAD' };
+  const lineCtx = {
+    ...ctx,
+    authProvider: 'line',
+    permissions: ['expense.receipt.line_upload'],
+  } as any;
+
+  it('lets the originating LINE user persist source facts and continuation state together', async () => {
+    let persisted: any;
+    const events: string[] = [];
+    const repo = {
+      findById: async () => lineRecord,
+      updateExpense: async (input: any, withinTx?: (tx: unknown) => Promise<void>) => {
+        persisted = input;
+        events.push('header.cas');
+        await withinTx?.(TX);
+        return { ...lineRecord, ...input };
+      },
+    } as any;
+    const transactionalAudit = {
+      companyId: 'company-1', actorUserId: 'user-1', action: 'expense.line_draft.answer',
+      targetType: 'expense_record', targetId: 'expense-1', requestId: 'req-1', result: 'SUCCESS',
+    } as const;
+    const useCase = new UpdateExpenseDraftUseCase(repo, {
+      log: async (entry: any, tx: unknown) => {
+        assert.equal(entry, transactionalAudit);
+        assert.equal(tx, TX);
+        events.push('audit.insert');
+      },
+    } as any, { resolveLines: async () => [] } as any);
+
+    await useCase.execute(lineCtx, lineRecord.id, {
+      expectedUpdatedAt: VERSION,
+      note: 'ใช้ในสำนักงาน',
+    }, {
+      requireExpectedUpdatedAt: true,
+      suppressGenericAudit: true,
+      lineDraftCollection: continuation,
+      transactionalAudit,
+    });
+
+    assert.equal(persisted.note, 'ใช้ในสำนักงาน');
+    assert.deepEqual(persisted.sourceChannelMetadataJson, continuation.sourceChannelMetadataJson);
+    assert.deepEqual(persisted.aiVerificationSummaryJson, continuation.aiVerificationSummaryJson);
+    assert.equal(persisted.updatedAt.toISOString(), continuation.nextUpdatedAt.toISOString());
+    assert.deepEqual(events, ['header.cas', 'audit.insert']);
+  });
+
+  it('does not expose the internal authority to a watchdog-authenticated HTTP caller', async () => {
+    const repo = { findById: async () => lineRecord } as any;
+    const useCase = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async () => [] } as any);
+
+    await assert.rejects(
+      () => useCase.execute(ctx, lineRecord.id, { note: 'x' }, { lineDraftCollection: continuation }),
+      ForbiddenException,
+    );
+  });
+
+  it('does not let a different LINE user update another user’s draft', async () => {
+    const repo = { findById: async () => lineRecord } as any;
+    const useCase = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async () => [] } as any);
+
+    await assert.rejects(
+      () => useCase.execute(
+        { ...lineCtx, userId: 'user-2' },
+        lineRecord.id,
+        { note: 'x' },
+        { lineDraftCollection: continuation },
+      ),
+      ForbiddenException,
+    );
+  });
+
+  it('does not let LINE mutate the record after it leaves DRAFT', async () => {
+    const repo = { findById: async () => ({ ...lineRecord, status: 'READY_FOR_CONFIRMATION' }) } as any;
+    const useCase = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async () => [] } as any);
+
+    await assert.rejects(
+      () => useCase.execute(
+        lineCtx,
+        lineRecord.id,
+        { note: 'late answer' },
+        { lineDraftCollection: continuation },
+      ),
+      ForbiddenException,
+    );
+  });
+
+  it('keeps reviewer-only tax fields closed during LINE collection', async () => {
+    const repo = { findById: async () => lineRecord } as any;
+    const useCase = new UpdateExpenseDraftUseCase(repo, audit, { resolveLines: async () => [] } as any);
+
+    await assert.rejects(
+      () => useCase.execute(
+        lineCtx,
+        lineRecord.id,
+        { taxCategory: 'INPUT_VAT' } as any,
+        { lineDraftCollection: continuation },
+      ),
+      /cannot update taxCategory/,
+    );
   });
 });
