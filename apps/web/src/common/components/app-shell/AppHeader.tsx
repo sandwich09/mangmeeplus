@@ -1,64 +1,33 @@
 'use client';
-import React, { useCallback, useRef, useState } from 'react';
-import Link from 'next/link';
+import React from 'react';
 import { useSidebar } from './SidebarContext';
-import { getInitials } from '@/common/components/mangmee';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
-import { logoutCurrentSession } from '@/common/auth/session';
-import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { useIsDesktop } from '@/common/hooks/use-media-query';
-import { AlertModal } from '@/common/components/modal';
 
 type Props = {
-  companyId?: string;
   companyName?: string;
   /** Optional interactive area (e.g. company switcher + branch filter); replaces the plain company name. */
   companyArea?: React.ReactNode;
-  /** Optional controls rendered top-right before the user menu (e.g. notification bell). */
+  /** Optional controls rendered top-right (e.g. notification bell). */
   headerExtras?: React.ReactNode;
   locale: SupportedLocale;
-  userName?: string;
-  showAccountSecurity?: boolean;
 };
 
 const AppHeader: React.FC<Props> = ({
-  companyId,
   companyName,
   companyArea,
   headerExtras,
   locale,
-  userName,
-  showAccountSecurity,
 }) => {
   const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
-  const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutFailed, setSignOutFailed] = useState(false);
   const isDesktop = useIsDesktop();
-  const userMenuRef = useRef<HTMLDivElement>(null);
-  useCloseOnOutsideClick(userMenuRef, useCallback(() => setUserMenuOpen(false), []));
-  // The security page is parked; /change-password is the real form the menu label promises.
-  const resetPasswordHref = '/change-password';
-  const userLabel = userName ?? t('shell.user_menu', locale);
-  useCloseOnOutsideClick(userMenuRef, useCallback(() => setUserMenuOpen(false), []));
 
   const handleToggle = () => {
     if (isDesktop) {
       toggleSidebar();
     } else {
       toggleMobileSidebar();
-    }
-  };
-
-  const handleSignOut = async () => {
-    if (signingOut) return;
-    setUserMenuOpen(false);
-    setSigningOut(true);
-    if (!(await logoutCurrentSession())) {
-      setSigningOut(false);
-      // Themed dialog instead of window.alert(): the browser alert ignored the app theme.
-      setSignOutFailed(true);
     }
   };
 
@@ -86,50 +55,11 @@ const AppHeader: React.FC<Props> = ({
           {companyArea ?? (companyName && <span className="truncate text-sm font-semibold text-gray-700">{companyName}</span>)}
         </div>
 
-        {/* Right: notifications + user menu */}
+        {/* Right: notifications. Account actions live with the user identity in the sidebar footer. */}
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
           {headerExtras}
-          {/* User menu */}
-          <div ref={userMenuRef} className="relative">
-            <button
-              onClick={() => setUserMenuOpen((o) => !o)}
-              className="flex h-11 w-11 items-center gap-2 rounded-lg px-0 hover:bg-gray-100 sm:h-10 sm:w-10"
-              aria-label={t('shell.user_menu', locale)}
-            >
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-100 text-sm font-bold text-brand-700">
-                {getInitials(userLabel)}
-              </span>
-            </button>
-            {userMenuOpen && (
-              <div className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-gray-200 bg-white py-2 shadow-[var(--shadow-theme-md)]">
-                {showAccountSecurity && (
-                  <Link
-                    href={resetPasswordHref}
-                    className="block w-full px-4 py-3 text-left text-sm font-bold text-gray-800 hover:bg-brand-25 hover:text-brand-700"
-                    onClick={() => setUserMenuOpen(false)}
-                  >
-                    {t('shell.reset_password', locale)}
-                  </Link>
-                )}
-                <button
-                  className="w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700"
-                  onClick={handleSignOut}
-                  disabled={signingOut}
-                >
-                  {signingOut ? t('shell.signing_out', locale) : t('shell.signout', locale)}
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
-      <AlertModal
-        open={signOutFailed}
-        title={t('shell.signout', locale)}
-        message={t('shell.signout_failed', locale)}
-        closeLabel={t('common.close', locale)}
-        onClose={() => setSignOutFailed(false)}
-      />
     </header>
   );
 };

@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSidebar } from './SidebarContext';
@@ -12,6 +12,7 @@ import { AlertModal, Modal } from '@/common/components/modal';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { logoutCurrentSession } from '@/common/auth/session';
+import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { useIsDesktop, useMediaQuery } from '@/common/hooks/use-media-query';
 
 export type NavItem = {
@@ -31,6 +32,7 @@ type Props = {
   userName?: string;
   /** primary role key from the session (e.g. OWNER) — shown in the sidebar footer per the มั่งมี design */
   userRole?: string;
+  showAccountSecurity?: boolean;
 };
 
 type MenuIconProps = {
@@ -86,7 +88,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRole }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRole, showAccountSecurity }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -111,11 +113,13 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [closeMobileSidebar, isMobileOpen]);
   const [subMenuHeight, setSubMenuHeight] = useState<Record<string, number>>({});
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const activeItemRef = useRef<HTMLElement | null>(null);
   const navScrollRef = useRef<HTMLDivElement | null>(null);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
   const initializedSubmenuRef = useRef(false);
   /** Last pathname the route-sync effect acted on, so it runs once per navigation. */
   const syncedPathRef = useRef<string | null>(null);
@@ -124,9 +128,13 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
   const footerLabel = displayUserName ?? roleLabel;
   const footerInitials = userName === 'นภา' ? 'นภ' : getInitials(footerLabel);
+  // The security page is parked; /change-password is the real form the menu label promises.
+  const resetPasswordHref = '/change-password';
+  useCloseOnOutsideClick(userMenuRef, useCallback(() => setUserMenuOpen(false), []));
 
   const handleSignOut = async () => {
     if (signingOut) return;
+    setUserMenuOpen(false);
     setSigningOut(true);
     if (!(await logoutCurrentSession())) {
       setSigningOut(false);
@@ -375,30 +383,57 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
         </nav>
       </div>
 
-      {/* footer per มั่งมี design: avatar + role + logout */}
+      {/* User identity and account actions stay together at the bottom of the navigation. */}
       {footerLabel && (
-        <div className={`mt-6 flex shrink-0 items-center gap-3 border-t border-gray-200 px-1 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4 ${sidebarVisible ? '' : 'lg:justify-center'}`}>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] bg-brand-100 text-sm font-bold text-brand-700">
-            {footerInitials}
-          </span>
-          {sidebarVisible && (
-            <>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-extrabold text-gray-800">{footerLabel}</span>
-                {displayUserName && roleLabel && <span className="mt-0.5 block truncate text-xs font-medium text-gray-500">{roleLabel}</span>}
-              </span>
+        <div ref={userMenuRef} className={`relative mt-6 shrink-0 border-t border-gray-200 px-1 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4`}>
+          {userMenuOpen && (
+            <div id="sidebar-user-menu" className="absolute bottom-full left-0 z-10 mb-2 w-60 overflow-hidden rounded-xl border border-gray-200 bg-white py-2 shadow-[var(--shadow-theme-md)]">
+              {showAccountSecurity && (
+                <Link
+                  href={resetPasswordHref}
+                  className="block w-full px-4 py-3 text-left text-sm font-bold text-gray-800 hover:bg-brand-25 hover:text-brand-700"
+                  onClick={() => setUserMenuOpen(false)}
+                >
+                  {t('shell.reset_password', locale)}
+                </Link>
+              )}
               <button
                 type="button"
-                onClick={() => setSignOutOpen(true)}
+                className="w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  setSignOutOpen(true);
+                }}
                 disabled={signingOut}
-                aria-label={t(signingOut ? 'shell.signing_out' : 'shell.signout', locale)}
-                title={t('shell.signout', locale)}
-                className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50 sm:h-8 sm:w-8"
               >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></svg>
+                {signingOut ? t('shell.signing_out', locale) : t('shell.signout', locale)}
               </button>
-            </>
+            </div>
           )}
+          <button
+            type="button"
+            onClick={() => setUserMenuOpen((open) => !open)}
+            aria-label={t('shell.user_menu', locale)}
+            aria-expanded={userMenuOpen}
+            aria-controls="sidebar-user-menu"
+            aria-haspopup="true"
+            className={`flex w-full items-center gap-3 rounded-xl py-2 text-left hover:bg-gray-50 ${sidebarVisible ? 'px-2' : 'lg:justify-center lg:px-0'}`}
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] bg-brand-100 text-sm font-bold text-brand-700">
+              {footerInitials}
+            </span>
+            {sidebarVisible && (
+              <>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-extrabold text-gray-800">{footerLabel}</span>
+                  {displayUserName && roleLabel && <span className="mt-0.5 block truncate text-xs font-medium text-gray-500">{roleLabel}</span>}
+                </span>
+                <span className={`shrink-0 text-gray-400 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`}>
+                  <ChevronDownIcon />
+                </span>
+              </>
+            )}
+          </button>
         </div>
       )}
       <Modal

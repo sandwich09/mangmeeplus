@@ -11,7 +11,6 @@ import type { NavItem } from './AppSidebar';
 
 type Props = {
   children: React.ReactNode;
-  companyId?: string;
   companyName?: string;
   companyArea?: React.ReactNode;
   headerExtras?: React.ReactNode;
@@ -26,7 +25,6 @@ type Props = {
 // Inner component so it can read sidebar state after SidebarProvider mounts
 function ShellInner({
   children,
-  companyId,
   companyName,
   companyArea,
   headerExtras,
@@ -53,17 +51,21 @@ function ShellInner({
       >
         {t('shell.skip_to_content', locale)}
       </a>
-      <AppSidebar navItems={navItems} activeKey={activeKey} locale={locale} userName={userName} userRole={userRole} />
+      <AppSidebar
+        navItems={navItems}
+        activeKey={activeKey}
+        locale={locale}
+        userName={userName}
+        userRole={userRole}
+        showAccountSecurity={showAccountSecurity}
+      />
       <Backdrop />
       <div className={`flex min-h-screen min-w-0 flex-1 flex-col transition-all duration-300 ease-in-out ${mainContentMargin}`}>
         <AppHeader
-          companyId={companyId}
           companyName={companyName}
           companyArea={companyArea}
           headerExtras={headerExtras}
           locale={locale}
-          userName={userName}
-          showAccountSecurity={showAccountSecurity}
         />
         <main id="workspace-main" className="mangmee-content">
           <WorkspaceLocaleContext.Provider value={locale}>{children}</WorkspaceLocaleContext.Provider>
@@ -75,7 +77,6 @@ function ShellInner({
 
 export function WorkspaceShell({
   children,
-  companyId,
   companyName,
   companyArea,
   headerExtras,
@@ -89,7 +90,6 @@ export function WorkspaceShell({
   return (
     <SidebarProvider>
       <ShellInner
-        companyId={companyId}
         companyName={companyName}
         companyArea={companyArea}
         headerExtras={headerExtras}

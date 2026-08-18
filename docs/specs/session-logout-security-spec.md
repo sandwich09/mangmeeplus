@@ -20,6 +20,7 @@ Fix a live bug and close a real self-service gap in session security.
 - **Bug fixed 2026-07-01**: the web app's "Sign out" menu item (`AppHeader.tsx`) previously only closed the dropdown. It now calls the BFF logout route (which revokes the session and clears the httpOnly auth cookies), scrubs the legacy stored token keys, and redirects to `/login`.
 - **Session model note (2026-07-13)**: sessions live in httpOnly cookies set by the BFF, not in `localStorage`. Cookie presence is never proof of authentication — `GET /v1/auth/me` is the only authentication boundary. See [[plans/web-session-recovery-redirect-loop-fix-plan|Web Session Recovery and Redirect Loop Fix]].
 - **UX update 2026-07-04**: the same header profile menu now exposes two authenticated account actions together: `Reset password` and `Sign out`.
+- **UX update 2026-08-18**: those account actions now open from the user-identity row at the bottom of `AppSidebar.tsx`; the duplicate profile avatar/menu was removed from the header.
 - **Gap**: today there is no way for a user to end sessions on *other* devices — for example after leaving a device unattended, losing a phone with a still-valid session, or simply wanting a clean slate — without asking an administrator or waiting for natural token expiry. Add self-service "log out of all other devices."
 
 ## 4. Non-goals
@@ -37,8 +38,8 @@ Fix a live bug and close a real self-service gap in session security.
 
 ### 6a. Single-session logout (fix existing)
 
-1. Trigger: user clicks "Sign out" in the web header profile menu.
-2. Main user action: confirms the click (no extra dialog needed — this only affects the current device/session).
+1. Trigger: user opens the account menu from their name at the bottom of the sidebar and clicks "Sign out."
+2. Main user action: confirms the logout dialog.
 3. System response: the browser calls the BFF route `POST /api/auth/logout`, which forwards to `POST /v1/auth/logout` (revoking the current session's `AuthSession` row by `tokenId`) and then clears the auth cookies on its own response.
 4. Review or approval: none.
 5. Completion state: the session cookies (`watchdog_token` and its `watchdog_token.0..N` chunks, `watchdog_refresh`, `watchdog_persist`, `watchdog_csrf`, `watchdog_home`) are cleared by the BFF `Set-Cookie` response — they are httpOnly and browser JavaScript cannot touch them. The client additionally scrubs the legacy pre-cookie `localStorage` keys (`watchdog.accessToken`, `watchdog.refreshToken`, `watchdog.auth.accessToken`), which are dead storage kept only so stale values do not linger, and redirects to `/login`.
@@ -65,7 +66,7 @@ Fix a live bug and close a real self-service gap in session security.
 
 ## 8. Boundary and Ownership
 
-- Web owns: wiring `AppHeader.tsx`'s header profile-menu actions (`Reset password` route + real sign-out flow), and the "log out of all other devices" section of the shared Account Security settings page (the page itself may be created by whichever of this plan or [[plans/forgot-password-reset-plan|Forgot Password and Self-Service Reset Plan]] lands first — see that plan's Phase 4 note).
+- Web owns: wiring `AppSidebar.tsx`'s footer user-menu actions (`Reset password` route + real sign-out flow), and the "log out of all other devices" section of the shared Account Security settings page (the page itself may be created by whichever of this plan or [[plans/forgot-password-reset-plan|Forgot Password and Self-Service Reset Plan]] lands first — see that plan's Phase 4 note).
 - Backend/API owns: the existing `POST /auth/logout` route (unchanged) and the new `POST /auth/sessions/revoke-others` route.
 - LINE/LIFF owns: nothing in this feature.
 - AI Gateway owns: nothing; must refuse any logout/session-revoke request.
@@ -92,7 +93,7 @@ Fix a live bug and close a real self-service gap in session security.
 
 ### Web
 
-- Main screen: `AppHeader.tsx`'s header profile menu, now containing `Reset password` and a working "Sign out" item; a new "Log out of all other devices" section on the Account Security settings page with a confirmation dialog.
+- Main screen: `AppSidebar.tsx`'s footer user menu, containing `Reset password` above a working "Sign out" item; the header has no duplicate profile avatar. Account Security also provides "Log out of all other devices" with a confirmation dialog.
 - List/detail/form pattern: no list — this pass does not show individual sessions, only a single revoke-all-others action (see Non-goals).
 - Loading/cover loader scope: the revoke-others button shows a scoped loading state and is disabled while the request is in flight.
 - Empty/error/forbidden/readonly states: revoking others when there are none to revoke still shows a success confirmation, not an error.
@@ -110,7 +111,7 @@ Fix a live bug and close a real self-service gap in session security.
 
 ## 14. Acceptance Criteria
 
-- [x] Clicking "Sign out" in the web header actually logs the user out: server-side session revoked, auth cookies cleared by the BFF response, redirected to `/login`; if the BFF is unreachable, the user remains on the current page and sees a retryable failure.
+- [x] Clicking "Sign out" from the sidebar footer user menu actually logs the user out: server-side session revoked, auth cookies cleared by the BFF response, redirected to `/login`; if the BFF is unreachable, the user remains on the current page and sees a retryable failure.
 - [x] A user can revoke every other active session for their own account in one click, without affecting their current session.
 - [x] LINE/AI cannot initiate or perform any logout or session-revocation action.
 
@@ -123,4 +124,4 @@ Fix a live bug and close a real self-service gap in session security.
 
 ## 16. Open Questions
 
-- Account Security settings page was created by this implementation pass at `apps/web/src/features/account-security/AccountSecurityPage.tsx`; [[plans/forgot-password-reset-plan|Forgot Password and Self-Service Reset Plan]] should extend this page rather than creating a second page. As of 2026-07-04, the authenticated entry point is the header profile-menu `Reset password` item.
+- Account Security settings page was created by this implementation pass at `apps/web/src/features/account-security/AccountSecurityPage.tsx`; [[plans/forgot-password-reset-plan|Forgot Password and Self-Service Reset Plan]] should extend this page rather than creating a second page. As of 2026-08-18, the authenticated entry point is the sidebar footer user-menu `Reset password` item.
