@@ -5,6 +5,7 @@ import {
   fittingPrefixCount,
   joinGroupText,
   joinedTextLength,
+  lineWaitStatusText,
   nextFlushDelayMs,
   segmentBatch,
   sortBatchItems,
@@ -115,5 +116,19 @@ describe('capacity rules', () => {
     const pending = [text('p', 'ก'.repeat(LINE_BUFFER_MAX_TEXT_CHARS - 10))];
     const incoming = [text('i1', 'ยาวเกินสิบตัวอักษรแน่นอน')];
     assert.equal(fittingPrefixCount(pending, incoming), 0);
+  });
+});
+
+describe('lineWaitStatusText', () => {
+  it('selects one waiting line from the request situation', () => {
+    assert.match(lineWaitStatusText('ช่วยทำรายงานยอดขาย'), /จัดเตรียมรายงาน/);
+    assert.match(lineWaitStatusText('สรุปค่าใช้จ่ายเดือนนี้'), /สรุปข้อมูล/);
+    assert.match(lineWaitStatusText('เปรียบเทียบยอดขายสองสาขา'), /เปรียบเทียบข้อมูล/);
+    assert.match(lineWaitStatusText('ยอดรวมทั้งหมดเท่าไหร่'), /คำนวณตัวเลข/);
+    assert.match(lineWaitStatusText('วิเคราะห์แนวโน้มสินค้า'), /วิเคราะห์ข้อมูล/);
+    assert.match(lineWaitStatusText('ค้นข้อมูลเอกสารเลขที่ 123'), /ค้นข้อมูล/);
+    assert.match(lineWaitStatusText('ขอดูสถานะใบแจ้งหนี้'), /ตรวจสอบข้อมูลในระบบ/);
+    assert.match(lineWaitStatusText('เล่าเรื่องสนุกให้ฟังหน่อย'), /ขอคิดสักครู่/);
+    assert.match(lineWaitStatusText('', 'media'), /ตรวจสอบเอกสาร/);
   });
 });

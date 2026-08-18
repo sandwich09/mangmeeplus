@@ -572,4 +572,72 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     await sleep(60);
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
+
+  it('pushes one contextual status after 2 seconds and restores loading before the answer', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      let releaseTurn!: () => void;
+      let completeTurn!: () => void;
+      let markStarted!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const h = makeHarness({
+        debounceMs: 0,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          markStarted();
+          await gate;
+          await event.beforeReply?.();
+          completeTurn();
+        },
+      });
+
+      await h.service.enqueue(textEnv('wait-1', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      await started;
+      assert.deepEqual(h.loadingCalls, ['user-1']);
+
+      t.mock.timers.tick(1_999);
+      await Promise.resolve();
+      assert.equal(h.pushes.length, 0);
+
+      t.mock.timers.tick(1);
+      await Promise.resolve();
+      await Promise.resolve();
+      assert.match(h.pushes[0]?.text ?? '', /กำลังเปรียบเทียบข้อมูล/);
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+
+      releaseTurn();
+      await completed;
+      assert.equal(h.pushes.length, 1);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('keeps a reply completed within 2 seconds to loading only', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+      let completeTurn!: () => void;
+      const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
+      const h = makeHarness({
+        debounceMs: 0,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          await event.beforeReply?.();
+          completeTurn();
+        },
+      });
+
+      await h.service.enqueue(textEnv('wait-fast', 'สวัสดี'));
+      await completed;
+      t.mock.timers.tick(2_000);
+      await Promise.resolve();
+
+      assert.deepEqual(h.loadingCalls, ['user-1']);
+      assert.equal(h.pushes.length, 0);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
 });
