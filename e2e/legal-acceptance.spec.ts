@@ -145,9 +145,16 @@ test.describe('LEGAL — explicit Terms acceptance and Privacy Notice acknowledg
       await expect(page.getByText(/ไม่ใช่การให้ความยินยอม|is not consent/i)).toBeVisible();
 
       await page.getByRole('button', { name: /ยืนยันและเริ่มใช้งาน|Confirm and start/i }).click();
-      await expect(page.locator('#legal-acceptance-error')).toContainText(/กรุณายืนยัน|Please confirm/i);
-      expect(await page.evaluate(() => (document.activeElement as HTMLInputElement | null)?.name))
-        .toBe('termsAccepted');
+      await expect(page.locator('.doc-gate-inline-error')).toHaveCount(3);
+      await expect(page.locator('input[name="termsAccepted"]')).toBeFocused();
+      await expect(page.locator('#terms-acceptance-error')).toBeInViewport();
+
+      await page.locator('input[name="termsAccepted"]').check();
+      await page.locator('input[name="privacyAcknowledged"]').check();
+      await page.getByRole('button', { name: /ยืนยันและเริ่มใช้งาน|Confirm and start/i }).click();
+      await expect(page.locator('.doc-gate-inline-error')).toHaveCount(1);
+      await expect(page.locator('input[name="deletionAcknowledged"]')).toBeFocused();
+      await expect(page.locator('#deletion-acknowledgment-error')).toBeInViewport();
       await expect(page).toHaveURL(/\/legal-acceptance(?:\?|$)/);
 
       const currentStatusRes = await browserApiGet(page, 'auth/legal-acceptance', companyId);
