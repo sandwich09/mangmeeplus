@@ -137,20 +137,26 @@ export function validateExpenseReview(
       addIssue(issues, `${prefix}.discountAmount`, 'error', 'expenses.v_discount_exceeds');
     }
 
-    for (const field of ['vatRate', 'whtRate'] as const) {
-      const raw = line[field];
-      if (raw === null || raw.trim() === '') {
-        // Spec §19g decision 1: a VAT mode asserts that VAT applies, so an unknown rate is an
-        // unanswered question, not a zero. Confirmation blocks on the same condition server-side.
-        if (field === 'vatRate' && vatModeRequiresRate(values.vatMode)) {
-          addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_vat_rate_required');
-        }
-        continue;
+    if (line.vatRate.trim() === '') {
+      // Spec §19g decision 1: a VAT mode asserts that VAT applies, so an unknown rate is an
+      // unanswered question, not a zero. Confirmation blocks on the same condition server-side.
+      if (vatModeRequiresRate(values.vatMode)) {
+        addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_vat_rate_required');
       }
-      const rate = numberValue(raw);
-      if (rate === null || rate < 0 || rate > 1) addIssue(issues, `${prefix}.${field}`, 'error', 'expenses.v_rate_range');
+    } else {
+      const rate = numberValue(line.vatRate);
+      if (rate === null || rate < 0 || rate > 1) addIssue(issues, `${prefix}.vatRate`, 'error', 'expenses.v_rate_range');
     }
   });
+
+  // The web form presents WHT once for the bill and writes the chosen rate to every line. Report a
+  // single issue beside that control even for historical drafts whose line rates differ.
+  if (values.lines.some((line) => {
+    const rate = numberValue(line.whtRate);
+    return line.whtRate !== null && line.whtRate.trim() !== '' && (rate === null || rate < 0 || rate > 1);
+  })) {
+    addIssue(issues, 'whtRate', 'error', 'expenses.v_rate_range');
+  }
 
   const computed = computedGrandTotal(values);
   const ai = opts.aiGrandTotal?.trim() ? Number(opts.aiGrandTotal.replace(/,/g, '')) : null;
