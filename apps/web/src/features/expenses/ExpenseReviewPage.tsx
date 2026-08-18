@@ -26,7 +26,7 @@ import {
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities,
   expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
-  hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
+  canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled,
   postingErrorText, vatModeRequiresRate,
 } from './expenses.model';
@@ -354,6 +354,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const isConfirmed = detail.status === 'CONFIRMED';
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
+  const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
   const hasWht = Number(detail.whtAmount) > 0;
   // Spec §7.5: a document that already records VAT keeps showing it, whatever the workspace mode.
@@ -476,7 +477,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
             {step === 'review' && (
               <>
-                {canReview && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
+                {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
                     <button className={btnClass} onClick={() => doAction(() => canReview ? markExpenseReadyAsReviewer(companyId, expenseId) : markExpenseReady(companyId, expenseId), 'ส่งตรวจสอบเรียบร้อยแล้ว')} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? t('expenses.non_expense_workflow_blocked', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
@@ -499,7 +500,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         )}
         {isConfirmed && (
           <>
-            {canReview && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate_short', locale)}</button>}
             {canGenerateJournal && detail.pendingPostingSourceType && (
               <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId}>
                 {detail.postingStatus === 'posting_error'

@@ -72,6 +72,10 @@ export function hasUnresolvedDuplicateWarning(duplicateStatus: DuplicateStatus):
   return duplicateStatus === 'POSSIBLE_DUPLICATE' || duplicateStatus === 'CONFIRMED_DUPLICATE';
 }
 
+export function canRunExpenseDuplicateCheck(status: ExpenseStatus): boolean {
+  return ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(status);
+}
+
 export function aiGrandTotalValue(aiVerifiedFieldsJson: Record<string, unknown> | null): string | null {
   const rawAiTotal = aiVerifiedFieldsJson?.['grandTotalAmount'];
   return (typeof rawAiTotal === 'string' || typeof rawAiTotal === 'number') && String(rawAiTotal).trim() !== ''
