@@ -79,8 +79,40 @@ Implementation review (2026-08-18, Fable 5 reviewing Opus 5):
   serialization rationale), (b) §5.3 fence/retire slimming (−3m; measure
   during next promote), (c) readiness parallel to the DB fence (−4–5m;
   larger promote restructure). (a)+(b)+(c) ≈ prod ~9–12m.
+Verification results (2026-08-18, all run IDs in production-deploy-2026-08-17.md):
+- Phase 1 VERIFIED: live promote 32078202452 (candidate 1bb4e9cf, camera fix
+  shipped): rollout 26m15s→21m22s (−18.6%), total 38m28s→34m23s. IAM
+  prerequisite gap found by first attempt 32070713324 (prod deploy role lacked
+  classic ecs:DescribeServices/UpdateService; fail-closed pre-intent, zero
+  mutation) — fixed via PR #152 + owner ceremony apply with exact readback +
+  policy simulation proof. Reviewer lesson: diff the deploy-role policy for
+  every new AWS API a phase introduces.
+- Phase 2 VERIFIED with revised numbers: reuse gate works (UAT-F2 32091272835:
+  build_and_publish skipped); acceptance contract gap found by UAT-V2
+  32082803120 (manifest.workflowRunId == signing run rejected every reused
+  release) — fixed as phase 2b (PR #156, publishedByRunId optional field,
+  5 pins, coupling audit of 16 sites). F1 publish 22m42s vs F2 reuse 19m05s.
+  UAT ≤10m NOT reached: deploy job is the floor (fence 207s + rollout 540s +
+  retire 171s + AgentCore staging); remaining levers are §5.3 fence/retire and
+  AgentCore staging reuse — out of the agreed three-phase scope, recorded as
+  follow-ups.
+- Phase 3: inline READY machinery VERIFIED live (combined run 32084651521:
+  reusable-call readiness both jobs green, same-run artifact consumption,
+  conditional recheck skips, run-name binding). Full-green combined promote
+  pending on real digests (75ae7e1 passport) after parent 63adc513 recovery.
+  The no-op-repromote rehearsal exposed two pre-existing platform edges:
+  (a) ECS Express mints a new service revision for an identical-config update
+  without creating a deployment → bind/noop check reports UNKNOWN (affects any
+  same-digest re-promote; unchanged by phases; follow-up), (b) pre-intent
+  recovery rejected already-serving builds — FIXED (PR #158, attribution to
+  the prior finalized release, retirement child skipped only when attributed —
+  Opus caught that the unconditional retirement would have closed launch-gate
+  authority of the live build). GitHub stale-replica fetches (post-incident)
+  intermittently 128 recovery runs whose recovery_ref is a just-merged tip;
+  fail-closed, retried.
 Next:
-- After stage E OPEN: merge order = hotfix (already ahead) → phase 1 → phase 2
-  → phase 3, each with its verification run per plan; main→develop sync after
-  workflow-file merges; first phase-1 verification candidate = camera-fix PR
-  head via full chain.
+- Terminalize parent 63adc513 via the attribution-fixed PRE_INTENT (retry loop
+  running), then combined live promote of the 75ae7e1 passport (real digests)
+  to close phase 3 with single-dispatch timing; then docs PR #151, ci.yml
+  release_controller_only allowlist extension (phase-1/2/3 infra files +
+  policy templates) per the owner's pnpm-test-skip request.
