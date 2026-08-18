@@ -54,3 +54,24 @@ UAT HEIC follow-up (2026-07-29):
 - `pnpm --filter @watchdog-bms/web typecheck` → exit 0.
 - `pnpm --filter @watchdog-bms/web build` → exit 0 (compiled in 9.3s). The first sandboxed build stalled in Turbopack and was interrupted; the same command outside the sandbox succeeded.
 Next: deploy to UAT and repeat the expense upload with `IMG_8759.HEIC`; run the remaining EXP-01..09/manual regression walk when the authenticated stack is available.
+
+## 2026-08-18 — LINE-saved iPhone photo reported as JPG
+
+Reported flow: iPhone HEIC → send through LINE → save as `.jpg` on desktop → web receipt upload
+accepts the selection, but completion reports a file-type mismatch.
+
+Evidence and decision:
+- The copy maps to the shared upload MIME/signature rejection path. The supplied attachment arrived
+  at Codex as a complete JFIF JPEG and passes `inspectAttachmentBytes('image/jpeg', bytes)`, so that
+  transported copy cannot reproduce the original desktop file metadata/container mismatch.
+- The deterministic gap was still present: `prepareReceiptFile` passed every declared JPEG/PNG under
+  6 MB through without inspecting bytes, while the backend correctly verifies the real container.
+- The client now detects complete JPEG, PNG, and HEIC/HEIF containers before pass-through. A real
+  JPEG/PNG keeps its original bytes and OCR quality; HEIC bytes hidden behind `.jpg` metadata use the
+  existing `heic-to` fallback and become a real JPEG; malformed or other decodable mismatches are
+  safely re-encoded instead of reaching backend signature rejection.
+
+Verification:
+- Focused `expense-upload.logic.spec.ts`: 15/15 pass, including renamed HEIC and truncated JPEG.
+- `pnpm --filter @watchdog-bms/web typecheck`: pass.
+- The supplied 103,973-byte JPEG is detected as JPEG and remains byte-for-byte unchanged.

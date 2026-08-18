@@ -27,6 +27,20 @@ export class HeicDecodeError extends Error {
   }
 }
 
+const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1']);
+
+export function detectReceiptImageByteKind(bytes: Uint8Array): 'jpeg' | 'png' | 'heic' | 'unknown' {
+  if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9) return 'jpeg';
+  if ([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value)) return 'png';
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.subarray(4, 8)) === 'ftyp') {
+    const boxSize = Math.min(bytes.length, ((bytes[0] ?? 0) * 0x1000000) + ((bytes[1] ?? 0) * 0x10000) + ((bytes[2] ?? 0) * 0x100) + (bytes[3] ?? 0));
+    for (let offset = 8; offset + 4 <= boxSize; offset += 4) {
+      if (offset !== 12 && HEIF_BRANDS.has(String.fromCharCode(...bytes.subarray(offset, offset + 4)))) return 'heic';
+    }
+  }
+  return 'unknown';
+}
+
 export function classifyUploadFile(name: string, type: string): UploadFileKind {
   const mime = type.toLowerCase();
   const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1];
@@ -84,16 +98,26 @@ export async function prepareReceiptFile(file: File): Promise<{ file: File; resi
   const sourceFile = file.type
     ? file
     : new File([file], file.name, { type: inferredMimeType, lastModified: file.lastModified });
-  if (kind === 'pdf' || (kind === 'image' && sourceFile.size <= MAX_IMAGE_BYTES)) {
+  // LINE Desktop can save HEIC bytes behind .jpg/image/jpeg metadata. Only preserve an image
+  // byte-for-byte when its container agrees; mismatches are decoded into a real JPEG below.
+  const byteKind = kind === 'image' || kind === 'heic'
+    ? detectReceiptImageByteKind(new Uint8Array(await sourceFile.arrayBuffer()))
+    : 'unknown';
+  const bytesMatchDeclaredType = (sourceFile.type === 'image/jpeg' && byteKind === 'jpeg')
+    || (sourceFile.type === 'image/png' && byteKind === 'png');
+  if (kind === 'pdf' || (kind === 'image' && sourceFile.size <= MAX_IMAGE_BYTES && bytesMatchDeclaredType)) {
     return { file: sourceFile, resized: false };
   }
 
   let image: ImageBitmap | HTMLImageElement;
   try { image = await decodeImage(sourceFile); }
   catch (error) {
-    if (kind !== 'heic') throw error;
+    if (kind !== 'heic' && byteKind !== 'heic') throw error;
     let converted: File;
-    try { converted = await heicToJpegFile(sourceFile); }
+    const heicFile = kind === 'heic'
+      ? sourceFile
+      : new File([sourceFile], sourceFile.name.replace(/\.[^.]+$/, '.heic'), { type: 'image/heic', lastModified: sourceFile.lastModified });
+    try { converted = await heicToJpegFile(heicFile); }
     catch { throw new HeicDecodeError(); }
     if (converted.size <= MAX_IMAGE_BYTES) return { file: converted, resized: true };
     image = await decodeImage(converted);
