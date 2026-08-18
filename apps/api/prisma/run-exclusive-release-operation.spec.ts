@@ -1548,6 +1548,133 @@ describe('durable remote release operation (real PostgreSQL)', () => {
     `, [releaseId])).rows[0].status, 'RECONCILED_FAILED_CONFIRMED');
   });
 
+  // 2026-08-18 production: a re-promote of the build that was ALREADY serving failed mid-rollout
+  // with zero api-web intents. The serving state belonged to a finalized release 90 minutes older,
+  // so the parent still provably never mutated api-web — but only that exact attribution says so.
+  it('recovers a serving incoming api-web build only when a prior finalized release explains it', async (t) => {
+    if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
+    // Its own build: earlier cases in this schema already finalized SHA_A releases, and the
+    // attribution query is deliberately a query over the whole environment history.
+    const servedSha = 'e'.repeat(40);
+    const preIntentServiceArn = SERVICE.replace('/api-web', '/watchdog-bms-uat-api-web');
+    const preIntentRevisionArn = REVISION.replace('/api-web/', '/watchdog-bms-uat-api-web/');
+    const servingIncoming = activeConfiguration(preIntentRevisionArn, servedSha);
+    const servingDeployment = {
+      serviceDeployments: [recoveryDeployment(preIntentServiceArn, preIntentRevisionArn)],
+    };
+    const recoverInput = (operationId: string) => ({
+      operationId, targetEnvironment: 'uat' as const, buildReleaseId: servedSha,
+      recoveryExecutorBuildReleaseId: SHA_B,
+      recoveryExecutorImage: `311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:${'f'.repeat(64)}`,
+      recoveryValidatedCiRunId: '987654', recovererTaskArn: TASK_C,
+      controller: GITHUB_CONTROLLER, region: 'ap-southeast-1',
+      readPlatform: async () => ({
+        service: recoveryService(preIntentServiceArn, servingIncoming, DEPLOYMENT),
+        deployment: servingDeployment,
+        ssmServiceArn: preIntentServiceArn,
+      }),
+    });
+    const startExpiredParent = async (id: string) => {
+      await beginRemoteReleaseOperation(first!, {
+        ...operation(id, TASK_A), mode: 'release', releaseDeployTarget: 'all', buildReleaseId: servedSha,
+      });
+      await first!.query(`
+        UPDATE "RemoteReleaseOperation"
+           SET "leaseExpiresAt" = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE "id" = $1
+      `, [id]);
+    };
+    // A blocked parent stays UNKNOWN and would fence the next case; the release itself is unchanged.
+    const abandon = async (id: string) => first!.query(`
+      UPDATE "RemoteReleaseOperation"
+         SET "status" = 'FAILED_CONFIRMED', "completedAt" = CURRENT_TIMESTAMP WHERE "id" = $1
+    `, [id]);
+    const finalizedRelease = async (buildReleaseId: string) => {
+      const id = randomUUID();
+      await beginRemoteReleaseOperation(first!, {
+        ...operation(id, TASK_A), mode: 'release', releaseDeployTarget: 'all', buildReleaseId,
+      });
+      await finishRemoteReleaseOperation(first!, id, TASK_A, 'SUCCEEDED', 'promoted before the retry');
+      await first!.query(`
+        UPDATE "RemoteReleaseOperation"
+           SET "completedAt" = CURRENT_TIMESTAMP - INTERVAL '90 minutes' WHERE "id" = $1
+      `, [id]);
+      return id;
+    };
+
+    const unexplainedId = randomUUID();
+    await startExpiredParent(unexplainedId);
+    await assert.rejects(
+      () => recoverPreIntentApiRelease(first!, recoverInput(unexplainedId)),
+      /incoming api-web build is active or the serving singleton is malformed/,
+      'a serving incoming build with no finalized release behind it stays UNKNOWN',
+    );
+    await abandon(unexplainedId);
+
+    await finalizedRelease(SHA_A);
+    const otherBuildId = randomUUID();
+    await startExpiredParent(otherBuildId);
+    await assert.rejects(
+      () => recoverPreIntentApiRelease(first!, recoverInput(otherBuildId)),
+      /incoming api-web build is active or the serving singleton is malformed/,
+      'a finalized release of a different build never attributes this serving singleton',
+    );
+    await abandon(otherBuildId);
+
+    const priorId = await finalizedRelease(servedSha);
+    const releaseId = randomUUID();
+    await startExpiredParent(releaseId);
+    const recovered = await recoverPreIntentApiRelease(first, recoverInput(releaseId));
+    const attribution = {
+      operationId: priorId, buildReleaseId: servedSha, status: 'SUCCEEDED',
+      completedAt: (await first.query(`
+        SELECT "completedAt" FROM "RemoteReleaseOperation" WHERE "id" = $1
+      `, [priorId])).rows[0].completedAt.toISOString(),
+    };
+    assert.deepEqual(recovered, {
+      replay: false,
+      terminalReplay: false,
+      state: {
+        serviceArn: preIntentServiceArn,
+        currentDeployment: DEPLOYMENT,
+        targetRevisionArn: preIntentRevisionArn,
+        sourceSha: servedSha,
+        servingAttribution: attribution,
+      },
+    });
+    assert.deepEqual((await first.query(`
+      SELECT "preIntentApiCleanupEvidenceJson" -> 'servingAttribution' AS attribution
+        FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0].attribution, attribution, 'the cleanup evidence names the prior release');
+    assert.equal((await first.query(`
+      SELECT "metadataJson" -> 'state' -> 'servingAttribution' ->> 'operationId' AS "operationId"
+        FROM "AuditLog"
+       WHERE "action" = 'system.release_operation.pre_intent_api_cleanup' AND "targetId" = $1
+    `, [releaseId])).rows[0].operationId, priorId);
+
+    const beforeReplay = (await first.query(`
+      SELECT "status", "updatedAt", "preIntentApiCleanupCompletedAt", "preIntentApiCleanupEvidenceJson"
+        FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0];
+    assert.deepEqual(await recoverPreIntentApiRelease(first, recoverInput(releaseId)), {
+      replay: true, terminalReplay: false, state: recovered.state,
+    });
+    assert.deepEqual((await first.query(`
+      SELECT "status", "updatedAt", "preIntentApiCleanupCompletedAt", "preIntentApiCleanupEvidenceJson"
+        FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0], beforeReplay, 'replayed attribution must not rewrite its own evidence');
+
+    assert.equal(await terminalizeRecoveredReleaseIfReady(first, {
+      operationId: releaseId, targetEnvironment: 'uat', recovererTaskArn: TASK_B,
+      controller: GITHUB_CONTROLLER,
+    }), true);
+    assert.equal((await first.query(`
+      SELECT "status" FROM "RemoteReleaseOperation" WHERE "id" = $1
+    `, [releaseId])).rows[0].status, 'RECONCILED_FAILED_CONFIRMED');
+    assert.deepEqual(await recoverPreIntentApiRelease(first, recoverInput(releaseId)), {
+      replay: true, terminalReplay: true, state: recovered.state,
+    });
+  });
+
   it('persists bounded orphan evidence, completes all-target coverage and replays only after live revalidation', async (t) => {
     if (!reachable || !first) return t.skip('no local PostgreSQL database is reachable');
     const releaseId = randomUUID();
@@ -2319,6 +2446,37 @@ describe('pre-intent API and F2 serving-build validation', () => {
     assert.throws(() => validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, mismatch, mismatch), /not exact/);
     const malformed = { ...stableFull, service: recoveryService(SERVICE, oldFull, null), deployment: null };
     assert.throws(() => validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, malformed, malformed), /settled deployment evidence/);
+  });
+
+  it('accepts a serving incoming build only for one unambiguous prior finalized release', () => {
+    const incoming = activeConfiguration(REVISION, SHA_B);
+    const serving = {
+      service: recoveryService(SERVICE, incoming, DEPLOYMENT), deployment: fullDeployment, ssmServiceArn: SERVICE,
+    };
+    const prior = {
+      operationId: 'a03c2b2e-1f8a-4c6f-9a1b-2f5d6e7c8a90',
+      buildReleaseId: SHA_B,
+      status: 'SUCCEEDED',
+      completedAt: '2026-08-18T01:00:00.000Z',
+    };
+    assert.deepEqual(
+      validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, serving, serving, [prior]).servingAttribution,
+      prior,
+    );
+    assert.throws(() => validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, serving, serving, [
+      { ...prior, buildReleaseId: SHA_A },
+    ]), /incoming/, 'a finalized release of another build attributes nothing');
+    assert.throws(() => validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, serving, serving, [
+      prior, { ...prior, operationId: 'b03c2b2e-1f8a-4c6f-9a1b-2f5d6e7c8a90' },
+    ]), /ambiguous/, 'a tie names no single prior release');
+    assert.throws(() => validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, serving, serving, [
+      { ...prior, completedAt: 'whenever' },
+    ]), /no exact completion time/);
+    // The attribution is never consulted, and never recorded, when the old build is still serving.
+    assert.equal(
+      validatePreIntentApiNoMutation('uat', SERVICE, SHA_B, stableFull, stableFull, [prior]).servingAttribution,
+      undefined,
+    );
   });
 
   it('pins F2 to one successful full-SHA deployment and rejects legacy serving state', () => {

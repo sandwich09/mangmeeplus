@@ -1848,12 +1848,56 @@ type PreIntentApiState = {
   currentDeployment: string | null;
   targetRevisionArn: string | null;
   sourceSha: string | null;
+  /** Present only when the incoming build was already serving; see `attributeServingBuild`. */
+  servingAttribution?: PriorFinalizedApiRelease;
 };
+
+/**
+ * A finalized api-web release of one exact build. `completedAt` is an ISO string so the stored
+ * cleanup evidence stays byte-identical across replays of the same attribution.
+ */
+export type PriorFinalizedApiRelease = {
+  operationId: string;
+  buildReleaseId: string;
+  status: string;
+  completedAt: string;
+};
+
+/**
+ * The ONLY reason an api-web singleton may already be serving the incoming build while its own
+ * release holds zero api-web intents: an earlier release of that exact build finalized before this
+ * parent was ever created, so the serving state is attributable to that release and not to this
+ * parent. The newest such release is the one that put the build there. Anything else — no
+ * candidate, a candidate for a different build, or a tie that names no single operation — is
+ * unattributable and keeps the rejection.
+ */
+function attributeServingBuild(
+  candidates: readonly PriorFinalizedApiRelease[],
+  incomingBuildReleaseId: string,
+): PriorFinalizedApiRelease | null {
+  const exact = candidates
+    .filter((row) => row.buildReleaseId === incomingBuildReleaseId)
+    .map((row) => ({ row, completedAt: Date.parse(row.completedAt) }));
+  if (exact.length === 0) return null;
+  if (exact.some((item) => !Number.isFinite(item.completedAt))) {
+    throw new RemoteReleaseOperationBlocked('prior finalized api-web release has no exact completion time');
+  }
+  const newest = Math.max(...exact.map((item) => item.completedAt));
+  const attributed = exact.filter((item) => item.completedAt === newest);
+  if (attributed.length !== 1) {
+    throw new RemoteReleaseOperationBlocked('prior finalized api-web releases of the incoming build are ambiguous');
+  }
+  return attributed[0]!.row;
+}
 
 /**
  * Prove the narrow crash window where the parent pre-attested api-web but no durable api intent
  * was ever committed. The incoming SHA must be absent and the old singleton must be stable and
  * internally consistent; any dual-build, moving, malformed or mismatched state stays UNKNOWN.
+ *
+ * The single exception is attribution: the incoming SHA may already be serving because an EARLIER
+ * finalized release of that exact build put it there, which leaves this parent's zero-api-intent
+ * proof intact. That case must be proved by `priorFinalizedApiReleases`, never assumed.
  */
 export function validatePreIntentApiNoMutation(
   environment: Environment,
@@ -1861,6 +1905,7 @@ export function validatePreIntentApiNoMutation(
   incomingBuildReleaseId: string,
   first: { service: Record<string, unknown> | null; deployment: Record<string, unknown> | null; ssmServiceArn: string | null },
   second: { service: Record<string, unknown> | null; deployment: Record<string, unknown> | null; ssmServiceArn: string | null },
+  priorFinalizedApiReleases: readonly PriorFinalizedApiRelease[] = [],
 ): PreIntentApiState {
   if (canonicalJson(first) !== canonicalJson(second)) {
     throw new RemoteReleaseOperationBlocked('pre-intent api-web state moved between recovery reads');
@@ -1883,7 +1928,15 @@ export function validatePreIntentApiNoMutation(
     throw new RemoteReleaseOperationBlocked('pre-intent api-web recovery requires one stable serving configuration');
   }
   const active = activeIntentDescriptors(service, environment);
-  if (active.length !== 1 || active[0]!.sourceSha === incomingBuildReleaseId) {
+  // deploy.sh commits the api-web intent before it mutates api-web, so a parent holding zero
+  // api-web intents never touched the service. An incoming build that is already serving is
+  // therefore either attributable to an earlier finalized release of that same build — recorded in
+  // the cleanup evidence below — or unattributable, in which case the parent stays UNKNOWN.
+  const incomingIsServing = active.length === 1 && active[0]!.sourceSha === incomingBuildReleaseId;
+  const servingAttribution = incomingIsServing
+    ? attributeServingBuild(priorFinalizedApiReleases, incomingBuildReleaseId)
+    : null;
+  if (active.length !== 1 || (incomingIsServing && servingAttribution === null)) {
     throw new RemoteReleaseOperationBlocked('incoming api-web build is active or the serving singleton is malformed');
   }
   const descriptor = active[0]!;
@@ -1910,6 +1963,9 @@ export function validatePreIntentApiNoMutation(
       : null),
     targetRevisionArn: descriptor.revisionArn,
     sourceSha: descriptor.sourceSha,
+    // Only the attributed shape carries this key, so evidence stored by every other shape — and
+    // every replay of it — keeps its exact historical bytes.
+    ...(servingAttribution ? { servingAttribution } : {}),
   };
 }
 
@@ -2977,9 +3033,10 @@ export async function recoverPreIntentApiRelease(
   const parent = await client.query<{
     status: string; mode: string; releaseDeployTarget: string | null; buildReleaseId: string;
     preIntentApiCleanupCompletedAt: Date | null; preIntentApiCleanupEvidenceJson: unknown;
+    createdAt: Date;
   }>(`
     SELECT "status", "mode", "releaseDeployTarget", "buildReleaseId",
-           "preIntentApiCleanupCompletedAt", "preIntentApiCleanupEvidenceJson"
+           "preIntentApiCleanupCompletedAt", "preIntentApiCleanupEvidenceJson", "createdAt"
       FROM "RemoteReleaseOperation"
      WHERE "id" = $1 AND "targetEnvironment" = $2
   `, [input.operationId, input.targetEnvironment]);
@@ -3052,25 +3109,53 @@ export async function recoverPreIntentApiRelease(
         : null;
     return { service, deployment, ssmServiceArn };
   });
+  // Attribution candidates: api-web-authorized releases of this exact build, in this exact
+  // environment, that reached a finalized success strictly BEFORE this parent was created. Only
+  // such a release can explain an api-web singleton that already serves the incoming build. The
+  // window is closed at the parent's own creation, so the set — and the attribution derived from
+  // it — is identical on every replay.
+  const priorFinalized = await client.query<{
+    id: string; buildReleaseId: string; status: string; completedAt: Date;
+  }>(`
+    SELECT "id", "buildReleaseId", "status", "completedAt"
+      FROM "RemoteReleaseOperation"
+     WHERE "targetEnvironment" = $1 AND "buildReleaseId" = $2 AND "id" <> $3
+       AND "mode" = 'release' AND "releaseDeployTarget" IN ('all', 'api-web')
+       AND "status" IN ('SUCCEEDED', 'RECONCILED_SUCCEEDED')
+       AND "completedAt" IS NOT NULL AND "completedAt" < $4
+  `, [input.targetEnvironment, input.buildReleaseId, input.operationId, parentRow.createdAt]);
   const first = await read();
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   const second = await read();
   const state = validatePreIntentApiNoMutation(
     input.targetEnvironment, expectedServiceArn, input.buildReleaseId, first, second,
+    priorFinalized.rows.map((row) => ({
+      operationId: row.id,
+      buildReleaseId: row.buildReleaseId,
+      status: row.status,
+      completedAt: row.completedAt.toISOString(),
+    })),
   );
   if (parentRow.preIntentApiCleanupCompletedAt !== null) {
     validateStoredPreIntentReplay(parentRow.preIntentApiCleanupEvidenceJson, state);
     return { replay: true, state, terminalReplay };
   }
 
-  const cleanup = await runChild(
-    `./node_modules/.bin/tsx prisma/retire-failed-bootstrap-build.ts --build=${input.buildReleaseId} --deployment-arn=PRE_INTENT_NO_API_MUTATION --intent-id=${input.operationId}`,
-    () => undefined,
-    () => undefined,
-    recoveryTargetChildEnvironment(process.env, input.targetEnvironment, input.buildReleaseId),
-  );
-  if (cleanup.code !== 0 || cleanup.signal) {
-    throw new RemoteReleaseOperationBlocked('pre-intent api-web launch-attestation cleanup failed');
+  // The retirement child exists to take launch-gate authority back from a build that never became
+  // the serving singleton. An attributed build IS the serving singleton and holds exactly the
+  // authority its own finalized release granted it, so retiring it here would strip authority from
+  // the build currently taking traffic — the inverse of the rule retire-launch-builds.ts enforces
+  // ("everything in [the active list] must already be attested").
+  if (state.servingAttribution === undefined) {
+    const cleanup = await runChild(
+      `./node_modules/.bin/tsx prisma/retire-failed-bootstrap-build.ts --build=${input.buildReleaseId} --deployment-arn=PRE_INTENT_NO_API_MUTATION --intent-id=${input.operationId}`,
+      () => undefined,
+      () => undefined,
+      recoveryTargetChildEnvironment(process.env, input.targetEnvironment, input.buildReleaseId),
+    );
+    if (cleanup.code !== 0 || cleanup.signal) {
+      throw new RemoteReleaseOperationBlocked('pre-intent api-web launch-attestation cleanup failed');
+    }
   }
 
   await client.query('BEGIN');
@@ -3861,7 +3946,11 @@ async function main(): Promise<number> {
       if (!terminalized) {
         throw new RemoteReleaseOperationBlocked('pre-intent cleanup completed but another release intent still needs exact recovery');
       }
-      console.log(`pre-intent api-web release recovered: parent=${parentId} replay=${result.replay} serving=${result.state.sourceSha ?? 'absent'}`);
+      // An accepted serving incoming build is an exception the operator must see, not infer.
+      const attributedTo = result.state.servingAttribution
+        ? ` attributed-to=${result.state.servingAttribution.operationId}`
+        : '';
+      console.log(`pre-intent api-web release recovered: parent=${parentId} replay=${result.replay} serving=${result.state.sourceSha ?? 'absent'}${attributedTo}`);
       return 0;
     }
 
