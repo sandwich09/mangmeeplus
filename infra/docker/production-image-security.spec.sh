@@ -400,6 +400,7 @@ manifest_validator_hash="$(sha256sum "$repo_root/infra/docker/validate-productio
 [[ "$manifest_validator_hash" =~ ^[0-9a-f]{64}$ ]]
 test "$(grep -Fhc "$acceptance_validator_hash" "$deploy_workflow" "$uat_workflow" | awk '{sum += $1} END {print sum}')" -eq 5
 
+bash "$repo_root/infra/docker/uat-deployment-acceptance.spec.sh"
 bash "$repo_root/infra/docker/production-release-intent.spec.sh"
 bash "$repo_root/infra/docker/production-maintenance-workflow.spec.sh"
 bash "$repo_root/infra/security/sync-production-maintenance-release-pins.spec.sh"
