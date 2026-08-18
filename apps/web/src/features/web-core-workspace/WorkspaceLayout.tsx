@@ -153,7 +153,6 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   return (
     <BranchFilterProvider companyId={companyId} onContextLoaded={applyLatestAccessContext}>
       <WorkspaceShell
-        companyId={companyId}
         companyName={companyName}
         companyArea={
           <div className="flex min-w-0 flex-1 items-center gap-2">

@@ -47,7 +47,8 @@ base.describe('LOGIN — auth & session', () => {
 authedTest.describe('LOGIN — authenticated session controls', () => {
   authedTest('LOGIN-05 @p1 logout clears browser session', async ({ authedPage, companyId }) => {
     await authedPage.goto(`/companies/${companyId}/dashboard`);
-    await authedPage.getByRole('button', { name: /ออกจากระบบ|Sign out|Logout/i }).first().click();
+    await authedPage.getByRole('button', { name: /เมนูผู้ใช้|User Menu/i }).click();
+    await authedPage.getByRole('button', { name: /ออกจากระบบ|Sign out|Logout/i }).click();
     await authedPage.getByRole('dialog').getByRole('button', { name: /ออกจากระบบ|Sign out|Logout/i }).click();
     await expect(authedPage).toHaveURL(/\/login/);
 
