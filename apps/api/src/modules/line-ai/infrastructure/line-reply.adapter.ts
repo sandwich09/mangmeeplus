@@ -36,7 +36,7 @@ export class LineReplyAdapter {
   }
 
   /** Push delivery consumes the OA monthly message quota (replies are free).
-   *  Used only as fallback when a reply token has expired (spec §10). */
+   *  Used for expired-token fallback and the delayed waiting status (spec §10). */
   async sendPush(to: string, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
     return this.postMessage(this.LINE_PUSH_URL, { to, messages }, 'push');
   }

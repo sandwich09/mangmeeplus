@@ -75,6 +75,8 @@ export type LineTextEvent = {
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
+  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  beforeReply?: () => Promise<void>;
 };
 
 export type LineReceiptUploadEvent = {
@@ -88,6 +90,8 @@ export type LineReceiptUploadEvent = {
   messagingChannelId: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
+  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  beforeReply?: () => Promise<void>;
 };
 
 /** `defer_text` = the intake router judged the accompanying caption to be a
@@ -859,9 +863,15 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
+    try {
+      await event.beforeReply?.();
+    } catch (error) {
+      // Waiting feedback is cosmetic; it must never block the actual answer.
+      this.logger.warn({ msg: 'LINE waiting feedback settlement failed', error: (error as Error).message });
+    }
     let result: LineDeliveryResult;
     try {
       result = await this.lineReply.sendReply(event.replyToken, messages);

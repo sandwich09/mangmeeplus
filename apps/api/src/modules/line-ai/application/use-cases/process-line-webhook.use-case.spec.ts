@@ -267,6 +267,21 @@ describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
 });
 
 describe('ProcessLineWebhookUseCase', () => {
+  it('settles waiting feedback before sending the final LINE reply', async () => {
+    const { prisma } = makePrisma({ identityUserId: null });
+    const { useCase, replies } = makeUseCase(prisma);
+    let settled = false;
+
+    await useCase.execute({
+      ...BASE_EVENT,
+      webhookEventId: 'evt-wait-settle',
+      beforeReply: async () => { settled = true; },
+    });
+
+    assert.equal(settled, true);
+    assert.match(replies[0] ?? '', /เชื่อมต่อบัญชี/);
+  });
+
   // A LINE userId only means anything within one messaging channel, so an unscoped lookup could
   // answer a webhook from one OA with an identity linked on another.
   it('resolves the identity on the webhook channel', async () => {
