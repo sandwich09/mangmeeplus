@@ -11,6 +11,7 @@ import {
   expenseAiSuggestion,
   applyExpenseAiSuggestion,
   expenseRatePercent,
+  expenseDocumentWhtRate,
   hasAcknowledgedAiTotalMismatch,
   hasAiGrandTotalMismatch,
   needsAiTotalAcknowledgement,
@@ -94,6 +95,13 @@ describe('expenses.model', () => {
     for (const status of ['CONFIRMED', 'REJECTED', 'VOIDED'] as const) {
       assert.equal(canRunExpenseDuplicateCheck(status), false);
     }
+  });
+
+  it('derives one bill-level WHT rate without overwriting mixed historical lines', () => {
+    assert.equal(expenseDocumentWhtRate([]), '');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: null }, { whtRate: null }]), '');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: '0.03' }, { whtRate: ' 0.03 ' }]), '0.03');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: '0.03' }, { whtRate: null }]), null);
   });
 
   it('keeps non-expense manual uploads blocked and exposes override only to finance reviewers', () => {

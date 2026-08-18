@@ -141,8 +141,12 @@ describe('validateExpenseReview', () => {
   });
 
   it('keeps WHT rate in the fraction range 0..1 when set', () => {
-    const values = validValues(); values.lines[0]!.whtRate = 'abc';
-    assert.equal(validate(values).find((issue) => issue.field === 'lines.0.whtRate')?.messageKey, 'expenses.v_rate_range');
+    const values = validValues();
+    values.lines.push({ ...values.lines[0]!, whtRate: '1.01' });
+    values.lines[0]!.whtRate = 'abc';
+    const issues = validate(values).filter((issue) => issue.field === 'whtRate');
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0]?.messageKey, 'expenses.v_rate_range');
   });
 
   it('warns when the computed total differs from the AI total by more than 0.01', () => {
