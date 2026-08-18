@@ -245,7 +245,16 @@ jobs:
                 infra/security/validate-production-maintenance-release.sh|\
                 infra/uat/agentcore-candidate-policy.spec.sh|\
                 infra/uat/github-deploy-role-policy.template.json|\
-                infra/prod-ecs-express/github-deploy-role-policy.template.json) ;;
+                infra/prod-ecs-express/github-deploy-role-policy.template.json|\
+                .github/workflows/deploy-production-v2.yml|\
+                infra/prod-ecs-express/lib-prod-rollout-config.sh|\
+                infra/prod-ecs-express/prod-rollout-config.spec.sh|\
+                infra/prod-ecs-express/lib-wait-for-service-url.sh|\
+                infra/prod-ecs-express/release-safety.spec.sh|\
+                infra/security/production-deploy-workflow-v2.spec.sh|\
+                infra/docker/validate-uat-deployment-acceptance.sh|\
+                infra/docker/uat-deployment-acceptance.spec.sh|\
+                infra/docker/production-image-security.spec.sh) ;;
                 *) release_controller_only=false ;;
               esac
             done <<< "$changed_paths"
@@ -266,13 +275,30 @@ jobs:
               infra/prod-ecs-express/uat-fast-rollout.spec.sh; do
               grep -Fxq "$required" <<< "$changed_paths" || uat_rollout_bundle=false
             done
+            prod_rollout_bundle=true
+            for required in infra/prod-ecs-express/lib-prod-rollout-config.sh \
+              infra/prod-ecs-express/prod-rollout-config.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || prod_rollout_bundle=false
+            done
+            promote_controller_bundle=true
+            for required in .github/workflows/deploy-production-v2.yml \
+              infra/security/production-deploy-workflow-v2.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || promote_controller_bundle=false
+            done
+            acceptance_contract_bundle=true
+            for required in infra/docker/validate-uat-deployment-acceptance.sh \
+              infra/docker/uat-deployment-acceptance.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || acceptance_contract_bundle=false
+            done
             readiness_controller_bundle=true
             for required in .github/workflows/production-readiness.yml \
               infra/security/production-readiness-workflow-v2.spec.sh; do
               grep -Fxq "$required" <<< "$changed_paths" || readiness_controller_bundle=false
             done
             [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true \
-              || "$uat_rollout_bundle" == true || "$readiness_controller_bundle" == true ]] \
+              || "$uat_rollout_bundle" == true || "$readiness_controller_bundle" == true \
+              || "$prod_rollout_bundle" == true || "$promote_controller_bundle" == true \
+              || "$acceptance_contract_bundle" == true ]] \
               || release_controller_only=false
           fi
           echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
