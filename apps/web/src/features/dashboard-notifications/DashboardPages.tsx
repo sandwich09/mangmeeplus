@@ -11,6 +11,7 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import { formatThaiTime } from '@/common/i18n/thai-date';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
+import { stripThaiTitlePrefix } from '@/common/components/mangmee';
 import { useBranchFilter, useBranchScopeLabel } from '@/features/web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '@/features/web-core-workspace/branch-scope-label.logic';
 
@@ -49,7 +50,7 @@ const CARD_LABEL_KEY: Record<string, DictionaryKey> = {
 const DATED_CARD_KEYS = new Set(['new_customers_today', 'appointments_today', 'average_first_response_today']);
 
 function firstName(displayName: string | null) {
-  const cleaned = (displayName ?? 'นภา').replace(/^คุณ\s*/, '').trim();
+  const cleaned = stripThaiTitlePrefix(displayName ?? 'นภา').replace(/^คุณ\s*/, '').trim();
   return cleaned.split(/\s+/)[0] || 'นภา';
 }
 
@@ -272,7 +273,7 @@ export function CompanyDashboardPage({
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-gray-900">{t('dashboard.home.greeting', locale)} {name}</h1>
+          <h1 className="text-[30px] font-extrabold leading-tight tracking-normal text-gray-900">{t('dashboard.home.greeting', locale)} {locale === 'th' && 'คุณ '}{name}</h1>
           <p className="mt-1 text-base text-gray-500">
             {t('dashboard.home.business_overview', locale)}{scopeLabel && ` · ${scopeLabel}`}
             {snapshot && ` · ${t('dashboard.home.updated_at', locale)} ${locale === 'th' ? formatThaiTime(snapshot.generatedAt) : new Date(snapshot.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })}`}
