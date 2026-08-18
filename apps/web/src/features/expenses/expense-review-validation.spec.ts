@@ -167,9 +167,16 @@ describe('validateExpenseReview', () => {
     });
   }
 
-  it('warns when the computed total is zero', () => {
-    const values = validValues(); values.lines[0]!.unitPrice = '0';
-    assert.equal(validate(values).find((issue) => issue.field === 'total')?.messageKey, 'expenses.v_total_zero');
+  it('blocks an all-zero bill but still allows a free line beside a paid line', () => {
+    const values = validValues();
+    values.lines[0]!.unitPrice = '0';
+    values.lines.push({ ...values.lines[0]!, description: 'ของแถม' });
+    assert.deepEqual(validate(values).find((issue) => issue.field === 'total'), {
+      field: 'total', severity: 'error', messageKey: 'expenses.v_total_zero',
+    });
+
+    values.lines[1]!.unitPrice = '100';
+    assert.equal(validate(values).some((issue) => issue.messageKey === 'expenses.v_total_zero'), false);
   });
 
   // RA-18 mirror of `validateConfirm`: the payee's taxpayer class decides ภ.ง.ด.3 vs ภ.ง.ด.53, so a

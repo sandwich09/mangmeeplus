@@ -157,7 +157,7 @@ export function validateExpenseReview(
   if (computed !== null && ai !== null && Number.isFinite(ai) && differsByMoreThanCent(computed, ai)) {
     addIssue(issues, 'total', 'warn', 'expenses.v_total_mismatch', { computed: computed.toFixed(2), ai: ai.toFixed(2) });
   }
-  if (computed === 0) addIssue(issues, 'total', 'warn', 'expenses.v_total_zero');
+  if (computed === 0) addIssue(issues, 'total', 'error', 'expenses.v_total_zero');
 
   return issues;
 }
