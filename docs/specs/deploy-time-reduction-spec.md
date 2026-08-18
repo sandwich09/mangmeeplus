@@ -95,7 +95,7 @@ Targets by phase (successful-path, CI-reuse candidate):
 | --- | --- | --- | --- |
 | today | 22m | 38m (+6m READY) | — |
 | 1 | ~20m | ~24–26m | bake policy + poll tuning |
-| 2 | ~9–10m | ~19–21m | publish reuse + fence/retire latency |
+| 2 | ~9–10m redeploy / ~14–15m first dispatch | ~19–21m | publish reuse + fence/retire latency (§5.2 rejected — see there) |
 | 3 | ~9–10m | **~9–11m** | READY folded into promote, dedup rechecks |
 
 ## 3. Invariants that must not change (all phases)
@@ -208,14 +208,31 @@ mirroring the existing CI-validation-reuse gate
 - Effect: second-and-later UAT runs of a SHA (the common retry/verify case),
   and every run after a merge-triggered publish (below), skip ~5m.
 
-### 5.2 Publish on merge to develop
+### 5.2 Publish on merge to develop — REJECTED (2026-08-18, evidence-based)
 
-New lightweight workflow: on push to `develop`, if the head SHA has a
-successful exact PR CI, invoke the existing `ci.yml` publish path
-(`publish_environment: uat`, `validated_ci_run_id` reuse) so images+tools are
-already in ECR when an operator dispatches UAT. No new build logic — the same
-reusable workflow, triggered earlier. Combined with §5.1, first UAT dispatch
-of a candidate drops the 5m24s publish leg.
+Implementation investigation proved this incompatible with the repo's trust
+model on three independent grounds, any one of which is disqualifying:
+
+1. The `uat` GitHub environment's deployment branch policy allows `main` only
+   (`GET /environments/uat/deployment-branch-policies` → `[{name: "main"}]`);
+   `ci.yml`'s publish jobs bind `environment: uat`, so a push-to-develop run
+   can never assume the publisher role without widening that policy — a real
+   security change, not a speedup.
+2. Disqualifying even if (1) were widened: artifacts published by a
+   develop-ref run sign as `ci.yml@refs/heads/develop`, while the deploy job
+   pins the exact cosign identity `ci.yml@refs/heads/main`. Pre-published
+   artifacts from develop can never pass verification, and calling
+   `ci.yml@main` from a new workflow would reintroduce the mutable-ref pattern
+   the security spec bans.
+3. `develop` advances by merge commits whose head SHA has no exact
+   pull-request CI, so the trigger's reuse condition would no-op on every
+   push.
+
+Consequence: §5.1 (publish reuse) alone carries phase 2. First UAT dispatch of
+a SHA still pays the ~5.5m publish leg; every subsequent UAT run of the same
+SHA (retries, redeploys, verification runs) skips it. Revised targets in §2
+below. The fence/retire work (§5.3) remains the path to a sub-10m first
+dispatch.
 
 ### 5.3 Fence/retire task latency
 
