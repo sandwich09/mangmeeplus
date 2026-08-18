@@ -69,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           TARGET: ${{ inputs.target }}
-          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: ffe2148da1d442b670927a7807392f00aaf5f22770d2dbd94ce9cac864e08c4c
           EXPECTED_MANIFEST_VALIDATOR_SHA256: 965feb008c224b26e5f8cb8db0aacb1d1eb3fc17956a049c0f50bcf7e29c2f86
         run: |
           set -euo pipefail
@@ -763,7 +763,8 @@ jobs:
         if: success() && steps.target.outputs.target == 'all'
         env:
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+          PUBLISHED_RELEASE_RUN_ID: ${{ needs.resolve-release.outputs.published_release_run_id }}
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: ffe2148da1d442b670927a7807392f00aaf5f22770d2dbd94ce9cac864e08c4c
           EXPECTED_MANIFEST_VALIDATOR_SHA256: 965feb008c224b26e5f8cb8db0aacb1d1eb3fc17956a049c0f50bcf7e29c2f86
         run: |
           set -euo pipefail
@@ -782,6 +783,11 @@ jobs:
           test "$validator_sha256" = "$EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256"
           manifest_validator_sha256="$(sha256sum infra/docker/validate-production-manifest.sh | awk '{print $1}')"
           test "$manifest_validator_sha256" = "$EXPECTED_MANIFEST_VALIDATOR_SHA256"
+          # A reused release was published by the run the publish-reuse gate verified and this job
+          # downloaded every artifact from; the acceptance attests that run instead of implying the
+          # signer published it. A full publish keeps the run id it always carried.
+          publishing_run_id="${PUBLISHED_RELEASE_RUN_ID:-$GITHUB_RUN_ID}"
+          [[ "$publishing_run_id" =~ ^[1-9][0-9]*$ ]]
           issued_at="$(date -u +%s)"
           expires_at="$((issued_at + 86400))"
           jq -cS -n \
@@ -796,6 +802,7 @@ jobs:
             --arg deployWorkflowBlob "$deploy_workflow_blob" \
             --arg validatorHash "$validator_sha256" \
             --arg manifestValidatorHash "$manifest_validator_sha256" \
+            --arg publishedByRunId "$PUBLISHED_RELEASE_RUN_ID" \
             --argjson issuedAt "$issued_at" \
             --argjson expiresAt "$expires_at" \
             --slurpfile manifest "$manifest" '
@@ -827,6 +834,7 @@ jobs:
                   | sort_by(.service)
                 )
               }
+              + (if $publishedByRunId == "" then {} else {publishedByRunId: $publishedByRunId} end)
             ' > "$acceptance_dir/acceptance-body.json"
           content_sha256="$(sha256sum "$acceptance_dir/acceptance-body.json" | awk '{print $1}')"
           jq -cS --arg contentHash "$content_sha256" \
@@ -836,7 +844,8 @@ jobs:
           bash infra/docker/validate-uat-deployment-acceptance.sh \
             "$acceptance_dir/uat-deployment-acceptance.json" "$manifest" \
             "$SOURCE_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$GITHUB_REPOSITORY" \
-            "$ci_workflow_blob" "$deploy_workflow_blob" "$validator_sha256" "$issued_at"
+            "$ci_workflow_blob" "$deploy_workflow_blob" "$validator_sha256" "$issued_at" \
+            "$publishing_run_id"
           cosign sign-blob --yes \
             --bundle "$acceptance_dir/uat-deployment-acceptance.bundle" \
             "$acceptance_dir/uat-deployment-acceptance.json"

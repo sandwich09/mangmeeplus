@@ -266,7 +266,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PROMOTE_FROM_RUN_ID: ${{ inputs.promote_from_run_id }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
-          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: ffe2148da1d442b670927a7807392f00aaf5f22770d2dbd94ce9cac864e08c4c
         run: |
           set -euo pipefail
           [[ "$PROMOTE_FROM_RUN_ID" =~ ^[0-9]+$ ]]
@@ -351,7 +351,7 @@ jobs:
           UAT_CONTROLLER_SHA: ${{ steps.promoted-run.outputs.controller_sha }}
           CI_WORKFLOW_BLOB: ${{ steps.promoted-run.outputs.ci_workflow_blob }}
           DEPLOY_WORKFLOW_BLOB: ${{ steps.promoted-run.outputs.deploy_workflow_blob }}
-          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: ffe2148da1d442b670927a7807392f00aaf5f22770d2dbd94ce9cac864e08c4c
         run: |
           set -euo pipefail
           acceptance=uat-acceptance/uat-deployment-acceptance.json
@@ -729,7 +729,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.resolve-release.outputs.source_sha }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
-          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: af082232dc47ae8d9cc73a2e6ffbaca29d4350b103a38a8aa7e292349127e757
+          EXPECTED_UAT_ACCEPTANCE_VALIDATOR_SHA256: ffe2148da1d442b670927a7807392f00aaf5f22770d2dbd94ce9cac864e08c4c
         run: |
           set -euo pipefail
           # This whole chain rests on a UAT acceptance verdict, and the approval binds the security
