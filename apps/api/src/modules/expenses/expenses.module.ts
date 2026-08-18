@@ -70,6 +70,7 @@ import { ExpenseTransactionTaxService } from './application/services/expense-tra
 import { DeleteExpenseUseCase } from './application/use-cases/delete-expense.use-case';
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
 import { LineSubstituteReceiptContinuationUseCase } from './application/use-cases/line-substitute-receipt-continuation.use-case';
+import { LineExpenseDraftConversationUseCase } from './application/use-cases/line-expense-draft-conversation.use-case';
 
 @Module({
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule],
@@ -100,6 +101,7 @@ import { LineSubstituteReceiptContinuationUseCase } from './application/use-case
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
     LineSubstituteReceiptContinuationUseCase,
+    LineExpenseDraftConversationUseCase,
     ListCompanySubstituteReceiptsUseCase,
     PrepareSubstituteReceiptUseCase,
     PreviewSubstituteReceiptUseCase,
@@ -140,6 +142,7 @@ import { LineSubstituteReceiptContinuationUseCase } from './application/use-case
     CaptureLineExpenseNoteUseCase,
     CorrectLineCapturedExpenseUseCase,
     LineSubstituteReceiptContinuationUseCase,
+    LineExpenseDraftConversationUseCase,
     ConfirmExpenseUseCase,
     VoidExpenseUseCase,
     InitSignatureUploadUseCase,

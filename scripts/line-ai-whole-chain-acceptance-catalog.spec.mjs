@@ -18,6 +18,8 @@ const EXPECTED_IDS = [
   'receipt-choice-plus-substitute-request',
   'substitute-request-four-missing-fields',
   'partial-answers-across-turns',
+  'expense-draft-all-items-and-questions',
+  'expense-draft-durable-resume-and-cas',
   'partial-answer-plus-vat-question',
   'intervening-question-between-answers',
   'intervening-question-with-pending-media',

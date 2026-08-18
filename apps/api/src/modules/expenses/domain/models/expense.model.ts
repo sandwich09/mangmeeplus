@@ -225,6 +225,9 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   companyId: string;
   updatedByUserId: string;
   expectedUpdatedAt?: Date;
+  /** Internal CAS callers may pin the next revision so persisted continuation metadata can point
+   * at the exact same revision. This is not exposed by the HTTP update contract. */
+  updatedAt?: Date;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
   vendorBranchCodeSnapshot?: string;

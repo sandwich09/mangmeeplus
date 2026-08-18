@@ -134,6 +134,8 @@ function makeHarness(opts: {
   expenseDetail?: any;
   lineReplyResult?: 'ok' | 'failed_token' | 'failed_other';
   conversationTurns?: any[];
+  expenseDraftConversation?: any;
+  expenseDraftConversationEnabled?: boolean;
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -157,7 +159,11 @@ function makeHarness(opts: {
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
-    { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
+    {
+      webBaseUrl: 'https://app.example.com',
+      lineMessagingChannelAccessToken: 'line-token',
+      lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
+    } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {} }) } as any,
     { log: async () => undefined } as any,
     {
@@ -201,6 +207,9 @@ function makeHarness(opts: {
           insertedAmount: '65.0000',
           categoryId: 'cat-meals',
           categoryName: 'ค่าอาหาร',
+          replyTexts: cmd.draftConversationEnabled
+            ? ['🧾 ร่างค่าใช้จ่าย expense-note-1\nข้อมูลที่ยังต้องตอบทั้งหมด\nI01-QTY จำนวนเท่าไร?']
+            : [],
         };
       },
     } as any,
@@ -269,6 +278,7 @@ function makeHarness(opts: {
       },
     } as any,
     (opts.substituteResult ? { execute: async (_ctx: any, input: any) => { substituteCalls.push(input); return opts.substituteResult; } } : undefined) as any,
+    opts.expenseDraftConversation,
   );
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
   (useCase as any).downloadLineMedia = async () => opts.mediaDownloadFails ? null : ({
@@ -611,24 +621,287 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.captured.length, 1);
   });
 
-  it('routes text spend note to expense capture with semantic hints and Paypers reply', async () => {
+  it('a duplicate continuation webhook applies its answer exactly once', async () => {
+    const { prisma } = makePrisma();
+    let claimed = false;
+    prisma.client.lineWebhookEventLog.create = async () => {
+      if (!claimed) { claimed = true; return {}; }
+      const error = new Error('unique constraint') as Error & { code: string };
+      error.code = 'P2002';
+      throw error;
+    };
+    let answerWrites = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      prisma,
+      expenseDraftConversation: {
+        routeContexts: async () => [{
+          expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN',
+          questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }],
+        }],
+        execute: async () => {
+          answerWrites += 1;
+          return { handled: true, status: 'UPDATED', replyTexts: ['🧾 ร่างล่าสุด'], acceptedFields: ['I01-QTY'] };
+        },
+      },
+    });
+    const answerEvent = { ...TEXT_EVENT, messageText: 'I01-QTY 5 รีม' };
+
+    await Promise.all([h.useCase.execute(answerEvent), h.useCase.execute(answerEvent)]);
+
+    assert.equal(answerWrites, 1);
+  });
+
+  it('keeps a committed continuation answer and marks delivery pending when LINE fails', async () => {
+    const { prisma, updates } = makePrisma();
+    let answerWrites = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      prisma,
+      lineReplyResult: 'failed_other',
+      expenseDraftConversation: {
+        routeContexts: async () => [{
+          expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN',
+          questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }],
+        }],
+        execute: async () => {
+          answerWrites += 1;
+          return { handled: true, status: 'UPDATED', replyTexts: ['🧾 บันทึกคำตอบแล้ว'], acceptedFields: ['I01-QTY'] };
+        },
+      },
+    });
+
+    await assert.rejects(() => h.useCase.execute({ ...TEXT_EVENT, messageText: 'I01-QTY 5 รีม' }), /LINE_DELIVERY_FAILED_OTHER/);
+
+    assert.equal(answerWrites, 1, 'the committed answer is not rolled back or re-applied by the delivery layer');
+    assert.ok(updates.some((update) => update.data?.status === 'delivery_pending'));
+  });
+
+  it('routes text spend note to a persistent draft and returns its complete question snapshot', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: {
         status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9,
         captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', amount: '65', expenseCategoryId: 'cat-meals' },
       },
+      expenseDraftConversation: { routeContexts: async () => [] },
     });
     await h.useCase.execute(TEXT_EVENT);
     assert.equal(h.captured.length, 1);
     assert.equal(h.captured[0].lineMessageId, 'msg-text-1');
     assert.equal(h.captured[0].captureHints.amount, '65');
-    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
-    assert.match(h.replies[0] ?? '', /ค่าอาหาร/);
+    assert.match(h.replies[0] ?? '', /ร่างค่าใช้จ่าย/);
+    assert.match(h.replies[0] ?? '', /I01-QTY/u);
     assert.match(h.replies[0] ?? '', /expense-note-1/);
     // Router received the active category catalog and permissions, never the raw LINE user id.
     assert.equal(h.routeRequests[0].activeCategories[0].id, 'cat-meals');
     assert.ok(!JSON.stringify(h.routeRequests[0]).includes('line-user-secret'));
+  });
+
+  it('does not load or expose durable draft conversation behavior while the rollout flag is off', async () => {
+    let contextLoads = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      expenseDraftConversationEnabled: false,
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9,
+        captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' },
+      },
+      expenseDraftConversation: {
+        routeContexts: async () => { contextLoads += 1; return []; },
+      },
+    });
+
+    await h.useCase.execute(TEXT_EVENT);
+
+    assert.equal(contextLoads, 0);
+    assert.equal(h.captured[0].draftConversationEnabled, false);
+    assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
+    assert.match(h.replies[0] ?? '', /expense-note-1/u);
+  });
+
+  it('falls back to the legacy capture when the rollout provider is unavailable', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9,
+        captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' },
+      },
+    });
+
+    await h.useCase.execute(TEXT_EVENT);
+
+    assert.equal(h.captured[0].draftConversationEnabled, false);
+    assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
+  });
+
+  it('keeps group and room chats on the single-turn path in phase 1', async () => {
+    let contextLoads = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9,
+        captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' },
+      },
+      expenseDraftConversation: {
+        routeContexts: async () => { contextLoads += 1; return []; },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' });
+
+    assert.equal(contextLoads, 0);
+    assert.equal(h.captured[0].draftConversationEnabled, false);
+    assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
+  });
+
+  it('applies a stable question-id answer before AI routing and renders the persisted draft', async () => {
+    const calls: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN', questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }] }],
+        execute: async (_ctx: any, input: any) => {
+          calls.push(input);
+          return { handled: true, status: 'UPDATED', replyTexts: ['🧾 ร่างค่าใช้จ่าย\nI01-PRICE ราคาเท่าไร?'], acceptedFields: ['I01-QTY'] };
+        },
+      },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'I01-QTY 5 รีม' });
+    assert.equal(h.routeRequests.length, 0, 'stable ids do not require a model call');
+    assert.equal(calls[0].webhookEventId, TEXT_EVENT.webhookEventId);
+    assert.match(h.replies[0] ?? '', /I01-PRICE/u);
+  });
+
+  it('sends durable draft questions to the router for a natural-language answer', async () => {
+    const calls: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95,
+        captureHints: { targetExpenseId: 'expense-1', items: [{ itemRef: 'I01', quantity: '5', unit: 'รีม' }] },
+      },
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'PAUSED', questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }] }],
+        execute: async (_ctx: any, input: any) => {
+          calls.push(input);
+          return { handled: true, status: 'UPDATED', replyTexts: ['🧾 ร่างค่าใช้จ่ายล่าสุด'], acceptedFields: ['I01-QTY'] };
+        },
+      },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กระดาษเอา 5 รีม' });
+    assert.equal(h.routeRequests[0].activeExpenseDrafts[0].questions[0].id, 'I01-QTY');
+    assert.equal(calls[0].captureHints.targetExpenseId, 'expense-1');
+    assert.match(h.replies[0] ?? '', /ร่างค่าใช้จ่ายล่าสุด/u);
+  });
+
+  it('resumes from the database after the entire 15-turn AI context has unrelated content', async () => {
+    const calls: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      conversationTurns: Array.from({ length: 15 }, (_, index) => ({
+        createdAt: new Date(Date.now() - index * 1000),
+        userMessagePreview: `คำถามอื่น ${index + 1}`,
+        replyPreview: `คำตอบอื่น ${index + 1}`,
+        intent: 'READ_SUMMARY', agent: 'general', refused: false, toolInvocations: [],
+      })),
+      expenseDraftConversation: {
+        routeContexts: async () => [{
+          expenseId: 'expense-1', label: 'ร่าง 1', status: 'PAUSED',
+          questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }],
+        }],
+        execute: async (_ctx: any, input: any) => {
+          calls.push(input);
+          return { handled: true, status: 'UPDATED', replyTexts: ['🧾 โหลดร่างจากฐานข้อมูลแล้ว\nI01-QTY จำนวน?'], acceptedFields: [] };
+        },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ต่อ' });
+
+    assert.equal(h.routeRequests.length, 0, 'resume control does not depend on the model or its 15-turn context');
+    assert.equal(calls.length, 1);
+    assert.match(h.replies[0] ?? '', /โหลดร่างจากฐานข้อมูลแล้ว/u);
+  });
+
+  it('parks an open draft for an unrelated business question and appends a resume capsule', async () => {
+    let interruptions = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN', questions: [] }],
+        interruptOpen: async () => {
+          interruptions += 1;
+          return '↩️ พักร่างค่าใช้จ่ายไว้แล้ว พิมพ์ “ต่อ” เมื่อต้องการกลับมาทำ';
+        },
+      },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายวันนี้เท่าไร' });
+    assert.equal(interruptions, 1);
+    assert.match(h.replies[0] ?? '', /turn-answer/u);
+    assert.match(h.replies[0] ?? '', /พักร่างค่าใช้จ่ายไว้แล้ว/u);
+  });
+
+  it('does not pause an open draft while the router is still asking what the user meant', async () => {
+    let interruptions = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.4 },
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN', questions: [] }],
+        interruptOpen: async () => { interruptions += 1; return 'should not be delivered'; },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อันนั้นเท่าไร' });
+
+    assert.equal(interruptions, 0);
+    assert.match(h.replies[0] ?? '', /ยังไม่แน่ใจ/u);
+  });
+
+  it('does not pause the old draft when a new capture attempt still needs clarification', async () => {
+    let interruptions = 0;
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99,
+        captureHints: { amount: '590' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN', questions: [] }],
+        interruptOpen: async () => { interruptions += 1; return 'should not be delivered'; },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'เริ่มอีกรายการ' });
+
+    assert.equal(interruptions, 0);
+    assert.match(h.replies[0] ?? '', /ยอดเงิน/u);
+  });
+
+  it('pauses only older drafts after a new draft was created successfully', async () => {
+    const excluded: string[][] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99,
+        captureHints: { description: 'กระดาษ A4', confidence: 0.99 },
+      },
+      expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'expense-old', label: 'ร่างเดิม', status: 'OPEN', questions: [] }],
+        interruptOpen: async (_ctx: any, _chat: string, excludeExpenseIds: string[]) => {
+          excluded.push(excludeExpenseIds);
+          return '↩️ พักร่างเดิมไว้แล้ว';
+        },
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ซื้อกระดาษ A4' });
+
+    assert.deepEqual(excluded, [['expense-note-1']]);
+    assert.match(h.replies[0] ?? '', /พักร่างเดิมไว้แล้ว/u);
   });
 
   it('turns an incomplete advisory capture route into one clarification and zero drafts', async () => {
@@ -758,13 +1031,15 @@ describe('LINE intake dispatch – text path', () => {
         status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.9,
         captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', amount: '65' },
       },
+      expenseDraftConversation: { routeContexts: async () => [] },
       prisma,
     });
     await h.useCase.execute(TEXT_EVENT);
     assert.equal(turnCreates.length, 1);
     assert.equal(turnCreates[0].data.intent, 'EVIDENCE_CAPTURE');
     assert.equal(turnCreates[0].data.userMessagePreview, 'ค่ากาแฟ 65 บาท');
-    assert.match(turnCreates[0].data.replyPreview, /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(turnCreates[0].data.replyPreview, /ร่างค่าใช้จ่าย expense-note-1/);
+    assert.match(turnCreates[0].data.replyPreview, /I01-QTY/);
   });
 
   it('CLARIFY prefers the router clarifying question and remembers the clarify turn', async () => {
@@ -866,6 +1141,46 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(update.data.taxEvidenceStatus, 'SUPPORTING_ONLY');
     assert.equal(update.data.taxEvidenceReasonCode, 'PAYMENT_EVIDENCE_ONLY');
     assert.match(h.replies[0] ?? '', /สลิปโอนเงิน/);
+  });
+
+  it('starts the durable all-question workflow after a receipt OCR capture when the flag is on', async () => {
+    const starts: any[] = [];
+    const { prisma, recordUpdates } = makePrisma();
+    const ocrFields = {
+      vendorName: 'ร้านทดสอบ', expenseDate: '2026-08-18', grandTotalAmount: '240.00', confidence: 0.98,
+      lines: [{ description: 'กระดาษ A4', quantity: '2', amount: '240', unitPrice: '120', evidenceSignal: 'กระดาษ A4 2 120 240' }],
+    };
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
+      receiptOcrResult: validReceiptOcr({
+        classification: businessClassification({
+          amountSignals: ['240.00'],
+          evidenceSignals: ['receipt', 'กระดาษ A4 2 120 240'],
+        }),
+        fields: ocrFields,
+      }),
+      prisma,
+      expenseDraftConversation: {
+        startFromReceipt: async (_ctx: any, input: any) => {
+          starts.push(input);
+          return {
+            handled: true, status: 'UPDATED', acceptedFields: [],
+            replyTexts: ['🧾 ร่างจากใบเสร็จ\nข้อมูลที่ยังต้องตอบทั้งหมด\nD-PURPOSE ใช้เพื่อธุรกิจเรื่องอะไร?'],
+          };
+        },
+      },
+    });
+
+    assert.equal((h.useCase as any).config.lineExpenseDraftConversationEnabled, true);
+    assert.ok((h.useCase as any).expenseDraftConversation);
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal(recordUpdates.at(-1).data.status, 'DRAFT');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].expenseId, 'expense-1');
+    assert.deepEqual(starts[0].ocrFields.lines, ocrFields.lines);
+    assert.match(h.replies[0] ?? '', /D-PURPOSE/u);
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {

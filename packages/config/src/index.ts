@@ -199,6 +199,8 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_AI_BUFFER_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
   LINE_AI_BUFFER_MAX_WAIT_MS: z.coerce.number().int().positive().default(8000),
   LINE_AI_LOADING_ANIMATION_ENABLED: envBoolean.default(true),
+  // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
+  LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)
   LINE_AI_LEDGER_ENABLED: envBoolean.default(false),
   LINE_AI_LEDGER_MAXLEN: z.coerce.number().int().positive().default(200),

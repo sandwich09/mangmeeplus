@@ -31,6 +31,7 @@ import { CancelDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
@@ -175,7 +176,21 @@ export class UpdateExpenseDraftUseCase {
     ctx: RequestContext,
     expenseId: string,
     input: UpdateExpenseDraftInput,
-    options: { db?: any; suppressGenericAudit?: boolean; requireExpectedUpdatedAt?: boolean } = {},
+    options: {
+      db?: any;
+      suppressGenericAudit?: boolean;
+      requireExpectedUpdatedAt?: boolean;
+      /** Internal-only authority for the originating LINE user to fill source facts on their own
+       * LINE draft. HTTP callers cannot set this option; final/reviewer-only mutations stay closed. */
+      lineDraftCollection?: {
+        sourceChannelMetadataJson: Record<string, unknown>;
+        aiVerificationSummaryJson: Record<string, unknown>;
+        /** Exact next row revision, also embedded in the continuation in the same transaction. */
+        nextUpdatedAt: Date;
+      };
+      /** Written in the same transaction as the LINE continuation CAS and replacement lines. */
+      transactionalAudit?: AuditLogEntry;
+    } = {},
   ): Promise<ExpenseRecord> {
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -184,12 +199,33 @@ export class UpdateExpenseDraftUseCase {
 
     const canReview = hasPerm(ctx, 'expense.review');
     const isOwner = r.createdByUserId === ctx.userId;
-    if (!canReview && !(hasPerm(ctx, 'expense.update') && isOwner)) throw new ForbiddenException('Missing permission: expense.update');
+    const canCollectOwnLineDraft = Boolean(options.lineDraftCollection)
+      && ctx.authProvider === 'line'
+      && r.captureSource === 'LINE_UPLOAD'
+      && r.status === 'DRAFT'
+      && isOwner
+      && (hasPerm(ctx, 'expense.receipt.line_upload') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.create'));
+    if (options.lineDraftCollection && !canCollectOwnLineDraft) {
+      throw new ForbiddenException('LINE draft collection is limited to the originating user and chat-authorized expense capability.');
+    }
+    if (options.transactionalAudit && !canCollectOwnLineDraft) {
+      throw new ForbiddenException('Transactional LINE draft audit requires LINE draft collection authority.');
+    }
+    if (!canReview && !(hasPerm(ctx, 'expense.update') && isOwner) && !canCollectOwnLineDraft) {
+      throw new ForbiddenException('Missing permission: expense.update');
+    }
+    if (canCollectOwnLineDraft) {
+      const allowed = new Set<keyof UpdateExpenseDraftInput>([
+        'expectedUpdatedAt', 'expenseDate', 'vendorNameSnapshot', 'note', 'lines',
+      ]);
+      const forbidden = (Object.keys(input) as Array<keyof UpdateExpenseDraftInput>).find((field) => !allowed.has(field));
+      if (forbidden) throw new ForbiddenException(`LINE draft collection cannot update ${String(forbidden)}.`);
+    }
     const financeOnlyFields: Array<keyof UpdateExpenseDraftInput> = [
       'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode',
       'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride',
     ];
-    if (!canReview && financeOnlyFields.some((field) => input[field] !== undefined)) {
+    if (!canReview && !canCollectOwnLineDraft && financeOnlyFields.some((field) => input[field] !== undefined)) {
       throw new ForbiddenException('Missing permission: expense.review for document, tax, or accounting classification fields.');
     }
     if (!['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(r.status)) {
@@ -389,11 +425,19 @@ export class UpdateExpenseDraftUseCase {
       ...(input.taxEvidenceStatus !== undefined && { taxEvidenceStatus: input.taxEvidenceStatus, ...(input.taxEvidenceReasonCode === undefined && canReview ? { taxEvidenceReasonCode: 'MANUAL_OVERRIDE' } : {}) }),
       ...(input.taxEvidenceReasonCode !== undefined && { taxEvidenceReasonCode: input.taxEvidenceReasonCode }),
       ...(nextSummaryJson && { aiVerificationSummaryJson: nextSummaryJson }),
+      ...(options.lineDraftCollection && {
+        sourceChannelMetadataJson: options.lineDraftCollection.sourceChannelMetadataJson,
+        aiVerificationSummaryJson: options.lineDraftCollection.aiVerificationSummaryJson,
+        updatedAt: options.lineDraftCollection.nextUpdatedAt,
+      }),
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
       ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
-    }, resolvedLines
-      ? (tx) => this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines!, tx)
+    }, resolvedLines || options.transactionalAudit
+      ? async (tx) => {
+        if (resolvedLines) await this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines, tx);
+        if (options.transactionalAudit) await this.audit.log(options.transactionalAudit, tx);
+      }
       : undefined, options.db);
     if (options.suppressGenericAudit) return updated;
     void this.audit.log({

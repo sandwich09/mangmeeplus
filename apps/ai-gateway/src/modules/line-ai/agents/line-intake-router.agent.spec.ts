@@ -102,6 +102,50 @@ describe('LINE intake router – routeIntake', () => {
     assert.ok(!('ignoredField' in (plan.captureHints ?? {})));
   });
 
+  it('maps a free-text answer to a durable expense draft and preserves every bounded item hint', async () => {
+    const capture: { input?: ProviderInput } = {};
+    const router = new IntentRouterAgent(modelAnswer({
+      intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.96,
+      captureHints: {
+        targetExpenseId: 'expense-1',
+        items: [
+          { itemRef: 'I01', sourceText: 'กระดาษ 5 รีม รวม 650 บาท', description: 'กระดาษ', quantity: '5', unit: 'รีม', totalAmount: '650', expenseCategoryId: 'cat-travel', accountingClass: 'OPEX' },
+          { itemRef: 'I02', sourceText: 'โน้ตบุ๊ก', description: 'โน้ตบุ๊ก', itemBehavior: 'NON_STOCK', missingFields: ['category'] },
+        ],
+      },
+    }, capture));
+    const plan = await router.routeIntake(baseRequest({
+      messageText: 'I01 กระดาษ 5 รีม รวม 650 บาท ส่วนโน้ตบุ๊กยังเหมือนเดิม',
+      activeExpenseDrafts: [{
+        expenseId: 'expense-1', label: 'ร่าง expense-1', status: 'PAUSED',
+        questions: [
+          { id: 'I01-QTY', itemRef: 'I01', prompt: 'กระดาษจำนวนเท่าไร?' },
+          { id: 'I01-PRICE', itemRef: 'I01', prompt: 'กระดาษราคาเท่าไร?' },
+        ],
+      }],
+    }));
+    assert.equal(plan.intent, 'EXPENSE_DRAFT_CONTINUATION');
+    assert.equal(plan.captureHints?.targetExpenseId, 'expense-1');
+    assert.equal(plan.captureHints?.items?.length, 2);
+    assert.equal(plan.captureHints?.items?.[0]?.quantity, '5');
+    assert.equal(plan.captureHints?.items?.[1]?.itemBehavior, 'NON_STOCK');
+    const payload = JSON.parse(capture.input?.messages[0]?.text ?? '{}');
+    assert.equal(payload.activeExpenseDrafts[0].questions[0].id, 'I01-QTY');
+  });
+
+  it('strips a continuation target the API never offered', async () => {
+    const router = new IntentRouterAgent(modelAnswer({
+      intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.9,
+      captureHints: { targetExpenseId: 'expense-other', items: [{ itemRef: 'I01', quantity: '5' }] },
+    }));
+    const plan = await router.routeIntake(baseRequest({
+      messageText: '5 ชิ้น',
+      activeExpenseDrafts: [{ expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN', questions: [] }],
+    }));
+    assert.equal(plan.intent, 'EXPENSE_DRAFT_CONTINUATION');
+    assert.equal(plan.captureHints?.targetExpenseId, undefined);
+  });
+
   it('routes a PDF attachment via metadata to EXPENSE_DOCUMENT_CAPTURE without inline bytes', async () => {
     const capture: { input?: ProviderInput } = {};
     const router = new IntentRouterAgent(modelAnswer(

@@ -115,6 +115,35 @@ export const LINE_AI_WHOLE_CHAIN_SCENARIOS = [
     ],
   },
   {
+    id: 'expense-draft-all-items-and-questions',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'every_named_item_is_preserved_and_all_document_and_item_gaps_are_returned_together',
+      tool: 'bounded_ai_candidates_then_deterministic_api_validation',
+      mutation: 'draft_source_facts_only_zero_review_or_final_mutation',
+      delivery: 'full_current_snapshot_and_every_remaining_question_after_each_answer',
+    },
+    evidence: [
+      ['apps/api/src/modules/expenses/domain/logic/line-expense-draft-conversation.logic.spec.ts', 'preserves every item and asks every document/item gap together without inventing paper numbers'],
+      ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'routes text spend note to a persistent draft and returns its complete question snapshot'],
+    ],
+  },
+  {
+    id: 'expense-draft-durable-resume-and-cas',
+    fixture: 'repository',
+    assertions: {
+      outcome: 'same_authorized_draft_resumes_after_context_expiry_or_requires_exact_target_selection',
+      tool: 'database_backed_continuation_read_independent_of_ai_turn_window',
+      mutation: 'one_cas_guarded_answer_and_transactional_audit_zero_final_mutation',
+      delivery: 'duplicate_event_does_not_reapply_and_failed_delivery_remains_recoverable',
+    },
+    evidence: [
+      ['apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.spec.ts', 'uses the revision of the loaded continuation snapshot for CAS, not a later detail read'],
+      ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'resumes from the database after the entire 15-turn AI context has unrelated content'],
+      ['apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts', 'a duplicate continuation webhook applies its answer exactly once'],
+    ],
+  },
+  {
     id: 'partial-answer-plus-vat-question',
     fixture: 'repository',
     assertions: {
@@ -323,6 +352,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic.spec.ts',
       'src/modules/line-ai/domain/logic/line-ai-reconciliation.logic.spec.ts',
       'src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts',
+      'src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.spec.ts',
+      'src/modules/expenses/domain/logic/line-expense-draft-conversation.logic.spec.ts',
       'src/modules/expenses/infrastructure/prisma-expense.repository.line-continuation.spec.ts',
       'src/modules/expenses/application/services/receipt-ocr-apply.service.spec.ts',
     ],
