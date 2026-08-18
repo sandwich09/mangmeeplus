@@ -51,7 +51,7 @@
 ## 6. Business Journey
 
 1. ผู้ใช้ sign in และเลือก company/branch scope
-2. ระบบโหลด shell ที่มี sidebar, header, branch switcher, profile menu และ content area แบบ responsive
+2. ระบบโหลด shell ที่มี sidebar พร้อม user menu ด้านล่างสุด, header, branch switcher และ content area แบบ responsive
 3. Sidebar แสดงเฉพาะเมนูที่ผู้ใช้มีสิทธิ์ตาม permission registry
 4. ผู้ใช้เข้าหน้า dashboard หรือโมดูลที่ต้องทำงาน
 5. หน้าแต่ละโมดูลใช้ `MangmeePage` สำหรับ page chrome และใช้ shared class/component สำหรับ card, table, form, badge, stat และ action
@@ -64,12 +64,12 @@
 - สีหลักของระบบคือ brand green ตาม prototype: `#12B76A`, `#027A48`, `#059669`
 - พื้นหลัง workspace ใช้ gray-50 และ surface สีขาวแบบมี border/shadow เบา
 - Sidebar expanded กว้าง 289px และ collapsed กว้าง 86px ตาม design screenshot ล่าสุด
-- Header สูง 68px และต้องรองรับ branch selector, notification, profile menu แบบ compact
+- Header สูง 68px และต้องรองรับ branch selector กับ notification; profile avatar/menu ไม่แสดงซ้ำใน header
 - Company dashboard content ต้องเริ่มใกล้ sidebar และใช้ full-width workspace padding ไม่ center max-width แบบหน้า marketing
 - Text ต้องไม่ล้น container ใน desktop และ mobile
 - Component ที่ใช้ซ้ำต้องอยู่ใน common layer หรือ design token layer ไม่กระจายเป็น style เฉพาะหน้า
 - Icon tone ต้อง map จาก module key/group ผ่าน helper เดียวเพื่อให้ sidebar, tile, card ใช้สีเดียวกัน
-- หน้า Login ยังคง public entry `Forgot password?`; authenticated reset entry อยู่ใน profile menu เป็น `Reset password`
+- หน้า Login ยังคง public entry `Forgot password?`; authenticated reset entry อยู่ใน sidebar user menu เป็น `Reset password`
 - กลุ่ม `ตั้งค่าระบบ` ต้องแสดง `สิทธิ์การใช้งาน` เป็น parent ที่เปิดเมนูย่อยได้ และมี child rows ครบตาม design: `รายบุคคล`, `เพิ่มพนักงาน`, `อนุมัติคำสั่งซื้อ`, `นโยบายส่วนลด`, `การแจ้งเตือน`
 - เมื่ออยู่หน้า child settings เช่น `อนุมัติคำสั่งซื้อ` ต้อง active เฉพาะ child row นั้น และ parent ต้องเปิดอยู่โดยไม่กลายเป็น active row ซ้ำ
 - Child `รายบุคคล` ต้องเปิดหน้า `สิทธิ์รายบุคคล` ที่ `/settings/access-overview`; parent `สิทธิ์การใช้งาน` ที่ `/settings/permissions` ยังเป็น role permission matrix
@@ -140,7 +140,7 @@ Shared UI model:
 - Layout:
   - Sidebar uses Mangmee green brand, gray navigation, rounded icon frames, group labels, and responsive collapse
   - Sidebar menu order follows the latest design: dashboard, inbox, shop operations, finance/accounting, then system settings
-  - Header uses 68px height, white surface, branch selector on the left, notification button and profile avatar on the right
+  - Header uses 68px height, white surface, branch selector on the left, and notification button on the right; account actions live in the sidebar footer user menu
   - Content uses full-width workspace padding and gray-50 background
   - Company dashboard starts with breadcrumb, `สวัสดี นภา`, branch scope chip, 4 KPI cards, and quick menu chips
   - Permissions page at `/companies/[companyId]/settings/permissions` uses the latest design matrix: role list on the left, menu/action permission table on the right, selected `ฝ่ายขาย`, and top-right edit/delete/open-menu actions

@@ -30,7 +30,7 @@ import {
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
   expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
   lateDocumentDays,
-  POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent,
+  POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
   vatRateFromPrintedAmount, effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion,
@@ -909,7 +909,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   );
 }
 
-type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate' | 'whtRate';
+type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
 export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   return {
@@ -969,8 +969,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
   const expenseDateIssue = fieldIssue(issues, 'expenseDate');
   const linesIssue = fieldIssue(issues, 'lines');
+  const whtRateIssue = fieldIssue(issues, 'whtRate');
   const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
   const totalIssues = issues.filter((issue) => issue.field === 'total');
+  const documentWhtRate = expenseDocumentWhtRate(values.lines);
+  const documentWhtPercent = expenseRatePercent(documentWhtRate ?? '');
   const withholdsTax = Number(detail.whtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
 
   useEffect(() => { setValues(reviewValues(detail)); setVatEditors({}); }, [detail.id, detail.updatedAt]);
@@ -1109,7 +1112,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {isMutable && (
           <button type="button" className={ghostClass} disabled={busy} onClick={() => setValues((v) => ({
             ...v,
-            lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', whtRate: null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
+            lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', whtRate: expenseDocumentWhtRate(v.lines) || null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
           }))}>{t('expenses.add_line', locale)}</button>
         )}
       </div>
@@ -1126,9 +1129,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         const unitPriceIssue = fieldIssue(issues, `lines.${index}.unitPrice`);
         const discountIssue = fieldIssue(issues, `lines.${index}.discountAmount`);
         const vatRateIssue = fieldIssue(issues, `lines.${index}.vatRate`);
-        const whtRateIssue = fieldIssue(issues, `lines.${index}.whtRate`);
         const vatPercent = expenseRatePercent(line.vatRate);
-        const whtPercent = expenseRatePercent(line.whtRate);
         // "custom, nothing typed yet" stores the same '' as "unset", so the flag has to be sticky.
         const showCustomRate = vatRatePreset(line.vatRate) === 'custom' || vatEditors[index]?.custom === true;
         return (
@@ -1166,15 +1167,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <input type="number" min="0" step="0.0001" className={validationInputClass(discountIssue)} aria-invalid={discountIssue?.severity === 'error' || undefined} value={line.discountAmount} onChange={(e) => updateLine(index, 'discountAmount', e.target.value)} disabled={!isMutable || busy} />
               <FieldIssueNote issue={discountIssue} />
             </label>
-            <div>
-              <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-                <label htmlFor={`expense-wht-rate-${detail.id}-${index}`}>{t('expenses.wht', locale)}</label>
-                <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_wht_rate', locale)} />
-              </span>
-              <input id={`expense-wht-rate-${detail.id}-${index}`} type="number" min="0" max="1" step="0.0001" className={validationInputClass(whtRateIssue)} aria-invalid={whtRateIssue?.severity === 'error' || undefined} value={line.whtRate ?? ''} onChange={(e) => updateLine(index, 'whtRate', e.target.value)} disabled={!isMutable || busy} />
-              <FieldIssueNote issue={whtRateIssue} />
-              {whtPercent !== null && <p className="mt-1 text-xs text-gray-500">{t('expenses.rate_percent_echo', locale).replace('{percent}', whtPercent)}</p>}
-            </div>
             {/* Spec §19g decision 4: a rate, a preset, or the VAT amount the document prints — all
                 three write the same stored decimal fraction. The bare 0–1 box asked reviewers to
                 convert "11.78 VAT TTL" into 0.07 in their heads.
@@ -1258,6 +1250,36 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         </div>
         );
       })}
+
+      {values.lines.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+            <label htmlFor={`expense-wht-rate-${detail.id}`}>{t('expenses.document_wht_rate', locale)}</label>
+            <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_wht_rate', locale)} />
+          </span>
+          <input
+            id={`expense-wht-rate-${detail.id}`}
+            type="number"
+            min="0"
+            max="1"
+            step="0.0001"
+            className={validationInputClass(whtRateIssue)}
+            aria-invalid={whtRateIssue?.severity === 'error' || undefined}
+            value={documentWhtRate ?? ''}
+            onChange={(event) => {
+              const whtRate = event.target.value || null;
+              setValues((current) => ({
+                ...current,
+                lines: current.lines.map((line) => ({ ...line, whtRate })),
+              }));
+            }}
+            disabled={!isMutable || busy}
+          />
+          <FieldIssueNote issue={whtRateIssue} />
+          {documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
+          {documentWhtPercent !== null && <p className="mt-1 text-xs text-gray-500">{t('expenses.rate_percent_echo', locale).replace('{percent}', documentWhtPercent)}</p>}
+        </div>
+      )}
 
       {totalIssues.map((issue, index) => <FieldIssueNote key={`${issue.messageKey}-${index}`} issue={issue} />)}
 

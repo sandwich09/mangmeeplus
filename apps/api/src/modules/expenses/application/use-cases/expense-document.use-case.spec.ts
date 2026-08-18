@@ -18,38 +18,98 @@ function ctx(permissions: string[], authProvider: 'watchdog' | 'line' = 'watchdo
 describe('CaptureLineExpenseNoteUseCase', () => {
   function makeRepo(overrides: Record<string, unknown> = {}) {
     const updates: any[] = [];
+    const deleted: any[] = [];
     return {
       updates,
+      deleted,
       repo: {
         findByLineMessageId: async () => null,
         listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }, { id: 'cat-travel', name: 'ค่าเดินทาง' }],
         updateExpense: async (input: any) => { updates.push(input); return { ...input, grandTotalAmount: '65.0000' }; },
+        deleteDraftExpense: async (...args: any[]) => { deleted.push(args); },
         ...overrides,
       } as any,
     };
   }
   const createDraft = {
-    execute: async (_c: any, input: any) => ({ id: 'exp-1', expenseCategoryId: input.expenseCategoryId ?? null, grandTotalAmount: '65.0000' }),
+    execute: async (_c: any, input: any) => ({
+      id: 'exp-1', expenseCategoryId: input.expenseCategoryId ?? null, grandTotalAmount: '65.0000',
+      updatedAt: new Date('2026-08-18T00:00:00.000Z'),
+    }),
   } as any;
+
+  it('preserves the proven single-turn capture while the rollout flag is off', async () => {
+    const { repo, updates } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
+
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ค่ากาแฟ 65 บาท',
+      captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' },
+      lineMessageId: 'legacy-msg', lineEventId: 'legacy-evt',
+    });
+
+    assert.equal(result.insertedAmount, '65.0000');
+    assert.equal(result.categoryId, 'cat-meals');
+    assert.deepEqual(result.replyTexts, []);
+    assert.equal(updates.at(-1).status, 'NEEDS_REVIEW');
+    assert.equal(updates.at(-1).sourceChannelMetadataJson.lineExpenseDraftContinuation, undefined);
+  });
+
+  it('opens an incomplete multi-item draft only when the rollout flag and confidence gate pass', async () => {
+    const { repo, updates } = makeRepo();
+    const creates: any[] = [];
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (_c: any, input: any) => {
+        creates.push(input);
+        return { id: 'exp-1', expenseCategoryId: null, grandTotalAmount: '0.0000', updatedAt: new Date('2026-08-18T00:00:00.000Z') };
+      },
+    } as any, audit, outbox);
+
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true,
+      messageText: 'ซื้อกระดาษ A4 กับโน้ตบุ๊ก โน้ตบุ๊ก 1 เครื่อง 25000 บาท',
+      captureHints: {
+        confidence: 0.95,
+        items: [
+          { sourceText: 'กระดาษ A4', description: 'กระดาษ A4' },
+          { sourceText: 'โน้ตบุ๊ก 1 เครื่อง 25000 บาท', description: 'โน้ตบุ๊ก', quantity: '1', unit: 'เครื่อง', unitPrice: '25000' },
+        ],
+      },
+      lineMessageId: 'multi-msg', lineEventId: 'multi-evt',
+    });
+
+    assert.equal(creates.length, 1);
+    assert.equal(creates[0].lines.length, 1, 'the incomplete paper item is preserved in metadata, not fabricated as a line');
+    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
+    assert.match(result.replyTexts.join('\n'), /I02-CATEGORY/u);
+    assert.equal(updates.at(-1).status, 'DRAFT');
+  });
 
   it('creates a reviewable no-receipt draft from validated semantic hints', async () => {
     const { repo, updates } = makeRepo();
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true,
       messageText: 'ค่ากาแฟ 65 บาท',
       captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals', confidence: 0.9 },
       lineMessageId: 'msg-1',
       lineEventId: 'evt-1',
     });
-    assert.equal(result.insertedAmount, '65.0000');
-    assert.equal(result.categoryId, 'cat-meals');
+    assert.equal(result.insertedAmount, null, 'amount stays staged until quantity is known');
+    assert.equal(result.categoryId, null, 'AI category is a suggestion until the user accepts it');
     assert.equal(result.categoryName, 'ค่าอาหาร');
+    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
+    assert.match(result.replyTexts.join('\n'), /I01-CATEGORY/u);
     const update = updates.at(-1);
     assert.equal(update.sourceDocumentType, 'EXPENSE_NOTE_TEXT');
     assert.equal(update.taxEvidenceStatus, 'SUPPORTING_ONLY');
     assert.equal(update.taxEvidenceReasonCode, 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE');
-    assert.equal(update.status, 'NEEDS_REVIEW');
+    assert.equal(update.status, 'DRAFT');
     assert.equal(update.lineMessageId, 'msg-1');
+    assert.equal(
+      update.sourceChannelMetadataJson.lineExpenseDraftContinuation.targetRevision,
+      update.updatedAt.toISOString(),
+    );
     // Bounded provenance only – no raw full message dump.
     assert.equal(update.sourceChannelMetadataJson.messagePreview, 'ค่ากาแฟ 65 บาท');
   });
@@ -59,7 +119,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      draftConversationEnabled: true,
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { confidence: 0.9, amount: '65', description: 'ค่ากาแฟ' },
       lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'hash-chat-1',
     });
 
@@ -73,7 +134,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      draftConversationEnabled: true,
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { confidence: 0.9, amount: '65', description: 'ค่ากาแฟ' },
       lineMessageId: 'msg-2', lineEventId: 'evt-2',
     });
 
@@ -82,7 +144,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
 
   it('commits the consumed clarification with the draft, not after it', async () => {
     const seen: any[] = [];
-    const { repo } = makeRepo({
+    const { repo, deleted } = makeRepo({
       updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => {
         await withinTx?.({ outboxEvent: { create: async ({ data }: any) => { seen.push(data); } } });
         return { ...input, grandTotalAmount: '65.0000' };
@@ -91,7 +153,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      draftConversationEnabled: true,
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { confidence: 0.9, amount: '65', description: 'ค่ากาแฟ' },
       lineMessageId: 'msg-1', lineEventId: 'evt-1',
       consumption: { companyId: 'company-1', ledgerStreamKey: 'lineai:ledger:company-1:chat1', entryIds: ['7-0'], outcome: 'evidence_capture' },
     });
@@ -101,7 +164,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
   });
 
   it('rolls the draft back when the consumption marker cannot be written', async () => {
-    const { repo } = makeRepo({
+    const { repo, deleted } = makeRepo({
       updateExpense: async (_input: any, withinTx?: (tx: any) => Promise<void>) => {
         await withinTx?.({ outboxEvent: { create: async () => { throw new Error('marker_conflict'); } } });
         return { id: 'exp-1' };
@@ -110,13 +173,17 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await assert.rejects(() => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      draftConversationEnabled: true,
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { confidence: 0.9, amount: '65', description: 'ค่ากาแฟ' },
       lineMessageId: 'msg-1', lineEventId: 'evt-1',
       consumption: { companyId: 'company-1', ledgerStreamKey: 'k', entryIds: ['7-0'], outcome: 'evidence_capture' },
     }), /marker_conflict/);
+    assert.equal(deleted.length, 1);
+    assert.equal(deleted[0][1], 'exp-1');
+    assert.ok(deleted[0][2] instanceof Date);
   });
 
-  it('keeps the plain single-write shape when there is nothing to consume', async () => {
+  it('writes the initial continuation audit inside the draft update transaction even with nothing to consume', async () => {
     let receivedCallback: unknown = 'unset';
     const { repo } = makeRepo({
       updateExpense: async (input: any, withinTx?: unknown) => { receivedCallback = withinTx; return { ...input }; },
@@ -124,17 +191,19 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
 
     await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
-      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { amount: '65', description: 'ค่ากาแฟ' },
+      draftConversationEnabled: true,
+      messageText: 'ค่ากาแฟ 65 บาท', captureHints: { confidence: 0.9, amount: '65', description: 'ค่ากาแฟ' },
       lineMessageId: 'msg-1', lineEventId: 'evt-1',
     });
 
-    assert.equal(receivedCallback, undefined);
+    assert.equal(typeof receivedCallback, 'function');
   });
 
   it('refuses invented category ids and keeps them out of the draft', async () => {
     const { repo, updates } = makeRepo();
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true,
       messageText: 'ค่าอะไรก็ไม่รู้ 100 บาท',
       captureHints: { amount: '100', description: 'ค่าอะไรก็ไม่รู้', expenseCategoryId: 'cat-invented' },
       lineMessageId: 'msg-2',
@@ -159,6 +228,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     ] as const) {
       await assert.rejects(
         () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+          draftConversationEnabled: true,
           messageText, captureHints, lineMessageId: `msg-${messageText}`, lineEventId: `evt-${messageText}`,
         }),
         LineTextExpenseCaptureIncompleteError,
@@ -167,23 +237,45 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(calls.length, 0, 'the final mutation boundary creates no draft');
   });
 
+  it('fails closed on a clearly non-expense direction even when model hints look complete', async () => {
+    const calls: any[] = [];
+    const { repo } = makeRepo();
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, {
+      execute: async (...args: any[]) => { calls.push(args); return { id: 'must-not-exist' }; },
+    } as any, audit, outbox);
+
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+        draftConversationEnabled: true,
+        messageText: 'รับเงินค่าสินค้าจากลูกค้า 590 บาท',
+        captureHints: { confidence: 0.99, amount: '590', description: 'ค่าสินค้า', expenseCategoryId: 'cat-meals' },
+        lineMessageId: 'income-msg', lineEventId: 'income-evt',
+      }),
+      LineTextExpenseCaptureIncompleteError,
+    );
+    assert.equal(calls.length, 0);
+  });
+
   it('allows an amount from the exact clarification request after the user supplies its purpose', async () => {
     const { repo } = makeRepo();
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true,
       messageText: 'เป็นค่าเดินทาง',
       groundingTexts: ['ยอด 200 บาท'],
-      captureHints: { amount: '200', description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel' },
+      captureHints: { confidence: 0.9, amount: '200', description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel' },
       lineMessageId: 'msg-follow-up', lineEventId: 'evt-follow-up',
     });
-    assert.equal(result.insertedAmount, '200.0000');
-    assert.equal(result.categoryId, 'cat-travel');
+    assert.equal(result.insertedAmount, null);
+    assert.equal(result.categoryId, null);
+    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
   });
 
   it('is idempotent by LINE message id', async () => {
     const { repo } = makeRepo({ findByLineMessageId: async () => ({ id: 'existing-1', grandTotalAmount: '65.0000', expenseCategoryId: null }) });
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      draftConversationEnabled: true,
       messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1',
     });
     assert.equal(result.expense.id, 'existing-1');

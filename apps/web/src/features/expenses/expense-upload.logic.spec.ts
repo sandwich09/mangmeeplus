@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUploadFile } from './expense-upload.logic';
+import { classifyUploadFile, detectReceiptImageByteKind } from './expense-upload.logic';
 
 describe('classifyUploadFile', () => {
   const cases = [
@@ -23,4 +23,20 @@ describe('classifyUploadFile', () => {
       assert.equal(classifyUploadFile(name, type), expected);
     });
   }
+});
+
+describe('detectReceiptImageByteKind', () => {
+  it('recognizes verified JPEG and PNG containers', () => {
+    assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])), 'jpeg');
+    assert.equal(detectReceiptImageByteKind(Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'png');
+  });
+
+  it('detects iPhone HEIC bytes even when file metadata says JPG', () => {
+    const renamedHeic = Uint8Array.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00, 0x6d, 0x69, 0x66, 0x31, 0x68, 0x65, 0x69, 0x63]);
+    assert.equal(detectReceiptImageByteKind(renamedHeic), 'heic');
+  });
+
+  it('does not pass a truncated JPEG through to the backend', () => {
+    assert.equal(detectReceiptImageByteKind(Uint8Array.from([0xff, 0xd8, 0x00, 0x01])), 'unknown');
+  });
 });

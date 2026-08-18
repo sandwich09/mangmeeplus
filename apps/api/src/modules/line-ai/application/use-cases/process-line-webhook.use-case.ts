@@ -27,6 +27,8 @@ import { reconcileExpenseDuplicateCandidates } from '../../../expenses/applicati
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
 import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, type LineSubstituteReceiptContinuationResult } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
+import { isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
@@ -47,7 +49,7 @@ import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parse
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
-import type { BusinessDocumentClassification, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
@@ -75,6 +77,8 @@ export type LineTextEvent = {
   lineMessageId?: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
+  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  beforeReply?: () => Promise<void>;
 };
 
 export type LineReceiptUploadEvent = {
@@ -88,6 +92,8 @@ export type LineReceiptUploadEvent = {
   messagingChannelId: string;
   /** Chat to push into when the reply token has expired (group id in group chats). */
   pushTargetId?: string;
+  /** Internal buffer hook: settle any in-flight waiting status before the answer. */
+  beforeReply?: () => Promise<void>;
 };
 
 /** `defer_text` = the intake router judged the accompanying caption to be a
@@ -693,6 +699,7 @@ export class ProcessLineWebhookUseCase {
     @Optional() private readonly correctExpense?: CorrectLineCapturedExpenseUseCase,
     // Receipt continuity: read/preflight and typed web-prefill only; no prepare/issue mutation.
     @Optional() private readonly substituteReceiptContinuation?: LineSubstituteReceiptContinuationUseCase,
+    @Optional() private readonly expenseDraftConversation?: LineExpenseDraftConversationUseCase,
   ) {}
 
   /**
@@ -777,6 +784,7 @@ export class ProcessLineWebhookUseCase {
     valueCandidates?: LineAiValueCandidates;
     openClarifications?: LineAiOpenClarification[];
     recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
+    activeExpenseDrafts?: LineExpenseDraftRouteContext[];
   }): Promise<LineIntakeRoutePlan> {
     try {
       const activeCategories = this.expenseRepo
@@ -792,6 +800,7 @@ export class ProcessLineWebhookUseCase {
         ...(input.valueCandidates && { valueCandidates: input.valueCandidates }),
         ...(input.openClarifications && { openClarifications: input.openClarifications }),
         ...(input.recentCapturedExpenses?.length ? { recentCapturedExpenses: input.recentCapturedExpenses } : {}),
+        ...(input.activeExpenseDrafts?.length ? { activeExpenseDrafts: input.activeExpenseDrafts } : {}),
         permissions: input.permissions,
         activeCategories,
         ...(input.attachment
@@ -858,10 +867,28 @@ export class ProcessLineWebhookUseCase {
     )]);
   }
 
-  private async deliverMessages(
+  private async deliverCompletedReplies(
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    texts: string[],
+    companyId: string,
+    access: { permissions: string[]; roles: string[] },
+  ): Promise<void> {
+    if (texts.length === 0 || texts.length > 5) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
+    const messages = texts.map((text) => this.lineReply.buildTextMessage(text));
+    messages[messages.length - 1] = await this.withCompletionMenu(messages[messages.length - 1]!, companyId, access);
+    await this.deliverRequiredMessages(event, messages);
+  }
+
+  private async deliverMessages(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void> },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
+    try {
+      await event.beforeReply?.();
+    } catch (error) {
+      // Waiting feedback is cosmetic; it must never block the actual answer.
+      this.logger.warn({ msg: 'LINE waiting feedback settlement failed', error: (error as Error).message });
+    }
     let result: LineDeliveryResult;
     try {
       result = await this.lineReply.sendReply(event.replyToken, messages);
@@ -1057,6 +1084,10 @@ export class ProcessLineWebhookUseCase {
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
       .some((perm) => resolvedAccess.permissions.includes(perm));
     const canSubmitSignature = resolvedAccess.permissions.includes('expense.signature.manage');
+    // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
+    const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
+      && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
+      && Boolean(this.expenseDraftConversation);
     if (!canQuery && !canCaptureExpense && !canSubmitSignature) {
       await this.deliverReply(event, FORBIDDEN_REPLY);
       await this.audit.log({
@@ -1187,9 +1218,40 @@ export class ProcessLineWebhookUseCase {
     const recentCapturedExpenses = canCaptureExpense
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
+    const expenseDraftCtx: RequestContext = {
+      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+    };
+    const activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
+      ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
+      : [];
+    const interruptExpenseDraft = async (excludeExpenseIds: string[] = []) => activeExpenseDrafts
+      .some((draft) => draft.status === 'OPEN' && !excludeExpenseIds.includes(draft.expenseId))
+      && this.expenseDraftConversation
+      ? this.expenseDraftConversation.interruptOpen(expenseDraftCtx, chatKeyHashOf(event), excludeExpenseIds)
+      : undefined;
+    if (activeExpenseDrafts.length > 0 && this.expenseDraftConversation
+      && isDeterministicLineExpenseDraftInput(normalizedText)) {
+      const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
+        messageText: normalizedText,
+        chatKeyHash: chatKeyHashOf(event),
+        webhookEventId: event.webhookEventId,
+      });
+      if (result.handled) {
+        await this.deliverCompletedReplies(event, result.replyTexts, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
+        });
+        await this.updateEventLog(event.webhookEventId, result.status === 'UPDATED' ? 'clarification_required' : 'completed', undefined, companyId);
+        return;
+      }
+    }
 
     if (isDeliveredCapabilityFollowUp(normalizedText, conversationContext)) {
-      const reply = capabilityFollowUpReply(normalizedText);
+      const interruption = await interruptExpenseDraft();
+      const reply = `${capabilityFollowUpReply(normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -1223,7 +1285,8 @@ export class ProcessLineWebhookUseCase {
           const category = expense.expenseCategoryId
             ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === expense.expenseCategoryId)
             : undefined;
-          const reply = formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name);
+          const interruption = await interruptExpenseDraft();
+          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name)}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -1256,10 +1319,12 @@ export class ProcessLineWebhookUseCase {
       if (routeSideQuestion) {
         substituteInterruption = result;
       } else {
-        await this.deliverCompletedReply(event, result.replyText, companyId, resolvedAccess);
+        const interruption = await interruptExpenseDraft();
+        const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
+        await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText: result.replyText, intent: 'CLARIFY',
+          userMessagePreview: normalizedText, replyText, intent: 'CLARIFY',
         });
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           openWaiting
@@ -1303,7 +1368,39 @@ export class ProcessLineWebhookUseCase {
       ...(valueCandidates && { valueCandidates }),
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       ...(recentCapturedExpenses.length > 0 && { recentCapturedExpenses }),
+      ...(activeExpenseDrafts.length > 0 && { activeExpenseDrafts }),
     });
+
+    if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION') {
+      if (!expenseDraftConversationEnabled) {
+        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      if (!canCaptureExpense || !this.expenseDraftConversation) {
+        await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+        return;
+      }
+      const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
+        messageText: normalizedText,
+        chatKeyHash: chatKeyHashOf(event),
+        webhookEventId: event.webhookEventId,
+        captureHints: routePlan.captureHints,
+      });
+      if (!result.handled) {
+        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+        return;
+      }
+      await this.deliverCompletedReplies(event, result.replyTexts, companyId, resolvedAccess);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
+      });
+      await this.updateEventLog(event.webhookEventId, result.status === 'UPDATED' ? 'clarification_required' : 'completed', undefined, companyId);
+      return;
+    }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
       if (!canCaptureExpense) {
@@ -1333,13 +1430,17 @@ export class ProcessLineWebhookUseCase {
       try {
         captured = await this.captureExpenseNote.execute(ctx, {
           messageText: normalizedText,
-          captureHints: routePlan.captureHints,
+          captureHints: {
+            ...(routePlan.captureHints ?? {}),
+            confidence: routePlan.captureHints?.confidence ?? routePlan.confidence,
+          },
           groundingTexts: openWaiting
             .filter((item) => routePlan.resolvedClarificationIds?.includes(item.id)
               && item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
             .map((item) => item.text),
           lineMessageId: event.lineMessageId ?? event.webhookEventId,
           lineEventId: event.webhookEventId,
+          draftConversationEnabled: expenseDraftConversationEnabled,
           chatKeyHash: chatKeyHashOf(event),
           ...(capturePlan ? { consumption: capturePlan.consumption } : {}),
         });
@@ -1364,22 +1465,25 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const paypersReply = formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
-        textOnly: true,
-        amount: captured.insertedAmount,
-        categoryName: captured.categoryName,
-        sourceDocumentType: captured.expense.sourceDocumentType,
-        // RECEIPT-09: show what was actually stored — a blanket ยังไม่ระบุ made users resend.
-        fields: {
-          ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
-          ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
-        } as ReceiptOcrFieldResult,
-      });
-      await this.deliverCompletedReply(event, paypersReply, companyId, resolvedAccess);
+      const replyTexts = captured.replyTexts.length
+        ? captured.replyTexts
+        : [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
+          textOnly: true,
+          amount: captured.insertedAmount,
+          categoryName: captured.categoryName,
+          sourceDocumentType: captured.expense.sourceDocumentType,
+          fields: {
+            ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
+            ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
+          } as ReceiptOcrFieldResult,
+        })];
+      const expenseDraftInterruption = await interruptExpenseDraft([captured.expense.id]);
+      if (expenseDraftInterruption) replyTexts[replyTexts.length - 1] = `${replyTexts.at(-1)}\n\n${expenseDraftInterruption}`;
+      await this.deliverCompletedReplies(event, replyTexts, companyId, resolvedAccess);
       await this.ackConsumed(capturePlan, 'evidence_capture');
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: paypersReply, intent: 'EVIDENCE_CAPTURE',
+        userMessagePreview: normalizedText, replyText: replyTexts.join('\n'), intent: 'EVIDENCE_CAPTURE',
       });
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
@@ -1419,6 +1523,8 @@ export class ProcessLineWebhookUseCase {
         reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
+      const expenseDraftInterruption = applied.status === 'clarify' ? undefined : await interruptExpenseDraft();
+      if (expenseDraftInterruption) reply = `${reply}\n\n${expenseDraftInterruption}`;
       if (applied.status === 'clarify') await this.deliverReply(event, reply);
       else await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
@@ -1449,10 +1555,12 @@ export class ProcessLineWebhookUseCase {
       }
       // Text asked for a signature upload but no image came with it: ask for the image only.
       await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'signature_request');
-      await this.deliverReply(event, SIGNATURE_NEED_IMAGE_REPLY);
+      const expenseDraftInterruption = await interruptExpenseDraft();
+      const reply = `${SIGNATURE_NEED_IMAGE_REPLY}${expenseDraftInterruption ? `\n\n${expenseDraftInterruption}` : ''}`;
+      await this.deliverReply(event, reply);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: SIGNATURE_NEED_IMAGE_REPLY, intent: 'SIGNATURE_REQUEST',
+        userMessagePreview: normalizedText, replyText: reply, intent: 'SIGNATURE_REQUEST',
       });
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
@@ -1561,7 +1669,8 @@ export class ProcessLineWebhookUseCase {
         metadataJson: { intent: turnResponse.intent },
       });
     }
-    const resumeCapsules = [substituteInterruption?.resumeCapsule, mediaResumeCapsule].filter((item): item is string => !!item);
+    const expenseDraftInterruption = await interruptExpenseDraft();
+    const resumeCapsules = [substituteInterruption?.resumeCapsule, mediaResumeCapsule, expenseDraftInterruption].filter((item): item is string => !!item);
     if (resumeCapsules.length > 0) {
       const resumeText = resumeCapsules.length === 1
         ? resumeCapsules[0]
@@ -2037,6 +2146,9 @@ export class ProcessLineWebhookUseCase {
       : undefined;
     const caption = captionText?.trim() ?? '';
     const captionSuffix = caption ? ` ${caption}` : '';
+    const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
+      && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
+      && Boolean(this.expenseDraftConversation);
     const captionCandidates = computeValueCandidates(normalizeLineText(caption));
     const routePlan = await this.tryRouteIntake({
       requestId,
@@ -2155,14 +2267,22 @@ export class ProcessLineWebhookUseCase {
       ? await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId)
       : null;
     if (existingExpense) {
-      const receiptReply = formatPaypersReply(this.config.webBaseUrl, companyId, existingExpense.id, {
+      const receiptDraft = expenseDraftConversationEnabled
+        ? await this.expenseDraftConversation!.startFromReceipt(ctx, {
+          expenseId: existingExpense.id,
+          chatKeyHash: chatKeyHashOf(event),
+          webhookEventId: event.webhookEventId,
+        })
+        : undefined;
+      const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, existingExpense.id, {
         sourceDocumentType: existingExpense.sourceDocumentType !== 'NEEDS_REVIEW' ? existingExpense.sourceDocumentType : undefined,
-      });
-      await this.deliverCompletedReply(event, receiptReply, companyId, access);
+      })];
+      if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
+      else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
       await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, existingExpense.id, access.scopes);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
+        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: replyTexts.join('\n'), intent: 'EVIDENCE_CAPTURE',
       });
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
@@ -2291,6 +2411,7 @@ export class ProcessLineWebhookUseCase {
       where: { id: intent.expenseId },
       data: {
         captureSource: 'LINE_UPLOAD',
+        ...(expenseDraftConversationEnabled ? { status: 'DRAFT' } : {}),
         lineMessageId: event.lineMessageId,
         lineEventId: event.webhookEventId,
         aiVerificationStatus: 'NEEDS_REVIEW',
@@ -2337,17 +2458,31 @@ export class ProcessLineWebhookUseCase {
       });
     }
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
-    const receiptReply = formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
+    const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
+    const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
+      .includes(normalizeLineText(purposeHint).toLocaleLowerCase('th-TH')) ? purposeHint : undefined;
+    const receiptDraft = expenseDraftConversationEnabled
+      ? await this.expenseDraftConversation!.startFromReceipt(ctx, {
+        expenseId: intent.expenseId,
+        chatKeyHash: chatKeyHashOf(event),
+        webhookEventId: event.webhookEventId,
+        ocrFields,
+        ...(groundedPurpose ? { businessPurpose: groundedPurpose } : {}),
+        ...(effectiveCategory?.id ? { suggestedCategoryId: effectiveCategory.id } : {}),
+      })
+      : undefined;
+    const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
       hasDuplicate,
       fields: ocrFields,
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
-    });
-    await this.deliverCompletedReply(event, receiptReply, companyId, access);
+    })];
+    if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
+    else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-      userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: receiptReply, intent: 'EVIDENCE_CAPTURE',
+      userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์เอกสารค่าใช้จ่าย]${captionSuffix}`, replyText: replyTexts.join('\n'), intent: 'EVIDENCE_CAPTURE',
     });
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
   }

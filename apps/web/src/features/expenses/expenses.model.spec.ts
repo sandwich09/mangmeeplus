@@ -11,9 +11,11 @@ import {
   expenseAiSuggestion,
   applyExpenseAiSuggestion,
   expenseRatePercent,
+  expenseDocumentWhtRate,
   hasAcknowledgedAiTotalMismatch,
   hasAiGrandTotalMismatch,
   needsAiTotalAcknowledgement,
+  canRunExpenseDuplicateCheck,
   hasUnresolvedDuplicateWarning,
   findOpaqueBounds,
   removeLightBackground,
@@ -84,6 +86,22 @@ describe('expenses.model', () => {
     assert.equal(hasUnresolvedDuplicateWarning('CONFIRMED_DUPLICATE'), true);
     assert.equal(hasUnresolvedDuplicateWarning('NO_MATCH'), false);
     assert.equal(hasUnresolvedDuplicateWarning('OVERRIDDEN'), false);
+  });
+
+  it('offers duplicate checks only before an expense reaches a terminal status', () => {
+    for (const status of ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as const) {
+      assert.equal(canRunExpenseDuplicateCheck(status), true);
+    }
+    for (const status of ['CONFIRMED', 'REJECTED', 'VOIDED'] as const) {
+      assert.equal(canRunExpenseDuplicateCheck(status), false);
+    }
+  });
+
+  it('derives one bill-level WHT rate without overwriting mixed historical lines', () => {
+    assert.equal(expenseDocumentWhtRate([]), '');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: null }, { whtRate: null }]), '');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: '0.03' }, { whtRate: ' 0.03 ' }]), '0.03');
+    assert.equal(expenseDocumentWhtRate([{ whtRate: '0.03' }, { whtRate: null }]), null);
   });
 
   it('keeps non-expense manual uploads blocked and exposes override only to finance reviewers', () => {

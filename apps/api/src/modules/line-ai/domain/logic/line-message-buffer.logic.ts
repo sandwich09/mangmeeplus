@@ -48,6 +48,25 @@ export const LINE_BUFFER_MAX_TEXT_CHARS = 4000;
 export const LINE_BUFFER_ORPHAN_REPROCESS_MS = 2 * 60 * 1000;
 /** Shutdown drain bound — must finish inside the ECS stop grace period. */
 export const LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
+export const LINE_WAIT_STATUS_DELAY_MS = 2_000;
+
+const LINE_WAIT_STATUS_RULES: Array<[RegExp, string]> = [
+  [/รายงาน|report/, 'กำลังจัดเตรียมรายงานให้นะคะ...'],
+  [/สรุป|ภาพรวม|summary|brief/, 'กำลังสรุปข้อมูลให้อ่านง่ายอยู่นะคะ...'],
+  [/เปรียบเทียบ|เทียบ|ต่างกัน|versus|\bvs\.?\b/, 'กำลังเปรียบเทียบข้อมูลให้นะคะ...'],
+  [/คำนวณ|รวมทั้งหมด|ค่าเฉลี่ย|เปอร์เซ็นต์|เท่าไหร่|กี่บาท|กี่รายการ|calculate|average|percent/, 'กำลังคำนวณตัวเลขให้นะคะ...'],
+  [/วิเคราะห์|แนวโน้ม|สาเหตุ|ผิดปกติ|analyse|analyze|trend/, 'กำลังวิเคราะห์ข้อมูลให้อยู่นะคะ...'],
+  [/ค้นหา|ค้นข้อมูล|search|find|lookup/, 'กำลังค้นข้อมูลที่เกี่ยวข้องให้อยู่นะคะ...'],
+  [/ข้อมูล|ยอดขาย|ค่าใช้จ่าย|ลูกค้า|สต็อก|สินค้าคงคลัง|ภาษี|ใบแจ้งหนี้|สถานะ|รายการ|อนุมัติ/, 'กำลังตรวจสอบข้อมูลในระบบให้นะคะ...'],
+];
+
+/** One truthful waiting line selected from the request; no model call needed. */
+export function lineWaitStatusText(messageText: string, kind: 'text' | 'media' = 'text'): string {
+  if (kind === 'media') return 'กำลังตรวจสอบเอกสารที่ส่งมาให้นะคะ...';
+  const normalized = messageText.trim().toLowerCase();
+  return LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
+    ?? 'ขอคิดสักครู่นะคะ 😊';
+}
 
 export type LineBufferFlushTiming = {
   /** Quiet time after the last bubble before flushing. 0 disables buffering. */

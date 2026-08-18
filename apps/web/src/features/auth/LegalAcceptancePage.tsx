@@ -37,7 +37,7 @@ type Copy = {
   loading: string;
   loadError: string;
   retry: string;
-  requiredError: string;
+  requiredItemError: string;
   saveError: string;
   staleError: string;
   logoutError: string;
@@ -64,7 +64,7 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     loading: 'กำลังตรวจสอบเอกสารที่ต้องยืนยัน…',
     loadError: 'ไม่สามารถโหลดเอกสารที่ต้องยืนยันได้ กรุณาลองใหม่อีกครั้ง',
     retry: 'ลองใหม่',
-    requiredError: 'กรุณายืนยันรายการที่มีเครื่องหมาย * ให้ครบทั้ง 3 รายการ',
+    requiredItemError: 'กรุณาติ๊กยืนยันข้อนี้ก่อนดำเนินการต่อ',
     saveError: 'ยังบันทึกการยืนยันไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่อีกครั้ง',
     staleError: 'ข้อมูลกิจการ บทบาท หรือฉบับเอกสารเปลี่ยนระหว่างที่คุณอ่าน กรุณาตรวจสอบข้อความล่าสุดและยืนยันใหม่',
     logoutError: 'ไม่สามารถออกจากระบบได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง',
@@ -89,7 +89,7 @@ const COPY: Record<LegalAcceptanceLocale, Copy> = {
     loading: 'Checking the documents you need to confirm…',
     loadError: 'We could not load the documents you need to confirm. Please try again.',
     retry: 'Try again',
-    requiredError: 'Please confirm all three items marked with *.',
+    requiredItemError: 'Please confirm this item before continuing.',
     saveError: 'We could not save your confirmation. Check your connection and try again.',
     staleError: 'Your company, role, or document version changed while you were reviewing. Check the latest statements and confirm again.',
     logoutError: 'We could not sign you out. Please try again.',
@@ -132,11 +132,13 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [deletionAcknowledged, setDeletionAcknowledged] = useState(false);
+  const [validationAttempted, setValidationAttempted] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   async function loadStatus(messageAfterLoad?: string) {
     setLoading(true);
     setError(null);
+    setValidationAttempted(false);
     try {
       const nextStatus = await getLegalAcceptanceStatus(companyId);
       setStatus(nextStatus);
@@ -163,12 +165,18 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
     event.preventDefault();
     const form = formRef.current;
     if (!form?.checkValidity()) {
-      setError(copy.requiredError);
-      form?.querySelector<HTMLInputElement>('input:invalid')?.focus();
+      const firstInvalid = form?.querySelector<HTMLInputElement>('input:invalid');
+      setError(null);
+      setValidationAttempted(true);
+      requestAnimationFrame(() => {
+        firstInvalid?.closest('.doc-gate-step')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        firstInvalid?.focus({ preventScroll: true });
+      });
       return;
     }
     if (!status) return;
 
+    setValidationAttempted(false);
     setSubmitting(true);
     setError(null);
     try {
@@ -297,10 +305,18 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                       required
                       checked={termsAccepted}
                       onChange={(event) => setTermsAccepted(event.target.checked)}
-                      aria-describedby={error ? 'legal-acceptance-error' : undefined}
+                      aria-invalid={validationAttempted && !termsAccepted}
+                      aria-describedby={validationAttempted && !termsAccepted
+                        ? 'terms-acceptance-error'
+                        : error ? 'legal-acceptance-error' : undefined}
                     />
                     <span>{statements?.terms}<RequiredMark /></span>
                   </label>
+                  {validationAttempted && !termsAccepted ? (
+                    <p id="terms-acceptance-error" className="doc-gate-inline-error">
+                      {copy.requiredItemError}
+                    </p>
+                  ) : null}
                 </li>
 
                 <li className="doc-gate-step">
@@ -323,12 +339,20 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                       required
                       checked={privacyAcknowledged}
                       onChange={(event) => setPrivacyAcknowledged(event.target.checked)}
-                      aria-describedby={error
-                        ? 'privacy-acknowledgment-note legal-acceptance-error'
-                        : 'privacy-acknowledgment-note'}
+                      aria-invalid={validationAttempted && !privacyAcknowledged}
+                      aria-describedby={validationAttempted && !privacyAcknowledged
+                        ? 'privacy-acknowledgment-note privacy-acknowledgment-error'
+                        : error
+                          ? 'privacy-acknowledgment-note legal-acceptance-error'
+                          : 'privacy-acknowledgment-note'}
                     />
                     <span>{statements?.privacy}<RequiredMark /></span>
                   </label>
+                  {validationAttempted && !privacyAcknowledged ? (
+                    <p id="privacy-acknowledgment-error" className="doc-gate-inline-error">
+                      {copy.requiredItemError}
+                    </p>
+                  ) : null}
                   <p id="privacy-acknowledgment-note" className="doc-gate-note">
                     <strong>หมายเหตุ:</strong> {copy.privacyNotConsent}
                   </p>
@@ -356,10 +380,18 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
                       required
                       checked={deletionAcknowledged}
                       onChange={(event) => setDeletionAcknowledged(event.target.checked)}
-                      aria-describedby={error ? 'legal-acceptance-error' : undefined}
+                      aria-invalid={validationAttempted && !deletionAcknowledged}
+                      aria-describedby={validationAttempted && !deletionAcknowledged
+                        ? 'deletion-acknowledgment-error'
+                        : error ? 'legal-acceptance-error' : undefined}
                     />
                     <span>{statements?.deletion}<RequiredMark /></span>
                   </label>
+                  {validationAttempted && !deletionAcknowledged ? (
+                    <p id="deletion-acknowledgment-error" className="doc-gate-inline-error">
+                      {copy.requiredItemError}
+                    </p>
+                  ) : null}
                 </li>
               </ol>
 

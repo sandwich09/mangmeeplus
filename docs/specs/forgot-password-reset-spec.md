@@ -46,7 +46,7 @@ Give any user with a verified email on file a way to recover account access with
 
 ### 6a. Email capture and verification / authenticated reset entry (prerequisite)
 
-1. Trigger: an authenticated user opens the header profile menu, clicks **Reset password**, lands on the shared **Account Security** settings page, and enters an email address (first time) or changes an existing one.
+1. Trigger: an authenticated user opens the user menu from their name at the bottom of the sidebar, clicks **Reset password**, lands on the shared **Account Security** settings page, and enters an email address (first time) or changes an existing one.
 2. Main user action: submit email, confirmed with current password (same re-authentication pattern as `change-password`).
 3. System response: creates a short-lived, single-use, hashed verification token for the pending email and sends a verification email. If the user already had a verified recovery email, that currently-verified address stays active until the pending email is confirmed.
 4. Review or approval: user clicks the emailed verification link, which opens the public `/verify-email?token=...` flow.
@@ -85,7 +85,7 @@ Give any user with a verified email on file a way to recover account access with
 
 ## 8. Boundary and Ownership
 
-- Web owns: the header profile-menu `Reset password` entry for authenticated users, the public `/forgot-password`, `/reset-password`, and `/verify-email` pages, the Account Security settings page (email capture/verification, shared with [[specs/session-logout-security-spec|Session Logout and Device Security]]'s "log out of all other devices" action), and all password/email mutation UI.
+- Web owns: the sidebar footer user-menu `Reset password` entry for authenticated users, the public `/forgot-password`, `/reset-password`, and `/verify-email` pages, the Account Security settings page (email capture/verification, shared with [[specs/session-logout-security-spec|Session Logout and Device Security]]'s "log out of all other devices" action), and all password/email mutation UI.
 - LINE/LIFF owns: nothing in this flow except an optional, best-effort, informational "your password was changed" push if the user already has LINE linked. LINE cannot request, approve, or view reset state.
 - Backend/API owns: `PasswordResetToken` and email-verification-token lifecycle, eligibility checks, rate limiting, credential mutation, session revocation, audit, and the email-delivery port/adapter.
 - AI Gateway owns: nothing. AI tools must refuse any password/email-mutation request.
@@ -132,7 +132,7 @@ Give any user with a verified email on file a way to recover account access with
 
 ### Web
 
-- Main screen: header profile menu with `Reset password` for authenticated users; `ForgotPasswordPage` (single field + submit, generic success panel, no retry/resend affordance to avoid implying "did it work?"); `ResetPasswordPage` (new password + confirm-new-password, auto-redirect to dashboard on success); `VerifyEmailPage` (public one-click verification state); `AccountSecurityPage` (current email + verified/unverified state, change-email form, resend action, shared with the logout feature's "log out of all other devices" action).
+- Main screen: sidebar footer user menu with `Reset password` for authenticated users; `ForgotPasswordPage` (single field + submit, generic success panel, no retry/resend affordance to avoid implying "did it work?"); `ResetPasswordPage` (new password + confirm-new-password, auto-redirect to dashboard on success); `VerifyEmailPage` (public one-click verification state); `AccountSecurityPage` (current email + verified/unverified state, change-email form, resend action, shared with the logout feature's "log out of all other devices" action).
 - List/detail/form pattern: simple single-purpose forms, no list views.
 - Loading/cover loader scope: form-scoped `CoverLoader` on every submit; page-scoped transitional loader during the post-reset auto-redirect.
 - Empty/error/forbidden/readonly states: the login page keeps only the compact `Forgot password?` link and no longer renders a separate reset-password promo card. Missing/invalid `?token=` on page load renders the invalid-link state immediately, without showing a form the user could fill in against a dead request. Rate-limit (429) shows a distinct inline banner, not a full error-page swap, so the form stays usable after cooldown.

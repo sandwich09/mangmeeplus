@@ -29,11 +29,13 @@ import {
   bufferAtCapacity,
   fittingPrefixCount,
   joinGroupText,
+  lineWaitStatusText,
   nextFlushDelayMs,
   segmentBatch,
   sortBatchItems,
   LINE_BUFFER_ORPHAN_REPROCESS_MS,
   LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS,
+  LINE_WAIT_STATUS_DELAY_MS,
 } from '../domain/logic/line-message-buffer.logic';
 import type {
   LineBatchGroup,
@@ -559,11 +561,14 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const caption = joinGroupText(group.textItems);
     let deferText = false;
     for (let index = 0; index < group.mediaItems.length; index++) {
-      await this.startLoading(state);
       const media = group.mediaItems[index];
-      const result = await this.processWebhook.executeReceiptUpload(
-        this.toMediaEvent(state, media),
-        deferText ? '' : caption,
+      const result = await this.withWaitFeedback(
+        state,
+        lineWaitStatusText('', 'media'),
+        (beforeReply) => this.processWebhook.executeReceiptUpload(
+          { ...this.toMediaEvent(state, media), beforeReply },
+          deferText ? '' : caption,
+        ),
       );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
@@ -575,9 +580,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
   }
 
   private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[]): Promise<void> {
-    await this.startLoading(state);
     const last = textItems[textItems.length - 1];
-    await this.processWebhook.execute(this.toTextEvent(state, textItems));
+    const messageText = joinGroupText(textItems);
+    await this.withWaitFeedback(
+      state,
+      lineWaitStatusText(messageText),
+      (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
+    );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
   }
 
@@ -631,6 +640,58 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (!this.config.lineAiLoadingAnimationEnabled) return;
     if (state.chatId !== state.lineUserId) return;
     await this.lineReply.startLoadingAnimation(state.lineUserId).catch(() => {});
+  }
+
+  /** Loading is immediate. A single contextual text is pushed only when the
+   * turn is still running after 2 s, and final delivery waits for that push. */
+  private async withWaitFeedback<T>(
+    state: ChatState,
+    statusText: string,
+    turn: (beforeReply: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    const finish = await this.startWaitFeedback(state, statusText);
+    try {
+      return await turn(finish);
+    } finally {
+      await finish();
+    }
+  }
+
+  private async startWaitFeedback(state: ChatState, statusText: string): Promise<() => Promise<void>> {
+    if (!this.config.lineAiLoadingAnimationEnabled || state.chatId !== state.lineUserId) {
+      return async () => {};
+    }
+
+    await this.startLoading(state);
+    let finished = false;
+    let statusDelivery: Promise<void> | null = null;
+    let timer: NodeJS.Timeout | null = setTimeout(() => {
+      timer = null;
+      if (finished) return;
+      statusDelivery = this.sendWaitStatus(state, statusText);
+    }, LINE_WAIT_STATUS_DELAY_MS);
+
+    const settle = async () => {
+      if (!finished) {
+        finished = true;
+        if (timer) clearTimeout(timer);
+        timer = null;
+      }
+      await statusDelivery;
+    };
+    return settle;
+  }
+
+  private async sendWaitStatus(state: ChatState, statusText: string): Promise<void> {
+    const result = await this.lineReply
+      .sendPush(state.chatId, [this.lineReply.buildTextMessage(statusText)])
+      .catch(() => 'failed_other' as const);
+    if (result !== 'ok') {
+      this.logger.warn({ msg: 'LINE waiting status delivery failed', result });
+      return;
+    }
+    // A bot message dismisses LINE's indicator; restore it before final reply.
+    await this.startLoading(state);
   }
 
   /** SIGTERM (every deploy): flush all open buffers and drain in-flight work,

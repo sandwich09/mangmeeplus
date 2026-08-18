@@ -72,6 +72,10 @@ export function hasUnresolvedDuplicateWarning(duplicateStatus: DuplicateStatus):
   return duplicateStatus === 'POSSIBLE_DUPLICATE' || duplicateStatus === 'CONFIRMED_DUPLICATE';
 }
 
+export function canRunExpenseDuplicateCheck(status: ExpenseStatus): boolean {
+  return ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(status);
+}
+
 export function aiGrandTotalValue(aiVerifiedFieldsJson: Record<string, unknown> | null): string | null {
   const rawAiTotal = aiVerifiedFieldsJson?.['grandTotalAmount'];
   return (typeof rawAiTotal === 'string' || typeof rawAiTotal === 'number') && String(rawAiTotal).trim() !== ''
@@ -625,6 +629,13 @@ export function expenseRatePercent(value: string | null): string | null {
   if (value === null || value.trim() === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? String(Number((parsed * 100).toFixed(2))) : null;
+}
+
+/** One value drives the bill-level WHT control. `null` means existing lines disagree, so the UI
+ *  leaves them untouched until the reviewer deliberately enters a replacement rate. */
+export function expenseDocumentWhtRate(lines: Array<{ whtRate: string | null }>): string | null {
+  const rates = lines.map((line) => line.whtRate?.trim() ?? '');
+  return rates.every((rate) => rate === rates[0]) ? rates[0] ?? '' : null;
 }
 
 /** Spec §19g decision 4 — the three ways a reviewer can express the same stored fraction. */

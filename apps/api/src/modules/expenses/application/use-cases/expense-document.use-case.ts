@@ -1,4 +1,5 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
@@ -11,6 +12,15 @@ import type {
   ExpenseCategorySummary,
 } from '@watchdog-bms/contracts';
 import { todayCivilDate } from '@watchdog-bms/contracts';
+import {
+  buildInitialLineExpenseDraftContinuation,
+  formatLineExpenseDraftReply,
+  isClearlyNonExpenseDirection,
+  isLineExpenseDraftStartEligible,
+  materializedLineExpenseDraftItems,
+  parseLineExpenseDraftContinuation,
+  splitLineExpenseDraftReply,
+} from '../../domain/logic/line-expense-draft-conversation.logic';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
   return ctx.permissions.includes(perm);
@@ -18,7 +28,7 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
 
 export class LineTextExpenseCaptureIncompleteError extends BadRequestException {
   constructor() {
-    super('LINE text expense capture requires a source-grounded amount and purpose/category');
+    super('LINE text expense capture requires a source-grounded expense purpose or item');
   }
 }
 
@@ -46,6 +56,8 @@ export class CaptureLineExpenseNoteUseCase {
       groundingTexts?: string[];
       lineMessageId: string;
       lineEventId: string;
+      /** Default-off rollout gate. False preserves the proven single-turn capture behavior. */
+      draftConversationEnabled?: boolean;
       /** Bounded hash of the chat this was captured in — a later correction may only target
        *  records captured in the SAME chat. Hash, never the raw LINE/group id. */
       chatKeyHash?: string;
@@ -54,24 +66,51 @@ export class CaptureLineExpenseNoteUseCase {
        *  message inherit the same request and capture it twice. */
       consumption?: ClarificationConsumption;
     },
-  ): Promise<{ expense: ExpenseRecord; warnings: string[]; insertedAmount: string | null; categoryId: string | null; categoryName: string | null }> {
+  ): Promise<{
+    expense: ExpenseRecord;
+    warnings: string[];
+    insertedAmount: string | null;
+    categoryId: string | null;
+    categoryName: string | null;
+    replyTexts: string[];
+  }> {
     if (!hasPerm(ctx, 'expense.receipt.line_upload') && !hasPerm(ctx, 'expense.receipt.upload') && !hasPerm(ctx, 'expense.create')) {
       throw new ForbiddenException('Missing permission: expense.receipt.line_upload');
     }
+    const draftConversationEnabled = cmd.draftConversationEnabled === true;
 
     // Idempotency by LINE message id: retried webhooks return the existing draft.
     const existing = await this.repo.findByLineMessageId(ctx.companyId, cmd.lineMessageId);
     if (existing) {
-      return { expense: existing, warnings: ['duplicate_line_message'], insertedAmount: existing.grandTotalAmount, categoryId: existing.expenseCategoryId, categoryName: null };
+      const categories = await this.repo.listCategories(ctx.companyId);
+      const state = parseLineExpenseDraftContinuation(existing.sourceChannelMetadataJson?.['lineExpenseDraftContinuation']);
+      const replyTexts = draftConversationEnabled && existing.status === 'DRAFT' && state
+        && state.userId === ctx.userId
+        && (!cmd.chatKeyHash || state.chatKeyHash === cmd.chatKeyHash)
+        ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state, categories, label: existing.expenseNumber ?? existing.id }))
+        : [];
+      return {
+        expense: existing,
+        warnings: ['duplicate_line_message'],
+        insertedAmount: Number(existing.grandTotalAmount) > 0 ? existing.grandTotalAmount : null,
+        categoryId: existing.expenseCategoryId,
+        categoryName: null,
+        replyTexts,
+      };
     }
 
     const activeCategories = await this.repo.listCategories(ctx.companyId);
-    if (!isLineTextExpenseCaptureEligible(
+    const completeCapture = isLineTextExpenseCaptureEligible(
       cmd.messageText,
       cmd.captureHints ?? {},
       new Map(activeCategories.map((category) => [category.id, category.name])),
       cmd.groundingTexts,
-    )) {
+    );
+    if (draftConversationEnabled && isClearlyNonExpenseDirection(cmd.messageText)) {
+      throw new LineTextExpenseCaptureIncompleteError();
+    }
+    const conversationEligible = draftConversationEnabled && isLineExpenseDraftStartEligible(cmd.messageText, cmd.captureHints);
+    if (!completeCapture && !conversationEligible) {
       throw new LineTextExpenseCaptureIncompleteError();
     }
     const validated = validateCaptureHints(cmd.captureHints ?? {}, new Set(activeCategories.map((c) => c.id)));
@@ -87,67 +126,176 @@ export class CaptureLineExpenseNoteUseCase {
 
     const description = validated.description ?? cmd.messageText.trim().slice(0, 120);
     const amount = validated.amount;
+    const provisionalDate = todayCivilDate();
+    const initialState = conversationEligible ? buildInitialLineExpenseDraftContinuation({
+      workflowId: randomUUID(),
+      companyId: ctx.companyId,
+      userId: ctx.userId,
+      expenseId: 'pending',
+      chatKeyHash: cmd.chatKeyHash ?? createHash('sha256').update(cmd.lineMessageId).digest('hex').slice(0, 24),
+      targetRevision: new Date().toISOString(),
+      provisionalExpenseDate: provisionalDate,
+      messageText: cmd.messageText,
+      webhookEventId: cmd.lineEventId,
+      hints: {
+        ...(cmd.captureHints ?? {}),
+        sourceDocumentType: validated.sourceDocumentType,
+        vatMode: validated.vatMode,
+        ...(validated.sourceDocumentLanguage ? { sourceDocumentLanguage: validated.sourceDocumentLanguage } : {}),
+        ...(validated.vendorName ? { vendorName: validated.vendorName } : {}),
+        ...(validated.description ? { description: validated.description } : {}),
+        ...(validated.expenseDate ? { expenseDate: validated.expenseDate } : {}),
+        ...(validated.amount ? { amount: validated.amount } : {}),
+        ...(validated.expenseCategoryId ? { expenseCategoryId: validated.expenseCategoryId } : {}),
+      },
+      categories: activeCategories,
+    }) : undefined;
+    const draftLines = initialState
+      ? materializedLineExpenseDraftItems(initialState)
+      : amount
+        ? [{ lineNumber: 1, description, quantity: '1', unitPrice: amount, expenseCategoryId: validated.expenseCategoryId ?? undefined }]
+        : [];
 
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
-      expenseDate: validated.expenseDate ?? todayCivilDate(),
+      expenseDate: initialState?.header.expenseDate ?? validated.expenseDate ?? provisionalDate,
       vatMode: validated.vatMode,
       inputVatClaimStatus: 'NEEDS_REVIEW',
-      expenseCategoryId: validated.expenseCategoryId ?? undefined,
+      ...(!initialState && validated.expenseCategoryId ? { expenseCategoryId: validated.expenseCategoryId } : {}),
       missingReceiptReason: 'LINE text-only expense note; evidence file not attached',
-      note: description,
-      lines: amount
-        ? [{ lineNumber: 1, description, quantity: '1', unitPrice: amount, expenseCategoryId: validated.expenseCategoryId ?? undefined }]
-        : [],
+      note: initialState?.header.businessPurpose ?? description,
+      lines: draftLines,
     });
 
-    const updated = await this.repo.updateExpense({
-      id: expense.id,
-      companyId: ctx.companyId,
-      updatedByUserId: ctx.userId,
-      status: 'NEEDS_REVIEW',
-      lineMessageId: cmd.lineMessageId,
-      lineEventId: cmd.lineEventId,
-      sourceDocumentType,
-      ...(validated.sourceDocumentLanguage ? { sourceDocumentLanguage: validated.sourceDocumentLanguage } : {}),
-      taxEvidenceStatus: taxEvidence.taxEvidenceStatus,
-      taxEvidenceReasonCode: taxEvidence.taxEvidenceReasonCode,
-      ...(validated.vendorName ? { vendorNameSnapshot: validated.vendorName } : {}),
-      aiVerificationStatus: 'NEEDS_REVIEW',
-      aiVerificationSummaryJson: {
-        status: 'TEXT_NOTE_SEMANTIC_CAPTURE',
-        insertedFields: {
-          amount: amount ?? undefined,
-          expenseDate: validated.expenseDate ?? undefined,
-          expenseCategoryId: validated.expenseCategoryId ?? undefined,
-          sourceDocumentType,
-          vendorName: validated.vendorName ?? undefined,
-        },
-        warnings: validated.warnings,
-        missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category'])],
-        nextAction: 'review_in_web',
-      },
-      sourceChannelMetadataJson: {
-        channel: 'LINE', kind: 'text_note', messagePreview: cmd.messageText.slice(0, 120),
-        ...(cmd.chatKeyHash ? { chatKeyHash: cmd.chatKeyHash } : {}),
-      },
-    }, consumptionWithinTx(cmd.consumption));
+    const state = initialState ? {
+      ...initialState,
+      expenseId: expense.id,
+      targetRevision: expense.updatedAt?.toISOString?.() ?? initialState.targetRevision,
+    } : undefined;
 
-    void this.audit.log({
+    // Pin the row and continuation to one exact revision. Without this explicit timestamp Prisma's
+    // @updatedAt would advance the row while metadata kept the previous value, making every later
+    // answer look current (or every honest stale check fail).
+    const priorRevision = expense.updatedAt instanceof Date
+      ? expense.updatedAt
+      : new Date(state?.targetRevision ?? Date.now());
+    const continuationRevision = state
+      ? new Date(Math.max(Date.now(), priorRevision.getTime() + 1))
+      : undefined;
+    if (state && continuationRevision) state.targetRevision = continuationRevision.toISOString();
+
+    const lineDraftAudit = state ? {
       companyId: ctx.companyId, actorUserId: ctx.userId,
-      action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: expense.id,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { kind: 'text_note', insertedAmount: amount ?? null, categoryId: validated.expenseCategoryId ?? null, warnings: validated.warnings },
-    });
+      action: 'expense.line_draft.start', targetType: 'expense_record', targetId: expense.id,
+      requestId: ctx.requestId, result: 'SUCCESS' as const, riskLevel: 'MEDIUM' as const,
+      metadataJson: {
+        workflowId: state.workflowId,
+        chatKeyHash: state.chatKeyHash,
+        previousVersion: 0,
+        nextVersion: state.version,
+        webhookEventIds: [cmd.lineEventId],
+        questionIds: state.unresolvedQuestions.map((question) => question.id),
+      },
+    } : undefined;
+    const consumeWithinTx = consumptionWithinTx(cmd.consumption);
+
+    let updated: ExpenseRecord;
+    try {
+      updated = await this.repo.updateExpense({
+        id: expense.id,
+        companyId: ctx.companyId,
+        updatedByUserId: ctx.userId,
+        ...(state ? { expectedUpdatedAt: priorRevision, updatedAt: continuationRevision } : {}),
+        status: state ? 'DRAFT' : 'NEEDS_REVIEW',
+        lineMessageId: cmd.lineMessageId,
+        lineEventId: cmd.lineEventId,
+        sourceDocumentType,
+        ...(validated.sourceDocumentLanguage ? { sourceDocumentLanguage: validated.sourceDocumentLanguage } : {}),
+        taxEvidenceStatus: taxEvidence.taxEvidenceStatus,
+        taxEvidenceReasonCode: taxEvidence.taxEvidenceReasonCode,
+        ...(validated.vendorName ? { vendorNameSnapshot: validated.vendorName } : {}),
+        aiVerificationStatus: 'NEEDS_REVIEW',
+        aiVerificationSummaryJson: state ? {
+          status: 'TEXT_NOTE_SEMANTIC_CAPTURE',
+          insertedFields: {
+            amount: draftLines.length ? validated.amount ?? undefined : undefined,
+            expenseDate: validated.expenseDate ?? undefined,
+            sourceDocumentType,
+            vendorName: validated.vendorName ?? undefined,
+          },
+          categorySuggestions: state.items.flatMap((item) => item.suggestedCategoryId
+            ? [{ itemRef: item.itemRef, expenseCategoryId: item.suggestedCategoryId }]
+            : []),
+          warnings: validated.warnings,
+          missingFields: [...new Set(['receipt_evidence', ...state.unresolvedQuestions.map((question) => question.field)])],
+          lineDraftQuestionIds: state.unresolvedQuestions.map((question) => question.id),
+          collectionState: state.status,
+          collectionVersion: state.version,
+          nextAction: 'review_in_web',
+        } : {
+          status: 'TEXT_NOTE_SEMANTIC_CAPTURE',
+          insertedFields: {
+            amount: amount ?? undefined,
+            expenseDate: validated.expenseDate ?? undefined,
+            expenseCategoryId: validated.expenseCategoryId ?? undefined,
+            sourceDocumentType,
+            vendorName: validated.vendorName ?? undefined,
+          },
+          warnings: validated.warnings,
+          missingFields: ['receipt_evidence', ...(amount ? [] : ['amount']), ...(validated.expenseCategoryId ? [] : ['category'])],
+          nextAction: 'review_in_web',
+        },
+        sourceChannelMetadataJson: {
+          channel: 'LINE', kind: 'text_note', messagePreview: cmd.messageText.slice(0, 120),
+          ...(cmd.chatKeyHash ? { chatKeyHash: cmd.chatKeyHash } : {}),
+          ...(state ? { lineExpenseDraftContinuation: state as unknown as Record<string, unknown> } : {}),
+        },
+      }, consumeWithinTx || lineDraftAudit
+        ? async (tx) => {
+          await consumeWithinTx?.(tx);
+          if (lineDraftAudit) await this.audit.log(lineDraftAudit, tx);
+        }
+        : undefined);
+    } catch (error) {
+      // The line idempotency key is attached by the update above. If that transaction rolls back,
+      // remove only the untouched row we just created; otherwise a retry could create a second
+      // orphan that findByLineMessageId cannot discover.
+      if (state) await this.repo.deleteDraftExpense(ctx.companyId, expense.id, priorRevision);
+      throw error;
+    }
+
+    if (!state) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: expense.id,
+        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
+        metadataJson: {
+          kind: 'text_note', insertedAmount: amount ?? null,
+          categoryId: validated.expenseCategoryId ?? null, warnings: validated.warnings,
+        },
+      });
+    }
     void this.outbox.append('expense.line_receipt_uploaded', 'expense_record', expense.id, {
       companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expense.id, requestId: ctx.requestId,
       occurredAt: new Date().toISOString(), data: { expenseId: expense.id, kind: 'text_note' },
     });
 
-    const categoryName = validated.expenseCategoryId
-      ? activeCategories.find((c) => c.id === validated.expenseCategoryId)?.name ?? null
+    const suggestedCategoryId = state?.items.find((item) => item.suggestedCategoryId)?.suggestedCategoryId
+      ?? validated.expenseCategoryId;
+    const categoryName = suggestedCategoryId
+      ? activeCategories.find((c) => c.id === suggestedCategoryId)?.name ?? null
       : null;
-    return { expense: updated, warnings: validated.warnings, insertedAmount: amount, categoryId: validated.expenseCategoryId, categoryName };
+    const replyTexts = state
+      ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state, categories: activeCategories, label: updated.expenseNumber ?? updated.id }))
+      : [];
+    return {
+      expense: updated,
+      warnings: validated.warnings,
+      insertedAmount: state ? (draftLines.length ? updated.grandTotalAmount : null) : amount,
+      categoryId: state ? updated.expenseCategoryId ?? null : validated.expenseCategoryId,
+      categoryName,
+      replyTexts,
+    };
   }
 }
 
