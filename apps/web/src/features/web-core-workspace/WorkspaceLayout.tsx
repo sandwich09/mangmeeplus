@@ -165,7 +165,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.
         userName={stripThaiTitlePrefix(session.displayName) || undefined}
-        userRole={session.roles[0]}
+        userRoles={session.roles}
         showAccountSecurity={[
           'account.password.change',
           'account.identity.link',

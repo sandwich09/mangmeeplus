@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { hasPrivilegedGrant, type EmployeeCredentialHandoff, type EmployeeSummary, type MenuDefinition, type PermissionMatrix as PermissionMatrixDto, type RoleSummary } from '@watchdog-bms/contracts';
+import type { EmployeeCredentialHandoff, EmployeeSummary, MenuDefinition, PermissionMatrix as PermissionMatrixDto, RoleSummary } from '@watchdog-bms/contracts';
 import {
   BellIcon,
   CalendarIcon,
@@ -39,7 +39,8 @@ import {
   updateEmployee,
 } from './employee-access.api';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
-import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
+import { assignableRoleOptions, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
@@ -200,7 +201,7 @@ const MVP1_INDIVIDUAL_PERMISSION_MENU_IDS = new Set<MenuDefinition['id']>([
 
 type SaveKey = 'role' | 'branch' | 'status';
 
-export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [] }: { companyId: string; viewerPermissions?: string[] }) {
+export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId }: { companyId: string; viewerPermissions?: string[]; viewerUserId?: string }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -311,6 +312,15 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const selectedIsOwner = selectedEmployee?.roles.some((role) => role.key === 'OWNER') ?? false;
   const selectedIsDraft = selectedEmployee?.status === 'DRAFT';
   const selectedActive = selectedEmployee?.status === 'ACTIVE';
+  // Options come from the server's own grant decision; the current role stays pinned (spec R1/R3).
+  const roleOptions = useMemo(() => assignableRoleOptions(roles, selectedRole?.id), [roles, selectedRole]);
+  const rolePickerReadOnly = isRoleFieldReadOnly({
+    canEditEmployee,
+    isOwnerTarget: selectedIsOwner,
+    isSelfTarget: isSelfEmployee(selectedEmployee, viewerUserId),
+    optionCount: roleOptions.length,
+  });
+
   const selectedRoleNames = selectedEmployee?.roles.map((role) => role.name).join(', ') ?? '';
   const accessProjection = useMemo(
     () => projectGrantedMenus(
@@ -348,7 +358,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   function editSelectedEmployee() {
-    if (!selectedEmployee || !canEditEmployee) return;
+    // The wizard always saves roleIds and the API rejects any role write on an OWNER target, so
+    // an owner row has no non-403 edit path (spec R5) — same guard as deleteSelectedEmployee.
+    if (!selectedEmployee || selectedIsOwner || !canEditEmployee) return;
     setEmployeeMenuOpen(false);
     router.push(`/companies/${companyId}/settings/employees?edit=${encodeURIComponent(selectedEmployee.id)}`);
   }
@@ -377,10 +389,17 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function changeSelectedRole(roleId: string) {
-    if (!selectedEmployee || selectedIsOwner || !canEditEmployee) return;
+    if (!selectedEmployee || rolePickerReadOnly) return;
     setRolePickerOpen(false);
     await withBusy('role', async () => {
-      await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+      try {
+        await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+      } catch (e) {
+        // Permissions can be revoked mid-session: refetch so the picker stops offering what the
+        // server now refuses (spec R10). withBusy still renders the generic forbidden message.
+        if (statusOf(e) === 403) await reload();
+        throw e;
+      }
       await reload();
     }, 'เปลี่ยนบทบาทพนักงานแล้ว');
   }
@@ -537,7 +556,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         </span>
                       </div>
                       <div className="relative mt-1" ref={rolePickerRef}>
-                        {selectedIsOwner || !canEditEmployee ? (
+                        {rolePickerReadOnly ? (
                           <RoleBadge role={selectedRole} />
                         ) : (
                           <button
@@ -552,10 +571,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
                           </button>
                         )}
-                        {rolePickerOpen && !selectedIsOwner && canEditEmployee && (
+                        {rolePickerOpen && !rolePickerReadOnly && (
                           <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                            {/* OWNER/SYSTEM_ADMIN are never assignable; without access.role.manage the API also rejects people-manager roles — hide what would 403. */}
-                            {roles.filter((r) => !['OWNER', 'SYSTEM_ADMIN'].includes(r.key) && r.status === 'ACTIVE' && (canManageRoles || !hasPrivilegedGrant(r.permissionKeys))).map((role) => (
+                            {roleOptions.map((role) => (
                               <button
                                 key={role.id} type="button" role="option" aria-selected={role.id === selectedRole.id}
                                 onClick={() => void changeSelectedRole(role.id)}
@@ -568,7 +586,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           </div>
                         )}
                       </div>
-                      {selectedIsOwner && <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</p>}
+                      {selectedIsOwner
+                        ? <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</p>
+                        : isSelfEmployee(selectedEmployee, viewerUserId) && <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>}
                     </div>
                   )}
 

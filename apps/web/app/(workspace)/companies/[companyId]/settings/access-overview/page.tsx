@@ -7,5 +7,5 @@ export default async function SettingsAccessOverviewPage({ params }: { params: P
   const session = await fetchServerSession(companyId);
   const forbidden = requireRoutePermission(session, '/settings/access-overview');
   if (forbidden) return forbidden;
-  return <IndividualPermissionsPrototypePage companyId={companyId} viewerPermissions={session?.permissions ?? []} />;
+  return <IndividualPermissionsPrototypePage companyId={companyId} viewerPermissions={session?.permissions ?? []} viewerUserId={session?.userId} />;
 }
