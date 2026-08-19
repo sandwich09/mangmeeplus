@@ -5,6 +5,7 @@ import {
   buildQrCells,
   isValidThaiMobile,
   readTokenParam,
+  signInAgainPath,
   validatePasswordConfirmation,
   verifyOtpInput,
 } from './auth.logic';
@@ -56,5 +57,13 @@ describe('auth.logic', () => {
     assert.notDeepEqual(a, buildQrCells(10));
     // top-left finder corner cell is always dark
     assert.equal(a[0], true);
+  });
+
+  it('keeps the blocked destination in the sign-in link', () => {
+    assert.equal(
+      signInAgainPath('/companies/c1/expenses/e1', '?tab=signatures'),
+      '/login?next=%2Fcompanies%2Fc1%2Fexpenses%2Fe1%3Ftab%3Dsignatures',
+    );
+    assert.equal(signInAgainPath('/companies/c1/dashboard'), '/login?next=%2Fcompanies%2Fc1%2Fdashboard');
   });
 });

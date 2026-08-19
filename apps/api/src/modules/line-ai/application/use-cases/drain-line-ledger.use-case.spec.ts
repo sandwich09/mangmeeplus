@@ -291,6 +291,30 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(acks.length, 0);
   });
 
+  it('sends the company entitlement set with the drained turn, like the live webhook does', async () => {
+    const { useCase, turnRequests } = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 2, idleMs: 5000 }],
+      entitlements: [
+        { featureKey: 'ai_line_assistant', enabled: true },
+        { featureKey: 'expenses', enabled: true },
+        { featureKey: 'crm', enabled: false },
+      ],
+    });
+    await useCase.execute(20, NOW);
+    // A drained turn must not describe the assistant's capabilities differently from a live one.
+    assert.ok(turnRequests[0].entitledFeatureKeys.includes('expenses'));
+    assert.ok(!turnRequests[0].entitledFeatureKeys.includes('crm'));
+  });
+
+  it('omits entitlements for a legacy company with no rows (fail-open)', async () => {
+    const { useCase, turnRequests } = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 2, idleMs: 5000 }],
+      entitlements: [],
+    });
+    await useCase.execute(20, NOW);
+    assert.equal(turnRequests[0].entitledFeatureKeys, undefined);
+  });
+
   it('re-runs an unacked turn entry after a crash (at-least-once, read-only safe)', async () => {
     const { useCase, acks, pushes, turnRequests, aiTurnUpdates, eventUpdates } = makeUseCase({
       claims: [{ entry: entry({ kind: 'turn', state: 'pending', text: 'ยอดขายวันนี้ กับของใกล้หมด' }), deliveryCount: 2, idleMs: 300000 }],

@@ -90,3 +90,12 @@ export function authErrorMessage(error: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * Sign-in URL that keeps the page the user was trying to open. The company-access screen is
+ * usually reached from a LINE deep link opened in a browser still signed in as another account,
+ * so the sign-in after it must land on that link, not on the remembered home.
+ */
+export function signInAgainPath(pathname: string, search = ''): string {
+  return `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
+}

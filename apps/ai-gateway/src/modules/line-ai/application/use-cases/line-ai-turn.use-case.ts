@@ -173,7 +173,10 @@ export class LineAiTurnUseCase {
         locale: req.userContext.locale,
         permissions: req.userContext.permissions,
         entitlementDeniedPermissions: req.userContext.entitlementDeniedPermissions,
-        entitledFeatureKeys: req.userContext.entitledFeatureKeys,
+        // One field on the wire feeds both destinations the artifact rebuilds (userContext for tool
+        // gating, request level for the capability answer). userContext is the richer source; the
+        // request-level copy is the fallback for callers that only populate that one.
+        entitledFeatureKeys: req.userContext.entitledFeatureKeys ?? req.entitledFeatureKeys,
         actorDelegations: req.actorDelegations,
         modelPolicy: req.modelPolicy,
         attachments: req.attachments?.map((a) => ({

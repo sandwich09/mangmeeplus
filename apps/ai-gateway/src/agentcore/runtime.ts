@@ -55,6 +55,9 @@ export type RuntimePayload = {
   locale?: string;
   permissions?: string[];
   entitlementDeniedPermissions?: Record<string, string>;
+  /** Company feature entitlements. Absent = legacy fail-open, same as an older gateway that does
+   *  not send them; the artifact must keep answering, just without entitlement-exact copy.
+   *  `null` is the explicit server-resolved "no entitlement rows" form of the same fail-open. */
   entitledFeatureKeys?: string[] | null;
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
@@ -273,6 +276,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     modelPolicy: p.modelPolicy,
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
+    ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     userContext: {
       lineUserId: '',
       internalUserId: p.userId,

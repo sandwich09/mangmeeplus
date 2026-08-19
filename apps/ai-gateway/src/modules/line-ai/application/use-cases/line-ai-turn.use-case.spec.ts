@@ -196,6 +196,24 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
     assert.deepEqual(invokeInput.entitledFeatureKeys, ['product_catalog']);
   });
 
+  it('forwards company feature entitlements to the AgentCore runtime', async () => {
+    let invokeInput: any;
+    const agentcoreRuntime = {
+      invoke: async (input: any) => {
+        invokeInput = input;
+        return { turnId: 't-1', replyText: 'ok', plan: { status: 'ROUTABLE', intents: [] }, durationMs: 1, refused: false, sourceRefs: [], webLinks: [], toolsInvoked: [] };
+      },
+    } as any;
+    const config = { lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), config, agentcoreRuntime);
+
+    await useCase.execute({ ...validReq, entitledFeatureKeys: ['crm', 'expenses'] });
+    assert.deepEqual(invokeInput.entitledFeatureKeys, ['crm', 'expenses']);
+
+    await useCase.execute(validReq);
+    assert.equal(invokeInput.entitledFeatureKeys, undefined, 'absent stays absent — legacy fail-open');
+  });
+
   it('maps runtime tool and source lineage onto the turn response', async () => {
     const sourceRef = { label: 'สินค้าใกล้หมด', module: 'inventory', entityType: 'product', permissionChecked: true as const };
     const webLink = { label: 'สินค้าใกล้หมด', path: '/inventory/low-stock' };

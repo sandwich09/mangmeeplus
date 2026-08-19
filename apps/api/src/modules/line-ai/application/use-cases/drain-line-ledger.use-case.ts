@@ -23,7 +23,8 @@ import { AiGatewayClient } from '../../infrastructure/ai-gateway.client';
 import { LineReplyAdapter } from '../../infrastructure/line-reply.adapter';
 import { buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
 import { LineAiLedgerService, type LedgerEntry } from '../line-ai-ledger.service';
-import { formatLineReply, lineAssistantDisabled } from './process-line-webhook.use-case';
+import { formatLineReply, lineAssistantDisabledFor } from './process-line-webhook.use-case';
+import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
 import { emitLineAiTerminalOutcome, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
@@ -124,7 +125,8 @@ export class DrainLineLedgerUseCase {
     // Freeze in place (owner decision 2026-08-04): the family may have been switched off while this
     // entry sat in the ledger. Terminal ack, not a retry — a re-enable must not revive a turn from
     // before the cutoff.
-    if (await lineAssistantDisabled(this.prisma, entry.companyId)) {
+    const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, entry.companyId);
+    if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       // The claim delay is min-idle (seconds), NOT the 15-minute context window — a queued `turn`
       // is usually still inside it, with a real user waiting on an answer. Dropping it silently
       // looks like the assistant hung, so send the SAME Thai refusal the synchronous webhook sends,
@@ -168,6 +170,9 @@ export class DrainLineLedgerUseCase {
       messageText: entry.text,
       messagePreviewHash: entry.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16) || 'ledger',
       ...(entry.valueCandidates ? { valueCandidates: entry.valueCandidates } : {}),
+      // Same entitlement set the live webhook sends, so a drained turn cannot describe the
+      // assistant's capabilities differently from a turn answered in the moment.
+      ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
     };
     const response = await this.aiGateway.requestLineTurn(turnRequest);
 

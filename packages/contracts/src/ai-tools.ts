@@ -113,6 +113,87 @@ export function hasToolFeature(
   return required.length === 0 || required.some((key) => entitled.has(key));
 }
 
+/**
+ * Capability groups the LINE assistant may describe itself with, in reply order.
+ *
+ * Grouped by FEATURE KEY, not by `businessSubjects`: a tool's secondary subject would otherwise
+ * advertise a module the company never bought — measured case, `dashboard.get_business_health_summary`
+ * declares subject `report` and lit a "finance" line on a company with reports, ledger and banking
+ * all off. Feature keys are the axis `hasToolFeature` actually gates on, so a group can only appear
+ * when a tool behind it would really run. Copy lives in the gateway, keyed by these ids, so the
+ * Thai and English replies can never describe different capability sets.
+ */
+export const LINE_CAPABILITY_GROUPS = [
+  { id: 'sales', featureKeys: ['sales_documents'] },
+  // `reimbursements` carries no feature key at all (owner decision 2026-08-10: its reads stay alive
+  // after the feature is switched off so in-flight claims can clear), so it is matched by module —
+  // otherwise a claims-only approver would be told the assistant can do nothing for them.
+  { id: 'expenses', featureKeys: ['expenses', 'expenses.list'], sourceModules: ['reimbursements'] },
+  { id: 'finance', featureKeys: ['double_entry_ledger', 'bank_reconciliation', 'reports'] },
+  { id: 'tax', featureKeys: ['thai_tax'] },
+  { id: 'inventory', featureKeys: ['inventory', 'product_catalog'] },
+  { id: 'customers', featureKeys: ['crm', 'crm.inbox'] },
+  { id: 'bookings', featureKeys: ['crm.bookings'] },
+  { id: 'procurement', featureKeys: ['procurement'] },
+  // Assigned workflow tasks and run failures are "pending work and alerts" to the user, and the old
+  // hardcoded copy claimed them under that wording; they keep their own feature gate.
+  { id: 'alerts', featureKeys: ['dashboard_notifications', 'workflow_automation'] },
+] as const satisfies ReadonlyArray<{
+  id: string;
+  featureKeys: readonly string[];
+  /** Matched in addition to featureKeys, for modules that are deliberately not feature-gated. */
+  sourceModules?: readonly string[];
+}>;
+
+export type LineCapabilityGroupId = (typeof LINE_CAPABILITY_GROUPS)[number]['id'];
+
+/**
+ * The receipt→expense-draft claim is NOT derived from a tool. `accounting.capture_receipt_evidence`
+ * requires `expense.receipt.upload`, but the path that actually captures a LINE receipt accepts any
+ * of the three below (process-line-webhook `canCaptureExpense`), and MANAGER/ACCOUNTANT/MARKETING
+ * hold only `expense.receipt.line_upload` — gating on the tool would hide a capability they have.
+ * Same list as the menu's camera button, so text and menu cannot disagree.
+ */
+export const LINE_RECEIPT_CAPTURE_PERMISSIONS = [
+  'expense.receipt.line_upload',
+  'expense.receipt.upload',
+  'expense.create',
+] as const;
+export const LINE_RECEIPT_CAPTURE_FEATURE_KEY = 'expenses.upload';
+
+/**
+ * The capability groups this caller can actually use right now: a group appears only when at least
+ * one LINE tool in it passes BOTH runtime gates (permissions ∧ entitlement). `entitled === null` is
+ * the legacy fail-open company, same convention as `hasToolFeature`.
+ */
+export function usableCapabilityGroupIds(
+  permissions: readonly string[],
+  entitled: ReadonlySet<string> | null,
+): LineCapabilityGroupId[] {
+  const usable = LINE_TOOL_REGISTRY.filter(
+    (tool) => hasToolPermissions(tool, permissions) && hasToolFeature(tool, entitled),
+  );
+  return LINE_CAPABILITY_GROUPS.filter((group) => usable.some((tool) => inCapabilityGroup(tool, group))).map((group) => group.id);
+}
+
+/** A tool belongs to a group when the group owns one of its feature keys, or its whole module. */
+export function inCapabilityGroup(
+  tool: Pick<ToolMeta, 'featureKeys' | 'sourceModule'>,
+  group: { featureKeys: readonly string[]; sourceModules?: readonly string[] },
+): boolean {
+  return toolFeatureKeys(tool).some((key) => group.featureKeys.includes(key))
+    || (group.sourceModules?.includes(tool.sourceModule) ?? false);
+}
+
+/** Whether the receipt→expense-draft sentence may be advertised to this caller. */
+export function canAdvertiseReceiptCapture(
+  permissions: readonly string[],
+  entitled: ReadonlySet<string> | null,
+): boolean {
+  const featureOn = entitled === null || entitled.has(LINE_RECEIPT_CAPTURE_FEATURE_KEY);
+  return featureOn && LINE_RECEIPT_CAPTURE_PERMISSIONS.some((permission) => permissions.includes(permission));
+}
+
 export const ACCOUNTING_DOCUMENT_VIEW_PERMISSIONS = [
   'accounting.document.read',
   'accounting.document.read_related',

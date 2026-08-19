@@ -374,7 +374,12 @@ export class OrchestratorAgent {
     const toolData = composableOutputs.flatMap((o) => o.toolData ?? []);
     let replyText = composed.replyText;
     if (zeroToolIntent === 'capability_help') {
-      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale);
+      // The self-description is filtered by the same two gates a real answer would hit, so it can
+      // never advertise a capability this caller's permissions or this company's features refuse.
+      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale, {
+        permissions: req.userContext.permissions,
+        ...(req.entitledFeatureKeys && { entitledFeatureKeys: req.entitledFeatureKeys }),
+      });
     } else if (zeroToolIntent === 'casual_conversation') {
       replyText = await composer.composeCasual(req.messageText, provider, {
         planLanguage: plan.language,
