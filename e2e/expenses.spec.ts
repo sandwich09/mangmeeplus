@@ -131,6 +131,31 @@ test.describe('EXP — expenses + receipts', () => {
     await expect(authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ })).toBeVisible();
   });
 
+  test('EXP-04A @p1 cancellation dialog keeps or rejects a draft with API truth', async ({ authedPage, api, companyId }) => {
+    const created = await createExpense(api, companyId);
+    await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
+    await authedPage.getByRole('button', { name: 'ตรวจก่อนส่ง' }).click();
+    await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
+
+    const dialog = authedPage.getByRole('dialog', { name: 'ยืนยันการยกเลิกรายการ' });
+    const reason = dialog.getByRole('textbox', { name: 'เหตุผลการยกเลิกรายการ' });
+    const confirm = dialog.getByRole('button', { name: 'ยืนยัน', exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(confirm).toBeDisabled();
+    await reason.fill('ยังไม่ยกเลิกในรอบแรก');
+    await expect(confirm).toBeEnabled();
+    await dialog.getByRole('button', { name: 'ยังไม่ยกเลิก', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('DRAFT');
+
+    await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
+    await expect(reason).toHaveValue('');
+    await reason.fill('บันทึกรายการผิด');
+    await confirm.click();
+    await expect(dialog).toBeHidden();
+    expect((await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`))).status).toBe('REJECTED');
+  });
+
   test('EXP-05 @p1 moves draft through ready and confirmed with API truth', async ({ api, request, companyId }) => {
     test.skip(
       process.env['S3_E2E'] !== '1' && process.env['S3_E2E_ACTIVE'] !== '1',

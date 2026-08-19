@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
+import { Modal } from '@/common/components/modal/Modal';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -93,6 +94,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Details-step edits are saved by navigation (ถัดไป/ย้อนกลับ/chips), not an in-section save button.
   const reviewSaveRef = useRef<(() => Promise<boolean>) | null>(null);
   const [stepSaving, setStepSaving] = useState(false);
+  const openReject = () => {
+    setReason(''); setError(null); setShowReject(true); setShowVoid(false); setDuplicateResolution(null);
+  };
+  const closeReject = () => {
+    if (actionLoading) return;
+    setShowReject(false); setReason('');
+  };
   // allowUnsaved lets stepper chips reach Review to reject an invalid draft instead of trapping the reviewer.
   const goToStep = async (key: ExpenseReviewStepKey, allowUnsaved = false) => {
     // An issued substitute certificate locks material fields server-side
@@ -448,12 +456,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
           <>
             {detail.status !== 'READY_FOR_CONFIRMATION' && (
               <>
-                {caps.canReject && <button className={dangerClass} onClick={() => { setShowReject(true); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+                {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
               </>
             )}
             {detail.status === 'READY_FOR_CONFIRMATION' && (
               <>
-                {caps.canReject && <button className={dangerClass} onClick={() => { setShowReject(true); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+                {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
               </>
             )}
           </>
@@ -461,12 +469,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         {/* Pure approver (expense.confirm/reject without review/update): READY_FOR_CONFIRMATION actions outside guided mode. */}
         {approverOnlyActions && (
           <>
-            {caps.canReject && <button className={dangerClass} onClick={() => { setShowReject(true); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
           </>
         )}
         {isConfirmed && (
           <>
-            {caps.canVoid && <button className={dangerClass} onClick={() => { setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
+            {caps.canVoid && <button className={dangerClass} onClick={() => { setReason(''); setError(null); setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
           </>
         )}
         {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
@@ -979,16 +987,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </div>
           </div>
 
-        {(modalFooter || showReject || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
+        {(modalFooter || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
           <div className="sticky bottom-0 z-10 border-t bg-white">
-            {(showReject || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
+            {(showVoid || showDelete || duplicateResolution || confirmBlockers) && (
               <div className="space-y-2 px-4 py-3">
               {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{t('expenses.non_expense_workflow_blocked', locale)}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && isZeroAmount && <p className={warnNoteClass}>{t('expenses.zero_amount_warning', locale)}</p>}
               {canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && hasDuplicates && <p className="text-xs font-semibold text-warning-700">{t('expenses.duplicate_action_required', locale)}</p>}
-              {(showReject || showVoid) && (
+              {showVoid && (
                 <>
-                  <div className="text-sm font-medium text-gray-700">{showVoid ? t('expenses.void_reason', locale) : t('expenses.reject_reason', locale)}</div>
+                  <div className="text-sm font-medium text-gray-700">{t('expenses.void_reason', locale)}</div>
                   <textarea className={inputClass} rows={2} value={reason} onChange={(e) => setReason(sanitizeReasonInput(e.target.value))} maxLength={REASON_MAX_LENGTH} />
                   <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
                   <div className="flex gap-2">
@@ -998,12 +1006,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                       // Close the reason box on success like the duplicate branch below: leaving it open
                       // reads as "nothing happened" and a second click hits the already-rejected record.
                       void doAction(async () => {
-                        if (showVoid) await voidExpense(companyId, expenseId, reason.trim());
-                        else await rejectExpense(companyId, expenseId, reason.trim());
-                        setShowReject(false); setShowVoid(false); setReason('');
-                      }, showVoid ? 'ยกเลิกเอกสารเรียบร้อยแล้ว' : 'ปฏิเสธรายการเรียบร้อยแล้ว');
+                        await voidExpense(companyId, expenseId, reason.trim());
+                        setShowVoid(false); setReason('');
+                      }, 'ยกเลิกเอกสารเรียบร้อยแล้ว');
                     }} disabled={actionLoading || !reason.trim()}>{t('expenses.confirm', locale)}</button>
-                    <button className={ghostClass} onClick={() => { setShowReject(false); setShowVoid(false); }}>{t('expenses.cancel', locale)}</button>
+                    <button className={ghostClass} onClick={() => { setShowVoid(false); setReason(''); }}>{t('expenses.cancel', locale)}</button>
                   </div>
                 </>
               )}
@@ -1042,6 +1049,50 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
           </div>
         )}
       </MangmeePage>
+
+      <Modal
+        open={showReject}
+        title={t('expenses.reject_confirm_title', locale)}
+        size="sm"
+        closeLabel={t('expenses.close', locale)}
+        onClose={closeReject}
+        footer={(
+          <>
+            <button type="button" className={cx(ghostClass, 'flex-1 sm:flex-none')} onClick={closeReject} disabled={actionLoading}>
+              {t('expenses.reject_stay', locale)}
+            </button>
+            <button type="button" className={cx(dangerClass, 'flex-1 sm:flex-none')} onClick={() => {
+              const cleanReason = reason.trim();
+              const forbidden = findForbiddenChars(cleanReason);
+              if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
+              void doAction(async () => {
+                await rejectExpense(companyId, expenseId, cleanReason);
+                setShowReject(false); setReason('');
+              }, t('expenses.reject_success', locale));
+            }} disabled={actionLoading || !reason.trim()}>
+              {t('expenses.confirm', locale)}
+            </button>
+          </>
+        )}
+      >
+        <div className="space-y-3">
+          <p className="text-sm leading-6 text-gray-600">{t('expenses.reject_confirm_description', locale)}</p>
+          {error && <ErrorBanner message={error} />}
+          <label className="block text-sm font-medium text-gray-700">
+            {t('expenses.reject_reason', locale)} <span className="text-error-600" aria-hidden>*</span>
+            <textarea
+              className={cx(inputClass, 'mt-1 min-h-28 resize-y')}
+              rows={4}
+              required
+              value={reason}
+              onChange={(event) => setReason(sanitizeReasonInput(event.target.value))}
+              maxLength={REASON_MAX_LENGTH}
+              placeholder={t('expenses.reject_reason_placeholder', locale)}
+            />
+          </label>
+          <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/{REASON_MAX_LENGTH}</div>
+        </div>
+      </Modal>
 
       {/* full-screen preview remains transient while the expense review itself is a page */}
       {preview && <DocumentPreviewModal
