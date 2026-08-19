@@ -277,6 +277,22 @@ export function evaluateEvidenceReadiness(input: {
   return readiness(missing);
 }
 
+/** R9: a saved ACTIVE personal signature signs any certificate, and a freshly drawn or uploaded
+ *  one still wins for the certificate being signed. */
+export function resolveWizardSignatureSource(input: {
+  hasReusableSignature: boolean;
+  /** A file is chosen or drawn but its transparent version has not been produced yet. */
+  chosenFile: boolean;
+  /** The reviewed transparent file that would be uploaded for this certificate. */
+  preparedFile: boolean;
+}): 'evidence_upload' | 'signature_library' | 'none' {
+  if (input.preparedFile) return 'evidence_upload';
+  // Blocks exactly as it did before the library existed: someone who picked a file meant to sign
+  // with THAT file, and must never have the saved image substituted behind their back.
+  if (input.chosenFile) return 'none';
+  return input.hasReusableSignature ? 'signature_library' : 'none';
+}
+
 export function evaluateSigningReadiness(input: {
   position: string;
   previewed: boolean;

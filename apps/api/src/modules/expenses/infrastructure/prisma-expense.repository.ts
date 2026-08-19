@@ -1085,6 +1085,62 @@ export class PrismaExpenseRepository {
     return row;
   }
 
+  /**
+   * R9: an ACTIVE signature asset submitted by this user (owner-approved) signs any evidence in the
+   * company, so a second substitute receipt needs no upload.
+   *
+   * Pass `attachmentId` to resolve what an evidence row already recorded. That branch deliberately
+   * drops the ACTIVE gate on the asset: ACTIVE answers "may this sign something new", while a
+   * certified document must stay approvable after its signature is archived or sent back for
+   * re-approval. Ownership, the attachment-id match, the attachment's own ACTIVE status and the
+   * caller's recorded-checksum comparison remain the integrity gates.
+   */
+  async findReusableSignatureAsset(
+    companyId: string,
+    userId: string,
+    attachmentId?: string,
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256: string | null } | null> {
+    const assets = await this.prisma.client.companySignatureAsset.findMany({
+      where: {
+        companyId,
+        submittedByUserId: userId,
+        ...(attachmentId
+          ? { OR: [{ derivedAttachmentId: attachmentId }, { originalAttachmentId: attachmentId }] }
+          : { status: 'ACTIVE' }),
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { originalAttachmentId: true, derivedAttachmentId: true },
+    });
+    if (assets.length === 0) return null;
+    // Pinned, only the recorded attachment may answer. Otherwise each asset offers its
+    // background-removed derivative first and its own original second, and only when neither is a
+    // live image does an older asset get a turn.
+    const preferences = attachmentId
+      ? [[attachmentId]]
+      : assets.map((asset) => [asset.derivedAttachmentId, asset.originalAttachmentId]
+        .filter((id): id is string => Boolean(id)));
+    const rows = await this.prisma.client.attachmentObject.findMany({
+      where: {
+        id: { in: [...new Set(preferences.flat())] },
+        companyId,
+        status: 'ACTIVE',
+        mimeType: { in: ['image/png', 'image/jpeg'] },
+      },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    for (const candidates of preferences) {
+      const row = candidates.map((id) => byId.get(id)).find((candidate) => Boolean(candidate));
+      if (row) {
+        return {
+          id: row.id, bucket: row.bucket, objectKey: row.objectKey,
+          objectVersionId: row.objectVersionId ?? undefined,
+          mimeType: row.mimeType, byteSize: row.byteSize, checksumSha256: row.checksumSha256,
+        };
+      }
+    }
+    return null;
+  }
+
   async createPreparedSubstituteEvidence(input: {
     companyId: string;
     expenseId: string;

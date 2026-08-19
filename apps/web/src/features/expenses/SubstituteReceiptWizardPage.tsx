@@ -85,6 +85,7 @@ import {
   mayApproveSubstituteReceipt,
   payeeTaxIdDigits,
   resolveWizardEntryMode,
+  resolveWizardSignatureSource,
   resolveWizardStep,
   sortAndPageCandidates,
   substituteReceiptEvidenceRenderabilityIssue,
@@ -341,14 +342,24 @@ function SignatureFields({
   signatureFile,
   signaturePreview,
   busy,
+  savedSignatureAvailable,
+  savedSignatureUsed,
   onSelect,
+  onDrawChange,
   onClean,
   onDrawn,
 }: {
   signatureFile: File | null;
   signaturePreview: { original: string; cleaned: string } | null;
   busy: boolean;
+  /** R9: the signer has a saved ACTIVE signature, so signing here is the alternative, not the path.
+   *  Kept separate from `savedSignatureUsed` so preparing a file never remounts these fields. */
+  savedSignatureAvailable: boolean;
+  /** R9: no file prepared yet, so the saved signature is what this certificate will carry. */
+  savedSignatureUsed: boolean;
   onSelect: (file: File | null) => void;
+  /** Unconfirmed pad strokes block submit the same way a chosen-but-unprocessed file does. */
+  onDrawChange: (hasStrokes: boolean) => void;
   onClean: () => void;
   onDrawn: (file: File, preview: { original: string; cleaned: string }) => void;
 }) {
@@ -357,12 +368,13 @@ function SignatureFields({
   const selectMethod = (next: 'draw' | 'upload') => {
     setMethod(next);
     onSelect(null);
+    onDrawChange(false);
   };
-  return (
+  const fields = (
     <div className="space-y-3">
-      <fieldset aria-required="true">
+      <fieldset aria-required={!savedSignatureUsed}>
         <legend className="mb-2 text-sm font-semibold text-gray-700">
-          {t('expenses.substitute_wizard.signature_method', locale)}<RequiredMark />
+          {t('expenses.substitute_wizard.signature_method', locale)}{!savedSignatureUsed && <RequiredMark />}
         </legend>
         <div className="grid rounded-xl bg-gray-100 p-1 sm:grid-cols-2">
           {(['draw', 'upload'] as const).map((option) => (
@@ -375,7 +387,7 @@ function SignatureFields({
                 type="radio"
                 name="signature-method"
                 value={option}
-                required
+                required={!savedSignatureUsed}
                 checked={method === option}
                 onChange={() => selectMethod(option)}
               />
@@ -387,12 +399,12 @@ function SignatureFields({
         </div>
       </fieldset>
       {method === 'draw' ? (
-        <SignaturePad busy={busy} onChange={() => onSelect(null)} onConfirm={onDrawn} />
+        <SignaturePad busy={busy} onChange={(hasStrokes) => { onSelect(null); onDrawChange(hasStrokes); }} onConfirm={onDrawn} />
       ) : (
         <>
           <div className="block text-sm font-semibold text-gray-700">
-            <span className="mb-1 block">{t('expenses.substitute_wizard.signature_file', locale)}<RequiredMark /></span>
-            <ThemedFile file={signatureFile} aria-required={true} accept={IMAGE_UPLOAD_ACCEPT} aria-label={t('expenses.substitute_wizard.signature_file', locale)} onChange={onSelect} />
+            <span className="mb-1 block">{t('expenses.substitute_wizard.signature_file', locale)}{!savedSignatureUsed && <RequiredMark />}</span>
+            <ThemedFile file={signatureFile} aria-required={!savedSignatureUsed} accept={IMAGE_UPLOAD_ACCEPT} aria-label={t('expenses.substitute_wizard.signature_file', locale)} onChange={onSelect} />
           </div>
           <button type="button" className={ghostClass} disabled={busy || !signatureFile} onClick={onClean}>
             {t('expenses.substitute_wizard.clean_signature', locale)}
@@ -412,6 +424,26 @@ function SignatureFields({
         </div>
       )}
       <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.signature_help', locale)}</p>
+    </div>
+  );
+  if (!savedSignatureAvailable) return fields;
+  return (
+    <div className="space-y-3">
+      {savedSignatureUsed && (
+        <>
+          <p className="rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700">
+            {t('expenses.substitute_wizard.saved_signature_used', locale)}
+          </p>
+          <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.saved_signature_help', locale)}</p>
+        </>
+      )}
+      {/* Uncontrolled on purpose: the only way to prepare a file is to open this first. */}
+      <details className="rounded-xl border border-gray-200 p-3">
+        <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+          {t('expenses.substitute_wizard.saved_signature_replace', locale)}
+        </summary>
+        <div className="mt-3">{fields}</div>
+      </details>
     </div>
   );
 }
@@ -487,6 +519,7 @@ export function SubstituteReceiptWizardPage({
   const [signerPosition, setSignerPosition] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
+  const [signatureDrawn, setSignatureDrawn] = useState(false);
   const [signaturePreview, setSignaturePreview] = useState<{ original: string; cleaned: string } | null>(null);
   const [previewChecksum, setPreviewChecksum] = useState<string | null>(null);
   const [certifiedPreviewed, setCertifiedPreviewed] = useState(false);
@@ -1010,6 +1043,7 @@ export function SubstituteReceiptWizardPage({
     setSignatureFile(file);
     setCleanedSignatureFile(null);
     setSignaturePreview(null);
+    setSignatureDrawn(false);
     setInfo(null);
   };
 
@@ -1064,6 +1098,14 @@ export function SubstituteReceiptWizardPage({
     }
   };
 
+  // R9: a saved ACTIVE personal signature covers every certificate; drawing or uploading one here
+  // still wins for this certificate.
+  const signatureSource = resolveWizardSignatureSource({
+    hasReusableSignature: policy?.hasReusableSignature ?? false,
+    chosenFile: Boolean(signatureFile) || signatureDrawn,
+    preparedFile: Boolean(cleanedSignatureFile),
+  });
+
   const uploadPersonalSignature = async (): Promise<string> => {
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
     if (!cleanedSignatureFile) throw new Error(t('expenses.substitute_wizard.signature_process_required', locale));
@@ -1078,6 +1120,7 @@ export function SubstituteReceiptWizardPage({
     setSignatureFile(null);
     setCleanedSignatureFile(null);
     setSignaturePreview(null);
+    setSignatureDrawn(false);
     setPreviewChecksum(null);
     setCertifiedPreviewed(false);
   };
@@ -1110,12 +1153,12 @@ export function SubstituteReceiptWizardPage({
     assertAllowed(signerPosition);
     if (!previewChecksum) throw new Error(t('expenses.substitute_wizard.preview_required', locale));
     if (!certificationAcknowledged) throw new Error(t('expenses.substitute_wizard.certification_ack_required', locale));
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     const result = await certifySubstituteReceipt(companyId, detail.id, receiptEvidence.id, {
       payerPosition: signerPosition.trim(),
       certificationAcknowledged: true,
       previewChecksumSha256: previewChecksum,
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: receiptEvidence.version,
       expectedEvidenceUpdatedAt: receiptEvidence.updatedAt,
     });
@@ -1196,12 +1239,12 @@ export function SubstituteReceiptWizardPage({
     assertAllowed(signerPosition);
     if (!certifiedPreviewed) throw new Error(t('expenses.substitute_wizard.certified_preview_required', locale));
     if (!approvalAcknowledged) throw new Error(t('expenses.substitute_wizard.approval_ack_required', locale));
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     const result = await approveSubstituteReceipt(companyId, detail.id, receiptEvidence.id, {
       approverPosition: signerPosition.trim(),
       approvalAcknowledged: true,
       certifiedArtifactChecksumSha256: receiptEvidence.certifiedArtifactChecksumSha256 ?? '',
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: receiptEvidence.version,
       expectedEvidenceUpdatedAt: receiptEvidence.updatedAt,
     });
@@ -2031,7 +2074,7 @@ export function SubstituteReceiptWizardPage({
     const signingReadiness = evaluateSigningReadiness({
       position: signerPosition,
       previewed: Boolean(previewChecksum),
-      signatureReady: Boolean(cleanedSignatureFile),
+      signatureReady: signatureSource !== 'none',
       acknowledged: certificationAcknowledged,
     });
     return (
@@ -2073,7 +2116,7 @@ export function SubstituteReceiptWizardPage({
               </div>
               <div className="rounded-2xl border border-gray-200 p-4">
                 <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}<RequiredMark /></p>
-                <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
+                <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
               </div>
               <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
                 <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
@@ -2107,7 +2150,7 @@ export function SubstituteReceiptWizardPage({
     const approvalReadiness = evaluateSigningReadiness({
       position: signerPosition,
       previewed: certifiedPreviewed,
-      signatureReady: Boolean(cleanedSignatureFile),
+      signatureReady: signatureSource !== 'none',
       acknowledged: approvalAcknowledged,
     });
     return (
@@ -2148,7 +2191,7 @@ export function SubstituteReceiptWizardPage({
             </label>
             <div className="rounded-2xl border border-gray-200 p-4">
               <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}<RequiredMark /></p>
-              <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} onSelect={selectSignatureFile} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
+              <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />
             </div>
             <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
               <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)} />

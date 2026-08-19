@@ -46,7 +46,11 @@ export class GetSubstituteReceiptPolicyUseCase {
   }
 
   async executeRuntime(ctx: RequestContext): Promise<SubstituteReceiptRuntimePolicy> {
-    const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
+    // R9: the signing UI asks for an upload only when this caller has no reusable signature yet.
+    const [policy, reusableSignature] = await Promise.all([
+      this.repo.getSubstituteReceiptPolicy(ctx.companyId),
+      this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId),
+    ]);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     return {
       configured: Boolean(policy),
@@ -54,6 +58,7 @@ export class GetSubstituteReceiptPolicyUseCase {
       approvalMode,
       cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
+      hasReusableSignature: Boolean(reusableSignature),
     };
   }
 }

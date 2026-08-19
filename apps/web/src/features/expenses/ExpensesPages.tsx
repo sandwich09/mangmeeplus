@@ -66,7 +66,7 @@ import { generateSourceJournal } from '../ledger/ledger.api';
 import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
-import { mayApproveSubstituteReceipt } from './substitute-receipt-wizard.model';
+import { mayApproveSubstituteReceipt, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -658,12 +658,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     assertAllowed(signerPosition);
     if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
     if (!previewChecksum) throw new Error('กรุณาสร้างและตรวจตัวอย่างก่อนลงนาม');
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     await certifySubstituteReceipt(companyId, detail.id, evidence.id, {
       payerPosition: signerPosition,
       certificationAcknowledged: true,
       previewChecksumSha256: previewChecksum,
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: evidence.version,
       expectedEvidenceUpdatedAt: evidence.updatedAt,
     });
@@ -672,12 +672,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const approveSubstitute = async () => {
     assertAllowed(signerPosition);
     if (!evidence) throw new Error('ไม่พบเอกสารที่รออนุมัติ');
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     await approveSubstituteReceipt(companyId, detail.id, evidence.id, {
       approverPosition: signerPosition,
       approvalAcknowledged: true,
       certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256 ?? '',
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: evidence.version,
       expectedEvidenceUpdatedAt: evidence.updatedAt,
     });
@@ -726,6 +726,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   };
   const requiresPaymentEvidence = subPaymentMethod !== 'CASH'
     || substitutePolicy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+  // R9: a saved ACTIVE signature signs this certificate too; a freshly prepared file still wins.
+  const signatureSource = resolveWizardSignatureSource({
+    hasReusableSignature: substitutePolicy?.hasReusableSignature ?? false,
+    chosenFile: Boolean(signatureFile),
+    preparedFile: Boolean(cleanedSignatureFile),
+  });
   const canApproveEvidence = evidence ? mayApproveSubstituteReceipt({
     userId,
     payerUserId: evidence.payerUserId,
@@ -881,8 +887,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </div>
               )}
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
+              {signatureSource === 'signature_library' && <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>}
               <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
-              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || !cleanedSignatureFile} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
+              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || signatureSource === 'none'} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
             </div>
           )}
           {evidence.status === 'PAYER_CERTIFIED' && !canApproveEvidence && <p>ผู้จ่ายลงนามแล้ว รอผู้มีสิทธิอนุมัติ</p>}
@@ -901,7 +908,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </div>
               )}
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
-              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || !cleanedSignatureFile} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
+              {signatureSource === 'signature_library' && <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>}
+              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || signatureSource === 'none'} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
             </div>
           )}
           {evidence.status === 'ISSUED' && (

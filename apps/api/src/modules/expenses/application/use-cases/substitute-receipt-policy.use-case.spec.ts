@@ -11,9 +11,11 @@ const ctx = {
 
 describe('substitute receipt company policy', () => {
   it('returns a ready owner-self permissive cash default without a policy row', async () => {
+    let reusableSignature: unknown = null;
     const repo = {
       getSubstituteReceiptPolicy: async () => null,
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findReusableSignatureAsset: async () => reusableSignature,
     } as any;
     const result = await new GetSubstituteReceiptPolicyUseCase(repo).execute(ctx);
     assert.equal(result.configured, false);
@@ -23,6 +25,10 @@ describe('substitute receipt company policy', () => {
     assert.equal(result.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
     const runtime = await new GetSubstituteReceiptPolicyUseCase(repo).executeRuntime(ctx);
     assert.equal(runtime.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
+    // R9: the signing UI asks for an upload only while this caller has no reusable signature.
+    assert.equal(runtime.hasReusableSignature, false);
+    reusableSignature = { id: 'att-library' };
+    assert.equal((await new GetSubstituteReceiptPolicyUseCase(repo).executeRuntime(ctx)).hasReusableSignature, true);
   });
 
   it('allows OWNER_SELF with no approvers and rejects an empty DESIGNATED_APPROVERS list', async () => {

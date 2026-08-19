@@ -736,7 +736,8 @@ export type CertifySubstituteReceiptInput = {
   payerPosition: string;
   certificationAcknowledged: true;
   previewChecksumSha256: string;
-  signatureAttachmentId: string;
+  /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
+  signatureAttachmentId?: string;
   checksumSha256?: string;
   byteSize?: number;
   expectedVersion: number;
@@ -747,7 +748,8 @@ export type ApproveSubstituteReceiptInput = {
   approverPosition: string;
   approvalAcknowledged: true;
   certifiedArtifactChecksumSha256: string;
-  signatureAttachmentId: string;
+  /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
+  signatureAttachmentId?: string;
   checksumSha256?: string;
   byteSize?: number;
   expectedVersion: number;
@@ -775,7 +777,10 @@ export type SubstituteReceiptPolicySettings = {
 export type SubstituteReceiptRuntimePolicy = Pick<
   SubstituteReceiptPolicySettings,
   'configured' | 'ready' | 'approvalMode' | 'cashEvidencePolicy' | 'cashEvidenceInstructions'
->;
+> & {
+  /** R9: the caller already has an ACTIVE personal signature, so signing needs no upload. */
+  hasReusableSignature: boolean;
+};
 
 export type UpdateSubstituteReceiptPolicyInput = {
   approvalMode: SubstituteReceiptApprovalMode;

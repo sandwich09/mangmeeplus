@@ -14,6 +14,7 @@ import {
   manualLinesTotal,
   payeeTaxIdDigits,
   resolveWizardEntryMode,
+  resolveWizardSignatureSource,
   resolveWizardStep,
   substituteReceiptEvidenceRenderabilityIssue,
   substituteReceiptRenderabilityIssue,
@@ -184,6 +185,30 @@ test('evaluates the shared payer and approver signing requirements', () => {
   assert.deepEqual(evaluateSigningReadiness({
     position: 'เจ้าของกิจการ', previewed: true, signatureReady: true, acknowledged: true,
   }), { ready: true, missing: [], missingCount: 0 });
+});
+
+test('R9: offers the saved signature by default and lets a fresh one win', () => {
+  const source = (hasReusableSignature: boolean, chosenFile: boolean, preparedFile: boolean) => (
+    resolveWizardSignatureSource({ hasReusableSignature, chosenFile, preparedFile })
+  );
+  assert.equal(source(true, false, false), 'signature_library');
+  assert.equal(source(true, true, true), 'evidence_upload');
+  assert.equal(source(false, true, true), 'evidence_upload');
+  // Unchanged for a first-time signer: signing stays blocked until a file is prepared.
+  assert.equal(source(false, false, false), 'none');
+  assert.equal(source(false, true, false), 'none');
+  // A chosen but unprocessed file — or unconfirmed strokes on the pad — blocks even with a saved
+  // signature available: signing must never silently fall back to the saved image and discard what
+  // the signer just picked or drew.
+  assert.equal(source(true, true, false), 'none');
+  assert.deepEqual(evaluateSigningReadiness({
+    position: 'เจ้าของกิจการ', previewed: true, acknowledged: true,
+    signatureReady: source(true, false, false) !== 'none',
+  }), { ready: true, missing: [], missingCount: 0 });
+  assert.deepEqual(evaluateSigningReadiness({
+    position: 'เจ้าของกิจการ', previewed: true, acknowledged: true,
+    signatureReady: source(true, true, false) !== 'none',
+  }), { ready: false, missing: ['signature'], missingCount: 1 });
 });
 
 test('resolves the wizard step from evidence status', () => {

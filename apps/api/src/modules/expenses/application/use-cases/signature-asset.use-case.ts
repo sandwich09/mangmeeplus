@@ -157,6 +157,11 @@ export class ArchiveSignatureAssetUseCase {
 /**
  * Records the derived background-removed PNG produced by the web canvas flow.
  * The original signature asset is always kept.
+ *
+ * Substitute-receipt certification (R9) prefers `derivedAttachmentId`, so re-pointing it swaps the
+ * image that signs legal artifacts. Only the submitter may do it, and doing it to an ACTIVE asset
+ * sends that asset back for owner approval — an approved signature is never silently replaced by an
+ * image nobody approved. Certified documents are unaffected: they resolve by recorded attachment id.
  */
 @Injectable()
 export class SetSignatureDerivedAssetUseCase {
@@ -173,16 +178,23 @@ export class SetSignatureDerivedAssetUseCase {
     if (asset.status === 'ARCHIVED' || asset.status === 'REJECTED') {
       throw new BadRequestException(`Cannot attach derived asset in status ${asset.status}`);
     }
+    if (asset.submittedByUserId !== ctx.userId) {
+      throw new ForbiddenException('Only the signature submitter may attach its background-removed image.');
+    }
+    const demotedFromActive = asset.status === 'ACTIVE';
 
     await this.completeUpload.execute(ctx, { attachmentId: cmd.attachmentId, checksumSha256: cmd.checksumSha256, byteSize: cmd.byteSize });
     await this.repo.linkAttachmentToTarget(cmd.attachmentId, 'company.signature_asset', signatureId, SIGNATURE_ATTACHMENT_PURPOSE, ctx.companyId, ctx.userId);
-    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, { derivedAttachmentId: cmd.attachmentId });
+    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, {
+      derivedAttachmentId: cmd.attachmentId,
+      ...(demotedFromActive ? { status: 'PENDING_OWNER_APPROVAL' } : {}),
+    });
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.signature.background_remove', targetType: 'company_signature_asset', targetId: signatureId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { derivedAttachmentId: cmd.attachmentId },
+      metadataJson: { derivedAttachmentId: cmd.attachmentId, demotedFromActive },
     });
     return updated;
   }

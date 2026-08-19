@@ -9,6 +9,8 @@ import {
   PrepareSubstituteReceiptUseCase,
   PreviewSubstituteReceiptUseCase,
 } from './substitute-receipt.use-case';
+import { SetSignatureDerivedAssetUseCase } from './signature-asset.use-case';
+import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { buildSubstituteCertificationText, canonicalSnapshotHash, type SubstituteReceiptSnapshot } from '../../domain/logic/substitute-receipt.logic';
 import { buildDedupKey } from '../../../dashboard-notifications/domain/logic/notification.logic';
 import { IMPLEMENTED_TRIGGER_KEYS } from '../../../dashboard-notifications/domain/models/notification.model';
@@ -582,5 +584,351 @@ describe('substitute receipt signing lifecycle', () => {
     assert.notEqual(issueInput.approverUserId, evidence.payerUserId);
     assert.equal(issueInput.allowSelfApproval, false);
     assert.match(issueInput.artifact.objectKey, /issued/);
+  });
+});
+
+describe('reusable personal signature (R9)', () => {
+  const library = { id: 'att-library', bucket: 'b', objectKey: 'library', mimeType: 'image/png', byteSize: png.length, checksumSha256: null };
+  const libraryChecksum = createHash('sha256').update(png).digest('hex');
+  const storage = {
+    getObject: async () => ({ bytes: png, mimeType: 'image/png' }),
+    putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length }),
+    deleteObject: async () => undefined,
+  } as any;
+
+  function signingRepo(overrides: Record<string, unknown> = {}) {
+    const evidences: Record<string, any> = {
+      'sub-A': prepared({ id: 'sub-A', documentNumber: 'SRC-EXP-1-V1' }),
+      'sub-B': prepared({ id: 'sub-B', documentNumber: 'SRC-EXP-2-V1' }),
+    };
+    return {
+      findSubstituteEvidence: async (_company: string, _expense: string, evidenceId: string) => evidences[evidenceId] ?? null,
+      findByIdWithRelations: async () => expense(),
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', approverUserIds: [] }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'payer-1', displayName: 'สมชาย' }],
+      // The per-evidence upload exists for one attachment id only; everything else must fall back.
+      findPersonalSignatureAttachment: async (_company: string, id: string) => (id === 'sig-upload'
+        ? { id, bucket: 'b', objectKey: id, mimeType: 'image/png', byteSize: png.length, checksumSha256: null }
+        : null),
+      // Pinned lookups must name the attachment the evidence recorded, or nothing resolves.
+      findReusableSignatureAsset: async (_company: string, _user: string, attachmentId?: string) => (
+        !attachmentId || attachmentId === library.id ? library : null
+      ),
+      markSubstituteEvidenceCertified: async () => prepared({ status: 'PAYER_CERTIFIED' }),
+      ...overrides,
+    } as any;
+  }
+
+  async function certify(repo: any, evidenceId: string, input: Record<string, unknown> = {}) {
+    const entries: any[] = [];
+    const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', evidenceId, { payerPosition: 'พนักงาน' });
+    await new CertifySubstituteReceiptUseCase(repo, storage, { log: async (entry: any) => { entries.push(entry); } } as any, notification, cleanup)
+      .execute(ctx('payer-1'), 'exp-1', evidenceId, {
+        payerPosition: 'พนักงาน', certificationAcknowledged: true,
+        previewChecksumSha256: preview.previewChecksumSha256,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+        ...input,
+      } as any);
+    return entries;
+  }
+
+  it('signs two different certificates from one asset, with no per-evidence upload', async () => {
+    const certified: any[] = [];
+    const repo = signingRepo({ markSubstituteEvidenceCertified: async (input: any) => { certified.push(input); return prepared({ status: 'PAYER_CERTIFIED' }); } });
+    const auditA = await certify(repo, 'sub-A');
+    const auditB = await certify(repo, 'sub-B');
+
+    assert.deepEqual(certified.map((input) => input.evidenceId), ['sub-A', 'sub-B']);
+    for (const input of certified) {
+      assert.equal(input.payerSignatureAttachmentId, 'att-library');
+      assert.equal(input.payerSignatureChecksumSha256, libraryChecksum);
+      assert.ok(input.referencedAttachmentIds.includes('att-library'));
+    }
+    assert.equal(auditA[0].metadataJson.signatureSource, 'signature_library');
+    assert.equal(auditB[0].metadataJson.signatureSource, 'signature_library');
+  });
+
+  it('lets a per-evidence upload win over the asset and still refuses a signer who has neither', async () => {
+    const certified: any[] = [];
+    const repo = signingRepo({ markSubstituteEvidenceCertified: async (input: any) => { certified.push(input); return prepared({ status: 'PAYER_CERTIFIED' }); } });
+    const entries = await certify(repo, 'sub-A', { signatureAttachmentId: 'sig-upload' });
+    assert.equal(certified[0].payerSignatureAttachmentId, 'sig-upload');
+    assert.equal(entries[0].metadataJson.signatureSource, 'evidence_upload');
+
+    const noSignature = signingRepo({ findReusableSignatureAsset: async () => null });
+    await assert.rejects(() => certify(noSignature, 'sub-A'), /Signature must be an ACTIVE PNG\/JPEG uploaded by the payer/);
+  });
+
+  it('keeps certification and approval two audit rows under OWNER_SELF while both reuse the asset', async () => {
+    const entries: any[] = [];
+    const audit = { log: async (entry: any) => { entries.push(entry); } } as any;
+    let certifiedInput: any;
+    let issueInput: any;
+    const repo = signingRepo({
+      findById: async () => expense(),
+      findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'เจ้าของกิจการ' }),
+      markSubstituteEvidenceCertified: async (input: any) => { certifiedInput = input; return prepared({ status: 'PAYER_CERTIFIED' }); },
+      issueSubstituteEvidence: async (input: any) => { issueInput = input; return prepared({ status: 'ISSUED' }); },
+    });
+    const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', 'sub-A', { payerPosition: 'เจ้าของกิจการ' });
+    await new CertifySubstituteReceiptUseCase(repo, storage, audit, notification, cleanup)
+      .execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-A', {
+        payerPosition: 'เจ้าของกิจการ', certificationAcknowledged: true,
+        previewChecksumSha256: preview.previewChecksumSha256,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+
+    // Approval reads back exactly what certification recorded, so the asset must resolve by that id.
+    const certifiedEvidence = prepared({
+      id: 'sub-A', status: 'PAYER_CERTIFIED', payerPosition: 'เจ้าของกิจการ',
+      snapshotJson: certifiedInput.snapshotJson, snapshotChecksumSha256: certifiedInput.snapshotChecksumSha256,
+      payerSignatureAttachmentId: certifiedInput.payerSignatureAttachmentId,
+      payerSignatureChecksumSha256: certifiedInput.payerSignatureChecksumSha256,
+      certifiedArtifactAttachmentId: 'certified-artifact',
+      certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256, certifiedAt: now,
+    });
+    const approveRepo = { ...repo, findSubstituteEvidence: async () => certifiedEvidence };
+    await new ApproveSubstituteReceiptUseCase(approveRepo, storage, audit, cleanup)
+      .execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-A', {
+        approverPosition: 'เจ้าของกิจการ', approvalAcknowledged: true,
+        certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+
+    assert.equal(certifiedInput.payerSignatureAttachmentId, 'att-library');
+    assert.equal(issueInput.approverSignatureAttachmentId, 'att-library');
+    // Spec §16: two acknowledgements stay two audit rows even when one person does both.
+    assert.deepEqual(entries.map((entry) => entry.action), [
+      'expense.substitute_receipt.certify',
+      'expense.substitute_receipt.approve',
+    ]);
+    assert.deepEqual(entries.map((entry) => entry.targetId), ['sub-A', 'sub-A']);
+    assert.deepEqual(entries.map((entry) => entry.metadataJson.signatureSource), ['signature_library', 'signature_library']);
+    assert.equal(entries[1].metadataJson.selfApproved, true);
+  });
+
+  it('refuses a blank signature attachment id instead of quietly using the saved signature', async () => {
+    const repo = signingRepo();
+    for (const signatureAttachmentId of ['', '   ']) {
+      await assert.rejects(
+        () => certify(repo, 'sub-A', { signatureAttachmentId }),
+        /Signature must be an ACTIVE PNG\/JPEG uploaded by the payer/,
+      );
+    }
+  });
+
+  it('tells the approver to supersede when the recorded payer signature no longer resolves', async () => {
+    let certifiedInput: any;
+    const repo = signingRepo({
+      findById: async () => expense(),
+      findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'เจ้าของกิจการ' }),
+      markSubstituteEvidenceCertified: async (input: any) => { certifiedInput = input; return prepared({ status: 'PAYER_CERTIFIED' }); },
+    });
+    await certify(repo, 'sub-A');
+    const certifiedEvidence = prepared({
+      id: 'sub-A', status: 'PAYER_CERTIFIED', payerPosition: 'พนักงาน',
+      snapshotJson: certifiedInput.snapshotJson, snapshotChecksumSha256: certifiedInput.snapshotChecksumSha256,
+      payerSignatureAttachmentId: certifiedInput.payerSignatureAttachmentId,
+      payerSignatureChecksumSha256: certifiedInput.payerSignatureChecksumSha256,
+      certifiedArtifactAttachmentId: 'certified-artifact',
+      certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256, certifiedAt: now,
+    });
+    const approveRepo = {
+      ...repo,
+      findSubstituteEvidence: async () => certifiedEvidence,
+      // The approver's own signature still resolves; only the recorded payer attachment is gone.
+      findReusableSignatureAsset: async (_company: string, _user: string, attachmentId?: string) => (attachmentId ? null : library),
+    };
+    await assert.rejects(
+      () => new ApproveSubstituteReceiptUseCase(approveRepo, storage, audit, cleanup)
+        .execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-A', {
+          approverPosition: 'เจ้าของกิจการ', approvalAcknowledged: true,
+          certifiedArtifactChecksumSha256: certifiedInput.artifact.checksumSha256,
+          expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+        }),
+      (error: any) => {
+        // A state conflict the approver can act on, not a 400 blaming them for the payer's signature.
+        assert.equal(error.getStatus(), 409);
+        assert.match(error.message, /Supersede this evidence and re-certify/);
+        return true;
+      },
+    );
+  });
+});
+
+describe('reusable personal signature lookup (R9)', () => {
+  const OLDER = new Date('2026-08-01T00:00:00.000Z');
+  const NEWER = new Date('2026-08-10T00:00:00.000Z');
+
+  function asset(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'sig-asset-1', companyId: 'co-1', status: 'ACTIVE', submittedByUserId: 'payer-1',
+      originalAttachmentId: 'att-original', derivedAttachmentId: null, createdAt: NEWER,
+      ...overrides,
+    } as any;
+  }
+
+  function attachment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'att-original', companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/png',
+      bucket: 'bucket', objectKey: 'signatures/original.png', objectVersionId: null,
+      byteSize: 1024, checksumSha256: 'checksum-original',
+      ...overrides,
+    } as any;
+  }
+
+  /** Mirrors only the filters the lookup builds, so a widened query fails these tests. */
+  function repository(assets: any[], attachments: any[]) {
+    const client: any = {
+      companySignatureAsset: {
+        findMany: async ({ where }: any) => assets
+          .filter((row) => row.companyId === where.companyId
+            && row.submittedByUserId === where.submittedByUserId
+            && (where.status === undefined || row.status === where.status)
+            && (!where.OR || where.OR.some((clause: Record<string, unknown>) => Object.entries(clause)
+              .every(([field, value]) => (row[field] ?? null) === value))))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+      },
+      attachmentObject: {
+        findMany: async ({ where }: any) => attachments.filter((row) => where.id.in.includes(row.id)
+          && row.companyId === where.companyId
+          && row.status === where.status
+          && where.mimeType.in.includes(row.mimeType)),
+      },
+    };
+    return new PrismaExpenseRepository({ client } as any);
+  }
+
+  it('resolves the newest ACTIVE owned asset and prefers its background-removed derivative', async () => {
+    const repo = repository(
+      [
+        asset({ id: 'sig-old', createdAt: OLDER, originalAttachmentId: 'att-old' }),
+        asset({ id: 'sig-new', createdAt: NEWER, originalAttachmentId: 'att-original', derivedAttachmentId: 'att-derived' }),
+      ],
+      [
+        attachment({ id: 'att-old' }),
+        attachment({ id: 'att-original' }),
+        attachment({ id: 'att-derived', objectKey: 'signatures/derived.png', checksumSha256: 'checksum-derived', objectVersionId: 'v2' }),
+      ],
+    );
+    assert.deepEqual(await repo.findReusableSignatureAsset('co-1', 'payer-1'), {
+      id: 'att-derived', bucket: 'bucket', objectKey: 'signatures/derived.png', objectVersionId: 'v2',
+      mimeType: 'image/png', byteSize: 1024, checksumSha256: 'checksum-derived',
+    });
+  });
+
+  it('falls back within the same asset before considering an older one', async () => {
+    const newest = asset({ id: 'sig-new', createdAt: NEWER, originalAttachmentId: 'att-original', derivedAttachmentId: 'att-derived' });
+    const attachments = [attachment({ id: 'att-old' }), attachment({ id: 'att-original' }), attachment({ id: 'att-derived', status: 'DELETED' })];
+    // A dead derivative must not demote the newest signature to an older one: its original is live.
+    const repo = repository([asset({ id: 'sig-old', createdAt: OLDER, originalAttachmentId: 'att-old' }), newest], attachments);
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1'))?.id, 'att-original');
+    const onlyNewest = repository([newest], attachments);
+    assert.equal((await onlyNewest.findReusableSignatureAsset('co-1', 'payer-1'))?.id, 'att-original');
+    const noDerivative = repository([asset()], [attachment()]);
+    assert.equal((await noDerivative.findReusableSignatureAsset('co-1', 'payer-1'))?.id, 'att-original');
+  });
+
+  it('never resolves an asset that is not ACTIVE, not owned, or in another company', async () => {
+    for (const status of ['PENDING_OWNER_APPROVAL', 'REJECTED', 'ARCHIVED']) {
+      const repo = repository([asset({ status })], [attachment()]);
+      assert.equal(await repo.findReusableSignatureAsset('co-1', 'payer-1'), null, status);
+    }
+    const otherUser = repository([asset({ submittedByUserId: 'approver-1' })], [attachment()]);
+    assert.equal(await otherUser.findReusableSignatureAsset('co-1', 'payer-1'), null);
+    const otherCompany = repository([asset({ companyId: 'co-2' })], [attachment()]);
+    assert.equal(await otherCompany.findReusableSignatureAsset('co-1', 'payer-1'), null);
+  });
+
+  it('skips an asset with no live image at all', async () => {
+    const repo = repository(
+      [asset({ id: 'sig-old', createdAt: OLDER, originalAttachmentId: 'att-old' }), asset({ id: 'sig-new', createdAt: NEWER, originalAttachmentId: 'att-deleted' })],
+      [attachment({ id: 'att-old' }), attachment({ id: 'att-deleted', status: 'DELETED' })],
+    );
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1'))?.id, 'att-old');
+    const onlyInactive = repository([asset({ originalAttachmentId: 'att-deleted' })], [attachment({ id: 'att-deleted', status: 'DELETED' })]);
+    assert.equal(await onlyInactive.findReusableSignatureAsset('co-1', 'payer-1'), null);
+  });
+
+  it('resolves a recorded attachment id whatever the asset status, and still fails closed', async () => {
+    // Archiving or re-submitting a signature must not brick documents already certified with it:
+    // ACTIVE gates signing something new, the pinned branch answers what certification recorded.
+    for (const status of ['ACTIVE', 'ARCHIVED', 'PENDING_OWNER_APPROVAL', 'REJECTED']) {
+      const repo = repository([asset({ status })], [attachment()]);
+      assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-original'))?.id, 'att-original', status);
+      // The unpinned path is unchanged: an archived asset may not sign anything new.
+      assert.equal(Boolean(await repo.findReusableSignatureAsset('co-1', 'payer-1')), status === 'ACTIVE', status);
+    }
+    const deletedAttachment = repository([asset({ status: 'ARCHIVED' })], [attachment({ status: 'DELETED' })]);
+    assert.equal(await deletedAttachment.findReusableSignatureAsset('co-1', 'payer-1', 'att-original'), null);
+    const otherUser = repository([asset({ status: 'ARCHIVED', submittedByUserId: 'approver-1' })], [attachment()]);
+    assert.equal(await otherUser.findReusableSignatureAsset('co-1', 'payer-1', 'att-original'), null);
+  });
+
+  it('pins to the recorded id even when the asset later gained a different derivative', async () => {
+    const repo = repository(
+      [
+        asset({ id: 'sig-old', createdAt: OLDER, originalAttachmentId: 'att-old' }),
+        asset({ id: 'sig-new', createdAt: NEWER, originalAttachmentId: 'att-original', derivedAttachmentId: 'att-derived' }),
+      ],
+      [attachment({ id: 'att-old' }), attachment({ id: 'att-original' }), attachment({ id: 'att-derived' })],
+    );
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-old'))?.id, 'att-old');
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-derived'))?.id, 'att-derived');
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-original'))?.id, 'att-original');
+    assert.equal(await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-unknown'), null);
+  });
+});
+
+describe('re-pointing a signature derivative (R9 hardening)', () => {
+  function harness(assetOverrides: Record<string, unknown> = {}) {
+    const asset = {
+      id: 'sig-1', companyId: 'co-1', status: 'ACTIVE', submittedByUserId: 'payer-1',
+      originalAttachmentId: 'att-original', derivedAttachmentId: null, ...assetOverrides,
+    };
+    const entries: any[] = [];
+    let updated: any;
+    const repo = {
+      findSignatureAssetById: async () => asset,
+      linkAttachmentToTarget: async () => undefined,
+      updateSignatureAsset: async (_company: string, _id: string, data: any) => { updated = data; return { ...asset, ...data }; },
+    } as any;
+    const useCase = new SetSignatureDerivedAssetUseCase(repo, { execute: async () => ({}) } as any, {
+      log: async (entry: any) => { entries.push(entry); },
+    } as any);
+    return { useCase, entries, updated: () => updated };
+  }
+
+  const manage = (userId: string) => ctx(userId, ['expense.signature.manage']);
+
+  it('lets only the submitter re-point their own signature', async () => {
+    const { useCase } = harness();
+    await assert.rejects(
+      () => useCase.execute(manage('approver-1'), 'sig-1', { attachmentId: 'att-swapped' }),
+      /Only the signature submitter/,
+    );
+    await assert.rejects(
+      () => useCase.execute(ctx('payer-1', []), 'sig-1', { attachmentId: 'att-swapped' }),
+      /expense.signature.manage/,
+    );
+  });
+
+  it('sends an ACTIVE asset back for owner approval when its derivative is replaced', async () => {
+    const { useCase, entries, updated } = harness();
+    const result = await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-swapped' });
+    // The lookup prefers the derivative, so a swapped image must not keep the owner's approval.
+    assert.equal(updated().status, 'PENDING_OWNER_APPROVAL');
+    assert.equal(updated().derivedAttachmentId, 'att-swapped');
+    assert.equal(result.status, 'PENDING_OWNER_APPROVAL');
+    assert.equal(entries[0].metadataJson.demotedFromActive, true);
+  });
+
+  it('leaves the normal upload flow alone: a pending asset stays pending', async () => {
+    const { useCase, entries, updated } = harness({ status: 'PENDING_OWNER_APPROVAL' });
+    await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-derived' });
+    assert.equal('status' in updated(), false);
+    assert.equal(entries[0].metadataJson.demotedFromActive, false);
   });
 });

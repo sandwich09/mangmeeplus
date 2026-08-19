@@ -654,7 +654,8 @@ export class CertifySubstituteReceiptUseCase {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.certify',
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
-        result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, version: evidence.version, snapshotChecksumSha256 },
+        result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: { expenseId, version: evidence.version, snapshotChecksumSha256, signatureSource: signature.source },
       });
       try {
         const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
@@ -752,7 +753,15 @@ export class ApproveSubstituteReceiptUseCase {
     if (canonicalSnapshotHash(snapshot) !== evidence.snapshotChecksumSha256) throw new ConflictException('Certified snapshot checksum is invalid.');
     assertSubstituteReceiptSnapshotRenderable(snapshot);
     const approverSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'approver');
-    const payerSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, evidence.payerSignatureAttachmentId, evidence.payerUserId, evidence.id, 'payer');
+    // The approver is not the person who can fix a payer signature that no longer resolves, so the
+    // failure is reported as a state conflict with a recovery path, not as their bad request.
+    const payerSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, evidence.payerSignatureAttachmentId, evidence.payerUserId, evidence.id, 'payer')
+      .catch((error) => {
+        if (error instanceof BadRequestException) {
+          throw new ConflictException('Payer signature recorded at certification can no longer be resolved. Supersede this evidence and re-certify.');
+        }
+        throw error;
+      });
     if (payerSignature.checksumSha256 !== evidence.payerSignatureChecksumSha256) {
       throw new ConflictException('The payer signature changed after certification.');
     }
@@ -790,7 +799,8 @@ export class ApproveSubstituteReceiptUseCase {
       await this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.approve',
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
-        result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { expenseId, version: evidence.version, checksumSha256, selfApproved },
+        result: 'SUCCESS', riskLevel: 'CRITICAL',
+        metadataJson: { expenseId, version: evidence.version, checksumSha256, selfApproved, signatureSource: approverSignature.source },
       });
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {
@@ -939,16 +949,31 @@ function assertImageBytes(bytes: Buffer, mimeType: string): void {
   }
 }
 
+/**
+ * R9: the per-evidence upload still wins wherever one exists, and the signer's personal signature
+ * library is the fallback, so a second substitute receipt needs no upload. Both routes record the
+ * resolved attachment id and its checksum on the evidence row, so the artifact chain is unchanged.
+ */
 async function loadOwnedSignature(
   repo: PrismaExpenseRepository,
   storage: AttachmentStoragePort,
   companyId: string,
-  attachmentId: string,
+  attachmentId: string | undefined,
   userId: string,
   evidenceId: string,
   role: 'payer' | 'approver',
-): Promise<{ id: string; dataUrl: string; checksumSha256: string }> {
-  const attachment = await repo.findPersonalSignatureAttachment(companyId, attachmentId, userId, evidenceId, role);
+): Promise<{ id: string; dataUrl: string; checksumSha256: string; source: 'evidence_upload' | 'signature_library' }> {
+  // Only an omitted id means "use my saved signature": a supplied-but-blank id is a caller bug and
+  // must fail exactly as it did before the library fallback existed.
+  if (attachmentId !== undefined && !attachmentId.trim()) {
+    throw new BadRequestException(`Signature must be an ACTIVE PNG/JPEG uploaded by the ${role}.`);
+  }
+  const uploaded = attachmentId
+    ? await repo.findPersonalSignatureAttachment(companyId, attachmentId, userId, evidenceId, role)
+    : null;
+  // With an attachmentId the fallback stays pinned to that exact attachment: an already-certified
+  // signature must still resolve after the signer adds a newer one.
+  const attachment = uploaded ?? await repo.findReusableSignatureAsset(companyId, userId, attachmentId);
   if (!attachment) throw new BadRequestException(`Signature must be an ACTIVE PNG/JPEG uploaded by the ${role}.`);
   if (attachment.byteSize > 2_000_000) throw new BadRequestException('Signature image must be at most 2 MB.');
   const object = await storage.getObject({
@@ -959,7 +984,12 @@ async function loadOwnedSignature(
   assertImageBytes(object.bytes, attachment.mimeType);
   const checksum = sha256(object.bytes);
   if (attachment.checksumSha256 && attachment.checksumSha256 !== checksum) throw new ConflictException('Signature checksum does not match storage.');
-  return { id: attachment.id, dataUrl: `data:${attachment.mimeType};base64,${object.bytes.toString('base64')}`, checksumSha256: checksum };
+  return {
+    id: attachment.id,
+    dataUrl: `data:${attachment.mimeType};base64,${object.bytes.toString('base64')}`,
+    checksumSha256: checksum,
+    source: uploaded ? 'evidence_upload' : 'signature_library',
+  };
 }
 
 async function assertSignatureActor(
