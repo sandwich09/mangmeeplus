@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import { createHash } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
 import { DownloadSubstituteReceiptFormPdfUseCase, DownloadSubstituteReceiptPdfUseCase } from './substitute-receipt.use-case';
 import { SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON } from '../../infrastructure/prisma-expense.repository';
@@ -177,5 +178,112 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
       /changed after preparation/,
     );
     assert.equal(stale.entries.length, 0, 'a refused form is not an egress');
+  });
+});
+
+/** R11: the paper route's issued document is the scan first, then the system attestation page. */
+async function scanPdf(pages: Array<[number, number]>): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  for (const [width, height] of pages) pdf.addPage([width, height]);
+  return Buffer.from(await pdf.save());
+}
+
+function paperUseCase(scan: { bytes: Buffer; mimeType: string }, attestation = issuedSvg, recordedChecksum?: string) {
+  const audit = { log: mock.fn(async (_entry: unknown) => undefined) };
+  const lookups: any[] = [];
+  const instance = new DownloadSubstituteReceiptPdfUseCase(
+    { execute: mock.fn(async () => ({ id: 'expense-1' })) } as any,
+    {
+      findSubstituteEvidence: mock.fn(async () => ({
+        id: 'evidence-1', status: 'ISSUED', supersedeReason: null, documentNumber: 'SUB-202608-00007',
+        artifactAttachmentId: 'artifact-1', signatureMode: 'PAPER',
+        wetSignedScanAttachmentId: 'scan-1',
+        wetSignedScanChecksumSha256: recordedChecksum ?? createHash('sha256').update(scan.bytes).digest('hex'),
+      })),
+      findSubstituteArtifactAttachment: mock.fn(async (_companyId: string, _expenseId: string, attachmentId: string, mimeTypes?: string[]) => {
+        lookups.push({ attachmentId, mimeTypes });
+        return attachmentId === 'scan-1'
+          ? { bucket: 'bucket', objectKey: 'scan', mimeType: scan.mimeType }
+          : { bucket: 'bucket', objectKey: 'issued.svg', objectVersionId: 'version-1', mimeType: 'image/svg+xml' };
+      }),
+    } as any,
+    { getObject: mock.fn(async (input: any) => (input.objectKey === 'scan' ? { bytes: scan.bytes } : { bytes: attestation })) } as any,
+    audit as any,
+  );
+  return { instance, audit, lookups };
+}
+
+describe('R11 — the paper-route issued artifact', () => {
+  it('serves the scan pages first and the system attestation page last', async () => {
+    const scan = await scanPdf([[200, 300], [200, 300]]);
+    const { instance, audit, lookups } = paperUseCase({ bytes: scan, mimeType: 'application/pdf' });
+
+    const result = await instance.execute({
+      companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog', requestId: 'request-11',
+    } as any, 'expense-1', 'evidence-1');
+
+    const pdf = await PDFDocument.load(result.data);
+    assert.equal(pdf.getPageCount(), 3, 'two scan pages plus one attestation page');
+    assert.deepEqual(pdf.getPage(0).getSize(), { width: 200, height: 300 }, 'the scan is page one');
+    assert.deepEqual(pdf.getPage(1).getSize(), { width: 200, height: 300 });
+    assert.equal(Math.round(pdf.getPage(2).getSize().width), 595, 'the attestation is the A4 page behind it');
+    assert.match(pdf.getSubject() ?? '', /Wet-signed scan \+ system attestation/);
+    assert.equal(pdf.getTitle(), 'SUB-202608-00007');
+    // The scan is read through the certification-chain lookup, widened to its own media types only.
+    assert.deepEqual(lookups.map((item) => item.attachmentId), ['artifact-1', 'scan-1']);
+    assert.deepEqual(lookups[1].mimeTypes, ['image/jpeg', 'image/png', 'application/pdf']);
+    const entry = audit.log.mock.calls[0]?.arguments[0] as any;
+    assert.equal(entry.metadataJson.signatureMode, 'PAPER');
+    assert.equal(entry.metadataJson.wetSignedScanAttachmentId, 'scan-1');
+  });
+
+  it('refuses to hand over a scan that no longer matches the checksum recorded at certification', async () => {
+    const { instance } = paperUseCase({ bytes: await scanPdf([[200, 300]]), mimeType: 'application/pdf' }, issuedSvg, 'a-different-checksum');
+
+    await assert.rejects(
+      () => instance.execute({ companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog' } as any, 'expense-1', 'evidence-1'),
+      (error: any) => {
+        // Printing different bytes under a certified document number would be a forged document.
+        assert.equal(error.getResponse().code, 'substitute_wet_signed_scan_checksum_mismatch');
+        return true;
+      },
+    );
+  });
+
+  it('reports an unreadable stored scan as a state, never as an unexplained failure', async () => {
+    const { instance } = paperUseCase({ bytes: Buffer.from('no longer a pdf'), mimeType: 'application/pdf' });
+
+    await assert.rejects(
+      () => instance.execute({ companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog' } as any, 'expense-1', 'evidence-1'),
+      (error: any) => {
+        assert.equal(error.getResponse().code, 'substitute_wet_signed_scan_not_renderable');
+        return true;
+      },
+    );
+  });
+
+  it('refuses to serve a paper certificate whose scan is gone', async () => {
+    const { instance } = paperUseCase({ bytes: Buffer.alloc(0), mimeType: 'application/pdf' });
+    (instance as any).repo.findSubstituteArtifactAttachment = async (_c: string, _e: string, attachmentId: string) =>
+      attachmentId === 'scan-1' ? null : { bucket: 'bucket', objectKey: 'issued.svg', mimeType: 'image/svg+xml' };
+
+    await assert.rejects(
+      () => instance.execute({ companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog' } as any, 'expense-1', 'evidence-1'),
+      /hand-signed scan .* no longer available/,
+    );
+  });
+
+  it('leaves the digital route rendering exactly one page from the stored SVG', async () => {
+    const { instance } = useCase('ISSUED', null);
+
+    const result = await instance.execute({
+      companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog',
+    } as any, 'expense-1', 'evidence-1');
+
+    const pdf = await PDFDocument.load(result.data);
+    assert.equal(pdf.getPageCount(), 1);
+    assert.equal((pdf.getSubject() ?? '').includes('Wet-signed scan'), false);
+    assert.match(pdf.getSubject() ?? '', /^Source SHA256: [0-9a-f]{64}$/);
+    assert.equal(result.fileName, 'SUB-202608-00001.pdf'.replace('SUB', 'SRC'));
   });
 });

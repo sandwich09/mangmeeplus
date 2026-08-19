@@ -18,11 +18,12 @@ import {
 import {
   buildSubstituteCertificationText,
   canonicalSnapshotHash,
+  renderSubstituteReceiptAttestationSvg,
   renderSubstituteReceiptSvg,
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
 import { hasBlockingNonExpenseClassification } from '../../domain/logic/expense-status.logic';
-import { renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
+import { renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
 import type { ExpenseRecordWithRelations, SubstituteReceiptEvidenceRecord } from '../../domain/models/expense.model';
 import { GetExpenseUseCase } from './expense-draft.use-case';
@@ -245,6 +246,20 @@ async function buildSnapshot(
     evidence: refs,
     note: evidence.note,
   };
+}
+
+/**
+ * R11: `PAPER` means the signatures exist only on the linked scan, so certification and approval
+ * resolve no signature image and embed none. Returns the scan's checksum — the value the attestation
+ * page prints and the only thing that makes a paper-route evidence signable at all — or `undefined`
+ * for the unchanged digital route. A `PAPER` row without its scan is a broken state, not a route.
+ */
+function paperRouteScanChecksum(evidence: SubstituteReceiptEvidenceRecord): string | undefined {
+  if (evidence.signatureMode !== 'PAPER') return undefined;
+  if (!evidence.wetSignedScanAttachmentId || !evidence.wetSignedScanChecksumSha256) {
+    throw new ConflictException('The hand-signed scan is missing from this paper-route substitute receipt.');
+  }
+  return evidence.wetSignedScanChecksumSha256;
 }
 
 function assertPreparedExpenseUnchanged(expense: ExpenseRecordWithRelations, evidence: SubstituteReceiptEvidenceRecord): void {
@@ -470,7 +485,9 @@ export class PrepareSubstituteReceiptUseCase {
         preparedByUserId: ctx.userId,
         preparedFromChannel,
         idempotencyKey,
-        ...(continuationId ? { lineContinuation: { workflowId: continuationId, userId: ctx.userId } } : {}),
+        ...(continuationId
+          ? { lineContinuation: { workflowId: continuationId, userId: ctx.userId, formRequested: input.formRequested === true } }
+          : {}),
       });
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.prepare',
@@ -554,7 +571,48 @@ export class DownloadSubstituteReceiptPdfUseCase {
     const stateStamp = evidence.status === 'SUPERSEDED'
       ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
       : undefined;
-    const data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
+    // R11: on the paper route the stored artifact is the attestation page, and the signatures live
+    // on the scan — so the document handed over is the scan first, then that page.
+    const scan = evidence.signatureMode === 'PAPER' && evidence.wetSignedScanAttachmentId
+      ? await this.repo.findSubstituteArtifactAttachment(
+        ctx.companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf'],
+      )
+      : null;
+    if (evidence.signatureMode === 'PAPER' && !scan) {
+      throw new ConflictException('The hand-signed scan of this substitute receipt is no longer available.');
+    }
+    let data: Buffer;
+    if (scan) {
+      const scanObject = await this.storage.getObject({
+        bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}),
+      });
+      // R11: the scan's checksum is recorded on the evidence precisely so the bytes handed over can
+      // be proven to be the ones that were certified. Silently printing different bytes would be a
+      // forged document, so a mismatch refuses with a code the web can explain.
+      if (sha256(scanObject.bytes) !== evidence.wetSignedScanChecksumSha256) {
+        throw new ConflictException({
+          code: 'substitute_wet_signed_scan_checksum_mismatch',
+          message: 'The stored hand-signed scan no longer matches the checksum recorded at certification.',
+        });
+      }
+      try {
+        data = await renderSubstituteReceiptPaperArtifactPdf(
+          { bytes: scanObject.bytes, mimeType: scan.mimeType },
+          svg.bytes,
+          evidence.documentNumber,
+          { ...(stateStamp ? { stateStamp } : {}) },
+        );
+      } catch (error) {
+        // Linking validates composability, so reaching here means the stored object changed under
+        // us. It is still a state the reader can act on, never an unexplained 500.
+        throw new ConflictException({
+          code: 'substitute_wet_signed_scan_not_renderable',
+          message: `The hand-signed scan can no longer be composed into the certificate (${(error as Error).message.slice(0, 120)}).`,
+        });
+      }
+    } else {
+      data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
+    }
     void this.audit.log({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -570,6 +628,8 @@ export class DownloadSubstituteReceiptPdfUseCase {
         evidenceStatus: evidence.status,
         supersedeReason: evidence.supersedeReason,
         derivedStamp: stateStamp ?? null,
+        signatureMode: evidence.signatureMode,
+        ...(scan ? { wetSignedScanAttachmentId: evidence.wetSignedScanAttachmentId } : {}),
       },
     });
     const stateSuffix = stateStamp ? `-${stateStamp}` : '';
@@ -681,11 +741,18 @@ export class CertifySubstituteReceiptUseCase {
     if (canonicalSnapshotHash(previewSnapshot) !== input.previewChecksumSha256) {
       throw new ConflictException('The reviewed preview no longer matches. Generate and review a new preview before signing.');
     }
-    const signature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'payer');
+    // R10/R11: on the paper route the ink is on the scan, so no signature image is resolved and none
+    // is drawn. The acknowledgement below is still the payer's own, and still its own audit row.
+    const scanChecksum = paperRouteScanChecksum(evidence);
+    const signature = scanChecksum
+      ? undefined
+      : await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'payer');
     const certifiedAt = new Date();
     const snapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, payerPosition, certifiedAt.toISOString());
     const snapshotChecksumSha256 = canonicalSnapshotHash(snapshot);
-    const bytes = renderSubstituteReceiptSvg(snapshot, signature.dataUrl);
+    const bytes = scanChecksum
+      ? renderSubstituteReceiptAttestationSvg(snapshot, { snapshotChecksumSha256, wetSignedScanChecksumSha256: scanChecksum })
+      : renderSubstituteReceiptSvg(snapshot, signature!.dataUrl);
     const checksumSha256 = sha256(bytes);
     const objectKey = `${ctx.companyId}/generated/expense-substitute/${expenseId}/v${evidence.version}-certified-${checksumSha256}-${randomUUID()}.svg`;
     const stored = await this.storage.putObject({ objectKey, mimeType: 'image/svg+xml', bytes });
@@ -696,9 +763,12 @@ export class CertifySubstituteReceiptUseCase {
         evidenceId,
         payerUserId: ctx.userId,
         payerPosition,
-        payerSignatureAttachmentId: signature.id,
-        payerSignatureChecksumSha256: signature.checksumSha256,
-        referencedAttachmentIds: [signature.id, ...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds],
+        ...(signature ? { payerSignatureAttachmentId: signature.id, payerSignatureChecksumSha256: signature.checksumSha256 } : {}),
+        referencedAttachmentIds: [
+          ...(signature ? [signature.id] : [evidence.wetSignedScanAttachmentId!]),
+          ...evidence.paymentEvidenceAttachmentIds,
+          ...evidence.supportingAttachmentIds,
+        ],
         snapshotJson: snapshot as unknown as Record<string, unknown>,
         snapshotChecksumSha256,
         certifiedAt,
@@ -710,7 +780,11 @@ export class CertifySubstituteReceiptUseCase {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.certify',
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
         result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: { expenseId, version: evidence.version, snapshotChecksumSha256, signatureSource: signature.source },
+        metadataJson: {
+          expenseId, version: evidence.version, snapshotChecksumSha256,
+          signatureSource: signature?.source ?? 'wet_signed_scan',
+          signatureMode: evidence.signatureMode,
+        },
       });
       try {
         const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
@@ -764,10 +838,12 @@ export class ApproveSubstituteReceiptUseCase {
     const approverPosition = requiredText(input.approverPosition, 'approverPosition', 120);
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    if (evidence.status !== 'PAYER_CERTIFIED' || !evidence.snapshotJson || !evidence.payerSignatureAttachmentId) {
+    const scanChecksum = paperRouteScanChecksum(evidence);
+    if (evidence.status !== 'PAYER_CERTIFIED' || !evidence.snapshotJson
+      || (!scanChecksum && !evidence.payerSignatureAttachmentId)) {
       throw new ConflictException('The payer must certify an immutable snapshot before approval.');
     }
-    if (!evidence.payerSignatureChecksumSha256) throw new ConflictException('The certified payer signature checksum is missing.');
+    if (!scanChecksum && !evidence.payerSignatureChecksumSha256) throw new ConflictException('The certified payer signature checksum is missing.');
     if (input.certifiedArtifactChecksumSha256 !== evidence.certifiedArtifactChecksumSha256) {
       throw new ConflictException('Approval must acknowledge the current payer-certified artifact checksum.');
     }
@@ -807,22 +883,32 @@ export class ApproveSubstituteReceiptUseCase {
     const snapshot = evidence.snapshotJson as unknown as SubstituteReceiptSnapshot;
     if (canonicalSnapshotHash(snapshot) !== evidence.snapshotChecksumSha256) throw new ConflictException('Certified snapshot checksum is invalid.');
     assertSubstituteReceiptSnapshotRenderable(snapshot);
-    const approverSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'approver');
+    const approverSignature = scanChecksum
+      ? undefined
+      : await loadOwnedSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, evidence.id, 'approver');
     // The approver is not the person who can fix a payer signature that no longer resolves, so the
     // failure is reported as a state conflict with a recovery path, not as their bad request.
-    const payerSignature = await loadOwnedSignature(this.repo, this.storage, ctx.companyId, evidence.payerSignatureAttachmentId, evidence.payerUserId, evidence.id, 'payer')
-      .catch((error) => {
-        if (error instanceof BadRequestException) {
-          throw new ConflictException('Payer signature recorded at certification can no longer be resolved. Supersede this evidence and re-certify.');
-        }
-        throw error;
-      });
-    if (payerSignature.checksumSha256 !== evidence.payerSignatureChecksumSha256) {
+    const payerSignature = scanChecksum
+      ? undefined
+      : await loadOwnedSignature(this.repo, this.storage, ctx.companyId, evidence.payerSignatureAttachmentId!, evidence.payerUserId, evidence.id, 'payer')
+        .catch((error) => {
+          if (error instanceof BadRequestException) {
+            throw new ConflictException('Payer signature recorded at certification can no longer be resolved. Supersede this evidence and re-certify.');
+          }
+          throw error;
+        });
+    if (payerSignature && payerSignature.checksumSha256 !== evidence.payerSignatureChecksumSha256) {
       throw new ConflictException('The payer signature changed after certification.');
     }
     const approvedAt = new Date();
     const approverDetails = { userId: ctx.userId, name: approver.displayName, position: approverPosition, approvedAt: approvedAt.toISOString() };
-    const bytes = renderSubstituteReceiptSvg(snapshot, payerSignature.dataUrl, approverDetails, approverSignature.dataUrl);
+    const bytes = scanChecksum
+      ? renderSubstituteReceiptAttestationSvg(snapshot, {
+        snapshotChecksumSha256: evidence.snapshotChecksumSha256!,
+        wetSignedScanChecksumSha256: scanChecksum,
+        approver: approverDetails,
+      })
+      : renderSubstituteReceiptSvg(snapshot, payerSignature!.dataUrl, approverDetails, approverSignature!.dataUrl);
     const checksumSha256 = sha256(bytes);
     const objectKey = `${ctx.companyId}/generated/expense-substitute/${expenseId}/v${evidence.version}-issued-${checksumSha256}-${randomUUID()}.svg`;
     const stored = await this.storage.putObject({ objectKey, mimeType: 'image/svg+xml', bytes });
@@ -837,12 +923,11 @@ export class ApproveSubstituteReceiptUseCase {
         // State the policy, not the outcome: a later refactor of the guard above must not silently
         // widen what the in-transaction re-check permits.
         allowSelfApproval: selfApprovalPermitted(approvalMode, ctx.roles),
-        approverSignatureAttachmentId: approverSignature.id,
+        ...(approverSignature ? { approverSignatureAttachmentId: approverSignature.id } : {}),
         approvedAt,
         expectedExpenseUpdatedAt: evidence.expenseUpdatedAtAtPreparation,
         referencedAttachmentIds: [
-          approverSignature.id,
-          evidence.payerSignatureAttachmentId,
+          ...(approverSignature ? [approverSignature.id, evidence.payerSignatureAttachmentId!] : [evidence.wetSignedScanAttachmentId!]),
           ...(evidence.certifiedArtifactAttachmentId ? [evidence.certifiedArtifactAttachmentId] : []),
           ...evidence.paymentEvidenceAttachmentIds,
           ...evidence.supportingAttachmentIds,
@@ -855,7 +940,11 @@ export class ApproveSubstituteReceiptUseCase {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.approve',
         targetType: 'expense_substitute_receipt', targetId: evidenceId, requestId: ctx.requestId,
         result: 'SUCCESS', riskLevel: 'CRITICAL',
-        metadataJson: { expenseId, version: evidence.version, checksumSha256, selfApproved, signatureSource: approverSignature.source },
+        metadataJson: {
+          expenseId, version: evidence.version, checksumSha256, selfApproved,
+          signatureSource: approverSignature?.source ?? 'wet_signed_scan',
+          signatureMode: evidence.signatureMode,
+        },
       });
       return toSubstituteEvidenceSummary(updated);
     } catch (error) {

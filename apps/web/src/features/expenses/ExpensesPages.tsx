@@ -732,6 +732,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     chosenFile: Boolean(signatureFile),
     preparedFile: Boolean(cleanedSignatureFile),
   });
+  // R11: the paper route's signatures are on the linked scan, so this panel asks for none either.
+  const paperSignature = evidence?.signatureMode === 'PAPER';
   const canApproveEvidence = evidence ? mayApproveSubstituteReceipt({
     userId,
     payerUserId: evidence.payerUserId,
@@ -889,7 +891,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
               {signatureSource === 'signature_library' && <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>}
               <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
-              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || signatureSource === 'none'} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
+              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || (!paperSignature && signatureSource === 'none')} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
             </div>
           )}
           {evidence.status === 'PAYER_CERTIFIED' && !canApproveEvidence && <p>ผู้จ่ายลงนามแล้ว รอผู้มีสิทธิอนุมัติ</p>}
@@ -909,7 +911,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
               )}
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
               {signatureSource === 'signature_library' && <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>}
-              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || signatureSource === 'none'} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
+              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || (!paperSignature && signatureSource === 'none')} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
             </div>
           )}
           {evidence.status === 'ISSUED' && (

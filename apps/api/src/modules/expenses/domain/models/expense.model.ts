@@ -172,6 +172,11 @@ export type SubstituteReceiptEvidenceRecord = {
   issuedAt: Date | null;
   supersededAt: Date | null;
   supersedeReason: string | null;
+  /** R10/R11 paper route: the ink is on the scan, so no signature image is rendered or demanded. */
+  signatureMode: 'DIGITAL' | 'PAPER';
+  wetSignedScanAttachmentId: string | null;
+  wetSignedScanChecksumSha256: string | null;
+  preparedFromChannel: 'WEB' | 'LINE';
   updatedAt: Date;
 };
 

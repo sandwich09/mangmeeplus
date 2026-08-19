@@ -683,6 +683,16 @@ export const ATTACHMENT_PURPOSE_LABELS: Record<string, string> = {
   'expense.signature.asset': 'รูปลายเซ็น',
 };
 
+/** R11: the hand-signed scan is linked with the certification-chain purpose that system-rendered
+ *  artifacts use, so the purpose alone would call a photograph of real ink “เอกสารที่ผ่านการตรวจ”.
+ *  It stays visible — that photo is the only place the signatures exist — under its own name. */
+export function isWetSignedScanAttachment(
+  attachmentId: string,
+  evidence: { wetSignedScanAttachmentId?: string | null } | null | undefined,
+): boolean {
+  return Boolean(evidence?.wetSignedScanAttachmentId) && evidence!.wetSignedScanAttachmentId === attachmentId;
+}
+
 export const MIME_TYPE_LABELS: Record<string, string> = {
   'application/pdf': 'เอกสาร PDF',
   'image/jpeg': 'รูปภาพ JPEG',

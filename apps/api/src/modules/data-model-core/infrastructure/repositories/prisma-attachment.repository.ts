@@ -34,6 +34,19 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
   ): Promise<'SUBSTITUTE_ARTIFACT' | 'SUBSTITUTE_SOURCE' | null> {
     const client = (tx ?? this.prisma.client) as any;
     const retainedStatuses = ['PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED'];
+    // R11: on the paper route the signatures exist ONLY on this scan, from the moment it is linked
+    // to a still-PREPARED evidence. Deleting it there is not "before anything was signed" — it is
+    // erasing the only copy of the ink and stranding a document that can no longer be certified.
+    const wetSignedScan = await client.expenseSubstituteReceiptEvidence.findFirst({
+      where: {
+        companyId: input.companyId,
+        status: { in: ['PREPARED', ...retainedStatuses] },
+        wetSignedScanAttachmentId: input.id,
+      },
+      select: { id: true },
+    });
+    if (wetSignedScan) return 'SUBSTITUTE_ARTIFACT';
+
     const directEvidence = await client.expenseSubstituteReceiptEvidence.findFirst({
       where: {
         companyId: input.companyId,

@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import { PrismaAttachmentRepository } from './prisma-attachment.repository';
 
-function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: object | null; linkedExpenseIds?: string[]; sourceEvidence?: object | null }) {
+function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: object | null; linkedExpenseIds?: string[]; sourceEvidence?: object | null; wetSignedScan?: object | null }) {
   const expenseSubstituteReceiptEvidence = {
-    findFirst: mock.fn(async (args: any) => args.where.OR.some((filter: object) => 'paymentEvidenceAttachmentIds' in filter)
-      ? input?.snapshotEvidence ?? null
-      : input?.directEvidence ?? null),
+    findFirst: mock.fn(async (args: any) => {
+      // R11's scan is looked up by its own column and over a wider status range than the rest.
+      if ('wetSignedScanAttachmentId' in args.where) return input?.wetSignedScan ?? null;
+      return args.where.OR.some((filter: object) => 'paymentEvidenceAttachmentIds' in filter)
+        ? input?.snapshotEvidence ?? null
+        : input?.directEvidence ?? null;
+    }),
   };
   const attachmentLink = {
     findMany: mock.fn(async () => (input?.linkedExpenseIds ?? []).map((targetId) => ({ targetId }))),
@@ -28,7 +32,8 @@ describe('PrismaAttachmentRepository substitute-evidence retention', () => {
     const { repo, expenseSubstituteReceiptEvidence, attachmentLink } = makeRepo({ directEvidence: { id: 'evidence-1' } });
 
     assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-1' }), 'SUBSTITUTE_ARTIFACT');
-    const where = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])[0]?.arguments[0].where;
+    const where = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])
+      .map((call) => call.arguments[0].where).find((item) => item.OR);
     assert.deepEqual(where.status.in, ['PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED']);
     assert.deepEqual(where.OR, [
       { certifiedArtifactAttachmentId: 'att-1' },
@@ -55,7 +60,8 @@ describe('PrismaAttachmentRepository substitute-evidence retention', () => {
     const { repo, expenseSubstituteReceiptEvidence, attachmentLink } = makeRepo({ snapshotEvidence: { id: 'evidence-1' } });
 
     assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-payment' }), 'SUBSTITUTE_SOURCE');
-    const secondWhere = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])[1]?.arguments[0].where;
+    const secondWhere = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])
+      .map((call) => call.arguments[0].where).filter((item) => item.OR)[1];
     assert.deepEqual(secondWhere.OR, [
       { paymentEvidenceAttachmentIds: { array_contains: ['att-payment'] } },
       { supportingAttachmentIds: { array_contains: ['att-payment'] } },
@@ -101,7 +107,8 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
 
     assert.equal(client.$transaction.mock.callCount(), 0);
     assert.equal(tx.$executeRaw.mock.callCount(), 1);
-    assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 2);
+    // wet-signed scan, then the artifact/signature hold, then the snapshot hold — all on the tx.
+    assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
     assert.equal(tx.attachmentLink.findMany.mock.callCount(), 1);
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
@@ -169,5 +176,24 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
     }), /target or purpose/i);
     assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
     assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+});
+
+describe('PrismaAttachmentRepository wet-signed scan retention (R11)', () => {
+  it('holds the hand-signed scan from the moment it is linked, while the evidence is still PREPARED', async () => {
+    const { repo, expenseSubstituteReceiptEvidence } = makeRepo({ wetSignedScan: { id: 'evidence-1' } });
+
+    // PREPARED is the only state a scan can be linked in, and it is exactly where the old hold had
+    // a hole: deleting the photograph there erases the only copy of the ink and strands a document
+    // that can then never be certified.
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-scan' }), 'SUBSTITUTE_ARTIFACT');
+    const where = (expenseSubstituteReceiptEvidence.findFirst.mock.calls as any[])[0]?.arguments[0].where;
+    assert.equal(where.wetSignedScanAttachmentId, 'att-scan');
+    assert.deepEqual(where.status.in, ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED']);
+  });
+
+  it('leaves every other attachment to the existing holds', async () => {
+    const { repo } = makeRepo({ wetSignedScan: null });
+    assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-other' }), null);
   });
 });

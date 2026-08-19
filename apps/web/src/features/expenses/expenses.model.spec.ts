@@ -33,6 +33,7 @@ import {
   AI_SUMMARY_STATUS_LABELS,
   AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS,
+  isWetSignedScanAttachment,
   SUBSTITUTE_RECEIPT_STATUS_LABELS,
   expenseValueLabel,
   expenseCapabilities,
@@ -61,6 +62,12 @@ describe('expenses.model', () => {
     assert.equal(expenseValueLabel(AI_SUMMARY_STATUS_LABELS, 'TEXT_NOTE_SEMANTIC_CAPTURE'), 'อ่านข้อมูลจากโน้ตข้อความแล้ว รอตรวจสอบ');
     assert.equal(expenseValueLabel(AI_MISSING_FIELD_LABELS, 'receipt_evidence'), 'หลักฐานใบเสร็จหรือหลักฐานประกอบ');
     assert.equal(expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, 'expense.payment.evidence'), 'หลักฐานการจ่ายเงิน');
+    // R11: the hand-signed scan shares expense.review.evidence with system-rendered artifacts, so
+    // the purpose alone would call a photograph of real ink "เอกสารที่ผ่านการตรวจ".
+    assert.equal(isWetSignedScanAttachment('att-scan', { wetSignedScanAttachmentId: 'att-scan' }), true);
+    assert.equal(isWetSignedScanAttachment('att-other', { wetSignedScanAttachmentId: 'att-scan' }), false);
+    assert.equal(isWetSignedScanAttachment('att-scan', { wetSignedScanAttachmentId: null }), false);
+    assert.equal(isWetSignedScanAttachment('att-scan', null), false);
     assert.equal(expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, 'PAYER_CERTIFIED'), 'ผู้จ่ายลงนามแล้ว รออนุมัติ');
     assert.equal(expenseValueLabel({}, 'NEW_INTERNAL_CODE', 'ข้อมูลที่ต้องตรวจเพิ่ม'), 'ข้อมูลที่ต้องตรวจเพิ่ม');
   });

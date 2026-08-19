@@ -1,12 +1,18 @@
-import { ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExpensePaymentMethod, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
 import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
+import { AuditService } from '../../../audit/application/audit.service';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
+import { substituteWetSignedScanRejection } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
 
 const STATE_KEY = 'lineSubstituteReceiptContinuation';
+/** One coded shape for “these bytes may not become this document's signed original”, shared by the
+ *  repository's state guard and the composability gate so the web shows one Thai sentence. */
+export const SCAN_NOT_LINKABLE = 'substitute_wet_signed_scan_not_linkable';
 const ACTIVE_STATUSES = new Set(['OPEN', 'PAUSED']);
 const MAX_VALUE_LENGTH = 500;
 
@@ -42,6 +48,10 @@ export type LineSubstituteReceiptContinuation = {
   /** R13: preflight is clean and the assistant has asked whether to issue. Additive — `parseState`
    *  accepts every state written before this existed, and its absence means "no decision pending". */
   pendingDecision?: 'ISSUE_CONFIRM';
+  /** R10: this chat asked for a printable form, so a photo arriving later may be the signed sheet.
+   *  Written by the prepare that consumes this state and never cleared — `awaitingScan` below reads
+   *  the evidence itself for the part that can still change. Additive, like `pendingDecision`. */
+  formRequested?: boolean;
   targetRevision: string;
   lastActivityAt: string;
 };
@@ -423,6 +433,162 @@ function payeeCouldSignHeadline(text: string): string | undefined {
   ].join('\n');
 }
 
+/** R14/§11. What this chat's open substitute work is, as far as an arriving photo is concerned.
+ *  Built from the continuation states in this chat plus the evidence rows they point at — nothing
+ *  here is inferred from the picture, which the API never looks at. */
+export type LineSubstituteMediaScan = {
+  expenseId: string;
+  evidenceId: string;
+  documentNumber: string;
+  amountLabel: string;
+  /** Bytes that arrived before this belong to some earlier question, never to the D9 confirm. */
+  preparedAt: string;
+};
+
+export type LineSubstituteMediaContext = {
+  /** Where a slip or a supporting photo belongs. */
+  expenseId: string;
+  /** R10/§15: every form printed from this chat that is still waiting for its signed photo,
+   *  newest first. D9 names the newest; “ไม่ใช่” lists the rest instead of dead-ending. */
+  awaitingScans: LineSubstituteMediaScan[];
+};
+
+export type LineSubstituteMediaChoice =
+  | 'WET_SIGNED_SCAN' | 'PAYMENT_EVIDENCE' | 'SUPPORTING_EVIDENCE' | 'NEW_EXPENSE' | 'NO_RECORD';
+
+/** The question a set of pending bytes is waiting on, recorded WITH them. A numbered answer is
+ *  resolved against this record, never against what the current state would ask now: the two lists
+ *  differ, and reading “2” off the wrong one inverts what the sender said. */
+export type LineSubstituteMediaQuestion =
+  | { kind: 'SUBSTITUTE_SCAN_CONFIRM'; chatKeyHash: string; evidenceId: string }
+  | { kind: 'SUBSTITUTE_SCAN_PICK'; chatKeyHash: string; evidenceIds: string[] }
+  | { kind: 'SUBSTITUTE_MEDIA_CLASS'; chatKeyHash: string; choices: LineSubstituteMediaChoice[] };
+
+const MEDIA_CHOICES = new Set<LineSubstituteMediaChoice>([
+  'WET_SIGNED_SCAN', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD',
+]);
+
+/** Reads back a recorded question, and only ours: an unrecognised shape, a row written before this
+ *  existed, or a row from ANOTHER chat all return undefined, which leaves the turn to the receipt
+ *  clarify exactly as before. Chat identity is checked here because the pending row is scoped per
+ *  user while substitute work is scoped per chat. */
+export function parseSubstituteMediaQuestion(value: unknown, chatKeyHash: string): LineSubstituteMediaQuestion | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const record = value as Partial<LineSubstituteMediaQuestion> & { kind?: string; chatKeyHash?: string };
+  if (record.chatKeyHash !== chatKeyHash) return undefined;
+  if (record.kind === 'SUBSTITUTE_SCAN_CONFIRM' && typeof (record as { evidenceId?: unknown }).evidenceId === 'string') {
+    return { kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash, evidenceId: (record as { evidenceId: string }).evidenceId };
+  }
+  const ids = (record as { evidenceIds?: unknown }).evidenceIds;
+  if (record.kind === 'SUBSTITUTE_SCAN_PICK' && Array.isArray(ids) && ids.every((id) => typeof id === 'string')) {
+    return { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash, evidenceIds: ids as string[] };
+  }
+  const choices = (record as { choices?: unknown }).choices;
+  if (record.kind === 'SUBSTITUTE_MEDIA_CLASS' && Array.isArray(choices)
+    && choices.every((choice) => MEDIA_CHOICES.has(choice as LineSubstituteMediaChoice))) {
+    return { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: choices as LineSubstituteMediaChoice[] };
+  }
+  return undefined;
+}
+
+/** A signature is a different route with a different destination, and the router already owns it.
+ *  Read here as well so a DEGRADED router cannot let a signature photo reach the D9 confirm, where
+ *  one “ใช่” would file a signature crop as the wet-signed original of a legal document. */
+const SIGNATURE_CAPTION = /(ลายเซ็น|ลายมือชื่อ|signature)/iu;
+const PAYMENT_CAPTION = /(สลิป|โอน|จ่ายแล้ว|หลักฐานการจ่าย)/u;
+const PROOF_CAPTION = /(หลักฐาน|ใบเสร็จ|รูปประกอบ)/u;
+
+/** §11: the caption is authoritative over the picture, because it is the sender's stated intent —
+ *  so every caption class is read BEFORE the awaiting-scan state. Only a caption-silent photo can
+ *  become the D9 confirm. `ASK` means two classes stay plausible: keep the bytes, ask once. */
+export function classifySubstituteMedia(
+  caption: string,
+  awaitingScan: boolean,
+): 'SIGNATURE' | 'PAYMENT_EVIDENCE' | 'SUPPORTING_EVIDENCE' | 'AWAITING_SCAN_CONFIRM' | 'ASK' {
+  const text = normalizedText(caption);
+  if (SIGNATURE_CAPTION.test(text)) return 'SIGNATURE';
+  if (PAYMENT_CAPTION.test(text)) return 'PAYMENT_EVIDENCE';
+  if (PROOF_CAPTION.test(text)) return 'SUPPORTING_EVIDENCE';
+  if (awaitingScan) return 'AWAITING_SCAN_CONFIRM';
+  return 'ASK';
+}
+
+/** D9: name the document back and ask for a yes. No OCR, no QR — the number is printed large on
+ *  the form, so the answer takes one glance. */
+export function substituteScanConfirmQuestion(scan: { documentNumber: string; amountLabel: string }): string {
+  return [
+    `ได้รับรูปเข้ามาค่ะ — ใบนี้คือฟอร์ม ${scan.documentNumber} ยอด ${scan.amountLabel} ที่เซ็นแล้วใช่ไหมคะ`,
+    '1) ใช่',
+    '2) ไม่ใช่ เป็นหลักฐานอื่น',
+  ].join('\n');
+}
+
+export function substituteScanConfirmAnswer(text: string): 'YES' | 'NO' | undefined {
+  const value = normalizedText(text);
+  if (/^1[.)]?$/u.test(value) || /^(ใช่|ใช่ค่ะ|ใช่ครับ|ถูกต้อง)$/u.test(value)) return 'YES';
+  if (/^2[.)]?$/u.test(value) || /^ไม่ใช่/u.test(value)) return 'NO';
+  return undefined;
+}
+
+/** §15: “ไม่ใช่ ใบอื่น” lists the other forms awaiting a scan instead of dropping the photo. */
+export function substituteScanPickQuestion(scans: LineSubstituteMediaScan[]): string {
+  return [
+    'ได้ค่ะ แล้วเป็นฟอร์มใบไหนคะ ตอบเลขข้อได้เลย',
+    ...scans.map((scan, index) => `${index + 1}) ${scan.documentNumber} ยอด ${scan.amountLabel}`),
+  ].join('\n');
+}
+
+const MEDIA_CHOICE_LABELS: Record<LineSubstituteMediaChoice, string> = {
+  WET_SIGNED_SCAN: 'ฟอร์มที่เซ็นแล้ว',
+  PAYMENT_EVIDENCE: 'สลิป/หลักฐานการจ่ายของรายการนี้',
+  SUPPORTING_EVIDENCE: 'หลักฐานประกอบของรายการนี้',
+  NEW_EXPENSE: 'ค่าใช้จ่ายใหม่ (เส้นทางเดิม)',
+  NO_RECORD: 'ภาพประกอบคำถาม ไม่ต้องบันทึก',
+};
+
+/** §11: exactly one numbered question, and only the choices this chat can actually honour — the
+ *  signed-form choice is offered only while a form is awaiting its scan (§15). The last choice is
+ *  the escape the receipt clarify has always had: a picture that answers a question and is not
+ *  evidence of anything must still be storable as “do not record”. */
+export function substituteMediaChoices(context: LineSubstituteMediaContext): LineSubstituteMediaChoice[] {
+  return [
+    ...(context.awaitingScans.length ? ['WET_SIGNED_SCAN' as const] : []),
+    'PAYMENT_EVIDENCE' as const,
+    'SUPPORTING_EVIDENCE' as const,
+    'NEW_EXPENSE' as const,
+    'NO_RECORD' as const,
+  ];
+}
+
+export function substituteMediaQuestion(choices: LineSubstituteMediaChoice[]): string {
+  return [
+    'ได้รับรูปเข้ามาค่ะ ยังไม่แน่ใจว่าเป็นอะไร ตอบเลขข้อได้เลยนะคะ',
+    ...choices.map((choice, index) => `${index + 1}) ${MEDIA_CHOICE_LABELS[choice]}`),
+  ].join('\n');
+}
+
+/** One-based selection out of a numbered list of `count` items, or undefined when the message is
+ *  not a bare choice number for THAT list. */
+export function numberedSelection(text: string, count: number): number | undefined {
+  const numbered = /^([1-9])[.)]?$/u.exec(normalizedText(text))?.[1];
+  const index = numbered ? Number(numbered) - 1 : -1;
+  return index >= 0 && index < count ? index : undefined;
+}
+
+/** The answer to the recorded question. `undefined` = not an answer to it, so the bytes stay
+ *  pending and the turn is routed exactly as it would have been without an open substitute
+ *  context. The list comes from the record, never from today's state. */
+export function substituteMediaAnswer(
+  text: string,
+  choices: LineSubstituteMediaChoice[],
+): LineSubstituteMediaChoice | undefined {
+  const index = numberedSelection(text, choices.length);
+  if (index !== undefined) return choices[index];
+  const value = normalizedText(text);
+  const matched = choices.filter((choice) => value.includes(MEDIA_CHOICE_LABELS[choice]));
+  return matched.length === 1 ? matched[0] : undefined;
+}
+
 /** Nest wraps a validation message in the exception body, so `.message` alone reports
  *  “Bad Request Exception” for the object form prepare throws. */
 function exceptionText(error: unknown): string {
@@ -591,7 +757,130 @@ export class LineSubstituteReceiptContinuationUseCase {
   constructor(
     private readonly repo: PrismaExpenseRepository,
     private readonly prepare: PrepareSubstituteReceiptUseCase,
+    private readonly audit: AuditService,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
   ) {}
+
+  /** R14/§11: the open substitute work an arriving photo could belong to. `undefined` means this
+   *  chat has none, and the media turn must behave exactly as it did before this existed. */
+  async loadOpenMediaContext(ctx: RequestContext, chatKeyHash: string): Promise<LineSubstituteMediaContext | undefined> {
+    if (!ctx.permissions.includes('expense.review')) return undefined;
+    const rows = await this.repo.listLineSubstituteContinuationRows({
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
+    });
+    const states = rows.map((row) => stateFromMetadata(row.sourceChannelMetadataJson))
+      .filter((state): state is LineSubstituteReceiptContinuation => !!state);
+    if (!states.length) return undefined;
+    // The state that asked for a form is CONSUMED by the prepare, so every status is read here —
+    // what still decides is the evidence: PREPARED, no scan yet, still on the digital default.
+    // §15 needs ALL of them, not just the newest: “ไม่ใช่ ใบอื่น” has to list the others.
+    const awaitingScans: LineSubstituteMediaScan[] = [];
+    for (const state of states.filter((item) => item.formRequested)) {
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, state.expenseId, undefined, ctx.scopes ?? {});
+      const evidence = expense?.substituteReceiptEvidence;
+      if (!expense || !evidence || evidence.status !== 'PREPARED'
+        || evidence.signatureMode !== 'DIGITAL' || evidence.wetSignedScanAttachmentId) continue;
+      awaitingScans.push({
+        expenseId: expense.id,
+        evidenceId: evidence.id,
+        documentNumber: evidence.documentNumber,
+        amountLabel: `${expense.grandTotalAmount} ${expense.currency}`,
+        preparedAt: evidence.preparedAt,
+      });
+    }
+    awaitingScans.sort((left, right) => right.preparedAt.localeCompare(left.preparedAt));
+    const expenseId = states.find((state) => ACTIVE_STATUSES.has(state.status))?.expenseId ?? awaitingScans[0]?.expenseId;
+    if (!expenseId) return undefined;
+    return { expenseId, awaitingScans };
+  }
+
+  /** §11/§14: a file the sender offered as evidence for the open work, attached under the purpose
+   *  their caption or their numbered answer chose. Never called on a guess. */
+  async attachMedia(ctx: RequestContext, input: {
+    expenseId: string;
+    attachmentId: string;
+    purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
+    webBaseUrl?: string;
+  }): Promise<{ replyText: string }> {
+    if (!ctx.permissions.includes('expense.receipt.upload')) {
+      throw new ForbiddenException('Missing permission: expense.receipt.upload');
+    }
+    await this.repo.linkAttachment(input.expenseId, input.attachmentId, input.purpose, ctx.companyId, ctx.userId);
+    await this.audit.log({
+      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'attachment.upload',
+      targetType: 'expense_record', targetId: input.expenseId, requestId: ctx.requestId,
+      result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { source: 'LINE', purpose: input.purpose, attachmentId: input.attachmentId },
+    });
+    const payment = input.purpose === 'expense.payment.evidence';
+    return {
+      replyText: formatStandalone({
+        headline: payment
+          ? '📎 แนบเป็นหลักฐานการจ่ายเงินของรายการนี้แล้วค่ะ'
+          : '📎 แนบเป็นหลักฐานประกอบของรายการนี้แล้วค่ะ',
+        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+        question: 'พิมพ์ “ทำใบรับรองต่อ” เพื่อดูสถานะงานล่าสุดได้เลยค่ะ',
+        webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${input.expenseId}`),
+      }),
+    };
+  }
+
+  /** R10 + D9: the sender confirmed this photo is the signed form, so it becomes the wet-signed
+   *  original and the evidence switches to the paper route. Linking issues nothing (§16): the two
+   *  web acknowledgements still have to happen. */
+  async linkWetSignedScan(ctx: RequestContext, input: {
+    expenseId: string;
+    evidenceId: string;
+    attachmentId: string;
+    checksumSha256: string;
+    webBaseUrl?: string;
+  }): Promise<{ replyText: string }> {
+    if (!ctx.permissions.includes('expense.review')) {
+      throw new ForbiddenException('Missing permission: expense.review');
+    }
+    // R11: an artifact that cannot be composed must be refused HERE. Linked, it certifies and
+    // issues without complaint, and then every download of the finished document fails forever.
+    const attachment = await this.repo.findActiveAttachmentObject(ctx.companyId, input.attachmentId);
+    if (!attachment) throw new ConflictException({ code: SCAN_NOT_LINKABLE, message: 'The scanned form attachment is not ACTIVE.' });
+    const object = await this.storage.getObject({
+      bucket: attachment.bucket,
+      objectKey: attachment.objectKey,
+      ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
+    });
+    const rejection = await substituteWetSignedScanRejection({ bytes: object.bytes, mimeType: attachment.mimeType });
+    if (rejection) throw new ConflictException({ code: SCAN_NOT_LINKABLE, message: rejection });
+    const linked = await this.repo.linkSubstituteWetSignedScan({
+      companyId: ctx.companyId,
+      expenseId: input.expenseId,
+      evidenceId: input.evidenceId,
+      attachmentId: input.attachmentId,
+      checksumSha256: input.checksumSha256,
+      actorUserId: ctx.userId,
+    });
+    if (linked.linked) {
+      await this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.wet_signed_scan.link',
+        targetType: 'expense_substitute_receipt', targetId: input.evidenceId, requestId: ctx.requestId,
+        result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: {
+          source: 'LINE', expenseId: input.expenseId, attachmentId: input.attachmentId,
+          checksumSha256: input.checksumSha256, signatureMode: 'PAPER',
+        },
+      });
+    }
+    const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${input.evidenceId}`);
+    return {
+      replyText: formatStandalone({
+        headline: [
+          `🔵 รอยืนยัน — รับฟอร์มที่เซ็นแล้วของเลขที่ ${linked.documentNumber} ไว้เป็นต้นฉบับลายเซ็นสดแล้วค่ะ`,
+          'รูปนี้ยังไม่ทำให้เอกสารออก ต้องรับรองและอนุมัติในเว็บอีก 2 ขั้นตอน',
+        ].join('\n'),
+        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+        question: 'เปิดลิงก์ด้านบนเพื่อรับรองและอนุมัติในเว็บได้เลยค่ะ',
+        webPath,
+      }),
+    };
+  }
 
   async loadForWeb(ctx: RequestContext, expenseId: string, workflowId: string): Promise<LineSubstituteReceiptPrefill> {
     if (ctx.authProvider === 'line') throw new ForbiddenException('Open this continuation in the authenticated web app.');
@@ -1017,6 +1306,8 @@ export class LineSubstituteReceiptContinuationUseCase {
         // One prepare per continuation: a repeated “1” returns the same reserved document number.
         idempotencyKey: state.workflowId,
         continuationId: state.workflowId,
+        // R10: only the paper route leaves this chat waiting for a photo of a signed sheet.
+        formRequested: choice === 'FORM',
         expectedExpenseUpdatedAt: state.targetRevision,
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);

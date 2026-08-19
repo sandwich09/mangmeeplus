@@ -271,6 +271,8 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
     checksumSha256: row.checksumSha256,
     issuedAt: row.issuedAt?.toISOString() ?? null,
     supersedeReason: row.supersedeReason,
+    signatureMode: row.signatureMode,
+    wetSignedScanAttachmentId: row.wetSignedScanAttachmentId,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -1022,11 +1024,15 @@ export class PrismaExpenseRepository {
     }));
   }
 
+  /** `mimeTypes` defaults to the rendered SVG artifact. R11's wet-signed scan rides the same
+   *  `expense.review.evidence` link — it is part of the certification chain, not supporting
+   *  evidence — so it is read through this method with its own image/PDF types. */
   async findSubstituteArtifactAttachment(
     companyId: string,
     expenseId: string,
     attachmentId: string,
-  ): Promise<{ bucket: string; objectKey: string; objectVersionId?: string } | null> {
+    mimeTypes: string[] = ['image/svg+xml'],
+  ): Promise<{ bucket: string; objectKey: string; objectVersionId?: string; mimeType: string } | null> {
     const link = await this.prisma.client.attachmentLink.findFirst({
       where: {
         companyId,
@@ -1034,7 +1040,7 @@ export class PrismaExpenseRepository {
         targetId: expenseId,
         attachmentId,
         purpose: 'expense.review.evidence',
-        attachment: { companyId, status: 'ACTIVE', mimeType: 'image/svg+xml' },
+        attachment: { companyId, status: 'ACTIVE', mimeType: { in: mimeTypes } },
       },
       include: { attachment: true },
     });
@@ -1042,7 +1048,86 @@ export class PrismaExpenseRepository {
       bucket: link.attachment.bucket,
       objectKey: link.attachment.objectKey,
       objectVersionId: link.attachment.objectVersionId ?? undefined,
+      mimeType: link.attachment.mimeType,
     } : null;
+  }
+
+  /** The stored bytes of an attachment that is not linked to anything yet — R10 has to read a
+   *  candidate scan before deciding whether it may become part of a legal document. */
+  async findActiveAttachmentObject(companyId: string, attachmentId: string): Promise<{
+    bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; checksumSha256: string | null;
+  } | null> {
+    const row = await this.prisma.client.attachmentObject.findFirst({
+      where: { id: attachmentId, companyId, status: 'ACTIVE' },
+      select: { bucket: true, objectKey: true, objectVersionId: true, mimeType: true, checksumSha256: true },
+    });
+    return row ? {
+      bucket: row.bucket,
+      objectKey: row.objectKey,
+      ...(row.objectVersionId ? { objectVersionId: row.objectVersionId } : {}),
+      mimeType: row.mimeType,
+      checksumSha256: row.checksumSha256,
+    } : null;
+  }
+
+  /**
+   * R10: link the photographed, hand-signed form to a PREPARED evidence and switch it to the paper
+   * route. Idempotent on redelivery (the same attachment returns `linked: false`), and it never
+   * touches the expense row — a metadata write there would invalidate
+   * `expenseUpdatedAtAtPreparation` and block the very certification this scan exists for.
+   */
+  async linkSubstituteWetSignedScan(input: {
+    companyId: string;
+    expenseId: string;
+    evidenceId: string;
+    attachmentId: string;
+    checksumSha256: string;
+    actorUserId: string;
+  }): Promise<{ documentNumber: string; linked: boolean }> {
+    const client = this.prisma.client as any;
+    return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId },
+      });
+      if (!evidence) throw new NotFoundException('Substitute evidence not found.');
+      if (evidence.wetSignedScanAttachmentId === input.attachmentId) {
+        return { documentNumber: evidence.documentNumber, linked: false };
+      }
+      if (evidence.status !== 'PREPARED' || evidence.wetSignedScanAttachmentId) {
+        throw new ConflictException({
+          code: 'substitute_wet_signed_scan_not_linkable',
+          message: `A wet-signed scan can only be linked to a PREPARED evidence with no scan yet, found ${evidence.status}.`,
+        });
+      }
+      const expense = await tx.expenseRecord.findFirst({
+        where: { id: input.expenseId, companyId: input.companyId, updatedAt: evidence.expenseUpdatedAtAtPreparation },
+      });
+      if (!expense) throw new ConflictException('Expense details changed after preparation. Finance must prepare a new version.');
+      const active = await tx.attachmentObject.count({
+        where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE' },
+      });
+      if (active !== 1) throw new ConflictException('The scanned form attachment is not ACTIVE.');
+      try {
+        await tx.attachmentLink.create({ data: {
+          companyId: input.companyId, attachmentId: input.attachmentId, targetType: 'expense.record',
+          targetId: input.expenseId, purpose: 'expense.review.evidence', linkedByUserId: input.actorUserId,
+        } });
+      } catch (error) {
+        // A partially applied first attempt already linked it; the evidence update below is the gate.
+        if ((error as { code?: string }).code !== 'P2002') throw error;
+      }
+      const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
+        where: { id: evidence.id, companyId: input.companyId, status: 'PREPARED', wetSignedScanAttachmentId: null },
+        data: {
+          signatureMode: 'PAPER',
+          wetSignedScanAttachmentId: input.attachmentId,
+          wetSignedScanChecksumSha256: input.checksumSha256,
+        },
+      });
+      if (changed.count !== 1) throw new ConflictException('Substitute evidence changed while linking the signed form.');
+      return { documentNumber: evidence.documentNumber, linked: true };
+    });
   }
 
   async findPersonalSignatureAttachment(
@@ -1181,7 +1266,7 @@ export class PrismaExpenseRepository {
     /** R7 audit trail: which surface reserved the document number. */
     preparedFromChannel: 'WEB' | 'LINE';
     idempotencyKey: string;
-    lineContinuation?: { workflowId: string; userId: string };
+    lineContinuation?: { workflowId: string; userId: string; formRequested?: boolean };
   }): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
@@ -1232,6 +1317,10 @@ export class PrismaExpenseRepository {
         (metadata as any).lineSubstituteReceiptContinuation = {
           ...state,
           status: 'CONSUMED',
+          // R10: the consumed state is the only durable record that this chat is waiting for a photo
+          // of the signed sheet — the expense row itself must not be touched again after prepare, or
+          // `assertPreparedExpenseUnchanged` would reject the certification this prepare exists for.
+          ...(input.lineContinuation.formRequested ? { formRequested: true } : {}),
           targetRevision: preparedAt.toISOString(),
           lastActivityAt: preparedAt.toISOString(),
         };
@@ -1319,8 +1408,9 @@ export class PrismaExpenseRepository {
     evidenceId: string;
     payerUserId: string;
     payerPosition: string;
-    payerSignatureAttachmentId: string;
-    payerSignatureChecksumSha256: string;
+    /** R11: absent on the paper route — the payer's ink is on `wetSignedScanAttachmentId`. */
+    payerSignatureAttachmentId?: string;
+    payerSignatureChecksumSha256?: string;
     referencedAttachmentIds: string[];
     snapshotJson: Record<string, unknown>;
     snapshotChecksumSha256: string;
@@ -1375,8 +1465,10 @@ export class PrismaExpenseRepository {
         where: { id: evidence.id, companyId: input.companyId, status: 'PREPARED', updatedAt: input.expectedEvidenceUpdatedAt },
         data: {
           status: 'PAYER_CERTIFIED', payerPosition: input.payerPosition,
-          payerSignatureAttachmentId: input.payerSignatureAttachmentId,
-          payerSignatureChecksumSha256: input.payerSignatureChecksumSha256,
+          ...(input.payerSignatureAttachmentId ? {
+            payerSignatureAttachmentId: input.payerSignatureAttachmentId,
+            payerSignatureChecksumSha256: input.payerSignatureChecksumSha256,
+          } : {}),
           snapshotJson: input.snapshotJson, snapshotChecksumSha256: input.snapshotChecksumSha256,
           certifiedArtifactAttachmentId: attachment.id, certifiedArtifactChecksumSha256: input.artifact.checksumSha256,
           certifiedAt: input.certifiedAt,
@@ -1399,7 +1491,8 @@ export class PrismaExpenseRepository {
      *  but it cannot decide the policy itself, or a solo owner is blocked here after passing
      *  every check above. */
     allowSelfApproval: boolean;
-    approverSignatureAttachmentId: string;
+    /** R11: absent on the paper route — the approver's ink is on the linked scan. */
+    approverSignatureAttachmentId?: string;
     approvedAt: Date;
     expectedExpenseUpdatedAt: Date;
     referencedAttachmentIds: string[];
@@ -1452,7 +1545,8 @@ export class PrismaExpenseRepository {
         where: { id: evidence.id, companyId: input.companyId, status: 'PAYER_CERTIFIED', updatedAt: input.expectedEvidenceUpdatedAt },
         data: {
           status: 'ISSUED', approverUserId: input.approverUserId, approverName: input.approverName,
-          approverPosition: input.approverPosition, approverSignatureAttachmentId: input.approverSignatureAttachmentId,
+          approverPosition: input.approverPosition,
+          ...(input.approverSignatureAttachmentId ? { approverSignatureAttachmentId: input.approverSignatureAttachmentId } : {}),
           approvedAt: now, artifactAttachmentId: attachment.id, checksumSha256: input.artifact.checksumSha256,
           issuedByUserId: input.approverUserId, issuedAt: now,
         },

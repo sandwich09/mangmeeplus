@@ -1,9 +1,23 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, substituteRequestExpenseText } from './line-substitute-receipt-continuation.use-case';
+import {
+  classifySubstituteMedia,
+  isSubstituteReceiptConversationText,
+  LineSubstituteReceiptContinuationUseCase,
+  parseSubstituteMediaQuestion,
+  SCAN_NOT_LINKABLE,
+  substituteMediaAnswer,
+  substituteMediaChoices,
+  substituteMediaQuestion,
+  substituteRequestExpenseText,
+  substituteScanConfirmAnswer,
+  substituteScanConfirmQuestion,
+  substituteScanPickQuestion,
+} from './line-substitute-receipt-continuation.use-case';
 import { PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { PDFDocument } from 'pdf-lib';
 
 const WEB_BASE = 'https://app.example.com';
 
@@ -31,8 +45,17 @@ function expense(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+/** A minimal, real PDF: the link gate loads the bytes, so a stub string cannot stand in. */
+async function onePagePdf(pages = 1): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  for (let index = 0; index < pages; index += 1) pdf.addPage([200, 300]);
+  return Buffer.from(await pdf.save());
+}
+
 function harness(overrides: {
   expense?: any; policy?: any; approvers?: any[]; candidates?: any[];
+  /** Bytes the stored scan attachment resolves to, for the R11 composability gate. */
+  scanObject?: { bytes: Buffer; mimeType: string } | null;
   /** R13 choice 1 asks this before it prepares: an ACTIVE personal signature or nothing. */
   signature?: { id: string } | null;
   /** The newest asset of any status — what tells "already sent, waiting for approval" from "none". */
@@ -43,6 +66,8 @@ function harness(overrides: {
   const saves: any[] = [];
   const prepares: any[] = [];
   const audits: any[] = [];
+  const links: any[] = [];
+  const scanLinks: any[] = [];
   const repo = {
     findReusableSignatureAsset: async (_companyId: string, _userId: string, attachmentId?: string) =>
       attachmentId ? null : overrides.signature ?? null,
@@ -61,12 +86,16 @@ function harness(overrides: {
       current = {
         ...current,
         updatedAt: at,
-        substituteReceiptEvidence: { id: 'evidence-1', documentNumber: 'SUB-202608-00007', status: 'PREPARED' },
+        substituteReceiptEvidence: {
+          id: 'evidence-1', documentNumber: 'SUB-202608-00007', status: 'PREPARED',
+          signatureMode: 'DIGITAL', wetSignedScanAttachmentId: null, preparedAt: at.toISOString(),
+        },
         sourceChannelMetadataJson: {
           ...current.sourceChannelMetadataJson,
           ...(state ? {
             lineSubstituteReceiptContinuation: {
               ...state, status: 'CONSUMED', targetRevision: at.toISOString(), lastActivityAt: at.toISOString(),
+              ...(input.lineContinuation?.formRequested ? { formRequested: true } : {}),
             },
           } : {}),
         },
@@ -88,6 +117,28 @@ function harness(overrides: {
     getSubstituteReceiptPolicy: async () => overrides.policy ?? null,
     listEligibleSubstituteReceiptApprovers: async () => overrides.approvers ?? [{ userId: 'user-1', displayName: 'เจ้าของ' }],
     findActiveMemberIdentity: async (_companyId: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
+    findActiveAttachmentObject: async () => overrides.scanObject === null
+      ? null
+      : { bucket: 'b', objectKey: 'scan', mimeType: overrides.scanObject?.mimeType ?? 'application/pdf', checksumSha256: 'scan-checksum' },
+    linkAttachment: async (expenseId: string, attachmentId: string, purpose: string) => {
+      links.push({ expenseId, attachmentId, purpose });
+      current = { ...current, attachments: [...(current.attachments ?? []), { id: attachmentId, status: 'ACTIVE', purpose }] };
+    },
+    linkSubstituteWetSignedScan: async (input: any) => {
+      const evidence = current.substituteReceiptEvidence;
+      if (evidence?.wetSignedScanAttachmentId === input.attachmentId) {
+        return { documentNumber: evidence.documentNumber, linked: false };
+      }
+      if (!evidence || evidence.status !== 'PREPARED' || evidence.wetSignedScanAttachmentId) {
+        throw new ConflictException('not linkable');
+      }
+      scanLinks.push(input);
+      current = {
+        ...current,
+        substituteReceiptEvidence: { ...evidence, signatureMode: 'PAPER', wetSignedScanAttachmentId: input.attachmentId },
+      };
+      return { documentNumber: evidence.documentNumber, linked: true };
+    },
     saveLineSubstituteContinuation: async (input: any) => {
       assert.equal(input.expectedUpdatedAt.toISOString(), current.updatedAt.toISOString(), 'CAS uses the current expense revision');
       const now = new Date(current.updatedAt.getTime() + 1000);
@@ -109,8 +160,12 @@ function harness(overrides: {
     { execute: async () => ({}) } as any,
   );
   return {
-    useCase: new LineSubstituteReceiptContinuationUseCase(repo, prepare),
-    saves, prepares, audits, getExpense: () => current,
+    useCase: new LineSubstituteReceiptContinuationUseCase(
+      repo, prepare,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      { getObject: async () => overrides.scanObject ?? { bytes: await onePagePdf(), mimeType: 'application/pdf' } } as any,
+    ),
+    saves, prepares, audits, links, scanLinks, getExpense: () => current,
   };
 }
 
@@ -776,7 +831,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.equal(prepared.paymentMethod, 'CASH', 'unstated values fall back to the expense');
     assert.deepEqual(prepared.supportingAttachmentIds, ['att-1']);
     assert.equal(prepared.idempotencyKey, before.workflowId, 'one prepare per continuation');
-    assert.deepEqual(prepared.lineContinuation, { workflowId: before.workflowId, userId: 'user-1' });
+    assert.deepEqual(prepared.lineContinuation, { workflowId: before.workflowId, userId: 'user-1', formRequested: false });
     assert.equal(prepared.expectedExpenseUpdatedAt.toISOString(), before.targetRevision);
 
     assert.equal(issued.status, 'READY_FOR_WEB');
@@ -1035,5 +1090,288 @@ describe('R15 — wrong-document detection', () => {
     });
     assert.match(afterPrepare.replyText, /SUB-202608-00007/);
     assert.equal(afterPrepare.replyText.includes('ใบสำคัญรับเงิน'), false, 'never above a reserved document number');
+  });
+});
+
+/** A chat whose form was already prepared: the continuation is CONSUMED and the evidence row is
+ *  what still decides whether a photo could be the signed sheet. */
+function scanHarness(
+  state: Record<string, unknown> = {},
+  evidence: Record<string, unknown> | null = {},
+  extra: Parameters<typeof harness>[0] = {},
+) {
+  return harness({
+    expense: expense({
+      sourceChannelMetadataJson: {
+        channel: 'LINE', kind: 'text_note', chatKeyHash: 'chat-hash',
+        lineSubstituteReceiptContinuation: {
+          workflowId: 'wf-1', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+          expenseId: 'expense-1', chatKeyHash: 'chat-hash', status: 'CONSUMED', acceptedValues: {},
+          provenance: {}, resolvedFields: [], missingFields: [], attachmentRefs: [], pendingQuestion: null,
+          targetRevision: '2026-08-16T09:00:00.000Z', lastActivityAt: '2026-08-16T09:00:00.000Z',
+          formRequested: true, ...state,
+        },
+      },
+      substituteReceiptEvidence: evidence && {
+        id: 'evidence-1', documentNumber: 'SUB-202608-00007', status: 'PREPARED',
+        signatureMode: 'DIGITAL', wetSignedScanAttachmentId: null, preparedAt: '2026-08-16T09:05:00.000Z',
+        ...evidence,
+      },
+    }),
+    ...extra,
+  });
+}
+
+const SCAN = {
+  expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SUB-202608-00007',
+  amountLabel: '200.0000 THB', preparedAt: '2026-08-16T09:05:00.000Z',
+};
+
+describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
+  it('reads the caption before the awaiting-scan state, because the caption is the stated intent', () => {
+    // A form is awaiting its scan in every one of these, and the caption still decides.
+    assert.equal(classifySubstituteMedia('ลายเซ็นค่ะ', true), 'SIGNATURE');
+    assert.equal(classifySubstituteMedia('อัปโหลดลายมือชื่อ', true), 'SIGNATURE');
+    assert.equal(classifySubstituteMedia('สลิปโอนค่ะ', true), 'PAYMENT_EVIDENCE');
+    assert.equal(classifySubstituteMedia('จ่ายแล้วนะ', true), 'PAYMENT_EVIDENCE');
+    assert.equal(classifySubstituteMedia('หลักฐานค่าที่จอดรถ', true), 'SUPPORTING_EVIDENCE');
+    assert.equal(classifySubstituteMedia('', true), 'AWAITING_SCAN_CONFIRM', 'only a silent caption becomes D9');
+    assert.equal(classifySubstituteMedia('อันนี้อะไรนะ', true), 'AWAITING_SCAN_CONFIRM');
+
+    assert.equal(classifySubstituteMedia('สลิปโอนค่ะ', false), 'PAYMENT_EVIDENCE');
+    assert.equal(classifySubstituteMedia('รูปประกอบของรายการนี้', false), 'SUPPORTING_EVIDENCE');
+    assert.equal(classifySubstituteMedia('', false), 'ASK');
+  });
+
+  it('asks D9 by document number and amount, and reads back only its own answers', () => {
+    const question = substituteScanConfirmQuestion(SCAN);
+    assert.match(question, /SUB-202608-00007/);
+    assert.match(question, /200\.0000 THB/);
+    assert.match(question, /1\) ใช่/);
+    assert.match(question, /2\) ไม่ใช่ เป็นหลักฐานอื่น/);
+    assert.equal(substituteScanConfirmAnswer('1'), 'YES');
+    assert.equal(substituteScanConfirmAnswer('ใช่'), 'YES');
+    assert.equal(substituteScanConfirmAnswer('2'), 'NO');
+    assert.equal(substituteScanConfirmAnswer('ไม่ใช่ ใบอื่น'), 'NO');
+    assert.equal(substituteScanConfirmAnswer('ใบไหนนะ'), undefined);
+  });
+
+  it('offers the signed-form choice only while a form awaits, always keeps the do-not-record escape', () => {
+    const awaiting = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [SCAN] });
+    assert.deepEqual(awaiting, ['WET_SIGNED_SCAN', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
+    assert.equal(substituteMediaAnswer('1', awaiting), 'WET_SIGNED_SCAN');
+    assert.equal(substituteMediaAnswer('5', awaiting), 'NO_RECORD');
+
+    const plain = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [] });
+    assert.deepEqual(plain, ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
+    assert.equal(substituteMediaQuestion(plain).includes('ฟอร์มที่เซ็นแล้ว'), false);
+    assert.match(substituteMediaQuestion(plain), /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);
+    assert.equal(substituteMediaAnswer('1', plain), 'PAYMENT_EVIDENCE');
+    assert.equal(substituteMediaAnswer('5', plain), undefined, 'a number past the offered list answers nothing');
+    assert.equal(substituteMediaAnswer('ยอดเท่าไร', plain), undefined);
+  });
+
+  it('resolves a recorded question only when it is ours AND from this chat', () => {
+    const asked = { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash: 'chat-hash', choices: ['PAYMENT_EVIDENCE', 'NO_RECORD'] };
+    assert.deepEqual(parseSubstituteMediaQuestion(asked, 'chat-hash'), asked);
+    assert.equal(parseSubstituteMediaQuestion(asked, 'other-chat'), undefined, 'the pending row is per user, the work is per chat');
+    // The receipt clarify's own rows, and rows written before questions were recorded, are not ours.
+    assert.equal(parseSubstituteMediaQuestion({ kind: 'RECEIPT_CLARIFY', chatKeyHash: 'chat-hash' }, 'chat-hash'), undefined);
+    assert.equal(parseSubstituteMediaQuestion(null, 'chat-hash'), undefined);
+    assert.equal(parseSubstituteMediaQuestion({ kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash: 'chat-hash', choices: ['NOPE'] }, 'chat-hash'), undefined);
+    assert.deepEqual(
+      parseSubstituteMediaQuestion({ kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash: 'chat-hash', evidenceId: 'evidence-1' }, 'chat-hash'),
+      { kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash: 'chat-hash', evidenceId: 'evidence-1' },
+    );
+  });
+
+  it('reads awaiting-scan from the consumed state plus the live evidence row', async () => {
+    const context = await scanHarness().useCase.loadOpenMediaContext(ctx(), 'chat-hash');
+    assert.equal(context?.expenseId, 'expense-1');
+    assert.deepEqual(context?.awaitingScans, [SCAN]);
+
+    const notAwaiting = [
+      // The chat asked for a document, not a form: nothing is waiting for a photo of a signed sheet.
+      await scanHarness({ formRequested: undefined }).useCase.loadOpenMediaContext(ctx(), 'chat-hash'),
+      // Already certified — the sheet's moment has passed.
+      await scanHarness({}, { status: 'PAYER_CERTIFIED' }).useCase.loadOpenMediaContext(ctx(), 'chat-hash'),
+      // A scan is already linked, so a second photo is not that scan.
+      await scanHarness({}, { signatureMode: 'PAPER', wetSignedScanAttachmentId: 'att-scan' }).useCase.loadOpenMediaContext(ctx(), 'chat-hash'),
+    ];
+    for (const item of notAwaiting) assert.deepEqual(item?.awaitingScans ?? [], []);
+
+    assert.equal(await scanHarness({}, null).useCase.loadOpenMediaContext(ctx(), 'chat-hash'), undefined);
+    assert.equal(await harness().useCase.loadOpenMediaContext(ctx(), 'chat-hash'), undefined, 'no continuation in this chat');
+    assert.equal(
+      await scanHarness().useCase.loadOpenMediaContext({ ...ctx(), permissions: ['expense.receipt.upload'] }, 'chat-hash'),
+      undefined,
+      'without expense.review there is no substitute work to classify against',
+    );
+  });
+
+  it('collects every form still awaiting a scan, newest first, so §15 can list the others', async () => {
+    const second = {
+      id: 'expense-2', updatedAt: new Date('2026-08-16T10:00:00.000Z'),
+      sourceChannelMetadataJson: {
+        chatKeyHash: 'chat-hash',
+        lineSubstituteReceiptContinuation: {
+          workflowId: 'wf-2', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+          expenseId: 'expense-2', chatKeyHash: 'chat-hash', status: 'CONSUMED', acceptedValues: {}, provenance: {},
+          resolvedFields: [], missingFields: [], attachmentRefs: [], pendingQuestion: null, formRequested: true,
+          targetRevision: '2026-08-16T10:00:00.000Z', lastActivityAt: '2026-08-16T10:00:00.000Z',
+        },
+      },
+    };
+    const h = scanHarness();
+    const repo = (h.useCase as any).repo;
+    const baseRows = repo.listLineSubstituteContinuationRows;
+    repo.listLineSubstituteContinuationRows = async (input: any) => [...await baseRows(input), second];
+    const baseFind = repo.findByIdWithRelations;
+    repo.findByIdWithRelations = async (companyId: string, id: string, ...rest: any[]) => id === 'expense-2'
+      ? {
+        id: 'expense-2', grandTotalAmount: '99.0000', currency: 'THB',
+        substituteReceiptEvidence: {
+          id: 'evidence-2', documentNumber: 'SUB-202608-00009', status: 'PREPARED',
+          signatureMode: 'DIGITAL', wetSignedScanAttachmentId: null, preparedAt: '2026-08-16T10:05:00.000Z',
+        },
+      }
+      : baseFind(companyId, id, ...rest);
+
+    const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
+
+    assert.deepEqual(context?.awaitingScans.map((item) => item.documentNumber), ['SUB-202608-00009', 'SUB-202608-00007']);
+    assert.match(substituteScanPickQuestion(context!.awaitingScans), /1\) SUB-202608-00009 ยอด 99\.0000 THB/);
+    assert.match(substituteScanPickQuestion(context!.awaitingScans), /2\) SUB-202608-00007/);
+  });
+
+  it('keeps an open workflow as the target for evidence even when nothing awaits a scan', async () => {
+    const h = await readyHarness();
+    const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
+    assert.equal(context?.expenseId, 'expense-1');
+    assert.deepEqual(context?.awaitingScans, []);
+  });
+
+  it('marks the paper route on the state the prepare consumes, so the next photo can be the scan', async () => {
+    const h = await readyHarness();
+    await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares[0].lineContinuation.formRequested, true);
+    const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
+    assert.equal(context?.awaitingScans[0]?.documentNumber, 'SUB-202608-00007');
+
+    const digital = await readyHarness({ signature: { id: 'signature-1' } });
+    await digital.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(digital.prepares[0].lineContinuation.formRequested, false);
+    // Consumed, nothing awaiting: this chat has no open substitute work for a photo to belong to.
+    assert.equal(await digital.useCase.loadOpenMediaContext(ctx(), 'chat-hash'), undefined);
+  });
+
+  it('links the confirmed scan once, replies รอยืนยัน with the evidence link, and audits it HIGH', async () => {
+    const h = scanHarness();
+    const linked = await h.useCase.linkWetSignedScan(ctx(), {
+      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'att-scan', checksumSha256: 'scan-checksum', webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(h.scanLinks.length, 1);
+    assert.equal(h.scanLinks[0].checksumSha256, 'scan-checksum');
+    assert.match(linked.replyText, /รอยืนยัน/);
+    assert.match(linked.replyText, /SUB-202608-00007/);
+    assert.match(linked.replyText, new RegExp(`${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`));
+    assert.match(linked.replyText, /ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/, '§16: a photo alone issues nothing');
+    const audit = h.audits.find((entry) => entry.action === 'expense.substitute_receipt.wet_signed_scan.link');
+    assert.equal(audit.riskLevel, 'HIGH');
+    assert.equal(audit.metadataJson.source, 'LINE');
+    assert.equal(audit.metadataJson.signatureMode, 'PAPER');
+
+    // Redelivery of the same confirmation: the evidence already points at these bytes.
+    const again = await h.useCase.linkWetSignedScan(ctx(), {
+      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'att-scan', checksumSha256: 'scan-checksum', webBaseUrl: WEB_BASE,
+    });
+    assert.equal(h.scanLinks.length, 1, 'idempotent: no second link');
+    assert.equal(h.audits.filter((entry) => entry.action === 'expense.substitute_receipt.wet_signed_scan.link').length, 1);
+    assert.match(again.replyText, /SUB-202608-00007/);
+
+    await assert.rejects(
+      () => h.useCase.linkWetSignedScan({ ...ctx(), permissions: ['expense.receipt.upload'] }, {
+        expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'att-other', checksumSha256: 'x',
+      }),
+      ForbiddenException,
+    );
+  });
+
+  it('refuses a scan that could never be composed into the issued document', async () => {
+    // R11: linking it would certify and issue cleanly, and then every download would fail forever.
+    const cases: Array<[string, { bytes: Buffer; mimeType: string } | null, RegExp]> = [
+      ['a scan with more pages than the artifact may hold', { bytes: await onePagePdf(6), mimeType: 'application/pdf' }, /6-page safety limit/],
+      ['bytes that are not a document at all', { bytes: Buffer.from('not a pdf'), mimeType: 'application/pdf' }, /cannot be read as a printable document/],
+      ['an image type the composer cannot reproduce', { bytes: Buffer.from('x'), mimeType: 'image/heic' }, /must be a JPEG, PNG, or PDF/],
+      ['an attachment that is no longer ACTIVE', null, /not ACTIVE/],
+    ];
+    for (const [name, scanObject, expected] of cases) {
+      const h = scanHarness({}, {}, { scanObject });
+      await assert.rejects(
+        () => h.useCase.linkWetSignedScan(ctx(), {
+          expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'att-scan', checksumSha256: 'c', webBaseUrl: WEB_BASE,
+        }),
+        (error: unknown) => {
+          const body = (error as ConflictException).getResponse() as { code: string; message: string };
+          assert.equal(body.code, SCAN_NOT_LINKABLE, name);
+          assert.match(body.message, expected, name);
+          return true;
+        },
+        name,
+      );
+      assert.equal(h.scanLinks.length, 0, `${name}: nothing is linked`);
+    }
+    // A five-page scan still fits: five scan pages plus the attestation is exactly the ceiling.
+    const ok = scanHarness({}, {}, { scanObject: { bytes: await onePagePdf(5), mimeType: 'application/pdf' } });
+    await ok.useCase.linkWetSignedScan(ctx(), {
+      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'att-scan', checksumSha256: 'c', webBaseUrl: WEB_BASE,
+    });
+    assert.equal(ok.scanLinks.length, 1);
+  });
+
+  it('attaches evidence under the chosen purpose with permission, audits the source, and refuses without it', async () => {
+    const h = await readyHarness();
+    const attached = await h.useCase.attachMedia({ ...ctx(), permissions: ['expense.review', 'expense.receipt.upload'] }, {
+      expenseId: 'expense-1', attachmentId: 'att-slip', purpose: 'expense.payment.evidence', webBaseUrl: WEB_BASE,
+    });
+    assert.deepEqual(h.links, [{ expenseId: 'expense-1', attachmentId: 'att-slip', purpose: 'expense.payment.evidence' }]);
+    assert.match(attached.replyText, /หลักฐานการจ่ายเงิน/);
+    const audit = h.audits.find((entry) => entry.action === 'attachment.upload');
+    assert.equal(audit.metadataJson.source, 'LINE');
+    assert.equal(audit.metadataJson.purpose, 'expense.payment.evidence');
+    assert.equal(audit.riskLevel, 'MEDIUM');
+
+    // MANAGER holds expense.review and not expense.receipt.upload: §14 keeps the attach gate.
+    await assert.rejects(
+      () => h.useCase.attachMedia({ ...ctx(), permissions: ['expense.review'] }, {
+        expenseId: 'expense-1', attachmentId: 'att-2', purpose: 'expense.receipt.supporting',
+      }),
+      ForbiddenException,
+    );
+    assert.equal(h.links.length, 1, 'a refused upload links nothing');
+  });
+
+  it('clears the evidence ask on the next turn once a file is attached (Journey C)', async () => {
+    const h = harness({
+      expense: expense({
+        vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'วินไม่ออกใบเสร็จ',
+      }),
+    });
+    const asked = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+    assert.ok(asked.blockers.some((item) => item.code === 'supporting_evidence_required'));
+
+    await h.useCase.attachMedia({ ...ctx(), permissions: ['expense.review', 'expense.receipt.upload'] }, {
+      expenseId: 'expense-1', attachmentId: 'att-slip', purpose: 'expense.payment.evidence', webBaseUrl: WEB_BASE,
+    });
+    const next = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(next.blockers.some((item) => item.code === 'supporting_evidence_required'), false);
+    assert.equal(next.replyText.includes('มีสลิปหรือรูปถ่ายประกอบไหมคะ'), false);
+    assert.match(next.replyText, /ข้อมูลครบแล้ว พร้อมออกเอกสาร/);
   });
 });

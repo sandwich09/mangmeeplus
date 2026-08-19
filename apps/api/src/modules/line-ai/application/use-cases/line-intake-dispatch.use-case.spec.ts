@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { ConflictException } from '@nestjs/common';
+import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
@@ -52,6 +53,8 @@ function makePrisma() {
       }),
       lineWebhookEventLog: {
         findUnique: async () => null,
+        // A bare number is only a company pick when the PREVIOUS turn was the picker; here it never was.
+        findFirst: async () => null,
         create: async (args: unknown) => args,
         updateMany: async (args: any) => { updates.push(args); return { count: 1 }; },
       },
@@ -65,6 +68,8 @@ function makePrisma() {
       companyFeatureEntitlement: { findMany: async () => [] },
       expenseRecord: { update: async (args: any) => { recordUpdates.push(args); return args; } },
       attachmentLink: { findFirst: async () => null },
+      // §11: the checksum the wet-signed scan is recorded with comes off the stored attachment.
+      attachmentObject: { findFirst: async () => ({ checksumSha256: 'scan-checksum' }) },
       aiConversation: { upsert: async (args: any) => ({ id: args.where.id }) },
       aiTurn: { create: async (args: any) => { turnCreates.push(args); return { id: 'turn-1' }; }, findMany: async () => [], update: async (args: any) => args },
       aiToolInvocation: { createMany: async (args: unknown) => args },
@@ -111,6 +116,9 @@ type Harness = {
   linkAttachmentCalls: any[];
   updateExpenseCalls: any[];
   substituteCalls: any[];
+  mediaContextCalls: any[];
+  attachMediaCalls: any[];
+  linkScanCalls: any[];
   receiptContinuationCalls: any[];
   /** Inputs the REAL capture use case handed to CreateExpenseDraftUseCase (realCapture only). */
   draftsCreated: any[];
@@ -133,6 +141,10 @@ function makeHarness(opts: {
   captureLedger?: any[];
   captureError?: Error;
   substituteResult?: any;
+  /** §11: what `loadOpenMediaContext` reports for this chat — undefined means no open substitute work. */
+  substituteMediaContext?: any;
+  /** R11: what the link gate refuses with, so the reply for an uncomposable scan can be asserted. */
+  linkScanError?: Error;
   /** Rows behind `hasActiveSubstituteContinuation`: a chat already mid-workflow must not fork a draft. */
   substituteContinuationRows?: any[];
   /** Runs the REAL CaptureLineExpenseNoteUseCase (deterministic eligibility gate included) instead
@@ -161,6 +173,9 @@ function makeHarness(opts: {
   const linkAttachmentCalls: any[] = [];
   const updateExpenseCalls: any[] = [];
   const substituteCalls: any[] = [];
+  const mediaContextCalls: any[] = [];
+  const attachMediaCalls: any[] = [];
+  const linkScanCalls: any[] = [];
   const receiptContinuationCalls: any[] = [];
   const draftsCreated: any[] = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
@@ -303,12 +318,25 @@ function makeHarness(opts: {
         return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
       },
     } as any,
-    (opts.substituteResult || opts.substituteThrows
+    (opts.substituteResult || opts.substituteThrows || opts.substituteMediaContext
       ? {
         execute: async (_ctx: any, input: any) => {
           substituteCalls.push(input);
           if (opts.substituteThrows) throw opts.substituteThrows;
           return opts.substituteResult;
+        },
+        loadOpenMediaContext: async (_ctx: any, chatKeyHash: string) => {
+          mediaContextCalls.push(chatKeyHash);
+          return opts.substituteMediaContext;
+        },
+        attachMedia: async (_ctx: any, input: any) => {
+          attachMediaCalls.push(input);
+          return { replyText: `📎 แนบแล้ว ${input.purpose}` };
+        },
+        linkWetSignedScan: async (_ctx: any, input: any) => {
+          if (opts.linkScanError) throw opts.linkScanError;
+          linkScanCalls.push(input);
+          return { replyText: '🔵 รอยืนยัน — SUB-202608-00007' };
         },
       }
       : undefined) as any,
@@ -323,7 +351,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, receiptContinuationCalls, draftsCreated };
+  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated };
 }
 
 const TEXT_EVENT = {
@@ -2197,5 +2225,337 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
   it('keeps refusing a negation that also names the document', () => {
     assert.notEqual(classifyPendingMediaReply('ไม่ใช่ใบกำกับภาษี'), 'receipt');
     assert.notEqual(classifyPendingMediaReply('ไม่ต้องบันทึกใบเสร็จ'), 'receipt');
+  });
+});
+
+// Spec §11 (R14) / R10: media that arrives while this chat has open substitute work.
+describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
+  const SCAN = {
+    expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SUB-202608-00007',
+    amountLabel: '50.0000 THB', preparedAt: '2026-08-20T09:00:00.000Z',
+  };
+  const AWAITING = { expenseId: 'expense-1', awaitingScans: [SCAN] };
+  const OPEN_ONLY = { expenseId: 'expense-1', awaitingScans: [] };
+  const SUBSTITUTE_PERMISSIONS = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'];
+  /** MANAGER: holds expense.review, does not hold expense.receipt.upload (§14 keeps that the gate). */
+  const MANAGER_PERMISSIONS = ['expense.receipt.line_upload', 'expense.review'];
+  const CAPTURE_PLAN = { status: 'ROUTED' as const, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const, language: 'th', confidence: 0.95 };
+  const CHAT_KEY_HASH = chatKeyHashOf(MEDIA_EVENT);
+
+  /** The question the arrival turn recorded, as the answer turn will read it back. */
+  const askedClass = (choices: string[], chatKeyHash = CHAT_KEY_HASH) =>
+    ({ kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices });
+  const askedScan = (evidenceId = 'evidence-1', chatKeyHash = CHAT_KEY_HASH) =>
+    ({ kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash, evidenceId });
+
+  it('asks the D9 question naming the document number and amount, and keeps the bytes pending', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    const result = await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal(result.outcome, 'done');
+    assert.match(h.replies[0] ?? '', /SUB-202608-00007/);
+    assert.match(h.replies[0] ?? '', /50\.0000 THB/);
+    assert.match(h.replies[0] ?? '', /1\) ใช่/);
+    assert.equal(pendingMediaRows.length, 1, 'the bytes wait for the answer');
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    // FIX-1: the row remembers WHICH question it was asked, and in which chat.
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson, askedScan());
+    assert.equal(h.initCalls.length, 0, 'no expense draft is created from an unclassified photo');
+    assert.equal(h.linkScanCalls.length, 0, '§16: a photo alone links nothing');
+  });
+
+  it('asks one numbered question without the signed-form choice when nothing awaits a scan', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
+    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.match(h.replies[0] ?? '', /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);
+    assert.deepEqual(
+      pendingMediaRows[0].askedQuestionJson,
+      askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']),
+    );
+  });
+
+  it('attaches straight to the open work when the caption already says what the file is', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'สลิปโอนค่ะ');
+
+    assert.deepEqual(h.attachMediaCalls, [{
+      expenseId: 'expense-1', attachmentId: 'pending-att-1',
+      purpose: 'expense.payment.evidence', webBaseUrl: 'https://app.example.com',
+    }]);
+    assert.equal(h.initCalls.length, 0, 'no second expense is created for a slip of the open one');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+
+    const supporting = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: makePrisma().prisma,
+      substituteMediaContext: OPEN_ONLY, routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await supporting.useCase.executeReceiptUpload(MEDIA_EVENT, 'หลักฐานค่าที่จอดรถค่ะ');
+    assert.equal(supporting.attachMediaCalls[0].purpose, 'expense.receipt.supporting');
+  });
+
+  it('never takes a photo that a different intent already answered', async () => {
+    // The signature ticket owns its own route, and a DEGRADED router must not let a signature
+    // caption reach the D9 confirm either — one ใช่ there would crop a signature into a certificate.
+    for (const routePlan of [
+      { status: 'ROUTED' as const, intent: 'SIGNATURE_UPLOAD_TICKET' as const, language: 'th', confidence: 0.92 },
+      { status: 'DEGRADED' as const, reason: 'router_unavailable' as const },
+    ]) {
+      const h = makeHarness({
+        permissions: [...SUBSTITUTE_PERMISSIONS, 'expense.signature.manage'],
+        substituteMediaContext: AWAITING, routePlan: routePlan as any,
+        prisma: makePrisma().prisma, receiptOcrResult: validReceiptOcr(),
+      });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ลายเซ็นค่ะ');
+      assert.equal(h.linkScanCalls.length, 0, 'a signature caption never reaches D9');
+      assert.equal(h.attachMediaCalls.length, 0);
+      assert.equal((h.replies[0] ?? '').includes('SUB-202608-00007'), false);
+    }
+
+    // The four routes that already have an answer keep it, context or no context.
+    const routes: Array<[string, any, RegExp]> = [
+      ['CLARIFY', { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.5, clarifyQuestion: 'ถามกลับ' }, /ถามกลับ/],
+      ['MUTATION_REQUEST_REFUSAL', { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.9 }, /ไม่สามารถทำรายการ/],
+      ['BUSINESS_READ_QUESTION', { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
+      ['UNSUPPORTED', { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
+    ];
+    for (const [name, routePlan, expected] of routes) {
+      const h = makeHarness({
+        permissions: SUBSTITUTE_PERMISSIONS, prisma: makePrisma().prisma,
+        substituteMediaContext: AWAITING, routePlan, receiptOcrResult: validReceiptOcr(),
+      });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
+      assert.match(h.replies[0] ?? '', expected, name);
+      assert.equal(h.attachMediaCalls.length, 0, `${name}: the substitute branch stays out of it`);
+      assert.equal((h.replies[0] ?? '').includes('SUB-202608-00007'), false, `${name}: no D9`);
+    }
+  });
+
+  it('leaves every no-context turn exactly as it was, and never doubles an already-captured photo', async () => {
+    const { prisma, recordUpdates } = makePrisma();
+    const noContext = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: undefined,
+      substituteResult: { handled: true, status: 'BLOCKED', acceptedFields: [], blockers: [], replyText: 'x' },
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await noContext.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(noContext.initCalls.length, 1, 'without open substitute work the photo is a new expense');
+    assert.equal(noContext.attachMediaCalls.length, 0);
+    assert.ok(recordUpdates.length > 0);
+
+    // MANAGER: expense.review but no expense.receipt.upload. §14 keeps the attach gate, so the
+    // branch never claims the arrival — their photo keeps the behaviour it has today.
+    const manager = makePrisma();
+    const managerTurn = makeHarness({
+      permissions: MANAGER_PERMISSIONS, prisma: manager.prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await managerTurn.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(managerTurn.mediaContextCalls.length, 0);
+    assert.equal(managerTurn.initCalls.length, 1, 'existing capture behaviour, unchanged');
+
+    // The same photo redelivered after the substitute work opened: it is already an expense.
+    const redelivered = makePrisma();
+    const again = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: redelivered.prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT' }),
+    });
+    await again.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-redelivered' });
+    assert.equal(redelivered.pendingMediaRows.length, 0, 'no second copy of an already-captured photo');
+    assert.equal(again.attachMediaCalls.length, 0);
+    assert.match(again.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่าย/);
+  });
+
+  it('resolves a numbered answer against the question that was asked, never against today’s list', async () => {
+    // The inversion this guards: an old receipt-clarify “2” means "just an illustration, do NOT
+    // record". Read off the substitute list it would mean "supporting evidence" and file the photo.
+    const legacy = makePrisma();
+    seedPendingRow(legacy.pendingMediaRows, { caption: 'ยอดขายเดือนนี้เท่าไหร่', askedQuestionJson: { kind: 'RECEIPT_CLARIFY', chatKeyHash: CHAT_KEY_HASH } });
+    const legacyTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: legacy.prisma, substituteMediaContext: OPEN_ONLY,
+    });
+    await legacyTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-legacy-2', messageText: '2' });
+    assert.equal(legacyTurn.attachMediaCalls.length, 0, 'an illustration answer never attaches evidence');
+    assert.equal(legacyTurn.createExpenseCalls.length, 0);
+    assert.equal(legacy.pendingMediaRows[0].status, 'RESOLVED_ILLUSTRATION', 'the receipt clarify resolved it, as before');
+
+    // A row with no recorded question at all (written before this existed) is likewise not ours.
+    const unrecorded = makePrisma();
+    seedPendingRow(unrecorded.pendingMediaRows, { caption: '' });
+    const unrecordedTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: unrecorded.prisma, substituteMediaContext: AWAITING,
+    });
+    await unrecordedTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrecorded', messageText: '1' });
+    assert.equal(unrecordedTurn.linkScanCalls.length, 0, 'a D9-shaped “1” cannot link a row that was never asked D9');
+    assert.equal(unrecordedTurn.attachMediaCalls.length, 0);
+
+    // A row questioned in a DIFFERENT chat is not this chat's to resolve either.
+    const otherChat = makePrisma();
+    seedPendingRow(otherChat.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(['PAYMENT_EVIDENCE'], 'another-chat') });
+    const otherChatTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: otherChat.prisma, substituteMediaContext: OPEN_ONLY,
+    });
+    await otherChatTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-other-chat', messageText: '1' });
+    assert.equal(otherChatTurn.attachMediaCalls.length, 0);
+  });
+
+  it('links the scan on ใช่, is idempotent on redelivery, and issues nothing by itself', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-confirm-1', messageText: 'ใช่' });
+
+    assert.deepEqual(h.linkScanCalls, [{
+      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'pending-att-1',
+      checksumSha256: 'scan-checksum', webBaseUrl: 'https://app.example.com',
+    }]);
+    assert.match(h.replies[0] ?? '', /รอยืนยัน/);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.equal(h.createExpenseCalls.length, 0, 'a confirmed form is not a new expense');
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-confirm-2', messageText: 'ใช่' });
+    assert.equal(h.linkScanCalls.length, 1, 'the resolved row is no longer pending');
+  });
+
+  it('lists the other forms on ไม่ใช่, and links the one that is picked (§15)', async () => {
+    const second = {
+      expenseId: 'expense-2', evidenceId: 'evidence-2', documentNumber: 'SUB-202608-00009',
+      amountLabel: '99.0000 THB', preparedAt: '2026-08-20T08:00:00.000Z',
+    };
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma,
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [SCAN, second] },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-not-this-one', messageText: 'ไม่ใช่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.match(h.replies[0] ?? '', /1\) SUB-202608-00009 ยอด 99\.0000 THB/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'the bytes are still waiting');
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
+      { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash: CHAT_KEY_HASH, evidenceIds: ['evidence-2'] });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-pick-1', messageText: '1' });
+    assert.deepEqual(h.linkScanCalls.map((call: any) => call.evidenceId), ['evidence-2']);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+  });
+
+  it('falls back to the plain numbered question on ไม่ใช่ when no other form awaits a scan (§15)', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-none-left', messageText: 'ไม่ใช่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
+    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
+      askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']));
+  });
+
+  it('routes the recorded choices to attach, to the capture path, and to the do-not-record escape', async () => {
+    const choices = ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'];
+    const attach = makePrisma();
+    seedPendingRow(attach.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const attaching = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: attach.prisma, substituteMediaContext: OPEN_ONLY });
+    await attaching.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-2', messageText: '2' });
+    assert.equal(attaching.attachMediaCalls[0].purpose, 'expense.receipt.supporting');
+    assert.equal(attach.pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+
+    const capture = makePrisma();
+    seedPendingRow(capture.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const newExpense = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: capture.prisma, substituteMediaContext: OPEN_ONLY });
+    await newExpense.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-3', messageText: '3' });
+    assert.equal(newExpense.attachMediaCalls.length, 0);
+    assert.equal(newExpense.createExpenseCalls.length, 1, 'choice “ค่าใช้จ่ายใหม่” is the existing capture path');
+
+    // The escape RECEIPT-05 has always had: a picture that answers a question and records nothing.
+    const escape = makePrisma();
+    seedPendingRow(escape.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const notRecorded = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: escape.prisma, substituteMediaContext: OPEN_ONLY });
+    await notRecorded.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-4', messageText: '4' });
+    assert.equal(notRecorded.attachMediaCalls.length, 0);
+    assert.equal(notRecorded.createExpenseCalls.length, 0, 'nothing is recorded');
+    assert.equal(escape.pendingMediaRows[0].status, 'RESOLVED_ILLUSTRATION');
+    assert.match(notRecorded.replies[0] ?? '', /ไม่ได้บันทึกเป็นหลักฐาน/);
+  });
+
+  it('re-states its own question instead of letting another classifier act on the bytes', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: [...SUBSTITUTE_PERMISSIONS, 'line.ai.query'], prisma, substituteMediaContext: AWAITING,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrelated', messageText: 'ยอดขายเดือนนี้เท่าไหร่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.equal(h.attachMediaCalls.length, 0);
+    assert.equal(h.createExpenseCalls.length, 0, 'an unrelated question never resolves the pending bytes');
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+  });
+
+  it('tells a MANAGER the truth instead of failing, and never lets this path throw into the turn', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedClass(['PAYMENT_EVIDENCE', 'NO_RECORD']) });
+    const manager = makeHarness({ permissions: MANAGER_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY });
+
+    await manager.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-manager-answer', messageText: '1' });
+
+    assert.equal(manager.attachMediaCalls.length, 0, 'nothing is attached without the permission');
+    assert.match(manager.replies[0] ?? '', /ไม่มีสิทธิ์|ยังไม่ได้เปิดใช้งาน/, 'the reply names the reason');
+    assert.equal((manager.replies[0] ?? '').includes('ขออภัยค่ะ เกิดข้อผิดพลาด'), false, 'not the generic infra failure');
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'their file is still there to retry');
+
+    // A failure inside the substitute path is contained: it never reaches the dispatcher's
+    // generic error reply carrying the customer's lost answer with it.
+    const failing = makePrisma();
+    seedPendingRow(failing.pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const thrower = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: failing.prisma, substituteMediaContext: AWAITING });
+    (thrower.useCase as any).substituteReceiptContinuation.loadOpenMediaContext = async () => { throw new Error('continuation store unavailable'); };
+    await thrower.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-throws', messageText: 'ใช่' });
+    assert.equal(thrower.linkScanCalls.length, 0);
+    assert.equal(failing.pendingMediaRows[0].status, 'PENDING');
+  });
+
+  it('refuses a scan the artifact could never contain, in words the sender can act on', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING,
+      linkScanError: new ConflictException({
+        code: 'substitute_wet_signed_scan_not_linkable',
+        message: 'The scanned form cannot be read as a printable document.',
+      }),
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-bad-scan', messageText: 'ใช่' });
+
+    assert.match(h.replies[0] ?? '', /SUB-202608-00007/);
+    assert.match(h.replies[0] ?? '', /cannot be read as a printable document/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'a refused scan keeps the bytes for a retry');
   });
 });

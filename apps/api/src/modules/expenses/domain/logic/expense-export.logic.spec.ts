@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ACCOUNTANT_INDEX_COLUMNS, ACCOUNTANT_INDEX_SUMMARY_COLUMNS } from '@watchdog-bms/contracts';
-import { buildAccountantIndexCsv, buildAccountantIndexRow } from './expense-export.logic';
+import type { ExpenseAttachmentPurpose } from '@watchdog-bms/contracts';
+import { buildAccountantIndexCsv, buildAccountantIndexRow, buildManifestEntry, evidenceRef, WET_SIGNED_SCAN_EVIDENCE_ROLE } from './expense-export.logic';
 
 // The accountant export must NOT follow the expense capture mode.
 //
@@ -49,5 +50,47 @@ describe('accountant index is independent of expense capture mode', () => {
 
   it('keeps vat_amount in the summary column set the UI downloads by default', () => {
     assert.ok(ACCOUNTANT_INDEX_SUMMARY_COLUMNS.includes('vat_amount'));
+  });
+});
+
+describe('R11 — the hand-signed scan is part of the certificate, not supporting evidence', () => {
+  const attachment = (id: string, purpose: ExpenseAttachmentPurpose) => ({
+    id, purpose, originalFileName: `${id}.jpg`, mimeType: 'image/jpeg', byteSize: 10, checksumSha256: 'c',
+    status: 'ACTIVE', createdAt: '2026-08-05T03:00:00.000Z',
+  });
+
+  it('keeps the scan out of supporting_evidence_refs', () => {
+    const source = {
+      ...nonVatExpense,
+      primaryAttachmentId: 'att-primary',
+      attachments: [
+        attachment('att-primary', 'expense.receipt.primary'),
+        attachment('att-slip', 'expense.payment.evidence'),
+        attachment('att-scan', 'expense.review.evidence'),
+      ],
+      wetSignedScanAttachmentIds: ['att-scan'],
+    };
+
+    const refs = buildAccountantIndexRow(source).supporting_evidence_refs;
+
+    assert.ok(refs.includes(evidenceRef(source.expenseNumber, source.expenseId, 'att-slip')));
+    assert.equal(refs.includes(evidenceRef(source.expenseNumber, source.expenseId, 'att-scan')), false,
+      'the signature page is not a second piece of evidence that the money was spent');
+    // Without the certificate's own scan list nothing changes for every other expense.
+    assert.ok(buildAccountantIndexRow({ ...source, wetSignedScanAttachmentIds: [] }).supporting_evidence_refs
+      .includes(evidenceRef(source.expenseNumber, source.expenseId, 'att-scan')));
+  });
+
+  it('gives the scan its own manifest role instead of the shared certification-chain purpose', () => {
+    const base = {
+      expenseId: 'exp-1', expenseNumber: 'EXP-202608-00001',
+      attachment: attachment('att-scan', 'expense.review.evidence'),
+      sourceDocumentType: 'RECEIPT' as const, taxEvidenceStatus: 'NOT_TAX_EVIDENCE' as const,
+      downloadUrl: 'https://example/d', downloadUrlExpiresAt: '2026-08-05T04:00:00.000Z',
+      webUrl: '/companies/co-1/expenses/exp-1',
+    };
+
+    assert.equal(buildManifestEntry({ ...base, isWetSignedScan: true }).evidence_role, WET_SIGNED_SCAN_EVIDENCE_ROLE);
+    assert.equal(buildManifestEntry(base).evidence_role, 'expense.review.evidence');
   });
 });

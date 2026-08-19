@@ -8,7 +8,7 @@
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { HttpException, Injectable, Logger, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -26,7 +26,26 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
-import { hasActiveSubstituteContinuation, isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, substituteRequestExpenseText, type LineSubstituteReceiptContinuationResult } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import {
+  classifySubstituteMedia,
+  hasActiveSubstituteContinuation,
+  isSubstituteReceiptConversationText,
+  LineSubstituteReceiptContinuationUseCase,
+  numberedSelection,
+  parseSubstituteMediaQuestion,
+  substituteMediaAnswer,
+  substituteMediaChoices,
+  substituteMediaQuestion,
+  substituteRequestExpenseText,
+  substituteScanConfirmAnswer,
+  substituteScanConfirmQuestion,
+  substituteScanPickQuestion,
+  type LineSubstituteMediaChoice,
+  type LineSubstituteMediaContext,
+  type LineSubstituteMediaQuestion,
+  type LineSubstituteMediaScan,
+  type LineSubstituteReceiptContinuationResult,
+} from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
 import { isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
@@ -137,6 +156,11 @@ const MEDIA_CLARIFY_REPLY = [
   '2) ภาพประกอบคำถาม ไม่ต้องบันทึก',
   '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
 ].join('\n');
+/** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
+ *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
+const MEDIA_NOT_RECORDED_REPLY = '🖼️ รับทราบค่ะ เก็บรูปไว้เฉยๆ ไม่ได้บันทึกเป็นหลักฐานของรายการไหน';
+/** The class question with the signed-form choice removed (§15: nothing is awaiting a scan). */
+const WITHOUT_SCAN_CHOICES: LineSubstituteMediaChoice[] = ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'];
 const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
 /** One turn that both captured an expense and ran the substitute continuation reports both outcomes
  *  under this separator; the capture stands on its own when the continuation cannot be evaluated. */
@@ -151,6 +175,13 @@ const PENDING_MEDIA_RESOLUTION = Symbol('pendingMediaResolution');
 /** Same chatKey the text path and the message buffer use: the group, else the person. */
 function mediaChatKey(event: LineReceiptUploadEvent): string {
   return event.pushTargetId ?? event.lineUserId;
+}
+
+/** RECEIPT-05's own numbered question, recorded on the row it belongs to. The pending row is scoped
+ *  per user while conversations are per chat, so the chat is part of the record: an answer typed in
+ *  a different chat must not resolve bytes that were questioned in this one. */
+function receiptClarifyQuestion(event: { lineUserId: string; pushTargetId?: string }): Record<string, unknown> {
+  return { kind: 'RECEIPT_CLARIFY', chatKeyHash: chatKeyHashOf(event) };
 }
 
 /**
@@ -1280,8 +1311,44 @@ export class ProcessLineWebhookUseCase {
       orderBy: { createdAt: 'desc' },
     });
     if (pendingMedia) {
-      const splitReply = splitPendingMediaReply(normalizedText);
-      const decision = splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
+      // §11: these bytes may be waiting on a question the substitute work asked. That question is
+      // recorded ON the row, so its answer is resolved against the list that was actually printed —
+      // reading a “2” off today's list instead would invert what the sender said. Rows carrying the
+      // receipt clarify's own question, or asked in another chat, fall through untouched.
+      let substituteAnswer: Awaited<ReturnType<ProcessLineWebhookUseCase['resolveSubstituteMediaAnswer']>>;
+      try {
+        substituteAnswer = await this.resolveSubstituteMediaAnswer(
+          event,
+          {
+            requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+            membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+            permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+          },
+          resolvedAccess, pendingMedia, normalizedText,
+        );
+      } catch (error) {
+        // Nothing here may reach the dispatcher's generic failure reply: the sender would lose both
+        // their answer and the explanation. Keep the bytes, say it plainly, end the turn.
+        this.logger.warn({ msg: 'line_substitute_media_answer_failed', requestId, error: (error as Error).message });
+        await this.deliverReply(event, ERROR_REPLY);
+        await this.updateEventLog(event.webhookEventId, 'substitute_media_answer_failed', undefined, companyId);
+        return;
+      }
+      if (substituteAnswer?.outcome === 'handled') {
+        await this.ackMediaClarification(companyId, event, identity.userId, pendingMedia.id, 'acked');
+        return;
+      }
+      if (substituteAnswer?.outcome === 'not_answered') {
+        // Ours, but not an answer to it. The row stays PENDING and the reminder rides the turn, so
+        // no other classifier can act on bytes that are waiting on a different question.
+        mediaResumeCapsule = `↩️ รูปที่รอจำแนกยังเก็บไว้อยู่ค่ะ\n${substituteAnswer.question}`;
+      }
+      const splitReply = substituteAnswer ? null : splitPendingMediaReply(normalizedText);
+      const decision = substituteAnswer?.outcome === 'new_expense'
+        ? 'receipt' as const
+        : substituteAnswer
+          ? 'ambiguous' as const
+          : splitReply?.decision ?? classifyPendingMediaReply(normalizedText);
       if (decision === 'receipt') {
         await this.resolvePendingMediaAsReceipt(
           event, requestId, identity.userId, companyId, resolvedAccess, pendingMedia, normalizedText,
@@ -2428,7 +2495,9 @@ export class ProcessLineWebhookUseCase {
       if (caption && canCaptureExpense) {
         // Only the delivery that CREATES the pending row asks the clarify question. A redelivery
         // (new webhookEventId, same lineMessageId) reuses the row and stays silent — idempotent.
-        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(
+          ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+        );
         if (created) {
           await this.deliverReply(event, MEDIA_CLARIFY_REPLY);
           await this.persistIntakeTurn({
@@ -2453,6 +2522,32 @@ export class ProcessLineWebhookUseCase {
       await this.deliverCompletedReply(event, MEDIA_UNSUPPORTED_REPLY, companyId, access);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
+    }
+
+    // R14/§11: this chat has open substitute work, so the photo is classified against THAT work
+    // instead of being read as a new expense. Deterministic signals only — the caption first, then
+    // awaiting-scan state, never the picture — and anything still ambiguous keeps the bytes pending
+    // behind one numbered question.
+    //
+    // It owns exactly one route: the generic capture/fallthrough. Signature tickets, clarifies,
+    // mutation refusals, business questions and reference documents were all answered above and
+    // keep their behaviour — a substitute continuation must not swallow the reply a different
+    // intent already earned.
+    if (this.substituteReceiptContinuation && canCaptureExpense
+      && access.permissions.includes('expense.receipt.upload')
+      && (routePlan.status !== 'ROUTED' || routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE')) {
+      try {
+        const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHashOf(event));
+        const outcome = context
+          ? await this.handleSubstituteMediaArrival({
+            event, ctx, access, companyId, userId: identity.userId, requestId, caption, captionSuffix, media, context,
+          })
+          : undefined;
+        if (outcome) return outcome;
+      } catch (error) {
+        // Never let this branch sink a media turn: without it the photo is still capturable below.
+        this.logger.warn({ msg: 'line_substitute_media_arrival_failed', requestId, error: (error as Error).message });
+      }
     }
 
     // Reference-only routes may receive bounded guidance without expense permission, but must
@@ -2537,7 +2632,9 @@ export class ProcessLineWebhookUseCase {
         : formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId);
       let terminalStatus = 'clarification_required';
       if (decision.persistMedia && canCaptureExpense) {
-        const { created, pending } = await this.ensurePendingMedia(ctx, event, companyId, identity.userId, caption, media);
+        const { created, pending } = await this.ensurePendingMedia(
+          ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+        );
         if (created) {
           await this.deliverReply(event, reply);
           await this.persistIntakeTurn({
@@ -2719,7 +2816,10 @@ export class ProcessLineWebhookUseCase {
     userId: string,
     caption: string,
     media: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer },
-  ): Promise<{ created: boolean; pending?: { id: string; attachmentId: string; mimeType: string } }> {
+    /** The question these bytes will be asked about, recorded WITH them so the answer is resolved
+     *  against it and never against whatever question the state would ask by the time it arrives. */
+    askedQuestion: Record<string, unknown>,
+  ): Promise<{ created: boolean; pending?: { id: string; attachmentId: string; mimeType: string; lineMessageId: string; createdAt: Date; askedQuestionJson?: unknown } }> {
     const key = { companyId_lineMessageId: { companyId, lineMessageId: event.lineMessageId } };
     const redelivered = await this.prisma.client.lineIntakePendingMedia.findUnique({ where: key });
     // Redelivery of the SAME message: stay silent, exactly as before.
@@ -2743,7 +2843,7 @@ export class ProcessLineWebhookUseCase {
       await this.prisma.client.lineIntakePendingMedia.create({
         data: {
           companyId, userId, lineMessageId: event.lineMessageId, attachmentId: intent.attachmentId,
-          caption, mimeType: media.mimeType, status: 'PENDING',
+          caption, mimeType: media.mimeType, status: 'PENDING', askedQuestionJson: askedQuestion as any,
           expiresAt: new Date(Date.now() + PENDING_MEDIA_TTL_MINUTES * 60 * 1000),
         },
       });
@@ -2821,6 +2921,296 @@ export class ProcessLineWebhookUseCase {
       // customer is waiting for. A stale entry expires on its own via the reclaim path.
       this.logger.warn({ msg: 'line_ai_media_clarify_ack_failed', pendingMediaId, error: (err as Error).message });
     }
+  }
+
+  /** §11 arrival half. The bytes are held by the SAME pending-media row the receipt clarify uses,
+   *  which is what makes this idempotent on redelivery and what keeps a second photo from opening a
+   *  second question — and the question they are waiting on is recorded WITH them, so the answer can
+   *  never be read off a different list. `undefined` hands the turn back to the existing branches
+   *  unchanged: a signature caption, an already-captured photo, or a pending slot owned by another
+   *  question. */
+  private async handleSubstituteMediaArrival(input: {
+    event: LineReceiptUploadEvent;
+    ctx: RequestContext;
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } };
+    companyId: string;
+    userId: string;
+    requestId: string;
+    caption: string;
+    captionSuffix: string;
+    media: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer };
+    context: LineSubstituteMediaContext;
+  }): Promise<LineMediaTurnOutcome | undefined> {
+    const { event, ctx, companyId, context } = input;
+    const chatKeyHash = chatKeyHashOf(event);
+    const classified = classifySubstituteMedia(input.caption, context.awaitingScans.length > 0);
+    // A signature belongs to the signature library, not inside a certificate. The router normally
+    // routes it, but a DEGRADED router must not be able to put a signature crop one “ใช่” away from
+    // becoming the wet-signed original of a legal document.
+    if (classified === 'SIGNATURE') return undefined;
+    // These bytes already became an expense on an earlier delivery — the substitute context opened
+    // afterwards. Redelivery reuses that one record below; it must not also store a second copy here.
+    if (await this.expenseRepo?.findByLineMessageId(companyId, event.lineMessageId)) return undefined;
+    const scan = context.awaitingScans[0];
+    const choices = substituteMediaChoices(context);
+    const question: LineSubstituteMediaQuestion | undefined = classified === 'AWAITING_SCAN_CONFIRM' && scan
+      ? { kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash, evidenceId: scan.evidenceId }
+      : classified === 'ASK'
+        ? { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices }
+        : undefined;
+    const { created, pending } = await this.ensurePendingMedia(
+      ctx, event, companyId, input.userId, input.caption, input.media,
+      question ?? { kind: 'SUBSTITUTE_ATTACH', chatKeyHash },
+    );
+    if (!pending || pending.lineMessageId !== event.lineMessageId) return undefined;
+    if (!created) {
+      await this.updateEventLog(event.webhookEventId, 'duplicate_media_pending', undefined, companyId);
+      return { outcome: 'done' };
+    }
+    if (!question) {
+      return this.attachSubstituteMedia({
+        ...input,
+        pending,
+        purpose: classified === 'PAYMENT_EVIDENCE' ? 'expense.payment.evidence' : 'expense.receipt.supporting',
+      });
+    }
+    // §11: two classes stay plausible, so exactly one question is asked and the file waits.
+    const text = question.kind === 'SUBSTITUTE_SCAN_CONFIRM' ? substituteScanConfirmQuestion(scan!) : substituteMediaQuestion(choices);
+    await this.deliverReply(event, text);
+    await this.persistIntakeTurn({
+      userId: input.userId, companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: `${mediaPreviewLabel(pending)}${input.captionSuffix}`, replyText: text, intent: 'CLARIFY',
+    });
+    await this.appendMediaClarification({
+      companyId, chatKey: mediaChatKey(event), requestId: input.requestId, webhookEventId: event.webhookEventId,
+      userId: input.userId, caption: input.caption, question: text, pending,
+    });
+    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+    return { outcome: 'done' };
+  }
+
+  /** §11/§14: the caption already said what this file is, so it is attached to the open work under
+   *  that purpose — permission-checked and audited inside the expenses use case. */
+  private async attachSubstituteMedia(input: {
+    event: LineReceiptUploadEvent;
+    ctx: RequestContext;
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } };
+    companyId: string;
+    userId: string;
+    captionSuffix: string;
+    context: LineSubstituteMediaContext;
+    pending: { id: string; attachmentId: string };
+    purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
+  }): Promise<LineMediaTurnOutcome> {
+    const { event, companyId } = input;
+    const { replyText } = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
+      expenseId: input.context.expenseId,
+      attachmentId: input.pending.attachmentId,
+      purpose: input.purpose,
+      webBaseUrl: this.config.webBaseUrl,
+    });
+    await this.deliverCompletedReply(event, replyText, companyId, input.access);
+    await this.resolvePendingRow(input.pending.id, 'RESOLVED_RECEIPT');
+    await this.persistIntakeTurn({
+      userId: input.userId, companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: `[ผู้ใช้ส่งหลักฐานของงานใบรับรอง]${input.captionSuffix}`, replyText, intent: 'EVIDENCE_CAPTURE',
+    });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+    return { outcome: 'done' };
+  }
+
+  private async resolvePendingRow(id: string, status: 'RESOLVED_RECEIPT' | 'RESOLVED_ILLUSTRATION'): Promise<void> {
+    await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { id, status: 'PENDING' }, data: { status } });
+  }
+
+  /** §11 answer half. It claims the turn ONLY for a row whose recorded question is one of ours and
+   *  was asked in THIS chat — the receipt clarify's own rows, and rows from another chat, route
+   *  exactly as they did before. Within our own rows the answer is read off the recorded list, so
+   *  “2” always means what it meant when it was printed.
+   *
+   *  `not_answered` means "ours, but this message is not an answer to it": the bytes stay pending
+   *  and the caller re-states the question instead of letting a different classifier act on them. */
+  private async resolveSubstituteMediaAnswer(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } },
+    pending: { id: string; attachmentId: string; lineMessageId: string; mimeType: string; askedQuestionJson?: unknown },
+    text: string,
+  ): Promise<{ outcome: 'handled' | 'new_expense' } | { outcome: 'not_answered'; question: string } | undefined> {
+    if (!this.substituteReceiptContinuation) return undefined;
+    const chatKeyHash = chatKeyHashOf(event);
+    const asked = parseSubstituteMediaQuestion(pending.askedQuestionJson, chatKeyHash);
+    if (!asked) return undefined;
+    // §14 keeps `expense.receipt.upload` as the attach gate. Someone who lost it between question
+    // and answer gets the truth, not a generic failure that also loses what they typed.
+    if (!ctx.permissions.includes('expense.receipt.upload')) {
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text, receiptDeniedReply(access));
+    }
+    const context = await this.substituteReceiptContinuation.loadOpenMediaContext(ctx, chatKeyHash);
+    if (!context) {
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text,
+        '📄 งานใบรับรองแทนใบเสร็จรับเงินในแชทนี้ไม่ได้เปิดค้างไว้แล้วค่ะ ไฟล์ที่ส่งมายังเก็บไว้ ยังไม่ได้บันทึกเป็นหลักฐานของรายการใด');
+    }
+    if (asked.kind === 'SUBSTITUTE_SCAN_CONFIRM') {
+      const scan = context.awaitingScans.find((item) => item.evidenceId === asked.evidenceId);
+      const confirmed = scan ? substituteScanConfirmAnswer(text) : undefined;
+      if (scan && confirmed === 'YES') return this.linkSubstituteScan(event, ctx, access, pending, text, scan);
+      // §15: “ไม่ใช่” refuses one identification, not the file. Other forms awaiting a scan are
+      // listed; with none left the photo is ordinary evidence and the class question decides.
+      if (scan && confirmed === 'NO') {
+        const others = context.awaitingScans.filter((item) => item.evidenceId !== asked.evidenceId);
+        return others.length
+          ? this.askSubstituteMediaQuestion(event, ctx, access, pending, text, substituteScanPickQuestion(others),
+            { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash, evidenceIds: others.map((item) => item.evidenceId) })
+          : this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
+            substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
+            { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+      }
+      // The form stopped awaiting a scan while the question was open: never link, ask again.
+      if (!scan) {
+        return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
+          substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
+          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+      }
+      return { outcome: 'not_answered', question: substituteScanConfirmQuestion(scan) };
+    }
+    if (asked.kind === 'SUBSTITUTE_SCAN_PICK') {
+      const offered = asked.evidenceIds
+        .map((id) => context.awaitingScans.find((item) => item.evidenceId === id))
+        .filter((item): item is LineSubstituteMediaScan => !!item);
+      const index = numberedSelection(text, offered.length);
+      if (index === undefined) return { outcome: 'not_answered', question: substituteScanPickQuestion(offered) };
+      return this.linkSubstituteScan(event, ctx, access, pending, text, offered[index]!);
+    }
+    const answer = substituteMediaAnswer(text, asked.choices);
+    if (!answer) return { outcome: 'not_answered', question: substituteMediaQuestion(asked.choices) };
+    if (answer === 'NEW_EXPENSE') return { outcome: 'new_expense' };
+    if (answer === 'NO_RECORD') {
+      await this.deliverCompletedReply(event, MEDIA_NOT_RECORDED_REPLY, ctx.companyId, access);
+      await this.resolvePendingRow(pending.id, 'RESOLVED_ILLUSTRATION');
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: text, replyText: MEDIA_NOT_RECORDED_REPLY, intent: 'CLARIFY',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+      return { outcome: 'handled' };
+    }
+    if (answer === 'WET_SIGNED_SCAN') {
+      const scan = context.awaitingScans[0];
+      if (!scan) {
+        return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
+          substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
+          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+      }
+      return this.linkSubstituteScan(event, ctx, access, pending, text, scan);
+    }
+    const { replyText } = await this.substituteReceiptContinuation.attachMedia(ctx, {
+      expenseId: context.expenseId,
+      attachmentId: pending.attachmentId,
+      purpose: answer === 'PAYMENT_EVIDENCE' ? 'expense.payment.evidence' : 'expense.receipt.supporting',
+      webBaseUrl: this.config.webBaseUrl,
+    });
+    return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText);
+  }
+
+  /** R10 + D9: the confirmed photo becomes the wet-signed original. A refusal from the link (an
+   *  unreadable scan, a state that moved) is a sentence the sender can act on, never a stack trace. */
+  private async linkSubstituteScan(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } },
+    pending: { id: string; attachmentId: string },
+    text: string,
+    scan: LineSubstituteMediaScan,
+  ): Promise<{ outcome: 'handled' }> {
+    try {
+      const { replyText } = await this.substituteReceiptContinuation!.linkWetSignedScan(ctx, {
+        expenseId: scan.expenseId,
+        evidenceId: scan.evidenceId,
+        attachmentId: pending.attachmentId,
+        checksumSha256: await this.pendingMediaChecksum(ctx.companyId, pending.attachmentId),
+        webBaseUrl: this.config.webBaseUrl,
+      });
+      return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText);
+    } catch (error: unknown) {
+      if (!(error instanceof HttpException)) throw error;
+      const body = error.getResponse();
+      const detail = typeof body === 'object' && body && typeof (body as { message?: unknown }).message === 'string'
+        ? (body as { message: string }).message
+        : error.message;
+      return this.refuseSubstituteMediaAnswer(event, ctx, access, text,
+        `📄 ยังรับรูปนี้เป็นฟอร์มที่เซ็นแล้วของ ${scan.documentNumber} ไม่ได้ค่ะ\n${detail}\nส่งรูปใหม่ที่ชัดเจน หรือแนบไฟล์ในเว็บได้เลย`);
+    }
+  }
+
+  /** Re-ask, keeping the bytes and REPLACING the recorded question so the next answer is read off
+   *  the list that was actually printed this time. */
+  private async askSubstituteMediaQuestion(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[]; entitlementDeniedPermissions?: Record<string, string> },
+    pending: { id: string },
+    text: string,
+    question: string,
+    asked: LineSubstituteMediaQuestion,
+  ): Promise<{ outcome: 'handled' }> {
+    await this.prisma.client.lineIntakePendingMedia.updateMany({
+      where: { id: pending.id, status: 'PENDING' }, data: { askedQuestionJson: asked as any },
+    });
+    // A question is not a finished turn: same plain delivery the arrival question uses, so a
+    // completion menu cannot appear next to a numbered list and be read as more choices.
+    await this.deliverReply(event, question);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: text, replyText: question, intent: 'CLARIFY',
+    });
+    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+    return { outcome: 'handled' };
+  }
+
+  /** The turn is ours and the answer cannot be honoured: say why, keep the bytes, write nothing. */
+  private async refuseSubstituteMediaAnswer(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[]; entitlementDeniedPermissions?: Record<string, string> },
+    text: string,
+    reply: string,
+  ): Promise<{ outcome: 'handled' }> {
+    await this.deliverCompletedReply(event, reply, ctx.companyId, access);
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: text, replyText: reply, intent: 'CLARIFY',
+    });
+    await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, ctx.companyId);
+    return { outcome: 'handled' };
+  }
+
+  /** The checksum recorded when the bytes were stored. R11 keeps the scan's own checksum on the
+   *  evidence row, so it is read from the attachment rather than recomputed from a second download. */
+  private async pendingMediaChecksum(companyId: string, attachmentId: string): Promise<string> {
+    const attachment = await this.prisma.client.attachmentObject.findFirst({
+      where: { id: attachmentId, companyId, status: 'ACTIVE' }, select: { checksumSha256: true },
+    });
+    if (!attachment?.checksumSha256) throw new Error('LINE_PENDING_MEDIA_CHECKSUM_MISSING');
+    return attachment.checksumSha256;
+  }
+
+  private async deliverSubstituteMediaOutcome(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    access: { permissions: string[]; roles: string[]; entitlementDeniedPermissions?: Record<string, string> },
+    pending: { id: string },
+    text: string,
+    replyText: string,
+  ): Promise<{ outcome: 'handled' }> {
+    await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
+    await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
+    await this.persistIntakeTurn({
+      userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+      userMessagePreview: text, replyText, intent: 'EVIDENCE_CAPTURE',
+    });
+    await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+    return { outcome: 'handled' };
   }
 
   /** R1 capture-first: create the expense draft the substitute request describes, so the

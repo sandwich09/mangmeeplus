@@ -675,8 +675,14 @@ export type SubstituteReceiptEvidenceSummary = {
   checksumSha256: string | null;
   issuedAt: string | null;
   supersedeReason: string | null;
+  /** R10/R11: `PAPER` means the ink lives on `wetSignedScanAttachmentId`, not in a rendered SVG,
+   *  so certification and approval ask for an acknowledgement instead of a signature image. */
+  signatureMode: SubstituteReceiptSignatureMode;
+  wetSignedScanAttachmentId: string | null;
   updatedAt: string;
 };
+
+export type SubstituteReceiptSignatureMode = 'DIGITAL' | 'PAPER';
 
 export type SupersedeSubstituteReceiptInput = {
   reason: string;
@@ -697,6 +703,9 @@ export type GenerateSubstituteReceiptInput = {
   paymentMethod?: ExpensePaymentMethod;
   idempotencyKey: string;
   expectedExpenseUpdatedAt: string;
+  /** R10: this prepare answers `ขอฟอร์มไปเซ็นเอง`, so the chat is now waiting for a photo of the
+   *  signed sheet. Recorded on the continuation state the prepare consumes; ignored without one. */
+  formRequested?: boolean;
   /** Opaque LINE handoff id; accepted values are reloaded server-side after authentication. */
   continuationId?: string;
   note?: string;

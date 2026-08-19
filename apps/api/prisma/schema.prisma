@@ -7219,17 +7219,21 @@ enum LineIntakePendingMediaStatus {
 }
 
 model LineIntakePendingMedia {
-  id            String                       @id @default(cuid())
-  companyId     String
-  userId        String
-  lineMessageId String
-  attachmentId  String
-  caption       String?
-  mimeType      String
-  status        LineIntakePendingMediaStatus @default(PENDING)
-  expiresAt     DateTime
-  createdAt     DateTime                     @default(now())
-  updatedAt     DateTime                     @updatedAt
+  id                String                       @id @default(cuid())
+  companyId         String
+  userId            String
+  lineMessageId     String
+  attachmentId      String
+  caption           String?
+  mimeType          String
+  status            LineIntakePendingMediaStatus @default(PENDING)
+  /// Which question these bytes are waiting on, and the chat it was asked in. A numbered answer is
+  /// resolved against THIS, never against whatever question the current state would ask now — the
+  /// two lists differ, and reading "2" off the wrong list inverts the customer's answer.
+  askedQuestionJson Json?
+  expiresAt         DateTime
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
 
   @@unique([companyId, lineMessageId])
   @@index([companyId, userId, status])

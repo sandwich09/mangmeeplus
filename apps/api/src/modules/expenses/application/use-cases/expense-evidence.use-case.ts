@@ -120,12 +120,20 @@ export class CreateAccountantPackageUseCase {
     const issuedSubstitutes = page.rows.length
       ? await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
         where: { companyId: ctx.companyId, expenseId: { in: page.rows.map((row) => row.id) }, status: 'ISSUED' },
-        select: { expenseId: true, artifactAttachmentId: true },
+        select: { expenseId: true, artifactAttachmentId: true, wetSignedScanAttachmentId: true },
       })
       : [];
     const substituteArtifactByExpense = new Map(
       issuedSubstitutes.filter((row) => row.artifactAttachmentId).map((row) => [row.expenseId, row.artifactAttachmentId!]),
     );
+    // R11: the hand-signed scan belongs to the certificate, not to the expense's supporting evidence.
+    const wetSignedScansByExpense = new Map<string, string[]>();
+    for (const row of issuedSubstitutes) {
+      if (!row.wetSignedScanAttachmentId) continue;
+      wetSignedScansByExpense.set(row.expenseId, [
+        ...(wetSignedScansByExpense.get(row.expenseId) ?? []), row.wetSignedScanAttachmentId,
+      ]);
+    }
 
     const indexRows = page.rows.map((r) => buildAccountantIndexRow({
       companyName: company?.name ?? ctx.companyId,
@@ -171,6 +179,7 @@ export class CreateAccountantPackageUseCase {
         : null,
       primaryAttachmentId: r.primaryAttachmentId,
       attachments: r.attachments.map(toAttachmentRef),
+      wetSignedScanAttachmentIds: wetSignedScansByExpense.get(r.id) ?? [],
       webUrl: `/companies/${ctx.companyId}/expenses/${r.id}`,
       notes: r.internalMemo,
     }));
@@ -186,6 +195,7 @@ export class CreateAccountantPackageUseCase {
             expenseId: r.id,
             expenseNumber: r.expenseNumber,
             attachment: toAttachmentRef(attachment),
+            isWetSignedScan: (wetSignedScansByExpense.get(r.id) ?? []).includes(attachment.id),
             sourceDocumentType: r.sourceDocumentType,
             taxEvidenceStatus: r.taxEvidenceStatus,
             downloadUrl: signed.downloadUrl,

@@ -58,6 +58,7 @@ function prepared(overrides: Record<string, unknown> = {}) {
     certifiedArtifactAttachmentId: null, certifiedArtifactChecksumSha256: null, certifiedAt: null,
     approverUserId: null, approverName: null, approverPosition: null, approverSignatureAttachmentId: null, approvedAt: null,
     artifactAttachmentId: null, checksumSha256: null, issuedByUserId: null, issuedAt: null, supersededAt: null, supersedeReason: null,
+    signatureMode: 'DIGITAL', wetSignedScanAttachmentId: null, wetSignedScanChecksumSha256: null, preparedFromChannel: 'WEB',
     createdAt: now, updatedAt: now,
     ...overrides,
   } as any;
@@ -91,7 +92,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     assert.equal(captured.payeeAddress, '1 ถนนทดสอบ');
     assert.equal(captured.payeeTaxId, '1234567890123');
     assert.equal(captured.paymentEvidenceAttachmentIds.length, 0);
-    assert.deepEqual(captured.lineContinuation, { workflowId: 'workflow-1', userId: 'finance-1' });
+    assert.deepEqual(captured.lineContinuation, { workflowId: 'workflow-1', userId: 'finance-1', formRequested: false });
     assert.deepEqual(notifications, [{
       companyId: 'co-1',
       triggerKey: 'expense.substitute_receipt_signature_pending',
@@ -1012,6 +1013,155 @@ describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () 
     await assert.rejects(
       () => new DownloadSubstituteReceiptFormPdfUseCase(repo, audit).execute(line() as any, 'exp-1', 'sub-1'),
       web,
+    );
+  });
+});
+
+describe('substitute receipt paper route (R11/R12)', () => {
+  const SCAN_CHECKSUM = 'scan-checksum-abcdef';
+  const paperEvidence = (overrides: Record<string, unknown> = {}) => prepared({
+    signatureMode: 'PAPER', wetSignedScanAttachmentId: 'att-scan', wetSignedScanChecksumSha256: SCAN_CHECKSUM,
+    ...overrides,
+  });
+
+  it('certifies and approves without any signature image and still writes two audit rows', async () => {
+    let evidence = paperEvidence();
+    const storageWrites: any[] = [];
+    const audits: any[] = [];
+    let certifiedInput: any;
+    let issueInput: any;
+    const repo = {
+      findSubstituteEvidence: async () => evidence,
+      findById: async () => expense(),
+      findByIdWithRelations: async () => expense(),
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      markSubstituteEvidenceCertified: async (input: any) => { certifiedInput = input; return evidence; },
+      issueSubstituteEvidence: async (input: any) => { issueInput = input; return paperEvidence({ status: 'ISSUED' }); },
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'ผู้จัดการ' }),
+      // Deliberately absent: findPersonalSignatureAttachment / findReusableSignatureAsset. The paper
+      // route must not reach for a signature at all — calling either would throw here.
+    } as any;
+    const storage = {
+      getObject: async () => ({ bytes: png, mimeType: 'image/png' }),
+      putObject: async (input: any) => { storageWrites.push(input); return { bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length }; },
+      deleteObject: async () => undefined,
+    } as any;
+    const auditCollector = { log: async (entry: any) => { audits.push(entry); } } as any;
+
+    const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
+    await new CertifySubstituteReceiptUseCase(repo, storage, auditCollector, notification, cleanup)
+      .execute(ctx('payer-1'), 'exp-1', 'sub-1', {
+        payerPosition: 'พนักงาน', certificationAcknowledged: true,
+        previewChecksumSha256: preview.previewChecksumSha256,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+
+    assert.equal(certifiedInput.payerSignatureAttachmentId, undefined, 'no signature is recorded on the paper route');
+    assert.deepEqual(certifiedInput.referencedAttachmentIds, ['att-scan', 'att-source'],
+      'the scan is the attachment the certification is locked against');
+    const certifiedSvg = storageWrites[0].bytes.toString('utf8');
+    assert.match(certifiedSvg, new RegExp(certifiedInput.snapshotChecksumSha256));
+    assert.match(certifiedSvg, new RegExp(SCAN_CHECKSUM));
+
+    evidence = paperEvidence({
+      status: 'PAYER_CERTIFIED', snapshotJson: certifiedInput.snapshotJson,
+      snapshotChecksumSha256: certifiedInput.snapshotChecksumSha256, payerPosition: 'พนักงาน',
+      certifiedArtifactAttachmentId: 'certified-artifact', certifiedArtifactChecksumSha256: 'certified-checksum', certifiedAt: now,
+    });
+    await new ApproveSubstituteReceiptUseCase(repo, storage, auditCollector, cleanup)
+      .execute(ctx('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', {
+        approverPosition: 'ผู้จัดการ', approvalAcknowledged: true,
+        certifiedArtifactChecksumSha256: 'certified-checksum',
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+
+    assert.equal(issueInput.approverSignatureAttachmentId, undefined);
+    assert.ok(issueInput.referencedAttachmentIds.includes('att-scan'));
+    const issuedSvg = storageWrites[1].bytes.toString('utf8');
+    assert.match(issuedSvg, new RegExp(certifiedInput.snapshotChecksumSha256), 'R11: the snapshot checksum is on the attestation');
+    assert.match(issuedSvg, new RegExp(SCAN_CHECKSUM), 'R11: so is the scan checksum');
+    assert.match(issuedSvg, /ผู้จัดการ/, 'the approver identity is printed, not signed');
+    assert.equal(issuedSvg.includes('<image'), false, 'no signature image is embedded anywhere');
+
+    // Journey B end to end: the document the user actually receives is composed from the artifact
+    // this approval stored plus the scan it was certified against.
+    const issued = paperEvidence({
+      status: 'ISSUED', artifactAttachmentId: 'issued-artifact',
+      snapshotJson: certifiedInput.snapshotJson, snapshotChecksumSha256: certifiedInput.snapshotChecksumSha256,
+    });
+    const scanBytes = await (async () => {
+      const { PDFDocument } = await import('pdf-lib');
+      const pdf = await PDFDocument.create();
+      pdf.addPage([200, 300]);
+      return Buffer.from(await pdf.save());
+    })();
+    const download = new DownloadSubstituteReceiptPdfUseCase(
+      { execute: async () => expense() } as any,
+      {
+        findSubstituteEvidence: async () => ({ ...issued, wetSignedScanChecksumSha256: createHash('sha256').update(scanBytes).digest('hex') }),
+        findSubstituteArtifactAttachment: async (_c: string, _e: string, id: string) => id === 'att-scan'
+          ? { bucket: 'b', objectKey: 'scan', mimeType: 'application/pdf' }
+          : { bucket: 'b', objectKey: 'issued', mimeType: 'image/svg+xml' },
+      } as any,
+      { getObject: async (input: any) => ({ bytes: input.objectKey === 'scan' ? scanBytes : storageWrites[1].bytes }) } as any,
+      auditCollector,
+    );
+    const artifact = await download.execute(ctx('approver-1', ['expense.review']), 'exp-1', 'sub-1');
+    const { PDFDocument } = await import('pdf-lib');
+    const rendered = await PDFDocument.load(artifact.data);
+    assert.equal(rendered.getPageCount(), 2, 'R11: the scan, then the attestation');
+    assert.deepEqual(rendered.getPage(0).getSize(), { width: 200, height: 300 }, 'the ink comes first');
+
+    // D8/R12: two acknowledgements, two audit rows, with the route recorded on both.
+    const actions = audits.map((entry) => entry.action).filter((action) => !action.includes('artifact.download'));
+    assert.deepEqual(actions, ['expense.substitute_receipt.certify', 'expense.substitute_receipt.approve']);
+    const acknowledgements = audits.filter((entry) => !entry.action.includes('artifact.download'));
+    assert.deepEqual(acknowledgements.map((entry) => entry.metadataJson.signatureMode), ['PAPER', 'PAPER']);
+    assert.deepEqual(acknowledgements.map((entry) => entry.metadataJson.signatureSource), ['wet_signed_scan', 'wet_signed_scan']);
+    assert.deepEqual(acknowledgements.map((entry) => entry.riskLevel), ['HIGH', 'CRITICAL']);
+  });
+
+  it('refuses a paper-route evidence whose scan is gone, and still demands a signature on the digital route', async () => {
+    const brokenPaper = prepared({ signatureMode: 'PAPER', wetSignedScanAttachmentId: null, wetSignedScanChecksumSha256: null });
+    const repo = (evidence: any, extra: Record<string, unknown> = {}) => ({
+      findSubstituteEvidence: async () => evidence,
+      findByIdWithRelations: async () => expense(),
+      findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      markSubstituteEvidenceCertified: async () => evidence,
+      ...extra,
+    } as any);
+    const storage = {
+      getObject: async () => ({ bytes: png, mimeType: 'image/png' }),
+      putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length }),
+      deleteObject: async () => undefined,
+    } as any;
+    const input = (previewChecksumSha256: string) => ({
+      payerPosition: 'พนักงาน', certificationAcknowledged: true as const, previewChecksumSha256,
+      expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+    });
+
+    const brokenRepo = repo(brokenPaper);
+    const brokenPreview = await new PreviewSubstituteReceiptUseCase(brokenRepo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
+    await assert.rejects(
+      () => new CertifySubstituteReceiptUseCase(brokenRepo, storage, audit, notification, cleanup)
+        .execute(ctx('payer-1'), 'exp-1', 'sub-1', input(brokenPreview.previewChecksumSha256)),
+      /hand-signed scan is missing/,
+    );
+
+    // The digital route is untouched: with no per-evidence upload and no reusable asset it still refuses.
+    const digitalRepo = repo(prepared(), {
+      findPersonalSignatureAttachment: async () => null,
+      findReusableSignatureAsset: async () => null,
+    });
+    const digitalPreview = await new PreviewSubstituteReceiptUseCase(digitalRepo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
+    await assert.rejects(
+      () => new CertifySubstituteReceiptUseCase(digitalRepo, storage, audit, notification, cleanup)
+        .execute(ctx('payer-1'), 'exp-1', 'sub-1', input(digitalPreview.previewChecksumSha256)),
+      /Signature must be an ACTIVE PNG\/JPEG uploaded by the payer/,
     );
   });
 });

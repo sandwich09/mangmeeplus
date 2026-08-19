@@ -3,12 +3,14 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import sharp from 'sharp';
 import {
   planSubstituteReceiptRasterSlices,
+  renderSubstituteReceiptPaperArtifactPdf,
   renderSubstituteReceiptPdf,
+  substituteWetSignedScanRejection,
   SUBSTITUTE_RECEIPT_PDF_LIMITS,
 } from './substitute-receipt-pdf.logic';
 import {
@@ -253,5 +255,91 @@ describe('substitute receipt PDF', () => {
       /safe raster size limit/,
     );
     assert.ok(Date.now() - startedAt < 5_000, 'Oversized SVG should fail during metadata probing, before rasterization.');
+  });
+});
+
+describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
+  const photo = (format: 'jpeg' | 'png') => sharp({
+    create: { width: 600, height: 900, channels: 3, background: '#ffffff' },
+  })[format]().toBuffer();
+  const scanPdf = async (pages: number) => {
+    const pdf = await PDFDocument.create();
+    for (let index = 0; index < pages; index += 1) pdf.addPage([200, 300]);
+    return Buffer.from(await pdf.save());
+  };
+
+  it('puts a photographed form ahead of the attestation page, for JPEG and PNG alike', async () => {
+    for (const format of ['jpeg', 'png'] as const) {
+      const data = await renderSubstituteReceiptPaperArtifactPdf(
+        { bytes: await photo(format), mimeType: `image/${format}` },
+        thaiSvg,
+        'SUB-202608-00007',
+      );
+      const pdf = await PDFDocument.load(data);
+      assert.equal(pdf.getPageCount(), 2, `${format}: the photo page plus the attestation page`);
+      assert.equal(pdf.getTitle(), 'SUB-202608-00007');
+      assert.match(pdf.getSubject() ?? '', /Wet-signed scan \+ system attestation/);
+    }
+  });
+
+  it('stamps one size of one word across every page, inside the narrowest page', async () => {
+    const plain = await renderSubstituteReceiptPaperArtifactPdf(
+      { bytes: await photo('png'), mimeType: 'image/png' }, thaiSvg, 'SUB-202608-00007',
+    );
+    // SUPERSEDED is the long word: at the old 0.62-em guess it printed wider than the page.
+    const superseded = await renderSubstituteReceiptPaperArtifactPdf(
+      { bytes: await photo('png'), mimeType: 'image/png' }, thaiSvg, 'SUB-202608-00007', { stateStamp: 'SUPERSEDED' },
+    );
+    const texts = await extractPageTexts(superseded);
+    assert.equal(texts.length, 2);
+    for (const [index, text] of texts.entries()) {
+      assert.match(text, /SUPERSEDED/, `page ${index + 1} carries the state`);
+    }
+    assert.doesNotMatch((await extractPageTexts(plain))[0] ?? '', /SUPERSEDED/);
+    assert.match((await PDFDocument.load(superseded)).getSubject() ?? '', /State: SUPERSEDED/);
+
+    // One size, and it fits: measured from the font, capped, and chosen from the narrowest page.
+    const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica);
+    const pages = (await PDFDocument.load(superseded)).getPages();
+    const narrowest = Math.min(...pages.map((page) => page.getSize().width));
+    assert.ok(font.widthOfTextAtSize('SUPERSEDED', 96) > narrowest, 'the cap alone would overflow, so fitting is what saves it');
+  });
+
+  it('numbers every page of the composed artifact and names the document on it', async () => {
+    const data = await renderSubstituteReceiptPaperArtifactPdf(
+      { bytes: await scanPdf(2), mimeType: 'application/pdf' }, thaiSvg, 'SUB-202608-00007',
+    );
+    const texts = await extractPageTexts(data);
+    assert.equal(texts.length, 3);
+    texts.forEach((text, index) => {
+      assert.match(text, /ID: SUB-202608-00007/, `page ${index + 1} names the document`);
+      assert.match(text, new RegExp(`Page ${index + 1}/3`), `page ${index + 1} says where it sits`);
+    });
+    // The attestation's own "Page 1/1" is corrected to its real position in the composed file.
+    assert.doesNotMatch(texts[2] ?? '', /Page 1\/1/);
+  });
+
+  it('refuses media it cannot reproduce, and keeps the page ceiling for a multi-page scan', async () => {
+    await assert.rejects(
+      renderSubstituteReceiptPaperArtifactPdf({ bytes: Buffer.from('x'), mimeType: 'image/heic' }, thaiSvg),
+      /must be a JPEG, PNG, or PDF/,
+    );
+    // The budget counts the attestation page too: 6 scan pages + 1 is over the ceiling.
+    await assert.rejects(
+      renderSubstituteReceiptPaperArtifactPdf(
+        { bytes: await scanPdf(SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages), mimeType: 'application/pdf' }, thaiSvg,
+      ),
+      new RegExp(`${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit`),
+    );
+    assert.equal(await substituteWetSignedScanRejection({ bytes: await scanPdf(5), mimeType: 'application/pdf' }), undefined);
+    assert.match(
+      (await substituteWetSignedScanRejection({ bytes: await scanPdf(6), mimeType: 'application/pdf' }))!,
+      /6-page safety limit/,
+    );
+    assert.match((await substituteWetSignedScanRejection({ bytes: Buffer.from('nope'), mimeType: 'application/pdf' }))!,
+      /cannot be read as a printable document/);
+    assert.match((await substituteWetSignedScanRejection({ bytes: Buffer.from('x'), mimeType: 'image/heic' }))!,
+      /must be a JPEG, PNG, or PDF/);
+    assert.equal(await substituteWetSignedScanRejection({ bytes: await photo('jpeg'), mimeType: 'image/jpeg' }), undefined);
   });
 });

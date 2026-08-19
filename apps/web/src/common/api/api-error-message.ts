@@ -101,6 +101,9 @@ const CODE_LABELS: Record<string, string> = {
   substitute_evidence_expense_confirmed: 'ยกเลิกหรือแก้ใบรับรองแทนใบเสร็จได้เฉพาะเอกสารที่ยังไม่ยืนยันเท่านั้น',
   substitute_evidence_idempotency_conflict: 'มีการจัดทำใบรับรองด้วยข้อมูลอื่นไปแล้ว กรุณาเปิดใหม่แล้วลองอีกครั้ง',
   expense_stale_reload: 'เอกสารถูกแก้ไขหลังการตรวจ กรุณาเปิดใหม่ก่อนจัดทำใบรับรองแทนใบเสร็จ',
+  substitute_wet_signed_scan_not_linkable: 'แนบฟอร์มที่เซ็นด้วยมือไม่ได้ ต้องเป็นใบรับรองที่เตรียมไว้ ยังไม่มีภาพฟอร์ม และไฟล์ต้องเป็นรูปหรือ PDF ที่เปิดอ่านได้และไม่เกินจำนวนหน้าที่กำหนด',
+  substitute_wet_signed_scan_checksum_mismatch: 'ภาพฟอร์มที่เซ็นด้วยมือไม่ตรงกับค่าตรวจสอบที่บันทึกไว้ตอนรับรอง กรุณาแจ้งผู้ดูแลระบบก่อนใช้เอกสารนี้',
+  substitute_wet_signed_scan_not_renderable: 'ประกอบไฟล์เอกสารจากภาพฟอร์มที่เซ็นด้วยมือไม่ได้ กรุณาแจ้งผู้ดูแลระบบ',
   LINE_RECEIPT_CONTINUATION_STALE:
     'รายการค่าใช้จ่ายถูกแก้ไขระหว่างส่งผลกลับใน LINE กรุณาเปิดรายการล่าสุดแล้วตรวจสอบก่อนทำต่อ',
   LINE_SUBSTITUTE_CONTINUATION_STALE:

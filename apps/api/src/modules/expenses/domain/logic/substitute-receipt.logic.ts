@@ -8,6 +8,9 @@ export const SUBSTITUTE_RECEIPT_TITLE = 'ใบรับรองแทนใบ
  *  standard font — Thai has to come from the same raster as the rest of the sheet. */
 export const SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE = 'เอกสารนี้ยังไม่สมบูรณ์จนกว่าจะมีลายเซ็นผู้จ่ายและผู้อนุมัติ';
 
+/** R11: the system's own page behind the photographed, hand-signed sheet. */
+export const SUBSTITUTE_RECEIPT_ATTESTATION_TITLE = 'หน้ารับรองโดยระบบ (แนบท้ายฟอร์มที่ลงนามด้วยมือ)';
+
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
@@ -287,6 +290,83 @@ export function renderSubstituteReceiptSvg(
 }
 
 /** `fontSize` defaults to this sheet's body size; ใบสำคัญรับเงิน prints at 18 and passes its own. */
+/**
+ * R11 — the system attestation page of the PAPER route. The ink lives on the scan that precedes
+ * this page in the artifact, so nothing here is a signature box: it is the system's own statement
+ * of what was certified, by whom, when, and against which two checksums.
+ *
+ * A page of its own rather than a flag on `renderSubstituteReceiptSvg`: that sheet's whole layout
+ * is signature blocks, and every DIGITAL artifact must keep rendering byte-for-byte as before.
+ */
+export function renderSubstituteReceiptAttestationSvg(
+  snapshot: SubstituteReceiptSnapshot,
+  input: {
+    snapshotChecksumSha256: string;
+    wetSignedScanChecksumSha256: string;
+    approver?: SubstituteReceiptApprover;
+  },
+): Buffer {
+  const facts: Array<[string, string]> = [
+    ['เลขที่เอกสาร', `${snapshot.documentNumber} · version ${snapshot.version}`],
+    ['บริษัท', snapshot.company.name],
+    ['สาขา', snapshot.company.branchName ?? 'สำนักงานใหญ่'],
+    ['เลขประจำตัวผู้เสียภาษี', snapshot.company.taxId ?? '-'],
+    ['เลขอ้างอิงรายการ', snapshot.expense.expenseNumber ?? snapshot.documentNumber],
+    ['วันที่รายจ่าย', formatDate(snapshot.expense.expenseDate)],
+    ['วันที่จ่าย', snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-'],
+    ['วิธีชำระเงิน', snapshot.expense.paymentMethod ? PAYMENT_METHOD_LABELS[snapshot.expense.paymentMethod] ?? 'อื่น ๆ' : '-'],
+    ['ผู้รับเงิน', snapshot.payee?.name ?? '-'],
+    ['จำนวนเงิน', `${money(snapshot.expense.grandTotalAmount)} ${snapshot.expense.currency}`],
+    ['จำนวนเงิน (ตัวอักษร)', thaiBahtText(snapshot.expense.grandTotalAmount)],
+    ['วัตถุประสงค์ทางธุรกิจ', snapshot.expense.businessPurpose],
+    ['เหตุผลที่ไม่มีใบเสร็จ', snapshot.missingReceiptReason],
+    ['ผู้จ่ายเงิน/ผู้รับรอง', `${snapshot.payer.name} · ${positionLabel(snapshot.payer.position)}`],
+    ['รับรองเมื่อ', formatDate(snapshot.payer.certifiedAt)],
+    ['ผู้อนุมัติ', input.approver ? `${input.approver.name} · ${positionLabel(input.approver.position)}` : 'รออนุมัติ'],
+    ['อนุมัติเมื่อ', input.approver ? formatDate(input.approver.approvedAt) : '-'],
+  ];
+  // A checksum is one token or it is not a checksum: these print on one line, condensed if need be,
+  // never wrapped — a hash split across two tspans cannot be compared by eye or by search.
+  const checksums: Array<[string, string]> = [
+    ['SHA-256 ของข้อมูลที่รับรอง', input.snapshotChecksumSha256],
+    ['SHA-256 ของภาพฟอร์มที่ลงนามด้วยมือ', input.wetSignedScanChecksumSha256],
+  ];
+  const noticeLines = wrapText(
+    'เอกสารนี้ออกตามเส้นทางลงนามด้วยมือ ลายมือชื่อผู้จ่ายเงินและผู้อนุมัติปรากฏบนภาพฟอร์มที่แนบไว้เป็นหน้าแรกของเอกสารฉบับนี้ ระบบเก็บข้อมูลที่รับรองไว้เป็นต้นฉบับเชิงโครงสร้างพร้อมค่าตรวจสอบทั้งสองค่าด้านบน',
+    740,
+  );
+  let y = 150;
+  const rows = facts.map(([label, value]) => {
+    const lines = wrapText(value, 520);
+    const markup = `<text x="50" y="${y}" font-weight="700"${fitToWidth(label, 250)}>${xml(label)}</text>
+      ${multilineText(310, y, lines, 22, 520)}`;
+    y += Math.max(28, lines.length * 22 + 6);
+    return markup;
+  }).join('');
+  const checksumRows = checksums.map(([label, value]) => {
+    const markup = `<text x="50" y="${y}" font-weight="700"${fitToWidth(label, 250)}>${xml(label)}</text>
+      <text x="310" y="${y}" font-size="12"${fitToWidth(value, 490, 12)}>${xml(value)}</text>`;
+    y += 28;
+    return markup;
+  }).join('');
+  const noticeY = y + 26;
+  const height = noticeY + noticeLines.length * 22 + 60;
+  return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_ATTESTATION_TITLE)}">
+  <rect width="850" height="${height}" fill="#fff"/>
+  <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
+    <text x="425" y="52" text-anchor="middle" font-size="24" font-weight="700">${SUBSTITUTE_RECEIPT_ATTESTATION_TITLE}</text>
+    <text x="425" y="82" text-anchor="middle" fill="#555">${SUBSTITUTE_RECEIPT_TITLE}</text>
+    <line x1="45" y1="110" x2="805" y2="110" stroke="#444"/>
+    ${rows}
+    ${checksumRows}
+    <line x1="45" y1="${noticeY - 20}" x2="805" y2="${noticeY - 20}" stroke="#bbb"/>
+    ${multilineText(50, noticeY, noticeLines, 22, 740)}
+    <text x="425" y="${height - 22}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>
+  </g>
+</svg>`, 'utf8');
+}
+
 export function wrapText(value: unknown, maxWidth: number, fontSize?: number): string[] {
   const text = String(value ?? '').trim();
   if (!text) return ['-'];
