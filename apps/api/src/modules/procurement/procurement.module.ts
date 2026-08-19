@@ -103,6 +103,8 @@ import { ReleasePp36InputVatClaimUseCase } from './application/use-cases/pp36-in
     ListSuppliersUseCase,
     GetPurchaseOrderUseCase,
     ListPurchaseOrdersUseCase,
+    // LINE approval card counts pending PRs through this permission-checked use case.
+    ListPurchaseRequestsUseCase,
     // LINE AI AP-outstanding tool reads through this permission-checked use case.
     GetApAgingUseCase,
     ListWhtIncomeCategoriesUseCase,

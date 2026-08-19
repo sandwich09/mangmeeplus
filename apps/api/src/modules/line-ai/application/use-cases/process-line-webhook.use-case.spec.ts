@@ -184,6 +184,9 @@ function makeUseCase(
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
       legalAcceptanceRequired?: boolean;
+      reimbursementApprovalQueue?: any;
+      listPurchaseRequests?: any;
+      listPurchaseOrders?: any;
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -237,6 +240,12 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
+    // captureExpenseNote → expenseDraftConversation: unused by these cases, listed so the approval
+    // queue readers land on their own positions.
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    opts.reimbursementApprovalQueue,
+    opts.listPurchaseRequests,
+    opts.listPurchaseOrders,
   );
 
 	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
@@ -950,6 +959,66 @@ describe('ProcessLineWebhookUseCase', () => {
     }
 
     assert.equal(harness.branchFindManyCalls.length, 0);
+  });
+
+  // UAT 2026-08-19: tapping "รายการรออนุมัติ" only ever produced a link, so the yes/no question it
+  // asks needed a browser to answer. The counts come from the same permission-checked queue use
+  // cases the web pages call — never a repository — so LINE cannot show a row the web would hide.
+  it('answers the approval menu with the real queue, read through the permission-checked use cases', async () => {
+    const { prisma } = makePrisma();
+    const approvalCalls: any[] = [];
+    const purchaseRequestCalls: any[] = [];
+    const purchaseOrderCalls: any[] = [];
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_order.approve'],
+      branchIds: ['branch-1'],
+      reimbursementApprovalQueue: { execute: async (ctx: any) => {
+        approvalCalls.push(ctx);
+        return [
+          { requestNo: 'RB-0001', requesterDisplayNameSnapshot: 'สมชาย', amount: '1200.00', currency: 'THB' },
+          { requestNo: undefined, requesterDisplayNameSnapshot: 'สมหญิง', amount: '980.50', currency: 'THB' },
+        ];
+      } },
+      listPurchaseRequests: { execute: async (ctx: any, filter: any) => { purchaseRequestCalls.push(filter); return { data: [], total: 0 }; } },
+      listPurchaseOrders: { execute: async (ctx: any, filter: any) => {
+        purchaseOrderCalls.push(filter);
+        return { data: [{ purchaseOrderNumber: 'PO-0007', grandTotalAmount: '5000.00', currency: 'THB' }], total: 1 };
+      } },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue', messageText: 'รายการรออนุมัติ' });
+
+    const card = sentMessages[0];
+    assert.match(card.altText, /รายการรออนุมัติ 3 รายการ/);
+    const rendered = JSON.stringify(card);
+    assert.ok(rendered.includes('คำขอเบิกเงิน · 2 รายการ'));
+    assert.ok(rendered.includes('RB-0001 · สมชาย · ฿1,200.00'));
+    assert.ok(rendered.includes('ยังไม่มีเลขที่ · สมหญิง · ฿980.50'));
+    assert.ok(rendered.includes('ใบสั่งซื้อ PO-0007 · ฿5,000.00'));
+
+    // Server-derived identity and scope, never anything read off the LINE message.
+    assert.equal(approvalCalls.length, 1);
+    assert.deepEqual(
+      { companyId: approvalCalls[0].companyId, userId: approvalCalls[0].userId, scopes: approvalCalls[0].scopes, authProvider: approvalCalls[0].authProvider },
+      { companyId: 'company-1', userId: 'user-1', scopes: { branchIds: ['branch-1'] }, authProvider: 'line' },
+    );
+    // No purchase-request approve permission → that lister is never called, and its rows are not counted.
+    assert.deepEqual(purchaseRequestCalls, []);
+    assert.deepEqual(purchaseOrderCalls, [{ status: 'PENDING_APPROVAL', page: 1, pageSize: 5 }]);
+  });
+
+  it('keeps the approval card link-only when a queue read fails, instead of reporting it empty', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve'],
+      reimbursementApprovalQueue: { execute: async () => { throw new Error('database unavailable'); } },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue-failed', messageText: 'รายการรออนุมัติ' });
+
+    const rendered = JSON.stringify(sentMessages[0]);
+    assert.equal(rendered.includes('ไม่มีรายการ'), false);
+    assert.ok(rendered.includes('reimbursements?tab=approvals'));
   });
 
   it('switches owner selected company through explicit LINE control command', async () => {

@@ -49,11 +49,14 @@ import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parse
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
+import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
+import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, pendingApprovalSurfaceKeys, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalQueues, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -666,6 +669,16 @@ export async function lineAssistantDisabled(prisma: PrismaService, companyId: st
 export const branchScopeFallbackLabel = (branchIds?: string[]) =>
   branchIds?.length ? `${branchIds.length} สาขา` : 'ทุกสาขา';
 
+/** Money on the approval card. Thai baht is the overwhelming case and reads best with the symbol;
+ *  anything else keeps its code, so a foreign-currency claim is never mistaken for baht. */
+const formatApprovalAmount = (amount: string, currency: string) => {
+  const value = Number(amount);
+  const formatted = Number.isFinite(value)
+    ? value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : amount;
+  return currency === 'THB' ? `฿${formatted}` : `${formatted} ${currency}`;
+};
+
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
@@ -700,6 +713,11 @@ export class ProcessLineWebhookUseCase {
     // Receipt continuity: read/preflight and typed web-prefill only; no prepare/issue mutation.
     @Optional() private readonly substituteReceiptContinuation?: LineSubstituteReceiptContinuationUseCase,
     @Optional() private readonly expenseDraftConversation?: LineExpenseDraftConversationUseCase,
+    // Approval-card counts. The SAME use cases the web queue pages call, so the card can only ever
+    // state rows this member could open there. Absent → the card links out without a number.
+    @Optional() private readonly reimbursementApprovalQueue?: ListApprovalQueueUseCase,
+    @Optional() private readonly listPurchaseRequests?: ListPurchaseRequestsUseCase,
+    @Optional() private readonly listPurchaseOrders?: ListPurchaseOrdersUseCase,
   ) {}
 
   /**
@@ -725,6 +743,62 @@ export class ProcessLineWebhookUseCase {
       // observation, and NOT redundant the moment a second `record` is added here.
       await sweep.flush();
     }
+  }
+
+  /**
+   * Reads the queues behind the "รายการรออนุมัติ" button so the card can answer the question
+   * instead of only linking to it. Every read goes through the permission-checked use case the web
+   * queue page uses — never a repository — so branch scope, approver eligibility, and self-approval
+   * filtering stay identical to what the same person sees on the web.
+   *
+   * A queue that cannot be read (the lister needs a `read` permission this member lacks, or the
+   * query failed) is LEFT OUT rather than reported as zero: "no pending items" and "nobody asked"
+   * must not look the same on the card.
+   */
+  private async loadPendingApprovalQueues(ctx: RequestContext, keys: ApprovalSurfaceKey[]): Promise<PendingApprovalQueues> {
+    const queues: PendingApprovalQueues = {};
+
+    if (keys.includes('reimbursement') && this.reimbursementApprovalQueue) {
+      try {
+        const rows = await this.reimbursementApprovalQueue.execute(ctx);
+        queues.reimbursement = {
+          total: rows.length,
+          items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => [
+            row.requestNo ?? 'ยังไม่มีเลขที่',
+            row.requesterDisplayNameSnapshot,
+            formatApprovalAmount(row.amount, row.currency),
+          ].join(' · ')),
+        };
+      } catch (error) {
+        this.logger.warn({ msg: 'LINE reimbursement approval queue unavailable', companyId: ctx.companyId, error: (error as Error).message });
+      }
+    }
+
+    if (keys.includes('procurement') && this.listPurchaseRequests && this.listPurchaseOrders) {
+      // Procurement approval is permission + branch scope (no per-step routing), so the pending
+      // rows this member can list ARE the rows this member can approve.
+      const filter = { status: 'PENDING_APPROVAL', page: 1, pageSize: PENDING_APPROVAL_ITEM_LIMIT };
+      const empty = { data: [], total: 0 };
+      try {
+        const requests = ctx.permissions.includes('procurement.purchase_request.approve')
+          ? await this.listPurchaseRequests.execute(ctx, filter)
+          : empty;
+        const orders = ctx.permissions.includes('procurement.purchase_order.approve')
+          ? await this.listPurchaseOrders.execute(ctx, filter)
+          : empty;
+        queues.procurement = {
+          total: requests.total + orders.total,
+          items: [
+            ...requests.data.map((row) => `ใบขอซื้อ ${row.requestNumber ?? 'ยังไม่มีเลขที่'} · ${formatApprovalAmount(row.grandTotalAmount, row.currency)}`),
+            ...orders.data.map((row) => `ใบสั่งซื้อ ${row.purchaseOrderNumber ?? 'ยังไม่มีเลขที่'} · ${formatApprovalAmount(row.grandTotalAmount, row.currency)}`),
+          ],
+        };
+      } catch (error) {
+        this.logger.warn({ msg: 'LINE procurement approval queue unavailable', companyId: ctx.companyId, error: (error as Error).message });
+      }
+    }
+
+    return queues;
   }
 
   private async resolveBranchScopeLabel(companyId: string, branchIds?: string[]): Promise<string> {
@@ -1124,7 +1198,17 @@ export class ProcessLineWebhookUseCase {
         : menuCommand === 'query'
           ? buildStaffQueryMenu(menuContext)
           : menuCommand === 'approval'
-            ? buildPendingApprovalCard(menuContext)
+            ? buildPendingApprovalCard(menuContext, await this.loadPendingApprovalQueues({
+              requestId,
+              authSubject: identity.userId,
+              userId: identity.userId,
+              companyId,
+              membershipId: resolvedAccess.membershipId,
+              roles: resolvedAccess.roles,
+              permissions: resolvedAccess.permissions,
+              scopes: resolvedAccess.scopes,
+              authProvider: 'line',
+            }, pendingApprovalSurfaceKeys(menuContext)))
             : buildReceiptCapturePrompt(menuContext);
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
