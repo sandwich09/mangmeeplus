@@ -1,6 +1,6 @@
 # Mobile-first evidence bundle
 
-Subjects: 302 · devices: 7 · blocking failures: 0 · DESKTOP-FINDING: 0
+Subjects: 352 · devices: 7 · blocking failures: 0 · DESKTOP-FINDING: 0
 
 Decision D11: desktop rows are measured, not enforced — they never block a phase.
 
@@ -9,10 +9,10 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1280 | 1280 | route/expenses | 0 | 83 | pass | [png](desktop-1280/route-expenses.png) |
 | desktop-1280 | 1280 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1280/route-expenses-upload.png) |
 | desktop-1280 | 1280 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1280/route-expenses-manual.png) |
-| desktop-1280 | 1280 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1280/route-expenses-evidence.png) |
+| desktop-1280 | 1280 | route/expenses/evidence | 0 | 83 | pass | [png](desktop-1280/route-expenses-evidence.png) |
 | desktop-1280 | 1280 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1280/route-expenses-categories.png) |
 | desktop-1280 | 1280 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1280/route-expenses-signatures.png) |
-| desktop-1280 | 1280 | route/expenses/substitute-receipts | 0 | 50 | pass | [png](desktop-1280/route-expenses-substitute-receipts.png) |
+| desktop-1280 | 1280 | route/expenses/substitute-receipts | 0 | 52 | pass | [png](desktop-1280/route-expenses-substitute-receipts.png) |
 | desktop-1280 | 1280 | route/settings/substitute-receipt | 0 | 57 | pass | [png](desktop-1280/route-settings-substitute-receipt.png) |
 | desktop-1280 | 1280 | route/reimbursements | 0 | 94 | pass | [png](desktop-1280/route-reimbursements.png) |
 | desktop-1280 | 1280 | route/dashboard | 0 | 67 | pass | [png](desktop-1280/route-dashboard.png) |
@@ -28,13 +28,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1280 | 1280 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-reimbursements.png) |
 | desktop-1280 | 1280 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-expenses.png) |
 | desktop-1280 | 1280 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-accounting.png) |
+| desktop-1280 | 1280 | cards/expenses/evidence | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-expenses-evidence.png) |
+| desktop-1280 | 1280 | cards/expenses/substitute-receipts | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-expenses-substitute-receipts.png) |
 | desktop-1440 | 1440 | route/expenses | 0 | 83 | pass | [png](desktop-1440/route-expenses.png) |
 | desktop-1440 | 1440 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1440/route-expenses-upload.png) |
 | desktop-1440 | 1440 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1440/route-expenses-manual.png) |
-| desktop-1440 | 1440 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1440/route-expenses-evidence.png) |
+| desktop-1440 | 1440 | route/expenses/evidence | 0 | 83 | pass | [png](desktop-1440/route-expenses-evidence.png) |
 | desktop-1440 | 1440 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1440/route-expenses-categories.png) |
 | desktop-1440 | 1440 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1440/route-expenses-signatures.png) |
-| desktop-1440 | 1440 | route/expenses/substitute-receipts | 0 | 50 | pass | [png](desktop-1440/route-expenses-substitute-receipts.png) |
+| desktop-1440 | 1440 | route/expenses/substitute-receipts | 0 | 52 | pass | [png](desktop-1440/route-expenses-substitute-receipts.png) |
 | desktop-1440 | 1440 | route/settings/substitute-receipt | 0 | 57 | pass | [png](desktop-1440/route-settings-substitute-receipt.png) |
 | desktop-1440 | 1440 | route/reimbursements | 0 | 94 | pass | [png](desktop-1440/route-reimbursements.png) |
 | desktop-1440 | 1440 | route/dashboard | 0 | 67 | pass | [png](desktop-1440/route-dashboard.png) |
@@ -50,13 +52,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1440 | 1440 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-reimbursements.png) |
 | desktop-1440 | 1440 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-expenses.png) |
 | desktop-1440 | 1440 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-accounting.png) |
+| desktop-1440 | 1440 | cards/expenses/evidence | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-expenses-evidence.png) |
+| desktop-1440 | 1440 | cards/expenses/substitute-receipts | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-expenses-substitute-receipts.png) |
 | desktop-1920 | 1920 | route/expenses | 0 | 83 | pass | [png](desktop-1920/route-expenses.png) |
 | desktop-1920 | 1920 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1920/route-expenses-upload.png) |
 | desktop-1920 | 1920 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1920/route-expenses-manual.png) |
-| desktop-1920 | 1920 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1920/route-expenses-evidence.png) |
+| desktop-1920 | 1920 | route/expenses/evidence | 0 | 83 | pass | [png](desktop-1920/route-expenses-evidence.png) |
 | desktop-1920 | 1920 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1920/route-expenses-categories.png) |
 | desktop-1920 | 1920 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1920/route-expenses-signatures.png) |
-| desktop-1920 | 1920 | route/expenses/substitute-receipts | 0 | 50 | pass | [png](desktop-1920/route-expenses-substitute-receipts.png) |
+| desktop-1920 | 1920 | route/expenses/substitute-receipts | 0 | 52 | pass | [png](desktop-1920/route-expenses-substitute-receipts.png) |
 | desktop-1920 | 1920 | route/settings/substitute-receipt | 0 | 57 | pass | [png](desktop-1920/route-settings-substitute-receipt.png) |
 | desktop-1920 | 1920 | route/reimbursements | 0 | 94 | pass | [png](desktop-1920/route-reimbursements.png) |
 | desktop-1920 | 1920 | route/dashboard | 0 | 67 | pass | [png](desktop-1920/route-dashboard.png) |
@@ -72,13 +76,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1920 | 1920 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-reimbursements.png) |
 | desktop-1920 | 1920 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-expenses.png) |
 | desktop-1920 | 1920 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-accounting.png) |
+| desktop-1920 | 1920 | cards/expenses/evidence | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-expenses-evidence.png) |
+| desktop-1920 | 1920 | cards/expenses/substitute-receipts | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-expenses-substitute-receipts.png) |
 | iphone13-chromium | 390 | route/expenses | 0 | 60 | pass | [png](iphone13-chromium/route-expenses.png) |
 | iphone13-chromium | 390 | route/expenses/upload | 0 | 32 | pass | [png](iphone13-chromium/route-expenses-upload.png) |
 | iphone13-chromium | 390 | route/expenses/manual | 0 | 36 | pass | [png](iphone13-chromium/route-expenses-manual.png) |
-| iphone13-chromium | 390 | route/expenses/evidence | 0 | 50 | pass | [png](iphone13-chromium/route-expenses-evidence.png) |
+| iphone13-chromium | 390 | route/expenses/evidence | 0 | 60 | pass | [png](iphone13-chromium/route-expenses-evidence.png) |
 | iphone13-chromium | 390 | route/expenses/categories | 0 | 61 | pass | [png](iphone13-chromium/route-expenses-categories.png) |
 | iphone13-chromium | 390 | route/expenses/signatures | 0 | 60 | pass | [png](iphone13-chromium/route-expenses-signatures.png) |
-| iphone13-chromium | 390 | route/expenses/substitute-receipts | 0 | 27 | pass | [png](iphone13-chromium/route-expenses-substitute-receipts.png) |
+| iphone13-chromium | 390 | route/expenses/substitute-receipts | 0 | 29 | pass | [png](iphone13-chromium/route-expenses-substitute-receipts.png) |
 | iphone13-chromium | 390 | route/settings/substitute-receipt | 0 | 34 | pass | [png](iphone13-chromium/route-settings-substitute-receipt.png) |
 | iphone13-chromium | 390 | route/reimbursements | 0 | 71 | pass | [png](iphone13-chromium/route-reimbursements.png) |
 | iphone13-chromium | 390 | route/dashboard | 0 | 44 | pass | [png](iphone13-chromium/route-dashboard.png) |
@@ -131,13 +137,24 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-chromium | 390 | cards/accounting-18 | 1 | 0 | pass | [png](iphone13-chromium/cards-accounting-18.png) |
 | iphone13-chromium | 390 | cards/accounting-19 | 1 | 0 | pass | [png](iphone13-chromium/cards-accounting-19.png) |
 | iphone13-chromium | 390 | cards/accounting-20 | 1 | 0 | pass | [png](iphone13-chromium/cards-accounting-20.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-1 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-1.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-2 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-2.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-3 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-3.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-4 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-4.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-5 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-5.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-6 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-6.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-7 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-7.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-8 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-8.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-9 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-9.png) |
+| iphone13-chromium | 390 | cards/expenses/evidence-10 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-evidence-10.png) |
+| iphone13-chromium | 390 | cards/expenses/substitute-receipts-1 | 1 | 0 | pass | [png](iphone13-chromium/cards-expenses-substitute-receipts-1.png) |
 | iphone13-webkit | 390 | route/expenses | 0 | 60 | pass | [png](iphone13-webkit/route-expenses.png) |
 | iphone13-webkit | 390 | route/expenses/upload | 0 | 32 | pass | [png](iphone13-webkit/route-expenses-upload.png) |
 | iphone13-webkit | 390 | route/expenses/manual | 0 | 36 | pass | [png](iphone13-webkit/route-expenses-manual.png) |
-| iphone13-webkit | 390 | route/expenses/evidence | 0 | 50 | pass | [png](iphone13-webkit/route-expenses-evidence.png) |
+| iphone13-webkit | 390 | route/expenses/evidence | 0 | 60 | pass | [png](iphone13-webkit/route-expenses-evidence.png) |
 | iphone13-webkit | 390 | route/expenses/categories | 0 | 61 | pass | [png](iphone13-webkit/route-expenses-categories.png) |
 | iphone13-webkit | 390 | route/expenses/signatures | 0 | 60 | pass | [png](iphone13-webkit/route-expenses-signatures.png) |
-| iphone13-webkit | 390 | route/expenses/substitute-receipts | 0 | 27 | pass | [png](iphone13-webkit/route-expenses-substitute-receipts.png) |
+| iphone13-webkit | 390 | route/expenses/substitute-receipts | 0 | 29 | pass | [png](iphone13-webkit/route-expenses-substitute-receipts.png) |
 | iphone13-webkit | 390 | route/settings/substitute-receipt | 0 | 34 | pass | [png](iphone13-webkit/route-settings-substitute-receipt.png) |
 | iphone13-webkit | 390 | route/reimbursements | 0 | 71 | pass | [png](iphone13-webkit/route-reimbursements.png) |
 | iphone13-webkit | 390 | route/dashboard | 0 | 44 | pass | [png](iphone13-webkit/route-dashboard.png) |
@@ -190,13 +207,24 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-webkit | 390 | cards/accounting-18 | 1 | 0 | pass | [png](iphone13-webkit/cards-accounting-18.png) |
 | iphone13-webkit | 390 | cards/accounting-19 | 1 | 0 | pass | [png](iphone13-webkit/cards-accounting-19.png) |
 | iphone13-webkit | 390 | cards/accounting-20 | 1 | 0 | pass | [png](iphone13-webkit/cards-accounting-20.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-1 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-1.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-2 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-2.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-3 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-3.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-4 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-4.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-5 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-5.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-6 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-6.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-7 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-7.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-8 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-8.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-9 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-9.png) |
+| iphone13-webkit | 390 | cards/expenses/evidence-10 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-evidence-10.png) |
+| iphone13-webkit | 390 | cards/expenses/substitute-receipts-1 | 1 | 0 | pass | [png](iphone13-webkit/cards-expenses-substitute-receipts-1.png) |
 | mobile-375 | 375 | route/expenses | 0 | 60 | pass | [png](mobile-375/route-expenses.png) |
 | mobile-375 | 375 | route/expenses/upload | 0 | 32 | pass | [png](mobile-375/route-expenses-upload.png) |
 | mobile-375 | 375 | route/expenses/manual | 0 | 36 | pass | [png](mobile-375/route-expenses-manual.png) |
-| mobile-375 | 375 | route/expenses/evidence | 0 | 50 | pass | [png](mobile-375/route-expenses-evidence.png) |
+| mobile-375 | 375 | route/expenses/evidence | 0 | 60 | pass | [png](mobile-375/route-expenses-evidence.png) |
 | mobile-375 | 375 | route/expenses/categories | 0 | 61 | pass | [png](mobile-375/route-expenses-categories.png) |
 | mobile-375 | 375 | route/expenses/signatures | 0 | 60 | pass | [png](mobile-375/route-expenses-signatures.png) |
-| mobile-375 | 375 | route/expenses/substitute-receipts | 0 | 27 | pass | [png](mobile-375/route-expenses-substitute-receipts.png) |
+| mobile-375 | 375 | route/expenses/substitute-receipts | 0 | 29 | pass | [png](mobile-375/route-expenses-substitute-receipts.png) |
 | mobile-375 | 375 | route/settings/substitute-receipt | 0 | 34 | pass | [png](mobile-375/route-settings-substitute-receipt.png) |
 | mobile-375 | 375 | route/reimbursements | 0 | 71 | pass | [png](mobile-375/route-reimbursements.png) |
 | mobile-375 | 375 | route/dashboard | 0 | 44 | pass | [png](mobile-375/route-dashboard.png) |
@@ -249,13 +277,24 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-375 | 375 | cards/accounting-18 | 1 | 0 | pass | [png](mobile-375/cards-accounting-18.png) |
 | mobile-375 | 375 | cards/accounting-19 | 1 | 0 | pass | [png](mobile-375/cards-accounting-19.png) |
 | mobile-375 | 375 | cards/accounting-20 | 1 | 0 | pass | [png](mobile-375/cards-accounting-20.png) |
+| mobile-375 | 375 | cards/expenses/evidence-1 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-1.png) |
+| mobile-375 | 375 | cards/expenses/evidence-2 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-2.png) |
+| mobile-375 | 375 | cards/expenses/evidence-3 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-3.png) |
+| mobile-375 | 375 | cards/expenses/evidence-4 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-4.png) |
+| mobile-375 | 375 | cards/expenses/evidence-5 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-5.png) |
+| mobile-375 | 375 | cards/expenses/evidence-6 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-6.png) |
+| mobile-375 | 375 | cards/expenses/evidence-7 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-7.png) |
+| mobile-375 | 375 | cards/expenses/evidence-8 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-8.png) |
+| mobile-375 | 375 | cards/expenses/evidence-9 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-9.png) |
+| mobile-375 | 375 | cards/expenses/evidence-10 | 1 | 0 | pass | [png](mobile-375/cards-expenses-evidence-10.png) |
+| mobile-375 | 375 | cards/expenses/substitute-receipts-1 | 1 | 0 | pass | [png](mobile-375/cards-expenses-substitute-receipts-1.png) |
 | mobile-chromium | 412 | route/expenses | 0 | 60 | pass | [png](mobile-chromium/route-expenses.png) |
 | mobile-chromium | 412 | route/expenses/upload | 0 | 32 | pass | [png](mobile-chromium/route-expenses-upload.png) |
 | mobile-chromium | 412 | route/expenses/manual | 0 | 36 | pass | [png](mobile-chromium/route-expenses-manual.png) |
-| mobile-chromium | 412 | route/expenses/evidence | 0 | 50 | pass | [png](mobile-chromium/route-expenses-evidence.png) |
+| mobile-chromium | 412 | route/expenses/evidence | 0 | 60 | pass | [png](mobile-chromium/route-expenses-evidence.png) |
 | mobile-chromium | 412 | route/expenses/categories | 0 | 61 | pass | [png](mobile-chromium/route-expenses-categories.png) |
 | mobile-chromium | 412 | route/expenses/signatures | 0 | 60 | pass | [png](mobile-chromium/route-expenses-signatures.png) |
-| mobile-chromium | 412 | route/expenses/substitute-receipts | 0 | 27 | pass | [png](mobile-chromium/route-expenses-substitute-receipts.png) |
+| mobile-chromium | 412 | route/expenses/substitute-receipts | 0 | 29 | pass | [png](mobile-chromium/route-expenses-substitute-receipts.png) |
 | mobile-chromium | 412 | route/settings/substitute-receipt | 0 | 34 | pass | [png](mobile-chromium/route-settings-substitute-receipt.png) |
 | mobile-chromium | 412 | route/reimbursements | 0 | 71 | pass | [png](mobile-chromium/route-reimbursements.png) |
 | mobile-chromium | 412 | route/dashboard | 0 | 44 | pass | [png](mobile-chromium/route-dashboard.png) |
@@ -308,3 +347,14 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-chromium | 412 | cards/accounting-18 | 1 | 0 | pass | [png](mobile-chromium/cards-accounting-18.png) |
 | mobile-chromium | 412 | cards/accounting-19 | 1 | 0 | pass | [png](mobile-chromium/cards-accounting-19.png) |
 | mobile-chromium | 412 | cards/accounting-20 | 1 | 0 | pass | [png](mobile-chromium/cards-accounting-20.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-1 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-1.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-2 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-2.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-3 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-3.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-4 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-4.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-5 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-5.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-6 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-6.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-7 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-7.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-8 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-8.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-9 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-9.png) |
+| mobile-chromium | 412 | cards/expenses/evidence-10 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-evidence-10.png) |
+| mobile-chromium | 412 | cards/expenses/substitute-receipts-1 | 1 | 0 | pass | [png](mobile-chromium/cards-expenses-substitute-receipts-1.png) |

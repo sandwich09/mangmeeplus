@@ -44,6 +44,12 @@ const CARD_LISTS = [
   { route: '/reimbursements', listTestId: 'reimbursements-mine-card-list', cardTestId: 'reimbursements-mine-card' },
   { route: '/expenses', listTestId: 'expenses-card-list', cardTestId: 'expenses-card' },
   { route: '/accounting', listTestId: 'accounting-documents-card-list', cardTestId: 'accounting-document-card' },
+  // Added in M4a. Two queues, not the three the plan named: the พนักงาน list in S2-F lives in
+  // MatrixView, which has zero consumers — every employee-access route renders a *Prototype*
+  // component instead. Decision D6 keeps dead components dead, so that card view was reverted
+  // rather than shipped to nobody.
+  { route: '/expenses/evidence', listTestId: 'evidence-card-list', cardTestId: 'evidence-card' },
+  { route: '/expenses/substitute-receipts', listTestId: 'substitute-receipt-card-list', cardTestId: 'substitute-receipt-card' },
 ] as const;
 
 async function gotoAndSettle(page: Page, companyId: string, route: string) {
@@ -133,11 +139,14 @@ test.describe('INV-11 evidence', () => {
       await gotoAndSettle(authedPage, companyId, cardList.route);
 
       const list = authedPage.getByTestId(cardList.listTestId);
-      // Card lists are md:hidden — on a desktop width their absence is correct, not missing evidence.
-      if (!(await list.isVisible().catch(() => false))) {
-        const reason = isMobile ? undefined : 'card list is md:hidden at this width — desktop shows the table instead';
-        await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: reason ?? 'card list did not render' });
-        expect(isMobile, `NO EVIDENCE: ${cardList.route} card list did not render at a mobile width`).toBeFalsy();
+      // Card lists are md:hidden — on a desktop width their absence is correct, not missing
+      // evidence. Presence is checked with count() rather than isVisible(): an empty list still
+      // exists in the DOM but has no height, and "the queue is empty" is a different fact from
+      // "the mobile view is missing". Conflating them hid a fixture gap behind a layout message.
+      if ((await list.count()) === 0 || !isMobile) {
+        const reason = isMobile ? 'card list is not in the DOM at a mobile width' : 'card list is md:hidden at this width — desktop shows the table instead';
+        await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: reason });
+        expect(isMobile, `NO EVIDENCE: ${cardList.route} ${reason}`).toBeFalsy();
         return;
       }
 

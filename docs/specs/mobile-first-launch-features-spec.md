@@ -75,7 +75,8 @@ green.
   `[desktop-visible]`.
 - No revival of dead shared components (`DataTable`, `ListPageLayout`, `PageHeader`, `ActionToolbar` — 0 consumers).
   Prior decision D6 stands.
-- The 9 `*Prototype*` files are out of scope.
+- The 9 `*Prototype*` files are out of scope **except where a priority route actually renders one** — which M4a
+  discovered is the case for all three employee-access routes. See S2-F.
 - Not a rewrite of the LINE capture path — LINE stays the fastest route for photo-to-expense; this spec covers the web
   surface a user reaches when they are already in the app.
 
@@ -123,7 +124,7 @@ Severity is judged by **cost to the user finishing the job on a phone**, not by 
 | S2-C2 | Two more scrolling tables live in the same file but belong to different screens | `:181` in `CategoryManagePanel` (`/expenses/categories`), `:416` in `SignaturePanel` (`/expenses/signatures`) | Both sit under priority-1 expenses, so they are in scope — but they are **not** the evidence table. Do not treat the three as one job. |
 | S2-D | ทดแทนใบเสร็จ hub is a scrolling table; 3 responsive prefixes in 375 lines | `SubstituteReceiptHubPage.tsx` | Priority-4 feature, effectively unadapted. |
 | S2-E | แจ้งเตือน is **already a list, not a table** — its problem is the row itself. At 390px the title gets ~180px of the row and is `truncate`d to one line, because the severity badge and two action links consume the rest | `NotificationPages.tsx:153` (row), `:164` (`truncate`), `:168-177` (two `text-xs` links ~16px tall, 8px apart, one of them destructive `ปิด`), `:157` (`<div role="link">`, not a real link, tappable area ~180×60px), `:132` (filter chips, no scroll strip), `:258,:269` (sub-16px inputs) | Priority-7 feature. **A card view is the wrong fix here** — the fix is the row's tap model. Busy labels at `:171,:175` also swell mid-action and reflow the row under the user's thumb. |
-| S2-F | พนักงาน list is a table with no card view, on a page that also carries S1-C | `EmployeeAccessPages.tsx` | Priority-8 feature. |
+| S2-F | ~~พนักงาน list is a table with no card view~~ **WITHDRAWN 2026-08-19 by M4a evidence** | `EmployeeAccessPages.tsx` | The list it named lives in `MatrixView`, reachable only from `EmployeeAccessWorkspacePage`, which has **zero consumers**. All three employee-access routes render `*Prototype*` components instead: `/settings/employees` -> `AddEmployeePrototypePage`, `/settings/permissions` -> `PermissionMatrixPrototypePage`, `/settings/access-overview` -> `IndividualPermissionsPrototypePage`. A card view was built there and reverted under decision D6 (dead components stay dead) once the evidence run reported the list was not in the DOM. **Consequence for §5: the blanket "prototypes are out of scope" is wrong for employee-access — those files are the product on three priority routes**, and their tap-target fixes were kept for exactly that reason. Neither remaining screen is a queue a card list fits: one is a form, one is a permission matrix. |
 | S2-G | 25 of 29 table-bearing files have no mobile card branch; `.mangmee-table-scroll` adopted by only 4 | grep, 2026-08-19 | Tables scroll (INV-2 green) but the action column is off-screen — the "drag tax" the prior plan named, still owed for every queue outside the original 5. |
 | S2-H | ทดแทนใบเสร็จ issuance wizard (2306 lines, 6 steps) has never been validated on a phone end to end | `SubstituteReceiptWizardPage.tsx` | Owner confirmed 2026-08-19 this feature is live, so the flow is in scope, not deferred. **Note: no defect list — the audit found its two most device-dependent parts already correct** (see S4). The risk here is flow and feel across 6 steps in a 659px window, which only an on-device pass can judge. |
 
@@ -173,8 +174,8 @@ Arithmetic only — nothing here has been rendered. M0's first desktop run eithe
 - **D2 — Desktop pixel-parity stays a hard rule.** Inherited unchanged from the prior project.
 - **D3 — `vh` is banned in app code; `dvh` only.** Enforced by a source-level check (below), because no browser
   automation available to this repo reproduces the iOS collapsing toolbar. Honest guard rails beat theatrical ones.
-- **D4 — Extend Tier-2 card views to the owner's priority queues**, not to all 25. Adds three: evidence
-  (`EvidencePanel`), substitute-receipt hub, employees. **Notifications is deliberately not on this list** — it is
+- **D4 — Extend Tier-2 card views to the owner's priority queues**, not to all 25. Adds two: evidence
+  (`EvidencePanel`) and the substitute-receipt hub. Employees was dropped during M4a — see S2-F. **Notifications is deliberately not on this list** — it is
   already a list, so it gets D9 instead. Settings matrices and GL stay scrolling tables by design.
 - **D5 — Camera-first capture on mobile.** `capture="environment"` plus a distinct "ถ่ายรูปใบเสร็จ" action; the dropzone
   becomes `sm:`-only and the mobile copy stops describing dragging. Desktop keeps drag-and-drop exactly as-is.
