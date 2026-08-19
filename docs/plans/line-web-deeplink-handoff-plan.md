@@ -174,7 +174,8 @@ Real LINE replies carry handoff links, and a minting failure costs nothing.
 ### Tasks
 
 - [ ] `LineHandoffLinkService.wrap(...)` in `line-ai`, returning the plain absolute URL when `webBaseUrl` is unset or minting throws.
-- [ ] Route every assistant link through it: `line-ai-formatter.logic.ts:50,64`, the `absoluteWebLink` call sites in `process-line-webhook.use-case.ts`, `line-staff-menu.logic.ts:250`, `line-business-card.logic.ts`.
+- [ ] Route every assistant link through it — ~25 sites in 5 files, counted in spec §13.1: 12 `absoluteWebLink()` sites in `process-line-webhook.use-case.ts`, 5 `formatRefusal()` callers, `line-staff-menu.logic.ts:250`, `line-business-card.logic.ts`, and the 4 relative-path sites in `line-substitute-receipt-continuation.use-case.ts` (spec G11 — these are not links at all today).
+- [ ] Leave the 48 `webPath:` source-ref builders alone: `buildWebLinks()` has no callers (spec G12).
 - [ ] Spec G3: delete the `https://mangmeeplus.com` and `https://app.watchdog.local` fallbacks; read `AppConfigService.webBaseUrl`, keep `WATCHDOG_WEB_BASE_URL` as an explicit override.
 
 ### Tests
