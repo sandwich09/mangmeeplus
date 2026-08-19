@@ -1,6 +1,6 @@
 # Agent Memory: mobile-first-launch-features
 
-Status: M1 COMPLETE 2026-08-19 (M0 complete same day) (guard rails + evidence harness built and run). Owner authorised execution.
+Status: ALL PHASES COMPLETE 2026-08-19 (M0-M5) (guard rails + evidence harness built and run). Owner authorised execution.
 Branch `feat/mobile-first-launch-features` off `origin/develop`.
 
 Owner: product owner set the priority feature list and the mobile-primary constraint on 2026-08-19; Claude authored the
@@ -151,7 +151,35 @@ M1 RESULTS 2026-08-19 — structural sweep, source checks now green.
 NOTE on reading run output: the evidence suite is RED by design until M3 (64 failing subjects, all `too-small`).
 `--reporter=line` prints the failure count ABOVE the pass count; read both lines before believing a run was clean.
 
+M2-M5 RESULTS 2026-08-19. Close-out doc: `e2e/RESPONSIVE-RESULTS-2026-08.md` (read that first — it carries the
+failure classification and the reproduce steps).
+
+- M2 camera-first upload: `capture="environment"` on a phone, desktop dropzone untouched, new i18n keys rather
+  than repurposed ones. The new affordance had no coverage by construction — a file input inside a label is
+  `sr-only`, which INV-11 skips, and the label was not an actionable selector — so INV-11 now treats
+  `label:has(input[type=file])` as a target.
+- M3 + M4b done together: the notification rows held 100 of the 269 undersized targets. Biggest single lever was
+  `.mangmee-btn`, whose `min-height: 2.5rem` outranked the `min-h-11` several call sites had already written
+  (plain CSS beats a Tailwind layer). Two controls needed restructuring rather than a bigger number, because a
+  `::after` hit area is invisible to `getBoundingClientRect` — the Toggle and InfoTip keep their visual size
+  inside a 44px button with a negative margin.
+- M4a shipped card views for evidence and the substitute-receipt hub. พนักงาน was dropped: see the S2-F
+  withdrawal above.
+- M4c walked the wizard. Its first version passed on all seven entries while asserting nothing, because the
+  stepper locator matched no elements — the count is now asserted before it is used.
+
+Final: 366 evidence subjects, 0 blocking, 0 DESKTOP-FINDING; responsive suite 283 passed / 0 failed; both
+source checks green; web typecheck pass.
+
+Three audit claims were overturned by evidence (iOS zoom, desktop arithmetic, the พนักงาน queue) and INV-11
+itself needed four false-positive fixes. Both are written up in the close-out doc. The lesson worth carrying:
+a new invariant's first runs test the invariant, not the app.
+
+Residual risk, unchanged and unfixable here: `dvh` and `vh` are equal in every browser this repo can drive, so
+the height axis has no runtime guard — the source check plus an owner device pass is the whole defence.
+Tablet widths 640-1024px sit outside both the mobile rule set and the device matrix.
+
 Next:
-1. M2 camera-first upload.
-2. M3 tap targets only (smaller than planned — the zoom half was withdrawn).
-3. M4a card views, M4b notifications A+2, M4c substitute-receipt flow on device, M5 close out.
+1. Owner reviews PR #177 and does the device pass, especially: the reported 404/error screen centred, a real
+   photo through /expenses/upload, and one substitute receipt issued end to end with a finger-drawn signature.
+2. If the tablet gap matters, it is a scoped follow-up, not a hole in this work.
