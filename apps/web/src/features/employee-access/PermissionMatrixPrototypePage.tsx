@@ -251,7 +251,7 @@ export function PermissionMatrixPrototypePage({ companyId }: { companyId: string
             <h2 className="text-sm font-bold text-gray-500">ตำแหน่งทั้งหมด</h2>
             <button
               type="button"
-              className="inline-flex h-8 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
+              className="inline-flex h-11 items-center gap-1 rounded-lg border border-gray-200 px-2 text-xs sm:h-8 font-bold text-gray-600 hover:border-brand-200 hover:bg-brand-25 disabled:opacity-50"
               onClick={() => setMode(mode === 'create' ? 'view' : 'create')}
             >
               <PlusIcon className="h-3.5 w-3.5" />

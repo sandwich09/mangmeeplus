@@ -16,7 +16,7 @@ export function MangmeePage({ eyebrow, title, description, actions, meta, childr
     <div className={cx('mangmee-page', className)}>
       <div className="mangmee-page-header">
         <div className="min-w-0">
-          {eyebrow && <div className="mangmee-eyebrow">{eyebrow}</div>}
+          {eyebrow && <div data-breadcrumb className="mangmee-eyebrow">{eyebrow}</div>}
           <h1 className="mangmee-page-title">{title}</h1>
           {description && <p className="mangmee-page-description">{description}</p>}
         </div>

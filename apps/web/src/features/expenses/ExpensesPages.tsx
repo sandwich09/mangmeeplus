@@ -386,7 +386,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
         </button>
         {uploadPhase && <p className="mt-2 text-center text-sm font-semibold text-brand-700">{uploadPhase}</p>}
         {onNoDocument && (
-          <button type="button" className="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline" onClick={onNoDocument}>
+          <button type="button" className="mt-3 min-h-11 w-full text-center text-sm font-semibold text-brand-600 sm:min-h-0 hover:underline" onClick={onNoDocument}>
             {t('expenses.upload_no_document_link', locale)}
           </button>
         )}
@@ -1508,7 +1508,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
             {chips.map((c) => (
               <button key={c.key} onClick={() => setChip(c.key)}
-                className={cx('inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
                   chip === c.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
                 {c.label}
                 <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>

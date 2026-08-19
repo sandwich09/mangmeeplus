@@ -673,7 +673,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
                   <div className="mb-1.5 text-[15px] font-semibold text-gray-700">คำนำหน้า <span className="text-error-500">*</span></div>
                   <div className="flex gap-1.5 rounded-[10px] bg-gray-100 p-1">
                     {(['นาย', 'นาง', 'นางสาว'] as TitleOption[]).map((item) => (
-                      <button key={item} type="button" onClick={() => { setTitle(item); setError(''); }} className={cx('h-9 flex-1 rounded-md text-sm font-extrabold transition', title === item ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600')}>
+                      <button key={item} type="button" onClick={() => { setTitle(item); setError(''); }} className={cx('h-11 flex-1 rounded-md text-sm font-extrabold transition sm:h-9', title === item ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600')}>
                         {item}
                       </button>
                     ))}

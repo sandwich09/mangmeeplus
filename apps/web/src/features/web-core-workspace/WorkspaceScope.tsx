@@ -160,7 +160,7 @@ export function BranchSelector() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 sm:h-10 text-sm font-bold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
         aria-label="เลือกสาขา"
       >
         <span className="shrink-0"><BranchIcon /></span>
@@ -225,7 +225,7 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
     <div ref={rootRef} className="relative min-w-0 flex-1 sm:flex-none">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex h-10 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
+        className="flex h-11 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 sm:h-10 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm:max-w-[240px]"
         aria-label="สลับบริษัท"
       >
         <span className="min-w-0 truncate">{label}</span>

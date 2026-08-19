@@ -101,6 +101,33 @@ test.describe('INV-11 evidence', () => {
     await captureEvidence(authedPage, testInfo, 'upload-capture-affordance');
   });
 
+  // Acceptance criterion 9 (decision D9): the row is one link, its actions sit behind a single
+  // 44px control, and no title is cut off mid-line. `elementFromPoint` is the part that matters
+  // — it is the only way to prove the menu button is not sitting on top of the row link beside it.
+  test('/notifications — the row is one target and its actions are behind one control', async ({ authedPage, companyId, isMobile }, testInfo) => {
+    await gotoAndSettle(authedPage, companyId, '/notifications');
+    const row = authedPage.locator('[class*="divide-y"] > div').first();
+
+    if (await row.count()) {
+      const overlay = row.locator('a.absolute.inset-0');
+      const menu = row.getByRole('button', { name: 'ตัวเลือกการแจ้งเตือน' });
+      await expect(overlay, 'the whole row must be one real link').toHaveCount(1);
+      await expect(menu, 'the two text actions must collapse into one control').toHaveCount(1);
+
+      const rowBox = await row.boundingBox();
+      const overlayBox = await overlay.boundingBox();
+      expect(overlayBox?.width ?? 0, 'the link must span the row, badge included')
+        .toBeGreaterThanOrEqual((rowBox?.width ?? 0) - 1);
+
+      if (isMobile) {
+        const menuBox = await menu.boundingBox();
+        expect(Math.min(menuBox?.width ?? 0, menuBox?.height ?? 0)).toBeGreaterThanOrEqual(43);
+        await expect(row.locator('.truncate'), 'titles must wrap, not be cut off, on a phone').toHaveCount(0);
+      }
+    }
+    await captureEvidence(authedPage, testInfo, 'notification-row-model');
+  });
+
   for (const cardList of CARD_LISTS) {
     test(`${cardList.route} — INV-11 every card`, async ({ authedPage, companyId, isMobile }, testInfo) => {
       await gotoAndSettle(authedPage, companyId, cardList.route);

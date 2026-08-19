@@ -52,6 +52,10 @@ const ACTIONABLE = [
 const TOUCH_TARGET_EXCEPTIONS = [
   // ThemedDate ships a deliberate 40px day cell; a 7-column calendar cannot hold 44px at 375px.
   '[data-testid="themed-date-day"]',
+  // Breadcrumb links are running text. A flex parent blockifies them, so the `display: inline`
+  // exemption below misses them, but WCAG 2.5.8's inline reasoning covers them all the same:
+  // padding one to 44px would break the trail it lives in.
+  '[data-breadcrumb] a',
 ];
 
 /**
@@ -139,9 +143,25 @@ export async function collectInv11(page: Page, scope?: Locator, touchTargets = t
           push('covered', `centre point hits ${blocker} instead — control cannot be tapped`);
         }
 
-        const exempt = exceptions.some((pattern) => element.matches(pattern));
-        if (touchTargets && !exempt && (rect.width < 44 || rect.height < 44)) {
-          push('too-small', `${Math.round(rect.width)}x${Math.round(rect.height)} is below the 44x44 touch target`);
+        // A native checkbox or radio renders ~16px and cannot be meaningfully resized; what the
+        // user aims at is the label wrapping it (Field.tsx:155 sizes exactly that way). Measure
+        // the label when there is one, and fall back to the input only when there is not.
+        const isTickbox = element.matches('input[type="checkbox"], input[type="radio"]');
+        const target = isTickbox ? (element.closest('label') ?? element) : element;
+        const targetRect = target === element ? rect : target.getBoundingClientRect();
+
+        // WCAG 2.5.8 exempts a target that sits inline in a sentence — a link inside running
+        // text cannot be 44px without breaking the paragraph, and the sentence itself is the
+        // affordance. Only `display: inline` qualifies; inline-flex/inline-block buttons do not.
+        const inlineInProse = window.getComputedStyle(target).display === 'inline';
+        // 1px of tolerance: a `min-h-11` element measures 43.x after border-box rounding at
+        // some device pixel ratios, and reporting a 44px control as undersized burns review time.
+        const MIN = 43;
+
+        const exempt = exceptions.some((pattern) => element.matches(pattern)) || inlineInProse;
+        if (touchTargets && !exempt && (targetRect.width < MIN || targetRect.height < MIN)) {
+          const what = target === element ? '' : ' (its label)';
+          push('too-small', `${Math.round(targetRect.width)}x${Math.round(targetRect.height)}${what} is below the 44x44 touch target`);
         }
       }
 

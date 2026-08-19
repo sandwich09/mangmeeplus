@@ -41,9 +41,14 @@ export function InfoTip({ label, text }: { label: string; text: string }): JSX.E
         onKeyDown={(event) => {
           if (event.key === 'Escape') setOpen(false);
         }}
-        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-xs text-gray-500 outline-none transition hover:border-brand-300 hover:text-brand-700 focus:ring-2 focus:ring-brand-300"
+        // The visible dot stays 20px and keeps its border on every screen; the button around
+        // it carries the 44px touch target on a phone, and the negative margin keeps that from
+        // pushing the label line apart. Same shape as the Toggle in ExpensesWorkspacePanels.
+        className="group -m-3 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full outline-none focus:ring-2 focus:ring-brand-300 sm:m-0 sm:h-5 sm:w-5"
       >
-        ⓘ
+        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-gray-300 bg-white text-xs text-gray-500 transition group-hover:border-brand-300 group-hover:text-brand-700">
+          ⓘ
+        </span>
       </button>
       <PopoverPanel
         open={open}

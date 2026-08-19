@@ -364,9 +364,12 @@ body {
   color: var(--color-error-700);
 }
 
+/* 2.75rem is the 44px touch minimum. This is plain CSS, so it outranks a `min-h-11` utility
+   written at a call site — several buttons carried one and still rendered 40px tall. Restored
+   to the original 2.5rem from 40rem up, so nothing on a desktop moves. */
 .mangmee-btn {
   display: inline-flex;
-  min-height: 2.5rem;
+  min-height: 2.75rem;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
@@ -444,6 +447,16 @@ body {
 }
 
 @media (min-width: 40rem) {
+  .mangmee-btn,
+  .mangmee-tab {
+    min-height: 2.5rem;
+  }
+
+  .mangmee-tab {
+    display: revert;
+    align-items: revert;
+  }
+
   .mangmee-input {
     min-height: 2.5rem;
     font-size: 0.875rem;
@@ -581,6 +594,9 @@ input[type='week'] {
 }
 
 .mangmee-tab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
   border-radius: var(--radius-md);
   padding: 0.5rem 0.875rem;
   color: var(--color-gray-500);

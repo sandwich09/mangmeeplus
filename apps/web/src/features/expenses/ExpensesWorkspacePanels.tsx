@@ -52,8 +52,14 @@ const BACKFILL_BLOCKER_LABELS: Record<ExpenseBackfillBlocker, string> = {
 function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; onToggle: () => void }) {
   return (
     <button role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}
-      className={cx('relative h-6 w-11 flex-shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-40', on ? 'bg-brand-500' : 'bg-gray-300')}>
-      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+      // The pill stays 24px; the button itself carries the 44px touch height on a phone and
+      // the negative margin cancels it out of the layout, so no row shifts. A ::after overlay
+      // would have looked equivalent and been invisible to getBoundingClientRect — the thing
+      // that measures whether this is really a 44px target.
+      className="relative -my-2.5 flex h-11 w-11 flex-shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 sm:my-0 sm:h-6">
+      <span className={cx('relative block h-6 w-11 rounded-full transition', on ? 'bg-brand-500' : 'bg-gray-300')}>
+        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+      </span>
     </button>
   );
 }
@@ -63,7 +69,7 @@ export function IconBtn({ title, tone, disabled, onClick, children }: { title: s
     // unconditionally, and `cx` is a plain join, so the primary tone's `bg-brand-500` lost the
     // cascade to it — the button rendered white with a white glyph, i.e. an empty box.
     <button type="button" title={title} aria-label={title} disabled={disabled} onClick={onClick}
-      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40',
+      className={cx('flex h-11 w-11 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8',
         tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:border-brand-600 hover:bg-brand-600'
           : tone === 'danger' ? 'border-gray-200 bg-white text-error-500 hover:border-[#FECDCA] hover:bg-gray-50'
             : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200 hover:bg-gray-50 hover:text-brand-600')}>
@@ -730,7 +736,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                       aria-pressed={flagFilter === filter.key}
                       onClick={() => setFlagFilter((current) => current === filter.key && filter.key !== 'all' ? 'all' : filter.key)}
                       className={cx(
-                        'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                        'inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
                         flagFilter === filter.key
                           ? 'border-brand-400 bg-brand-50 text-brand-700'
                           : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
@@ -830,10 +836,10 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     <div className="tabular-nums">แสดง {bounds.from}-{bounds.to} จาก {visibleRows.length} รายการ</div>
                     {bounds.totalPages > 1 && (
                       <div className="flex items-center gap-2">
-                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                           disabled={bounds.page <= 1} onClick={() => setPage(bounds.page - 1)}>ก่อนหน้า</button>
                         <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">{bounds.page} / {bounds.totalPages}</span>
-                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                           disabled={bounds.page >= bounds.totalPages} onClick={() => setPage(bounds.page + 1)}>ถัดไป</button>
                       </div>
                     )}
@@ -915,7 +921,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
 
 function FolderBtn({ active, label, count, incomplete, onClick }: { active: boolean; label: ReactNode; count?: number; incomplete?: boolean; onClick: () => void }) {
   return (
-    <button className={cx('flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
+    <button className={cx('flex w-full items-center justify-between gap-2 min-h-11 rounded-lg px-3 py-2 text-left text-sm font-medium sm:min-h-0', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
       <span>{label}</span>
       {count != null && <span className="text-xs text-gray-400">{count} รายการ {incomplete && <span className="text-warning-700" title="บางรายการไม่มีไฟล์หลักฐาน">⚠</span>}</span>}
     </button>
