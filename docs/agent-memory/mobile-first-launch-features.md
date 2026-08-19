@@ -169,7 +169,12 @@ failure classification and the reproduce steps).
   stepper locator matched no elements — the count is now asserted before it is used.
 
 Final: 366 evidence subjects, 0 blocking, 0 DESKTOP-FINDING; responsive suite 283 passed / 0 failed; both
-source checks green; web typecheck pass.
+source checks green; web typecheck pass. Full desktop suite 143 passed / 7 failed / 75 skipped — all 7
+classified NOT-OURS by swapping develop's copy of each file this branch touched back in and re-running:
+JRNL-01/02/03 fail identically under develop's `globals.css`, REIMB-01 and the three roles-matrix tests fail
+identically under develop's `ReimbursementsPages.tsx`. All reproduce in isolation, so none is load flakiness.
+(A worktree at origin/develop was tried first and could not build the API — the generated Prisma client does
+not survive a symlinked node_modules. File swapping is cheaper and isolates one suspect at a time.)
 
 Three audit claims were overturned by evidence (iOS zoom, desktop arithmetic, the พนักงาน queue) and INV-11
 itself needed four false-positive fixes. Both are written up in the close-out doc. The lesson worth carrying:

@@ -56,9 +56,18 @@ Recorded because the corrections are the substance of the work, not footnotes.
 
 ## Failures classified
 
-| Failure | Verdict | Evidence |
+Full desktop suite (`--project=chromium`, 225 tests): **143 passed, 7 failed, 75 skipped.**
+
+| Failure | Verdict | How it was established |
 |---|---|---|
-| `responsive.spec.ts` reimbursements desktop parity expected 8 `<th>`, found 9 | **NOT OURS** — pre-existing on develop | the `<thead>` region is byte-identical to `origin/develop`; the constant had gone stale. Corrected to 9. |
+| `responsive.spec.ts` reimbursements desktop parity expected 8 `<th>`, found 9 | **NOT OURS** | the `<thead>` region is byte-identical to `origin/develop`; the constant had gone stale. Corrected to 9. |
+| `journal.spec.ts` JRNL-01 / JRNL-02 / JRNL-03 | **NOT OURS** | `/journal` renders no `สมุดรายวัน` heading. No file under `src/features/ledger` differs from develop, so the only possible link was `globals.css`; swapping in develop's copy and re-running left JRNL-01 failing identically. |
+| `reimbursements.spec.ts` REIMB-01 | **NOT OURS** | re-run with develop's `ReimbursementsPages.tsx` in place — fails identically. |
+| `_roles-reference.spec.ts` sidebar matrix, OWNER / SALES / STAFF | **NOT OURS** | same swap, same failure. The 2026-08-04 memory already records the roles-matrix spec as stale and owner-confirmed (`ตั้งค่าบริษัท` is permission-driven by design). |
+
+Method note: a worktree at `origin/develop` was the first attempt and could not build the API (the generated Prisma client does not survive a symlinked `node_modules`). Swapping individual files back in the working tree was both cheaper and more precise, since it isolates one suspect at a time.
+
+All seven reproduce in isolation, so none is load-related flakiness — they are simply not this branch's.
 
 INV-11 itself needed four corrections before its output could be trusted, all commented where they were fixed:
 collapsed accordions (`AppSidebar.tsx:348` keeps `height:0` children's layout rects) reported as "covered";
