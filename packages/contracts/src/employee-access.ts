@@ -165,6 +165,12 @@ export type RoleSummary = {
   permissionKeys: string[];
   /** Permissions still usable after this company's feature entitlements — matches the access matrix. */
   effectivePermissionCount?: number;
+  /**
+   * The requesting user may assign this role right now — the server's own grant decision
+   * (`roleGrantViolation`), so pickers never re-implement the permission math. Absent on
+   * reads with no requester context (e.g. the access matrix).
+   */
+  assignableByCurrentUser?: boolean;
 };
 
 export type RoleDetail = RoleSummary;

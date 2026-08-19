@@ -4,7 +4,7 @@ import type React from 'react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { useRouter } from 'next/navigation';
-import { ALL_BRANCH_ROLE_KEYS, hasPrivilegedGrant, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
+import { ALL_BRANCH_ROLE_KEYS, type EmployeeLineLinkPackage, type EmployeeSummary, type RoleSummary, type ThaiAddressOption } from '@watchdog-bms/contracts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { LoadingState } from '@/common/components/state/LoadingState';
@@ -14,6 +14,7 @@ import { listBranches as listCompanyBranches, type Branch } from '../branch-sett
 import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, listThaiAddresses, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
+import { assignableRoleOptions, isSelfEmployee } from './role-picker.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -240,7 +241,7 @@ function colorForRole(role?: RoleSummary): string {
   return ROLE_COLOR_BY_KEY[role.key] ?? '#7A5AF8';
 }
 
-export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPermissions = [] }: { companyId: string; editEmployeeId?: string; viewerPermissions?: string[] }) {
+export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId }: { companyId: string; editEmployeeId?: string; viewerUserId?: string }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -290,9 +291,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
       ]);
       if (rolesResult.status === 'fulfilled') {
         const currentRoleId = employeeResult.status === 'fulfilled' ? employeeResult.value?.roles[0]?.id : undefined;
-        const canManageRoles = viewerPermissions.includes('access.role.manage');
-        const assignable = rolesResult.value.filter((r) => r.key !== 'OWNER' && r.key !== 'SYSTEM_ADMIN' && r.status === 'ACTIVE'
-          && (canManageRoles || r.id === currentRoleId || !hasPrivilegedGrant(r.permissionKeys)));
+        const assignable = assignableRoleOptions(rolesResult.value, currentRoleId);
         setRoles(assignable);
         setRoleId((current) => current || assignable[0]?.id || '');
       } else {
@@ -336,7 +335,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
       }
     })().finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, editEmployeeId, viewerPermissions]);
+  }, [companyId, editEmployeeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +383,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
   }, [companyId, postal]);
 
   const selectedRole = roles.find((r) => r.id === roleId);
+  // The API always rejects a self role change, so editing yourself shows the role read-only and the
+  // unchanged roleIds save as a no-op (spec R4).
+  const editingSelf = isSelfEmployee(editingEmployee, viewerUserId);
   // R8: an oversight role (ADMIN, FINANCE, ACCOUNTANT, ...) must hold every branch, and the server
   // rejects anything narrower — so the picker must not offer the choice.
   const branchPickerLocked = Boolean(selectedRole && ALL_BRANCH_ROLE_KEYS.includes(selectedRole.key));
@@ -739,14 +741,23 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerPerm
           {step === 3 && (
             <div>
               <div className="mb-2 text-[15px] font-semibold text-gray-700">ตำแหน่ง (1 คน มีได้ 1 ตำแหน่ง)</div>
-              <div className="flex flex-wrap gap-2.5">
-                {roles.map((item) => (
-                  <button key={item.id} type="button" onClick={() => { setRoleId(item.id); setError(''); }} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleId === item.id ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
-                    {item.name}
-                  </button>
-                ))}
-                {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
-              </div>
+              {editingSelf ? (
+                <>
+                  <span className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">
+                    {selectedRole?.name ?? '—'}
+                  </span>
+                  <div className="mt-2 text-sm font-medium text-gray-400">ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</div>
+                </>
+              ) : (
+                <div className="flex flex-wrap gap-2.5">
+                  {roles.map((item) => (
+                    <button key={item.id} type="button" onClick={() => { setRoleId(item.id); setError(''); }} className={cx('rounded-[9px] border px-3.5 py-2 text-[14.5px] font-extrabold transition', roleId === item.id ? 'border-brand-300 bg-brand-25 text-brand-600' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
+                      {item.name}
+                    </button>
+                  ))}
+                  {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
+                </div>
+              )}
 
               <div className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700">
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>

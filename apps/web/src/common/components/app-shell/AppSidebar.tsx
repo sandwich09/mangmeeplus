@@ -30,8 +30,8 @@ type Props = {
   activeKey?: string;
   locale: SupportedLocale;
   userName?: string;
-  /** primary role key from the session (e.g. OWNER) — shown in the sidebar footer per the มั่งมี design */
-  userRole?: string;
+  /** every role key the session holds (e.g. OWNER) — all of them show in the sidebar footer per the มั่งมี design */
+  userRoles?: string[];
   showAccountSecurity?: boolean;
 };
 
@@ -88,7 +88,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRole, showAccountSecurity }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, showAccountSecurity }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -124,7 +124,12 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   /** Last pathname the route-sync effect acted on, so it runs once per navigation. */
   const syncedPathRef = useRef<string | null>(null);
   const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const roleLabel = userRole ? t(roleLabelKey[userRole] ?? 'shell.user_menu', locale) : null;
+  // A member holding several roles sees all of them, so the shell answers "ฉันเป็นตำแหน่งอะไร" (spec R9).
+  // Deduped after translation: two custom role keys both fall back to the same generic label, and
+  // "เมนูผู้ใช้ · เมนูผู้ใช้" reads as a bug. First appearance keeps its position.
+  const roleLabel = userRoles?.length
+    ? [...new Set(userRoles.map((role) => t(roleLabelKey[role] ?? 'shell.user_menu', locale)))].join(' · ')
+    : null;
   const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
   const footerLabel = displayUserName ?? roleLabel;
   const footerInitials = userName === 'นภา' ? 'นภ' : getInitials(footerLabel);
