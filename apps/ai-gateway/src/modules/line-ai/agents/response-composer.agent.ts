@@ -7,6 +7,7 @@
  * back to the deterministic text when the model is unavailable or breaks grounding.
  */
 import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates } from '@watchdog-bms/contracts';
+import { availableLineCapabilityGroups, canCaptureLineReceipt } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
@@ -64,26 +65,44 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   'Return only the reply text in the user language: no preamble, quotes, markdown fences, JSON, or raw URL.',
 ].join('\n');
 
-const CAPABILITY_HELP = {
-  th: [
-    'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น',
-    '• ยอดขาย ค่าใช้จ่าย การเงิน และภาษี',
-    '• สินค้า สต็อก ลูกค้า นัดหมาย และงานติดตาม',
-    '• เอกสาร งานค้าง และการแจ้งเตือน',
-    'ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ',
-    'ลองถามตรงๆ เช่น “ยอดขายวันนี้เท่าไหร่” หรือ “ของอะไรใกล้หมด” ได้เลยค่ะ',
-    'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
-  ].join('\n'),
-  en: [
-    'Nong Mangmee can find and summarize work data allowed by your permissions, including:',
-    '• sales, expenses, finance, and tax',
-    '• products, stock, customers, bookings, and follow-ups',
-    '• documents, pending work, and alerts',
-    'You can also send a receipt or payment slip to create an expense draft.',
-    'Try asking “What are today’s sales?” or “Which products are low in stock?”',
-    'Available capabilities depend on company features and your permissions. Final approvals, payments, and posting stay in the web app.',
-  ].join('\n'),
+/** LINE stays a chat: list the openings this member has, not the whole product catalogue. */
+const CAPABILITY_BULLET_LIMIT = 6;
+
+const CAPABILITY_COPY = {
+  th: {
+    // The API's "อย่างไร" follow-up detector matches this opening line — keep it in sync there.
+    header: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น',
+    more: '• และงานอื่นตามสิทธิ์ของคุณ',
+    receipt: 'ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ',
+    examples: (samples: string[]) => `ลองถามตรงๆ เช่น ${samples.map((sample) => `“${sample}”`).join(' หรือ ')} ได้เลยค่ะ`,
+    boundary: 'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
+    none: 'ตอนนี้สิทธิ์ของคุณยังไม่เปิดข้อมูลส่วนไหนให้น้องมั่งมีค้นผ่าน LINE ค่ะ กรุณาติดต่อผู้ดูแลระบบของบริษัทเพื่อขอสิทธิ์เพิ่มนะคะ',
+  },
+  en: {
+    header: 'Nong Mangmee can find and summarize work data allowed by your permissions, including:',
+    more: '• and other work your permissions allow',
+    receipt: 'You can also send a receipt or payment slip to create an expense draft.',
+    examples: (samples: string[]) => `Try asking ${samples.map((sample) => `“${sample}”`).join(' or ')}`,
+    boundary: 'Available capabilities depend on company features and your permissions. Final approvals, payments, and posting stay in the web app.',
+    none: 'Your permissions do not open any business data to Nong Mangmee on LINE yet. Please ask your company administrator for access.',
+  },
 } as const;
+
+function buildCapabilityHelp(language: 'th' | 'en', permissions: readonly string[]): string {
+  const copy = CAPABILITY_COPY[language];
+  const groups = availableLineCapabilityGroups(permissions);
+  const shown = groups.slice(0, CAPABILITY_BULLET_LIMIT);
+  const receipt = canCaptureLineReceipt(permissions) ? [copy.receipt] : [];
+  if (shown.length === 0) return [copy.none, ...receipt].join('\n');
+  return [
+    copy.header,
+    ...shown.map((group) => `• ${language === 'th' ? group.labelTh : group.labelEn}`),
+    ...(groups.length > shown.length ? [copy.more] : []),
+    ...receipt,
+    copy.examples(shown.slice(0, 2).map((group) => (language === 'th' ? group.exampleTh : group.exampleEn))),
+    copy.boundary,
+  ].join('\n');
+}
 
 const COPY = {
   th: {
@@ -119,8 +138,8 @@ const COPY = {
 type ComposedReply = { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] };
 
 export class ResponseComposerAgent {
-  composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH'): string {
-    return CAPABILITY_HELP[detectReplyLanguage(messageText, planLanguage, locale)];
+  composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH', permissions: readonly string[] = []): string {
+    return buildCapabilityHelp(detectReplyLanguage(messageText, planLanguage, locale), permissions);
   }
 
   async composeCasual(

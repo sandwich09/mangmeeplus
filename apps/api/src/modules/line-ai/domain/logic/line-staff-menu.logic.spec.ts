@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -162,6 +162,60 @@ describe('LINE staff menu', () => {
     const card = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'], webBaseUrl: undefined });
     assert.equal((card as { contents: any }).contents.footer, undefined);
     assert.equal(JSON.stringify(card).includes('po-approval'), false);
+  });
+
+  // UAT 2026-08-18: the card said only "เปิดรายการจริงในเว็บ", so an approver had to open the web
+  // app to learn whether anything was waiting at all.
+  describe('pending approval counts', () => {
+    const cardText = (card: any) => (card.contents.body.contents as any[]).map((line) => line.text);
+
+    it('states the total, names the queue, and lists at most five rows', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve'] },
+        { reimbursement: { total: 7, items: ['RB-1 · สมชาย · 1,130.00 บาท', 'RB-2', 'RB-3', 'RB-4', 'RB-5', 'RB-6'] } },
+      );
+      const text = cardText(card);
+      assert.equal((card as { altText?: string }).altText, 'รายการรออนุมัติ 7 รายการ');
+      assert.equal(text[1], 'มี 7 รายการรอคุณอนุมัติ');
+      assert.equal(text[2], 'คำขอเบิกเงิน (7)');
+      assert.deepEqual(text.slice(3, 9), ['• RB-1 · สมชาย · 1,130.00 บาท', '• RB-2', '• RB-3', '• RB-4', '• RB-5', 'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย']);
+    });
+
+    it('splits the five rows across the queues the member can act on', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] },
+        {
+          reimbursement: { total: 3, items: ['RB-1', 'RB-2', 'RB-3'] },
+          procurement: { total: 4, items: ['PO-1', 'PO-2', 'PO-3', 'PO-4'] },
+        },
+      );
+      assert.deepEqual(cardText(card).slice(2), [
+        'คำขอเบิกเงิน (3)', '• RB-1', '• RB-2', '• RB-3',
+        'ใบขอซื้อ/ใบสั่งซื้อ (4)', '• PO-1', '• PO-2',
+        'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย',
+      ]);
+    });
+
+    it('says the queue is empty when it was read, and stays silent about counts when it was not', () => {
+      const empty = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] }, { reimbursement: { total: 0, items: [] } });
+      assert.deepEqual(cardText(empty), ['✅ รายการรออนุมัติ', 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ']);
+
+      const unread = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] });
+      assert.deepEqual(cardText(unread), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+    });
+
+    it('ignores a count for a queue this member cannot act on', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve'] },
+        { procurement: { total: 9, items: ['PO-1'] } },
+      );
+      assert.deepEqual(cardText(card), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+    });
+
+    it('names only the queues the caller should query', () => {
+      assert.deepEqual(availableApprovalSurfaceKeys({ ...context, permissions: ['reimbursement.approve'] }), ['reimbursement']);
+      assert.deepEqual(availableApprovalSurfaceKeys({ ...context, permissions: ALL_PERMISSIONS, entitledFeatureKeys: new Set(['procurement.purchase_orders']) }), ['procurement']);
+    });
   });
 
   it('parses only explicit menu commands', () => {

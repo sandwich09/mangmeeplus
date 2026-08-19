@@ -184,6 +184,7 @@ function makeUseCase(
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
       legalAcceptanceRequired?: boolean;
+      approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -237,6 +238,11 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
+    // captureExpenseNote → expenseDraftConversation stay unwired for these cases.
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    opts.approvalQueues?.reimbursement,
+    opts.approvalQueues?.purchaseRequests,
+    opts.approvalQueues?.purchaseOrders,
   );
 
 	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
@@ -890,6 +896,36 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
   });
 
+  // UAT 2026-08-18: รายการรออนุมัติ only linked out, so an approver could not tell from LINE
+  // whether anything was waiting.
+  it('counts the pending approval queues the member can act on', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_request.approve'],
+      approvalQueues: {
+        reimbursement: { execute: async () => [
+          { requestNo: 'RB-0007', requesterDisplayNameSnapshot: 'สมชาย', amount: '1130' },
+          { requestNo: 'RB-0008', requesterDisplayNameSnapshot: 'มานี', amount: '250.5' },
+        ] },
+        // An approver without the matching read permission: the queue is left out, never zeroed.
+        purchaseRequests: { execute: async () => { throw new Error('Forbidden'); } },
+      },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-counts', messageText: 'รายการรออนุมัติ' });
+
+    const lines = (sentMessages[0]?.contents.body.contents as any[]).map((line) => line.text);
+    assert.equal(sentMessages[0]?.altText, 'รายการรออนุมัติ 2 รายการ');
+    assert.deepEqual(lines, [
+      '✅ รายการรออนุมัติ',
+      'มี 2 รายการรอคุณอนุมัติ',
+      'คำขอเบิกเงิน (2)',
+      '• RB-0007 · สมชาย · 1,130.00 บาท',
+      '• RB-0008 · มานี · 250.50 บาท',
+      'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย',
+    ]);
+  });
+
   it('delivers the receipt prompt as a Flex card', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'] });
@@ -1221,6 +1257,70 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, undefined);
     assert.equal((updates.at(-1) as any).data.processedAt, null);
     assert.equal((updates.at(-1) as any).data.errorCode, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
+  });
+
+  it('audits a failed LINE receipt read with its gateway errorCode', async () => {
+    // An unreadable image routes to `clarify` and returns before any expense exists, so this row is
+    // the only record that the read was attempted at all. Without it every "อ่านไม่ออก" report is
+    // invisible in the audit log and the failure cause is unattributable.
+    const { prisma } = makePrisma();
+    const audits: any[] = [];
+    const useCase = new ProcessLineWebhookUseCase(
+      prisma,
+      { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
+      {
+        resolveAccess: async () => ({
+          membershipId: 'mem-1',
+          roles: ['STAFF'],
+          permissions: ['expense.receipt.line_upload', 'attachment.create', 'expense.create'],
+          scopes: {},
+        }),
+      } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      {
+        requestLineTurn: async () => { throw new Error('not expected'); },
+        requestLineIntakeRoute: async () => ROUTED_EXPENSE_DOCUMENT,
+        requestReceiptOcr: async () => ({ status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }),
+      } as any,
+      {
+        buildTextMessage: (text: string) => ({ type: 'text', text }),
+        sendReply: async () => 'ok',
+      } as any,
+      { apply: async () => ({ candidatesCreated: 0 }) } as any,
+      CLEAN_SCANNER,
+      acceptedLegal,
+      shadowProbe,
+      { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
+      { execute: async () => undefined } as any,
+    );
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg',
+      mimeType: 'image/jpeg',
+      byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash',
+      contentBase64: JPEG_BYTES.toString('base64'),
+      bytes: JPEG_BYTES,
+    });
+    // The clarify branch parks the media for a follow-up; that storage path is covered elsewhere.
+    (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-unreadable-1',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-unreadable-1',
+      lineMessageId: 'line-msg-unreadable-1',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    const ocrAudit = audits.find((entry) => entry.action === 'expense.ocr.request');
+    assert.ok(ocrAudit, 'a failed read must still be audited');
+    assert.equal(ocrAudit.result, 'FAILED');
+    assert.equal(ocrAudit.targetId, 'evt-unreadable-1');
+    assert.equal(ocrAudit.metadataJson.channel, 'line');
+    assert.equal(ocrAudit.metadataJson.status, 'OCR_FAILED');
+    assert.equal(ocrAudit.metadataJson.errorCode, 'OCR_EMPTY_OUTPUT');
+    assert.equal(ocrAudit.metadataJson.recognizedFieldCount, 0);
   });
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {

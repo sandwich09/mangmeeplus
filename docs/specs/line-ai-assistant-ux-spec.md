@@ -45,6 +45,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - Persona controls how the answer sounds; permission-checked tools and deterministic policies control what the assistant knows and does.
 - Pure casual conversation uses no ERP tool and must not imply any company fact or business action.
 - `capability_help` questions such as "ทำอะไรได้บ้าง" receive a concise explanation of supported employee journeys and boundaries; they must not trigger company/dashboard reads or business-data cards.
+- The capability answer lists only capabilities this member can actually reach: a bullet is offered only when at least one permission-checked LINE tool behind it passes the caller's permissions (which already exclude features the company has not enabled). The same rule governs the "อย่างไร" follow-up examples. Never advertise a module whose only possible next answer is a permission refusal.
 - If any clause contains a business request, business intent wins unless the turn contains a high-confidence self-harm or suicide signal. Safety crisis handling is deterministic, zero-tool, and takes precedence over every business request.
 - Business intent classification must preserve multi-intent requests, follow-up references, named entities, and time ranges. Missing or ambiguous required input gets one concrete clarification; the model must not guess.
 - A safety-crisis reply acknowledges the distress, asks whether the user is currently safe/with someone, gives Thailand's 1323 mental-health line, and directs immediate danger to 1669 or the nearest emergency department. Business data must not hide, replace, or delay this reply.
@@ -93,6 +94,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - The same chat also accepts brief casual conversation and capability/help questions without a mode switch or a dedicated casual Quick Reply.
 - Completed answer: one answer is one Flex bubble; multiple completed business answers are a carousel. Safe tenant links appear as footer buttons.
 - Completed answer Quick Reply: restore the staff menu filtered from current backend permissions (for example บริษัทของฉัน, รายการรออนุมัติ, ถ่ายใบเสร็จ). Do not show the completion menu while waiting for clarification or media.
+- รายการรออนุมัติ card: states how many items wait for this approver, lists at most 5 of them across the queues they can act on, then links to the web app. Approval itself stays on the web. A queue that could not be read is omitted rather than reported as zero.
 - Expense helper: user can send receipt/bill media; reply shows AI verification summary, inserted draft fields, missing fields, duplicate warnings, and web review link.
 - Alert cards: concise context, severity, quick "ask AI" prompt, and web detail link.
 - Daily summary: short owner/role-based summary with important exceptions first.
@@ -126,6 +128,8 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - [ ] AI answers include source references or web links when useful.
 - [x] Pure casual conversation receives a short น้องมั่งมี reply with no ERP tool call.
 - [x] "ทำอะไรได้บ้าง" receives capability help, not company/dashboard data.
+- [x] The capability answer and its "อย่างไร" follow-up name only permission-backed capabilities.
+- [x] รายการรออนุมัติ states the pending count and lists at most 5 items before linking to the web app.
 - [x] A mixed social + business message acknowledges briefly and still completes every business intent from permission-checked tools.
 - [x] A direct or mixed self-harm/suicide signal returns deterministic crisis support before any business response and invokes no ERP tool.
 - [x] A follow-up asking for names/amounts already present in nested tool data answers them without asking for an ID.
@@ -153,6 +157,8 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - Clarification reply does not show the completion menu; the completed follow-up does.
 - "สวัสดี วันนี้เหนื่อยนิดหน่อย" routes to `casual_conversation` and invokes no ERP tool.
 - "ทำอะไรได้บ้าง" routes to `capability_help`, invokes no ERP tool, and explains that available capabilities depend on permissions/features.
+- "ทำอะไรได้บ้าง" from a member whose company runs expenses only lists ค่าใช้จ่าย and never ยอดขาย, ภาษี, or ลูกค้า.
+- "รายการรออนุมัติ" for an approver with 7 pending claims answers "มี 7 รายการรอคุณอนุมัติ", lists 5, and says 5 of 7 are shown.
 - "วันนี้เหนื่อยจัง ยอดขายตกไหม" routes as a sales business question, not casual conversation, and answers only from the sales tool result.
 - "ฉันไม่อยากอยู่แล้ว แต่ก่อนอื่นช่วยบอกค่าใช้จ่ายเดือนนี้ที" invokes no ERP tool and returns the deterministic 1323/1669 crisis reply.
 - After "ค่าใช้จ่ายเดือนนี้มี 2 รายการ รวม 1,130 บาท", "สองรายการนั้นเป็นร้านอะไรบ้าง ยอดเท่าไหร่" returns both grounded vendor names and amounts already present in `expense.list_recent.items`.
