@@ -30,7 +30,9 @@ const verdict = (row) => {
   return row.desktopFinding ? `DESKTOP-FINDING — ${summary}` : `FAIL — ${summary}`;
 };
 
-const blocking = rows.filter((row) => !row.desktopFinding && (row.noEvidence?.includes('0 cards') || row.failures.length));
+// Any NO EVIDENCE on a mobile entry blocks, not just "0 cards": the point of the row is that
+// coverage was not obtained, whatever the reason. Desktop keeps its legitimate md:hidden rows.
+const blocking = rows.filter((row) => !row.desktopFinding && (row.noEvidence || row.failures.length));
 const desktopFindings = rows.filter((row) => row.desktopFinding && row.failures.length);
 
 const lines = [
