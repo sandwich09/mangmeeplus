@@ -204,7 +204,7 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      if (canSeeRoute('/settings/employees', userPermissions)) {
+      if (userPermissions.includes('access.employee.create')) {
         childItems.push({
           key: 'employees',
           label: t('module.add_employee' as Parameters<typeof t>[0], locale),

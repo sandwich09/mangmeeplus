@@ -301,12 +301,28 @@ describe('buildNavItems', () => {
     const employeeItems = buildNavItems(employeeModules, 'employee-company', 'th', {}, ['access.employee.read']);
     assert.deepEqual(
       employeeItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
-      ['roles.individual', 'employees'],
+      ['roles.individual'],
     );
     assert.equal(
       employeeItems.find((item) => item.key === 'roles')?.href,
       '/companies/employee-company/settings/access-overview',
     );
+
+    const creatorPermissions = ['access.employee.read', 'access.employee.create'];
+    const creatorItems = buildNavItems(
+      filterModulesByPermissions(WORKSPACE_MODULES, creatorPermissions),
+      'employee-company', 'th', {}, creatorPermissions,
+    );
+    assert.deepEqual(
+      creatorItems.find((item) => item.key === 'roles')?.subItems?.map((item) => item.key),
+      ['roles.individual', 'employees'],
+    );
+
+    const editorItems = buildNavItems(
+      filterModulesByPermissions(WORKSPACE_MODULES, ['access.employee.read', 'access.employee.update']),
+      'employee-company', 'th', {}, ['access.employee.read', 'access.employee.update'],
+    );
+    assert.ok(!editorItems.find((item) => item.key === 'roles')?.subItems?.some((item) => item.key === 'employees'));
 
     const overviewModules = filterModulesByPermissions(WORKSPACE_MODULES, ['access.effective.read']);
     const overviewItems = buildNavItems(overviewModules, 'overview-company', 'th', {}, ['access.effective.read']);
@@ -363,7 +379,8 @@ describe('buildNavItems', () => {
   });
 
   it('nests settings children under permissions menu instead of rendering them as top-level rows', () => {
-    const items = buildNavItems(WORKSPACE_MODULES, 'owner-company', 'th', {});
+    const ownerPermissions = [...ALL_MODULE_PERMISSIONS, 'access.employee.create'];
+    const items = buildNavItems(WORKSPACE_MODULES, 'owner-company', 'th', {}, ownerPermissions);
     const permissionsItem = items.find((nav) => nav.key === 'roles');
 
     assert.ok(permissionsItem);
@@ -637,6 +654,7 @@ describe('canAccessWorkspacePath', () => {
 
   it('separates employee and role settings permissions', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/access-overview'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.employee.read'], 'abc', '/companies/abc/settings/employees'), true);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/employees'), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.effective.read'], 'abc', '/companies/abc/settings/access-overview'), false);
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['access.role.read'], 'abc', '/companies/abc/settings/permissions'), false);

@@ -222,6 +222,25 @@ test.describe('Mobile responsive invariants', () => {
     });
   }
 
+  test('/settings/access-overview — permission summary keeps names and status readable', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/settings/access-overview');
+
+    const summary = authedPage.getByTestId('access-permission-summary');
+    await expect(summary.getByTestId('access-permission-row').first()).toBeVisible();
+    const dimensions = await summary.evaluate((element) => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    }));
+    expect(dimensions.scrollWidth, 'permission summary must not require horizontal scrolling').toBeLessThanOrEqual(dimensions.clientWidth + 1);
+
+    const clippedLabels = await summary.getByTestId('access-permission-menu-label').evaluateAll((labels) => labels.flatMap((label) => {
+      const style = window.getComputedStyle(label);
+      return style.whiteSpace === 'nowrap' || style.textOverflow === 'ellipsis' ? [label.textContent] : [];
+    }));
+    expect(clippedLabels, 'permission menu labels must wrap instead of ellipsizing').toEqual([]);
+    await expect(summary.getByTestId('access-permission-actions').locator('button, a, [role="button"], [tabindex]')).toHaveCount(0);
+  });
+
   test('INV-3 drawer works', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/dashboard');
 
