@@ -1,0 +1,103 @@
+import { test, expect } from './harness/fixtures';
+import { expectMainReady } from './harness/e2e-utils';
+import { captureEvidence, describeFailures } from './harness/inv11';
+import type { Page } from '@playwright/test';
+
+/**
+ * Evidence suite — spec section 12, decisions D10 and D11.
+ *
+ * Runs on all seven device entries. Mobile failures fail the run; desktop failures are
+ * recorded as DESKTOP-FINDING and do not, because D2 (desktop pixel parity) outranks D11.
+ *
+ * Every run writes outputs/mobile-evidence/<project>/results.jsonl plus a full-page
+ * screenshot per subject. `scripts/build-evidence-manifest.mjs` turns those into EVIDENCE.md.
+ */
+
+/** The nine launch features, spec section 7. */
+const PRIORITY_ROUTES = [
+  '/expenses',
+  '/expenses/upload',
+  '/expenses/manual',
+  '/expenses/evidence',
+  '/expenses/categories',
+  '/expenses/signatures',
+  '/expenses/substitute-receipts',
+  '/settings/substitute-receipt',
+  '/reimbursements',
+  '/dashboard',
+  '/notifications',
+  // NotificationPreferencesPage and NotificationRulesPage live on their own routes; the
+  // sub-16px fields the audit found are here, not on /notifications.
+  '/settings/notifications',
+  '/notifications/rules',
+  '/settings/employees',
+  '/settings/permissions',
+  '/settings',
+] as const;
+
+/**
+ * Card lists that must be checked card by card — "ทุกการ์ด", not the first card.
+ * A list that renders zero rows records NO EVIDENCE and fails: a silent empty state is the
+ * most likely way this bundle ends up lying about coverage.
+ */
+const CARD_LISTS = [
+  { route: '/reimbursements', listTestId: 'reimbursements-mine-card-list', cardTestId: 'reimbursements-mine-card' },
+  { route: '/expenses', listTestId: 'expenses-card-list', cardTestId: 'expenses-card' },
+  { route: '/accounting', listTestId: 'accounting-documents-card-list', cardTestId: 'accounting-document-card' },
+] as const;
+
+async function gotoAndSettle(page: Page, companyId: string, route: string) {
+  await page.goto(`/companies/${companyId}${route}`);
+  await expectMainReady(page);
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+}
+
+test.describe('INV-11 evidence', () => {
+  for (const route of PRIORITY_ROUTES) {
+    test(`${route} — INV-11 controls reachable`, async ({ authedPage, companyId }, testInfo) => {
+      await gotoAndSettle(authedPage, companyId, route);
+      const row = await captureEvidence(authedPage, testInfo, `route${route}`);
+
+      // Desktop is measured, not enforced (D11): record the finding, keep the run green.
+      if (row.desktopFinding) {
+        test.info().annotations.push({ type: 'DESKTOP-FINDING', description: describeFailures(route, row.failures) });
+        return;
+      }
+      expect(row.failures, describeFailures(route, row.failures)).toEqual([]);
+    });
+  }
+
+  for (const cardList of CARD_LISTS) {
+    test(`${cardList.route} — INV-11 every card`, async ({ authedPage, companyId, isMobile }, testInfo) => {
+      await gotoAndSettle(authedPage, companyId, cardList.route);
+
+      const list = authedPage.getByTestId(cardList.listTestId);
+      // Card lists are md:hidden — on a desktop width their absence is correct, not missing evidence.
+      if (!(await list.isVisible().catch(() => false))) {
+        const reason = isMobile ? undefined : 'card list is md:hidden at this width — desktop shows the table instead';
+        await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: reason ?? 'card list did not render' });
+        expect(isMobile, `NO EVIDENCE: ${cardList.route} card list did not render at a mobile width`).toBeFalsy();
+        return;
+      }
+
+      const cards = authedPage.getByTestId(cardList.cardTestId);
+      const count = await cards.count();
+      if (count === 0) {
+        await captureEvidence(authedPage, testInfo, `cards${cardList.route}`, { noEvidence: 'list rendered 0 cards' });
+        throw new Error(`NO EVIDENCE: ${cardList.route} rendered 0 cards — fix the fixture, do not waive the row`);
+      }
+
+      const failures: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const row = await captureEvidence(authedPage, testInfo, `cards${cardList.route}-${index + 1}`, {
+          scope: cards.nth(index),
+          cardsChecked: 1,
+        });
+        if (row.failures.length && !row.desktopFinding) {
+          failures.push(describeFailures(`${cardList.route} card ${index + 1}/${count}`, row.failures));
+        }
+      }
+      expect(failures, failures.join('\n')).toEqual([]);
+    });
+  }
+});

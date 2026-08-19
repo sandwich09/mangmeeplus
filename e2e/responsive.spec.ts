@@ -79,15 +79,64 @@ const CARD_VIEW_CASES = [
   },
 ] as const;
 
+/**
+ * The nine launch features (spec section 7). INV-5 used to sample two routes; acceptance
+ * criterion 4 requires all of them, because the sub-16px fields the audit found live on
+ * routes nobody was sampling.
+ */
+const PRIORITY_ROUTES = [
+  '/expenses',
+  '/expenses/upload',
+  '/expenses/manual',
+  '/expenses/evidence',
+  '/expenses/categories',
+  '/expenses/signatures',
+  '/expenses/substitute-receipts',
+  '/settings/substitute-receipt',
+  '/reimbursements',
+  '/dashboard',
+  '/notifications',
+  // NotificationPreferencesPage and NotificationRulesPage live on their own routes; the
+  // sub-16px fields the audit found are here, not on /notifications.
+  '/settings/notifications',
+  '/notifications/rules',
+  '/settings/employees',
+  '/settings/permissions',
+  '/settings',
+] as const;
+
+/**
+ * Routes whose whole point is a form. A zero here is not "this page has no fields", it is
+ * "the page did not render its form" — the silent-empty failure mode the spec calls out
+ * (section 12.3). Fix the fixture; do not soften the assertion.
+ */
+const ROUTES_THAT_MUST_HAVE_FIELDS = new Set<string>([
+  '/expenses/upload',
+  '/expenses/manual',
+  '/settings/substitute-receipt',
+  '/settings/notifications',
+]);
+
 async function gotoAndSettle(page: Page, companyId: string, route: string) {
   await page.goto(`/companies/${companyId}${route}`);
   await expectMainReady(page);
   await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
 }
 
-async function expectNoZoomFields(page: Page, location: string) {
-  const fields = page.locator('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):visible, select:visible, textarea:visible');
-  await expect(fields.first(), `INV-5 ${location}: expected at least one visible form field`).toBeVisible();
+async function expectNoZoomFields(page: Page, location: string, options: { requireFields?: boolean } = {}) {
+  // Scoped to the page's own content: the shell header carries its own search input, so a
+  // whole-page query reports "this route has fields" even when the route rendered nothing.
+  // That made the requireFields guard below useless until it was scoped here.
+  const main = page.locator('#workspace-main');
+  const scope = (await main.count()) > 0 ? main : page.locator('body');
+  const fields = scope.locator('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):visible, select:visible, textarea:visible');
+  if (options.requireFields === false) {
+    // A list route with no form fields is a legitimate zero, not a silent pass: it is
+    // annotated below so the run states it was checked rather than skipped.
+    if ((await fields.count()) === 0) return 0;
+  } else {
+    await expect(fields.first(), `INV-5 ${location}: expected at least one visible form field`).toBeVisible();
+  }
   const tooSmall = await fields.evaluateAll((elements) => elements.flatMap((element) => {
     const fontSize = Number.parseFloat(window.getComputedStyle(element).fontSize);
     return fontSize >= 16 ? [] : [{
@@ -96,6 +145,7 @@ async function expectNoZoomFields(page: Page, location: string) {
     }];
   }));
   expect(tooSmall, `INV-5 ${location}: form fields below 16px trigger iOS focus zoom`).toEqual([]);
+  return fields.count();
 }
 
 async function expectInViewport(selector: Locator, location: string) {
@@ -208,6 +258,16 @@ test.describe('Mobile responsive invariants', () => {
     await gotoAndSettle(authedPage, companyId, '/expenses/manual');
     await expectNoZoomFields(authedPage, '/expenses/manual');
   });
+
+  for (const route of PRIORITY_ROUTES) {
+    test(`${route} — INV-5 no iOS zoom fields`, async ({ authedPage, companyId }, testInfo) => {
+      await gotoAndSettle(authedPage, companyId, route);
+      const fieldCount = await expectNoZoomFields(authedPage, route, {
+        requireFields: ROUTES_THAT_MUST_HAVE_FIELDS.has(route),
+      });
+      testInfo.annotations.push({ type: 'INV-5', description: `${route}: ${fieldCount} visible field(s) checked` });
+    });
+  }
 
   test('INV-6 popovers stay inside the viewport', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/dashboard');
