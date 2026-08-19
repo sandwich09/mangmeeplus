@@ -1,6 +1,6 @@
 # Mobile-first evidence bundle
 
-Subjects: 281 · devices: 7 · blocking failures: 64 · DESKTOP-FINDING: 0
+Subjects: 288 · devices: 7 · blocking failures: 64 · DESKTOP-FINDING: 0
 
 Decision D11: desktop rows are measured, not enforced — they never block a phase.
 
@@ -22,6 +22,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1280 | 1280 | route/settings/employees | 0 | 60 | pass | [png](desktop-1280/route-settings-employees.png) |
 | desktop-1280 | 1280 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1280/route-settings-permissions.png) |
 | desktop-1280 | 1280 | route/settings | 0 | 53 | pass | [png](desktop-1280/route-settings.png) |
+| desktop-1280 | 1280 | branded-state-404 | 0 | 2 | pass | [png](desktop-1280/branded-state-404.png) |
 | desktop-1280 | 1280 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-reimbursements.png) |
 | desktop-1280 | 1280 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-expenses.png) |
 | desktop-1280 | 1280 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-accounting.png) |
@@ -41,6 +42,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1440 | 1440 | route/settings/employees | 0 | 60 | pass | [png](desktop-1440/route-settings-employees.png) |
 | desktop-1440 | 1440 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1440/route-settings-permissions.png) |
 | desktop-1440 | 1440 | route/settings | 0 | 53 | pass | [png](desktop-1440/route-settings.png) |
+| desktop-1440 | 1440 | branded-state-404 | 0 | 2 | pass | [png](desktop-1440/branded-state-404.png) |
 | desktop-1440 | 1440 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-reimbursements.png) |
 | desktop-1440 | 1440 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-expenses.png) |
 | desktop-1440 | 1440 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-accounting.png) |
@@ -60,6 +62,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1920 | 1920 | route/settings/employees | 0 | 60 | pass | [png](desktop-1920/route-settings-employees.png) |
 | desktop-1920 | 1920 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1920/route-settings-permissions.png) |
 | desktop-1920 | 1920 | route/settings | 0 | 53 | pass | [png](desktop-1920/route-settings.png) |
+| desktop-1920 | 1920 | branded-state-404 | 0 | 2 | pass | [png](desktop-1920/branded-state-404.png) |
 | desktop-1920 | 1920 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-reimbursements.png) |
 | desktop-1920 | 1920 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-expenses.png) |
 | desktop-1920 | 1920 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-accounting.png) |
@@ -79,6 +82,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-chromium | 390 | route/settings/employees | 0 | 37 | FAIL — too-small x6 | [png](iphone13-chromium/route-settings-employees.png) |
 | iphone13-chromium | 390 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](iphone13-chromium/route-settings-permissions.png) |
 | iphone13-chromium | 390 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](iphone13-chromium/route-settings.png) |
+| iphone13-chromium | 390 | branded-state-404 | 0 | 2 | pass | [png](iphone13-chromium/branded-state-404.png) |
 | iphone13-chromium | 390 | cards/reimbursements-1 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-1.png) |
 | iphone13-chromium | 390 | cards/reimbursements-2 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-2.png) |
 | iphone13-chromium | 390 | cards/reimbursements-3 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-3.png) |
@@ -127,14 +131,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-webkit | 390 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](iphone13-webkit/route-expenses-signatures.png) |
 | iphone13-webkit | 390 | route/expenses/substitute-receipts | 0 | 27 | FAIL — too-small x6 | [png](iphone13-webkit/route-expenses-substitute-receipts.png) |
 | iphone13-webkit | 390 | route/settings/substitute-receipt | 0 | 34 | FAIL — too-small x13 | [png](iphone13-webkit/route-settings-substitute-receipt.png) |
-| iphone13-webkit | 390 | route/reimbursements | 0 | 72 | FAIL — too-small x19 | [png](iphone13-webkit/route-reimbursements.png) |
+| iphone13-webkit | 390 | route/reimbursements | 0 | 71 | FAIL — too-small x19 | [png](iphone13-webkit/route-reimbursements.png) |
 | iphone13-webkit | 390 | route/dashboard | 0 | 44 | FAIL — too-small x9 | [png](iphone13-webkit/route-dashboard.png) |
 | iphone13-webkit | 390 | route/notifications | 0 | 177 | FAIL — too-small x108 | [png](iphone13-webkit/route-notifications.png) |
-| iphone13-webkit | 390 | route/settings/notifications | 0 | 27 | FAIL — too-small x8 | [png](iphone13-webkit/route-settings-notifications.png) |
+| iphone13-webkit | 390 | route/settings/notifications | 0 | 28 | FAIL — too-small x8 | [png](iphone13-webkit/route-settings-notifications.png) |
 | iphone13-webkit | 390 | route/notifications/rules | 0 | 24 | FAIL — too-small x5 | [png](iphone13-webkit/route-notifications-rules.png) |
 | iphone13-webkit | 390 | route/settings/employees | 0 | 37 | FAIL — too-small x6 | [png](iphone13-webkit/route-settings-employees.png) |
 | iphone13-webkit | 390 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](iphone13-webkit/route-settings-permissions.png) |
 | iphone13-webkit | 390 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](iphone13-webkit/route-settings.png) |
+| iphone13-webkit | 390 | branded-state-404 | 0 | 2 | pass | [png](iphone13-webkit/branded-state-404.png) |
 | iphone13-webkit | 390 | cards/reimbursements-1 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-1.png) |
 | iphone13-webkit | 390 | cards/reimbursements-2 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-2.png) |
 | iphone13-webkit | 390 | cards/reimbursements-3 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-3.png) |
@@ -191,6 +196,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-375 | 375 | route/settings/employees | 0 | 37 | FAIL — too-small x6 | [png](mobile-375/route-settings-employees.png) |
 | mobile-375 | 375 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](mobile-375/route-settings-permissions.png) |
 | mobile-375 | 375 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](mobile-375/route-settings.png) |
+| mobile-375 | 375 | branded-state-404 | 0 | 2 | pass | [png](mobile-375/branded-state-404.png) |
 | mobile-375 | 375 | cards/reimbursements-1 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-1.png) |
 | mobile-375 | 375 | cards/reimbursements-2 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-2.png) |
 | mobile-375 | 375 | cards/reimbursements-3 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-3.png) |
@@ -239,14 +245,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-chromium | 412 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](mobile-chromium/route-expenses-signatures.png) |
 | mobile-chromium | 412 | route/expenses/substitute-receipts | 0 | 27 | FAIL — too-small x6 | [png](mobile-chromium/route-expenses-substitute-receipts.png) |
 | mobile-chromium | 412 | route/settings/substitute-receipt | 0 | 34 | FAIL — too-small x13 | [png](mobile-chromium/route-settings-substitute-receipt.png) |
-| mobile-chromium | 412 | route/reimbursements | 0 | 71 | FAIL — too-small x19 | [png](mobile-chromium/route-reimbursements.png) |
-| mobile-chromium | 412 | route/dashboard | 0 | 44 | FAIL — too-small x9 | [png](mobile-chromium/route-dashboard.png) |
+| mobile-chromium | 412 | route/reimbursements | 0 | 72 | FAIL — too-small x19 | [png](mobile-chromium/route-reimbursements.png) |
+| mobile-chromium | 412 | route/dashboard | 0 | 45 | FAIL — too-small x9 | [png](mobile-chromium/route-dashboard.png) |
 | mobile-chromium | 412 | route/notifications | 0 | 177 | FAIL — too-small x108 | [png](mobile-chromium/route-notifications.png) |
 | mobile-chromium | 412 | route/settings/notifications | 0 | 27 | FAIL — too-small x8 | [png](mobile-chromium/route-settings-notifications.png) |
 | mobile-chromium | 412 | route/notifications/rules | 0 | 24 | FAIL — too-small x5 | [png](mobile-chromium/route-notifications-rules.png) |
 | mobile-chromium | 412 | route/settings/employees | 0 | 37 | FAIL — too-small x6 | [png](mobile-chromium/route-settings-employees.png) |
 | mobile-chromium | 412 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](mobile-chromium/route-settings-permissions.png) |
 | mobile-chromium | 412 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](mobile-chromium/route-settings.png) |
+| mobile-chromium | 412 | branded-state-404 | 0 | 2 | pass | [png](mobile-chromium/branded-state-404.png) |
 | mobile-chromium | 412 | cards/reimbursements-1 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-1.png) |
 | mobile-chromium | 412 | cards/reimbursements-2 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-2.png) |
 | mobile-chromium | 412 | cards/reimbursements-3 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-3.png) |
@@ -2417,19 +2424,19 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
   - rect 16,90 26x19
   - `<a class="hover:text-brand-700" href="/companies/seed-local-company/dashboard">มั่งมี</a>`
 - **[too-small]** 61x41 is below the 44x44 touch target
-  - rect 16,217 61x41
+  - rect 16,241 61x41
   - `<button type="button" class="shrink-0 whitespace-nowrap rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold shadow-[var(--shadow-theme-sm)] bg-brand-600 text-white">วันนี้</but`
 - **[too-small]** 100x43 is below the 44x44 touch target
-  - rect 85,216 100x43
+  - rect 85,240 100x43
   - `<button type="button" class="shrink-0 whitespace-nowrap rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold shadow-[var(--shadow-theme-sm)] border border-gray-200 bg-white text`
 - **[too-small]** 78x43 is below the 44x44 touch target
-  - rect 193,216 78x43
+  - rect 193,240 78x43
   - `<button type="button" class="shrink-0 whitespace-nowrap rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold shadow-[var(--shadow-theme-sm)] border border-gray-200 bg-white text`
 - **[too-small]** 96x43 is below the 44x44 touch target
-  - rect 263,216 96x43
+  - rect 263,240 96x43
   - `<button type="button" class="shrink-0 whitespace-nowrap rounded-[10px] px-[17px] py-[9px] text-[15px] font-bold shadow-[var(--shadow-theme-sm)] border border-gray-200 bg-white text`
 - **[too-small]** 101x43 is below the 44x44 touch target
-  - rect 259,216 101x43
+  - rect 259,240 101x43
   - `<button type="button" class="shrink-0 whitespace-nowrap flex items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-[17px] py-[9px] text-[15px] font-bold text-gray-60`
 
 ### mobile-375 · route/notifications

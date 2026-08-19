@@ -148,7 +148,7 @@ function FieldError({ children }: { children?: string | null }) {
 
 function DetailSkeleton() {
   return (
-    <main className="min-h-screen bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-dvh bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl animate-pulse space-y-4">
         <div className="h-5 w-48 rounded bg-gray-200" />
         <div className="h-44 rounded-3xl bg-white" />
@@ -305,7 +305,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
   if (loading) return <DetailSkeleton />;
   if (!detail || loadError) {
     return (
-      <main className="min-h-screen bg-[#f6f8f7] px-4 py-10">
+      <main className="min-h-dvh bg-[#f6f8f7] px-4 py-10">
         <div className="mx-auto max-w-2xl rounded-3xl border border-red-200 bg-white p-8 text-center shadow-sm">
           <h1 className="text-xl font-semibold text-gray-950">เปิดรายละเอียดไม่ได้</h1>
           <p className="mt-2 text-sm text-red-700">{loadError ?? 'ไม่พบข้อมูล'}</p>
@@ -519,7 +519,7 @@ export default function DataRightsDetailPage({ caseId, currentUserId }: { caseId
   };
 
   return (
-    <main className="min-h-screen bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-dvh bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link href="/system/data-rights" className="inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-emerald-700">← กลับไปรายการคำขอ</Link>

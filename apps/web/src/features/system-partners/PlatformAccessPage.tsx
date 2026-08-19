@@ -44,7 +44,7 @@ export default function PlatformAccessPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
+    <main className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
       <div className="mx-auto max-w-2xl space-y-5">
         <div>

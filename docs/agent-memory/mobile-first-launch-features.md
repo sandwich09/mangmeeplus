@@ -1,6 +1,6 @@
 # Agent Memory: mobile-first-launch-features
 
-Status: M0 COMPLETE 2026-08-19 (guard rails + evidence harness built and run). Owner authorised execution.
+Status: M1 COMPLETE 2026-08-19 (M0 complete same day) (guard rails + evidence harness built and run). Owner authorised execution.
 Branch `feat/mobile-first-launch-features` off `origin/develop`.
 
 Owner: product owner set the priority feature list and the mobile-primary constraint on 2026-08-19; Claude authored the
@@ -131,8 +131,27 @@ Also found: the local environment has drifted from `e2e/HANDOFF.md`. The seeded 
 **15432**, not native 5432, and `psql` is not on PATH, so `e2e/run-local.sh` preflight fails. Run playwright directly
 with `DATABASE_URL=...localhost:15432/watchdog_bms?schema=public`. Committed defaults were left alone deliberately.
 
+M1 RESULTS 2026-08-19 — structural sweep, source checks now green.
+- 21 product files swept `100vh`/`*-screen` -> `dvh`. INV-10 goes from 30 red to green. (Watch out: a naive
+  tree-wide replace also rewrites `viewport-units.spec.ts`, which is the one file that must keep the banned strings.)
+- New `.mangmee-safe-bottom` utility in `globals.css`, applied to the two bars INV-9 reported. INV-9 green.
+- `EmployeeAccessPages.tsx:222` now uses `var(--app-header-h)` instead of a stale hardcoded 64px.
+- `BrandedState` is mobile-first: `p-4 sm:p-6` outer, `p-6 sm:p-12` card, 56px logo tile at `sm:` 64, tightened
+  vertical rhythm, and buttons stack full width on a phone and return to the wrapping row at `sm:`.
+  Deliberately NOT `sm:items-center` — the original default is stretch, and `app/error.tsx` passes a non-button child
+  (the sign-out error paragraph) that would have moved. Desktop parity is the reason.
+- `app/error.tsx` and `app/not-found.tsx` anchors: `h-11 sm:h-10`, matching `Button`.
+- Evidence: 288 subjects. too-small counts identical to the M0 baseline on all four mobile entries (269 each), no new
+  failure class, desktop still zero findings — which is the correct result, since M1 only changed things no headless
+  browser can measure.
+- Coverage gap closed while here: BrandedState renders on error/404/access-denied, so it belonged to no route and had
+  no automated evidence at all — the very screen this project started from. Added a 404 subject; it passes on all
+  seven entries, tap targets included.
+
+NOTE on reading run output: the evidence suite is RED by design until M3 (64 failing subjects, all `too-small`).
+`--reporter=line` prints the failure count ABOVE the pass count; read both lines before believing a run was clean.
+
 Next:
-1. M1 structural sweep — 30 `vh` sites + 2 safe-area bars + BrandedState mobile-first spacing. Worklist is whatever
-   the two source checks print.
-2. M2 camera-first upload.
-3. M3 tap targets only (smaller than planned, see above).
+1. M2 camera-first upload.
+2. M3 tap targets only (smaller than planned — the zoom half was withdrawn).
+3. M4a card views, M4b notifications A+2, M4c substitute-receipt flow on device, M5 close out.

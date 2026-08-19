@@ -67,6 +67,21 @@ test.describe('INV-11 evidence', () => {
     });
   }
 
+  // The screen this whole project started from. BrandedState renders on error, 404,
+  // access-denied and company-unavailable, so it sits on no route in PRIORITY_ROUTES and had
+  // no automated evidence at all until M1 — the one screen most in need of it.
+  test('branded state (404) — INV-11 controls reachable', async ({ authedPage, companyId }, testInfo) => {
+    await authedPage.goto(`/companies/${companyId}/this-route-does-not-exist`);
+    await expect(authedPage.getByRole('heading', { level: 1 })).toBeVisible();
+    const row = await captureEvidence(authedPage, testInfo, 'branded-state-404');
+
+    if (row.desktopFinding) {
+      testInfo.annotations.push({ type: 'DESKTOP-FINDING', description: describeFailures('404', row.failures) });
+      return;
+    }
+    expect(row.failures, describeFailures('branded state 404', row.failures)).toEqual([]);
+  });
+
   for (const cardList of CARD_LISTS) {
     test(`${cardList.route} — INV-11 every card`, async ({ authedPage, companyId, isMobile }, testInfo) => {
       await gotoAndSettle(authedPage, companyId, cardList.route);

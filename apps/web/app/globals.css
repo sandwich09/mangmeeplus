@@ -120,6 +120,13 @@ body {
   }
 }
 
+/* A bar pinned to the bottom of the viewport sits in the iPhone home-indicator swipe zone
+   without this. `env()` resolves to 0 everywhere else, so desktop and Android are untouched.
+   Enforced by apps/web/src/common/styles/safe-area.spec.ts. */
+.mangmee-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
 .mangmee-page {
   display: flex;
   min-width: 0;

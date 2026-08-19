@@ -7,7 +7,7 @@ export default function MaintenancePage() {
   return (
     <main
       data-platform-maintenance-page="active"
-      className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_15%_15%,rgba(134,239,172,.34),transparent_34rem),radial-gradient(circle_at_88%_82%,rgba(252,211,77,.28),transparent_30rem),#f6f8f5] p-4"
+      className="grid min-h-dvh place-items-center bg-[radial-gradient(circle_at_15%_15%,rgba(134,239,172,.34),transparent_34rem),radial-gradient(circle_at_88%_82%,rgba(252,211,77,.28),transparent_30rem),#f6f8f5] p-4"
     >
       <section className="w-full max-w-xl overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl shadow-brand-900/10">
         <div className="h-2 bg-linear-to-r from-brand-600 via-brand-400 to-gold-300" />

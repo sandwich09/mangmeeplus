@@ -219,7 +219,7 @@ export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees
     { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดู effective access ของทุกคน' },
   ];
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-[#f7faf8]">
+    <div className="min-h-[calc(100dvh-var(--app-header-h))] bg-[#f7faf8]">
       <div className="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>

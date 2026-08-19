@@ -980,7 +980,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
           </div>
 
         {(modalFooter || showReject || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
-          <div className="sticky bottom-0 z-10 border-t bg-white">
+          <div className="mangmee-safe-bottom sticky bottom-0 z-10 border-t bg-white">
             {(showReject || showVoid || showDelete || duplicateResolution || confirmBlockers) && (
               <div className="space-y-2 px-4 py-3">
               {canMutateDraft && classificationBlocked && <p className={warnNoteClass}>{t('expenses.non_expense_workflow_blocked', locale)}</p>}

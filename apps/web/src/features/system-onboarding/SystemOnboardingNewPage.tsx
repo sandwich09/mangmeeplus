@@ -386,7 +386,7 @@ export default function SystemOnboardingNewPage() {
 
   if (forbidden) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Access Denied</h1>
           <p className="text-sm text-gray-500 mt-1">You do not have permission to create company onboardings.</p>
@@ -399,7 +399,7 @@ export default function SystemOnboardingNewPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-dvh bg-gray-50 p-6">
       <div className="max-w-lg mx-auto space-y-6">
         <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
         <div>
