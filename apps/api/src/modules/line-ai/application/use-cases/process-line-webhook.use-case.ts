@@ -118,6 +118,7 @@ const ERROR_REPLY = '⏳ ขออภัยค่ะ เกิดข้อผิ
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
+const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ส่งลายเซ็นบริษัทผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะสร้างคำขอให้เจ้าของกิจการอนุมัติในเว็บก่อนใช้งานค่ะ';
@@ -441,6 +442,32 @@ const SOURCE_DOC_TYPE_REPLY_LABELS: Record<string, string> = {
   OTHER_EXPENSE_DOCUMENT: 'เอกสารค่าใช้จ่ายอื่น',
 };
 
+const RECEIPT_CAPTURE_PERMISSIONS = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'] as const;
+
+function receiptFeatureDisabled(access: { permissions: string[]; entitlementDeniedPermissions?: Record<string, string> }): boolean {
+  return RECEIPT_CAPTURE_PERMISSIONS.some((permission) => access.entitlementDeniedPermissions?.[permission]);
+}
+
+function receiptDeniedReply(access: { permissions: string[]; entitlementDeniedPermissions?: Record<string, string> }): string {
+  return receiptFeatureDisabled(access)
+    ? EXPENSE_FEATURE_DISABLED_REPLY
+    : RECEIPT_FORBIDDEN_REPLY;
+}
+
+function isReceiptItemQuestion(text: string): boolean {
+  return /(?:ซื้อ|จ่าย|ค่า|มี|รายการ).{0,12}(?:สินค้า|ของ|อะไร|รายการ)|(?:สินค้า|ของ|รายการ).{0,12}(?:อะไร|บ้าง|ไหน)|what\s+(?:items?|products?).*(?:bill|receipt)|what.*(?:bill|receipt).*(?:for|contain)/iu.test(text);
+}
+
+function receiptItemLines(fields: ReceiptOcrFieldResult | null | undefined): string[] {
+  return (fields?.lines ?? []).slice(0, 10).map((line) => {
+    const amount = Number(toMoney4(line.amount));
+    const amountLabel = Number.isFinite(amount)
+      ? amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : line.amount;
+    return `• ${line.description} × ${line.quantity} – ${amountLabel}`;
+  });
+}
+
 /** Same user-facing date shape as the web app, e.g. 25 ก.ค. 2569. */
 const THAI_DATE_REPLY_FORMATTER = new Intl.DateTimeFormat('th-TH', {
   timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric',
@@ -455,7 +482,7 @@ function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
@@ -473,6 +500,12 @@ function formatPaypersReply(
     `• VAT / WHT / ภาษีซื้อ – ${options.fields?.vatAmount ? `VAT ${Number(toMoney4(options.fields.vatAmount)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'รอตรวจสอบ'}`,
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
   ];
+  if (options.questionText && isReceiptItemQuestion(options.questionText)) {
+    const itemLines = receiptItemLines(options.fields);
+    parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
+      ? itemLines
+      : ['• ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ']));
+  }
   if (options.textOnly) {
     parts.push('', '📎 ยังไม่มีไฟล์แนบ – กรุณาแนบรูป/PDF ในเว็บก่อนยืนยันถ้าต้องใช้หลักฐาน');
   }
@@ -485,8 +518,8 @@ function formatPaypersReply(
 
 export function isGroundedReceiptFollowUp(text: string): boolean {
   const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
-  const currentReference = /(ใบนี้|ใบเสร็จนี้|เอกสารนี้|รายการนี้|อันนี้|เมื่อกี้)/u.test(normalized);
-  const receiptQuestion = /(คืออะไร|ประเภท(?:ไหน|อะไร)|เป็นค่าใช้จ่าย|ลงค่าใช้จ่าย|ใช้กับบริษัท|บันทึก.*บริษัท|vat|ภาษี|เคลม)/iu.test(normalized);
+  const currentReference = /(บิลนี้|ใบนี้|ใบเสร็จนี้|เอกสารนี้|รายการนี้|อันนี้|เมื่อกี้)/u.test(normalized);
+  const receiptQuestion = /(คืออะไร|ประเภท(?:ไหน|อะไร)|เป็นค่าใช้จ่าย|ลงค่าใช้จ่าย|ใช้กับบริษัท|บันทึก.*บริษัท|vat|ภาษี|เคลม)/iu.test(normalized) || isReceiptItemQuestion(normalized);
   return currentReference && receiptQuestion;
 }
 
@@ -505,6 +538,7 @@ export function formatGroundedReceiptFollowUp(
   companyId: string,
   expense: ExpenseRecordWithRelations,
   categoryName?: string,
+  questionText = '',
 ): string {
   const fields = receiptSummaryFields(expense);
   const missing = expense.aiVerificationSummaryJson?.['missingFields'];
@@ -513,6 +547,16 @@ export function formatGroundedReceiptFollowUp(
   const amount = Number(expense.grandTotalAmount) > 0
     ? Number(expense.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : 'ยังไม่ระบุ';
+  if (isReceiptItemQuestion(questionText)) {
+    const items = receiptItemLines(fields);
+    return [
+      '🧾 ตอบจากบิลล่าสุดที่บันทึกไว้ในแชทนี้ (ยังรอตรวจสอบ)',
+      '',
+      ...(items.length > 0 ? items : ['ยังอ่านรายการสินค้าจากหลักฐานนี้ไม่ได้ชัดเจนค่ะ']),
+      '',
+      `เปิดตรวจสอบรายการ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`,
+    ].join('\n');
+  }
   const printed = [
     `• ผู้ขาย/ผู้รับเงิน – ${fields.vendorName ?? 'ยังอ่านยืนยันไม่ได้'}`,
     `• วันที่พิมพ์บนเอกสาร – ${formatReplyDate(fields.expenseDate) ?? 'ยังอ่านยืนยันไม่ได้'}`,
@@ -1047,7 +1091,7 @@ export class ProcessLineWebhookUseCase {
     const companyId = resolved.companyId;
 
     // 5. Resolve membership + permissions via existing permission resolver
-    let resolvedAccess: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
+    let resolvedAccess: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
     try {
       resolvedAccess = await this.permissionResolver.resolveAccess(identity.userId, companyId);
     } catch {
@@ -1286,7 +1330,7 @@ export class ProcessLineWebhookUseCase {
             ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === expense.expenseCategoryId)
             : undefined;
           const interruption = await interruptExpenseDraft();
-          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name)}${interruption ? `\n\n${interruption}` : ''}`;
+          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -1378,8 +1422,11 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       if (!canCaptureExpense || !this.expenseDraftConversation) {
-        await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
+        await this.updateEventLog(event.webhookEventId,
+          receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
+          receiptFeatureDisabled(resolvedAccess) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+          companyId);
         return;
       }
       const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
@@ -1404,9 +1451,12 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
       if (!canCaptureExpense) {
-        await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
         await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload', route: 'text_note' } });
-        await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+        await this.updateEventLog(event.webhookEventId,
+          receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
+          receiptFeatureDisabled(resolvedAccess) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+          companyId);
         return;
       }
       if (!this.captureExpenseNote) {
@@ -1491,8 +1541,11 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_CAPTURE_CORRECTION') {
       if (!canCaptureExpense) {
-        await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+        await this.deliverReply(event, receiptDeniedReply(resolvedAccess));
+        await this.updateEventLog(event.webhookEventId,
+          receiptFeatureDisabled(resolvedAccess) ? 'feature_disabled' : 'forbidden',
+          receiptFeatureDisabled(resolvedAccess) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+          companyId);
         return;
       }
       const canEdit = resolvedAccess.permissions.includes('expense.update') || resolvedAccess.permissions.includes('expense.review');
@@ -1607,6 +1660,8 @@ export class ProcessLineWebhookUseCase {
       companyId,
       membershipId: resolvedAccess.membershipId,
       permissions: resolvedAccess.permissions,
+      entitlementDeniedPermissions: resolvedAccess.entitlementDeniedPermissions,
+      entitledFeatureKeys: resolvedAccess.entitledFeatureKeys,
       roles: resolvedAccess.roles,
       branchIds: resolvedAccess.scopes.branchIds,
       locale: 'th-TH',
@@ -2056,7 +2111,7 @@ export class ProcessLineWebhookUseCase {
     }
     const companyId = resolved.companyId;
 
-    let access: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } };
+    let access: Awaited<ReturnType<PermissionResolverService['resolveAccess']>>;
     try {
       access = await this.permissionResolver.resolveAccess(identity.userId, companyId);
     } catch {
@@ -2081,9 +2136,12 @@ export class ProcessLineWebhookUseCase {
     const canCaptureExpense = access.permissions.includes('expense.receipt.line_upload') || access.permissions.includes('expense.receipt.upload');
     const canSubmitSignature = access.permissions.includes('expense.signature.manage');
     if (!canCaptureExpense && !canSubmitSignature) {
-      await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
+      await this.deliverReply(event, receiptDeniedReply(access));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
-      await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+      await this.updateEventLog(event.webhookEventId,
+        receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
+        receiptFeatureDisabled(access) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+        companyId);
       return;
     }
     if (!this.initReceiptUpload || !this.completeReceiptUpload) {
@@ -2255,9 +2313,12 @@ export class ProcessLineWebhookUseCase {
     // never read an existing expense. Every possible capture/fallback branch is denied here.
     const isReferenceOnlyRoute = routePlan.status === 'ROUTED' && routePlan.intent === 'BUSINESS_DOCUMENT_REFERENCE';
     if (!canCaptureExpense && !isReferenceOnlyRoute) {
-      await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
+      await this.deliverReply(event, receiptDeniedReply(access));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload', route: 'capture' } });
-      await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+      await this.updateEventLog(event.webhookEventId,
+        receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
+        receiptFeatureDisabled(access) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+        companyId);
       return;
     }
 
@@ -2276,6 +2337,7 @@ export class ProcessLineWebhookUseCase {
         : undefined;
       const replyTexts = receiptDraft?.replyTexts.length ? receiptDraft.replyTexts : [formatPaypersReply(this.config.webBaseUrl, companyId, existingExpense.id, {
         sourceDocumentType: existingExpense.sourceDocumentType !== 'NEEDS_REVIEW' ? existingExpense.sourceDocumentType : undefined,
+        questionText: caption,
       })];
       if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
       else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
@@ -2476,6 +2538,7 @@ export class ProcessLineWebhookUseCase {
       fields: ocrFields,
       sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
       categoryName: effectiveCategory?.name || null,
+      questionText: caption,
     })];
     if (receiptDraft?.replyTexts.length) await this.deliverCompletedReplies(event, replyTexts, companyId, access);
     else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
@@ -2612,15 +2675,18 @@ export class ProcessLineWebhookUseCase {
     requestId: string,
     userId: string,
     companyId: string,
-    access: { membershipId: string; roles: string[]; permissions: string[]; scopes: { branchIds?: string[] } },
+    access: { membershipId: string; roles: string[]; permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; scopes: { branchIds?: string[] } },
     pending: { id: string; attachmentId: string; lineMessageId: string; mimeType: string },
     userMessagePreview: string,
     additionalText?: string,
   ): Promise<void> {
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'].some((p) => access.permissions.includes(p));
     if (!canCaptureExpense || !this.expenseRepo) {
-      await this.deliverReply(event, RECEIPT_FORBIDDEN_REPLY);
-      await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
+      await this.deliverReply(event, receiptDeniedReply(access));
+      await this.updateEventLog(event.webhookEventId,
+        receiptFeatureDisabled(access) ? 'feature_disabled' : 'forbidden',
+        receiptFeatureDisabled(access) ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+        companyId);
       return;
     }
     // Idempotent by the ORIGINAL media message id (the text reply carries a different id): a

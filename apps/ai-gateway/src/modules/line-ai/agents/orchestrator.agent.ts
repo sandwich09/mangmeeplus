@@ -13,7 +13,8 @@ import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
 import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } from './accounting-summary.agent';
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
-import { ResponseComposerAgent } from './response-composer.agent';
+import { ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
+import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -24,14 +25,14 @@ export const ORCHESTRATOR_SYSTEM_PROMPT = `
 You are the Orchestrator Agent for MangmeePlus LINE AI.
 Your job is to coordinate specialist agents, respect the intent plan, and keep every action inside the safe LINE boundary.
 Use one specialist per job.
-Never call tools outside each specialist allowlist.
+Never call tools outside each routed intent's requiredTools and specialist allowlist.
 Never perform final business mutations from LINE.
 Use the same output language as the user's input.
 If a task needs final approval, payment, posting, stock mutation, tax filing, or admin change, refuse safely and point the user to the web app.
 `.trim();
 
 // Model-driven tool loop: the orchestrator asks the model which read-only tool to call next,
-// one at a time, choosing only from the domain-scoped allowlist. Fact-shaping stays with the
+// one at a time, choosing only from the planned requiredTools. Fact-shaping stays with the
 // specialists (grounding), so the model only decides which tool runs — never the numbers.
 // Owner decision 2026-07-03: tools may take whitelisted inputs; period-scoped tools default to
 // "now" (current month) server-side, so the model passes fromDate/toDate ONLY when the user's
@@ -228,11 +229,18 @@ function appendPlanRefusalLines(replyText: string, plan: AgentIntentPlan): strin
   return replyText.includes(line) ? replyText : `${replyText}\n${line}`;
 }
 
-function appendPartialAvailability(replyText: string, plan: AgentIntentPlan): string {
-  if (plan.status !== 'PARTIAL' || !plan.refusals.some((refusal) => refusal.reason === 'feature_disabled')) return replyText;
-  return `${replyText}\n${plan.language.toLowerCase().startsWith('en')
-    ? 'ℹ️ Part of this request is not available in LINE yet.'
-    : 'ℹ️ บางส่วนของคำถามนี้ยังไม่พร้อมใช้งานใน LINE'}`;
+function appendPartialAvailability(replyText: string, plan: AgentIntentPlan, featureDisabledTools: readonly string[]): string {
+  if (plan.status !== 'PARTIAL') return replyText;
+  const lines: string[] = [];
+  if (plan.refusals.some((refusal) => refusal.reason === 'feature_disabled')) {
+    lines.push(featureDisabledReply(featureDisabledTools, plan.language));
+  }
+  if (plan.refusals.some((refusal) => /forbidden|permission/i.test(refusal.reason))) {
+    lines.push(plan.language.toLowerCase().startsWith('en')
+      ? '🔒 You do not have permission to access the remaining information.'
+      : '🔒 ส่วนข้อมูลที่เหลือ คุณไม่มีสิทธิ์เข้าถึงค่ะ');
+  }
+  return lines.reduce((reply, line) => reply.includes(line) ? reply : `${reply}\n${line}`, replyText);
 }
 
 export function buildAnswerPresentation(
@@ -258,7 +266,11 @@ export function buildAnswerPresentation(
       return {
         text: successful.length === 1 ? replyText : composed.replyText,
         ...(sourceLabels.length > 0 ? { sourceLabels } : {}),
-        ...(composed.webLinks[0] ? { webLink: composed.webLinks[0] } : {}),
+        ...(composed.webLinks[0] ? {
+          webLink: output.toolCalls.some((call) => call.name === 'expense.get_daily_closing')
+            ? { ...composed.webLinks[0], label: 'ดูรายการค่าใช้จ่าย' }
+            : composed.webLinks[0],
+        } : {}),
       };
     }),
   };
@@ -294,12 +306,15 @@ export class OrchestratorAgent {
 
     // Route intents
     const router = new IntentRouterAgent(provider);
-    const plan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
+    const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
+    const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
+    let plan = access.plan;
+    const featureDisabledTools = [...access.featureDisabledTools];
     const zeroToolIntent = plan.intents.length === 1 && isZeroToolIntent(plan.intents[0]?.intent)
       ? plan.intents[0].intent
       : undefined;
 
-    const outputs = [];
+    const outputs: SpecialistOutput[] = [];
 
     // Text intent specialists. Fallback chain (item 10F): native tool-use loop (flag on +
     // provider capable) → JSON one-tool-at-a-time loop (10B) → deterministic plan dispatch.
@@ -333,13 +348,30 @@ export class OrchestratorAgent {
       }
     }
 
+    // The API re-checks live entitlements. If a feature changed after planning, normalize the late
+    // FEATURE_NOT_ENABLED result to the same customer truth and suppress the specialist's generic
+    // failure sentence while retaining the tool call in the audit result.
+    const runtimeFeatureDisabled = outputs.flatMap((output) => output.toolCalls)
+      .filter((call) => call.errorCode === 'FEATURE_NOT_ENABLED')
+      .map((call) => call.name);
+    if (runtimeFeatureDisabled.length > 0) {
+      featureDisabledTools.push(...runtimeFeatureDisabled);
+      plan = removeRuntimeBlockedTools(plan, req.messageText, runtimeFeatureDisabled);
+    }
+    const composableOutputs = outputs.filter((output) => !(output.facts.length === 0
+      && (output.toolData?.length ?? 0) === 0
+      && output.toolCalls.length > 0
+      && output.toolCalls.every((call) => call.errorCode === 'FEATURE_NOT_ENABLED')));
+
     const composer = new ResponseComposerAgent();
-    const composed = composer.compose(plan, outputs, req.messageText, req.userContext.locale);
+    const composed = composer.compose(plan, composableOutputs, req.messageText, req.userContext.locale, {
+      featureDisabledTools,
+    });
     // Owner decision 2026-07-03: text business-read answers are model-composed from the raw tool
     // data (grounded by the number guard; deterministic compose is the fallback).
     // Refusal/no-data/permission-denied replies keep their deterministic templates.
-    const hasGroundedFacts = outputs.some((o) => o.facts.length > 0);
-    const toolData = outputs.flatMap((o) => o.toolData ?? []);
+    const hasGroundedFacts = composableOutputs.some((o) => o.facts.length > 0);
+    const toolData = composableOutputs.flatMap((o) => o.toolData ?? []);
     let replyText = composed.replyText;
     if (zeroToolIntent === 'capability_help') {
       replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale);
@@ -375,11 +407,11 @@ export class OrchestratorAgent {
         locale: req.userContext.locale,
       });
     }
-    replyText = appendPartialAvailability(replyText, plan);
+    replyText = appendPartialAvailability(replyText, plan, featureDisabledTools);
     replyText = appendPlanRefusalLines(replyText, plan);
     const presentation = buildAnswerPresentation(
       plan,
-      outputs,
+      composableOutputs,
       replyText,
       req.messageText,
       req.userContext.locale,
@@ -461,7 +493,7 @@ export class OrchestratorAgent {
   }
 
   // Model-driven dispatch: the model chooses the next tool to call, one at a time, from the
-  // domain-scoped allowlist for the routed agents. Each choice is executed by the owning
+  // planned requiredTools for the routed intents. Each choice is executed by the owning
   // specialist (requiredTools=[tool]) so fact-shaping and permission checks stay identical.
   // Returns empty outputs when the provider is unavailable or the model calls no valid tool, so
   // the caller falls back to deterministic dispatch. askUser is set when the model chose to ask
@@ -534,7 +566,13 @@ export class OrchestratorAgent {
         language: plan.language,
         currentDate: todayIso,
         // The router's multi-intent plan rides as the coverage checklist context.
-        subRequests: plan.intents.map((i) => ({ intent: i.intent, subject: i.subject, agent: i.agent, priority: i.priority })),
+        subRequests: plan.intents.map((i) => ({
+          intent: i.intent,
+          subject: i.subject,
+          agent: i.agent,
+          priority: i.priority,
+          requiredTools: i.requiredTools,
+        })),
         ...(req.conversationContext && { conversationContext: req.conversationContext }),
         ...(req.valueCandidates && { valueCandidates: req.valueCandidates }),
         ...(req.openClarifications && { openClarifications: req.openClarifications }),
@@ -721,14 +759,14 @@ export class OrchestratorAgent {
 
 type LoopTool = { agent: LineAiAgent; intent: LineAiIntent; subject: AgentIntentPlan['intents'][number]['subject']; meta: ToolMeta };
 
-// Tools the model may choose from = the routed agents' specialist allowlists, intersected with
-// the enabled router tools (disabled tools stay out of execution). This is the domain-isolation
-// boundary: an inventory-routed plan only ever exposes inventory tools.
+// The router plans; the loop only executes. Exposed tools are requiredTools intersected with the
+// specialist allowlist, enabled catalog, subject compatibility, and effective permissions.
 function availableToolsForPlan(plan: AgentIntentPlan, permissions: readonly string[]): Map<string, LoopTool> {
   const map = new Map<string, LoopTool>();
   for (const intentItem of plan.intents) {
-    for (const name of allowedToolsForAgent(intentItem.agent)) {
-      if (!ROUTER_ENABLED_TOOLS.has(name) || map.has(name) || !isSubjectCompatible(intentItem.subject, name)) continue;
+    const specialistTools = allowedToolsForAgent(intentItem.agent);
+    for (const name of intentItem.requiredTools) {
+      if (!specialistTools.has(name) || !ROUTER_ENABLED_TOOLS.has(name) || map.has(name) || !isSubjectCompatible(intentItem.subject, name)) continue;
       const meta = LINE_TOOL_REGISTRY.find((t) => t.name === name);
       if (meta && hasToolPermissions(meta, permissions)) {
         map.set(name, { agent: intentItem.agent, intent: intentItem.intent, subject: intentItem.subject, meta });

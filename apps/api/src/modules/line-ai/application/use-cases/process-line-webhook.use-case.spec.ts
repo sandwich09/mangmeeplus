@@ -174,6 +174,8 @@ function makeUseCase(
   prisma: any,
 	  opts: {
 	    permissions?: string[];
+	    entitlementDeniedPermissions?: Record<string, string>;
+	    entitledFeatureKeys?: string[] | null;
 	    roles?: string[];
 	    branchIds?: string[];
 	    aiGatewayFn?: (req?: any) => any;
@@ -199,7 +201,12 @@ function makeUseCase(
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
-    { resolveAccess: async () => ({ membershipId: 'mem-1', roles, permissions, scopes: branchIds === undefined ? {} : { branchIds } }) } as any,
+    { resolveAccess: async () => ({
+      membershipId: 'mem-1', roles, permissions,
+      entitlementDeniedPermissions: opts.entitlementDeniedPermissions,
+      entitledFeatureKeys: opts.entitledFeatureKeys,
+      scopes: branchIds === undefined ? {} : { branchIds },
+    }) } as any,
     { log: async (entry: any) => { auditEvents.push(entry); } } as any,
     {
 	      requestLineTurn: async (req: any) => {
@@ -483,8 +490,10 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('allows the turn when ai_line_assistant entitlement is enabled', async () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: true }] });
-    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+    const { useCase, getAiGatewayCalled, aiGatewayRequests } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant', 'product_catalog'],
       aiGatewayFn: () => ({
         requestId: 'req-ai',
         replyText: 'สรุปแดชบอร์ดวันนี้',
@@ -502,7 +511,33 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute(BASE_EVENT);
 
     assert.equal(getAiGatewayCalled(), true);
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitledFeatureKeys, ['ai_line_assistant', 'product_catalog']);
     assert.equal((updates.at(-1) as any).data.status, 'completed');
+  });
+
+  it('reports an expenses feature switch instead of blaming the member permission', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: [
+      { featureKey: 'ai_line_assistant', enabled: true },
+      { featureKey: 'expenses', enabled: false },
+    ] });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: {
+        'expense.receipt.line_upload': 'expenses.upload',
+        'expense.receipt.upload': 'expenses.upload',
+        'expense.create': 'expenses',
+      },
+      entitledFeatureKeys: ['ai_line_assistant'],
+      intakeRouteFn: () => ROUTED_EXPENSE_DOCUMENT,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-expense-off', messageText: 'ค่ากาแฟ 65 บาท' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(replies[0] ?? '', /ระบบค่าใช้จ่ายและเอกสาร/);
+    assert.equal((replies[0] ?? '').includes('ไม่มีสิทธิ์'), false);
+    assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
   it('delivers a successful business query as one themed Flex answer card', async () => {

@@ -88,6 +88,7 @@ describe('AiGatewayClient actor delegation', () => {
         companyId: 'company-1',
         membershipId: 'membership-1',
         permissions: ['ai.tool.invoke', 'inventory.product.read', 'inventory.report.read'],
+        entitledFeatureKeys: ['inventory', 'product_catalog'],
         roles: ['INVENTORY'],
         locale: 'th-TH',
       },
@@ -117,6 +118,34 @@ describe('AiGatewayClient actor delegation', () => {
     assert.equal(posted?.actorDelegations?.['inventory.list_low_stock']?.[0], 'signed:inventory.list_low_stock');
     assert.equal(posted?.actorDelegations?.['ledger.get_financial_summary'], undefined);
     assert.ok(signal instanceof AbortSignal, 'AI Gateway calls must be time-bounded');
+  });
+
+  it('does not issue a delegation for a cross-feature tool the company has not enabled', async () => {
+    const issued: string[] = [];
+    const client = new AiGatewayClient(
+      { aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'workload-secret' } as any,
+      { issue: ({ toolName }: { toolName: string }) => { issued.push(toolName); return 'signed'; } } as any,
+    );
+    let posted: LineAiTurnRequest | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body));
+      return { ok: true, json: async () => ({ requestId: 'request-1' }) } as Response;
+    };
+    try {
+      await client.requestLineTurn({
+        ...baseTurnRequest,
+        userContext: {
+          ...baseTurnRequest.userContext,
+          permissions: ['ai.tool.invoke', 'crm.report.read'],
+          entitledFeatureKeys: ['crm', 'crm.overview'],
+        },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(issued.includes('sales.get_sales_summary'), false);
+    assert.equal(posted?.actorDelegations?.['sales.get_sales_summary'], undefined);
   });
 });
 

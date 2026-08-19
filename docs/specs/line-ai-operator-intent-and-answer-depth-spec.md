@@ -4,9 +4,9 @@
 
 - Owner: Product owner
 - Date: 2026-08-19
-- Status: Core intent-depth fix implemented locally; capability-availability honesty extension
-  specified below and not yet implemented. Real-provider language evaluation still requires a
-  network-enabled terminal.
+- Status: Core intent-depth and capability-availability honesty implemented and verified locally.
+  Real-provider language evaluation still requires a network-enabled terminal; no UAT or Production
+  deployment is part of this task.
 - Incident driver: a Production turn asking `ช่วยคำนวณยอดค่าใช้จ่ายเดือนนี้ให้หน่อย`
   invoked `expense.get_daily_closing`, returned a full daily-close card, and linked to the generic
   expense list.
@@ -100,7 +100,7 @@ These states are different customer truths and must remain different end to end:
 
 | Outcome | Authoritative evidence | Customer meaning | Forbidden wording |
 |---|---|---|---|
-| `feature_disabled` | the tool fails effective permissions but passes after restoring only server-resolved `entitlementDeniedPermissions`, or the API returns `FEATURE_NOT_ENABLED` | the company has not enabled the needed capability | `ไม่มีสิทธิ์`, `ไม่พบข้อมูล`, `ระบบล่ม` |
+| `feature_disabled` | the tool fails effective permissions but passes after restoring only server-resolved `entitlementDeniedPermissions`, the exact server-resolved feature set does not entitle the tool, or the API returns `FEATURE_NOT_ENABLED` | the company has not enabled the needed capability | `ไม่มีสิทธิ์`, `ไม่พบข้อมูล`, `ระบบล่ม` |
 | `forbidden` | the tool still fails after entitlement-stripped permissions are restored | this member does not have access | `ฟีเจอร์ยังไม่ได้เปิด` |
 | `unsupported_module` | no current tool can answer the requested outcome reliably | MangmeePlus cannot currently answer this question | pretending a nearby report answers it |
 | `tool_unavailable` | provider/source/adaptor is temporarily unavailable or the backend tool is not wired | the capability cannot be used through this channel now | implying the company did not buy/enable it |
@@ -221,17 +221,20 @@ planned tools. It must not silently substitute a nearby tool.
 
 ### 7.4 Server-Derived Availability
 
-`LineUserContext` carries an optional server-derived entitlement-denial map from the existing
-permission resolver. It is internal authorization context, never accepted from LINE text and never
-placed in a model prompt.
+`LineUserContext` carries the optional server-derived entitlement-denial map and exact entitled
+feature keys from the existing permission resolver. Exact feature keys cover cross-feature tools
+whose shared permission alone cannot prove entitlement. Both fields are internal authorization
+context, never accepted from LINE text and never placed in a model prompt.
 
 One shared plan-normalization step runs before native, JSON-model, and deterministic dispatch:
 
-1. Existing effective permissions pass -> keep the planned tool.
+1. Existing effective permissions and exact feature entitlement pass -> keep the planned tool.
 2. Effective permissions fail, but pass after restoring only entitlement-denied permission keys ->
    remove the affected intent/tool and add `feature_disabled`.
 3. Permissions still fail -> remove the affected intent/tool and add `forbidden`.
-4. No executable intent remains -> `UNROUTABLE`; some remain -> `PARTIAL`.
+4. Effective permission passes but exact feature entitlement fails -> remove the tool and add
+   `feature_disabled`.
+5. No executable intent remains -> `UNROUTABLE`; some remain -> `PARTIAL`.
 
 This normalization is presentation guidance, not authority. Actor delegation and the API's live
 permission/feature checks stay unchanged and fail closed.
@@ -305,7 +308,8 @@ keys in customer copy, raw LINE id, or message text.
 ## 12. Local Language Evaluation
 
 Implementation must include at least 100 locally invoked owner/operator questions. The checked-in
-corpus currently contains 220 cases across expense and other owner-decision topics.
+corpus contains 220 intent-depth cases plus 216 availability/failure cases across current business
+families (436 full-flow local invocations total).
 
 Minimum coverage:
 
@@ -377,27 +381,29 @@ deterministic server-derived assertions.
 - [x] Daily-close button says `ดูรายการค่าใช้จ่าย` while it targets the generic expense page.
 - [x] Existing permission, multi-intent, coverage, fallback, and source-honesty tests remain green.
 - [x] Focused typecheck/tests and `git diff --check` pass.
-- [ ] A company-disabled inventory/product request returns `feature_disabled` on local,
-  native/model-loop, deterministic fallback, and AgentCore payload paths; it never says permission,
-  no data, or temporary source failure.
-- [ ] With `product_catalog=ON` and `inventory=OFF`, product search/detail still succeeds while stock
+- [x] A company-disabled inventory/product request returns `feature_disabled` on local,
+  native/model-loop and deterministic fallback paths; it never says permission, no data, or
+  temporary source failure. AgentCore payload parsing is implemented/typechecked, but its HTTP spec
+  cannot bind a local port in this sandbox (`listen EPERM`).
+- [x] With `product_catalog=ON` and `inventory=OFF`, product search/detail still succeeds while stock
   balance, low-stock, and movement requests return the inventory-specific feature-disabled copy.
-- [ ] A genuine missing role permission still returns `forbidden`, including when an unrelated
+- [x] A genuine missing role permission still returns `forbidden`, including when an unrelated
   company feature is disabled.
-- [ ] Static build-unavailable tools say unavailable through LINE and never claim that the company
+- [x] Static build-unavailable tools say unavailable through LINE and never claim that the company
   did not enable the feature.
-- [ ] Core/no-feature-gate company, branch, employee, and reimbursement reads never emit
+- [x] Core/no-feature-gate company, branch, employee, and reimbursement reads never emit
   `feature_disabled`; they preserve permission, empty-data, missing-input, and source-failure truth.
-- [ ] `ขายอะไรดี` and typo/abbreviation variants call no inventory or aggregate-sales tool and use
+- [x] `ขายอะไรดี` and typo/abbreviation variants call no inventory or aggregate-sales tool and use
   the grounded unsupported-advice copy.
-- [ ] `บิลนี้จ่ายค่าสินค้าอะไร` routes to expense/document semantics, never inventory. It either
+- [x] `บิลนี้จ่ายค่าสินค้าอะไร` routes to expense/document semantics, never inventory. It either
   returns grounded lines, asks for one bill reference, or reports the relevant expense/document
   feature state.
-- [ ] A feature-disabled answer contains no business-data source reference and no link to a hidden
+- [x] A feature-disabled answer contains no business-data source reference and no link to a hidden
   feature page.
-- [ ] At least 128 new unique availability questions pass full local fixture replay, and at least
+- [ ] 216 new unique availability questions pass full local fixture replay; at least
   100 pass real-provider semantic invocation before UAT. Every §6.5 family has both a positive or
-  supported-shape case and its applicable disabled/forbidden/unavailable contrast.
+  supported-shape case and its applicable disabled/forbidden/unavailable contrast. The local half is
+  complete; the real-provider half remains blocked by network access.
 - [ ] Evidence records exact source commit, corpus hash, command, counts, duration, and zero forbidden
   tool calls; failures include case ids without credentials or raw LINE identities.
 - [ ] No UAT or Production action occurs without the mandatory deployment protocol and new immutable
@@ -425,3 +431,21 @@ This is pre-fix evidence, not completion evidence:
 
 That last result is the reproduced defect this extension must turn into a truthful feature-disabled
 answer. Exact commands and results are recorded in the linked task memory.
+
+## 15. Post-Fix Local Evidence — 2026-08-19
+
+- Full real-code orchestration replay with fixed read-only routing/ERP fixtures: 436/436 passed in
+  104 ms. This includes 216 availability/failure cases, 83 noisy-language cases, and zero forbidden
+  tool invocations. Corpus SHA-256:
+  `c0b4ab4dcac776c4e43c8ef03aa2e91e9b7a1b9fdbe41c576643a27f18d51842`.
+- Focused AI Gateway routing, executor, composition, availability, and deterministic-turn suites:
+  146/146 passed.
+- Focused API webhook, ledger replay, receipt follow-up, delegation, and authoritative tool-boundary
+  suites: 137/137 passed.
+- Corpus integrity: 2/2 passed. Contracts, AI Gateway, and API typechecks passed; `git diff --check`
+  passed.
+- AgentCore runtime HTTP spec cannot execute in this managed sandbox because binding `0.0.0.0`
+  returns `EPERM`; the parser and wire changes compile, and the failed run is recorded rather than
+  counted as a pass.
+- Real-provider semantic invocation remains pending from a network-enabled terminal and is mandatory
+  before UAT. No UAT or Production action was performed.

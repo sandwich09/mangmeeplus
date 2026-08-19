@@ -170,7 +170,14 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
     const orchestrator = { run: async () => { orchestratorCalled = true; return {} as any; } } as any;
     const useCase = new LineAiTurnUseCase(makeErpTools(), orchestrator, config, agentcoreRuntime);
 
-    const resp = await useCase.execute(validReq);
+    const resp = await useCase.execute({
+      ...validReq,
+      userContext: {
+        ...validReq.userContext,
+        entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+        entitledFeatureKeys: ['product_catalog'],
+      },
+    });
     assert.equal(agentcoreCalled, true, 'AgentCore adapter must be called');
     assert.equal(orchestratorCalled, false, 'local orchestrator must not be called');
     assert.equal(resp.replyText, 'reply from agentcore');
@@ -185,6 +192,8 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
       { membershipId: 'mem-1', branchIds: ['branch-1'], locationIds: ['location-1'], roles: ['owner'] },
     );
     assert.deepEqual(resp.toolsInvoked, []);
+    assert.deepEqual(invokeInput.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(invokeInput.entitledFeatureKeys, ['product_catalog']);
   });
 
   it('maps runtime tool and source lineage onto the turn response', async () => {

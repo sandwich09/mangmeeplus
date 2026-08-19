@@ -167,6 +167,8 @@ describe('AgentCore Runtime – payload validation', () => {
       branchIds: ['b-1'],
       locationIds: ['l-1'],
       roles: ['owner'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['product_catalog'],
       actorDelegations: { 'inventory.list_low_stock': ['signed-delegation'] },
       messageText: 'hello',
     });
@@ -177,7 +179,25 @@ describe('AgentCore Runtime – payload validation', () => {
     assert.deepEqual(turnReq.userContext.branchIds, ['b-1']);
     assert.deepEqual(turnReq.userContext.locationIds, ['l-1']);
     assert.deepEqual(turnReq.userContext.roles, ['owner']);
+    assert.deepEqual(turnReq.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(turnReq.userContext.entitledFeatureKeys, ['product_catalog']);
     assert.deepEqual(turnReq.actorDelegations, { 'inventory.list_low_stock': ['signed-delegation'] });
+  });
+
+  it('drops malformed internal availability evidence and preserves legacy null', () => {
+    const malformed = validatePayload({
+      turnId: 't-bad-policy', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      entitlementDeniedPermissions: { 'inventory.report.read': 42 },
+      entitledFeatureKeys: ['inventory', 42],
+    });
+    assert.equal(malformed?.entitlementDeniedPermissions, undefined);
+    assert.equal(malformed?.entitledFeatureKeys, undefined);
+
+    const legacy = validatePayload({
+      turnId: 't-legacy-policy', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      entitledFeatureKeys: null,
+    });
+    assert.equal(legacy?.entitledFeatureKeys, null);
   });
 
   it('reconstructs a valid turn request when authoritative scope fields are absent', () => {

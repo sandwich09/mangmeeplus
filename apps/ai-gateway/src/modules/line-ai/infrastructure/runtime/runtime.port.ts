@@ -12,6 +12,8 @@ export type AgentCoreInvokeInput = {
   messageText: string;
   locale: string;
   permissions: string[];
+  entitlementDeniedPermissions?: Record<string, string>;
+  entitledFeatureKeys?: string[] | null;
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: AiModelPolicy;
   qualifier?: string;

@@ -65,6 +65,8 @@ function makeUseCase(opts: {
       membershipId: 'm1',
       roles: ['owner'],
       permissions: opts.permissions ?? ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant'],
       scopes: { branchIds: undefined },
     }),
   } as any;
@@ -120,6 +122,8 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(turnRequests[0].messageText, 'ยอดค้างซัพพลายเออร์');
     assert.deepEqual(turnRequests[0].valueCandidates, candidates);
     assert.equal(turnRequests[0].userContext.lineUserId, '[REDACTED]');
+    assert.deepEqual(turnRequests[0].userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(turnRequests[0].userContext.entitledFeatureKeys, ['ai_line_assistant']);
     assert.equal(pushes[0].to, 'chat1', 'push lands in the source chat');
     assert.ok(pushes[0].text.includes('5,000'));
     assert.deepEqual(acks, [{ id: '1-0', outcome: 'followed_up' }]);

@@ -36,6 +36,19 @@ const INVENTORY_PLAN = {
   refusals: [], requiresHumanReview: false,
 };
 
+function inventoryPlan(requiredTools: string[]) {
+  return {
+    ...INVENTORY_PLAN,
+    intents: [{ ...INVENTORY_PLAN.intents[0], requiredTools }],
+  };
+}
+
+const MONTHLY_EXPENSE_PLAN = {
+  status: 'ROUTABLE', language: 'th',
+  intents: [{ intent: 'read_summary', subject: 'expense', agent: 'accounting', priority: 1, requiredTools: ['expense.list_recent'], missingContext: [] }],
+  refusals: [], requiresHumanReview: false,
+};
+
 type NativeTurn = { toolCalls?: Array<{ name: string; input?: unknown }>; text?: string };
 
 /** Routes by payload shape: body.tools → native turn queue; toolsCalled → critic queue;
@@ -118,6 +131,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('executes parallel tool calls from one model turn', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock', 'inventory.get_stock_balance']),
       nativeTurns: [
         { toolCalls: [{ name: 'inventory__list_low_stock' }, { name: 'inventory__get_stock_balance' }] },
         { text: 'done' },
@@ -135,6 +149,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('allows the same tool twice with different input and blocks an identical repeat', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.summarize_stock_movements']),
       nativeTurns: [
         { toolCalls: [
           { name: 'inventory__summarize_stock_movements', input: { fromDate: '2026-06-01' } },
@@ -155,6 +170,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('rejects an out-of-allowlist tool with an error result and keeps looping', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock']),
       nativeTurns: [
         { toolCalls: [{ name: 'ledger__get_financial_summary' }] },
         { toolCalls: [{ name: 'inventory__list_low_stock' }] },
@@ -183,6 +199,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('caps executions at the tool budget and defers the tail honestly', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock', 'inventory.get_stock_balance']),
       nativeTurns: [{ toolCalls: [{ name: 'inventory__list_low_stock' }, { name: 'inventory__get_stock_balance' }] }],
       criticAnswers: [JSON.stringify([
         { request: 'ของใกล้หมด', verdict: 'covered' },
@@ -199,6 +216,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('critic failure fails open – reply proceeds without coverage', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock']),
       nativeTurns: [{ toolCalls: [{ name: 'inventory__list_low_stock' }] }, { text: 'done' }],
       criticAnswers: ['this is not json'],
     });
@@ -212,6 +230,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('uncovered verdicts resume the loop once and coverage is re-judged', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock', 'inventory.get_stock_balance']),
       nativeTurns: [
         { toolCalls: [{ name: 'inventory__list_low_stock' }] },
         { text: 'ครบแล้ว' },
@@ -231,7 +250,7 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
 
   it('flag off never touches the native wire (byte-equivalent 10B path)', async () => {
     const nativeBodies: any[] = [];
-    installNativeFetch({ nativeBodies, jsonLoopChoices: [{ callTool: 'inventory.list_low_stock' }, { done: true }] });
+    installNativeFetch({ plan: inventoryPlan(['inventory.list_low_stock']), nativeBodies, jsonLoopChoices: [{ callTool: 'inventory.list_low_stock' }, { done: true }] });
     const orchestrator = new OrchestratorAgent(trackingErpTools([]), makeConfig({ lineAiTooluseLoopEnabled: false }));
     const result = await orchestrator.run(makeReq('ของใกล้หมด'));
     assert.equal(nativeBodies.length, 0, 'no tool-wire request when the flag is off');
@@ -241,11 +260,36 @@ describe('OrchestratorAgent – native tool-use loop (item 10F)', () => {
   it('falls back to the JSON loop when the provider fails before any facts', async () => {
     const calls: Array<{ name: string; input: any }> = [];
     installNativeFetch({
+      plan: inventoryPlan(['inventory.list_low_stock']),
       nativeHttpErrorFirst: true,
       jsonLoopChoices: [{ callTool: 'inventory.list_low_stock' }, { done: true }],
     });
     const orchestrator = new OrchestratorAgent(trackingErpTools(calls), makeConfig());
     await orchestrator.run(makeReq('ของใกล้หมด'));
     assert.ok(calls.some((c) => c.name === 'inventory.list_low_stock'), 'JSON loop answered after native failure');
+  });
+
+  it('never invokes daily closing when the router planned only the monthly expense tool', async () => {
+    const calls: Array<{ name: string; input: any }> = [];
+    const nativeBodies: any[] = [];
+    installNativeFetch({
+      plan: MONTHLY_EXPENSE_PLAN,
+      nativeBodies,
+      nativeTurns: [
+        { toolCalls: [{ name: 'expense__get_daily_closing' }] },
+        { toolCalls: [{ name: 'expense__list_recent' }] },
+        { text: 'done' },
+      ],
+      criticAnswers: [JSON.stringify([{ request: 'ยอดค่าใช้จ่ายเดือนนี้', verdict: 'covered' }])],
+    });
+    const req = makeReq('ช่วยคำนวณยอดค่าใช้จ่ายเดือนนี้ให้หน่อย');
+    req.userContext.permissions = ['expense.read'];
+    const result = await new OrchestratorAgent(trackingErpTools(calls), makeConfig()).run(req);
+
+    assert.deepEqual(calls.map((call) => call.name), ['expense.list_recent']);
+    assert.ok(!calls.some((call) => call.name === 'expense.get_daily_closing'));
+    const subRequests = JSON.parse(nativeBodies[0]?.input?.[0]?.content?.[0]?.text ?? '{}').subRequests;
+    assert.deepEqual(subRequests[0]?.requiredTools, ['expense.list_recent']);
+    assert.ok(!result.replyText.includes('สรุปปิดร้าน'));
   });
 });

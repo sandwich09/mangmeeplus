@@ -92,8 +92,8 @@ const COPY = {
     forbidden: '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ',
     crisis: 'น้องมั่งมีเป็นห่วงความปลอดภัยของคุณนะคะ ตอนนี้คุณอยู่ในที่ปลอดภัยและมีคนที่ไว้ใจอยู่ใกล้ๆ ไหมคะ\nถ้าไหว โทรสายด่วนสุขภาพจิต 1323 (24 ชั่วโมง) หรือบอกคนที่ไว้ใจให้อยู่กับคุณตอนนี้ค่ะ\nถ้ามีอันตรายทันทีหรืออาจทำร้ายตัวเอง โทร 1669 หรือไปห้องฉุกเฉินที่ใกล้ที่สุดเดี๋ยวนี้นะคะ',
     privacyRumor: 'น้องมั่งมีไม่ขอเดาหรือขยายข่าวลือเกี่ยวกับชีวิตส่วนตัวของคนอื่นนะคะ',
-    unavailable: '⏳ น้องมั่งมีเชื่อมต่อ AI ไม่สำเร็จชั่วคราวค่ะ กรุณาลองใหม่อีกครั้งนะคะ',
-    disabled: '📋 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งานในระบบนี้ค่ะ',
+    unavailable: '⏳ ส่วนนี้ยังไม่พร้อมใช้งานผ่าน LINE ค่ะ กรุณาตรวจสอบในเว็บแอปนะคะ',
+    disabled: '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานส่วนที่คำถามนี้ต้องใช้ค่ะ',
     noData: '📭 ไม่พบข้อมูลที่ตรงกันค่ะ กรุณาลองถามใหม่อีกครั้งนะคะ',
     unsupportedOutput: '📋 ฟีเจอร์นี้ยังไม่พร้อมใช้งาน กรุณาตรวจสอบผ่านเว็บแอปนะคะ',
     failed: '⏳ ไม่สามารถดึงข้อมูลได้ในขณะนี้ค่ะ',
@@ -106,8 +106,8 @@ const COPY = {
     forbidden: '🔒 You do not have permission to access this information.',
     crisis: 'Nong Mangmee is concerned about your safety. Are you somewhere safe, with someone you trust nearby?\nIf you can, call Thailand’s Mental Health Hotline 1323 (24 hours) or ask someone you trust to stay with you now.\nIf you may hurt yourself or are in immediate danger, call 1669 or go to the nearest emergency department now.',
     privacyRumor: 'Nong Mangmee won’t guess or spread rumours about another person’s private life.',
-    unavailable: '⏳ Nong Mangmee cannot connect to AI temporarily. Please try again shortly.',
-    disabled: '📋 This feature is not enabled or not ready in this system.',
+    unavailable: '⏳ This capability is not ready through LINE. Please check the web app.',
+    disabled: '📋 This company has not enabled the capability needed for this question.',
     noData: '📭 No matching data found. Please try asking again.',
     unsupportedOutput: '📋 This feature is not available yet. Please review it in the web app.',
     failed: '⏳ Unable to fetch data right now.',
@@ -117,6 +117,46 @@ const COPY = {
 } as const;
 
 type ComposedReply = { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] };
+
+const PRODUCT_CATALOG_TOOLS = new Set(['inventory.search_products', 'inventory.get_product_detail']);
+
+function capabilityLabel(toolName: string, language: 'th' | 'en'): string {
+  const label = (th: string, en: string) => language === 'th' ? th : en;
+  if (PRODUCT_CATALOG_TOOLS.has(toolName)) return label('ระบบสินค้าและบริการ', 'products and services');
+  if (toolName.startsWith('inventory.')) return label('ระบบคลังสินค้า', 'inventory');
+  if (toolName.startsWith('expense.')) return label('ระบบค่าใช้จ่ายและเอกสาร', 'expenses and receipts');
+  if (toolName.startsWith('accounting.') || toolName.startsWith('sales.')) return label('ระบบเอกสารขายและรับชำระ', 'sales documents and collections');
+  if (toolName.startsWith('crm.')) return label('ระบบลูกค้าและงานติดตาม', 'customers and follow-ups');
+  if (toolName.startsWith('procurement.')) return label('ระบบจัดซื้อและผู้ขาย', 'procurement and suppliers');
+  if (toolName.startsWith('ledger.')) return label('ระบบบัญชี', 'accounting ledger');
+  if (toolName.startsWith('tax.')) return label('ระบบภาษี', 'tax');
+  if (toolName.startsWith('bank.')) return label('ระบบธนาคารและกระทบยอด', 'banking and reconciliation');
+  if (toolName.startsWith('workflow.')) return label('ระบบงานอัตโนมัติ', 'workflow automation');
+  if (toolName.startsWith('reports.')) return label('ระบบรายงาน', 'reports');
+  if (toolName.startsWith('dashboard.') || toolName.startsWith('notifications.')) return label('แดชบอร์ดและแจ้งเตือน', 'dashboard and notifications');
+  if (toolName.startsWith('hr.')) return label('ระบบลางาน', 'leave management');
+  return label('ส่วนนี้', 'this capability');
+}
+
+export function featureDisabledReply(toolNames: readonly string[], language: string): string {
+  const lang: 'th' | 'en' = language.toLowerCase().startsWith('en') ? 'en' : 'th';
+  const labels = [...new Set(toolNames.map((name) => capabilityLabel(name, lang)))].slice(0, 3);
+  if (labels.length === 0) return COPY[lang].disabled;
+  const joined = labels.join(lang === 'th' ? ' และ ' : ' and ');
+  return lang === 'th'
+    ? `📋 บริษัทนี้ยังไม่ได้เปิดใช้งาน${joined}ค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ`
+    : `📋 This company has not enabled ${joined}.\nAn owner or administrator can enable it in the web app.`;
+}
+
+function isProductRecommendationQuestion(messageText: string): boolean {
+  return /(?:ควร|น่าจะ|แนะนำ|เลือก).{0,24}(?:ขาย|ลงร้าน)|(?:ขาย|ลงร้าน).{0,12}(?:อะไร|ไร|ตัวไหน|สินค้าไหน).{0,8}(?:ดี|ควร)|(?:เติม|เอา).{0,20}(?:มาขาย|ขายดี)|what\s+(?:product|item)s?\s+should\s+(?:i|we)\s+sell/iu.test(messageText);
+}
+
+function unsupportedRecommendationReply(language: 'th' | 'en'): string {
+  return language === 'th'
+    ? '📋 ตอนนี้น้องมั่งมียังไม่มีข้อมูลระดับรายสินค้าด้านยอดขาย กำไร และสต็อกที่พอจะแนะนำว่าควรขายอะไรได้อย่างน่าเชื่อถือค่ะ'
+    : '📋 Nong Mangmee does not yet have enough product-level sales, margin, and stock data to recommend what you should sell reliably.';
+}
 
 export class ResponseComposerAgent {
   composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH'): string {
@@ -150,17 +190,28 @@ export class ResponseComposerAgent {
     return reply && !looksLikeJson(reply) ? boundCasualReply(reply, fallback, result.stopReason === 'max_tokens') : fallback;
   }
 
-  compose(plan: AgentIntentPlan, outputs: SpecialistOutput[], messageText = '', locale = 'th-TH'): ComposedReply {
-    const copy = COPY[detectReplyLanguage(messageText, plan.language, locale)];
+  compose(
+    plan: AgentIntentPlan,
+    outputs: SpecialistOutput[],
+    messageText = '',
+    locale = 'th-TH',
+    availability: { featureDisabledTools?: readonly string[] } = {},
+  ): ComposedReply {
+    const language = detectReplyLanguage(messageText, plan.language, locale);
+    const copy = COPY[language];
 
     if (plan.status === 'UNROUTABLE') {
       const reasons = plan.refusals.map((r) => r.reason);
       if (reasons.includes('safety_crisis')) return empty(copy.crisis);
       if (reasons.includes('privacy_rumor')) return empty(copy.privacyRumor);
       if (reasons.includes('mutation_blocked')) return empty(copy.mutation);
-      if (reasons.some((reason) => reason.startsWith('feature_disabled'))) return empty(copy.disabled);
+      if (reasons.some((reason) => reason.startsWith('feature_disabled'))) {
+        const disabled = featureDisabledReply(availability.featureDisabledTools ?? [], language);
+        return empty(reasons.some((reason) => /forbidden|permission/i.test(reason)) ? `${disabled}\n${copy.forbidden}` : disabled);
+      }
       if (reasons.includes('tool_unavailable')) return empty(copy.unavailable);
       if (reasons.some((reason) => /forbidden|permission/i.test(reason))) return empty(copy.forbidden);
+      if (isProductRecommendationQuestion(messageText)) return empty(unsupportedRecommendationReply(language));
       return empty(copy.unsupported);
     }
 

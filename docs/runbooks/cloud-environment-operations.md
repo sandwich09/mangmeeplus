@@ -192,6 +192,27 @@ aws ce get-cost-and-usage --region us-east-1 --time-period Start=...,End=... \
 Cost Explorer คิด **$0.01 ต่อ request** และข้อมูล **ทยอย post ข้าม 24 ชม.** — ยอดที่ query ตอนเช้าอาจ
 ต่ำกว่าความจริงมาก (ใน session นี้ตัวเลขเดียวกันขยับจาก $173 เป็น $263 ระหว่าง query สองครั้ง)
 
+### Employee LINE webhook — UAT + Production (ตรวจ live 2026-08-18)
+
+Webhook ของ OA `uat-mangmeeplus` ต้องชี้ไปที่ค่า SSM
+`/watchdog-bms/uat/ecs-express-api-web-url` ต่อท้าย `/v1/line/webhook`. อย่าใช้
+`https://uat.mangmeeplus.com/v1/line/webhook` จนกว่าจะแก้ POST timeout: custom domain ตอบ
+`GET /v1/health` เป็น 200 แต่ LINE provider webhook test ได้ `REQUEST_TIMEOUT`; URL ของ ECS Express
+โดยตรงได้ `success=true`, `statusCode=200`, `reason=OK` และถูกตั้งเป็น live endpoint แล้ว.
+
+หลังเปลี่ยนหรือ deploy UAT ให้ read-back endpoint และรัน provider test เสมอ; health GET อย่างเดียว
+ไม่พิสูจน์ webhook POST. อ่าน access token จาก Secrets Manager แบบไม่พิมพ์ค่า แล้วใช้ Messaging API
+`GET/PUT /v2/bot/channel/webhook/endpoint` และ `POST /v2/bot/channel/webhook/test`. หลักฐาน acceptance
+และเหตุการณ์ synthetic ที่จบ `completed` อยู่ใน `docs/agent-memory/uat-ai-not-responding.md`.
+
+Production เคยชี้ `https://mangmeeplus.com/v1/line/webhook` และ LINE provider test ได้
+`REQUEST_TIMEOUT` แบบเดียวกัน ขณะที่ ECS Express origin โดยตรงผ่าน. หลัง owner อนุมัติ live endpoint
+ของ OA `มั่งมี Plus` ถูกเปลี่ยนเป็นค่า SSM
+`/watchdog-bms/production/ecs-express-api-web-url` ต่อท้าย `/v1/line/webhook`; exact read-back ได้
+`active=true` และ configured-endpoint test ได้ `success=true`, `statusCode=200`, `reason=OK`.
+การแก้นี้ไม่ใช่ ECS deploy และไม่เปลี่ยน customer gate. ห้ามยิง synthetic business message ใน
+Production เพื่อพิสูจน์ต่อเอง; ให้ใช้ข้อความจริงของพนักงานที่ได้รับอนุญาต.
+
 โปรไฟล์ local แยกชัดเจน: `thawatchai` คือ AWS root ส่วน `watchdog-bedrock` และ
 `watchdog-bedrock-dev` คือ IAM user `watchdog-bedrock-dev`. จาก audit 2026-08-12 ไม่มี platform
 หรือ bootstrap role ที่ user นี้ assume ได้; GitHub OIDC roles ทั้งหมดก็ไม่มีสิทธิ์แก้ IAM. User
