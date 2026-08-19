@@ -46,6 +46,22 @@ Rebase (2026-08-19):
   `line-intake-dispatch.use-case` 100 pass; `apps/ai-gateway` typecheck clean, 62 pass;
   `packages/contracts` build + 125 pass.
 
+Merge resolution 2026-08-19 (PR #175 stack into develop):
+
+- The approval-card half of this document stands as written and is the shipped implementation.
+- The capability half is SUPERSEDED by the entitlement-derived answer of PR #175
+  ([[specs/line-ai-capability-help-entitlement-spec|LINE AI Capability-Help Entitlement Honesty]],
+  [[agent-memory/line-ai-capability-help-entitlement|capability-help entitlement memory]]). The
+  decision above that "permission-only gating is sufficient for the feature dimension" is wrong for
+  the CRM-on / sales-off case: `crm.report.read` reaches `sales.get_sales_summary`, so permissions
+  alone cannot tell that company apart from one that bought sales. `entitledFeatureKeys` is now
+  plumbed to the gateway and both replies gate on permissions ∧ entitlement.
+- Consequently `LineCapabilityGroup`, `availableLineCapabilityGroups`, and `canCaptureLineReceipt`
+  no longer exist. The contracts API is `LINE_CAPABILITY_GROUPS` (feature-key groups with `id`),
+  `LineCapabilityGroupId`, `usableCapabilityGroupIds(permissions, entitled)`, and
+  `canAdvertiseReceiptCapture(permissions, entitled)`; copy lives with its consumer, keyed by group
+  id. `composeCapabilityHelp` takes `CapabilityAccess`, not a permission array.
+
 Next:
 
 - Ship to UAT and re-run the two LINE journeys from the screenshots: รายการรออนุมัติ on a reimbursement approver, and ทำอะไรได้บ้าง on a company with only some features enabled.

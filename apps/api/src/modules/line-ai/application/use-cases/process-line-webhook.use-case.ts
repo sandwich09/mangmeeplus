@@ -665,7 +665,12 @@ async function resolveCompanyForLineUser(
 /** ai_line_assistant entitlement gate — the partner-detail feature toggle. Companies with no
  *  entitlement rows at all are legacy fail-open, same convention as loadEntitledFeatureKeys. */
 export async function lineAssistantDisabled(prisma: PrismaService, companyId: string): Promise<boolean> {
-  const entitled = await loadEntitledFeatureKeys(prisma, companyId);
+  return lineAssistantDisabledFor(await loadEntitledFeatureKeys(prisma, companyId));
+}
+
+/** Same gate over an already-loaded entitlement set, so a turn that needs the set for other reasons
+ *  (capability copy, the completion menu) reads the rows once instead of per consumer. */
+export function lineAssistantDisabledFor(entitled: ReadonlySet<string> | null): boolean {
   return entitled !== null && !entitled.has('ai_line_assistant');
 }
 
@@ -1131,7 +1136,10 @@ export class ProcessLineWebhookUseCase {
     )) return;
 
     await this.recordShadowTurn(companyId);
-    if (await lineAssistantDisabled(this.prisma, companyId)) {
+    // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
+    // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
+    const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
         companyId,
@@ -1182,7 +1190,7 @@ export class ProcessLineWebhookUseCase {
           ? await this.resolveBranchScopeLabel(companyId, resolvedAccess.scopes.branchIds)
           : branchScopeFallbackLabel(resolvedAccess.scopes.branchIds),
         permissions: resolvedAccess.permissions,
-        entitledFeatureKeys: await loadEntitledFeatureKeys(this.prisma, companyId),
+        entitledFeatureKeys,
         webBaseUrl: this.config.webBaseUrl,
         companyId,
         isOwner: resolvedAccess.roles.includes('OWNER'),
@@ -1329,7 +1337,10 @@ export class ProcessLineWebhookUseCase {
 
     if (isDeliveredCapabilityFollowUp(normalizedText, conversationContext)) {
       const interruption = await interruptExpenseDraft();
-      const reply = `${capabilityFollowUpReply(normalizedText, resolvedAccess.permissions)}${interruption ? `\n\n${interruption}` : ''}`;
+      const reply = `${capabilityFollowUpReply(normalizedText, {
+        permissions: resolvedAccess.permissions,
+        ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      })}${interruption ? `\n\n${interruption}` : ''}`;
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -1702,6 +1713,7 @@ export class ProcessLineWebhookUseCase {
       ...(valueCandidates && { valueCandidates }),
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       messagePreviewHash: hashMessagePreview(event.messageText),
+      ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
     };
 
     // 7.5 Item 10F: durable `turn` entry BEFORE the gateway call — a crash mid-turn leaves it

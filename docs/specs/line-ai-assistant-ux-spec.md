@@ -45,7 +45,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - Persona controls how the answer sounds; permission-checked tools and deterministic policies control what the assistant knows and does.
 - Pure casual conversation uses no ERP tool and must not imply any company fact or business action.
 - `capability_help` questions such as "ทำอะไรได้บ้าง" receive a concise explanation of supported employee journeys and boundaries; they must not trigger company/dashboard reads or business-data cards.
-- The capability answer lists only capabilities this member can actually reach: a bullet is offered only when at least one permission-checked LINE tool behind it passes the caller's permissions (which already exclude features the company has not enabled). The same rule governs the "อย่างไร" follow-up examples. Never advertise a module whose only possible next answer is a permission refusal.
+- The capability answer lists only capabilities this member can actually reach: a bullet is offered only when at least one permission-checked LINE tool behind it passes BOTH gates — the caller's permissions and the company's entitled feature keys (see [[specs/line-ai-capability-help-entitlement-spec|LINE AI Capability-Help Entitlement Honesty]]). The same rule governs the "อย่างไร" follow-up examples. Never advertise a module whose only possible next answer is a permission refusal.
 - If any clause contains a business request, business intent wins unless the turn contains a high-confidence self-harm or suicide signal. Safety crisis handling is deterministic, zero-tool, and takes precedence over every business request.
 - Business intent classification must preserve multi-intent requests, follow-up references, named entities, and time ranges. Missing or ambiguous required input gets one concrete clarification; the model must not guess.
 - A safety-crisis reply acknowledges the distress, asks whether the user is currently safe/with someone, gives Thailand's 1323 mental-health line, and directs immediate danger to 1669 or the nearest emergency department. Business data must not hide, replace, or delay this reply.
@@ -128,7 +128,7 @@ Web is the full product surface for data viewing, approvals, accounting, tax, in
 - [ ] AI answers include source references or web links when useful.
 - [x] Pure casual conversation receives a short น้องมั่งมี reply with no ERP tool call.
 - [x] "ทำอะไรได้บ้าง" receives capability help, not company/dashboard data.
-- [x] The capability answer and its "อย่างไร" follow-up name only permission-backed capabilities.
+- [x] The capability answer and its "อย่างไร" follow-up name only capabilities backed by both the caller's permissions and the company's entitled features.
 - [x] รายการรออนุมัติ states the pending count and lists at most 5 items before linking to the web app.
 - [x] A mixed social + business message acknowledges briefly and still completes every business intent from permission-checked tools.
 - [x] A direct or mixed self-harm/suicide signal returns deterministic crisis support before any business response and invokes no ERP tool.

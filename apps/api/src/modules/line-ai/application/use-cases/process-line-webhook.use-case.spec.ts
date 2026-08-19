@@ -511,6 +511,44 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
 
+  it('sends the company entitlement set with the turn so the assistant can describe itself honestly', async () => {
+    const { prisma } = makePrisma({
+      entitlements: [
+        { featureKey: 'ai_line_assistant', enabled: true },
+        { featureKey: 'expenses', enabled: true },
+        { featureKey: 'sales_documents', enabled: false },
+      ],
+    });
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    const sent: string[] = aiGatewayRequests[0]?.entitledFeatureKeys ?? [];
+    assert.ok(sent.includes('expenses'));
+    assert.ok(!sent.includes('sales_documents'), 'a switched-off feature must not travel as entitled');
+  });
+
+  it('omits the entitlement set for a legacy company with no rows (fail-open)', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
+  });
+
   it('delivers a successful business query as one themed Flex answer card', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, {
@@ -986,6 +1024,45 @@ describe('ProcessLineWebhookUseCase', () => {
     }
 
     assert.equal(harness.branchFindManyCalls.length, 0);
+  });
+
+  // The queue use cases receive server-derived identity and scope, never anything read off the
+  // LINE message, so the card can only ever count rows this member could open on the web.
+  it('reads the approval queues with the caller RequestContext, not with anything from the message', async () => {
+    const { prisma } = makePrisma();
+    const approvalCalls: any[] = [];
+    const purchaseOrderCalls: any[] = [];
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_order.approve'],
+      branchIds: ['branch-1'],
+      approvalQueues: {
+        reimbursement: { execute: async (ctx: any) => { approvalCalls.push(ctx); return []; } },
+        purchaseOrders: { execute: async (_ctx: any, filter: any) => { purchaseOrderCalls.push(filter); return { data: [], total: 0 }; } },
+      },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue', messageText: 'รายการรออนุมัติ' });
+
+    assert.equal(approvalCalls.length, 1);
+    assert.deepEqual(
+      { companyId: approvalCalls[0].companyId, userId: approvalCalls[0].userId, scopes: approvalCalls[0].scopes, authProvider: approvalCalls[0].authProvider },
+      { companyId: 'company-1', userId: 'user-1', scopes: { branchIds: ['branch-1'] }, authProvider: 'line' },
+    );
+    assert.deepEqual(purchaseOrderCalls, [{ status: 'PENDING_APPROVAL', page: 1, pageSize: 5 }]);
+  });
+
+  it('keeps the approval card link-only when a queue read fails, instead of reporting it empty', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve'],
+      approvalQueues: { reimbursement: { execute: async () => { throw new Error('database unavailable'); } } },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue-failed', messageText: 'รายการรออนุมัติ' });
+
+    const rendered = JSON.stringify(sentMessages[0]);
+    assert.equal(rendered.includes('ไม่มีรายการ'), false);
+    assert.ok(rendered.includes('reimbursements?tab=approvals'));
   });
 
   it('switches owner selected company through explicit LINE control command', async () => {

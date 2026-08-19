@@ -513,15 +513,16 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
 });
 
 describe('LINE intake dispatch – text path', () => {
+  const CAPABILITY_TURN = [{
+    createdAt: new Date(), userMessagePreview: 'ทำอะไรได้บ้าง',
+    replyPreview: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ',
+    intent: 'UNKNOWN', agent: 'general', refused: false, toolInvocations: [],
+  }];
+
   it('keeps an immediate vague follow-up attached to the delivered capability answer without another model call', async () => {
     const h = makeHarness({
-      // The examples are permission-backed: this member can read sales and send a receipt.
-      permissions: ['line.ai.query', 'crm.report.read', 'expense.receipt.line_upload'],
-      conversationTurns: [{
-        createdAt: new Date(), userMessagePreview: 'ทำอะไรได้บ้าง',
-        replyPreview: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ',
-        intent: 'UNKNOWN', agent: 'general', refused: false, toolInvocations: [],
-      }],
+      permissions: ['line.ai.query', 'accounting.document.read', 'expense.receipt.line_upload'],
+      conversationTurns: CAPABILITY_TURN,
     });
 
     await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อย่างไหร่' });
@@ -530,6 +531,19 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
     assert.match(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
     assert.match(h.replies[0] ?? '', /ขั้นสุดท้ายยังทำในเว็บ/);
+  });
+
+  it('follow-up examples name only what this caller can reach', async () => {
+    // `line.ai.query` alone reaches no business tool and no receipt upload, so the examples that
+    // used to be hardcoded here would all have been refused if the user typed them back.
+    const h = makeHarness({ permissions: ['line.ai.query'], conversationTurns: CAPABILITY_TURN });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อย่างไหร่' });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.doesNotMatch(h.replies[0] ?? '', /ยอดขายวันนี้เท่าไหร่/);
+    assert.doesNotMatch(h.replies[0] ?? '', /ส่งรูปใบเสร็จ/);
+    assert.match(h.replies[0] ?? '', /ติดต่อผู้ดูแลระบบของบริษัท/);
   });
 
   it('does not treat the same vague text as capability follow-up without the delivered capability marker', () => {

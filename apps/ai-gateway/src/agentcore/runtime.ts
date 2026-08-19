@@ -54,6 +54,9 @@ export type RuntimePayload = {
   messageText: string;
   locale?: string;
   permissions?: string[];
+  /** Company feature entitlements. Absent = legacy fail-open, same as an older gateway that does
+   *  not send them; the artifact must keep answering, just without entitlement-exact copy. */
+  entitledFeatureKeys?: string[];
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
@@ -213,6 +216,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       messageText: prompt,
       locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
       permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
+      ...(Array.isArray(p['entitledFeatureKeys']) ? { entitledFeatureKeys: p['entitledFeatureKeys'] as string[] } : {}),
       actorDelegations: parseActorDelegations(p['actorDelegations']),
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
@@ -235,6 +239,7 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     messageText,
     locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
     permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
+    ...(Array.isArray(p['entitledFeatureKeys']) ? { entitledFeatureKeys: p['entitledFeatureKeys'] as string[] } : {}),
     actorDelegations: parseActorDelegations(p['actorDelegations']),
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
@@ -252,6 +257,7 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     modelPolicy: p.modelPolicy,
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
+    ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     userContext: {
       lineUserId: '',
       internalUserId: p.userId,

@@ -174,6 +174,7 @@ export class LineAiTurnUseCase {
         messageText: req.messageText,
         locale: req.userContext.locale,
         permissions: req.userContext.permissions,
+        ...(req.entitledFeatureKeys && { entitledFeatureKeys: req.entitledFeatureKeys }),
         actorDelegations: req.actorDelegations,
         modelPolicy: req.modelPolicy,
         attachments: req.attachments?.map((a) => ({

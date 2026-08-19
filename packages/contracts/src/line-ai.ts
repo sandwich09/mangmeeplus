@@ -156,6 +156,11 @@ export type LineAiTurnRequest = {
   modelPolicy?: AiModelPolicy;
   /** Bounded API-issued single-use delegations selected by exact ERP tool name. */
   actorDelegations?: Record<string, string[]>;
+  /** Feature keys this company has switched on, from the API's `loadEntitledFeatureKeys`. Absent =
+   *  the legacy fail-open company (no entitlement rows) OR an older caller that does not send it;
+   *  both are treated as "every feature entitled", the repo-wide convention. Capability metadata
+   *  about the caller's own company only — never another company's, never a permission grant. */
+  entitledFeatureKeys?: string[];
   messageText: string;
   attachments?: LineAiAttachment[];
   /** Short-term chat context only; company/permission truth still comes from userContext/tools. */

@@ -11,6 +11,13 @@ import {
   requiredFeatureKeys,
   unmetFeatureDependencies,
 } from './feature-entitlements.js';
+import {
+  LINE_CAPABILITY_GROUPS,
+  LINE_TOOL_REGISTRY,
+  canAdvertiseReceiptCapture,
+  inCapabilityGroup,
+  usableCapabilityGroupIds,
+} from './ai-tools.js';
 
 const onlyThese = (...on: string[]) => (key: string) => on.includes(key);
 
@@ -121,5 +128,102 @@ describe('unmetFeatureDependencies — both directions', () => {
         { featureKey: 'procurement.supplier_payments', requiresFeatureKey: 'procurement.vendor_bills' },
       ],
     );
+  });
+});
+
+// ── LINE capability groups (spec: line-ai-capability-help-entitlement-spec.md) ─────────────────
+// The assistant's self-description is DERIVED from the tool registry, so it can never advertise a
+// capability the same turn would refuse. Asserted over the real LINE_TOOL_REGISTRY, not a fixture.
+
+const ALL_FEATURES_ON = new Set<string>([
+  'sales_documents', 'expenses', 'expenses.list', 'expenses.upload', 'double_entry_ledger',
+  'bank_reconciliation', 'reports', 'thai_tax', 'inventory', 'product_catalog', 'crm', 'crm.inbox',
+  'crm.bookings', 'procurement', 'dashboard_notifications',
+]);
+const EXPENSES_ONLY = new Set<string>(['expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications']);
+// An owner-shaped grant: whatever the registry asks for, this caller has. Isolates the feature axis.
+const ALL_PERMISSIONS = [...new Set(LINE_TOOL_REGISTRY.flatMap(
+  (tool) => [...tool.requiredPermissions, ...(tool.anyOfPermissions ?? [])],
+))];
+
+describe('LINE capability groups', () => {
+  it('advertises every group when features and permissions are complete (AC-4)', () => {
+    assert.deepEqual(
+      usableCapabilityGroupIds(ALL_PERMISSIONS, ALL_FEATURES_ON),
+      ['sales', 'expenses', 'finance', 'tax', 'inventory', 'customers', 'bookings', 'procurement', 'alerts'],
+    );
+  });
+
+  it('hides every switched-off capability on an expenses-only company (AC-1)', () => {
+    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, EXPENSES_ONLY), ['expenses', 'alerts']);
+  });
+
+  it('treats a legacy company (entitled === null) as fully entitled (AC-5)', () => {
+    assert.deepEqual(
+      usableCapabilityGroupIds(ALL_PERMISSIONS, null),
+      usableCapabilityGroupIds(ALL_PERMISSIONS, ALL_FEATURES_ON),
+    );
+  });
+
+  it('hides the sales line when sales is off and crm is on (AC-6)', () => {
+    // sales.get_sales_summary asks for crm.report.read but reads sales_documents data. Permissions
+    // alone cannot catch it — this is the case the entitlement set exists for.
+    const crmOnSalesOff = new Set(['crm', 'crm.inbox', 'crm.bookings', 'dashboard_notifications']);
+    const groups = usableCapabilityGroupIds(ALL_PERMISSIONS, crmOnSalesOff);
+    assert.ok(!groups.includes('sales'), `sales must be hidden, got ${groups.join(',')}`);
+    assert.ok(groups.includes('customers'));
+  });
+
+  it('advertises nothing to a caller with no permissions (AC-7)', () => {
+    assert.deepEqual(usableCapabilityGroupIds([], ALL_FEATURES_ON), []);
+    assert.equal(canAdvertiseReceiptCapture([], ALL_FEATURES_ON), false);
+  });
+
+  it('groups a tool by its feature keys, never by a secondary business subject', () => {
+    // dashboard.get_business_health_summary declares businessSubjects ['company','report']; grouping
+    // on subjects lit a finance line for a company with reports/ledger/banking all off.
+    const dashboardOnly = new Set(['dashboard_notifications']);
+    assert.deepEqual(usableCapabilityGroupIds(['dashboard.read'], dashboardOnly), ['alerts']);
+  });
+
+  it('keeps every group backed by a real tool (AC-11)', () => {
+    for (const group of LINE_CAPABILITY_GROUPS) {
+      const backing = LINE_TOOL_REGISTRY.filter((tool) => inCapabilityGroup(tool, group));
+      assert.ok(backing.length > 0, `capability group ${group.id} advertises no tool`);
+    }
+  });
+
+  it('describes a caller whose only reach is reimbursements or workflow tasks', () => {
+    // Both modules were silently outside every group at first: reimbursements carries no feature key
+    // by design, and workflow_automation had none of its own. A claims-only approver would then have
+    // been told the assistant could do nothing for them, while the tools answered fine.
+    assert.deepEqual(usableCapabilityGroupIds(['reimbursement.approve'], null), ['expenses']);
+    assert.deepEqual(usableCapabilityGroupIds(['workflow.task.read'], new Set(['workflow_automation'])), ['alerts']);
+    assert.deepEqual(usableCapabilityGroupIds(['workflow.task.read'], new Set(['dashboard_notifications'])), []);
+  });
+
+  it('advertises no capability for a tool no group owns, rather than widening a neighbour', () => {
+    // company/employee/hr context tools are deliberately unadvertised; they must not light a line.
+    assert.deepEqual(usableCapabilityGroupIds(['company.branch.read', 'hr.leave.read'], null), []);
+  });
+});
+
+describe('LINE receipt-capture claim', () => {
+  it('follows the intake path permissions, not the capture tool (AC-3)', () => {
+    // MANAGER/ACCOUNTANT/MARKETING hold line_upload only; the tool asks for expense.receipt.upload.
+    assert.equal(canAdvertiseReceiptCapture(['expense.receipt.line_upload'], ALL_FEATURES_ON), true);
+    assert.equal(canAdvertiseReceiptCapture(['expense.receipt.upload'], ALL_FEATURES_ON), true);
+    assert.equal(canAdvertiseReceiptCapture(['expense.create'], ALL_FEATURES_ON), true);
+    assert.equal(canAdvertiseReceiptCapture(['expense.read'], ALL_FEATURES_ON), false);
+  });
+
+  it('disappears when the expenses.upload submenu is off, with expenses still on (AC-2)', () => {
+    const uploadOff = new Set(['expenses', 'expenses.list', 'dashboard_notifications']);
+    assert.equal(canAdvertiseReceiptCapture(['expense.receipt.line_upload'], uploadOff), false);
+    assert.deepEqual(usableCapabilityGroupIds(ALL_PERMISSIONS, uploadOff), ['expenses', 'alerts']);
+  });
+
+  it('stays fail-open for a legacy company', () => {
+    assert.equal(canAdvertiseReceiptCapture(['expense.receipt.line_upload'], null), true);
   });
 });
