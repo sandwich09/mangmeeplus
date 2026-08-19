@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
-import { fetchServerSessionResult } from '@/common/auth/server-session';
+import { fetchServerSession, fetchServerSessionResult } from '@/common/auth/server-session';
 import CompanyAccessUnavailable from '@/features/auth/CompanyAccessUnavailable';
 import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
 
@@ -26,7 +26,13 @@ export default async function CompanyWorkspaceLayout({
   if (sessionResult.status === 'unavailable') {
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
-  if (sessionResult.status === 'forbidden') return <CompanyAccessUnavailable />;
+  if (sessionResult.status === 'forbidden') {
+    // Resolve the account itself — no company header, so this succeeds where the scoped call 403s —
+    // and name it on the screen. Without it the page reads as "your access was revoked" even in the
+    // usual case: a deep link opened in a browser still signed in as a different account.
+    const current = await fetchServerSession();
+    return <CompanyAccessUnavailable displayName={current?.displayName ?? null} />;
+  }
   const returnTo = `/companies/${companyId}/dashboard`;
   if (sessionResult.session.mustChangePassword) {
     redirect(`/change-password?next=${encodeURIComponent(returnTo)}`);
