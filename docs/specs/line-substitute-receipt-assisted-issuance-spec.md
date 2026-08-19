@@ -2,11 +2,11 @@
 
 ## 1. Status
 
-v0.2, 2026-08-18. **Owner-decided, not implemented.** All open questions from v0.1 were answered the same day and folded into §4 (D1-D9). No blocking question remains; the implementation plan is the next artifact.
+v0.3, 2026-08-19. **Owner-decided, plan written, not implemented.** All open questions from v0.1 were answered 2026-08-18 and folded into §4 (D1-D9). Every §5.A code fact was re-verified against the tree on 2026-08-19 while writing the plan — all still hold (line numbers have drifted; the plan carries the current anchors, e.g. the vocabulary guard now sits at `process-line-webhook.use-case.ts:1439-1440` and the dead-end copy at `line-substitute-receipt-continuation.use-case.ts:406`).
 
-Owner: thawatchai. Trigger: UAT screenshot 2026-08-18 — the user typed `สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์จากที่ทำงานไปพบลูกค้า 50 บาท` and received a dead-end reply with a non-clickable relative link.
+Owner: thawatchai. Trigger: UAT screenshot 2026-08-18 — the user typed `สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์จากที่ทำงานไปพบลูกค้า 50 บาท` and received a dead-end reply with a non-clickable relative link. A second UAT screenshot 2026-08-19 (`สร้างใบแทนใบเสร็จได้ไหม`) reproduced the same dead-end.
 
-Linked plan: to be written after owner sign-off.
+Linked plan: [[plans/line-substitute-receipt-assisted-issuance-plan|LINE Substitute-Receipt Assisted Issuance Implementation Plan]] (phases 1-5 = §18 steps 1-5).
 
 Memory: [[agent-memory/line-substitute-receipt-assisted-issuance|task memory]]
 
@@ -409,7 +409,8 @@ Each step is independently releasable and independently reversible.
 ## 19. Open Questions
 
 All four questions raised in v0.1 were answered by the owner on 2026-08-18 and are recorded as D5,
-D7, D8 and D9. No blocking questions remain; the plan can be written.
+D7, D8 and D9. No blocking questions remain; the plan is written
+([[plans/line-substitute-receipt-assisted-issuance-plan|implementation plan]], 2026-08-19).
 
 Deliberately left for implementation to settle:
 

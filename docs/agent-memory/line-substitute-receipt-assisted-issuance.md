@@ -1,6 +1,6 @@
 # Agent Memory: LINE substitute-receipt assisted issuance
 
-Status: Spec v0.2 owner-decided. No code changed. Next artifact is the implementation plan.
+Status: Spec v0.3 + implementation plan written 2026-08-19. No code changed. Next step is Phase 1 implementation (dead-end fix), pending owner go.
 Owner: thawatchai
 Scope: `docs/specs/line-substitute-receipt-assisted-issuance-spec.md`. Implementation will touch `apps/api` (line-ai webhook, expenses substitute-receipt + policy + storage delivery), `apps/web` (public delivery route, substitute wizard deep link), `packages/contracts`, and `prisma/schema.prisma`.
 
@@ -30,13 +30,15 @@ Open questions: none blocking. Bucket-vs-prefix for the delivery temp copy is an
 
 Artifacts:
 
-- `docs/specs/line-substitute-receipt-assisted-issuance-spec.md` — the spec (R1-R16, journeys A/B/C, §12 delivery design, §18 five-step rollout).
+- `docs/specs/line-substitute-receipt-assisted-issuance-spec.md` — the spec (R1-R16, journeys A/B/C, §12 delivery design, §18 five-step rollout). v0.3 links the plan and records the 2026-08-19 re-verification + second UAT screenshot (`สร้างใบแทนใบเสร็จได้ไหม`).
+- `docs/plans/line-substitute-receipt-assisted-issuance-plan.md` — implementation plan, phases 1-5 = spec §18 steps, with current file:line anchors (re-verified 2026-08-19), per-phase changes/tests/exit criteria, and the §16 acceptance-criteria → phase map.
 
 Verification:
 
-- Discovery only; no code executed. Every source fact in spec §5.A carries a file:line read on 2026-08-18.
+- Discovery only; no code executed. Every source fact in spec §5.A carries a file:line read on 2026-08-18 and was re-verified 2026-08-19 while writing the plan (all hold; anchors drifted — plan carries current lines: guard `process-line-webhook.use-case.ts:1439`, dead-end `line-substitute-receipt-continuation.use-case.ts:406`, candidates filter `prisma-expense.repository.ts:2223-2256`, absolute-URL-only card buttons `line-business-card.logic.ts:93`).
+- Plan-writing discovery additions: the capture→continuation chain ALREADY exists on the pending-media path (`process-line-webhook.use-case.ts:2800-2859`) and is the R1 pattern to reuse for text; signature reuse maps to `CompanySignatureAsset` `status: ACTIVE` + `submittedByUserId` (schema `:2412-2435`, no new column); the R6 default-flip fallback sweep list is `substitute-receipt.use-case.ts:436,744`, `line-substitute-receipt-continuation.use-case.ts:469`, `substitute-receipt-policy.use-case.ts`, `contracts/expenses.ts`, web `SubstituteReceiptWizardPage/SubstituteReceiptSettingsPage/ExpensesPages`.
 
 Next:
 
-- Write `docs/plans/line-substitute-receipt-assisted-issuance-plan.md` — spec §19 is clear, nothing is blocking.
-- Rollout step 1 (absolute links, permission check, shared formatter) is independently shippable and fixes the screenshot's worst symptom without any policy or boundary change.
+- Implement plan Phase 1 (absolute links + permission gate + shared formatter) — independently shippable, fixes the screenshot's worst symptom with no policy/boundary change.
+- Then phases 2-5 in order; do not start a phase before the prior phase's exit checks are green.
