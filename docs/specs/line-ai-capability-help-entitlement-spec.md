@@ -1,0 +1,162 @@
+# Feature: LINE AI Capability-Help Entitlement Honesty
+
+## 1. Status
+
+- Docs-first, not implemented. Extends the shipped LINE entitlement work of 2026-08-15 ([[agent-memory/line-menu-entitlement-gating|LINE staff menu feature-entitlement gating]]), which gated the quick-reply menu and the ERP tools but deliberately did not touch reply COPY.
+- Owner: thawatchai
+- Date: 2026-08-19. Driven by an owner report from the LINE OA: the user asked "แล้วคุณทำอะไรได้บ้าง" and น้องมั่งมี answered with a capability list naming sales, finance, tax, stock, customers, bookings and receipt→expense-draft capture, on a company where those features are not switched on. The quick-reply buttons under the same message were already correctly filtered — the text was not.
+- Rule already stated by the owner on 2026-08-15 and inherited here: **a feature that is off in the system must not appear in LINE at all.** This spec extends "appear" from buttons and answers to the assistant's own description of itself.
+- **Owner decision 2026-08-19: AC-6 is in scope and is a release gate.** The CRM-on / sales-off case must be correct, not accepted as a known miss. This closes §10.3: `entitledFeatureKeys` is plumbed through the AgentCore runtime path (phase 4 of the plan is mandatory, not optional), because UAT and Production both run `LINE_AI_AGENT_RUNTIME=agentcore` and permission-only derivation cannot get that case right.
+
+## 2. Goal
+
+When a linked employee asks น้องมั่งมี what it can do, the answer names only capabilities this company has switched on **and** this employee's permissions can reach. Anything the system would refuse is never advertised.
+
+Concretely, after this change:
+
+1. Every capability line in the reply corresponds to at least one LINE tool that would actually run for this caller, in this company, right now.
+2. A capability the caller could not use is absent — not greyed out, not footnoted, not "contact your admin".
+3. A legacy company with no entitlement rows keeps today's full text, unchanged.
+4. The self-description and the quick-reply menu under it never disagree.
+
+## 3. Source Docs
+
+- Authority: [[specs/line-ai-read-only-assistant-spec|LINE AI Read-Only Assistant Spec]] (reply safety contract, final-mutation boundary)
+- Entitlement model: [[specs/feature-entitlement-decoupling-spec|Feature Entitlement Decoupling Spec]], [[agent-memory/line-menu-entitlement-gating|LINE staff menu feature-entitlement gating]] (the menu + tool gate this spec mirrors)
+- Orchestration: [[specs/line-ai-local-agent-orchestration-spec|10B Orchestration Spec]] (`capability_help` is a zero-tool intent)
+- Plan: [[plans/line-ai-capability-help-entitlement-plan|LINE AI Capability-Help Entitlement Plan]]
+- Memory: [[agent-memory/line-ai-capability-help-entitlement|Agent Memory: line-ai-capability-help-entitlement]]
+
+## 4. Measured Current State (2026-08-19)
+
+All numbers below were produced by running the real registries and helpers against fixture companies before any code was changed. Full harness output is recorded in the memory doc.
+
+| # | Finding | Evidence |
+|---|---|---|
+| E1 | The capability text is a frozen constant. `CAPABILITY_HELP` (th/en) at `apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.ts:68-92` is returned verbatim by `composeCapabilityHelp()` (`:122`), called from `orchestrator.agent.ts:344-345`. Measured function arity: **0** — every parameter has a default and none of them is a company, permission, or feature input. | harness E1 |
+| E2 | For a realistic company with only `expenses` + `dashboard_notifications` + `ai_line_assistant` on, **9 of the 12 capabilities the text advertises cannot be answered at all** (sales, finance, tax, products, stock, customers, bookings, follow-ups, documents). | harness E2 |
+| E3 | For that same company the already-shipped tool gate refuses **44 of 60** tools in `LINE_TOOL_REGISTRY`. The assistant advertises, then refuses — with `🚧 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานสำหรับบริษัทของคุณค่ะ`. | harness E3 |
+| E4 | The AI gateway has **no entitlement input of any kind**: `grep -rn entitlement apps/ai-gateway/src` returns nothing, and `LineAiTurnRequest` (`packages/contracts/src/line-ai.ts:150-170`) carries no feature keys. The blurb could not have been gated even if it wanted to be. | code |
+| E5 | The follow-up reply has the same defect on the API side: `capabilityFollowUpReply(text)` at `apps/api/src/modules/line-ai/domain/logic/line-ai-capability-follow-up.logic.ts:15-33` is a static two-language constant (it repeats the receipt→draft claim), reached from `process-line-webhook.use-case.ts:1252-1254`. Unlike the gateway, this file already runs where entitlements are loadable. | code |
+| E6 | No test anywhere asserts the capability copy. `response-composer.agent.spec.ts` (32 tests, all passing) never mentions it; `line-ai-capability-follow-up.logic.ts` has no spec file at all. | baseline run |
+
+## 5. Non-goals
+
+- No change to what any tool does, to permissions, to the entitlement evaluator, or to the `FEATURE_NOT_ENABLED` refusal introduced on 2026-08-15.
+- No new UI, no admin screen, no per-company copy editor.
+- No attempt to sell: the reply never names a disabled feature, never says "ติดต่อผู้ดูแลเพื่อเปิดใช้งาน" for something the caller did not ask for, and never leaks another company's or another role's capabilities.
+- The `casual_conversation` reply and the safety/refusal templates are untouched.
+
+## 6. Design Decision: derive, do not re-list
+
+Two designs were measured before choosing.
+
+**Rejected — a second hand-written list keyed by feature.** A `[featureKeys, thaiLine]` table beside the existing one in `line-staff-menu.logic.ts`. It works (harness E4 produced correct output from it), but it is a third copy of "what น้องมั่งมี can do" that must be re-edited every time a tool is added, and nothing fails when it drifts.
+
+**Chosen — derive the lines from `LINE_TOOL_REGISTRY`.** A capability line renders if and only if at least one tool in its group passes **both** gates the runtime itself uses:
+
+```
+usable = LINE_TOOL_REGISTRY.filter(t => hasToolPermissions(t, permissions) && hasToolFeature(t, entitled))
+```
+
+Then the advertised text is a projection of `usable`. The blurb becomes structurally incapable of promising something the gate would refuse, and a newly added tool lights its line up on its own.
+
+Measured behaviour of the derivation (harness E7, corrected fixtures):
+
+| Caller / company | Lines rendered | Receipt-capture line |
+|---|---|---|
+| staff (expense + receipt upload perms) @ expenses-only company | ค่าใช้จ่าย, งานค้าง/แจ้งเตือน | yes |
+| same staff, `expenses` on but `expenses.upload` off | ค่าใช้จ่าย, งานค้าง/แจ้งเตือน | **no** |
+| manager without upload permission @ expenses-only company | ค่าใช้จ่าย, งานค้าง/แจ้งเตือน | no |
+| manager @ all features on | 8 lines (sales, expenses, finance, tax, stock, customers, bookings, alerts) | no |
+| manager @ legacy company (`entitled === null`) | identical to all-features-on | no |
+| caller with zero permissions | none | no |
+
+### 6.1 Group by the entitlement axis, not by business subject
+
+The first derivation attempt grouped tools by `ToolMeta.businessSubjects` and produced a **false** finance line for the expenses-only company: `dashboard.get_business_health_summary` declares `businessSubjects: ['company','report']`, so a dashboard tool advertised "การเงิน บัญชี และธนาคาร" on a company with `reports`, `double_entry_ledger` and `bank_reconciliation` all off (harness E5/E6).
+
+Grouping instead by `toolFeatureKeys(tool)` — the exact axis `hasToolFeature` gates on — removes the leak and keeps submenu precision (`crm.bookings` separates from `crm`, `expenses.upload` separates from `expenses`). Groups:
+
+| Group | Feature keys |
+|---|---|
+| ยอดขายและเอกสารขาย | `sales_documents` |
+| ค่าใช้จ่ายและใบเสร็จ | `expenses`, `expenses.list` |
+| การเงิน บัญชี และธนาคาร | `double_entry_ledger`, `bank_reconciliation`, `reports` |
+| ภาษี | `thai_tax` |
+| สินค้าและสต็อก | `inventory`, `product_catalog` |
+| ลูกค้าและงานติดตาม | `crm`, `crm.inbox` |
+| นัดหมายและคิว | `crm.bookings` |
+| จัดซื้อและผู้ขาย | `procurement` |
+| งานค้างและการแจ้งเตือน | `dashboard_notifications` |
+| (receipt capture sentence) | `expenses.upload` — **not** derived from a tool; see §10.1. The predicate is the intake path's own check: `expenses.upload` entitled ∧ any of `expense.receipt.line_upload` / `expense.receipt.upload` / `expense.create` |
+
+A tool whose feature keys match no group is not advertised; it is not an error, and it must not silently widen an unrelated line. The reimbursement tools stay deliberately ungated and therefore unadvertised, preserving owner decision 2026-08-10 (runoff reads stay alive without being sold).
+
+## 7. Where the entitlement set comes from
+
+`req.userContext.permissions` reaching the gateway are **already entitlement-stripped**: `prisma-permission-resolver.repository.ts:72-73` runs `filterPermissionsByEntitlement` at resolve time for every LINE turn. Measured consequence (harness E9/E10): for an owner holding all 266 registry permissions, permission-only filtering selects the same tool set as permission ∧ entitlement for **59 of 60** tools.
+
+The single residual divergence is `sales.get_sales_summary`, which requires `crm.report.read` but reads `sales_documents` data — the same bypass the 2026-08-15 work identified and closed at the tool layer. On a CRM-on / sales-off company, permission-only derivation would still advertise the sales line.
+
+Therefore:
+
+- `LineAiTurnRequest` gains **optional** `entitledFeatureKeys?: string[]`, supplied by the API from the `loadEntitledFeatureKeys` call it already makes.
+- Absent (older payloads, the AgentCore runtime path until it is plumbed, any non-LINE caller) = `null` = legacy fail-open, exactly the repo-wide convention. Absence degrades to permission-only derivation, which E9/E10 show is already correct for 59/60 tools — the field buys exactness, not basic safety.
+- The field is capability METADATA about the caller's own company, already implied by the permission list beside it; it names no other company and no other user.
+
+## 8. Reply contract
+
+Thai (English mirrors it line for line):
+
+```
+น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น
+<one line per usable group, in the fixed order of §6.1>
+[ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ — only when a receipt-capture tool is usable]
+<one example question drawn from a rendered group, never from a hidden one>
+ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ
+```
+
+Rules:
+
+- **R1** Fixed group order, so the reply is stable turn to turn.
+- **R2** The example question must come from a rendered group. Today's text hardcodes "ยอดขายวันนี้เท่าไหร่" and "ของอะไรใกล้หมด" — both invalid for the reported company.
+- **R3** The closing sentence stays: it is the honest reason the list is short, and it already names both dimensions (สิทธิ์ + ฟีเจอร์).
+- **R4** Zero usable groups (measured possible: a caller with no permissions) never yields an empty reply. It falls back to a single honest line — the assistant is connected but this account can currently read nothing here, check with the company admin — and no capability list.
+- **R5** No feature key, permission key, tool name, or count of hidden features may appear in the text. Same leak rule the 2026-08-15 `FEATURE_NOT_ENABLED` reply is tested against.
+- **R6** The follow-up ("อย่างไร" / "how so") reply obeys R1–R5 over the same usable set. It must never re-introduce a claim the first reply omitted.
+- **R7 One language per reply.** The derivation returns group **ids**; the copy comes from exactly one language table chosen once per turn by the existing `detectReplyLanguage` (`response-composer.agent.ts:517-523`). No group id may carry copy, and the example question of R2 is drawn from the same table as the bullets, so a half-Thai/half-English reply is unrepresentable. Language selection itself is unchanged by this spec.
+
+Measured behaviour of `detectReplyLanguage` on mixed input (2026-08-19, real function):
+
+| Input | Reply |
+|---|---|
+| `ทำอะไรได้บ้าง` | TH |
+| `ช่วย summary sales ให้หน่อยว่าทำอะไรได้บ้าง` | TH |
+| `AI ทำอะไรได้บ้าง` / `can you ดูยอดขาย ได้ไหม` / `ทำอะไรได้บ้าง help` | TH |
+| `🙏` (no Latin letters) | TH |
+| `what can you do` / `ok what can you do?` / `help` | EN |
+| empty text (button/postback) | follows `planLanguage`/`locale` |
+
+One Thai character anywhere wins for Thai; a message with no Thai characters and at least one Latin letter is answered in English. So "ไทยคำอังกฤษคำ" always produces a fully Thai reply — the mixed-language case never yields mixed-language copy. The one edge worth knowing (pre-existing, not introduced here): a Thai user who types only `help` or `ok` gets the English reply.
+
+## 9. Acceptance Criteria
+
+- AC-1 Expenses-only company, staff with receipt-upload permission: the reply names expenses and receipt capture and alerts, and contains none of ยอดขาย / ภาษี / สต็อก / นัดหมาย / ลูกค้า / รายงานการเงิน.
+- AC-2 Same company with `expenses.upload` explicitly off: the receipt sentence is gone; the expenses line stays.
+- AC-3 Caller holding none of `expense.receipt.line_upload` / `expense.receipt.upload` / `expense.create` on a company with `expenses.upload` on: the receipt sentence is gone. Conversely a `MANAGER` / `ACCOUNTANT` / `MARKETING` role — `line_upload` only — **keeps** it, because the intake path accepts them (§10.1).
+- AC-4 All features on: the reply lists every group (parity with today's promise, not a regression).
+- AC-5 Legacy company with no entitlement rows: byte-identical behaviour to AC-4 — no company loses copy because it was never configured.
+- AC-6 CRM-on / sales-off company: the sales line is absent (this is the case permission-only derivation gets wrong; it pins the value of §7's field). **Release gate — owner decision 2026-08-19.** It must hold on the AgentCore path, not only on the local orchestrator path, so the same assertion runs against a request built by `payloadToTurnRequest`.
+- AC-7 Caller with zero permissions: R4 fallback, no bullet list, no crash, no empty message.
+- AC-8 The reply contains no feature key, permission key, or tool name in either language.
+- AC-9 The follow-up reply for the same caller advertises a subset of the first reply's claims.
+- AC-10 The quick-reply menu attached to the reply and the reply text name the same capabilities.
+- AC-11 Every rendered line is backed by ≥1 tool passing both gates — asserted by construction, over the real `LINE_TOOL_REGISTRY`, not a fixture registry.
+- AC-12 Mixed Thai/English input (`ช่วย summary sales ให้หน่อยว่าทำอะไรได้บ้าง`) returns a fully Thai reply with no English fragment, and the TH and EN tables render the same set of groups for the same caller (same ids, different words). R7.
+
+## 10. Open Questions (owner)
+
+1. **Receipt-capture permission — proposal REVERSED by measurement (2026-08-19).** The first draft proposed gating the receipt sentence on `accounting.capture_receipt_evidence`'s `expense.receipt.upload`. That is wrong: the tool is not what runs. A LINE receipt image is captured by the intake path, which accepts **any of** `expense.receipt.line_upload` / `expense.receipt.upload` / `expense.create` (`process-line-webhook.use-case.ts:1158-1159`, `:2165`, mirrored in `expense-upload.use-case.ts:44` and `expense-document.use-case.ts:77`), exactly like the menu camera button (`line-staff-menu.logic.ts:64-67`). And `MANAGER`, `ACCOUNTANT`, and `MARKETING` hold `expense.receipt.line_upload` **without** `expense.receipt.upload` (`permission-registry.ts:613`, `:806`, `:859`). Gating on the tool would therefore hide a capability those three roles really have — a false negative, the opposite of the reported bug. **Revised proposal — APPROVED by owner 2026-08-19:** the receipt sentence follows the intake path (`line_upload || upload || create`) ∧ the `expenses.upload` entitlement, which also makes AC-10 hold by construction.
+2. ~~**English parity.**~~ **RESOLVED 2026-08-19.** Both tables ship together, keyed by the same group ids (R7). Mixed-language input was measured and cannot produce mixed-language copy.
+3. ~~**AgentCore runtime path.**~~ **RESOLVED 2026-08-19 — owner: AC-6 must be delivered, so the field is plumbed.** Both UAT and Production run `LINE_AI_AGENT_RUNTIME=agentcore` (`.github/workflows/deploy-uat.yml:615`, `.github/workflows/deploy-production.yml:236`; production promotion *fails* if it is anything else — `infra/security/validate-production-promotion-environment.sh:52`), so `payloadToTurnRequest` (`apps/ai-gateway/src/agentcore/runtime.ts:245-267`) is the live request builder and drops any field absent from `RuntimePayload`. Without plumbing, AC-1..AC-5 would still hold (permissions travel in the payload) but AC-6 would fail in exactly the environments that matter. `entitledFeatureKeys` therefore travels: API → gateway request → `RuntimePayload` → AgentCore invoke → rebuilt request, and a test pins that both paths answer identically for the same caller.

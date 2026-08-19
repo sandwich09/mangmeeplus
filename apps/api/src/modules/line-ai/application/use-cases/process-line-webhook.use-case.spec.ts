@@ -514,6 +514,44 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
 
+  it('sends the company entitlement set with the turn so the assistant can describe itself honestly', async () => {
+    const { prisma } = makePrisma({
+      entitlements: [
+        { featureKey: 'ai_line_assistant', enabled: true },
+        { featureKey: 'expenses', enabled: true },
+        { featureKey: 'sales_documents', enabled: false },
+      ],
+    });
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    const sent: string[] = aiGatewayRequests[0]?.entitledFeatureKeys ?? [];
+    assert.ok(sent.includes('expenses'));
+    assert.ok(!sent.includes('sales_documents'), 'a switched-off feature must not travel as entitled');
+  });
+
+  it('omits the entitlement set for a legacy company with no rows (fail-open)', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
+  });
+
   it('delivers a successful business query as one themed Flex answer card', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, {

@@ -351,3 +351,89 @@ describe('ResponseComposerAgent.composeAnswer – value candidates (item 10F)', 
     assert.equal(out, FALLBACK);
   });
 });
+
+// ── Capability help: entitlement + permission honesty ──────────────────────────────────────────
+// spec: docs/specs/line-ai-capability-help-entitlement-spec.md
+describe('ResponseComposerAgent – capability help', () => {
+  const agent = new ResponseComposerAgent();
+  const ALL_ON = [
+    'sales_documents', 'expenses', 'expenses.list', 'expenses.upload', 'double_entry_ledger',
+    'bank_reconciliation', 'reports', 'thai_tax', 'inventory', 'product_catalog', 'crm', 'crm.inbox',
+    'crm.bookings', 'procurement', 'dashboard_notifications',
+  ];
+  const EXPENSES_ONLY = ['expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications'];
+  const STAFF = ['expense.read', 'expense.receipt.line_upload', 'dashboard.read'];
+  const ask = (permissions: string[], entitledFeatureKeys?: string[], text = 'ทำอะไรได้บ้าง') =>
+    agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) });
+
+  it('names only the enabled capabilities on an expenses-only company (AC-1)', () => {
+    const reply = ask(STAFF, EXPENSES_ONLY);
+    assert.match(reply, /ค่าใช้จ่ายและใบเสร็จ/);
+    assert.match(reply, /งานค้างและการแจ้งเตือน/);
+    for (const hidden of ['ยอดขาย', 'ภาษี', 'สต็อก', 'นัดหมาย', 'ลูกค้า', 'จัดซื้อ']) {
+      assert.doesNotMatch(reply, new RegExp(hidden), `must not advertise ${hidden}`);
+    }
+  });
+
+  it('drops the receipt sentence when expenses.upload is off, keeping expenses (AC-2)', () => {
+    const reply = ask(STAFF, ['expenses', 'expenses.list', 'dashboard_notifications']);
+    assert.match(reply, /ค่าใช้จ่ายและใบเสร็จ/);
+    assert.doesNotMatch(reply, /ส่งรูปใบเสร็จ/);
+  });
+
+  it('drops the receipt sentence for a caller without any upload permission (AC-3)', () => {
+    assert.doesNotMatch(ask(['expense.read'], EXPENSES_ONLY), /ส่งรูปใบเสร็จ/);
+    assert.match(ask(STAFF, EXPENSES_ONLY), /ส่งรูปใบเสร็จ/);
+  });
+
+  it('is unchanged for a legacy company with no entitlement rows (AC-5)', () => {
+    const owner = ['accounting.document.read', 'expense.read', 'crm.customer.read', 'dashboard.read'];
+    assert.equal(ask(owner), ask(owner, ALL_ON));
+  });
+
+  it('hides sales on a crm-on / sales-off company (AC-6)', () => {
+    // The permission that reaches sales.get_sales_summary is crm.report.read — permissions alone
+    // cannot tell this company apart from one that bought sales.
+    const reply = ask(['crm.report.read', 'crm.customer.read'], ['crm', 'crm.inbox', 'dashboard_notifications']);
+    assert.doesNotMatch(reply, /ยอดขาย/);
+    assert.match(reply, /ลูกค้าและงานติดตาม/);
+  });
+
+  it('falls back honestly when the caller can reach nothing (AC-7)', () => {
+    const reply = ask([], ALL_ON);
+    assert.doesNotMatch(reply, /^•/mu);
+    assert.match(reply, /ติดต่อผู้ดูแลระบบของบริษัท/);
+  });
+
+  it('leaks no feature key, permission key, or tool name in either language (AC-8)', () => {
+    for (const language of ['ทำอะไรได้บ้าง', 'what can you do']) {
+      const reply = agent.composeCapabilityHelp(language, 'th', 'th-TH', { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY });
+      for (const leak of ['expenses.upload', 'dashboard_notifications', 'expense.read', 'expense.receipt', 'accounting.', 'sales_documents']) {
+        assert.ok(!reply.includes(leak), `${leak} leaked into: ${reply}`);
+      }
+    }
+  });
+
+  it('suggests an example question only from a capability it just advertised (R2)', () => {
+    const reply = ask(STAFF, EXPENSES_ONLY);
+    assert.match(reply, /ค่าใช้จ่ายเดือนนี้เท่าไหร่/);
+    assert.doesNotMatch(reply, /ของอะไรใกล้หมด/);
+  });
+
+  it('answers mixed Thai/English input fully in Thai, with the same groups as English (AC-12)', () => {
+    const access = { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY };
+    const mixed = agent.composeCapabilityHelp('ช่วย summary sales ให้หน่อยว่าทำอะไรได้บ้าง', 'th', 'th-TH', access);
+    assert.match(mixed, /^น้องมั่งมี/u);
+    assert.doesNotMatch(mixed, /[A-Za-z]/u);
+    const english = agent.composeCapabilityHelp('what can you do', 'th', 'th-TH', access);
+    assert.equal(english.split('\n').length, mixed.split('\n').length);
+    assert.match(english, /expenses and receipts/);
+    assert.doesNotMatch(english, /sales and sales documents/);
+  });
+
+  it('keeps the pre-entitlement full text when no caller context is supplied', () => {
+    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH');
+    assert.match(reply, /ยอดขายและเอกสารขาย/);
+    assert.match(reply, /ส่งรูปใบเสร็จ/);
+  });
+});

@@ -186,7 +186,11 @@ describe('OrchestratorAgent', () => {
     assert.equal(called, false);
     assert.deepEqual(result.outputs, []);
     assert.equal(result.presentation, undefined);
-    assert.match(result.replyText, /ยอดขาย/);
+    // Derived from THIS caller's permissions (inventory + ledger reads), so it names stock and
+    // finance and stays silent about sales, which the same turn would have refused.
+    assert.match(result.replyText, /สินค้าและสต็อก/);
+    assert.match(result.replyText, /การเงิน บัญชี และรายงาน/);
+    assert.doesNotMatch(result.replyText, /ยอดขาย/);
     assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
   });
 

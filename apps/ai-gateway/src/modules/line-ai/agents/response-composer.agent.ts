@@ -6,7 +6,8 @@
  * in it — it must never add or change any number, id, decision, or outcome, and it falls
  * back to the deterministic text when the model is unavailable or breaks grounding.
  */
-import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates } from '@watchdog-bms/contracts';
+import type { AgentIntentPlan, SpecialistOutput, SourceRef, LineAiWebLink, LineAiConversationContext, LineAiValueCandidates, LineCapabilityGroupId } from '@watchdog-bms/contracts';
+import { LINE_CAPABILITY_GROUPS, canAdvertiseReceiptCapture, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import type { IModelProvider } from '../infrastructure/provider/provider.port';
 
 export const RESPONSE_COMPOSER_SYSTEM_PROMPT = `
@@ -64,26 +65,88 @@ export const CASUAL_CONVERSATION_SYSTEM_PROMPT = [
   'Return only the reply text in the user language: no preamble, quotes, markdown fences, JSON, or raw URL.',
 ].join('\n');
 
-const CAPABILITY_HELP = {
-  th: [
-    'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น',
-    '• ยอดขาย ค่าใช้จ่าย การเงิน และภาษี',
-    '• สินค้า สต็อก ลูกค้า นัดหมาย และงานติดตาม',
-    '• เอกสาร งานค้าง และการแจ้งเตือน',
-    'ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ',
-    'ลองถามตรงๆ เช่น “ยอดขายวันนี้เท่าไหร่” หรือ “ของอะไรใกล้หมด” ได้เลยค่ะ',
-    'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
-  ].join('\n'),
-  en: [
-    'Nong Mangmee can find and summarize work data allowed by your permissions, including:',
-    '• sales, expenses, finance, and tax',
-    '• products, stock, customers, bookings, and follow-ups',
-    '• documents, pending work, and alerts',
-    'You can also send a receipt or payment slip to create an expense draft.',
-    'Try asking “What are today’s sales?” or “Which products are low in stock?”',
-    'Available capabilities depend on company features and your permissions. Final approvals, payments, and posting stay in the web app.',
-  ].join('\n'),
-} as const;
+/**
+ * Capability copy, keyed by the capability-group ids in `LINE_CAPABILITY_GROUPS`. The derivation
+ * returns ids, never words, so the Thai and English replies always describe the SAME set of
+ * capabilities and a reply can never come out half-translated. A group's line and its example
+ * question live together, so R2 (never suggest a question about a hidden capability) holds by
+ * construction.
+ */
+const CAPABILITY_COPY = {
+  th: {
+    intro: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ เช่น',
+    receipt: 'ส่งรูปใบเสร็จหรือสลิปเพื่อสร้างร่างค่าใช้จ่ายได้ด้วยนะคะ',
+    closing: 'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
+    example: (question: string) => `ลองถามตรงๆ เช่น “${question}” ได้เลยค่ะ`,
+    // Nothing usable at all: honest, no capability list, and it does not blame the company's plan —
+    // the caller cannot tell a missing permission from a switched-off feature, and neither should
+    // this reply pretend to.
+    none: 'ตอนนี้บัญชีของคุณยังไม่มีข้อมูลที่น้องมั่งมีดึงให้ผ่าน LINE ได้เลยค่ะ กรุณาติดต่อผู้ดูแลระบบของบริษัทเพื่อตรวจสอบสิทธิ์การใช้งานนะคะ',
+    groups: {
+      sales: { line: '• ยอดขายและเอกสารขาย', example: 'ยอดขายวันนี้เท่าไหร่' },
+      expenses: { line: '• ค่าใช้จ่ายและใบเสร็จ', example: 'ค่าใช้จ่ายเดือนนี้เท่าไหร่' },
+      finance: { line: '• การเงิน บัญชี และรายงาน', example: 'ขอสรุปการเงินเดือนนี้' },
+      tax: { line: '• ภาษี', example: 'ภาษีที่ต้องยื่นเดือนนี้มีอะไรบ้าง' },
+      inventory: { line: '• สินค้าและสต็อก', example: 'ของอะไรใกล้หมด' },
+      customers: { line: '• ลูกค้าและงานติดตาม', example: 'ลูกค้าที่ต้องติดตามมีใครบ้าง' },
+      bookings: { line: '• นัดหมายและคิว', example: 'คิววันนี้มีอะไรบ้าง' },
+      procurement: { line: '• จัดซื้อและผู้ขาย', example: 'ใบสั่งซื้อที่ค้างอยู่มีอะไรบ้าง' },
+      alerts: { line: '• งานค้างและการแจ้งเตือน', example: 'มีงานค้างอะไรบ้าง' },
+    },
+  },
+  en: {
+    intro: 'Nong Mangmee can find and summarize work data allowed by your permissions, including:',
+    receipt: 'You can also send a receipt or payment slip to create an expense draft.',
+    closing: 'Available capabilities depend on company features and your permissions. Final approvals, payments, and posting stay in the web app.',
+    example: (question: string) => `Try asking “${question}”`,
+    none: 'Right now there is no data Nong Mangmee can pull for your account through LINE. Please ask your company admin to check your access.',
+    groups: {
+      sales: { line: '• sales and sales documents', example: 'What are today’s sales?' },
+      expenses: { line: '• expenses and receipts', example: 'What are this month’s expenses?' },
+      finance: { line: '• finance, accounting, and reports', example: 'Summarize this month’s finances' },
+      tax: { line: '• tax', example: 'What tax filings are due this month?' },
+      inventory: { line: '• products and stock', example: 'Which products are low in stock?' },
+      customers: { line: '• customers and follow-ups', example: 'Which customers need a follow-up?' },
+      bookings: { line: '• bookings and queues', example: 'What is on today’s schedule?' },
+      procurement: { line: '• procurement and suppliers', example: 'Which purchase orders are still open?' },
+      alerts: { line: '• pending work and alerts', example: 'What is pending for me?' },
+    },
+  },
+} as const satisfies Record<'th' | 'en', {
+  intro: string; receipt: string; closing: string; none: string;
+  example: (question: string) => string;
+  groups: Record<LineCapabilityGroupId, { line: string; example: string }>;
+}>;
+
+/** The caller's own access, as the composer needs it. Undefined = legacy fail-open: describe
+ *  everything, exactly as the assistant did before entitlement awareness existed. */
+export type CapabilityAccess = {
+  permissions?: readonly string[];
+  /** Absent/undefined = company has no entitlement rows, or the caller did not send them. */
+  entitledFeatureKeys?: readonly string[];
+};
+
+export function buildCapabilityHelp(language: 'th' | 'en', access?: CapabilityAccess): string {
+  const copy = CAPABILITY_COPY[language];
+  const entitled = access?.entitledFeatureKeys ? new Set(access.entitledFeatureKeys) : null;
+  // No permission list at all means no caller context was supplied (older call sites, smoke
+  // harnesses): keep the pre-entitlement behaviour rather than silently emptying the reply.
+  // Only a completely absent `access` means "no caller context". A partial one must NOT fall back
+  // to advertising everything — under-describing is a smaller error than promising a refusal.
+  const permissions = access ? access.permissions ?? [] : undefined;
+  const groups = permissions
+    ? usableCapabilityGroupIds(permissions, entitled)
+    : [...LINE_CAPABILITY_GROUPS].map((group) => group.id);
+  const receipt = permissions ? canAdvertiseReceiptCapture(permissions, entitled) : true;
+  if (groups.length === 0) return receipt ? [copy.receipt, copy.closing].join('\n') : copy.none;
+  return [
+    copy.intro,
+    ...groups.map((id) => copy.groups[id].line),
+    ...(receipt ? [copy.receipt] : []),
+    copy.example(copy.groups[groups[0]!].example),
+    copy.closing,
+  ].join('\n');
+}
 
 const COPY = {
   th: {
@@ -119,8 +182,8 @@ const COPY = {
 type ComposedReply = { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] };
 
 export class ResponseComposerAgent {
-  composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH'): string {
-    return CAPABILITY_HELP[detectReplyLanguage(messageText, planLanguage, locale)];
+  composeCapabilityHelp(messageText = '', planLanguage = 'th', locale = 'th-TH', access?: CapabilityAccess): string {
+    return buildCapabilityHelp(detectReplyLanguage(messageText, planLanguage, locale), access);
   }
 
   async composeCasual(
