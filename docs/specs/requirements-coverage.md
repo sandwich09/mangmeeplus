@@ -32,7 +32,7 @@ Status legend:
 | Inventory / stock tracking | Covered | `inventory-mvp-spec.md`, `line-ai-assistant-ux-spec.md` | Internal QR is default MVP; web handles stock actions, LINE answers stock questions and alerts. |
 | Product tracking | Covered | `inventory-mvp-spec.md` | Tracking depth beyond stock movement can be refined in implementation plan. |
 | Accounting | Covered | `accounting-documents-spec.md`, `double-entry-ledger-closing-spec.md`, `accounting-product-benchmark.md`, `line-ai-channel-auth-spec.md` | Web document workflow plus promoted double-entry ledger for GL/TB/P&L/BS/close; LINE answers summaries, reminders, and exception questions. |
-| Employee access / role management | Covered | `employee-access-role-management-spec.md`, `permission-matrix.md`, `auth-authorization-rbac-spec.md`, `line-ai-channel-auth-spec.md` | Owner/admin creates named employee users, temporary passwords, roles, and LINE link QR packages; payroll/HR details stay in item 20. |
+| Employee access / role management | Covered | `employee-access-role-management-spec.md`, `access-overview-granted-only-permission-summary-spec.md`, `permission-matrix.md`, `auth-authorization-rbac-spec.md`, `line-ai-channel-auth-spec.md` | Owner/admin creates named employee users, temporary passwords, roles, and LINE link QR packages; the access overview follow-up specifies a granted-only, source-honest responsive summary; payroll/HR details stay in item 20. |
 | CRM | Covered | `crm-sales-spec.md` | Need primary contact channels. |
 | Notifications | Covered | `dashboard-notification-spec.md`, `workflow-automation-spec.md`, `line-ai-channel-auth-spec.md` | LINE delivery and web notification center first; native push is out of scope. |
 | Sales dashboard | Covered | `dashboard-notification-spec.md` | Need exact target logic. |
@@ -64,7 +64,7 @@ Status legend:
 | CIT calendar/report prep | Partial | `tax-thailand-2026-spec.md`, `tax-2026-verified-rules.md` | Calculation detail later; calendar first. |
 | P&L / Balance Sheet | Covered | `double-entry-ledger-closing-spec.md`, `accounting-documents-spec.md`, `dashboard-notification-spec.md` | Formal statements derive from account classes/report groups and posted journal lines. |
 | Forecast / advanced BI | Partial | `dashboard-notification-spec.md` | Advanced BI builder is non-goal for MVP. |
-| Employee and role settings | Covered | `employee-access-role-management-spec.md`, `employee-access-role-management-plan.md`, `permission-matrix.md` | Settings > Employees and Settings > Roles are web-owned; LINE/AI cannot mutate users or permissions. |
+| Employee and role settings | Covered | `employee-access-role-management-spec.md`, `access-overview-granted-only-permission-summary-spec.md`, `employee-access-role-management-plan.md`, `access-overview-granted-only-permission-summary-plan.md`, `permission-matrix.md` | Settings > Employees and Settings > Roles are web-owned; individual access summaries hide denied rows but role-authoring matrices stay complete; LINE/AI cannot mutate users or permissions. |
 
 ## 6. AI Coverage
 
