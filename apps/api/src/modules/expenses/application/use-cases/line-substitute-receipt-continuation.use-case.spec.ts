@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, substituteRequestExpenseText } from './line-substitute-receipt-continuation.use-case';
+import { PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import { ConflictException } from '@nestjs/common';
 
 const WEB_BASE = 'https://app.example.com';
 
@@ -29,10 +31,54 @@ function expense(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-function harness(overrides: { expense?: any; policy?: any; approvers?: any[]; candidates?: any[] } = {}) {
+function harness(overrides: {
+  expense?: any; policy?: any; approvers?: any[]; candidates?: any[];
+  /** R13 choice 1 asks this before it prepares: an ACTIVE personal signature or nothing. */
+  signature?: { id: string } | null;
+  /** The newest asset of any status — what tells "already sent, waiting for approval" from "none". */
+  latestSignature?: { status: string; rejectReason: string | null } | null;
+  prepareError?: Error;
+} = {}) {
   let current = overrides.expense ?? expense();
   const saves: any[] = [];
+  const prepares: any[] = [];
+  const audits: any[] = [];
   const repo = {
+    findReusableSignatureAsset: async (_companyId: string, _userId: string, attachmentId?: string) =>
+      attachmentId ? null : overrides.signature ?? null,
+    findLatestSignatureAssetStatus: async () => overrides.latestSignature ?? null,
+    findSubstituteEvidenceAttachments: async (_companyId: string, _expenseId: string, ids: string[]) =>
+      (current.attachments ?? [])
+        .filter((item: any) => ids.includes(item.id))
+        .map((item: any) => ({ ...item, originalFileName: `${item.id}.jpg`, mimeType: 'image/jpeg' })),
+    createPreparedSubstituteEvidence: async (input: any) => {
+      prepares.push(input);
+      if (overrides.prepareError) throw overrides.prepareError;
+      // Mirrors the real transaction: the evidence row appears on the expense, the expense revision
+      // moves, and the continuation that fed it is CONSUMED (never deleted — it holds the provenance).
+      const at = new Date(current.updatedAt.getTime() + 1000);
+      const state = current.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation;
+      current = {
+        ...current,
+        updatedAt: at,
+        substituteReceiptEvidence: { id: 'evidence-1', documentNumber: 'SUB-202608-00007', status: 'PREPARED' },
+        sourceChannelMetadataJson: {
+          ...current.sourceChannelMetadataJson,
+          ...(state ? {
+            lineSubstituteReceiptContinuation: {
+              ...state, status: 'CONSUMED', targetRevision: at.toISOString(), lastActivityAt: at.toISOString(),
+            },
+          } : {}),
+        },
+      };
+      return {
+        ...input, id: 'evidence-1', version: 1, status: 'PREPARED', documentNumber: 'SUB-202608-00007',
+        preparedAt: at, expenseUpdatedAtAtPreparation: at, updatedAt: at,
+        payerPosition: null, certifiedArtifactAttachmentId: null, certifiedArtifactChecksumSha256: null, certifiedAt: null,
+        approverUserId: null, approverName: null, approverPosition: null, approvedAt: null,
+        artifactAttachmentId: null, checksumSha256: null, issuedAt: null, supersedeReason: null,
+      };
+    },
     listLineSubstituteContinuationRows: async () => {
       const state = current.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation;
       return state ? [{ id: current.id, updatedAt: current.updatedAt, sourceChannelMetadataJson: current.sourceChannelMetadataJson }] : [];
@@ -55,7 +101,34 @@ function harness(overrides: { expense?: any; policy?: any; approvers?: any[]; ca
       return { updatedAt: now, continuation };
     },
   } as any;
-  return { useCase: new LineSubstituteReceiptContinuationUseCase(repo), saves, getExpense: () => current };
+  // The real prepare use case, not a stub: R7's channel gate, its validation, and the audit fields
+  // are exactly what these cases have to prove.
+  const prepare = new PrepareSubstituteReceiptUseCase(
+    repo,
+    { log: async (entry: any) => { audits.push(entry); } } as any,
+    { execute: async () => ({}) } as any,
+  );
+  return {
+    useCase: new LineSubstituteReceiptContinuationUseCase(repo, prepare),
+    saves, prepares, audits, getExpense: () => current,
+  };
+}
+
+/** Drives a fresh workflow to the R13 question: every blocker answered in one message. */
+async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
+  const h = harness({
+    expense: expense({
+      vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+      missingReceiptReason: 'วินไม่ออกใบเสร็จ',
+      attachments: [{ id: 'att-1', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }],
+    }),
+    ...overrides,
+  });
+  const asked = await h.useCase.execute(ctx(), {
+    messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+    recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+  });
+  return { ...h, asked };
 }
 
 describe('LineSubstituteReceiptContinuationUseCase', () => {
@@ -553,5 +626,414 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       () => h.useCase.loadForWeb(webCtx, 'expense-1', opened.workflowId!),
       /Expense changed/,
     );
+  });
+});
+
+
+describe('R13 — the assistant asks before producing the document', () => {
+  it('asks one question with three numbered choices once the preflight is clean', async () => {
+    const { asked, getExpense } = await readyHarness();
+
+    assert.equal(asked.status, 'READY_FOR_WEB');
+    assert.deepEqual(asked.blockers, []);
+    assert.equal(asked.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ', 'pendingQuestion is what routes the answer back here');
+    assert.match(asked.replyText, /ทำต่อ: ให้ออกเอกสารเลยไหมคะ/);
+    assert.match(asked.replyText, /1\) ออกเอกสาร \(ใช้ลายเซ็นที่บันทึกไว้\)/);
+    assert.match(asked.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
+    assert.match(asked.replyText, /3\) แก้ข้อมูลก่อน/);
+    assert.match(asked.replyText, /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/, 'nothing is produced unasked');
+    assert.equal(
+      getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      'ISSUE_CONFIRM',
+    );
+  });
+
+  // The whole table, both directions. Reserving a document number is irreversible, so the only
+  // messages allowed to do it are the ones that unambiguously say so.
+  const ACCEPTED: Array<[string, 'ISSUE' | 'FORM' | 'EDIT']> = [
+    ['1', 'ISSUE'], ['1.', 'ISSUE'], ['1)', 'ISSUE'],
+    ['ออกเอกสาร', 'ISSUE'], ['ออกเอกสารเลย', 'ISSUE'], ['ออกเอกสารเลยค่ะ', 'ISSUE'],
+    ['ออกเอกสาร (ใช้ลายเซ็นที่บันทึกไว้)', 'ISSUE'], ['ใช้ลายเซ็นที่บันทึกไว้', 'ISSUE'],
+    ['2', 'FORM'], ['ขอฟอร์มไปเซ็นเอง', 'FORM'], ['ขอฟอร์ม', 'FORM'], ['ขอฟอร์มไปเซ็นเองค่ะ', 'FORM'],
+    ['3', 'EDIT'], ['แก้ข้อมูลก่อน', 'EDIT'], ['ขอแก้ข้อมูล', 'EDIT'],
+  ];
+  const DECLINED = [
+    'ขอบคุณค่ะ ไม่ต้องออกเอกสาร',
+    'ตอนนี้ยังไม่ต้องออกเอกสารนะคะ',
+    'ห้ามออกเอกสาร',
+    'ไว้ค่อยออกเอกสารทีหลัง',
+    'ขอฟอร์มไปเซ็นเอง ไม่ต้องออกเอกสาร',
+    'เดี๋ยวก่อน อย่าเพิ่งออกเอกสาร',
+    // normalizeLineText collapses newlines before this use case ever sees them, so the refusal on
+    // line 2 arrives mid-line and must still be read.
+    'ออกเอกสารเลย\nไม่ ๆ เดี๋ยวก่อน',
+  ];
+  const NOT_A_CHOICE = ['ออกเอกสารได้ไหม', 'ออกเอกสารยังไง', 'ขอฟอร์มยังไงคะ', 'ทำต่อ', 'ใช่'];
+
+  for (const [messageText, expected] of ACCEPTED) {
+    it(`accepts “${messageText}” as ${expected}`, async () => {
+      const h = await readyHarness({ signature: { id: 'signature-1' } });
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+      if (expected === 'EDIT') {
+        assert.equal(h.prepares.length, 0);
+        assert.match(result.replyText, /แก้ได้เลยค่ะ/);
+        return;
+      }
+      assert.equal(h.prepares.length, 1);
+      assert.match(result.replyText, expected === 'ISSUE' ? /รอยืนยัน/ : /แบบฟอร์มรอลงนาม/);
+    });
+  }
+
+  for (const messageText of DECLINED) {
+    it(`declines “${messageText.replace('\n', ' ⏎ ')}” without reserving anything`, async () => {
+      const h = await readyHarness({ signature: { id: 'signature-1' } });
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+      assert.equal(h.prepares.length, 0, 'no document number is reserved');
+      assert.match(result.replyText, /ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่ งานนี้ยังเปิดอยู่/);
+      assert.equal(
+        h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+        undefined,
+        'the decision is cleared, so the next turn re-derives it from a fresh preflight',
+      );
+      assert.equal(
+        h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose,
+        'ไปพบลูกค้า',
+        'declining loses nothing',
+      );
+    });
+  }
+
+  for (const messageText of NOT_A_CHOICE) {
+    it(`treats “${messageText}” as not an answer and re-asks`, async () => {
+      const h = await readyHarness({ signature: { id: 'signature-1' } });
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+      assert.equal(h.prepares.length, 0, 'a question is never an instruction');
+      assert.equal(result.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+    });
+  }
+
+  it('choice 1 without any signature asks for the photo and keeps the decision pending', async () => {
+    const h = await readyHarness();
+
+    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 0, 'no signature means nothing is prepared');
+    assert.match(answered.replyText, /เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น/);
+    assert.match(answered.replyText, /ส่งรูปเข้ามาในแชทนี้/);
+    assert.equal(answered.pendingQuestion, 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
+    assert.equal(
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      'ISSUE_CONFIRM',
+      'the workflow stays open with the decision still pending, so “1” after the photo lands here again',
+    );
+  });
+
+  it('does not repeat the ask-for-a-photo reply while the photo already sits in the approval queue', async () => {
+    // A LINE-uploaded signature is stored PENDING_OWNER_APPROVAL, which the ACTIVE-only reusable
+    // lookup cannot see. Without the status read this reply repeats forever.
+    const h = await readyHarness({ latestSignature: { status: 'PENDING_OWNER_APPROVAL', rejectReason: null } });
+
+    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.match(answered.replyText, /ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บ/);
+    assert.equal(answered.replyText.includes('เซ็นบนกระดาษขาว'), false, 'it must not ask for the same photo again');
+    assert.match(answered.replyText, /ขอฟอร์มไปเซ็นเอง/, 'the paper route is the way forward while approval is pending');
+    assert.equal(answered.blockers[0]?.code, 'reusable_signature_pending_approval');
+    assert.equal(
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      'ISSUE_CONFIRM',
+    );
+
+    // …and the offered way out works on the very next turn.
+    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 1, 'the loop progresses instead of repeating');
+    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+  });
+
+  it('says a rejected signature was rejected, with its reason, instead of asking again blindly', async () => {
+    const h = await readyHarness({ latestSignature: { status: 'REJECTED', rejectReason: 'ลายเซ็นไม่ชัด' } });
+
+    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.match(answered.replyText, /ไม่ผ่านการอนุมัติ/);
+    assert.match(answered.replyText, /ลายเซ็นไม่ชัด/);
+    assert.match(answered.replyText, /เซ็นบนกระดาษขาว/, 'a rejected signature still needs a new photo');
+  });
+
+  it('choice 1 with a saved signature prepares from LINE and points at the signing page', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+    const before = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation;
+
+    const issued = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสาร', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 1);
+    const prepared = h.prepares[0];
+    assert.equal(prepared.preparedFromChannel, 'LINE');
+    assert.equal(prepared.businessPurpose, 'ไปพบลูกค้า');
+    assert.equal(prepared.payerUserId, 'user-1');
+    assert.equal(prepared.paymentMethod, 'CASH', 'unstated values fall back to the expense');
+    assert.deepEqual(prepared.supportingAttachmentIds, ['att-1']);
+    assert.equal(prepared.idempotencyKey, before.workflowId, 'one prepare per continuation');
+    assert.deepEqual(prepared.lineContinuation, { workflowId: before.workflowId, userId: 'user-1' });
+    assert.equal(prepared.expectedExpenseUpdatedAt.toISOString(), before.targetRevision);
+
+    assert.equal(issued.status, 'READY_FOR_WEB');
+    assert.equal(issued.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
+    assert.match(issued.replyText, /รอยืนยัน/);
+    assert.match(issued.replyText, /SUB-202608-00007/);
+    assert.match(issued.replyText, /LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/);
+    assert.equal(issued.replyText.includes('ออกเอกสารแล้ว'), false, 'a prepared document is never described as issued');
+    assert.equal(issued.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false);
+
+    const audit = h.audits.find((entry) => entry.action === 'expense.substitute_receipt.prepare');
+    assert.equal(audit.metadataJson.preparedFromChannel, 'LINE');
+    assert.equal(audit.metadataJson.source, 'LINE');
+  });
+
+  it('never links the system’s own review artifacts back in as supporting evidence', async () => {
+    const h = await readyHarness({
+      signature: { id: 'signature-1' },
+      expense: expense({
+        vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'วินไม่ออกใบเสร็จ',
+        attachments: [
+          { id: 'att-photo', status: 'ACTIVE', purpose: 'expense.receipt.supporting' },
+          { id: 'att-slip', status: 'ACTIVE', purpose: 'expense.payment.evidence' },
+          // A superseded version left these behind: its certified SVG and its signature render.
+          { id: 'att-old-certificate', status: 'ACTIVE', purpose: 'expense.review.evidence' },
+          { id: 'att-old-signature', status: 'ACTIVE', purpose: 'expense.review.evidence' },
+        ],
+      }),
+    });
+
+    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.deepEqual(h.prepares[0].supportingAttachmentIds, ['att-photo'], 'same split the web wizard uses');
+    assert.deepEqual(h.prepares[0].paymentEvidenceAttachmentIds, ['att-slip']);
+  });
+
+  it('choice 2 prepares the same way and points at the unsigned form instead', async () => {
+    const h = await readyHarness({ signature: null });
+
+    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 1, 'the paper route needs no stored signature');
+    assert.equal(h.prepares[0].preparedFromChannel, 'LINE');
+    assert.equal(form.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
+    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+    assert.match(form.replyText, /UNSIGNED/);
+    assert.match(form.replyText, /LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/);
+  });
+
+  it('choice 3 lists the editable fields, clears the decision, and resumes value collection', async () => {
+    const h = await readyHarness();
+
+    const editing = await h.useCase.execute(ctx(), { messageText: '3', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 0);
+    assert.match(editing.replyText, /วัตถุประสงค์ทางธุรกิจ/);
+    assert.match(editing.replyText, /วิธีชำระเงิน/);
+    assert.equal(
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      undefined,
+      'the decision is off the table until the edit lands',
+    );
+
+    const edited = await h.useCase.execute(ctx(), {
+      messageText: 'วัตถุประสงค์: ไปส่งของให้ลูกค้า', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.ok(edited.acceptedFields.includes('businessPurpose'), 'a labelled answer merges exactly as before');
+    assert.equal(edited.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ', 'and the question comes back because nothing is missing');
+  });
+
+  it('re-asks the one question when the answer is neither a choice nor a value, and still reminds', async () => {
+    const h = await readyHarness();
+
+    const confused = await h.useCase.execute(ctx(), { messageText: 'อ่ะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 0);
+    assert.match(confused.replyText, /ตอบเป็นหมายเลข 1-3/);
+    assert.equal(confused.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+    assert.equal(confused.replyText.includes('สิ่งที่ยังต้องทำทั้งหมด'), false, 'the full status card is not replayed');
+    assert.match(confused.resumeCapsule ?? '', /งานใบรับรองแทนใบเสร็จรับเงินของรายการ EXP-001 ยังอยู่/);
+  });
+
+  it('answers a side question asked while the decision is open, from source state, and keeps the capsule', async () => {
+    const h = await readyHarness();
+
+    const asked = await h.useCase.execute(ctx(), {
+      messageText: 'ใบนี้เคลมภาษีซื้อได้ไหมคะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(h.prepares.length, 0);
+    assert.match(asked.replyText, /คำถามแทรก — VAT/);
+    assert.match(asked.replyText, /ไม่ใช่ใบกำกับภาษีจากผู้ขาย/);
+    assert.equal(asked.sideQuestionAnswered, true, 'answered here, so the dispatcher must not deflect it');
+    assert.match(asked.resumeCapsule ?? '', /ทำต่อ: ให้ออกเอกสารเลยไหมคะ/);
+    assert.equal(asked.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+  });
+
+  it('reports the existing document instead of restarting the conversation over it', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const consumed = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation;
+    assert.equal(consumed.status, 'CONSUMED');
+    const provenanceBefore = JSON.stringify(consumed.provenance);
+    const savesBefore = h.saves.length;
+
+    const followUp = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+
+    assert.match(followUp.replyText, /SUB-202608-00007/);
+    assert.match(followUp.replyText, /รอยืนยัน/);
+    assert.equal(followUp.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
+    assert.equal(followUp.replyText.includes('สิ่งที่ยังต้องทำทั้งหมด'), false, 'no already-answered blockers');
+    assert.equal(h.saves.length, savesBefore, 'the consumed continuation is not overwritten');
+    assert.equal(
+      JSON.stringify(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.provenance),
+      provenanceBefore,
+      'provenance survives byte-identical',
+    );
+  });
+
+  it('degrades a stale expense between the ask and the answer into the STALE reply, never a raw error', async () => {
+    const h = await readyHarness({
+      signature: { id: 'signature-1' },
+      prepareError: new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review.' }),
+    });
+
+    const stale = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(stale.status, 'STALE');
+    assert.match(stale.replyText, /รายการถูกแก้ไขจากเว็บหรือผู้ใช้อื่น/);
+    assert.match(stale.replyText, /ตรวจสอบสถานะปัจจุบันในเว็บ: https:\/\/app\.example\.com\/companies\//);
+  });
+
+  it('degrades a prepare that the preflight cannot see coming into the blocked card, not an exception', async () => {
+    // The LINE preflight counts attachments but does not apply the renderability cap, so more
+    // linked files than a certificate can print is the one refusal a clean preflight still hits.
+    const h = await readyHarness({
+      signature: { id: 'signature-1' },
+      expense: expense({
+        vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'วินไม่ออกใบเสร็จ',
+        attachments: Array.from({ length: 9 }, (_item, index) => ({
+          id: `att-${index}`, status: 'ACTIVE', purpose: 'expense.receipt.supporting',
+        })),
+      }),
+    });
+    assert.equal(h.asked.status, 'READY_FOR_WEB');
+
+    const refused = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(h.prepares.length, 0, 'prepare refused before it reached the repository');
+    assert.equal(refused.status, 'BLOCKED');
+    assert.deepEqual(refused.blockers.map((item) => item.code), ['substitute_prepare_failed']);
+    assert.match(refused.replyText, /ยังเตรียมเอกสารไม่ได้: .*at most 8/u);
+    assert.equal(refused.replyText.includes('Error'), false, 'no raw exception reaches the chat');
+  });
+});
+
+describe('R15 — wrong-document detection', () => {
+  const TRIGGERS = [
+    'ผู้รับเงินเซ็นให้ได้',
+    'ให้ร้านเซ็นแล้ว',
+    'เขายอมเซ็นให้',
+    'มีสำเนาบัตรประชาชนของผู้รับเงินด้วย',
+  ];
+  // The refusal is the case ใบรับรองแทนใบเสร็จรับเงิน exists FOR. Explaining a different document
+  // here would be exactly backwards.
+  const NOT_TRIGGERS = [
+    'ผู้ขายไม่ยอมเซ็น',
+    'ร้านไม่ยอมเซ็นให้',
+    'เขาไม่เซ็นให้ได้',
+    'ผู้รับเงินปฏิเสธไม่ยอมเซ็น',
+    'ไม่มีสำเนาบัตรประชาชนของผู้รับเงิน',
+    'ทำใบทดแทนใบเสร็จ ค่าวินมอไซต์ไปพบลูกค้า 50 บาท',
+  ];
+
+  for (const phrase of TRIGGERS) {
+    it(`explains ใบสำคัญรับเงิน and asks exactly one question: “${phrase}”`, async () => {
+      const h = harness();
+      const result = await h.useCase.execute(ctx(), {
+        messageText: `ทำใบทดแทนใบเสร็จ ${phrase}`, chatKeyHash: 'chat-hash',
+        recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+      });
+      assert.match(result.replyText, /ใบสำคัญรับเงิน/);
+      assert.match(result.replyText, /สำเนาบัตรประชาชน/);
+      assert.match(result.replyText, /ระบบยังไม่รองรับการออกใบสำคัญรับเงิน/);
+      assert.equal(result.pendingQuestion, 'จะทำใบรับรองแทนใบเสร็จรับเงินต่อไหมคะ');
+      assert.equal((result.replyText.match(/ไหมคะ/gu) ?? []).length, 1, 'exactly one question in the reply');
+      assert.equal(result.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('?'), false,
+        'the only “?” in the reply belongs to the link query string');
+      assert.equal(h.saves.length, 0, 'state is completely untouched');
+    });
+  }
+
+  for (const messageText of NOT_TRIGGERS) {
+    it(`stays silent on “${messageText}”`, async () => {
+      const h = harness();
+      const result = await h.useCase.execute(ctx(), {
+        messageText, chatKeyHash: 'chat-hash',
+        recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+      });
+      assert.equal(result.replyText.includes('ใบสำคัญรับเงิน'), false);
+    });
+  }
+
+  it('short-circuits the turn: it never prepares, never merges, and never stacks a second question', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+    const before = JSON.stringify(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation);
+    const savesBefore = h.saves.length;
+
+    const notice = await h.useCase.execute(ctx(), {
+      messageText: 'ออกเอกสารเลย เขาเซ็นแล้ว', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(h.prepares.length, 0, 'the wrong-document question comes before any document number');
+    assert.equal(h.saves.length, savesBefore);
+    assert.equal(JSON.stringify(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation), before);
+    assert.equal((notice.replyText.match(/ไหมคะ/gu) ?? []).length, 1);
+    assert.equal(notice.replyText.includes('ให้ออกเอกสารเลยไหมคะ'), false, 'the decision question does not stack on top');
+
+    // “ทำต่อ” resumes: the decision was never cleared, so it re-fires on its own.
+    const resumed = await h.useCase.execute(ctx(), { messageText: 'ทำต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(resumed.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+    assert.equal(h.prepares.length, 0, 'resuming is not consenting');
+  });
+
+  it('pauses the workflow when the sender declines to continue with this document', async () => {
+    const h = await readyHarness();
+    await h.useCase.execute(ctx(), {
+      messageText: 'ผู้รับเงินเซ็นให้ได้', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    const declined = await h.useCase.execute(ctx(), { messageText: 'ไม่ทำต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(declined.status, 'PAUSED');
+    assert.match(declined.replyText, /พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่/);
+  });
+
+  it('never rides on a reply that already reports a decision the system made', async () => {
+    // FORBIDDEN returns before any of this, and a prepared expense answers with its document card.
+    const forbidden = await harness().useCase.execute({ ...ctx(), permissions: ['expense.receipt.line_upload'] }, {
+      messageText: 'ทำใบทดแทนใบเสร็จ ผู้รับเงินเซ็นให้ได้', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(forbidden.status, 'FORBIDDEN');
+    assert.equal(forbidden.replyText.includes('ใบสำคัญรับเงิน'), false);
+
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+    await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const afterPrepare = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ เขาเซ็นแล้ว', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+    assert.match(afterPrepare.replyText, /SUB-202608-00007/);
+    assert.equal(afterPrepare.replyText.includes('ใบสำคัญรับเงิน'), false, 'never above a reserved document number');
   });
 });

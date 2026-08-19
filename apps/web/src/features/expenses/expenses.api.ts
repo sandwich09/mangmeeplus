@@ -377,6 +377,19 @@ export async function fetchSubstituteReceiptPdfBlob(
   return checkedPreviewBlob(response, 'application/pdf');
 }
 
+/** R8 `แบบฟอร์มรอลงนาม`: derived from the PREPARED snapshot on every request, never stored, so there
+ *  is no attachment id to pass and nothing to open as "the issued document". */
+export async function downloadSubstituteReceiptFormPdf(
+  companyId: string,
+  expenseId: string,
+  evidenceId: string,
+  documentNumber: string,
+): Promise<void> {
+  const response = await authedFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/form.pdf`);
+  if (!response.ok) throw await responseError(response);
+  downloadBlob(await checkedPreviewBlob(response, 'application/pdf'), `${documentNumber}-UNSIGNED.pdf`);
+}
+
 export async function downloadPaymentVoucherPdf(
   companyId: string,
   expenseId: string,

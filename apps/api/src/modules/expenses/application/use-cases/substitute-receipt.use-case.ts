@@ -56,6 +56,8 @@ const INELIGIBLE_CLASSIFICATION_KINDS = new Set([
   'NON_FINANCIAL_IMAGE', 'NEEDS_REVIEW',
 ]);
 const PREVIEW_CERTIFIED_AT = '0000-01-01T00:00:00.000Z';
+/** The payer picks their position when they certify, so the printed form leaves a rule for it. */
+const UNSIGNED_FORM_POSITION_BLANK = '__________';
 const SUBSTITUTE_RECEIPT_STATUSES = new Set<SubstituteReceiptEvidenceStatus>([
   'PREPARED', 'PAYER_CERTIFIED', 'ISSUED', 'SUPERSEDED',
 ]);
@@ -372,7 +374,12 @@ export class PrepareSubstituteReceiptUseCase {
   ) {}
 
   async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
-    assertWeb(ctx);
+    // R7: preparing is the one substitute-receipt step LINE may take. It writes staged facts and
+    // reserves a document number; it embeds no signature and grants no approval. The three gates
+    // the spec names — `expense.review` below, `assertBranch`, and the payer resolving to an active
+    // in-scope member — already run for every channel, so the channel decides only what the audit
+    // trail records. Preview/certify/approve/download keep `assertWeb` (§16 last bullet).
+    const preparedFromChannel = ctx.authProvider === 'line' ? 'LINE' : 'WEB';
     if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     if (!REASON_CODES.has(input.reasonCode)) throw new BadRequestException('Invalid substitute receipt reasonCode.');
     const reason = requiredText(input.missingReceiptReason, 'missingReceiptReason', 500);
@@ -461,6 +468,7 @@ export class PrepareSubstituteReceiptUseCase {
         payeeAddress,
         payeeTaxId,
         preparedByUserId: ctx.userId,
+        preparedFromChannel,
         idempotencyKey,
         ...(continuationId ? { lineContinuation: { workflowId: continuationId, userId: ctx.userId } } : {}),
       });
@@ -468,7 +476,12 @@ export class PrepareSubstituteReceiptUseCase {
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.prepare',
         targetType: 'expense_substitute_receipt', targetId: evidence.id, requestId: ctx.requestId,
         // R5: evidenceCount makes every self-certified no-evidence document listable in one query.
-        result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, version: evidence.version, payerUserId, evidenceCount: allIds.length },
+        result: 'SUCCESS', riskLevel: 'HIGH',
+        metadataJson: {
+          expenseId, version: evidence.version, payerUserId, evidenceCount: allIds.length, preparedFromChannel,
+          // Spec §14 names `source: LINE` on the LINE-sourced row; on the web there is no source to state.
+          ...(preparedFromChannel === 'LINE' ? { source: 'LINE' } : {}),
+        },
       });
       try {
         await notifySignaturePending(this.notify, ctx, evidence, [payer.userId], 'PAYER');
@@ -561,6 +574,48 @@ export class DownloadSubstituteReceiptPdfUseCase {
     });
     const stateSuffix = stateStamp ? `-${stateStamp}` : '';
     return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}${stateSuffix}.pdf` };
+  }
+}
+
+/**
+ * R8 — `แบบฟอร์มรอลงนาม`. The same snapshot the payer is about to certify, rendered with both
+ * signature boxes blank, an `UNSIGNED` watermark, the document number printed large, and the line
+ * that says the sheet is not yet a document. It is DERIVED on demand and never stored: no
+ * attachment, no artifact id, nothing that could later be mistaken for the issued certificate.
+ */
+@Injectable()
+export class DownloadSubstituteReceiptFormPdfUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
+
+  async execute(ctx: RequestContext, expenseId: string, evidenceId: string): Promise<{ data: Buffer; fileName: string }> {
+    assertWeb(ctx);
+    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
+    if (!evidence) throw new NotFoundException('Substitute evidence not found.');
+    if (evidence.status !== 'PREPARED') throw new ConflictException(`The unsigned form exists only while the evidence is PREPARED, found ${evidence.status}.`);
+    const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
+    if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
+    assertBranch(ctx, expense.branchId);
+    // Someone is about to sign this sheet by hand: it must carry the values the certification will,
+    // not a stale copy of them.
+    assertPreparedExpenseUnchanged(expense, evidence);
+    const snapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, UNSIGNED_FORM_POSITION_BLANK, PREVIEW_CERTIFIED_AT);
+    const svg = renderSubstituteReceiptSvg(snapshot, undefined, undefined, undefined, { unsignedForm: true });
+    const data = await renderSubstituteReceiptPdf(svg, evidence.documentNumber, { stateStamp: 'UNSIGNED' });
+    // The sheet carries payee name and amount, so its egress is audited exactly like the issued
+    // artifact's — the only difference is that this one has no stored attachment to name.
+    void this.audit.log({
+      companyId: ctx.companyId,
+      actorUserId: ctx.userId,
+      action: 'expense.substitute_receipt.form.download',
+      targetType: 'expense_substitute_receipt',
+      targetId: evidenceId,
+      requestId: ctx.requestId,
+      result: 'SUCCESS',
+      riskLevel: 'LOW',
+      metadataJson: { expenseId, evidenceStatus: evidence.status, version: evidence.version, derivedStamp: 'UNSIGNED' },
+    });
+    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}-UNSIGNED.pdf` };
   }
 }
 

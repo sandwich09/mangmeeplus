@@ -42,6 +42,7 @@ import {
   CertifySubstituteReceiptUseCase,
   CompleteSubstituteSignatureUploadUseCase,
   DownloadPaymentVoucherPdfUseCase,
+  DownloadSubstituteReceiptFormPdfUseCase,
   DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   ListCompanySubstituteReceiptsUseCase,
@@ -116,6 +117,7 @@ export class ExpenseController {
     private readonly completeSubstituteSignatureUpload: CompleteSubstituteSignatureUploadUseCase,
     private readonly downloadPaymentVoucherPdf: DownloadPaymentVoucherPdfUseCase,
     private readonly downloadSubstituteReceiptPdf: DownloadSubstituteReceiptPdfUseCase,
+    private readonly downloadSubstituteReceiptFormPdf: DownloadSubstituteReceiptFormPdfUseCase,
     private readonly signatureFill: FillSignatureUseCase,
     private readonly sharedEvidence: GetSharedEvidenceViewUseCase,
     private readonly accountantPackage: CreateAccountantPackageUseCase,
@@ -289,6 +291,24 @@ export class ExpenseController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     const { data, fileName } = await this.downloadSubstituteReceiptPdf.execute(ctx, expenseId, evidenceId);
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return new StreamableFile(data, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${fileName}"`,
+    });
+  }
+
+  // R8: derived on demand from the PREPARED snapshot, never stored, never "issued". `expense.review`
+  // matches the permission that prepared it — the use case enforces the same gate.
+  @Get(':expenseId/substitute-receipt/:evidenceId/form.pdf')
+  @RequirePermissions('expense.review')
+  async downloadSubstituteFormPdf(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { data, fileName } = await this.downloadSubstituteReceiptFormPdf.execute(ctx, expenseId, evidenceId);
     response.setHeader('Cache-Control', 'private, no-store, max-age=0');
     return new StreamableFile(data, {
       type: 'application/pdf',

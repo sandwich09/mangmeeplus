@@ -3,6 +3,11 @@ import { formatThaiExportDate } from '../../../../common/export/thai-date.logic'
 
 export const SUBSTITUTE_RECEIPT_TITLE = 'ใบรับรองแทนใบเสร็จรับเงิน';
 
+/** R8: the line that keeps a printable pre-signature sheet from reading as an issued document. It
+ *  is rendered into the SVG, not stamped onto the PDF, because the PDF stamp uses a Latin-only
+ *  standard font — Thai has to come from the same raster as the rest of the sheet. */
+export const SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE = 'เอกสารนี้ยังไม่สมบูรณ์จนกว่าจะมีลายเซ็นผู้จ่ายและผู้อนุมัติ';
+
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
 const THAI_POSITIONS = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน'];
 const WORD_SEGMENTER = new Intl.Segmenter('th', { granularity: 'word' });
@@ -128,11 +133,15 @@ function sortJsonKeys(value: unknown): unknown {
   );
 }
 
+/** `unsignedForm` renders the R8 `แบบฟอร์มรอลงนาม` variant: the same sheet, with the document number
+ *  printed large enough to read back by eye (D9) and the incompleteness notice at the foot. It
+ *  never applies to a signed artifact, so no issued document's layout changes. */
 export function renderSubstituteReceiptSvg(
   snapshot: SubstituteReceiptSnapshot,
   payerSignatureDataUrl?: string,
   approver?: SubstituteReceiptApprover,
   approverSignatureDataUrl?: string,
+  options: { unsignedForm?: boolean } = {},
 ): Buffer {
   if (payerSignatureDataUrl) assertSignatureDataUrl(payerSignatureDataUrl);
   if (approver && !approverSignatureDataUrl) throw new Error('Approver signature is required.');
@@ -208,6 +217,12 @@ export function renderSubstituteReceiptSvg(
     ...evidenceBreaks,
     signaturesStart,
   ])].filter((value) => value > 0 && value < height).sort((left, right) => left - right);
+  // D9 reads this number back off a photographed sheet, so on the unsigned form it prints at title
+  // size instead of the grey sub-heading the signed artifact uses.
+  const documentNumberLine = `เลขที่ ${snapshot.documentNumber} · version ${snapshot.version}`;
+  const documentNumberAttributes = options.unsignedForm
+    ? ` font-size="24" font-weight="700" fill="#111"${fitToWidth(documentNumberLine, 700, 24)}`
+    : ' fill="#555"';
   const payerSignatureY = signaturesStart + 8;
   const approverSignatureY = signaturesStart + 8;
   const payerSignatureBlock = payerSignatureDataUrl
@@ -225,7 +240,7 @@ export function renderSubstituteReceiptSvg(
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
-    <text x="425" y="76" text-anchor="middle" fill="#555">เลขที่ ${xml(snapshot.documentNumber)} · version ${snapshot.version}</text>
+    <text x="425" y="${options.unsignedForm ? 82 : 76}" text-anchor="middle"${documentNumberAttributes}>${xml(documentNumberLine)}</text>
     <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
     <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
@@ -265,7 +280,7 @@ export function renderSubstituteReceiptSvg(
     <text x="240" y="${signaturesStart + 140}" text-anchor="middle">ผู้จ่ายเงิน/ผู้รับรอง${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
     ${approverBlock}
     ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
-    <text x="425" y="${height - 48}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>
+    <text x="425" y="${height - 48}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>${options.unsignedForm ? `\n    <text x="425" y="${height - 24}" text-anchor="middle" font-size="14" font-weight="700" fill="#c62828">${SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE}</text>` : ''}
   </g>
 </svg>`;
   return Buffer.from(svg, 'utf8');

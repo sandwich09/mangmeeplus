@@ -1141,6 +1141,23 @@ export class PrismaExpenseRepository {
     return null;
   }
 
+  /**
+   * R13: "is a signature already on its way?". `findReusableSignatureAsset` answers "may this sign
+   * something now", which is silent about an asset still waiting for owner approval — and a LINE
+   * upload lands exactly there. Without this the assistant repeats the same ask-for-a-photo reply
+   * forever while the photo it already received sits in the queue.
+   */
+  async findLatestSignatureAssetStatus(
+    companyId: string,
+    userId: string,
+  ): Promise<{ status: string; rejectReason: string | null } | null> {
+    return this.prisma.client.companySignatureAsset.findFirst({
+      where: { companyId, submittedByUserId: userId },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true, rejectReason: true },
+    });
+  }
+
   async createPreparedSubstituteEvidence(input: {
     companyId: string;
     expenseId: string;
@@ -1161,6 +1178,8 @@ export class PrismaExpenseRepository {
     payeeAddress: string | null;
     payeeTaxId: string | null;
     preparedByUserId: string;
+    /** R7 audit trail: which surface reserved the document number. */
+    preparedFromChannel: 'WEB' | 'LINE';
     idempotencyKey: string;
     lineContinuation?: { workflowId: string; userId: string };
   }): Promise<SubstituteReceiptEvidenceRecord> {
@@ -1274,6 +1293,7 @@ export class PrismaExpenseRepository {
           paymentMethod: input.paymentMethod,
           note: input.note,
           preparedByUserId: input.preparedByUserId,
+          preparedFromChannel: input.preparedFromChannel,
           preparedAt,
           expenseUpdatedAtAtPreparation: safeExpense.updatedAt,
           payerUserId: input.payerUserId,

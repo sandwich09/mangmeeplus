@@ -177,7 +177,7 @@ function printableDocumentNumber(value: string | undefined): string | null {
 export async function renderSubstituteReceiptPdf(
   svg: Buffer,
   documentNumber?: string,
-  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED' | 'UNSIGNED' } = {},
 ): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');

@@ -1,10 +1,10 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExpensePaymentMethod, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
 import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
-import { collectSubstituteReceiptEligibilityIssues } from './substitute-receipt.use-case';
+import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
 
 const STATE_KEY = 'lineSubstituteReceiptContinuation';
 const ACTIVE_STATUSES = new Set(['OPEN', 'PAUSED']);
@@ -39,6 +39,9 @@ export type LineSubstituteReceiptContinuation = {
   missingFields: string[];
   attachmentRefs: string[];
   pendingQuestion: string | null;
+  /** R13: preflight is clean and the assistant has asked whether to issue. Additive — `parseState`
+   *  accepts every state written before this existed, and its absence means "no decision pending". */
+  pendingDecision?: 'ISSUE_CONFIRM';
   targetRevision: string;
   lastActivityAt: string;
 };
@@ -353,6 +356,84 @@ const FIELD_BY_BLOCKER: Record<string, keyof LineSubstituteReceiptValues> = {
   supporting_evidence_required: 'evidenceNone',
 };
 
+/** R13: the one question the assistant asks once nothing is missing. It never produces the document
+ *  unasked, and the three answers are the three things a person can actually want here. */
+const ISSUE_DECISION_QUESTION = 'ให้ออกเอกสารเลยไหมคะ';
+const ISSUE_DECISION_CHOICES = [
+  'ออกเอกสาร (ใช้ลายเซ็นที่บันทึกไว้)',
+  'ขอฟอร์มไปเซ็นเอง',
+  'แก้ข้อมูลก่อน',
+];
+
+/** A question is never a decision. “ออกเอกสารได้ไหม” asks what the assistant can do; answering it by
+ *  reserving a document number is the single worst misread available here. */
+const DECISION_QUESTION = /[?？]|ไหม|หรือเปล่า|รึเปล่า|หรือไม่|อะไร|ยังไง|อย่างไร|ต่างกัน/u;
+/** Refusal or deferral ANYWHERE in the message, not only at its front: `normalizedText` has already
+ *  collapsed newlines, so “ออกเอกสารเลย\nไม่ ๆ เดี๋ยวก่อน” arrives as one line and must still decline. */
+const DECISION_DECLINE = /ไม่|ยัง|อย่า|ห้าม|ค่อย|ทีหลัง|เดี๋ยวก่อน|พอแค่นี้|ภายหลัง/u;
+const DECISION_FORM = /ขอฟอร์ม|ฟอร์ม|เซ็นเอง|พิมพ์ออกมา/u;
+const DECISION_EDIT = /แก้ข้อมูล|แก้ไข|ขอแก้/u;
+const DECISION_ISSUE = /ออกเอกสาร|ใช้ลายเซ็น/u;
+
+/** Deterministic in three passes, in this order because each one protects the next:
+ *  1. a question is not an answer — it falls through to the side-answer/re-ask path;
+ *  2. a bare number is the choice it names;
+ *  3. otherwise the wanted action comes from the choice's own words — and any refusal or deferral
+ *     token alongside it turns the whole message into an explicit DECLINE, which reserves nothing.
+ *  The paper route is read before issuance so “ขอฟอร์มไปเซ็นเอง ไม่ต้องออกเอกสาร” is one decline of
+ *  issuance, not two conflicting choices. */
+function issueDecisionChoice(text: string): 'ISSUE' | 'FORM' | 'EDIT' | 'DECLINE' | undefined {
+  const value = normalizedText(text);
+  if (DECISION_QUESTION.test(value)) return undefined;
+  const numbered = /^([123])[.)]?$/u.exec(value)?.[1];
+  if (numbered) return numbered === '1' ? 'ISSUE' : numbered === '2' ? 'FORM' : 'EDIT';
+  const wanted = DECISION_FORM.test(value) ? 'FORM' as const
+    : DECISION_EDIT.test(value) ? 'EDIT' as const
+    : DECISION_ISSUE.test(value) ? 'ISSUE' as const
+    : undefined;
+  if (!wanted) return undefined;
+  return DECISION_DECLINE.test(value) ? 'DECLINE' : wanted;
+}
+
+/** R15 (D6): the sender's words say the payee could sign, which is the `ใบสำคัญรับเงิน` situation —
+ *  a different, stronger document this system does not produce. Explain it, say so, and ask; never
+ *  hand over the weaker document as if it were the same thing.
+ *
+ *  A refusal is the case `ใบรับรองแทนใบเสร็จรับเงิน` exists FOR, so “ผู้ขายไม่ยอมเซ็น” must never
+ *  trigger this. Two guards keep it out: the gap inside the pattern cannot cross a negation, and the
+ *  few characters before the match are checked as well (which is what catches the ID-copy phrase in
+ *  “ไม่มีสำเนาบัตรของผู้รับเงิน”).
+ *
+ *  OWNER-REVIEW-PENDING: the wording below is a draft. Spec §19 keeps the exact copy open until the
+ *  owner reviews it against a real conversation. The behaviour — explain, refuse to substitute
+ *  silently, ask one question — is settled; only these sentences are provisional. */
+const PAYEE_COULD_SIGN = /(?:ผู้รับเงิน|ผู้ขาย|เขา|ร้าน)(?:(?!ไม่|มิได้|ปฏิเสธ).){0,12}(?:เซ็นให้ได้|เซ็นแล้ว|ยอมเซ็น)|สำเนาบัตร(?:ประชาชน)?ของผู้รับเงิน/u;
+const PAYEE_REFUSED = /ไม่|มิได้|ปฏิเสธ/u;
+const PAYEE_COULD_SIGN_QUESTION = 'จะทำใบรับรองแทนใบเสร็จรับเงินต่อไหมคะ';
+
+function payeeCouldSignHeadline(text: string): string | undefined {
+  const normalized = text.normalize('NFC');
+  const match = PAYEE_COULD_SIGN.exec(normalized);
+  if (!match) return undefined;
+  if (PAYEE_REFUSED.test(normalized.slice(Math.max(0, match.index - 6), match.index + match[0].length))) return undefined;
+  return [
+    '📌 ถ้าผู้รับเงินลงนามให้ได้ เอกสารที่ตรงกับกรณีนี้คือ “ใบสำคัญรับเงิน” ซึ่งผู้รับเงินเป็นผู้ลงนามเอง มักแนบสำเนาบัตรประชาชนของผู้รับเงิน และเป็นหลักฐานที่หนักแน่นกว่า “ใบรับรองแทนใบเสร็จรับเงิน” ที่พนักงานผู้จ่ายรับรองตัวเอง',
+    'ระบบยังไม่รองรับการออกใบสำคัญรับเงินค่ะ',
+    'ตอบ “ทำต่อ” เพื่อทำใบรับรองแทนใบเสร็จรับเงินต่อ หรือ “ไม่ทำต่อ” เพื่อพักงานนี้ไว้',
+  ].join('\n');
+}
+
+/** Nest wraps a validation message in the exception body, so `.message` alone reports
+ *  “Bad Request Exception” for the object form prepare throws. */
+function exceptionText(error: unknown): string {
+  const body = error instanceof HttpException ? error.getResponse() : null;
+  if (typeof body === 'string') return body;
+  if (body && typeof body === 'object' && typeof (body as { message?: unknown }).message === 'string') {
+    return (body as { message: string }).message;
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 const VALUE_LABELS: Record<string, string> = {
   reasonCode: 'กรณีที่ใช้ใบเสร็จเดิมไม่ได้',
   missingReceiptReason: 'เหตุผลที่ไม่มีใบเสร็จ',
@@ -417,13 +498,15 @@ function formatStandalone(input: {
   choices?: string[];
   question: string;
   webPath?: string;
+  /** After a LINE prepare the default line is no longer true: LINE did prepare — and only prepare. */
+  boundary?: string;
 }): string {
   const lines = ['📄 ใบรับรองแทนใบเสร็จรับเงิน'];
   const echo = echoLines(input.echoed ?? {}, input.categories ?? []);
   if (echo.length) lines.push('รับทราบจากข้อความนี้ (ยังไม่บันทึก):', ...echo);
   lines.push(input.headline);
   (input.choices ?? []).forEach((choice, index) => lines.push(`${index + 1}) ${choice}`));
-  lines.push('LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
+  lines.push(input.boundary ?? 'LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
   lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
   if (input.webPath) lines.push(`เปิดในเว็บ: ${input.webPath}`);
   lines.push('', `ทำต่อ: ${input.question}`);
@@ -481,7 +564,7 @@ function formatResult(input: {
     lines.push('', 'สิ่งที่ยังต้องทำทั้งหมด:');
     input.blockers.forEach((item) => lines.push(`• ${item.message}`));
   } else {
-    lines.push('', '✅ ข้อมูลร่างพร้อมดำเนินการต่อในเว็บ');
+    lines.push('', '✅ ข้อมูลครบแล้ว พร้อมออกเอกสาร');
   }
   if (input.policy) {
     const source = input.policy.configured ? 'ตั้งค่าเฉพาะบริษัทแล้ว' : 'ใช้ค่าเริ่มต้นของระบบ';
@@ -492,6 +575,11 @@ function formatResult(input: {
   if (input.webPath) lines.push(`เปิดตรวจสอบในเว็บ: ${input.webPath}`);
   const next = input.blockers.find((item) => item.collectableInLine && QUESTIONS[item.code]);
   if (next) lines.push('', `ทำต่อ: ${QUESTIONS[next.code]}`);
+  // R13: nothing is missing, so the single next question is whether to issue — and it is a question,
+  // never an action already taken.
+  else if (input.state.pendingDecision === 'ISSUE_CONFIRM') {
+    lines.push('', `ทำต่อ: ${ISSUE_DECISION_QUESTION}`, ...ISSUE_DECISION_CHOICES.map((choice, index) => `${index + 1}) ${choice}`));
+  }
   if (input.sideAnswer && input.state.status === 'OPEN') {
     lines.push(`กลับมาทำรายการ ${input.expense.expenseNumber ?? input.expense.id} ต่อได้เลย งานเดิมยังอยู่และยังขาด ${input.state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้`);
   }
@@ -500,7 +588,10 @@ function formatResult(input: {
 
 @Injectable()
 export class LineSubstituteReceiptContinuationUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository) {}
+  constructor(
+    private readonly repo: PrismaExpenseRepository,
+    private readonly prepare: PrepareSubstituteReceiptUseCase,
+  ) {}
 
   async loadForWeb(ctx: RequestContext, expenseId: string, workflowId: string): Promise<LineSubstituteReceiptPrefill> {
     if (ctx.authProvider === 'line') throw new ForbiddenException('Open this continuation in the authenticated web app.');
@@ -596,6 +687,11 @@ export class LineSubstituteReceiptContinuationUseCase {
       const expenseId = input.recentCandidates[candidateIndex].id;
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
       if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เลือกไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณค่ะ');
+      // A prepared expense has a document number, a status and a page of its own; minting a fresh
+      // OPEN state over it would wipe the provenance the consumed continuation still holds and ask
+      // three questions that are already answered. Report the document instead, and write nothing.
+      const live = expense.substituteReceiptEvidence;
+      if (live && live.status !== 'SUPERSEDED') return this.existingEvidenceCard(ctx, input.webBaseUrl, expense, live);
       const now = new Date().toISOString();
       selected = {
         row: { id: expense.id, updatedAt: expense.updatedAt, sourceChannelMetadataJson: expense.sourceChannelMetadataJson },
@@ -612,7 +708,10 @@ export class LineSubstituteReceiptContinuationUseCase {
     if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการของงานนี้ไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณแล้วค่ะ');
     const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, selected.state.workflowId);
     const lowered = normalizedText(input.messageText).toLocaleLowerCase('th-TH');
-    const pause = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง)$/u.test(lowered);
+    // R15's question offers “ไม่ทำต่อ” as the way out, so the plain refusals join the pause set. They
+    // stay whole-message anchored, which is what keeps “ไม่มี” (the evidence answer) and “ไม่มีใบเสร็จ”
+    // (a reason code) out of it.
+    const pause = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u.test(lowered);
     const cancel = /^(ยกเลิก|ยกเลิกงานนี้|ไม่ทำแล้ว)$/u.test(lowered);
     if (pause || cancel) {
       const nextState = { ...selected.state, status: pause ? 'PAUSED' as const : 'CANCELLED' as const };
@@ -633,7 +732,28 @@ export class LineSubstituteReceiptContinuationUseCase {
       };
     }
 
+    // R15 (D6) short-circuits the whole turn: the sender may be describing a situation that calls
+    // for a different document, so nothing is merged, nothing is decided, nothing is prepared, and
+    // the stored state is left exactly as it was. The reply is the explanation and its one question;
+    // “ทำต่อ” resumes with whatever was already pending, “ไม่ทำต่อ” pauses through the branch above.
+    // It never reaches FORBIDDEN, PAUSED, CANCELLED or STALE turns — those all returned already.
+    const wrongDocument = payeeCouldSignHeadline(input.messageText);
+    if (wrongDocument) {
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: selected.state.workflowId,
+        acceptedFields: [], blockers: [], webPath, pendingQuestion: PAYEE_COULD_SIGN_QUESTION,
+        resumeCapsule: resumeCapsule(expense, selected.state, [], webPath),
+        replyText: formatStandalone({ headline: wrongDocument, question: PAYEE_COULD_SIGN_QUESTION, webPath }),
+      };
+    }
+
     const categories = await this.repo.listCategories(ctx.companyId);
+    // R13: the assistant asked whether to issue, so this turn is that answer. It runs before value
+    // extraction, otherwise a bare “1” would be read as a stray value instead of a choice.
+    if (selected.state.pendingDecision === 'ISSUE_CONFIRM') {
+      const decided = await this.answerIssueDecision(ctx, input, expense, selected.state, categories);
+      if (decided) return decided;
+    }
     const pendingField = selected.state.missingFields[0] ?? null;
     const acceptedNow = extractValues(input.messageText, pendingField, ctx.userId, categories);
     const sideAnswer = groundedSideAnswer(expense, input.messageText);
@@ -672,7 +792,10 @@ export class LineSubstituteReceiptContinuationUseCase {
       resolvedFields: Object.keys(acceptedValues).sort(),
       missingFields,
       attachmentRefs: expense.attachments.filter((item) => item.status === 'ACTIVE').map((item) => item.id).slice(0, 20),
-      pendingQuestion: pending ? QUESTIONS[pending.code] : null,
+      pendingQuestion: pending ? QUESTIONS[pending.code] : blockers.length ? null : ISSUE_DECISION_QUESTION,
+      // Set only while the preflight is clean: a value the user changes later reopens a blocker and
+      // takes the decision back off the table until everything is answered again.
+      pendingDecision: blockers.length ? undefined : 'ISSUE_CONFIRM',
       targetRevision: expense.updatedAt.toISOString(),
       lastActivityAt: acceptedAt,
     };
@@ -698,5 +821,244 @@ export class LineSubstituteReceiptContinuationUseCase {
       ...(state.pendingQuestion ? { pendingQuestion: state.pendingQuestion } : {}),
       replyText: formatResult({ status, expense, state, acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath, policy: policyFacts, sideAnswer }),
     };
+  }
+
+  /** The evidence already exists, so the conversation reports it instead of starting over. Nothing
+   *  is written: the consumed continuation keeps the provenance of every value it collected. */
+  private existingEvidenceCard(
+    ctx: RequestContext,
+    webBaseUrl: string | undefined,
+    expense: ExpenseRecordWithRelations,
+    evidence: { id: string; documentNumber: string; status: string },
+  ): LineSubstituteReceiptContinuationResult {
+    const webPath = absoluteLink(webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
+    const issued = evidence.status === 'ISSUED';
+    return {
+      handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath,
+      replyText: formatStandalone({
+        headline: [
+          `${issued ? '✅ ออกเอกสารแล้ว' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
+          `รายการ ${expense.expenseNumber ?? expense.id} · ยอด ${expense.grandTotalAmount} ${expense.currency}`,
+          issued
+            ? 'เอกสารออกเรียบร้อยแล้ว เปิดดูและดาวน์โหลดได้ในเว็บ'
+            : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
+        ].join('\n'),
+        boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+        question: issued
+          ? 'เปิดลิงก์ด้านบนเพื่อดาวน์โหลดเอกสารได้เลยค่ะ'
+          : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ',
+        webPath,
+      }),
+    };
+  }
+
+  /** R13 answer handling. `undefined` means "not an answer to this question, but it does carry
+   *  values" — the normal collect-and-re-ask path owns those, so a correction is never lost. */
+  private async answerIssueDecision(
+    ctx: RequestContext,
+    input: { messageText: string; webBaseUrl?: string },
+    expense: ExpenseRecordWithRelations,
+    state: LineSubstituteReceiptContinuation,
+    categories: Array<{ id: string; name: string }>,
+  ): Promise<LineSubstituteReceiptContinuationResult | undefined> {
+    const choice = issueDecisionChoice(input.messageText);
+    const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
+    if (!choice) {
+      // §15: a question asked while the decision is open is still answered from source state, and the
+      // capsule reminds the sender what is waiting — otherwise the dispatcher deflects to a general
+      // AI turn and this work drops out of the conversation.
+      const sideAnswer = groundedSideAnswer(expense, input.messageText);
+      if (Object.keys(extractValues(input.messageText, null, ctx.userId, categories)).length > 0) return undefined;
+      // Re-ask the one question rather than replaying the whole status card at someone who already read it.
+      return {
+        handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
+        acceptedFields: [], blockers: [], pendingQuestion: ISSUE_DECISION_QUESTION, webPath,
+        ...(sideAnswer ? { sideQuestionAnswered: true } : {}),
+        resumeCapsule: resumeCapsule(expense, state, [], webPath),
+        replyText: formatStandalone({
+          headline: sideAnswer
+            ? `${sideAnswer}\n\nข้อมูลครบแล้ว รอเลือกว่าจะทำอะไรต่อค่ะ`
+            : 'ยังไม่แน่ใจว่าจะให้ทำอะไรต่อค่ะ ตอบเป็นหมายเลข 1-3 ได้เลย',
+          choices: ISSUE_DECISION_CHOICES,
+          question: ISSUE_DECISION_QUESTION,
+        }),
+      };
+    }
+    if (choice === 'DECLINE') {
+      // An explicit "not now" reserves nothing and loses nothing. The decision marker is cleared so
+      // the next turn re-derives it from a fresh preflight instead of replaying a stale question.
+      const saved = await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+        continuation: { ...state, pendingDecision: undefined, pendingQuestion: null } as unknown as Record<string, unknown>,
+      });
+      const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        acceptedFields: [], blockers: [],
+        webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
+        resumeCapsule: resumeCapsule(expense, next, [], workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId)),
+        replyText: formatStandalone({
+          headline: 'รับทราบค่ะ ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่ งานนี้ยังเปิดอยู่ ข้อมูลที่รับไว้ยังอยู่ครบ',
+          question: 'บอกได้ตลอดเมื่อพร้อมให้ออกเอกสารค่ะ',
+          webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
+        }),
+      };
+    }
+    if (choice === 'EDIT') {
+      const question = 'จะแก้ช่องไหนคะ? ตอบแบบมีป้ายกำกับได้เลย เช่น “วัตถุประสงค์: ไปพบลูกค้า”';
+      const saved = await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+        // The decision is off the table until the edit lands, so the next labelled answer merges as usual.
+        continuation: { ...state, pendingDecision: undefined, pendingQuestion: question } as unknown as Record<string, unknown>,
+      });
+      const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        acceptedFields: [], blockers: [], pendingQuestion: question,
+        webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
+        replyText: formatStandalone({
+          headline: 'แก้ได้เลยค่ะ ช่องที่แก้ผ่าน LINE ได้:',
+          choices: [...new Set(Object.values(FIELD_BY_BLOCKER))].map((field) => VALUE_LABELS[field] ?? field),
+          question,
+          webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
+        }),
+      };
+    }
+    if (choice === 'ISSUE') {
+      // Unpinned: ACTIVE only, because this signature is about to sign something new (R9).
+      const signature = await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
+      if (!signature) return this.askForSignature(ctx, input, expense, state);
+    }
+    return this.prepareFromLine(ctx, input, expense, state, choice);
+  }
+
+  /** Journey A step 5, and the loop it must not become. A LINE-uploaded signature is stored
+   *  `PENDING_OWNER_APPROVAL`, which the ACTIVE-only reusable lookup cannot see — so asking for a
+   *  photo again would repeat forever while the photo already sits in the owner's queue. The newest
+   *  asset's status decides which of the three true situations the sender is actually in. */
+  private async askForSignature(
+    ctx: RequestContext,
+    input: { webBaseUrl?: string },
+    expense: ExpenseRecordWithRelations,
+    state: LineSubstituteReceiptContinuation,
+  ): Promise<LineSubstituteReceiptContinuationResult> {
+    const latest = await this.repo.findLatestSignatureAssetStatus(ctx.companyId, ctx.userId);
+    const sendPhoto = 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ';
+    const howTo = [
+      'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้',
+      'ระบบจะเก็บเป็นลายเซ็นประจำตัว (รอเจ้าของกิจการอนุมัติก่อนใช้งาน) แล้วใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก',
+    ];
+    const waiting = latest?.status === 'PENDING_OWNER_APPROVAL';
+    const rejected = latest?.status === 'REJECTED';
+    const question = waiting ? 'ระหว่างรออนุมัติ จะขอฟอร์มไปเซ็นเองก่อนไหมคะ (ตอบ 2)' : sendPhoto;
+    return {
+      handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+      acceptedFields: [],
+      blockers: [blocker(
+        waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
+        waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
+        true,
+      )],
+      // The decision stays pending and nothing is written, so “1” after the photo lands here again.
+      pendingQuestion: question,
+      webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId),
+      replyText: formatStandalone({
+        headline: (waiting
+          ? [
+            'ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บค่ะ',
+            'พออนุมัติแล้วจะใช้ลงนามได้ทันที ไม่ต้องส่งรูปใหม่',
+            'ถ้าไม่อยากรอ ขอฟอร์มไปเซ็นด้วยมือก่อนได้',
+          ]
+          : rejected
+            ? [
+              `ลายเซ็นที่ส่งมาก่อนหน้านี้ไม่ผ่านการอนุมัติค่ะ${latest?.rejectReason ? ` (เหตุผล: ${latest.rejectReason})` : ''}`,
+              ...howTo,
+            ]
+            : ['ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ', ...howTo]).join('\n'),
+        ...(waiting ? { choices: ISSUE_DECISION_CHOICES } : {}),
+        question,
+      }),
+    };
+  }
+
+  /** R7 from the conversation: prepare with the values the preflight already cleared, then hand the
+   *  work to the one web page where certification and approval happen. */
+  private async prepareFromLine(
+    ctx: RequestContext,
+    input: { webBaseUrl?: string },
+    expense: ExpenseRecordWithRelations,
+    state: LineSubstituteReceiptContinuation,
+    choice: 'ISSUE' | 'FORM',
+  ): Promise<LineSubstituteReceiptContinuationResult> {
+    const values = state.acceptedValues;
+    const active = expense.attachments.filter((item) => item.status === 'ACTIVE');
+    const paymentEvidenceAttachmentIds = active.filter((item) => item.purpose === 'expense.payment.evidence').map((item) => item.id);
+    // Same split the web wizard uses. `expense.review.evidence` is the system's own output — the
+    // certified/issued SVG of a superseded version and its signature renders — so linking it back in
+    // would print the previous certificate as supporting evidence for its own replacement.
+    const supportingAttachmentIds = active
+      .filter((item) => item.purpose !== 'expense.payment.evidence' && item.purpose !== 'expense.review.evidence')
+      .map((item) => item.id);
+    try {
+      const evidence = await this.prepare.execute(ctx, expense.id, {
+        // The preflight was clean, so every required value is present; prepare re-validates anyway
+        // and any gap comes back as the degraded reply below rather than an exception.
+        reasonCode: values.reasonCode!,
+        missingReceiptReason: values.missingReceiptReason ?? expense.missingReceiptReason ?? '',
+        businessPurpose: values.businessPurpose!,
+        payerUserId: values.payerUserId!,
+        ...(values.payeeName ? { payeeName: values.payeeName } : {}),
+        ...(values.paymentMethod ? { paymentMethod: values.paymentMethod } : {}),
+        ...(values.paymentDate ? { paymentDate: values.paymentDate } : {}),
+        paymentEvidenceAttachmentIds,
+        supportingAttachmentIds,
+        // One prepare per continuation: a repeated “1” returns the same reserved document number.
+        idempotencyKey: state.workflowId,
+        continuationId: state.workflowId,
+        expectedExpenseUpdatedAt: state.targetRevision,
+      });
+      const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
+      const amount = `${expense.grandTotalAmount} ${expense.currency}`;
+      return {
+        handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
+        acceptedFields: [], blockers: [], webPath,
+        replyText: formatStandalone({
+          headline: choice === 'ISSUE'
+            ? [
+              `🔵 รอยืนยัน — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
+              `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
+              'ขั้นต่อไปทำในเว็บหน้าเดียว: ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ',
+            ].join('\n')
+            : [
+              `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
+              `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
+              'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว',
+            ].join('\n'),
+          boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
+          question: choice === 'ISSUE'
+            ? 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ'
+            : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ',
+          webPath,
+        }),
+      };
+    } catch (error) {
+      // A prepare that cannot happen is a state the sender can act on, not a stack trace.
+      const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
+      if (error instanceof ConflictException) {
+        return {
+          handled: true, status: 'STALE', expenseId: expense.id, workflowId: state.workflowId,
+          acceptedFields: [], blockers: [], webPath,
+          replyText: formatResult({ status: 'STALE', expense, state, acceptedFields: [], blockers: [], webPath }),
+        };
+      }
+      const blockers = [blocker('substitute_prepare_failed', `ยังเตรียมเอกสารไม่ได้: ${exceptionText(error)}`)];
+      return {
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+        acceptedFields: [], blockers, webPath,
+        replyText: formatResult({ status: 'BLOCKED', expense, state, acceptedFields: [], blockers, webPath }),
+      };
+    }
   }
 }

@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import {
   ApproveSubstituteReceiptUseCase,
   CertifySubstituteReceiptUseCase,
+  DownloadSubstituteReceiptFormPdfUseCase,
+  DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   PrepareSubstituteReceiptUseCase,
   PreviewSubstituteReceiptUseCase,
@@ -930,5 +932,86 @@ describe('re-pointing a signature derivative (R9 hardening)', () => {
     await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-derived' });
     assert.equal('status' in updated(), false);
     assert.equal(entries[0].metadataJson.demotedFromActive, false);
+  });
+});
+
+describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () => {
+  const line = (userId = 'payer-1', permissions = ['expense.review']) => ({ ...ctx(userId, permissions), authProvider: 'line' });
+
+  function prepareHarness() {
+    const audits: any[] = [];
+    let captured: any;
+    const repo = {
+      findByIdWithRelations: async () => expense(),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findSubstituteEvidenceAttachments: async () => [],
+      createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared(); },
+    } as any;
+    const useCase = new PrepareSubstituteReceiptUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any, notification);
+    return { useCase, audits, input: () => captured };
+  }
+
+  const input = {
+    reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'วินไม่ออกใบเสร็จ',
+    businessPurpose: 'ไปพบลูกค้า', payerUserId: 'payer-1', paymentMethod: 'CASH' as const,
+    idempotencyKey: 'workflow-1', continuationId: 'workflow-1', expectedExpenseUpdatedAt: now.toISOString(),
+  };
+
+  it('prepares from LINE with expense.review and records the channel on the row and the audit', async () => {
+    const h = prepareHarness();
+    await h.useCase.execute(line() as any, 'exp-1', input);
+
+    assert.equal(h.input().preparedFromChannel, 'LINE');
+    const audit = h.audits.find((entry) => entry.action === 'expense.substitute_receipt.prepare');
+    assert.equal(audit.metadataJson.preparedFromChannel, 'LINE');
+    assert.equal(audit.metadataJson.source, 'LINE', 'spec §14 names the LINE source explicitly');
+  });
+
+  it('still records WEB for an authenticated web prepare, with no LINE source claim', async () => {
+    const h = prepareHarness();
+    await h.useCase.execute(ctx('payer-1'), 'exp-1', input);
+
+    assert.equal(h.input().preparedFromChannel, 'WEB');
+    const audit = h.audits.find((entry) => entry.action === 'expense.substitute_receipt.prepare');
+    assert.equal(audit.metadataJson.preparedFromChannel, 'WEB');
+    assert.equal('source' in audit.metadataJson, false);
+  });
+
+  it('refuses a LINE prepare without expense.review', async () => {
+    const h = prepareHarness();
+    await assert.rejects(
+      () => h.useCase.execute(line('payer-1', []) as any, 'exp-1', input),
+      /expense\.review/,
+    );
+  });
+
+  it('keeps certify, approve, preview, and artifact download web-only', async () => {
+    const repo = { findSubstituteEvidence: async () => prepared() } as any;
+    const web = /authenticated web only/;
+    await assert.rejects(
+      () => new CertifySubstituteReceiptUseCase(repo, {} as any, audit, notification, cleanup)
+        .execute(line() as any, 'exp-1', 'sub-1', { certificationAcknowledged: true } as any),
+      web,
+    );
+    await assert.rejects(
+      () => new ApproveSubstituteReceiptUseCase(repo, {} as any, audit, cleanup)
+        .execute(line('payer-1', ['expense.confirm']) as any, 'exp-1', 'sub-1', { approvalAcknowledged: true } as any),
+      web,
+    );
+    await assert.rejects(
+      () => new PreviewSubstituteReceiptUseCase(repo).execute(line() as any, 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' }),
+      web,
+    );
+    await assert.rejects(
+      () => new DownloadSubstituteReceiptPdfUseCase({ execute: async () => ({}) } as any, repo, {} as any, audit)
+        .execute(line() as any, 'exp-1', 'sub-1'),
+      web,
+    );
+    await assert.rejects(
+      () => new DownloadSubstituteReceiptFormPdfUseCase(repo, audit).execute(line() as any, 'exp-1', 'sub-1'),
+      web,
+    );
   });
 });

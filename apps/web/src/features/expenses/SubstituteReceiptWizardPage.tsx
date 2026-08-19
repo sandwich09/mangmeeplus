@@ -28,6 +28,7 @@ import {
   completePersonalSignatureUpload,
   createExpenseDraft,
   downloadPaymentVoucherPdf,
+  downloadSubstituteReceiptFormPdf,
   downloadSubstituteReceiptPdf,
   fetchAttachmentPreviewBlob,
   fetchSubstituteReceiptPdfBlob,
@@ -2110,9 +2111,17 @@ export function SubstituteReceiptWizardPage({
                   {previewChecksum && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.preview_help', locale)}</p>
-                <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
-                  <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className={ghostClass} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
+                    <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
+                  </button>
+                  {/* R8: the printable route out of this step — same document, both signature boxes
+                      blank, UNSIGNED watermark. Not a preview and not the issued certificate. */}
+                  <button type="button" className={ghostClass} disabled={busy} onClick={() => void run(() => downloadSubstituteReceiptFormPdf(companyId, receiptEvidence.expenseId, receiptEvidence.id, receiptEvidence.documentNumber))}>
+                    <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute_wizard.download_form', locale)}</span>
+                  </button>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.download_form_help', locale)}</p>
               </div>
               <div className="rounded-2xl border border-gray-200 p-4">
                 <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}<RequiredMark /></p>

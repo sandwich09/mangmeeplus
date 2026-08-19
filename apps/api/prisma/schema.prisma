@@ -2066,6 +2066,20 @@ enum SubstituteReceiptEvidenceStatus {
   SUPERSEDED
 }
 
+// DIGITAL embeds a signature image in the rendered artifact; PAPER carries the ink on a photographed
+// sheet instead, so the issued artifact is that scan plus a system attestation page (spec R10/R11).
+enum SubstituteReceiptSignatureMode {
+  DIGITAL
+  PAPER
+}
+
+// Which surface reserved the document number (spec R7). LINE may prepare; it may never sign,
+// approve, issue, or download.
+enum SubstituteReceiptPreparedChannel {
+  WEB
+  LINE
+}
+
 enum ExpenseCashEvidencePolicy {
   REQUIRE_SEPARATE_PAYMENT_EVIDENCE
   ALLOW_SUPPORTING_EVIDENCE_ONLY
@@ -2496,6 +2510,10 @@ model ExpenseSubstituteReceiptEvidence {
   approvedAt                      DateTime?
   artifactAttachmentId            String?                         @unique
   checksumSha256                  String?
+  signatureMode                   SubstituteReceiptSignatureMode  @default(DIGITAL)
+  wetSignedScanAttachmentId       String?                         @unique
+  wetSignedScanChecksumSha256     String?
+  preparedFromChannel             SubstituteReceiptPreparedChannel @default(WEB)
   supersededAt                    DateTime?
   supersedeReason                 String?
   issuedByUserId                  String?
