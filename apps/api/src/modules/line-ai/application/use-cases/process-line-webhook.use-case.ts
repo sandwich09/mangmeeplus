@@ -1447,11 +1447,15 @@ export class ProcessLineWebhookUseCase {
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         recentCandidates: recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
+        webBaseUrl: this.config.webBaseUrl,
       });
+      // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
+      // through the normal branch instead of being reduced to a side-question interruption.
       const routeSideQuestion = hasSubstituteClarification
         && !isSubstituteReceiptConversationText(normalizedText)
         && isInterveningQuestionText(normalizedText)
-        && !result.sideQuestionAnswered;
+        && !result.sideQuestionAnswered
+        && result.status !== 'FORBIDDEN';
       if (routeSideQuestion) {
         substituteInterruption = result;
       } else {
@@ -2826,6 +2830,7 @@ export class ProcessLineWebhookUseCase {
           messageText: additionalText,
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
+          webBaseUrl: this.config.webBaseUrl,
         });
         reply = `${reply}\n\nผลคำขอเพิ่มเติม:\n${continuation.replyText}`;
         pendingQuestion = continuation.pendingQuestion;

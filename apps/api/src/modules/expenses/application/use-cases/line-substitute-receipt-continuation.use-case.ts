@@ -58,13 +58,15 @@ export type LineSubstituteReceiptContinuationResult = {
   resumeCapsule?: string;
 };
 
+// NFC, never NFKC: NFKC decomposes ำ (U+0E33 → U+0E4D U+0E32), which both mangles echoed user text
+// and stops every composed-ำ literal below (ทำใบรับรองต่อ, ไว้ทำทีหลัง, ไม่ทำแล้ว) from ever matching.
 export function isSubstituteReceiptConversationText(text: string): boolean {
-  const normalized = text.normalize('NFKC').toLocaleLowerCase('th-TH');
+  const normalized = text.normalize('NFC').toLocaleLowerCase('th-TH');
   return /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ใบรับรองแทนเงินสด|ทำใบรับรองต่อ)/u.test(normalized);
 }
 
 function normalizedText(value: string): string {
-  return value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return value.normalize('NFC').replace(/\s+/g, ' ').trim();
 }
 
 function bounded(value: string | undefined, max = MAX_VALUE_LENGTH): string | undefined {
@@ -288,8 +290,79 @@ const VALUE_LABELS: Record<string, string> = {
   expenseCategoryId: 'หมวดค่าใช้จ่าย',
 };
 
-function workflowLink(companyId: string, expenseId: string, workflowId: string): string {
-  return `/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&workflow=${encodeURIComponent(workflowId)}`;
+/** Resolves the path against the base ORIGIN (any path in webBaseUrl is dropped), matching
+ *  safeTenantLink in line-business-card.logic.ts so the card lifts the result into a button.
+ *  An absent or unparseable base degrades to the relative path instead of throwing. */
+function absoluteLink(webBaseUrl: string | undefined, path: string): string {
+  try {
+    return webBaseUrl ? new URL(path, webBaseUrl).toString() : path;
+  } catch {
+    return path;
+  }
+}
+
+function workflowLink(webBaseUrl: string | undefined, companyId: string, expenseId: string, workflowId: string): string {
+  return absoluteLink(webBaseUrl, `/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&workflow=${encodeURIComponent(workflowId)}`);
+}
+
+const PAYMENT_METHOD_LABELS: Record<ExpensePaymentMethod, string> = {
+  CASH: 'เงินสด', BANK_TRANSFER: 'โอนเงิน', CARD: 'บัตร', CHEQUE: 'เช็ค', OTHER: 'วิธีอื่น',
+};
+
+const REASON_CODE_LABELS: Record<SubstituteReceiptReasonCode, string> = {
+  PAYEE_CANNOT_ISSUE: 'ผู้ขายออกใบเสร็จให้ไม่ได้',
+  RECEIPT_MATERIALLY_INCOMPLETE: 'เอกสารเดิมไม่สมบูรณ์',
+  RECEIPT_UNAVAILABLE: 'ไม่มีใบเสร็จ/ใบเสร็จหาย',
+  OTHER: 'กรณีอื่น',
+};
+
+/** Every echoed bullet shows a value the sender can recognise: no ids, no enum codes, no ISO dates. */
+function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }>): string[] {
+  return Object.entries(values).map(([field, value]) => {
+    const shown = field === 'reasonCode' ? REASON_CODE_LABELS[value as SubstituteReceiptReasonCode]
+      : field === 'paymentMethod' ? PAYMENT_METHOD_LABELS[value as ExpensePaymentMethod]
+      : field === 'payerUserId' ? 'คุณ (ผู้ส่งข้อความ)'
+      : field === 'expenseCategoryId' ? categories.find((item) => item.id === value)?.name
+      // UTC keeps a date-only value on its own calendar day regardless of server timezone.
+      : field === 'paymentDate' ? new Date(`${value}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+      : String(value);
+    return `• ${VALUE_LABELS[field] ?? field}: ${shown ?? value}`;
+  });
+}
+
+/** Replies emitted before a target exists (or without permission) keep formatResult's shape:
+ *  what is understood → what is missing → boundary → VAT caveat → link → exactly one question. */
+function formatStandalone(input: {
+  echoed?: LineSubstituteReceiptValues;
+  categories?: Array<{ id: string; name: string }>;
+  headline: string;
+  choices?: string[];
+  question: string;
+  webPath?: string;
+}): string {
+  const lines = ['📄 ใบรับรองแทนใบเสร็จรับเงิน'];
+  const echo = echoLines(input.echoed ?? {}, input.categories ?? []);
+  if (echo.length) lines.push('รับทราบจากข้อความนี้ (ยังไม่บันทึก):', ...echo);
+  lines.push(input.headline);
+  (input.choices ?? []).forEach((choice, index) => lines.push(`${index + 1}) ${choice}`));
+  lines.push('LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
+  lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
+  if (input.webPath) lines.push(`เปิดในเว็บ: ${input.webPath}`);
+  lines.push('', `ทำต่อ: ${input.question}`);
+  return lines.join('\n');
+}
+
+/** The target exists but is not readable under the current permissions/branch scope: no workflow link,
+ *  no pending question (nothing here is answerable in chat), just the expense list to check scope. */
+function targetOutOfScope(companyId: string, webBaseUrl: string | undefined, headline: string): LineSubstituteReceiptContinuationResult {
+  return {
+    handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
+    replyText: formatStandalone({
+      headline,
+      question: 'เปิดรายการค่าใช้จ่ายในเว็บเพื่อตรวจสอบสิทธิ์และสาขาก่อนได้ไหมคะ?',
+      webPath: absoluteLink(webBaseUrl, `/companies/${companyId}/expenses`),
+    }),
+  };
 }
 
 function resumeCapsule(
@@ -378,7 +451,19 @@ export class LineSubstituteReceiptContinuationUseCase {
     messageText: string;
     chatKeyHash: string;
     recentCandidates: Array<{ id: string; label: string }>;
+    webBaseUrl?: string;
   }): Promise<LineSubstituteReceiptContinuationResult> {
+    // R3: the permission a link needs is checked before any target is discovered, so no link is offered.
+    if (!ctx.permissions.includes('expense.review')) {
+      return {
+        handled: true, status: 'FORBIDDEN', acceptedFields: [],
+        blockers: [blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน')],
+        replyText: formatStandalone({
+          headline: 'จัดทำใบรับรองแทนใบเสร็จรับเงินต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
+          question: 'ขอสิทธิ์ตรวจทานค่าใช้จ่ายจากผู้ดูแลบริษัทก่อนได้ไหมคะ?',
+        }),
+      };
+    }
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
@@ -390,26 +475,49 @@ export class LineSubstituteReceiptContinuationUseCase {
     let selected = states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
 
     if (!selected && states.length > 1) {
-      const choices = states.map((item, index) => `${index + 1}) ${item.state.expenseId}`).join('\n');
-      return { handled: true, status: 'TARGET_REQUIRED', replyText: `มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ กรุณาเลือกก่อนค่ะ\n${choices}`, acceptedFields: [], blockers: [] };
+      // The question is pending so the dispatcher keeps the clarification open and routes “1” back here.
+      const question = 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)';
+      return {
+        handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [], pendingQuestion: question,
+        replyText: formatStandalone({
+          headline: 'มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ ยังไม่ทราบว่าจะทำงานไหนต่อค่ะ',
+          choices: states.map((item) => item.state.expenseId),
+          question,
+        }),
+      };
     }
 
     if (!selected) {
       const candidateIndex = selection ?? (input.recentCandidates.length === 1 ? 0 : null);
       if (candidateIndex === null || !input.recentCandidates[candidateIndex]) {
-        const choices = input.recentCandidates.map((item, index) => `${index + 1}) ${item.label}`).join('\n');
+        const hasChoices = input.recentCandidates.length > 0;
+        const question = hasChoices
+          ? 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)'
+          : 'เปิดในเว็บเพื่อเลือกรายการค่าใช้จ่ายก่อนได้ไหมคะ?';
+        const categories = await this.repo.listCategories(ctx.companyId);
         return {
           handled: true,
           status: 'TARGET_REQUIRED',
-          replyText: choices
-            ? `กรุณาเลือกรายการที่จะทำใบรับรองแทนใบเสร็จรับเงินก่อนค่ะ\n${choices}`
-            : `ยังระบุรายการค่าใช้จ่ายไม่ได้ค่ะ กรุณาเปิดรายการในเว็บก่อน\n/companies/${ctx.companyId}/expenses/substitute-receipts/new`,
+          // Nothing is persisted without a target, so the values are echoed back instead of dropped.
+          replyText: formatStandalone({
+            echoed: extractValues(input.messageText, null, ctx.userId, categories),
+            categories,
+            headline: hasChoices
+              ? 'ยังไม่ทราบว่าจะทำใบรับรองให้รายการค่าใช้จ่ายไหนค่ะ'
+              : 'ยังไม่พบรายการค่าใช้จ่ายในแชทนี้ที่จะทำใบรับรองให้ค่ะ',
+            choices: input.recentCandidates.map((item) => item.label),
+            question,
+            webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/new`),
+          }),
+          // Only a numbered choice stays pending; with no candidate the web link is the exit, so the
+          // next unrelated message must not be captured as an answer.
+          ...(hasChoices ? { pendingQuestion: question } : {}),
           acceptedFields: [], blockers: [],
         };
       }
       const expenseId = input.recentCandidates[candidateIndex].id;
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
-      if (!expense) return { handled: true, status: 'TARGET_REQUIRED', replyText: 'ไม่พบรายการที่เลือกในสิทธิ์หรือสาขาปัจจุบันค่ะ', acceptedFields: [], blockers: [] };
+      if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เลือกไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณค่ะ');
       const now = new Date().toISOString();
       selected = {
         row: { id: expense.id, updatedAt: expense.updatedAt, sourceChannelMetadataJson: expense.sourceChannelMetadataJson },
@@ -423,8 +531,8 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
 
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, selected.state.expenseId, undefined, ctx.scopes ?? {});
-    if (!expense) return { handled: true, status: 'TARGET_REQUIRED', replyText: 'ไม่พบรายการนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ', acceptedFields: [], blockers: [] };
-    const webPath = workflowLink(ctx.companyId, expense.id, selected.state.workflowId);
+    if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการของงานนี้ไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณแล้วค่ะ');
+    const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, selected.state.workflowId);
     const lowered = normalizedText(input.messageText).toLocaleLowerCase('th-TH');
     const pause = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง)$/u.test(lowered);
     const cancel = /^(ยกเลิก|ยกเลิกงานนี้|ไม่ทำแล้ว)$/u.test(lowered);
@@ -500,7 +608,9 @@ export class LineSubstituteReceiptContinuationUseCase {
     const status = forbidden ? 'FORBIDDEN' as const : ineligible ? 'INELIGIBLE' as const : blockers.length ? 'BLOCKED' as const : 'READY_FOR_WEB' as const;
     const targetPath = forbidden
       ? undefined
-      : ineligible ? `/companies/${ctx.companyId}/expenses/${expense.id}` : workflowLink(ctx.companyId, expense.id, state.workflowId);
+      : ineligible
+        ? absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`)
+        : workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
     return {
       handled: true, status, workflowId: state.workflowId, expenseId: expense.id,
       acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath,

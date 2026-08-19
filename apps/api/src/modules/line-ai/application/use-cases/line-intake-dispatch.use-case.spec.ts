@@ -985,6 +985,30 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
   });
 
+  it('delivers a forbidden substitute outcome instead of silently dropping it as a side-question interruption', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'sub-clarify-1', question: 'เหตุผลคืออะไร?', text: 'ทำใบรับรองต่อ', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      substituteResult: {
+        handled: true, status: 'FORBIDDEN', acceptedFields: [],
+        blockers: [{ code: 'expense_review_forbidden' }],
+        // No resumeCapsule and no sideQuestionAnswered: the old routing lost this reply entirely.
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
+
+    assert.equal(h.substituteCalls.length, 1);
+    assert.match(h.replies[0] ?? '', /expense\.review/, 'the forbidden reason reaches the user');
+    assert.equal(h.routeRequests.length, 0, 'a forbidden outcome is answered deterministically, not routed to the model');
+  });
+
   it('answers a business question beside pending media, then deterministically resumes the stored picture choice', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows);

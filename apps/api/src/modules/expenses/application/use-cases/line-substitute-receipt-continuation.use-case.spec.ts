@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { LineSubstituteReceiptContinuationUseCase } from './line-substitute-receipt-continuation.use-case';
+import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase } from './line-substitute-receipt-continuation.use-case';
+
+const WEB_BASE = 'https://app.example.com';
 
 function ctx(): RequestContext {
   return {
@@ -84,15 +86,133 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(h.saves.length, 1);
   });
 
-  it('returns forbidden without a target-specific web link when review permission is missing', async () => {
+  it('returns forbidden with no link at all before any target is discovered when review permission is missing', async () => {
     const h = harness();
     const result = await h.useCase.execute({ ...ctx(), permissions: ['expense.receipt.line_upload'] }, {
-      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
     assert.equal(result.status, 'FORBIDDEN');
     assert.equal(result.webPath, undefined);
     assert.equal(result.replyText.includes('/expenses/expense-1'), false);
+    assert.match(result.replyText, /expense\.review|สิทธิ์ตรวจทานค่าใช้จ่าย/);
+    assert.equal(result.replyText.includes('/companies/'), false, 'a forbidden reply carries no tenant path');
+    assert.equal(result.replyText.includes('http'), false, 'a forbidden reply carries no link');
+    assert.equal(h.saves.length, 0);
+  });
+
+  it('matches the composed-ำ vocabulary the formatter itself tells users to type', () => {
+    assert.equal(isSubstituteReceiptConversationText('ทำใบรับรองต่อ'), true);
+    assert.equal(isSubstituteReceiptConversationText('ขอใบแทนใบเสร็จหน่อย'), true);
+    assert.equal(isSubstituteReceiptConversationText('ยอดขายเดือนนี้เท่าไหร่'), false);
+  });
+
+  it('echoes every understood value in readable Thai, byte-identical, with one absolute wizard link and no target', async () => {
+    const h = harness();
+    const result = await h.useCase.execute(ctx(), {
+      messageText: [
+        'สร้างใบทดแทนใบเสร็จ',
+        'ผู้รับเงิน: ร้านน้ำแข็ง',
+        'ยอด: 50 บาท',
+        'หมวด: ค่าเดินทาง',
+        'ชำระด้วยเงินสด',
+        'วันที่จ่าย: 15 สิงหาคม 2569',
+        'ฉันเป็นผู้จ่าย',
+        'ไม่มีใบเสร็จ',
+      ].join('\n'),
+      chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(result.status, 'TARGET_REQUIRED');
+    assert.match(result.replyText, /ยังไม่บันทึก/);
+    assert.ok(result.replyText.includes('• ผู้รับเงิน/ผู้ขาย: ร้านน้ำแข็ง'), 'ำ survives the round trip byte-identically');
+    assert.match(result.replyText, /• ยอดเงิน: 50/);
+    assert.match(result.replyText, /• หมวดค่าใช้จ่าย: ค่าเดินทาง/, 'a typed category is resolved to its name, not dropped');
+    assert.match(result.replyText, /• วิธีชำระเงิน: เงินสด/);
+    assert.match(result.replyText, /• ผู้จ่ายเงินจริง: คุณ \(ผู้ส่งข้อความ\)/);
+    assert.match(result.replyText, /• กรณีที่ใช้ใบเสร็จเดิมไม่ได้: ไม่มีใบเสร็จ\/ใบเสร็จหาย/);
+    assert.match(result.replyText, /• วันที่ชำระเงินจริง: 15 ส\.ค\. 2569/);
+    assert.equal(/^• .*: *$/mu.test(result.replyText), false, 'no echoed bullet is left dangling without a value');
+    assert.equal(result.replyText.includes('RECEIPT_UNAVAILABLE') || result.replyText.includes('CASH')
+      || result.replyText.includes('user-1') || result.replyText.includes('2026-08-15'), false, 'no raw ids, enums or ISO dates');
+    assert.equal(h.saves.length, 0, 'nothing is persisted without a target');
+    assert.equal(result.pendingQuestion, undefined, 'with no candidate the web link is the exit, so nothing stays pending');
+    assert.match(result.replyText, /https:\/\/app\.example\.com\/companies\/company-1\/expenses\/substitute-receipts\/new/);
+    assert.equal((result.replyText.match(/https?:\/\//gu) ?? []).length, 1, 'exactly one link');
+    assert.equal((result.replyText.match(/\/companies\//gu) ?? []).length, 1, 'no bare relative tenant path remains');
+    assert.equal((result.replyText.match(/ทำต่อ: /gu) ?? []).length, 1, 'exactly one next question');
+  });
+
+  it('answers out-of-scope targets with the formatter and the expense list, never hand-written copy', async () => {
+    const h = harness();
+    const unknown = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [{ id: 'expense-out-of-scope', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.equal(unknown.status, 'TARGET_REQUIRED');
+    assert.match(unknown.replyText, /^📄 ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.match(unknown.replyText, /สิทธิ์หรือสาขาปัจจุบัน/);
+    assert.match(unknown.replyText, /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\/company-1\/expenses$/mu);
+    assert.equal((unknown.replyText.match(/\/companies\//gu) ?? []).length, 1, 'no bare relative tenant path remains');
+    assert.equal(unknown.pendingQuestion, undefined, 'nothing here is answerable in chat');
+
+    await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    (h.useCase as any).repo.findByIdWithRelations = async () => null;
+    const lostTarget = await h.useCase.execute(ctx(), {
+      messageText: 'วัตถุประสงค์: ไปพบลูกค้า', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE, recentCandidates: [],
+    });
+    assert.equal(lostTarget.status, 'TARGET_REQUIRED');
+    assert.match(lostTarget.replyText, /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\/company-1\/expenses$/mu);
+    assert.equal((lostTarget.replyText.match(/\/companies\//gu) ?? []).length, 1);
+  });
+
+  it('lists numbered candidates when the target is ambiguous and still resolves the chosen number', async () => {
+    const h = harness();
+    const listed = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [
+        { id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' },
+        { id: 'expense-9', label: 'โน้ตค่าใช้จ่าย · 90.00' },
+      ],
+    });
+    assert.equal(listed.status, 'TARGET_REQUIRED');
+    assert.match(listed.replyText, /1\).*200\.00[\s\S]*2\).*90\.00/);
+    assert.equal(listed.pendingQuestion, listed.replyText.split('ทำต่อ: ')[1],
+      'the offered choice stays pending so the dispatcher routes the next “1” back here');
+
+    const chosen = await h.useCase.execute(ctx(), {
+      messageText: '1', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [
+        { id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' },
+        { id: 'expense-9', label: 'โน้ตค่าใช้จ่าย · 90.00' },
+      ],
+    });
+    assert.equal(chosen.expenseId, 'expense-1');
+    assert.equal(chosen.status, 'BLOCKED');
+  });
+
+  it('emits absolute links in the reply, resume capsule and webPath when a web base url is configured', async () => {
+    const h = harness();
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.equal(result.status, 'BLOCKED');
+    assert.ok(result.webPath?.startsWith(`${WEB_BASE}/companies/company-1/expenses/substitute-receipts/new?`));
+    assert.match(result.replyText, /เปิดตรวจสอบในเว็บ: https:\/\/app\.example\.com\/companies\//);
+    assert.match(result.resumeCapsule ?? '', /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\//);
+    assert.equal(result.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false,
+      'no bare relative tenant path survives once the absolute links are stripped');
+
+    const withoutBase = harness();
+    const relative = await withoutBase.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.ok(relative.webPath?.startsWith('/companies/company-1/'), 'an unset base degrades to the relative path');
+    assert.equal(relative.replyText.includes('http'), false);
   });
 
   it('accepts several labeled fields in one message, preserves them across a later partial answer, and never creates PREPARED evidence', async () => {
@@ -208,24 +328,30 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       { id: 'expense-1', updatedAt: current.updatedAt, sourceChannelMetadataJson: { lineSubstituteReceiptContinuation: state } },
       { id: 'expense-2', updatedAt: current.updatedAt, sourceChannelMetadataJson: { lineSubstituteReceiptContinuation: { ...state, workflowId: 'wf-2', expenseId: 'expense-2' } } },
     ];
-    const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'TARGET_REQUIRED');
     assert.match(result.replyText, /1\).*expense-1[\s\S]*2\).*expense-2/);
+    assert.equal(result.pendingQuestion, result.replyText.split('ทำต่อ: ')[1], 'the numbered choice stays pending');
+    assert.equal(result.replyText.includes('/companies/'), false, 'an ambiguous target offers no link at all');
   });
 
   it('pauses and cancels only conversation state without deleting the expense or evidence', async () => {
     const h = harness();
     await h.useCase.execute(ctx(), {
-      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
-    const paused = await h.useCase.execute(ctx(), { messageText: 'พักไว้ก่อน', chatKeyHash: 'chat-hash', recentCandidates: [] });
-    assert.equal(paused.status, 'PAUSED');
+    const paused = await h.useCase.execute(ctx(), { messageText: 'ไว้ทำทีหลัง', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(paused.status, 'PAUSED', 'the composed-ำ pause phrase matches');
     assert.equal(h.getExpense().id, 'expense-1');
     assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'PAUSED');
-    const cancelled = await h.useCase.execute(ctx(), { messageText: 'ยกเลิก', chatKeyHash: 'chat-hash', recentCandidates: [] });
-    assert.equal(cancelled.status, 'CANCELLED');
+    assert.ok(paused.webPath?.startsWith(`${WEB_BASE}/companies/company-1/`));
+    assert.equal(paused.replyText.includes('/companies/'), false);
+    const cancelled = await h.useCase.execute(ctx(), { messageText: 'ไม่ทำแล้ว', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(cancelled.status, 'CANCELLED', 'the composed-ำ cancel phrase matches');
     assert.equal(h.getExpense().id, 'expense-1');
+    assert.ok(cancelled.webPath?.startsWith(`${WEB_BASE}/companies/company-1/`));
+    assert.equal(cancelled.replyText.includes('/companies/'), false);
     const afterCancel = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
     assert.equal(afterCancel.status, 'TARGET_REQUIRED', 'closed values are not resurrected as active conversation state');
   });
@@ -233,12 +359,38 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
   it('routes a valid receipt to normal review unless unavailability/incompleteness is proven', async () => {
     const h = harness({ expense: expense({ sourceDocumentType: 'RECEIPT', vendorNameSnapshot: 'Royal Pizza' }) });
     const result = await h.useCase.execute(ctx(), {
-      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [{ id: 'expense-1', label: 'ใบเสร็จ · 2,890.00' }],
     });
     assert.equal(result.status, 'INELIGIBLE');
     assert.ok(result.blockers.some((item) => item.code === 'valid_receipt_normal_path'));
-    assert.match(result.webPath ?? '', /\/expenses\/expense-1$/);
+    assert.equal(result.webPath, `${WEB_BASE}/companies/company-1/expenses/expense-1`);
+    assert.match(result.replyText, /เปิดตรวจสอบในเว็บ: https:\/\/app\.example\.com\/companies\//);
+    assert.equal(result.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false);
+  });
+
+  it('reaches READY_FOR_WEB with absolute links once every blocker is answered', async () => {
+    const h = harness({
+      expense: expense({
+        vendorNameSnapshot: 'ร้านน้ำแข็ง', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'ร้านไม่ออกใบเสร็จ',
+        attachments: [
+          { id: 'att-1', status: 'ACTIVE', purpose: 'expense.source.document' },
+          { id: 'att-2', status: 'ACTIVE', purpose: 'expense.payment.evidence' },
+        ],
+      }),
+    });
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย',
+      chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.equal(result.status, 'READY_FOR_WEB');
+    assert.deepEqual(result.blockers, []);
+    assert.ok(result.webPath?.startsWith(`${WEB_BASE}/companies/company-1/expenses/substitute-receipts/new?`));
+    assert.match(result.replyText, /เปิดตรวจสอบในเว็บ: https:\/\/app\.example\.com\/companies\//);
+    assert.match(result.resumeCapsule ?? '', /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\//);
+    assert.equal(result.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false);
   });
 
   it('refuses to overwrite a newer web revision with a plain continuation answer', async () => {
@@ -249,8 +401,9 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     });
     h.getExpense().updatedAt = new Date(h.getExpense().updatedAt.getTime() + 5000);
     const before = h.saves.length;
-    const result = await h.useCase.execute(ctx(), { messageText: 'เป็นค่าเดินทาง', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    const result = await h.useCase.execute(ctx(), { messageText: 'เป็นค่าเดินทาง', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'STALE');
+    assert.match(result.replyText, /ตรวจสอบสถานะปัจจุบันในเว็บ: https:\/\/app\.example\.com\/companies\//);
     assert.equal(h.saves.length, before, 'stale text performs no write');
     const explicitResume = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
     assert.equal(explicitResume.status, 'STALE');
