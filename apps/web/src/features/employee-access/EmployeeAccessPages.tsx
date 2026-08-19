@@ -126,8 +126,8 @@ export const mutedPanelClass = 'rounded-lg border border-gray-200 bg-gray-50/70'
 // editable one. Same treatment the shared Field.tsx inputs use.
 export const inputClass = 'h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400';
 export const btnClass = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50';
-export const ghostClass = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-50';
-export const dangerClass = 'inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50';
+export const ghostClass = 'inline-flex h-11 sm:h-10 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:border-brand-200 hover:bg-brand-25 disabled:cursor-not-allowed disabled:opacity-50';
+export const dangerClass = 'inline-flex h-11 sm:h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50';
 const chipClass = 'inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600';
 const brandChipClass = 'inline-flex items-center gap-1.5 rounded-full border border-brand-100 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700';
 
@@ -219,7 +219,7 @@ export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees
     { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดู effective access ของทุกคน' },
   ];
   return (
-    <div className="min-h-[calc(100vh-64px)] bg-[#f7faf8]">
+    <div className="min-h-[calc(100dvh-var(--app-header-h))] bg-[#f7faf8]">
       <div className="mx-auto w-full max-w-[1480px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>

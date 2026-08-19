@@ -329,9 +329,27 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 
       <MangmeeCard className="p-6">
         {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
+        {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
+            click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
+            user cannot follow on the device they are holding — while photographing the receipt
+            is the entire job. Desktop keeps its dropzone verbatim. */}
+        <div className="flex flex-col gap-3 sm:hidden">
+          <label className={cx(btnClass, 'h-12 w-full cursor-pointer text-base')}>
+            <span className="inline-flex items-center justify-center gap-2">📷 {t('expenses.upload_capture_cta', locale)}</span>
+            {/* `capture` restricts the picker to the camera, so the button below keeps PDF and HEIC reachable. */}
+            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleFileChange} />
+          </label>
+          <label className="flex h-12 w-full cursor-pointer items-center justify-center rounded-lg border border-gray-300 bg-white text-base font-medium text-gray-700">
+            {t('expenses.upload_pick_cta', locale)}
+            <input type="file" accept={RECEIPT_UPLOAD_ACCEPT} className="sr-only" onChange={handleFileChange} />
+          </label>
+          <p className="text-sm leading-6 text-gray-500">{t('expenses.upload_capture_hint', locale)}</p>
+          {preparing ? <p className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</p> : fileName && <p className="truncate rounded-lg bg-brand-25 px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</p>}
+        </div>
+
         <label
           className={cx(
-            'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-11 text-center transition',
+            'hidden cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-11 text-center transition sm:flex',
             dragActive ? 'border-brand-500 bg-brand-50 shadow-[0_0_0_4px_rgba(52,211,153,0.14)]' : 'border-brand-300 bg-brand-25 hover:bg-brand-50',
           )}
           onDragEnter={handleDrag}
@@ -368,7 +386,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
         </button>
         {uploadPhase && <p className="mt-2 text-center text-sm font-semibold text-brand-700">{uploadPhase}</p>}
         {onNoDocument && (
-          <button type="button" className="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline" onClick={onNoDocument}>
+          <button type="button" className="mt-3 min-h-11 w-full text-center text-sm font-semibold text-brand-600 sm:min-h-0 hover:underline" onClick={onNoDocument}>
             {t('expenses.upload_no_document_link', locale)}
           </button>
         )}
@@ -1490,7 +1508,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
             {chips.map((c) => (
               <button key={c.key} onClick={() => setChip(c.key)}
-                className={cx('inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
                   chip === c.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
                 {c.label}
                 <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>

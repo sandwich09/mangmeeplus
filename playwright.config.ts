@@ -87,12 +87,48 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /evidence\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'mobile-chromium',
-      testMatch: /responsive\.spec\.ts/,
+      testMatch: /(responsive|evidence)\.spec\.ts/,
       use: { ...devices['Pixel 7'] },
+    },
+    // ── evidence matrix (spec section 12.5) ────────────────────────────────
+    // Rows 1-4 prove the mobile work; rows 5-7 answer "does anything fall off the edge on a
+    // computer screen", which nothing in this repo asked before (responsive.spec.ts skips
+    // every invariant unless isMobile). Desktop rows are measured, not enforced — decision
+    // D11 records them as DESKTOP-FINDING because D2 (desktop pixel parity) outranks them.
+    {
+      name: 'iphone13-webkit',
+      testMatch: /(responsive|evidence)\.spec\.ts/,
+      use: { ...devices['iPhone 13'] },
+    },
+    {
+      name: 'iphone13-chromium',
+      testMatch: /(responsive|evidence)\.spec\.ts/,
+      use: { ...devices['Pixel 7'], viewport: { width: 390, height: 664 } },
+    },
+    {
+      name: 'mobile-375',
+      testMatch: /(responsive|evidence)\.spec\.ts/,
+      use: { ...devices['Pixel 7'], viewport: { width: 375, height: 667 } },
+    },
+    {
+      name: 'desktop-1280',
+      testMatch: /evidence\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
+    },
+    {
+      name: 'desktop-1440',
+      testMatch: /evidence\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
+    },
+    {
+      name: 'desktop-1920',
+      testMatch: /evidence\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
     },
   ],
 });

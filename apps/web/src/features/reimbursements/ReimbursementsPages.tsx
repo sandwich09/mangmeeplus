@@ -220,10 +220,10 @@ function TablePager({ from, to, total, page, totalPages, onPage }: {
       <div className="tabular-nums">แสดง {from}-{to} จาก {total} รายการ</div>
       {totalPages > 1 && (
         <div className="flex items-center gap-2">
-          <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+          <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
             disabled={page <= 1} onClick={() => onPage(page - 1)}>ก่อนหน้า</button>
           <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">{page} / {totalPages}</span>
-          <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+          <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
             disabled={page >= totalPages} onClick={() => onPage(page + 1)}>ถัดไป</button>
         </div>
       )}
@@ -690,7 +690,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
               {statusChips.map(chip => (
                 <button key={chip.key} onClick={() => setStatusFilter(chip.key)}
-                  className={cx('inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                  className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
                     statusFilter === chip.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
                   {chip.label}
                   <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
@@ -751,8 +751,8 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ส่งอนุมัติ</button>}
-                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} onClick={e => { e.stopPropagation(); action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ยกเลิก</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ส่งอนุมัติ</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ยกเลิก</button>}
                           </div>
                         </td>
                       </tr>
@@ -1164,8 +1164,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, '!min-h-9 !px-3 !py-1.5 !text-xs')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
-                            <button className={cx(dangerClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
+                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
+                            <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
                           </div>
                         </td>
                       </tr>
@@ -1365,8 +1365,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: 
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, '!min-h-9 !px-3 !py-1.5 !text-xs')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
-                            {(r.status === 'READY_FOR_PAYMENT') && <button className={cx(btnClass, '!min-h-9 !px-3 !py-1.5 !text-xs')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
+                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
+                            {(r.status === 'READY_FOR_PAYMENT') && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
                       </tr>

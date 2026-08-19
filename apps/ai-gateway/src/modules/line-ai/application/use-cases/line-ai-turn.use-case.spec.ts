@@ -170,7 +170,14 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
     const orchestrator = { run: async () => { orchestratorCalled = true; return {} as any; } } as any;
     const useCase = new LineAiTurnUseCase(makeErpTools(), orchestrator, config, agentcoreRuntime);
 
-    const resp = await useCase.execute(validReq);
+    const resp = await useCase.execute({
+      ...validReq,
+      userContext: {
+        ...validReq.userContext,
+        entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+        entitledFeatureKeys: ['product_catalog'],
+      },
+    });
     assert.equal(agentcoreCalled, true, 'AgentCore adapter must be called');
     assert.equal(orchestratorCalled, false, 'local orchestrator must not be called');
     assert.equal(resp.replyText, 'reply from agentcore');
@@ -185,6 +192,26 @@ describe('LineAiTurnUseCase – agentcore runtime routing', () => {
       { membershipId: 'mem-1', branchIds: ['branch-1'], locationIds: ['location-1'], roles: ['owner'] },
     );
     assert.deepEqual(resp.toolsInvoked, []);
+    assert.deepEqual(invokeInput.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(invokeInput.entitledFeatureKeys, ['product_catalog']);
+  });
+
+  it('forwards company feature entitlements to the AgentCore runtime', async () => {
+    let invokeInput: any;
+    const agentcoreRuntime = {
+      invoke: async (input: any) => {
+        invokeInput = input;
+        return { turnId: 't-1', replyText: 'ok', plan: { status: 'ROUTABLE', intents: [] }, durationMs: 1, refused: false, sourceRefs: [], webLinks: [], toolsInvoked: [] };
+      },
+    } as any;
+    const config = { lineAiAgentOrchestrationEnabled: true, lineAiAgentRuntime: 'agentcore' } as any;
+    const useCase = new LineAiTurnUseCase(makeErpTools(), makeOrchestrator(), config, agentcoreRuntime);
+
+    await useCase.execute({ ...validReq, entitledFeatureKeys: ['crm', 'expenses'] });
+    assert.deepEqual(invokeInput.entitledFeatureKeys, ['crm', 'expenses']);
+
+    await useCase.execute(validReq);
+    assert.equal(invokeInput.entitledFeatureKeys, undefined, 'absent stays absent — legacy fail-open');
   });
 
   it('maps runtime tool and source lineage onto the turn response', async () => {

@@ -54,6 +54,11 @@ export type RuntimePayload = {
   messageText: string;
   locale?: string;
   permissions?: string[];
+  entitlementDeniedPermissions?: Record<string, string>;
+  /** Company feature entitlements. Absent = legacy fail-open, same as an older gateway that does
+   *  not send them; the artifact must keep answering, just without entitlement-exact copy.
+   *  `null` is the explicit server-resolved "no entitlement rows" form of the same fail-open. */
+  entitledFeatureKeys?: string[] | null;
   actorDelegations?: Record<string, string[]>;
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
@@ -123,6 +128,21 @@ function parseActorDelegations(value: unknown): Record<string, string[]> | undef
     return undefined;
   }
   return Object.fromEntries(entries) as Record<string, string[]>;
+}
+
+function parseDeniedPermissions(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > 512 || entries.some(([permission, feature]) =>
+    !permission || permission.length > 200 || typeof feature !== 'string' || !feature || feature.length > 200)) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function parseEntitledFeatureKeys(value: unknown): string[] | null | undefined {
+  if (value === null) return null;
+  if (!Array.isArray(value) || value.length > 256
+    || value.some((key) => typeof key !== 'string' || !key || key.length > 200)) return undefined;
+  return [...new Set(value as string[])];
 }
 
 /**
@@ -213,6 +233,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       messageText: prompt,
       locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
       permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
+      entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
+      entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
       actorDelegations: parseActorDelegations(p['actorDelegations']),
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
@@ -235,6 +257,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     messageText,
     locale: typeof p['locale'] === 'string' ? p['locale'] : 'th-TH',
     permissions: Array.isArray(p['permissions']) ? (p['permissions'] as string[]) : [],
+    entitlementDeniedPermissions: parseDeniedPermissions(p['entitlementDeniedPermissions']),
+    entitledFeatureKeys: parseEntitledFeatureKeys(p['entitledFeatureKeys']),
     actorDelegations: parseActorDelegations(p['actorDelegations']),
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
@@ -252,12 +276,15 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     modelPolicy: p.modelPolicy,
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
+    ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
     userContext: {
       lineUserId: '',
       internalUserId: p.userId,
       companyId: p.companyId,
       membershipId: p.membershipId ?? '',
       permissions: p.permissions ?? [],
+      entitlementDeniedPermissions: p.entitlementDeniedPermissions,
+      entitledFeatureKeys: p.entitledFeatureKeys,
       roles: p.roles ?? [],
       ...(p.branchIds && { branchIds: p.branchIds }),
       ...(p.locationIds && { locationIds: p.locationIds }),

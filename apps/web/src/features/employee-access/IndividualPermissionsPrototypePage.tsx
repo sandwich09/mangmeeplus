@@ -470,7 +470,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
               </ThemedSelect>
             </div>
 
-            <div className="mt-5 grid max-h-[min(60vh,640px)] gap-2 overflow-y-auto pr-1 xl:max-h-[calc(100vh-320px)]">
+            <div className="mt-5 grid max-h-[min(60vh,640px)] gap-2 overflow-y-auto pr-1 xl:max-h-[calc(100dvh-320px)]">
               {filteredEmployees.map((employee) => (
                 <EmployeeRow
                   key={employee.id} employee={employee} role={roleById.get(employee.roles[0]?.id ?? '')}

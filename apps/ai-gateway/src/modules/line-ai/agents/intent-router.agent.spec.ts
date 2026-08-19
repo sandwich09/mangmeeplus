@@ -319,7 +319,7 @@ describe('IntentRouterAgent – model routing', () => {
 
     const plan = await router.route('แนะนำลูกค้าที่ควรติดตาม', false);
     assert.equal(plan.status, 'UNROUTABLE');
-    assert.equal(plan.refusals[0]?.reason, 'feature_disabled');
+    assert.equal(plan.refusals[0]?.reason, 'tool_unavailable');
   });
 
   it('routes item-11B read contracts after backend wiring', async () => {
@@ -380,7 +380,7 @@ describe('IntentRouterAgent – model routing', () => {
     const plan = await router.route('ยอดขายวันนี้และควรตามลูกค้าคนไหน', false);
     assert.equal(plan.status, 'PARTIAL');
     assert.deepEqual(plan.intents.map((intent) => intent.requiredTools), [['sales.get_sales_summary']]);
-    assert.equal(plan.refusals[0]?.reason, 'feature_disabled');
+    assert.equal(plan.refusals[0]?.reason, 'tool_unavailable');
   });
 
   it('fails closed when provider returns invalid JSON', async () => {

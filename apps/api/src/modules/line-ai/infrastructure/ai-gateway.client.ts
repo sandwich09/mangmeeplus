@@ -7,6 +7,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import {
   LINE_TOOL_REGISTRY,
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
+  hasToolFeature,
   hasToolPermissions,
   type AiUsageEntry,
   type LineAiTurnRequest,
@@ -45,10 +46,14 @@ export class AiGatewayClient {
 
   async requestLineTurn(request: LineAiTurnRequest): Promise<LineAiTurnResponse> {
     await this.assertRateLimit('llm', request.userContext.companyId);
-    const { internalUserId: userId, companyId, membershipId, permissions } = request.userContext;
+    const { internalUserId: userId, companyId, membershipId, permissions, entitledFeatureKeys } = request.userContext;
+    const entitled = entitledFeatureKeys === undefined
+      ? undefined
+      : entitledFeatureKeys === null ? null : new Set(entitledFeatureKeys);
     const actorDelegations = Object.fromEntries(
       (permissions.includes('ai.tool.invoke') ? LINE_TOOL_REGISTRY : [])
-        .filter((tool) => hasToolPermissions(tool, permissions))
+        .filter((tool) => hasToolPermissions(tool, permissions)
+          && (entitled === undefined || hasToolFeature(tool, entitled)))
         .map((tool) => [
           tool.name,
           Array.from({ length: LINE_AI_ACTOR_DELEGATIONS_PER_TOOL }, () =>

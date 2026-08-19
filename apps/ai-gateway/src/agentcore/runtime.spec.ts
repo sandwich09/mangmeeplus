@@ -167,6 +167,8 @@ describe('AgentCore Runtime – payload validation', () => {
       branchIds: ['b-1'],
       locationIds: ['l-1'],
       roles: ['owner'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['product_catalog'],
       actorDelegations: { 'inventory.list_low_stock': ['signed-delegation'] },
       messageText: 'hello',
     });
@@ -177,7 +179,43 @@ describe('AgentCore Runtime – payload validation', () => {
     assert.deepEqual(turnReq.userContext.branchIds, ['b-1']);
     assert.deepEqual(turnReq.userContext.locationIds, ['l-1']);
     assert.deepEqual(turnReq.userContext.roles, ['owner']);
+    assert.deepEqual(turnReq.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(turnReq.userContext.entitledFeatureKeys, ['product_catalog']);
     assert.deepEqual(turnReq.actorDelegations, { 'inventory.list_low_stock': ['signed-delegation'] });
+  });
+
+  it('carries company feature entitlements through to the rebuilt turn request', () => {
+    // AC-6 of the capability-help spec rests on this: UAT and production both run the AgentCore
+    // path, so a field dropped here is a field the composer never sees in the only environments
+    // that matter.
+    const payload = validatePayload({
+      turnId: 't-1', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      permissions: ['line.ai.query'], entitledFeatureKeys: ['crm', 'dashboard_notifications'],
+    });
+    assert.ok(payload);
+    assert.deepEqual(payloadToTurnRequest(payload).entitledFeatureKeys, ['crm', 'dashboard_notifications']);
+  });
+
+  it('leaves entitlements undefined when an older gateway does not send them (fail-open)', () => {
+    const payload = validatePayload({ turnId: 't-1', companyId: 'c-1', userId: 'u-1', messageText: 'hello' });
+    assert.ok(payload);
+    assert.equal(payloadToTurnRequest(payload).entitledFeatureKeys, undefined);
+  });
+
+  it('drops malformed internal availability evidence and preserves legacy null', () => {
+    const malformed = validatePayload({
+      turnId: 't-bad-policy', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      entitlementDeniedPermissions: { 'inventory.report.read': 42 },
+      entitledFeatureKeys: ['inventory', 42],
+    });
+    assert.equal(malformed?.entitlementDeniedPermissions, undefined);
+    assert.equal(malformed?.entitledFeatureKeys, undefined);
+
+    const legacy = validatePayload({
+      turnId: 't-legacy-policy', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      entitledFeatureKeys: null,
+    });
+    assert.equal(legacy?.entitledFeatureKeys, null);
   });
 
   it('reconstructs a valid turn request when authoritative scope fields are absent', () => {

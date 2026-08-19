@@ -65,6 +65,8 @@ function makeUseCase(opts: {
       membershipId: 'm1',
       roles: ['owner'],
       permissions: opts.permissions ?? ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant'],
       scopes: { branchIds: undefined },
     }),
   } as any;
@@ -120,6 +122,8 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(turnRequests[0].messageText, 'ยอดค้างซัพพลายเออร์');
     assert.deepEqual(turnRequests[0].valueCandidates, candidates);
     assert.equal(turnRequests[0].userContext.lineUserId, '[REDACTED]');
+    assert.deepEqual(turnRequests[0].userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(turnRequests[0].userContext.entitledFeatureKeys, ['ai_line_assistant']);
     assert.equal(pushes[0].to, 'chat1', 'push lands in the source chat');
     assert.ok(pushes[0].text.includes('5,000'));
     assert.deepEqual(acks, [{ id: '1-0', outcome: 'followed_up' }]);
@@ -285,6 +289,30 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     const result = await useCase.execute(20, NOW);
     assert.equal(result.followedUp, 0);
     assert.equal(acks.length, 0);
+  });
+
+  it('sends the company entitlement set with the drained turn, like the live webhook does', async () => {
+    const { useCase, turnRequests } = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 2, idleMs: 5000 }],
+      entitlements: [
+        { featureKey: 'ai_line_assistant', enabled: true },
+        { featureKey: 'expenses', enabled: true },
+        { featureKey: 'crm', enabled: false },
+      ],
+    });
+    await useCase.execute(20, NOW);
+    // A drained turn must not describe the assistant's capabilities differently from a live one.
+    assert.ok(turnRequests[0].entitledFeatureKeys.includes('expenses'));
+    assert.ok(!turnRequests[0].entitledFeatureKeys.includes('crm'));
+  });
+
+  it('omits entitlements for a legacy company with no rows (fail-open)', async () => {
+    const { useCase, turnRequests } = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 2, idleMs: 5000 }],
+      entitlements: [],
+    });
+    await useCase.execute(20, NOW);
+    assert.equal(turnRequests[0].entitledFeatureKeys, undefined);
   });
 
   it('re-runs an unacked turn entry after a crash (at-least-once, read-only safe)', async () => {

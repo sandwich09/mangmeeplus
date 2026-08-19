@@ -40,7 +40,7 @@ export default function VerifyEmailPage() {
   }, [token]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-8">
         <CoverLoader active={loading} scope="section" label={t('auth.verify.loading', locale)}>
           {invalidLink ? (

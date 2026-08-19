@@ -120,6 +120,7 @@ function presentationOutput(
   label = 'ยอดขาย',
   value = '100 บาท',
   data: unknown = { total: 1 },
+  toolName = 'sales.get_sales_summary',
 ) {
   const sourceRef = { label, module: 'sales', entityType: 'summary', permissionChecked: true as const, webPath: '/sales' };
   return {
@@ -127,8 +128,10 @@ function presentationOutput(
     status,
     summary: `${label}: ${value}`,
     facts: status === 'SUCCEEDED' ? [{ label, value, sourceRef }] : [],
-    suggestions: [], toolCalls: [], requiresHumanReview: false,
-    ...(status === 'SUCCEEDED' ? { toolData: [{ tool: 'sales.get_sales_summary', data }] } : {}),
+    suggestions: [],
+    toolCalls: status === 'SUCCEEDED' ? [{ name: toolName, status: 'ok' as const, durationMs: 1 }] : [],
+    requiresHumanReview: false,
+    ...(status === 'SUCCEEDED' ? { toolData: [{ tool: toolName, data }] } : {}),
   };
 }
 
@@ -153,6 +156,21 @@ describe('buildAnswerPresentation', () => {
   it('presents explicit empty results as a grounded answer card', () => {
     const output = presentationOutput('SUCCEEDED', 'ค่าใช้จ่าย', 'ยังไม่มีรายการ', { total: 0, items: [] });
     assert.equal(buildAnswerPresentation(PRESENTATION_PLAN, [output], 'เดือนนี้ยังไม่มีค่าใช้จ่าย')?.cards[0]?.text, 'เดือนนี้ยังไม่มีค่าใช้จ่าย');
+  });
+
+  it('labels a daily-closing link as the generic expense list it actually opens', () => {
+    const output = presentationOutput(
+      'SUCCEEDED',
+      'สรุปปิดร้าน',
+      'วันนี้',
+      { occurredToday: { totalCount: 0 } },
+      'expense.get_daily_closing',
+    );
+    output.facts[0]!.sourceRef!.webPath = '/companies/company-1/expenses';
+    assert.deepEqual(buildAnswerPresentation(PRESENTATION_PLAN, [output], 'สรุปปิดร้านวันนี้')?.cards[0]?.webLink, {
+      label: 'ดูรายการค่าใช้จ่าย',
+      path: '/companies/company-1/expenses',
+    });
   });
 
   it('omits cards for forbidden, unavailable, unsupported, and clarification outcomes', () => {
@@ -186,7 +204,11 @@ describe('OrchestratorAgent', () => {
     assert.equal(called, false);
     assert.deepEqual(result.outputs, []);
     assert.equal(result.presentation, undefined);
-    assert.match(result.replyText, /ยอดขาย/);
+    // Derived from THIS caller's permissions (inventory + ledger reads), so it names stock and
+    // finance and stays silent about sales, which the same turn would have refused.
+    assert.match(result.replyText, /สินค้าและสต็อก/);
+    assert.match(result.replyText, /การเงิน บัญชี และรายงาน/);
+    assert.doesNotMatch(result.replyText, /ยอดขาย/);
     assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
   });
 
@@ -308,12 +330,14 @@ describe('OrchestratorAgent', () => {
         };
       },
     } as any;
-    const req = makeReq('ดูค่าใช้จ่าย');
+    const req = makeReq('ช่วยคำนวณยอดค่าใช้จ่ายเดือนนี้ให้หน่อย');
     req.userContext.permissions.push('expense.read');
     const orchestrator = new OrchestratorAgent(erpTools, makeConfig());
     const result = await orchestrator.run(req);
     assert.ok(calledTools.includes('expense.list_recent'));
     assert.ok(result.replyText.includes('11,875.00'));
+    assert.ok(!result.replyText.includes('สิ้นกำหนดวันนี้'));
+    assert.ok(!result.replyText.includes('เกินกำหนด'));
     assert.ok(result.replyText.includes('ยอดทั้งหมด'));
     // Work in progress is the whole pending set, not drafts alone.
     assert.ok(result.replyText.includes('รอตรวจสอบ'));
@@ -372,11 +396,11 @@ describe('OrchestratorAgent', () => {
     assert.ok(!result.replyText.includes('ยังไม่ได้เปิดใช้งานหรือยังไม่พร้อมใช้งาน'));
   });
 
-  it('disabled provider says the assistant is temporarily unavailable, not that a feature is disabled', async () => {
+  it('disabled provider says the LINE capability is unavailable, not that a company feature is disabled', async () => {
     const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ modelProvider: 'disabled', openAiApiKey: undefined }));
     const result = await orchestrator.run(makeReq('ยอดขาย'));
     assert.equal(result.plan.status, 'UNROUTABLE');
-    assert.ok(result.replyText.includes('ชั่วคราว'));
+    assert.ok(result.replyText.includes('ยังไม่พร้อมใช้งานผ่าน LINE'));
     assert.ok(!result.replyText.includes('ฟีเจอร์'));
   });
 

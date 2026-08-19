@@ -110,7 +110,7 @@ export default function DataRightsListPage() {
   }), [items]);
 
   return (
-    <main className="min-h-screen bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-dvh bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
         <section className="overflow-hidden rounded-3xl border border-emerald-100 bg-[radial-gradient(circle_at_top_right,_rgba(34,197,94,0.14),_transparent_38%),linear-gradient(135deg,#ffffff,#f4fff7)] px-5 py-6 shadow-sm sm:px-7">
           <div className="flex flex-wrap items-start justify-between gap-5">

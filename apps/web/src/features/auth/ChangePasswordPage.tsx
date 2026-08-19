@@ -77,7 +77,7 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-white rounded-lg border border-gray-200 p-8 space-y-6">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">{t('auth.change.title', locale)}</h1>

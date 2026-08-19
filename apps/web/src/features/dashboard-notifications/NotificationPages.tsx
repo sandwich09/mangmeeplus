@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { ForbiddenState } from '@/common/components/state';
 import { useToast } from '@/common/components/toast';
+import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import {
   listNotifications,
   markRead,
@@ -29,6 +30,58 @@ function ErrorBanner({ message }: { message: string }) {
 }
 
 // ---- Notification Center Page ----
+
+/**
+ * One 44px control instead of two 16px text links 8px apart, one of which dismissed the
+ * notification. It also reclaims ~40px of row width and stops the row reflowing when a busy
+ * label ("กำลังทำเครื่องหมาย...") replaced a short one mid-tap.
+ */
+function NotificationRowMenu({ read, busy, busyLabel, onMarkRead, onDismiss }: {
+  read: boolean;
+  busy: boolean;
+  busyLabel: string | null;
+  onMarkRead: () => void;
+  onDismiss: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useCloseOnOutsideClick(ref, () => setOpen(false));
+
+  return (
+    <div ref={ref} className="relative z-10 shrink-0">
+      <button
+        type="button"
+        aria-label="ตัวเลือกการแจ้งเตือน"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-11 w-11 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 disabled:opacity-40 sm:h-9 sm:w-9"
+      >
+        {busyLabel ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : '⋮'}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-1 min-w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+          {!read && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onMarkRead(); }}
+              className="flex min-h-11 w-full items-center px-4 text-left text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              อ่านแล้ว
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onDismiss(); }}
+            className="flex min-h-11 w-full items-center px-4 text-left text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            ปิด
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function NotificationCenterPage({ companyId, permissions }: { companyId: string; permissions: readonly string[] }) {
   const toast = useToast();
@@ -106,14 +159,14 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
           <button
             onClick={handleMarkAllRead}
             disabled={markAllBusy || busyRow !== null}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
           >
             {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
           </button>
           {childLinks.includes('preferences') && (
             <Link
               href={`/companies/${companyId}/settings/notifications`}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
             >
               ตั้งค่า
             </Link>
@@ -121,7 +174,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
           {childLinks.includes('rules') && (
             <Link
               href={`/companies/${companyId}/notifications/rules`}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
             >
               กฎ
             </Link>
@@ -129,12 +182,14 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
         </div>
       </div>
 
-      <div className="flex gap-2">
+      {/* A scroll strip rather than a wrapping row: chips that wrap strand the last one on a
+          line of its own at 390px. Same recipe the 2026-08-05 follow-up used for tab bars. */}
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {(['unread', 'all'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`rounded-full px-3 py-1 text-sm font-medium ${filter === f ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+            className={`inline-flex min-h-11 shrink-0 items-center rounded-full px-3 py-1 text-sm font-medium sm:min-h-0 ${filter === f ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
           >
             {f === 'unread' ? 'ยังไม่ได้อ่าน' : 'ทั้งหมด'}
           </button>
@@ -150,31 +205,37 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
 
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden divide-y divide-gray-100">
         {items.map((item) => (
-          <div key={item.id} className={`flex items-start gap-3 p-3 ${item.read ? 'opacity-60' : ''}`}>
-            <span className={`mt-0.5 rounded px-1.5 py-0.5 text-xs font-semibold ${severityColor(item.severity as NotificationSeverity)}`}>
+          <div key={item.id} className={`relative flex items-start gap-3 p-3 ${item.read ? 'opacity-60' : ''}`}>
+            {/* The whole row is the target, badge included. It used to be a <div role="link">
+                covering only the middle column — about 180px of a 390px screen, and not a real
+                link: no long-press, no open-in-new-tab, Enter only. The overlay link is a
+                sibling of the menu button rather than its parent, because a <button> inside an
+                <a> is invalid and Safari treats it unpredictably. */}
+            {internalHref(item) && (
+              <Link
+                href={internalHref(item)!}
+                onClick={() => { if (!item.read) void handleMarkRead(item.id); }}
+                className="absolute inset-0 z-0"
+                aria-label={item.title}
+              />
+            )}
+            <span className={`pointer-events-none relative mt-0.5 rounded px-1.5 py-0.5 text-xs font-semibold ${severityColor(item.severity as NotificationSeverity)}`}>
               {severityLabel(item.severity as NotificationSeverity)}
             </span>
-            <div
-              className={`flex-1 min-w-0 ${internalHref(item) ? 'cursor-pointer' : ''}`}
-              role={internalHref(item) ? 'link' : undefined}
-              tabIndex={internalHref(item) ? 0 : undefined}
-              onClick={() => void handleOpen(item)}
-              onKeyDown={(event) => { if (event.key === 'Enter') void handleOpen(item); }}
-            >
-              <p className="text-sm font-medium text-gray-900 truncate">{item.title}</p>
+            <div className="pointer-events-none relative min-w-0 flex-1">
+              {/* Two lines instead of `truncate`: the title had ~180px of room and was cut
+                  mid-sentence, which is most of what made this screen unreadable on a phone. */}
+              <p className="line-clamp-2 text-sm font-medium text-gray-900 sm:truncate">{item.title}</p>
               <p className="text-xs text-gray-500">{item.body}</p>
               <p className="text-xs text-gray-400 mt-0.5">{formatRelativeTime(item.createdAt)}</p>
             </div>
-            <div className="flex gap-2 shrink-0">
-              {!item.read && (
-                <button disabled={markAllBusy || busyRow !== null} onClick={() => handleMarkRead(item.id)} className="text-xs text-brand-700 hover:underline disabled:opacity-40">
-                  {busyRow?.id === item.id && busyRow.action === 'read' ? 'กำลังทำเครื่องหมาย...' : 'อ่านแล้ว'}
-                </button>
-              )}
-              <button disabled={markAllBusy || busyRow !== null} onClick={() => handleDismiss(item.id)} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40">
-                {busyRow?.id === item.id && busyRow.action === 'dismiss' ? 'กำลังปิด...' : 'ปิด'}
-              </button>
-            </div>
+            <NotificationRowMenu
+              read={item.read}
+              busy={markAllBusy || busyRow !== null}
+              busyLabel={busyRow?.id === item.id ? (busyRow.action === 'read' ? 'กำลังทำเครื่องหมาย...' : 'กำลังปิด...') : null}
+              onMarkRead={() => handleMarkRead(item.id)}
+              onDismiss={() => handleDismiss(item.id)}
+            />
           </div>
         ))}
       </div>
@@ -232,7 +293,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
     <div className="max-w-2xl space-y-4">
       <div className="flex flex-wrap items-center justify-between">
         <h1 className="text-2xl font-semibold text-gray-900">ตั้งค่าการแจ้งเตือน</h1>
-        <Link href={`/companies/${companyId}/notifications`} className="text-sm text-brand-700 hover:underline">กลับ</Link>
+        <Link href={`/companies/${companyId}/notifications`} className="inline-flex min-h-11 min-w-11 items-center justify-center text-sm text-brand-700 hover:underline sm:min-h-0 sm:min-w-0">กลับ</Link>
       </div>
       {error && <ErrorBanner message={error} />}
       {pref && (
@@ -245,7 +306,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
                   key={channel}
                   disabled={saving || channel === 'web'}
                   onClick={() => toggleChannel(channel)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium ${pref.enabledChannels.includes(channel) ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:opacity-60`}
+                  className={`inline-flex min-h-11 items-center rounded-md px-3 py-1.5 text-sm font-medium sm:min-h-0 ${pref.enabledChannels.includes(channel) ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:opacity-60`}
                 >
                   {channel === 'web' ? 'Web' : 'LINE'}
                 </button>
@@ -261,7 +322,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
                 onChange={(event) => updateQuietHours('quietHoursStart', event.target.value)}
                 onBlur={() => save(pref)}
                 placeholder="22:00"
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="mt-1 min-h-11 w-full rounded-md border border-gray-300 px-3 py-2 text-sm sm:min-h-0"
               />
             </label>
             <label className="text-sm font-medium text-gray-700">
@@ -272,7 +333,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
                 onChange={(event) => updateQuietHours('quietHoursEnd', event.target.value)}
                 onBlur={() => save(pref)}
                 placeholder="07:00"
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                className="mt-1 min-h-11 w-full rounded-md border border-gray-300 px-3 py-2 text-sm sm:min-h-0"
               />
             </label>
           </div>
@@ -335,7 +396,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
               <button
                 onClick={() => toggleRule(rule)}
                 disabled={busyRuleId !== null}
-                className={`rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40 ${rule.status === 'enabled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
+                className={`inline-flex min-h-11 items-center rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40 sm:min-h-0 ${rule.status === 'enabled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
               >
                 {busyRuleId === rule.id ? (rule.status === 'enabled' ? 'กำลังปิด...' : 'กำลังเปิด...') : rule.status === 'enabled' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
               </button>

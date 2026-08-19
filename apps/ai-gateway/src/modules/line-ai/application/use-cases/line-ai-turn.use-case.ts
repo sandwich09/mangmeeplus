@@ -10,15 +10,13 @@ import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-too
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
 import { AgentCoreRuntimeClient } from '../../infrastructure/runtime/agentcore-runtime.client';
+import { toolAccessOutcome } from '../../agents/tool-availability';
+import { featureDisabledReply } from '../../agents/response-composer.agent';
 
 // ---- Thai-first refusal messages ----
 const MUTATION_REPLY = '⚠️ ขออภัยค่ะ น้องมั่งมีไม่สามารถดำเนินการนี้ผ่าน LINE ได้\nกรุณาเปิดเว็บแอปเพื่อดำเนินการต่อนะคะ';
 const UNSUPPORTED_REPLY = '📋 ขออภัยค่ะ น้องมั่งมีตอบได้เฉพาะข้อมูลในระบบธุรกิจที่เชื่อมต่ออยู่เท่านั้น\nคำถามนี้อยู่นอกขอบเขตระบบ จึงไม่สามารถให้ข้อมูลที่น่าเชื่อถือได้ค่ะ';
 const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้ค่ะ';
-// A switched-off module is not a permission problem and not an empty result. Without its own reply
-// the user is told "📭 ไม่พบข้อมูลที่ตรงกันค่ะ", which reads as "your business has no data" when the
-// truth is that the company never turned the feature on. Names no other company and no other feature.
-const FEATURE_OFF_REPLY = '🚧 ฟีเจอร์นี้ยังไม่ได้เปิดใช้งานสำหรับบริษัทของคุณค่ะ\nหากต้องการเปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบของบริษัทนะคะ';
 /** Matches the errorCode the ERP tool boundary returns when a company feature is off. */
 const FEATURE_NOT_ENABLED_CODE = 'FEATURE_NOT_ENABLED';
 const ERROR_REPLY = '⏳ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
@@ -174,6 +172,11 @@ export class LineAiTurnUseCase {
         messageText: req.messageText,
         locale: req.userContext.locale,
         permissions: req.userContext.permissions,
+        entitlementDeniedPermissions: req.userContext.entitlementDeniedPermissions,
+        // One field on the wire feeds both destinations the artifact rebuilds (userContext for tool
+        // gating, request level for the capability answer). userContext is the richer source; the
+        // request-level copy is the fallback for callers that only populate that one.
+        entitledFeatureKeys: req.userContext.entitledFeatureKeys ?? req.entitledFeatureKeys,
         actorDelegations: req.actorDelegations,
         modelPolicy: req.modelPolicy,
         attachments: req.attachments?.map((a) => ({
@@ -297,14 +300,37 @@ export class LineAiTurnUseCase {
       actorDelegations: req.actorDelegations,
     };
 
-    const topTools = tools.slice(0, 3);
+    const plannedTools = tools.slice(0, 3);
+    const featureDisabledTools = plannedTools.filter((tool) => toolAccessOutcome(tool, req.userContext) === 'feature_disabled');
+    const forbiddenTools = plannedTools.filter((tool) => toolAccessOutcome(tool, req.userContext) === 'forbidden');
+    const topTools = plannedTools.filter((tool) => toolAccessOutcome(tool, req.userContext) === 'allowed');
+    if (topTools.length === 0 && featureDisabledTools.length > 0 && forbiddenTools.length === 0) {
+      return this.buildRefusedResponse(
+        req,
+        'feature_disabled',
+        featureDisabledReply(featureDisabledTools.map((tool) => tool.name), req.userContext.locale),
+        startMs,
+        intent,
+        agent,
+      );
+    }
+    if (topTools.length === 0 && forbiddenTools.length > 0) {
+      return this.buildRefusedResponse(req, 'forbidden', FORBIDDEN_REPLY, startMs, intent, agent);
+    }
     const toolInput = intent === 'capture_accounting_evidence' ? { attachments: req.attachments ?? [], messageText: req.messageText } : {};
     const results = await Promise.all(topTools.map((t) => this.erpTools.invoke(t, erpCtx, toolInput)));
 
     // Checked before the forbidden branch so a turn blocked purely by the company's feature switch
     // is never reported as a missing permission or as an empty business.
     if (results.length > 0 && results.every((r) => r.errorCode === FEATURE_NOT_ENABLED_CODE)) {
-      return this.buildRefusedResponse(req, 'unsupported_module', FEATURE_OFF_REPLY, startMs, intent, agent);
+      return this.buildRefusedResponse(
+        req,
+        'feature_disabled',
+        featureDisabledReply(topTools.map((tool) => tool.name), req.userContext.locale),
+        startMs,
+        intent,
+        agent,
+      );
     }
 
     if (results.every((r) => r.status === 'forbidden')) {

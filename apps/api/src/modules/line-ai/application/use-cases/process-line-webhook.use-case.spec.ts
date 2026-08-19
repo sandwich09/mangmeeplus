@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -174,6 +174,8 @@ function makeUseCase(
   prisma: any,
 	  opts: {
 	    permissions?: string[];
+	    entitlementDeniedPermissions?: Record<string, string>;
+	    entitledFeatureKeys?: string[] | null;
 	    roles?: string[];
 	    branchIds?: string[];
 	    aiGatewayFn?: (req?: any) => any;
@@ -184,6 +186,7 @@ function makeUseCase(
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
       legalAcceptanceRequired?: boolean;
+      approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -199,7 +202,12 @@ function makeUseCase(
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
-    { resolveAccess: async () => ({ membershipId: 'mem-1', roles, permissions, scopes: branchIds === undefined ? {} : { branchIds } }) } as any,
+    { resolveAccess: async () => ({
+      membershipId: 'mem-1', roles, permissions,
+      entitlementDeniedPermissions: opts.entitlementDeniedPermissions,
+      entitledFeatureKeys: opts.entitledFeatureKeys,
+      scopes: branchIds === undefined ? {} : { branchIds },
+    }) } as any,
     { log: async (entry: any) => { auditEvents.push(entry); } } as any,
     {
 	      requestLineTurn: async (req: any) => {
@@ -237,6 +245,11 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
+    // captureExpenseNote → expenseDraftConversation stay unwired for these cases.
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    opts.approvalQueues?.reimbursement,
+    opts.approvalQueues?.purchaseRequests,
+    opts.approvalQueues?.purchaseOrders,
   );
 
 	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
@@ -483,8 +496,10 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('allows the turn when ai_line_assistant entitlement is enabled', async () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: true }] });
-    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+    const { useCase, getAiGatewayCalled, aiGatewayRequests } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant', 'product_catalog'],
       aiGatewayFn: () => ({
         requestId: 'req-ai',
         replyText: 'สรุปแดชบอร์ดวันนี้',
@@ -502,7 +517,71 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute(BASE_EVENT);
 
     assert.equal(getAiGatewayCalled(), true);
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitledFeatureKeys, ['ai_line_assistant', 'product_catalog']);
     assert.equal((updates.at(-1) as any).data.status, 'completed');
+  });
+
+  it('sends the company entitlement set with the turn so the assistant can describe itself honestly', async () => {
+    const { prisma } = makePrisma({
+      entitlements: [
+        { featureKey: 'ai_line_assistant', enabled: true },
+        { featureKey: 'expenses', enabled: true },
+        { featureKey: 'sales_documents', enabled: false },
+      ],
+    });
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    const sent: string[] = aiGatewayRequests[0]?.entitledFeatureKeys ?? [];
+    assert.ok(sent.includes('expenses'));
+    assert.ok(!sent.includes('sales_documents'), 'a switched-off feature must not travel as entitled');
+  });
+
+  it('omits the entitlement set for a legacy company with no rows (fail-open)', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, aiGatewayRequests } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'ok', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 1,
+      }),
+    });
+
+    await useCase.execute(BASE_EVENT);
+
+    assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
+  });
+
+  it('reports an expenses feature switch instead of blaming the member permission', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: [
+      { featureKey: 'ai_line_assistant', enabled: true },
+      { featureKey: 'expenses', enabled: false },
+    ] });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: {
+        'expense.receipt.line_upload': 'expenses.upload',
+        'expense.receipt.upload': 'expenses.upload',
+        'expense.create': 'expenses',
+      },
+      entitledFeatureKeys: ['ai_line_assistant'],
+      intakeRouteFn: () => ROUTED_EXPENSE_DOCUMENT,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-expense-off', messageText: 'ค่ากาแฟ 65 บาท' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(replies[0] ?? '', /ระบบค่าใช้จ่ายและเอกสาร/);
+    assert.equal((replies[0] ?? '').includes('ไม่มีสิทธิ์'), false);
+    assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
   it('delivers a successful business query as one themed Flex answer card', async () => {
@@ -890,6 +969,36 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
   });
 
+  // UAT 2026-08-18: รายการรออนุมัติ only linked out, so an approver could not tell from LINE
+  // whether anything was waiting.
+  it('counts the pending approval queues the member can act on', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_request.approve'],
+      approvalQueues: {
+        reimbursement: { execute: async () => [
+          { requestNo: 'RB-0007', requesterDisplayNameSnapshot: 'สมชาย', amount: '1130' },
+          { requestNo: 'RB-0008', requesterDisplayNameSnapshot: 'มานี', amount: '250.5' },
+        ] },
+        // An approver without the matching read permission: the queue is left out, never zeroed.
+        purchaseRequests: { execute: async () => { throw new Error('Forbidden'); } },
+      },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-counts', messageText: 'รายการรออนุมัติ' });
+
+    const lines = (sentMessages[0]?.contents.body.contents as any[]).map((line) => line.text);
+    assert.equal(sentMessages[0]?.altText, 'รายการรออนุมัติ 2 รายการ');
+    assert.deepEqual(lines, [
+      '✅ รายการรออนุมัติ',
+      'มี 2 รายการรอคุณอนุมัติ',
+      'คำขอเบิกเงิน (2)',
+      '• RB-0007 · สมชาย · 1,130.00 บาท',
+      '• RB-0008 · มานี · 250.50 บาท',
+      'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย',
+    ]);
+  });
+
   it('delivers the receipt prompt as a Flex card', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'] });
@@ -950,6 +1059,45 @@ describe('ProcessLineWebhookUseCase', () => {
     }
 
     assert.equal(harness.branchFindManyCalls.length, 0);
+  });
+
+  // The queue use cases receive server-derived identity and scope, never anything read off the
+  // LINE message, so the card can only ever count rows this member could open on the web.
+  it('reads the approval queues with the caller RequestContext, not with anything from the message', async () => {
+    const { prisma } = makePrisma();
+    const approvalCalls: any[] = [];
+    const purchaseOrderCalls: any[] = [];
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_order.approve'],
+      branchIds: ['branch-1'],
+      approvalQueues: {
+        reimbursement: { execute: async (ctx: any) => { approvalCalls.push(ctx); return []; } },
+        purchaseOrders: { execute: async (_ctx: any, filter: any) => { purchaseOrderCalls.push(filter); return { data: [], total: 0 }; } },
+      },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue', messageText: 'รายการรออนุมัติ' });
+
+    assert.equal(approvalCalls.length, 1);
+    assert.deepEqual(
+      { companyId: approvalCalls[0].companyId, userId: approvalCalls[0].userId, scopes: approvalCalls[0].scopes, authProvider: approvalCalls[0].authProvider },
+      { companyId: 'company-1', userId: 'user-1', scopes: { branchIds: ['branch-1'] }, authProvider: 'line' },
+    );
+    assert.deepEqual(purchaseOrderCalls, [{ status: 'PENDING_APPROVAL', page: 1, pageSize: 5 }]);
+  });
+
+  it('keeps the approval card link-only when a queue read fails, instead of reporting it empty', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve'],
+      approvalQueues: { reimbursement: { execute: async () => { throw new Error('database unavailable'); } } },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue-failed', messageText: 'รายการรออนุมัติ' });
+
+    const rendered = JSON.stringify(sentMessages[0]);
+    assert.equal(rendered.includes('ไม่มีรายการ'), false);
+    assert.ok(rendered.includes('reimbursements?tab=approvals'));
   });
 
   it('switches owner selected company through explicit LINE control command', async () => {
@@ -1221,6 +1369,70 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, undefined);
     assert.equal((updates.at(-1) as any).data.processedAt, null);
     assert.equal((updates.at(-1) as any).data.errorCode, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
+  });
+
+  it('audits a failed LINE receipt read with its gateway errorCode', async () => {
+    // An unreadable image routes to `clarify` and returns before any expense exists, so this row is
+    // the only record that the read was attempted at all. Without it every "อ่านไม่ออก" report is
+    // invisible in the audit log and the failure cause is unattributable.
+    const { prisma } = makePrisma();
+    const audits: any[] = [];
+    const useCase = new ProcessLineWebhookUseCase(
+      prisma,
+      { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
+      {
+        resolveAccess: async () => ({
+          membershipId: 'mem-1',
+          roles: ['STAFF'],
+          permissions: ['expense.receipt.line_upload', 'attachment.create', 'expense.create'],
+          scopes: {},
+        }),
+      } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      {
+        requestLineTurn: async () => { throw new Error('not expected'); },
+        requestLineIntakeRoute: async () => ROUTED_EXPENSE_DOCUMENT,
+        requestReceiptOcr: async () => ({ status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }),
+      } as any,
+      {
+        buildTextMessage: (text: string) => ({ type: 'text', text }),
+        sendReply: async () => 'ok',
+      } as any,
+      { apply: async () => ({ candidatesCreated: 0 }) } as any,
+      CLEAN_SCANNER,
+      acceptedLegal,
+      shadowProbe,
+      { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
+      { execute: async () => undefined } as any,
+    );
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg',
+      mimeType: 'image/jpeg',
+      byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash',
+      contentBase64: JPEG_BYTES.toString('base64'),
+      bytes: JPEG_BYTES,
+    });
+    // The clarify branch parks the media for a follow-up; that storage path is covered elsewhere.
+    (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-unreadable-1',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-unreadable-1',
+      lineMessageId: 'line-msg-unreadable-1',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    const ocrAudit = audits.find((entry) => entry.action === 'expense.ocr.request');
+    assert.ok(ocrAudit, 'a failed read must still be audited');
+    assert.equal(ocrAudit.result, 'FAILED');
+    assert.equal(ocrAudit.targetId, 'evt-unreadable-1');
+    assert.equal(ocrAudit.metadataJson.channel, 'line');
+    assert.equal(ocrAudit.metadataJson.status, 'OCR_FAILED');
+    assert.equal(ocrAudit.metadataJson.errorCode, 'OCR_EMPTY_OUTPUT');
+    assert.equal(ocrAudit.metadataJson.recognizedFieldCount, 0);
   });
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {
@@ -1886,5 +2098,37 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     // No company means no entitlement question to ask; a fabricated observation would be worse
     // than none.
     assert.deepEqual(since(), []);
+  });
+});
+
+function expenseWithLines(lines: unknown[]) {
+  return {
+    id: 'expense-1', sourceDocumentType: 'RECEIPT', grandTotalAmount: '125.00', currency: 'THB',
+    expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
+    aiVerificationSummaryJson: { recognizedFields: { lines }, missingFields: [] },
+  } as any;
+}
+
+describe('LINE grounded receipt item follow-up', () => {
+  it('recognizes low-tech references to the current bill as a document question', () => {
+    for (const question of [
+      'บิลนี้จ่ายค่าสินค้าอะไร', 'ใบนี้ซื้ออะไรบ้าง', 'เอกสารนี้มีรายการอะไร',
+    ]) assert.equal(isGroundedReceiptFollowUp(question), true, question);
+  });
+
+  it('answers only the printed line items and links to the selected expense record', () => {
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expenseWithLines([
+      { description: 'กระดาษ A4', quantity: '2', amount: '100.00', evidenceSignal: 'กระดาษ A4 2 100' },
+      { description: 'ปากกา', quantity: '1', amount: '25.00', evidenceSignal: 'ปากกา 1 25' },
+    ]), undefined, 'บิลนี้จ่ายค่าสินค้าอะไร');
+    assert.match(reply, /กระดาษ A4 × 2 – 100\.00/);
+    assert.match(reply, /ปากกา × 1 – 25\.00/);
+    assert.match(reply, /\/companies\/company-1\/expenses\/expense-1/);
+    assert.equal(reply.includes('สต็อก'), false, 'a bill item question is not inventory');
+  });
+
+  it('states honestly when no printed item rows were readable', () => {
+    const reply = formatGroundedReceiptFollowUp(undefined, 'company-1', expenseWithLines([]), undefined, 'บิลนี้ซื้ออะไร');
+    assert.match(reply, /ยังอ่านรายการสินค้า.*ไม่ได้ชัดเจน/);
   });
 });

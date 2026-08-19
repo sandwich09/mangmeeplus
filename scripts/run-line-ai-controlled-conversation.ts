@@ -89,10 +89,10 @@ const turns = [
   { text: 'ขอบคุณนะ', policy: 'zero_tool' },
   { text: 'วันนี้เหนื่อยนิดหน่อย', policy: 'zero_tool' },
   { text: 'ดีใจมากเลย', policy: 'zero_tool' },
-  { text: 'โอเคค่ะ', policy: 'zero_tool' },
+  { text: 'ช่วยคำนวณยอดค่าใช้จ่ายเดือนนี้ให้หน่อย', policy: 'read_only', expectedTool: 'expense.list_recent' },
   { text: 'ช่วยอะไรได้บ้าง', policy: 'zero_tool' },
 ] as const;
-const INTER_TURN_CADENCE_MS = 5_000;
+const INTER_TURN_CADENCE_MS = Number(process.env['LINE_AI_CONTROLLED_CADENCE_MS'] ?? '5000');
 
 function request(text: string, index: number, recentTurns: LineAiConversationContextTurn[], permissionRefusal = false): LineAiTurnRequest {
   return {

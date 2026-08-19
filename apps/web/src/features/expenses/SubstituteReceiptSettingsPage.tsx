@@ -191,7 +191,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
             <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
               <h2 className="text-lg font-extrabold">ขอบเขตทางภาษี</h2>
               <p className="mt-2">การตั้งค่านี้เป็น control ภายในบริษัท ไม่ทำให้เอกสารกลายเป็นใบกำกับภาษี และไม่สร้างสิทธิ์ภาษีซื้อโดยอัตโนมัติ</p>
-              <a className="mt-3 inline-block font-bold underline" href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">ดูคู่มือกรมสรรพากร</a>
+              <a className="mt-3 inline-flex min-h-11 items-center font-bold underline sm:min-h-0" href="https://www.rd.go.th/fileadmin/download/15277290359.pdf" target="_blank" rel="noreferrer">ดูคู่มือกรมสรรพากร</a>
             </section>
             <MangmeeCard className="p-5">
               <h2 className="text-lg font-extrabold text-gray-900">ก่อนเปิดใช้งานจริง</h2>

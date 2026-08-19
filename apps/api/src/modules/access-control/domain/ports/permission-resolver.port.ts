@@ -5,6 +5,8 @@ export interface ResolvedAccess {
   permissions: string[];  // permission keys e.g. account.session.read
   /** Otherwise-granted permissions removed only because their owning feature is OFF. */
   entitlementDeniedPermissions?: Record<string, string>;
+  /** Server-resolved company features; null means the legacy fail-open company. */
+  entitledFeatureKeys?: string[] | null;
   scopes: {
     branchIds?: string[];
     locationIds?: string[];

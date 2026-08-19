@@ -41,7 +41,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
           remembered landing that may itself be the page that failed. */}
       <a
         href="/login?home=reset"
-        className="inline-flex h-10 items-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        className="inline-flex h-11 items-center justify-center sm:h-10 rounded-lg border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50"
       >
         {th ? 'กลับหน้าหลัก' : 'Back to home'}
       </a>

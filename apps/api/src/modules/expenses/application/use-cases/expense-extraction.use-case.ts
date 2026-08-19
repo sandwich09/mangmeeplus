@@ -105,7 +105,7 @@ export class RequestReceiptExtractionUseCase {
 
       if (response.status !== 'ok') {
         const status = response.status === 'not_configured' ? 'not_configured' : 'failed';
-        return this.finish(ctx, expenseId, status, attachment.id, response.modelLineage);
+        return this.finish(ctx, expenseId, status, attachment.id, response.modelLineage, response.errorCode);
       }
 
       if (!response.classification) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
@@ -200,8 +200,9 @@ export class RequestReceiptExtractionUseCase {
     status: Exclude<ExpenseExtractionResult['status'], 'ok'>,
     attachmentId?: string,
     modelLineage?: AiModelLineage[],
+    errorCode?: string,
   ): Promise<ExpenseExtractionResult> {
-    await this.auditOutcome(ctx, expenseId, status, attachmentId, 0, undefined, modelLineage);
+    await this.auditOutcome(ctx, expenseId, status, attachmentId, 0, undefined, modelLineage, errorCode);
     return { status };
   }
 
@@ -213,6 +214,7 @@ export class RequestReceiptExtractionUseCase {
     recognizedFieldCount = 0,
     classification?: BusinessDocumentClassification,
     modelLineage?: AiModelLineage[],
+    errorCode?: string,
   ): Promise<void> {
     return this.audit.log({
       companyId: ctx.companyId,
@@ -224,8 +226,10 @@ export class RequestReceiptExtractionUseCase {
       result: status === 'ok' || status === 'not_expense_document' ? 'SUCCESS' : 'FAILED',
       riskLevel: 'MEDIUM',
       metadataJson: {
+        channel: 'web',
         attachmentId: attachmentId ?? null,
         status,
+        ...(errorCode ? { errorCode } : {}),
         recognizedFieldCount,
         documentKind: classification?.documentKind ?? null,
         modelLineage: modelLineage?.slice(0, 4) ?? [],
