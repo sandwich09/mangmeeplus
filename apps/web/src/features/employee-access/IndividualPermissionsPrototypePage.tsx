@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { hasPrivilegedGrant, type EmployeeCredentialHandoff, type EmployeeSummary, type MenuDefinition, type PermissionMatrix as PermissionMatrixDto, type RoleSummary } from '@watchdog-bms/contracts';
+import type { EmployeeCredentialHandoff, EmployeeSummary, MenuDefinition, PermissionMatrix as PermissionMatrixDto, RoleSummary } from '@watchdog-bms/contracts';
 import {
   BellIcon,
   CalendarIcon,
@@ -38,8 +38,9 @@ import {
   setEmployeeStatus,
   updateEmployee,
 } from './employee-access.api';
-import { capabilityLabels, MENU_GROUP_LABEL_TH, MENU_GROUP_ORDER } from './access-overview.model';
-import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
+import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
+import { assignableRoleOptions, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
 type SvgProps = React.SVGProps<SVGSVGElement>;
@@ -200,7 +201,7 @@ const MVP1_INDIVIDUAL_PERMISSION_MENU_IDS = new Set<MenuDefinition['id']>([
 
 type SaveKey = 'role' | 'branch' | 'status';
 
-export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [] }: { companyId: string; viewerPermissions?: string[] }) {
+export function IndividualPermissionsPrototypePage({ companyId, viewerPermissions = [], viewerUserId }: { companyId: string; viewerPermissions?: string[]; viewerUserId?: string }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -215,6 +216,8 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [branchError, setBranchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -238,6 +241,8 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
 
   const reload = useCallback(async () => {
     setError(null);
+    setPermissionError(null);
+    setBranchError(null);
     const [employeesR, rolesR, matrixR, branchesR] = await Promise.allSettled([
       listEmployees(companyId),
       listRoles(companyId),
@@ -250,9 +255,24 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     } else {
       setError(localizedErrorMessage(employeesR.reason, locale, { fallback: 'error.load_failed' }));
     }
-    if (rolesR.status === 'fulfilled') setRoles(rolesR.value);
-    if (matrixR.status === 'fulfilled') setMatrix(matrixR.value);
-    if (branchesR.status === 'fulfilled') setBranches(branchesR.value);
+    if (rolesR.status === 'fulfilled') {
+      setRoles(rolesR.value);
+    } else {
+      setRoles([]);
+      setPermissionError(localizedErrorMessage(rolesR.reason, locale, { fallback: 'error.load_failed' }));
+    }
+    if (matrixR.status === 'fulfilled') {
+      setMatrix(matrixR.value);
+    } else {
+      setMatrix(null);
+      setPermissionError(localizedErrorMessage(matrixR.reason, locale, { fallback: 'error.load_failed' }));
+    }
+    if (branchesR.status === 'fulfilled') {
+      setBranches(branchesR.value);
+    } else {
+      setBranches([]);
+      setBranchError(localizedErrorMessage(branchesR.reason, locale, { fallback: 'error.load_failed' }));
+    }
     setLoading(false);
   }, [companyId, locale]);
 
@@ -289,17 +309,28 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }, [activeUserId]);
   const selectedEmployee = employees.find((e) => e.id === activeUserId) ?? null;
   const selectedRole = selectedEmployee ? roleById.get(selectedEmployee.roles[0]?.id ?? '') : undefined;
-  const selectedIsOwner = selectedRole?.key === 'OWNER';
+  const selectedIsOwner = selectedEmployee?.roles.some((role) => role.key === 'OWNER') ?? false;
   const selectedIsDraft = selectedEmployee?.status === 'DRAFT';
   const selectedActive = selectedEmployee?.status === 'ACTIVE';
+  // Options come from the server's own grant decision; the current role stays pinned (spec R1/R3).
+  const roleOptions = useMemo(() => assignableRoleOptions(roles, selectedRole?.id), [roles, selectedRole]);
+  const rolePickerReadOnly = isRoleFieldReadOnly({
+    canEditEmployee,
+    isOwnerTarget: selectedIsOwner,
+    isSelfTarget: isSelfEmployee(selectedEmployee, viewerUserId),
+    optionCount: roleOptions.length,
+  });
 
-  const selectedRow = useMemo(
-    () => (selectedRole ? matrix?.rows.find((r) => r.roleId === selectedRole.id) ?? null : null),
-    [matrix, selectedRole],
+  const selectedRoleNames = selectedEmployee?.roles.map((role) => role.name).join(', ') ?? '';
+  const accessProjection = useMemo(
+    () => projectGrantedMenus(
+      selectedEmployee?.roles.map((role) => role.id) ?? [],
+      matrix?.rows ?? [],
+      matrix?.menus ?? [],
+      MVP1_INDIVIDUAL_PERMISSION_MENU_IDS,
+    ),
+    [matrix, selectedEmployee],
   );
-  const menus = matrix?.menus ?? [];
-  const accessMenus = menus.filter((m) => MVP1_INDIVIDUAL_PERMISSION_MENU_IDS.has(m.id));
-  const grantedCount = accessMenus.filter((m) => selectedRow?.menus[m.id]?.view === true).length;
 
   const selectedBranchIds = selectedEmployee
     ? (selectedEmployee.branchScopeMode === 'ALL_BRANCHES' ? branches.map((b) => b.id) : selectedEmployee.branchScopeBranchIds)
@@ -327,7 +358,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   function editSelectedEmployee() {
-    if (!selectedEmployee || !canEditEmployee) return;
+    // The wizard always saves roleIds and the API rejects any role write on an OWNER target, so
+    // an owner row has no non-403 edit path (spec R5) — same guard as deleteSelectedEmployee.
+    if (!selectedEmployee || selectedIsOwner || !canEditEmployee) return;
     setEmployeeMenuOpen(false);
     router.push(`/companies/${companyId}/settings/employees?edit=${encodeURIComponent(selectedEmployee.id)}`);
   }
@@ -356,10 +389,17 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }
 
   async function changeSelectedRole(roleId: string) {
-    if (!selectedEmployee || selectedIsOwner || !canEditEmployee) return;
+    if (!selectedEmployee || rolePickerReadOnly) return;
     setRolePickerOpen(false);
     await withBusy('role', async () => {
-      await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+      try {
+        await updateEmployee(companyId, selectedEmployee.id, { roleIds: [roleId] });
+      } catch (e) {
+        // Permissions can be revoked mid-session: refetch so the picker stops offering what the
+        // server now refuses (spec R10). withBusy still renders the generic forbidden message.
+        if (statusOf(e) === 403) await reload();
+        throw e;
+      }
       await reload();
     }, 'เปลี่ยนบทบาทพนักงานแล้ว');
   }
@@ -516,7 +556,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         </span>
                       </div>
                       <div className="relative mt-1" ref={rolePickerRef}>
-                        {selectedIsOwner || !canEditEmployee ? (
+                        {rolePickerReadOnly ? (
                           <RoleBadge role={selectedRole} />
                         ) : (
                           <button
@@ -531,10 +571,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                             <ChevronDownIcon className="h-4 w-4 shrink-0 text-gray-400" />
                           </button>
                         )}
-                        {rolePickerOpen && !selectedIsOwner && canEditEmployee && (
+                        {rolePickerOpen && !rolePickerReadOnly && (
                           <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                            {/* OWNER/SYSTEM_ADMIN are never assignable; without access.role.manage the API also rejects people-manager roles — hide what would 403. */}
-                            {roles.filter((r) => !['OWNER', 'SYSTEM_ADMIN'].includes(r.key) && r.status === 'ACTIVE' && (canManageRoles || !hasPrivilegedGrant(r.permissionKeys))).map((role) => (
+                            {roleOptions.map((role) => (
                               <button
                                 key={role.id} type="button" role="option" aria-selected={role.id === selectedRole.id}
                                 onClick={() => void changeSelectedRole(role.id)}
@@ -547,7 +586,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           </div>
                         )}
                       </div>
-                      {selectedIsOwner && <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</p>}
+                      {selectedIsOwner
+                        ? <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</p>
+                        : isSelfEmployee(selectedEmployee, viewerUserId) && <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>}
                     </div>
                   )}
 
@@ -593,75 +634,115 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
             </MangmeeCard>
 
             <MangmeeCard className="p-5 sm:p-6">
+              <div data-testid="access-permission-summary">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0">
                   <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์การใช้งานของ {employeeShortName(selectedEmployee)}</h2>
                   {selectedIsOwner ? (
                     <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                      เจ้าของกิจการเป็น super-admin เข้าถึงทุกเมนูเสมอ ปรับสิทธิ์ไม่ได้
+                      สิทธิ์มาจากตำแหน่งเจ้าของกิจการ — ปรับสิทธิ์ไม่ได้
                     </p>
                   ) : (
                     <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                       <p className="max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                        สิทธิ์มาจากตำแหน่ง {selectedRole?.name ?? selectedEmployee.roles[0]?.name ?? '—'} — พนักงานทุกคนที่อยู่ตำแหน่งนี้ได้สิทธิ์ชุดเดียวกัน
+                        สิทธิ์มาจากตำแหน่ง {selectedRoleNames || '—'}
+                        {selectedEmployee.roles.length > 1
+                          ? ' — ระบบรวมสิทธิ์จากทุกตำแหน่ง'
+                          : ' — พนักงานทุกคนที่อยู่ตำแหน่งนี้ได้สิทธิ์ชุดเดียวกัน'}
                       </p>
                       {canManageRoles && (
                         <Link href={`/companies/${companyId}/settings/permissions`} className="text-sm font-extrabold text-brand-700 hover:underline">
-                          แก้สิทธิ์ของตำแหน่งนี้ →
+                          แก้สิทธิ์ของตำแหน่ง →
                         </Link>
                       )}
                     </div>
                   )}
+                  <p className="mt-2 max-w-4xl text-xs font-semibold leading-5 text-gray-400">
+                    {accountAccessNotice(selectedEmployee.status)}
+                  </p>
                 </div>
-                <MangmeeBadge tone="brand" className="shrink-0 tabular-nums">{grantedCount}/{accessMenus.length} เมนู</MangmeeBadge>
+                {!permissionError && accessProjection.complete && (
+                  <MangmeeBadge tone="brand" className="shrink-0 tabular-nums">
+                    ใช้งานได้ {accessProjection.grantedCount} เมนู
+                  </MangmeeBadge>
+                )}
               </div>
 
               <div className="mt-5 grid gap-4">
-                {MENU_GROUP_ORDER.map((group) => {
-                  const groupMenus = accessMenus.filter((menu) => menu.group === group);
-                  if (groupMenus.length === 0) return null;
-                  return (
-                    <div key={group} className="grid gap-1">
-                      <h3 className="px-3 text-xs font-extrabold uppercase tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
-                      {groupMenus.map((menu) => {
-                        const cell = selectedRow?.menus[menu.id];
-                        const granted = cell?.view === true;
-                        const labels = capabilityLabels(cell);
-                        return (
+                {permissionError ? (
+                  <div role="alert" data-testid="access-permission-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
+                    <p className="text-sm font-extrabold text-error-700">โหลดข้อมูลสิทธิ์ไม่สำเร็จ จึงยังสรุปสิทธิ์ไม่ได้</p>
+                    <p className="mt-1 text-xs font-semibold text-error-600">{permissionError}</p>
+                    <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
+                      ลองโหลดใหม่
+                    </button>
+                  </div>
+                ) : selectedEmployee.roles.length === 0 ? (
+                  <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+                    ยังไม่ได้กำหนดตำแหน่ง จึงยังไม่มีข้อมูลสิทธิ์
+                  </p>
+                ) : !accessProjection.complete ? (
+                  <div role="alert" data-testid="access-permission-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
+                    <p className="text-sm font-extrabold text-error-700">ข้อมูลตำแหน่งกับสิทธิ์ไม่ตรงกัน กรุณาลองโหลดใหม่</p>
+                    <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
+                      ลองโหลดใหม่
+                    </button>
+                  </div>
+                ) : accessProjection.groups.length === 0 ? (
+                  <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+                    ยังไม่มีเมนูที่ใช้งานได้จากตำแหน่งที่กำหนด
+                  </p>
+                ) : accessProjection.groups.map(({ group, menus: groupMenus }) => (
+                  <div key={group} className="grid gap-1">
+                    <h3 className="px-3 text-xs font-extrabold uppercase tracking-wide text-gray-400">{MENU_GROUP_LABEL_TH[group]}</h3>
+                    {groupMenus.map(({ menu, labels }) => (
+                      <div
+                        key={menu.id}
+                        data-testid="access-permission-row"
+                        data-menu-id={menu.id}
+                        className="grid min-w-0 gap-3 rounded-xl bg-white px-3 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] sm:items-center"
+                      >
+                        <div className="flex min-w-0 items-start gap-3">
+                          <MenuIconFrame menu={menu} className="h-8 w-8" />
+                          <span data-testid="access-permission-menu-label" className="min-w-0 whitespace-normal break-words text-sm font-extrabold leading-6 text-gray-900">
+                            {menu.labelTh}
+                          </span>
+                        </div>
+                        <div className="min-w-0 sm:text-right">
+                          <span className="block text-[11px] font-bold text-gray-400">สิทธิ์ที่มี</span>
                           <div
-                            key={menu.id}
-                            className={cx(
-                              'flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl px-3 py-2.5',
-                              granted ? 'bg-white' : 'bg-gray-50/60',
-                            )}
+                            data-testid="access-permission-actions"
+                            aria-label={`สิทธิ์ที่มีสำหรับ ${menu.labelTh}`}
+                            className="mt-1 flex flex-wrap gap-x-3 gap-y-1 sm:justify-end"
                           >
-                            <div className="flex min-w-0 flex-1 items-center gap-3">
-                              <MenuIconFrame menu={menu} className={cx('h-8 w-8', !granted && 'opacity-50')} />
-                              <span className={cx('min-w-0 truncate text-sm font-extrabold', granted ? 'text-gray-900' : 'text-gray-400')}>
-                                {menu.labelTh}
+                            {labels.map((label) => (
+                              <span key={label} className="inline-flex items-center gap-1 text-sm font-extrabold text-brand-700">
+                                <CheckLineIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                {label}
                               </span>
-                            </div>
-                            <div className="flex max-w-full flex-wrap justify-end gap-1.5">
-                              {granted ? labels.map((label) => (
-                                <span key={label} className="inline-flex h-6 items-center rounded-full bg-brand-50 px-2 text-[11px] font-extrabold text-brand-700">
-                                  {label}
-                                </span>
-                              )) : (
-                                <span className="inline-flex h-6 items-center rounded-full bg-gray-100 px-2 text-[11px] font-extrabold text-gray-400">
-                                  ไม่เห็นเมนูนี้
-                                </span>
-                              )}
-                            </div>
+                            ))}
                           </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
               </div>
             </MangmeeCard>
 
-            {branches.length > 0 && (
+            {branchError ? (
+              <MangmeeCard className="p-5 sm:p-6">
+                <div role="alert" data-testid="branch-access-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
+                  <h2 className="text-xl font-extrabold text-gray-900">สาขาที่เข้าถึงได้</h2>
+                  <p className="mt-2 text-sm font-extrabold text-error-700">โหลดข้อมูลสาขาไม่สำเร็จ จึงยังสรุปขอบเขตสาขาไม่ได้</p>
+                  <p className="mt-1 text-xs font-semibold text-error-600">{branchError}</p>
+                  <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
+                    ลองโหลดใหม่
+                  </button>
+                </div>
+              </MangmeeCard>
+            ) : branches.length > 0 && (
               <MangmeeCard className="p-5 sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0">

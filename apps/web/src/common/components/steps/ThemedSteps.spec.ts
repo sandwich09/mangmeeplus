@@ -19,18 +19,33 @@ test('marks only the current step with aria-current and shows labels + descripti
   assert.match(html, /aria-label="ขั้นตอน"/);
   assert.match(html, /ข้อมูลส่วนตัว/);
   assert.match(html, /อีเมลและเบอร์โทร/);
-  // done = check mark path, current = brand square with halo ring, upcoming = gray square
-  assert.match(html, /m5 10\.5 3\.5 3\.5L15 6\.5/);
+  // every node shows its number; current also carries the halo ring
+  assert.match(html, />1</);
+  assert.match(html, />2</);
+  assert.match(html, />3</);
   assert.match(html, /ring-brand-100/);
-  assert.match(html, /bg-gray-300/);
 });
 
-test('connector after a done step is brand, after the current step fades to gray', async () => {
+test('passed and current are brand circles, upcoming is a gray-numbered outline', async () => {
   const { ThemedSteps } = await import('./ThemedSteps');
   const html = renderToStaticMarkup(React.createElement(ThemedSteps, { steps: STEPS }));
 
-  assert.match(html, /bg-brand-500(?![^"]*from)/);
-  assert.match(html, /from-brand-500 to-gray-200/);
+  assert.equal(html.match(/bg-brand-500/g)!.filter(Boolean).length >= 2, true);
+  assert.match(html, /border-gray-200[^"]*text-gray-400/);
+  // no completion icons in the สรรพากร-style design — numbers only
+  assert.doesNotMatch(html, /<svg/);
+});
+
+test('connector is brand only behind a passed step — the current step\'s outbound segment is gray', async () => {
+  const { ThemedSteps } = await import('./ThemedSteps');
+  const html = renderToStaticMarkup(React.createElement(ThemedSteps, { steps: STEPS }));
+
+  const segments = html.match(/aria-hidden="true" class="[^"]*(bg-brand-500|bg-gray-200)/g)!;
+  // 3 nodes → 4 half-segments: after(done)=brand, before(current)=gray? no — before keys off previous
+  // node: after node1(done)=brand, before node2(prev done)=brand, after node2(current)=gray, before node3(prev current)=gray
+  const tones = segments.map((s) => (s.includes('bg-brand-500') ? 'brand' : 'gray'));
+  assert.deepEqual(tones, ['brand', 'brand', 'gray', 'gray']);
+  assert.doesNotMatch(html, /from-brand-500/);
 });
 
 test('href renders a link, onSelect renders a button, neither renders a plain node', async () => {

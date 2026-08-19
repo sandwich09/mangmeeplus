@@ -396,7 +396,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 }
 
 // ── Document type / tax evidence review + substitute + signature fill ─────────
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, dirtyRef }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; dirtyRef?: MutableRefObject<boolean> }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -505,6 +505,13 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     requestId === previewRequestRef.current && requestScope === previewScopeRef.current
   );
   const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
+  // Live dirtiness for the parent's ถัดไป guard — only while the บันทึกการตรวจ button exists
+  // (a read-only viewer has nothing to save and must never be blocked).
+  useEffect(() => {
+    if (!dirtyRef) return;
+    dirtyRef.current = isMutable && canReview && dirty;
+    return () => { dirtyRef.current = false; };
+  });
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
   const canResolveClassification = classificationReviewState.showFinanceOverride && docType !== 'NEEDS_REVIEW' && classificationOverrideReason.trim().length > 0 && classificationOverrideReason.trim().length <= 500;
