@@ -271,6 +271,29 @@ test.describe('Mobile responsive invariants', () => {
     ).toContain('-translate-x-full');
   });
 
+  test('INV-3 expanded bottom accordion stays in the drawer viewport', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+
+    const drawer = authedPage.locator('aside').first();
+    await authedPage.locator('header button[class*="lg:hidden"]').tap();
+    const guide = drawer.getByRole('button', { name: 'คู่มือการใช้งานระบบ' });
+    await guide.tap();
+    await expect(guide).toHaveAttribute('aria-expanded', 'true');
+
+    const scrollRoot = drawer.locator('nav').locator('..');
+    const lastGuide = drawer.getByRole('link', { name: 'การเบิกจ่ายและอนุมัติ' });
+    await expect.poll(async () => {
+      const [rootBox, triggerBox, lastGuideBox] = await Promise.all([
+        scrollRoot.boundingBox(),
+        guide.boundingBox(),
+        lastGuide.boundingBox(),
+      ]);
+      return Boolean(rootBox && triggerBox && lastGuideBox
+        && triggerBox.y >= rootBox.y - 1
+        && lastGuideBox.y + lastGuideBox.height <= rootBox.y + rootBox.height + 1);
+    }, { message: 'expanded guide and its last item must remain visible inside the sidebar scroller' }).toBe(true);
+  });
+
   test('INV-5 login fields do not trigger iOS zoom', async ({ page }) => {
     await page.goto('/login');
     await expect(page.locator('#login-identifier')).toBeVisible();
