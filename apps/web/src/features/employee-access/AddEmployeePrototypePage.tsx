@@ -664,7 +664,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               key: String(definition.n),
               label: definition.label,
               state: definition.n === step ? 'current' : definition.n < step ? 'done' : 'upcoming',
-              onSelect: () => void goToStep(definition.n),
+              // Display-only, same rule as the expense review stepper: navigate with ย้อนกลับ/ถัดไป.
             }))}
           />
 
