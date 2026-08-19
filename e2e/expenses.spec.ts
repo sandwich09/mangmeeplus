@@ -121,20 +121,22 @@ test.describe('EXP — expenses + receipts', () => {
   test('EXP-04 @p1 expense detail renders totals and transitions', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses?expenseId=${created.id}`);
-    // guided stepper: money summary lives on the vendor+items step, terminal actions on the final step
-    await authedPage.getByRole('button', { name: 'ตรวจข้อมูล' }).click();
+    // guided stepper opens on the vendor+items step, where the money summary lives
     await expect(authedPage.getByText('ยอดก่อนหักส่วนลด', { exact: true })).toBeVisible();
     await expect(authedPage.getByText('ฐานภาษี (ยอดก่อน VAT)', { exact: true })).toBeVisible();
     await expect(authedPage.getByText('ยอดรวมทั้งสิ้น', { exact: true })).toBeVisible();
-    // Step tab is now labelled "ตรวจก่อนส่ง" (expenses.step_review) -- "สรุปและส่งตรวจ" was renamed.
-    await authedPage.getByRole('button', { name: 'ตรวจก่อนส่ง' }).click();
+    // The stepper is display-only: reach the final step through ถัดไป. A vendor name is
+    // required first — createExpense() leaves it empty, which disables ถัดไป by validation.
+    await authedPage.getByRole('textbox', { name: /ชื่อผู้ขาย/ }).first().fill('E2E Vendor');
+    await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await authedPage.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(authedPage.getByRole('button', { name: /ส่งตรวจสอบ/ })).toBeVisible();
   });
 
   test('EXP-04A @p1 cancellation dialog keeps or rejects a draft with API truth', async ({ authedPage, api, companyId }) => {
     const created = await createExpense(api, companyId);
     await gotoCompany(authedPage, companyId, `/expenses/${created.id}`);
-    await authedPage.getByRole('button', { name: 'ตรวจก่อนส่ง' }).click();
+    // ยกเลิกรายการ renders on every guided step now that the stepper is display-only.
     await authedPage.getByRole('button', { name: 'ยกเลิกรายการ', exact: true }).click();
 
     const dialog = authedPage.getByRole('dialog', { name: 'ยืนยันการยกเลิกรายการ' });

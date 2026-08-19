@@ -93,6 +93,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const [step, setStep] = useState<ExpenseReviewStepKey>('data');
   // Details-step edits are saved by navigation (ถัดไป/ย้อนกลับ/chips), not an in-section save button.
   const reviewSaveRef = useRef<(() => Promise<boolean>) | null>(null);
+  // Evidence-step edits save only via the explicit บันทึกการตรวจ button (the save can cascade —
+  // e.g. clearing tax codes), so navigation must not save them; it must refuse to skip past them.
+  const evidenceDirtyRef = useRef(false);
   const [stepSaving, setStepSaving] = useState(false);
   const openReject = () => {
     setReason(''); setError(null); setShowReject(true); setShowVoid(false); setDuplicateResolution(null);
@@ -101,8 +104,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     if (actionLoading) return;
     setShowReject(false); setReason('');
   };
-  // allowUnsaved lets stepper chips reach Review to reject an invalid draft instead of trapping the reviewer.
-  const goToStep = async (key: ExpenseReviewStepKey, allowUnsaved = false) => {
+  // Navigation is linear — ถัดไป/ย้อนกลับ only, the stepper is display-only. ยกเลิกรายการ
+  // therefore renders on every step: an invalid draft (ถัดไป disabled by validation) must
+  // stay rejectable without faking data first.
+  const goToStep = async (key: ExpenseReviewStepKey) => {
     // An issued substitute certificate locks material fields server-side
     // (409 substitute_evidence_locks_expense); saving on navigate would fail
     // silently and trap the user on step 1, and there is nothing to save.
@@ -110,7 +115,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     if (step === 'data' && key !== 'data' && reviewSaveRef.current && !substituteLocked) {
       setStepSaving(true);
       const saved = await reviewSaveRef.current().finally(() => setStepSaving(false));
-      if (!saved && !allowUnsaved) return; // stay on the step — the section shows the error
+      if (!saved) return; // stay on the step — the section shows the error
+    }
+    // ถัดไป past unsaved evidence edits would submit stale values while everything reads green —
+    // stay and name the button. Going back keeps the edits (sections hide, not unmount).
+    if (step === 'evidence' && key === 'review' && !substituteLocked && evidenceDirtyRef.current) {
+      toast.warning(t('expenses.doc_review_unsaved_next', locale));
+      return;
     }
     setStep(key);
   };
@@ -452,19 +463,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const modalFooter = hasFooterActions ? (
     <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-        {guided && step === 'review' && (
-          <>
-            {detail.status !== 'READY_FOR_CONFIRMATION' && (
-              <>
-                {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
-              </>
-            )}
-            {detail.status === 'READY_FOR_CONFIRMATION' && (
-              <>
-                {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
-              </>
-            )}
-          </>
+        {/* Every step, not just review: the stepper is display-only, so a draft whose
+            validation errors disable ถัดไป must still be rejectable without faking data. */}
+        {guided && caps.canReject && (
+          <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>
         )}
         {/* Pure approver (expense.confirm/reject without review/update): READY_FOR_CONFIRMATION actions outside guided mode. */}
         {approverOnlyActions && (
@@ -634,7 +636,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     </div>
   );
   const documentReviewCard = (
-    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} canSelfApprove={canSelfApprove} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} />
+    <DocumentReviewSection companyId={companyId} detail={detail} isMutable={isMutable} canReview={canReview} canConfirm={canConfirm} userId={userId} canSelfApprove={canSelfApprove} onSaved={async () => { setNotice(null); await load(); await onRefresh(); }} onOpenFile={showPreview} dirtyRef={evidenceDirtyRef} />
   );
   // A total that disagrees with its own receipt reaches the ledger only through a named decision:
   // Finance either edits the amount or records why the stored figure stands. Accepting is bound to
@@ -831,16 +833,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
 
         <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
           {guided ? (
-            <ThemedSteps steps={steps.map((entry) => ({
+            <ThemedSteps steps={steps.map((entry, index) => ({
               key: entry.key,
               label: t(STEP_LABEL_KEYS[entry.key], locale),
-              // The step being worked on reads as current even when flagged — the
-              // warning look returns once the user moves on without fixing it.
+              // Position decides the color (สรรพากร-style): green up to where the user
+              // stands, gray past it — stepping back grays the steps ahead again. A
+              // flagged step keeps its warning look unless it is the one being worked on.
+              // Display-only on purpose: navigation goes through ถัดไป/ย้อนกลับ.
               state: step === entry.key ? 'current'
-                : entry.state === 'done' ? 'done'
-                  : entry.state === 'attention' ? 'attention' : 'upcoming',
-              onSelect: () => void goToStep(entry.key, true),
-              disabled: stepSaving,
+                : entry.state === 'attention' ? 'attention'
+                  : index < stepIndex ? 'done' : 'upcoming',
             }))} />
           ) : navChips.map((chip) => (
             <button key={chip.key} type="button" onClick={() => chip.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
