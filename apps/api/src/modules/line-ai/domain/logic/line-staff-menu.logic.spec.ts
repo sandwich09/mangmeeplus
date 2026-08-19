@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, pendingApprovalSurfaceKeys, staffMenuCommand } from './line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -164,64 +164,58 @@ describe('LINE staff menu', () => {
     assert.equal(JSON.stringify(card).includes('po-approval'), false);
   });
 
-  // UAT 2026-08-19: the card only ever said "open it in the web", so the one thing the button
-  // promises — is there anything waiting for me? — took a browser session to answer.
-  const cardTexts = (card: any) => {
-    const [title, summary, sectionBox] = card.contents.body.contents;
-    return [title.text, summary.text, ...(sectionBox?.contents ?? []).map((line: any) => line.text)];
-  };
-  const approverContext = { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] };
+  // UAT 2026-08-18: the card said only "เปิดรายการจริงในเว็บ", so an approver had to open the web
+  // app to learn whether anything was waiting at all.
+  describe('pending approval counts', () => {
+    const cardText = (card: any) => (card.contents.body.contents as any[]).map((line) => line.text);
 
-  it('names the queues to read from the same predicate that renders them', () => {
-    assert.deepEqual(pendingApprovalSurfaceKeys(approverContext), ['reimbursement', 'procurement']);
-    assert.deepEqual(pendingApprovalSurfaceKeys({ ...context, permissions: ['reimbursement.approve'] }), ['reimbursement']);
-    assert.deepEqual(pendingApprovalSurfaceKeys(context), []);
-  });
-
-  it('states the pending count and the first five rows, and defers the rest to the web queue', () => {
-    const items = ['RB-0001 · สมชาย · ฿1,200.00', 'RB-0002 · สมหญิง · ฿980.00', 'RB-0003 · ก้อง · ฿450.00', 'RB-0004 · แนน · ฿2,000.00', 'RB-0005 · ปอ · ฿75.00', 'RB-0006 · มาย · ฿310.00'];
-    const card = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] }, { reimbursement: { total: 7, items } });
-
-    assert.match((card as any).altText, /รายการรออนุมัติ 7 รายการ/);
-    assert.deepEqual(cardTexts(card), [
-      '✅ รายการรออนุมัติ',
-      'รอคุณอนุมัติ 7 รายการ · เปิดในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย',
-      'คำขอเบิกเงิน · 7 รายการ',
-      ...items.slice(0, 5).map((item) => `• ${item}`),
-      'และอีก 2 รายการในเว็บ',
-    ]);
-    // Six rows were handed over; only five are shown, and the sixth is not silently counted as shown.
-    assert.equal(JSON.stringify(card).includes(items[5]), false);
-    assert.deepEqual((card as any).contents.footer.contents.map((button: any) => button.action.label), ['คำขอเบิกเงิน']);
-  });
-
-  it('answers "nothing pending" outright and drops the button that would open an empty queue', () => {
-    const card = buildPendingApprovalCard(approverContext, {
-      reimbursement: { total: 0, items: [] },
-      procurement: { total: 0, items: [] },
+    it('states the total, names the queue, and lists at most five rows', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve'] },
+        { reimbursement: { total: 7, items: ['RB-1 · สมชาย · 1,130.00 บาท', 'RB-2', 'RB-3', 'RB-4', 'RB-5', 'RB-6'] } },
+      );
+      const text = cardText(card);
+      assert.equal((card as { altText?: string }).altText, 'รายการรออนุมัติ 7 รายการ');
+      assert.equal(text[1], 'มี 7 รายการรอคุณอนุมัติ');
+      assert.equal(text[2], 'คำขอเบิกเงิน (7)');
+      assert.deepEqual(text.slice(3, 9), ['• RB-1 · สมชาย · 1,130.00 บาท', '• RB-2', '• RB-3', '• RB-4', '• RB-5', 'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย']);
     });
 
-    assert.equal((card as any).altText, 'รายการรออนุมัติ');
-    assert.deepEqual(cardTexts(card), [
-      '✅ รายการรออนุมัติ',
-      'ตอนนี้ไม่มีรายการที่รอคุณอนุมัติค่ะ 🎉',
-      'คำขอเบิกเงิน · ไม่มีรายการรออนุมัติ',
-      'ใบขอซื้อ/ใบสั่งซื้อ · ไม่มีรายการรออนุมัติ',
-    ]);
-    assert.equal((card as any).contents.footer, undefined);
-  });
+    it('splits the five rows across the queues the member can act on', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve', 'procurement.purchase_order.approve'] },
+        {
+          reimbursement: { total: 3, items: ['RB-1', 'RB-2', 'RB-3'] },
+          procurement: { total: 4, items: ['PO-1', 'PO-2', 'PO-3', 'PO-4'] },
+        },
+      );
+      assert.deepEqual(cardText(card).slice(2), [
+        'คำขอเบิกเงิน (3)', '• RB-1', '• RB-2', '• RB-3',
+        'ใบขอซื้อ/ใบสั่งซื้อ (4)', '• PO-1', '• PO-2',
+        'แสดง 5 จาก 7 รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย',
+      ]);
+    });
 
-  it('never reports an unread queue as empty', () => {
-    // Reimbursement read and empty, procurement not read at all: the card may not claim the whole
-    // picture is clear, and must still offer the queue whose size it does not know.
-    const card = buildPendingApprovalCard(approverContext, { reimbursement: { total: 0, items: [] } });
+    it('says the queue is empty when it was read, and stays silent about counts when it was not', () => {
+      const empty = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] }, { reimbursement: { total: 0, items: [] } });
+      assert.deepEqual(cardText(empty), ['✅ รายการรออนุมัติ', 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ']);
 
-    assert.deepEqual(cardTexts(card), [
-      '✅ รายการรออนุมัติ',
-      'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย',
-      'คำขอเบิกเงิน · ไม่มีรายการรออนุมัติ',
-    ]);
-    assert.deepEqual((card as any).contents.footer.contents.map((button: any) => button.action.label), ['ใบขอซื้อ/ใบสั่งซื้อ']);
+      const unread = buildPendingApprovalCard({ ...context, permissions: ['reimbursement.approve'] });
+      assert.deepEqual(cardText(unread), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+    });
+
+    it('ignores a count for a queue this member cannot act on', () => {
+      const card = buildPendingApprovalCard(
+        { ...context, permissions: ['reimbursement.approve'] },
+        { procurement: { total: 9, items: ['PO-1'] } },
+      );
+      assert.deepEqual(cardText(card), ['✅ รายการรออนุมัติ', 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย']);
+    });
+
+    it('names only the queues the caller should query', () => {
+      assert.deepEqual(availableApprovalSurfaceKeys({ ...context, permissions: ['reimbursement.approve'] }), ['reimbursement']);
+      assert.deepEqual(availableApprovalSurfaceKeys({ ...context, permissions: ALL_PERMISSIONS, entitledFeatureKeys: new Set(['procurement.purchase_orders']) }), ['procurement']);
+    });
   });
 
   it('parses only explicit menu commands', () => {

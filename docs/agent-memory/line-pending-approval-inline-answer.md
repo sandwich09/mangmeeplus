@@ -33,3 +33,16 @@ Verification:
 
 Next:
 - Verify on UAT LINE OA with a company that has both reimbursement and procurement approvals.
+
+Merge resolution 2026-08-19 (PR #175 stack into develop):
+
+- SUPERSEDED. PR #172 shipped the same feature first and stays. This document's decisions still
+  describe the product intent, but none of its named artifacts exist any more: `APPROVAL_SURFACES`
+  is an array of objects keyed by `key`, and the API is `availableApprovalSurfaceKeys` /
+  `PendingApprovalSnapshot` / `buildPendingApprovalCard(context, pending)` /
+  `loadPendingApprovals` / `bahtText`. See
+  [[agent-memory/line-approval-card-and-capability-scope|LINE รายการรออนุมัติ counts + capability scope]]
+  for the shipped shape.
+- Two behaviours from this variant were dropped with it: a queue read and known empty keeps its web
+  button, and the procurement listers are called only when the caller holds the matching `.approve`
+  permission (the shipped version calls them and lets the use case refuse).

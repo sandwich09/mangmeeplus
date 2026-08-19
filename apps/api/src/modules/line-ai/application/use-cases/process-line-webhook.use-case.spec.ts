@@ -184,9 +184,7 @@ function makeUseCase(
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
       legalAcceptanceRequired?: boolean;
-      reimbursementApprovalQueue?: any;
-      listPurchaseRequests?: any;
-      listPurchaseOrders?: any;
+      approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -240,12 +238,11 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
-    // captureExpenseNote → expenseDraftConversation: unused by these cases, listed so the approval
-    // queue readers land on their own positions.
+    // captureExpenseNote → expenseDraftConversation stay unwired for these cases.
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-    opts.reimbursementApprovalQueue,
-    opts.listPurchaseRequests,
-    opts.listPurchaseOrders,
+    opts.approvalQueues?.reimbursement,
+    opts.approvalQueues?.purchaseRequests,
+    opts.approvalQueues?.purchaseOrders,
   );
 
 	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
@@ -937,6 +934,36 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
   });
 
+  // UAT 2026-08-18: รายการรออนุมัติ only linked out, so an approver could not tell from LINE
+  // whether anything was waiting.
+  it('counts the pending approval queues the member can act on', async () => {
+    const { prisma } = makePrisma();
+    const { useCase, sentMessages } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_request.approve'],
+      approvalQueues: {
+        reimbursement: { execute: async () => [
+          { requestNo: 'RB-0007', requesterDisplayNameSnapshot: 'สมชาย', amount: '1130' },
+          { requestNo: 'RB-0008', requesterDisplayNameSnapshot: 'มานี', amount: '250.5' },
+        ] },
+        // An approver without the matching read permission: the queue is left out, never zeroed.
+        purchaseRequests: { execute: async () => { throw new Error('Forbidden'); } },
+      },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-counts', messageText: 'รายการรออนุมัติ' });
+
+    const lines = (sentMessages[0]?.contents.body.contents as any[]).map((line) => line.text);
+    assert.equal(sentMessages[0]?.altText, 'รายการรออนุมัติ 2 รายการ');
+    assert.deepEqual(lines, [
+      '✅ รายการรออนุมัติ',
+      'มี 2 รายการรอคุณอนุมัติ',
+      'คำขอเบิกเงิน (2)',
+      '• RB-0007 · สมชาย · 1,130.00 บาท',
+      '• RB-0008 · มานี · 250.50 บาท',
+      'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย',
+    ]);
+  });
+
   it('delivers the receipt prompt as a Flex card', async () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, { permissions: ['expense.receipt.line_upload'] });
@@ -999,49 +1026,28 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(harness.branchFindManyCalls.length, 0);
   });
 
-  // UAT 2026-08-19: tapping "รายการรออนุมัติ" only ever produced a link, so the yes/no question it
-  // asks needed a browser to answer. The counts come from the same permission-checked queue use
-  // cases the web pages call — never a repository — so LINE cannot show a row the web would hide.
-  it('answers the approval menu with the real queue, read through the permission-checked use cases', async () => {
+  // The queue use cases receive server-derived identity and scope, never anything read off the
+  // LINE message, so the card can only ever count rows this member could open on the web.
+  it('reads the approval queues with the caller RequestContext, not with anything from the message', async () => {
     const { prisma } = makePrisma();
     const approvalCalls: any[] = [];
-    const purchaseRequestCalls: any[] = [];
     const purchaseOrderCalls: any[] = [];
-    const { useCase, sentMessages } = makeUseCase(prisma, {
+    const { useCase } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'reimbursement.approve', 'procurement.purchase_order.approve'],
       branchIds: ['branch-1'],
-      reimbursementApprovalQueue: { execute: async (ctx: any) => {
-        approvalCalls.push(ctx);
-        return [
-          { requestNo: 'RB-0001', requesterDisplayNameSnapshot: 'สมชาย', amount: '1200.00', currency: 'THB' },
-          { requestNo: undefined, requesterDisplayNameSnapshot: 'สมหญิง', amount: '980.50', currency: 'THB' },
-        ];
-      } },
-      listPurchaseRequests: { execute: async (ctx: any, filter: any) => { purchaseRequestCalls.push(filter); return { data: [], total: 0 }; } },
-      listPurchaseOrders: { execute: async (ctx: any, filter: any) => {
-        purchaseOrderCalls.push(filter);
-        return { data: [{ purchaseOrderNumber: 'PO-0007', grandTotalAmount: '5000.00', currency: 'THB' }], total: 1 };
-      } },
+      approvalQueues: {
+        reimbursement: { execute: async (ctx: any) => { approvalCalls.push(ctx); return []; } },
+        purchaseOrders: { execute: async (_ctx: any, filter: any) => { purchaseOrderCalls.push(filter); return { data: [], total: 0 }; } },
+      },
     });
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue', messageText: 'รายการรออนุมัติ' });
 
-    const card = sentMessages[0];
-    assert.match(card.altText, /รายการรออนุมัติ 3 รายการ/);
-    const rendered = JSON.stringify(card);
-    assert.ok(rendered.includes('คำขอเบิกเงิน · 2 รายการ'));
-    assert.ok(rendered.includes('RB-0001 · สมชาย · ฿1,200.00'));
-    assert.ok(rendered.includes('ยังไม่มีเลขที่ · สมหญิง · ฿980.50'));
-    assert.ok(rendered.includes('ใบสั่งซื้อ PO-0007 · ฿5,000.00'));
-
-    // Server-derived identity and scope, never anything read off the LINE message.
     assert.equal(approvalCalls.length, 1);
     assert.deepEqual(
       { companyId: approvalCalls[0].companyId, userId: approvalCalls[0].userId, scopes: approvalCalls[0].scopes, authProvider: approvalCalls[0].authProvider },
       { companyId: 'company-1', userId: 'user-1', scopes: { branchIds: ['branch-1'] }, authProvider: 'line' },
     );
-    // No purchase-request approve permission → that lister is never called, and its rows are not counted.
-    assert.deepEqual(purchaseRequestCalls, []);
     assert.deepEqual(purchaseOrderCalls, [{ status: 'PENDING_APPROVAL', page: 1, pageSize: 5 }]);
   });
 
@@ -1049,7 +1055,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma();
     const { useCase, sentMessages } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'reimbursement.approve'],
-      reimbursementApprovalQueue: { execute: async () => { throw new Error('database unavailable'); } },
+      approvalQueues: { reimbursement: { execute: async () => { throw new Error('database unavailable'); } } },
     });
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-approval-queue-failed', messageText: 'รายการรออนุมัติ' });
@@ -1328,6 +1334,70 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, undefined);
     assert.equal((updates.at(-1) as any).data.processedAt, null);
     assert.equal((updates.at(-1) as any).data.errorCode, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
+  });
+
+  it('audits a failed LINE receipt read with its gateway errorCode', async () => {
+    // An unreadable image routes to `clarify` and returns before any expense exists, so this row is
+    // the only record that the read was attempted at all. Without it every "อ่านไม่ออก" report is
+    // invisible in the audit log and the failure cause is unattributable.
+    const { prisma } = makePrisma();
+    const audits: any[] = [];
+    const useCase = new ProcessLineWebhookUseCase(
+      prisma,
+      { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
+      {
+        resolveAccess: async () => ({
+          membershipId: 'mem-1',
+          roles: ['STAFF'],
+          permissions: ['expense.receipt.line_upload', 'attachment.create', 'expense.create'],
+          scopes: {},
+        }),
+      } as any,
+      { log: async (entry: any) => { audits.push(entry); } } as any,
+      {
+        requestLineTurn: async () => { throw new Error('not expected'); },
+        requestLineIntakeRoute: async () => ROUTED_EXPENSE_DOCUMENT,
+        requestReceiptOcr: async () => ({ status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }),
+      } as any,
+      {
+        buildTextMessage: (text: string) => ({ type: 'text', text }),
+        sendReply: async () => 'ok',
+      } as any,
+      { apply: async () => ({ candidatesCreated: 0 }) } as any,
+      CLEAN_SCANNER,
+      acceptedLegal,
+      shadowProbe,
+      { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
+      { execute: async () => undefined } as any,
+    );
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg',
+      mimeType: 'image/jpeg',
+      byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash',
+      contentBase64: JPEG_BYTES.toString('base64'),
+      bytes: JPEG_BYTES,
+    });
+    // The clarify branch parks the media for a follow-up; that storage path is covered elsewhere.
+    (useCase as any).ensurePendingMedia = async () => ({ created: true, pending: null });
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-unreadable-1',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-unreadable-1',
+      lineMessageId: 'line-msg-unreadable-1',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    });
+
+    const ocrAudit = audits.find((entry) => entry.action === 'expense.ocr.request');
+    assert.ok(ocrAudit, 'a failed read must still be audited');
+    assert.equal(ocrAudit.result, 'FAILED');
+    assert.equal(ocrAudit.targetId, 'evt-unreadable-1');
+    assert.equal(ocrAudit.metadataJson.channel, 'line');
+    assert.equal(ocrAudit.metadataJson.status, 'OCR_FAILED');
+    assert.equal(ocrAudit.metadataJson.errorCode, 'OCR_EMPTY_OUTPUT');
+    assert.equal(ocrAudit.metadataJson.recognizedFieldCount, 0);
   });
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {

@@ -56,7 +56,7 @@ import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, Line
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, pendingApprovalSurfaceKeys, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalQueues, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -171,6 +171,9 @@ type ReceiptOcrPreflight = {
   status: 'OCR_EXTRACTED_NEEDS_REVIEW' | 'NOT_CONFIGURED' | 'OCR_FAILED' | 'NOT_REQUESTED';
   fields: ReceiptOcrFieldResult | null;
   classification: BusinessDocumentClassification | null;
+  /** Gateway reason for a failed read (OCR_EMPTY_OUTPUT, PROVIDER_TIMEOUT, …). Absent when the
+   *  gateway call itself threw — that case is OCR_FAILED with no code. */
+  errorCode?: string;
 };
 
 type DownloadedLineMedia = {
@@ -674,14 +677,11 @@ export function lineAssistantDisabledFor(entitled: ReadonlySet<string> | null): 
 export const branchScopeFallbackLabel = (branchIds?: string[]) =>
   branchIds?.length ? `${branchIds.length} สาขา` : 'ทุกสาขา';
 
-/** Money on the approval card. Thai baht is the overwhelming case and reads best with the symbol;
- *  anything else keeps its code, so a foreign-currency claim is never mistaken for baht. */
-const formatApprovalAmount = (amount: string, currency: string) => {
+const bahtText = (amount: string) => {
   const value = Number(amount);
-  const formatted = Number.isFinite(value)
-    ? value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : amount;
-  return currency === 'THB' ? `฿${formatted}` : `${formatted} ${currency}`;
+  return Number.isFinite(value)
+    ? `${value.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
+    : `${amount} บาท`;
 };
 
 @Injectable()
@@ -718,8 +718,8 @@ export class ProcessLineWebhookUseCase {
     // Receipt continuity: read/preflight and typed web-prefill only; no prepare/issue mutation.
     @Optional() private readonly substituteReceiptContinuation?: LineSubstituteReceiptContinuationUseCase,
     @Optional() private readonly expenseDraftConversation?: LineExpenseDraftConversationUseCase,
-    // Approval-card counts. The SAME use cases the web queue pages call, so the card can only ever
-    // state rows this member could open there. Absent → the card links out without a number.
+    // Counts for the รายการรออนุมัติ card, read through the same permission-checked use cases the
+    // web approval screens use. Absent → the card links out without counts.
     @Optional() private readonly reimbursementApprovalQueue?: ListApprovalQueueUseCase,
     @Optional() private readonly listPurchaseRequests?: ListPurchaseRequestsUseCase,
     @Optional() private readonly listPurchaseOrders?: ListPurchaseOrdersUseCase,
@@ -750,62 +750,6 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
-  /**
-   * Reads the queues behind the "รายการรออนุมัติ" button so the card can answer the question
-   * instead of only linking to it. Every read goes through the permission-checked use case the web
-   * queue page uses — never a repository — so branch scope, approver eligibility, and self-approval
-   * filtering stay identical to what the same person sees on the web.
-   *
-   * A queue that cannot be read (the lister needs a `read` permission this member lacks, or the
-   * query failed) is LEFT OUT rather than reported as zero: "no pending items" and "nobody asked"
-   * must not look the same on the card.
-   */
-  private async loadPendingApprovalQueues(ctx: RequestContext, keys: ApprovalSurfaceKey[]): Promise<PendingApprovalQueues> {
-    const queues: PendingApprovalQueues = {};
-
-    if (keys.includes('reimbursement') && this.reimbursementApprovalQueue) {
-      try {
-        const rows = await this.reimbursementApprovalQueue.execute(ctx);
-        queues.reimbursement = {
-          total: rows.length,
-          items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => [
-            row.requestNo ?? 'ยังไม่มีเลขที่',
-            row.requesterDisplayNameSnapshot,
-            formatApprovalAmount(row.amount, row.currency),
-          ].join(' · ')),
-        };
-      } catch (error) {
-        this.logger.warn({ msg: 'LINE reimbursement approval queue unavailable', companyId: ctx.companyId, error: (error as Error).message });
-      }
-    }
-
-    if (keys.includes('procurement') && this.listPurchaseRequests && this.listPurchaseOrders) {
-      // Procurement approval is permission + branch scope (no per-step routing), so the pending
-      // rows this member can list ARE the rows this member can approve.
-      const filter = { status: 'PENDING_APPROVAL', page: 1, pageSize: PENDING_APPROVAL_ITEM_LIMIT };
-      const empty = { data: [], total: 0 };
-      try {
-        const requests = ctx.permissions.includes('procurement.purchase_request.approve')
-          ? await this.listPurchaseRequests.execute(ctx, filter)
-          : empty;
-        const orders = ctx.permissions.includes('procurement.purchase_order.approve')
-          ? await this.listPurchaseOrders.execute(ctx, filter)
-          : empty;
-        queues.procurement = {
-          total: requests.total + orders.total,
-          items: [
-            ...requests.data.map((row) => `ใบขอซื้อ ${row.requestNumber ?? 'ยังไม่มีเลขที่'} · ${formatApprovalAmount(row.grandTotalAmount, row.currency)}`),
-            ...orders.data.map((row) => `ใบสั่งซื้อ ${row.purchaseOrderNumber ?? 'ยังไม่มีเลขที่'} · ${formatApprovalAmount(row.grandTotalAmount, row.currency)}`),
-          ],
-        };
-      } catch (error) {
-        this.logger.warn({ msg: 'LINE procurement approval queue unavailable', companyId: ctx.companyId, error: (error as Error).message });
-      }
-    }
-
-    return queues;
-  }
-
   private async resolveBranchScopeLabel(companyId: string, branchIds?: string[]): Promise<string> {
     const fallback = branchScopeFallbackLabel(branchIds);
     if (!branchIds?.length) return fallback;
@@ -828,6 +772,56 @@ export class ProcessLineWebhookUseCase {
       this.logger.warn({ msg: 'LINE branch scope lookup failed', companyId, branchCount: branchIds.length, error: (error as Error).message });
       return fallback;
     }
+  }
+
+  /**
+   * Counts and a shortlist for the รายการรออนุมัติ card, read through the same permission-checked
+   * use cases the web approval screens use — never the repositories — so LINE can never list a row
+   * the same person cannot see on the web.
+   *
+   * A queue that is unwired or refuses (an approver without the matching read permission) is left
+   * out of the snapshot rather than reported as zero: "ไม่มีรายการ" and "อ่านไม่ได้" must not look
+   * the same to someone deciding whether to open the web app.
+   */
+  private async loadPendingApprovals(ctx: RequestContext, keys: ApprovalSurfaceKey[]): Promise<PendingApprovalSnapshot> {
+    const pending: PendingApprovalSnapshot = {};
+    const failed = (queue: string) => (error: unknown) => {
+      this.logger.warn({ msg: 'LINE pending approval queue unavailable', queue, companyId: ctx.companyId, error: (error as Error).message });
+      return null;
+    };
+
+    if (keys.includes('reimbursement') && this.reimbursementApprovalQueue) {
+      const rows = await this.reimbursementApprovalQueue.execute(ctx).catch(failed('reimbursement'));
+      if (rows) {
+        pending.reimbursement = {
+          total: rows.length,
+          items: rows.slice(0, PENDING_APPROVAL_ITEM_LIMIT).map((row) => [
+            row.requestNo ?? 'คำขอเบิกเงิน',
+            row.requesterDisplayNameSnapshot,
+            bahtText(row.amount),
+          ].filter(Boolean).join(' · ')),
+        };
+      }
+    }
+
+    if (keys.includes('procurement') && (this.listPurchaseRequests || this.listPurchaseOrders)) {
+      const filter = { status: 'PENDING_APPROVAL', page: 1, pageSize: PENDING_APPROVAL_ITEM_LIMIT };
+      const [requests, orders] = await Promise.all([
+        this.listPurchaseRequests?.execute(ctx, filter).catch(failed('purchase_request')) ?? null,
+        this.listPurchaseOrders?.execute(ctx, filter).catch(failed('purchase_order')) ?? null,
+      ]);
+      if (requests || orders) {
+        pending.procurement = {
+          total: (requests?.total ?? 0) + (orders?.total ?? 0),
+          items: [
+            ...(requests?.data ?? []).map((row) => `${row.requestNumber ?? 'ใบขอซื้อ'} · ${bahtText(row.grandTotalAmount)}`),
+            ...(orders?.data ?? []).map((row) => `${row.purchaseOrderNumber ?? 'ใบสั่งซื้อ'} · ${bahtText(row.grandTotalAmount)}`),
+          ].slice(0, PENDING_APPROVAL_ITEM_LIMIT),
+        };
+      }
+    }
+
+    return pending;
   }
 
   private async refusePendingLegalAcceptance(
@@ -1206,7 +1200,7 @@ export class ProcessLineWebhookUseCase {
         : menuCommand === 'query'
           ? buildStaffQueryMenu(menuContext)
           : menuCommand === 'approval'
-            ? buildPendingApprovalCard(menuContext, await this.loadPendingApprovalQueues({
+            ? buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
               requestId,
               authSubject: identity.userId,
               userId: identity.userId,
@@ -1216,7 +1210,7 @@ export class ProcessLineWebhookUseCase {
               permissions: resolvedAccess.permissions,
               scopes: resolvedAccess.scopes,
               authProvider: 'line',
-            }, pendingApprovalSurfaceKeys(menuContext)))
+            }, availableApprovalSurfaceKeys(menuContext)))
             : buildReceiptCapturePrompt(menuContext);
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
@@ -2388,6 +2382,25 @@ export class ProcessLineWebhookUseCase {
     // NOT_REQUESTED and therefore fails closed unless a routed expense caption supplies purpose.
     const ocr = await this.tryExtractReceiptFields(ctx, event.lineMessageId, media);
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
+    // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
+    // `clarify` and returns below without ever creating an expense, so auditing further down (as this
+    // once did, guarded on OCR_EXTRACTED_NEEDS_REVIEW) recorded successes only and left every
+    // unreadable image — the whole "อ่านไม่ออก" signal — absent from the log. Keyed to the webhook
+    // event because no expense exists yet; the expense-linked row shares this `requestId`.
+    await this.audit.log({
+      companyId, actorUserId: identity.userId, action: 'expense.ocr.request', targetType: 'line_webhook_event',
+      targetId: event.webhookEventId, requestId,
+      result: ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' ? 'SUCCESS' : 'FAILED', riskLevel: 'MEDIUM',
+      metadataJson: {
+        channel: 'line',
+        status: ocr.status,
+        ...(ocr.errorCode ? { errorCode: ocr.errorCode } : {}),
+        documentKind: decision.classification?.documentKind ?? null,
+        recognizedFieldCount: ocr.fields ? Object.keys(ocr.fields).length : 0,
+        mimeType: media.mimeType,
+        byteSize: media.byteSize,
+      },
+    });
     if (decision.outcome === 'reference' || decision.outcome === 'unsupported') {
       const reply = decision.outcome === 'reference'
         ? formatBusinessDocumentReply(decision.classification, this.config.webBaseUrl, companyId)
@@ -2543,16 +2556,6 @@ export class ProcessLineWebhookUseCase {
         },
       },
     });
-    if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW') {
-      await this.audit.log({
-        companyId, actorUserId: identity.userId, action: 'expense.ocr.request', targetType: 'expense_record',
-        targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-        metadataJson: {
-          recognizedFieldCount: ocrFields ? Object.keys(ocrFields).length : 0,
-          documentKind: decision.classification?.documentKind,
-        },
-      });
-    }
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
@@ -2970,7 +2973,9 @@ export class ProcessLineWebhookUseCase {
         attachment: { id: attachmentId, mimeType: media.mimeType, purpose: 'receipt', contentBase64: media.contentBase64 },
       });
       if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
-      if (result.status !== 'ok') return { status: 'OCR_FAILED', fields: null, classification: null };
+      if (result.status !== 'ok') {
+        return { status: 'OCR_FAILED', fields: null, classification: null, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };
+      }
       return {
         status: 'OCR_EXTRACTED_NEEDS_REVIEW',
         fields: result.fields ?? null,

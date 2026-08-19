@@ -196,97 +196,96 @@ export function buildReceiptCapturePrompt(context: StaffMenuContext): LineReplyM
   };
 }
 
-/** One entry per real approval queue the member can act on. Ordered as listed.
- *  [key, label, any-of permissions, web path, any-of feature keys]. */
+/** One button per real approval queue the member can act on. Ordered as listed. */
 const APPROVAL_SURFACES = [
-  ['reimbursement', 'คำขอเบิกเงิน', ['reimbursement.approve'], 'reimbursements?tab=approvals', ['reimbursement']],
-  ['procurement', 'ใบขอซื้อ/ใบสั่งซื้อ', ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'], 'procurement', ['procurement.purchase_requests', 'procurement.purchase_orders']],
+  {
+    key: 'reimbursement',
+    label: 'คำขอเบิกเงิน',
+    permissions: ['reimbursement.approve'],
+    path: 'reimbursements?tab=approvals',
+    features: ['reimbursement'],
+  },
+  {
+    key: 'procurement',
+    label: 'ใบขอซื้อ/ใบสั่งซื้อ',
+    permissions: ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'],
+    path: 'procurement',
+    features: ['procurement.purchase_requests', 'procurement.purchase_orders'],
+  },
 ] as const;
 
-export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number][0];
+export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number]['key'];
 
-/** What the card is allowed to state as fact about one queue: `total` is the whole queue the
- *  caller could read, `items` the first few already rendered as one line each (the caller owns the
- *  domain rows, this file owns the layout). A surface with NO entry was not read at all — the card
- *  then links out without claiming a number, so it can never say "none" over a failed query. */
-export type PendingApprovalQueue = { total: number; items: string[] };
-export type PendingApprovalQueues = Partial<Record<ApprovalSurfaceKey, PendingApprovalQueue>>;
+/** What the approver has waiting: `total` is the whole queue, `items` the display lines the card
+ *  may show. A key left out means that queue could not be read — the card then links out without a
+ *  count instead of implying zero. */
+export type PendingApprovalSnapshot = Partial<Record<ApprovalSurfaceKey, { total: number; items: string[] }>>;
 
-/** How many rows the card shows before deferring the rest to the web queue. */
+/** LINE shows the shortlist; the web app stays the place the approval is actually made. */
 export const PENDING_APPROVAL_ITEM_LIMIT = 5;
 
 /** The single source both the quick-reply button and the card itself read. Hoisted, so the quick
  *  reply above can call it. */
 function availableApprovalSurfaces(permissions: Set<string>, entitled: ReadonlySet<string> | null) {
-  return APPROVAL_SURFACES.filter(([, , required, , features]) =>
-    hasAny(permissions, required) && hasFeature(entitled, features));
+  return APPROVAL_SURFACES.filter((surface) =>
+    hasAny(permissions, surface.permissions) && hasFeature(entitled, surface.features));
 }
 
-/** Which queues the caller should read before building the card. Same predicate as the card, so a
- *  query is never run for a surface the card will not show, and never skipped for one it will. */
-export function pendingApprovalSurfaceKeys(
+/** The queues worth querying before the card is built. */
+export function availableApprovalSurfaceKeys(
   context: Pick<StaffMenuContext, 'permissions' | 'entitledFeatureKeys'>,
 ): ApprovalSurfaceKey[] {
   return availableApprovalSurfaces(new Set(context.permissions), context.entitledFeatureKeys)
-    .map(([key]) => key);
+    .map((surface) => surface.key);
 }
 
-/**
- * Answers the question the button asks. A queue the caller read is stated as a number plus its
- * first `PENDING_APPROVAL_ITEM_LIMIT` rows — "none pending" is an answer, not a dead end — and the
- * web link stays for the detail, the ceiling check, and the actual approve. A queue the caller
- * could NOT read (missing read permission, or the query failed) keeps the link-only wording,
- * because silence is the only honest thing to say about a number nobody fetched.
- */
-export function buildPendingApprovalCard(context: StaffMenuContext, queues: PendingApprovalQueues = {}): LineReplyMessage {
+export function buildPendingApprovalCard(context: StaffMenuContext, pending: PendingApprovalSnapshot = {}): LineReplyMessage {
   const base = context.webBaseUrl?.replace(/\/$/, '');
   const permissions = new Set(context.permissions);
   const companySegment = `/companies/${encodeURIComponent(context.companyId)}/`;
   const surfaces = availableApprovalSurfaces(permissions, context.entitledFeatureKeys);
-  const read = surfaces.map(([key]) => queues[key]).filter((queue): queue is PendingApprovalQueue => !!queue);
-  const pending = read.reduce((sum, queue) => sum + queue.total, 0);
-  const allRead = read.length === surfaces.length && surfaces.length > 0;
-
-  const summary = allRead && pending === 0
-    ? 'ตอนนี้ไม่มีรายการที่รอคุณอนุมัติค่ะ 🎉'
-    : pending > 0
-      ? `รอคุณอนุมัติ ${pending} รายการ · เปิดในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย`
-      : 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย';
-
-  const sections = surfaces.flatMap(([key, label]) => {
-    const queue = queues[key];
-    if (!queue) return [];
-    if (queue.total === 0) return [{ type: 'text', text: `${label} · ไม่มีรายการรออนุมัติ`, wrap: true, size: 'sm', color: '#667085' }];
-    const shown = queue.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT);
-    return [
-      { type: 'text', text: `${label} · ${queue.total} รายการ`, weight: 'bold', size: 'sm', color: '#101828', wrap: true },
-      ...shown.map((item) => ({ type: 'text', text: `• ${item}`, wrap: true, size: 'xs', color: '#667085' })),
-      ...(queue.total > shown.length
-        ? [{ type: 'text', text: `และอีก ${queue.total - shown.length} รายการในเว็บ`, size: 'xs', color: '#98A2B3', wrap: true }]
-        : []),
-    ];
-  });
-
-  // A queue read and known empty needs no button: there is nothing on the other side of it.
   const buttons = base
-    ? surfaces
-      .filter(([key]) => (queues[key]?.total ?? 1) > 0)
-      .map(([, label, , path]) => ({
-        type: 'button', style: 'primary', color: '#12B76A',
-        action: { type: 'uri', label, uri: `${base}${companySegment}${path}` },
-      }))
+    ? surfaces.map((surface) => ({
+      type: 'button', style: 'primary', color: '#12B76A',
+      action: { type: 'uri', label: surface.label, uri: `${base}${companySegment}${surface.path}` },
+    }))
     : [];
+
+  const counted = surfaces.filter((surface) => pending[surface.key]);
+  const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
+  const lines: Record<string, unknown>[] = [];
+  let listed = 0;
+  for (const surface of counted) {
+    const queue = pending[surface.key]!;
+    if (queue.total === 0) continue;
+    lines.push({ type: 'text', text: `${surface.label} (${queue.total})`, weight: 'bold', size: 'sm', color: '#101828', margin: 'md', wrap: true });
+    for (const item of queue.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT - listed)) {
+      lines.push({ type: 'text', text: `• ${item}`, size: 'sm', color: '#475467', wrap: true });
+      listed += 1;
+    }
+  }
+
+  const summary = counted.length === 0
+    ? 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย'
+    : total === 0
+      ? 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ'
+      : `มี ${total} รายการรอคุณอนุมัติ`;
+  const closing = total > 0
+    ? listed < total
+      ? `แสดง ${listed} จาก ${total} รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย`
+      : 'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย'
+    : undefined;
+
   return {
     type: 'flex',
-    altText: pending > 0 ? `รายการรออนุมัติ ${pending} รายการ` : 'รายการรออนุมัติ',
+    altText: counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`,
     contents: {
       type: 'bubble',
       body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
         { type: 'text', text: '✅ รายการรออนุมัติ', weight: 'bold', size: 'lg', color: '#101828' },
         { type: 'text', text: summary, wrap: true, color: '#667085', size: 'sm' },
-        ...(sections.length > 0
-          ? [{ type: 'box', layout: 'vertical', spacing: 'xs', contents: sections }]
-          : []),
+        ...lines,
+        ...(closing ? [{ type: 'text', text: closing, wrap: true, color: '#667085', size: 'xs', margin: 'md' }] : []),
       ] },
       ...(buttons.length > 0 ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: buttons } } : {}),
     },

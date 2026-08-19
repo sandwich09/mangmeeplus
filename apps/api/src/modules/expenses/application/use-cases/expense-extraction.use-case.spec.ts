@@ -215,6 +215,7 @@ describe('RequestReceiptExtractionUseCase', () => {
       result: 'SUCCESS',
       riskLevel: 'MEDIUM',
       metadataJson: {
+        channel: 'web',
         attachmentId: 'attachment-1',
         status: 'ok',
         recognizedFieldCount: 4,
