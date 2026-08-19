@@ -702,7 +702,7 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                 {query.trim() ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
-                <input className={cx(inputClass, 'w-full pr-10')} type="search"
+                <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                   placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
@@ -1111,7 +1111,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail }: QueueProps) {
                 {query.trim() ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
-                <input className={cx(inputClass, 'w-full pr-10')} type="search"
+                <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                   placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
@@ -1318,7 +1318,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: 
                 {query.trim() ? `พบ ${filteredData.length} จาก ${data.length} รายการ` : `ทั้งหมด ${data.length} รายการ`}
               </div>
               <div className="relative w-full sm:max-w-96">
-                <input className={cx(inputClass, 'w-full pr-10')} type="search"
+                <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                   placeholder="ค้นหาทุกข้อมูลในตาราง เช่น เลขที่ ผู้ขอ จำนวนเงิน สถานะ"
                   value={query} onChange={e => setQuery(e.target.value)} />
                 <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
