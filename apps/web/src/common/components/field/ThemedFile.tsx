@@ -21,6 +21,8 @@ export type ThemedFileProps = {
   file?: File | string | null;
   onChange?: (file: File | null) => void;
   accept?: string;
+  /** `capture="environment"` opens the rear camera straight away on a phone. */
+  capture?: boolean | 'user' | 'environment';
   disabled?: boolean;
   className?: string;
   placeholder?: string;
@@ -32,7 +34,7 @@ export type ThemedFileProps = {
   'aria-required'?: boolean;
 };
 
-export function ThemedFile({ file, onChange, accept, disabled = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-required': ariaRequired }: ThemedFileProps) {
+export function ThemedFile({ file, onChange, accept, capture, disabled = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-required': ariaRequired }: ThemedFileProps) {
   const locale = useWorkspaceLocale();
   const labels = LABELS[locale] ?? LABELS.th;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -82,6 +84,7 @@ export function ThemedFile({ file, onChange, accept, disabled = false, className
         name={name}
         required={required}
         accept={accept}
+        capture={capture}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-required={ariaRequired}
@@ -99,7 +102,7 @@ export function ThemedFile({ file, onChange, accept, disabled = false, className
           type="button"
           aria-label={labels.clear}
           onClick={clear}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 sm:h-7 sm:w-7"
         >
           <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
             <path d="m5.5 5.5 9 9m0-9-9 9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />

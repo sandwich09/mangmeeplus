@@ -43,6 +43,9 @@ const ACTIONABLE = [
   '[role="button"]',
   '[role="link"]',
   '[role="tab"]',
+  // A label wrapping a file input is the real tap target: the input itself is `sr-only`,
+  // which this check skips, so without this the camera button would have no coverage at all.
+  'label:has(input[type="file"])',
 ].join(', ');
 
 /** Documented exceptions to the 44px rule (spec section 12.2). */

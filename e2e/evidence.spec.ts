@@ -82,6 +82,25 @@ test.describe('INV-11 evidence', () => {
     expect(row.failures, describeFailures('branded state 404', row.failures)).toEqual([]);
   });
 
+  // Acceptance criterion 6: on a phone the first action offered is the camera, and no visible
+  // copy tells the user to drag a file. Desktop keeps its dropzone, which is the other half of
+  // the same assertion — a mobile-only change that quietly rewrote desktop would fail here.
+  test('/expenses/upload — camera first on a phone, dropzone on desktop', async ({ authedPage, companyId, isMobile }, testInfo) => {
+    await gotoAndSettle(authedPage, companyId, '/expenses/upload');
+    const dragCopy = authedPage.getByText('ลากไฟล์มาวาง', { exact: false });
+
+    if (isMobile) {
+      const cameraLabel = authedPage.locator('label:has(input[capture="environment"])');
+      await expect(cameraLabel, 'a phone must be offered the camera directly').toHaveCount(1);
+      const box = await cameraLabel.boundingBox();
+      expect(box?.height ?? 0, 'camera button must be a real touch target').toBeGreaterThanOrEqual(44);
+      await expect(dragCopy, 'a phone cannot drag a file — that copy must not be visible').toBeHidden();
+    } else {
+      await expect(dragCopy, 'desktop keeps its dropzone verbatim').toBeVisible();
+    }
+    await captureEvidence(authedPage, testInfo, 'upload-capture-affordance');
+  });
+
   for (const cardList of CARD_LISTS) {
     test(`${cardList.route} — INV-11 every card`, async ({ authedPage, companyId, isMobile }, testInfo) => {
       await gotoAndSettle(authedPage, companyId, cardList.route);

@@ -1,14 +1,14 @@
 # Mobile-first evidence bundle
 
-Subjects: 288 · devices: 7 · blocking failures: 64 · DESKTOP-FINDING: 0
+Subjects: 295 · devices: 7 · blocking failures: 68 · DESKTOP-FINDING: 0
 
 Decision D11: desktop rows are measured, not enforced — they never block a phase.
 
 | Device | Width | Subject | Cards | Controls | Verdict | Screenshot |
 |---|---|---|---|---|---|---|
 | desktop-1280 | 1280 | route/expenses | 0 | 83 | pass | [png](desktop-1280/route-expenses.png) |
-| desktop-1280 | 1280 | route/expenses/upload | 0 | 50 | pass | [png](desktop-1280/route-expenses-upload.png) |
-| desktop-1280 | 1280 | route/expenses/manual | 0 | 58 | pass | [png](desktop-1280/route-expenses-manual.png) |
+| desktop-1280 | 1280 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1280/route-expenses-upload.png) |
+| desktop-1280 | 1280 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1280/route-expenses-manual.png) |
 | desktop-1280 | 1280 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1280/route-expenses-evidence.png) |
 | desktop-1280 | 1280 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1280/route-expenses-categories.png) |
 | desktop-1280 | 1280 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1280/route-expenses-signatures.png) |
@@ -23,12 +23,13 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1280 | 1280 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1280/route-settings-permissions.png) |
 | desktop-1280 | 1280 | route/settings | 0 | 53 | pass | [png](desktop-1280/route-settings.png) |
 | desktop-1280 | 1280 | branded-state-404 | 0 | 2 | pass | [png](desktop-1280/branded-state-404.png) |
+| desktop-1280 | 1280 | upload-capture-affordance | 0 | 55 | pass | [png](desktop-1280/upload-capture-affordance.png) |
 | desktop-1280 | 1280 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-reimbursements.png) |
 | desktop-1280 | 1280 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-expenses.png) |
 | desktop-1280 | 1280 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1280/cards-accounting.png) |
 | desktop-1440 | 1440 | route/expenses | 0 | 83 | pass | [png](desktop-1440/route-expenses.png) |
-| desktop-1440 | 1440 | route/expenses/upload | 0 | 50 | pass | [png](desktop-1440/route-expenses-upload.png) |
-| desktop-1440 | 1440 | route/expenses/manual | 0 | 58 | pass | [png](desktop-1440/route-expenses-manual.png) |
+| desktop-1440 | 1440 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1440/route-expenses-upload.png) |
+| desktop-1440 | 1440 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1440/route-expenses-manual.png) |
 | desktop-1440 | 1440 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1440/route-expenses-evidence.png) |
 | desktop-1440 | 1440 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1440/route-expenses-categories.png) |
 | desktop-1440 | 1440 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1440/route-expenses-signatures.png) |
@@ -43,12 +44,13 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1440 | 1440 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1440/route-settings-permissions.png) |
 | desktop-1440 | 1440 | route/settings | 0 | 53 | pass | [png](desktop-1440/route-settings.png) |
 | desktop-1440 | 1440 | branded-state-404 | 0 | 2 | pass | [png](desktop-1440/branded-state-404.png) |
+| desktop-1440 | 1440 | upload-capture-affordance | 0 | 55 | pass | [png](desktop-1440/upload-capture-affordance.png) |
 | desktop-1440 | 1440 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-reimbursements.png) |
 | desktop-1440 | 1440 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-expenses.png) |
 | desktop-1440 | 1440 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1440/cards-accounting.png) |
 | desktop-1920 | 1920 | route/expenses | 0 | 83 | pass | [png](desktop-1920/route-expenses.png) |
-| desktop-1920 | 1920 | route/expenses/upload | 0 | 50 | pass | [png](desktop-1920/route-expenses-upload.png) |
-| desktop-1920 | 1920 | route/expenses/manual | 0 | 58 | pass | [png](desktop-1920/route-expenses-manual.png) |
+| desktop-1920 | 1920 | route/expenses/upload | 0 | 55 | pass | [png](desktop-1920/route-expenses-upload.png) |
+| desktop-1920 | 1920 | route/expenses/manual | 0 | 59 | pass | [png](desktop-1920/route-expenses-manual.png) |
 | desktop-1920 | 1920 | route/expenses/evidence | 0 | 73 | pass | [png](desktop-1920/route-expenses-evidence.png) |
 | desktop-1920 | 1920 | route/expenses/categories | 0 | 84 | pass | [png](desktop-1920/route-expenses-categories.png) |
 | desktop-1920 | 1920 | route/expenses/signatures | 0 | 83 | pass | [png](desktop-1920/route-expenses-signatures.png) |
@@ -63,12 +65,13 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | desktop-1920 | 1920 | route/settings/permissions | 0 | 60 | pass | [png](desktop-1920/route-settings-permissions.png) |
 | desktop-1920 | 1920 | route/settings | 0 | 53 | pass | [png](desktop-1920/route-settings.png) |
 | desktop-1920 | 1920 | branded-state-404 | 0 | 2 | pass | [png](desktop-1920/branded-state-404.png) |
+| desktop-1920 | 1920 | upload-capture-affordance | 0 | 55 | pass | [png](desktop-1920/upload-capture-affordance.png) |
 | desktop-1920 | 1920 | cards/reimbursements | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-reimbursements.png) |
 | desktop-1920 | 1920 | cards/expenses | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-expenses.png) |
 | desktop-1920 | 1920 | cards/accounting | 0 | 0 | NO EVIDENCE — card list is md:hidden at this width — desktop shows the table instead | [png](desktop-1920/cards-accounting.png) |
 | iphone13-chromium | 390 | route/expenses | 0 | 60 | FAIL — too-small x13 | [png](iphone13-chromium/route-expenses.png) |
-| iphone13-chromium | 390 | route/expenses/upload | 0 | 27 | FAIL — too-small x4 | [png](iphone13-chromium/route-expenses-upload.png) |
-| iphone13-chromium | 390 | route/expenses/manual | 0 | 35 | FAIL — too-small x6 | [png](iphone13-chromium/route-expenses-manual.png) |
+| iphone13-chromium | 390 | route/expenses/upload | 0 | 32 | FAIL — too-small x4 | [png](iphone13-chromium/route-expenses-upload.png) |
+| iphone13-chromium | 390 | route/expenses/manual | 0 | 36 | FAIL — too-small x6 | [png](iphone13-chromium/route-expenses-manual.png) |
 | iphone13-chromium | 390 | route/expenses/evidence | 0 | 50 | FAIL — too-small x16 | [png](iphone13-chromium/route-expenses-evidence.png) |
 | iphone13-chromium | 390 | route/expenses/categories | 0 | 61 | FAIL — too-small x35 | [png](iphone13-chromium/route-expenses-categories.png) |
 | iphone13-chromium | 390 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](iphone13-chromium/route-expenses-signatures.png) |
@@ -83,6 +86,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-chromium | 390 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](iphone13-chromium/route-settings-permissions.png) |
 | iphone13-chromium | 390 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](iphone13-chromium/route-settings.png) |
 | iphone13-chromium | 390 | branded-state-404 | 0 | 2 | pass | [png](iphone13-chromium/branded-state-404.png) |
+| iphone13-chromium | 390 | upload-capture-affordance | 0 | 32 | FAIL — too-small x4 | [png](iphone13-chromium/upload-capture-affordance.png) |
 | iphone13-chromium | 390 | cards/reimbursements-1 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-1.png) |
 | iphone13-chromium | 390 | cards/reimbursements-2 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-2.png) |
 | iphone13-chromium | 390 | cards/reimbursements-3 | 1 | 0 | pass | [png](iphone13-chromium/cards-reimbursements-3.png) |
@@ -124,8 +128,8 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-chromium | 390 | cards/accounting-19 | 1 | 0 | pass | [png](iphone13-chromium/cards-accounting-19.png) |
 | iphone13-chromium | 390 | cards/accounting-20 | 1 | 0 | pass | [png](iphone13-chromium/cards-accounting-20.png) |
 | iphone13-webkit | 390 | route/expenses | 0 | 60 | FAIL — too-small x13 | [png](iphone13-webkit/route-expenses.png) |
-| iphone13-webkit | 390 | route/expenses/upload | 0 | 27 | FAIL — too-small x4 | [png](iphone13-webkit/route-expenses-upload.png) |
-| iphone13-webkit | 390 | route/expenses/manual | 0 | 35 | FAIL — too-small x6 | [png](iphone13-webkit/route-expenses-manual.png) |
+| iphone13-webkit | 390 | route/expenses/upload | 0 | 32 | FAIL — too-small x4 | [png](iphone13-webkit/route-expenses-upload.png) |
+| iphone13-webkit | 390 | route/expenses/manual | 0 | 36 | FAIL — too-small x6 | [png](iphone13-webkit/route-expenses-manual.png) |
 | iphone13-webkit | 390 | route/expenses/evidence | 0 | 50 | FAIL — too-small x16 | [png](iphone13-webkit/route-expenses-evidence.png) |
 | iphone13-webkit | 390 | route/expenses/categories | 0 | 61 | FAIL — too-small x35 | [png](iphone13-webkit/route-expenses-categories.png) |
 | iphone13-webkit | 390 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](iphone13-webkit/route-expenses-signatures.png) |
@@ -134,12 +138,13 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-webkit | 390 | route/reimbursements | 0 | 71 | FAIL — too-small x19 | [png](iphone13-webkit/route-reimbursements.png) |
 | iphone13-webkit | 390 | route/dashboard | 0 | 44 | FAIL — too-small x9 | [png](iphone13-webkit/route-dashboard.png) |
 | iphone13-webkit | 390 | route/notifications | 0 | 177 | FAIL — too-small x108 | [png](iphone13-webkit/route-notifications.png) |
-| iphone13-webkit | 390 | route/settings/notifications | 0 | 28 | FAIL — too-small x8 | [png](iphone13-webkit/route-settings-notifications.png) |
+| iphone13-webkit | 390 | route/settings/notifications | 0 | 27 | FAIL — too-small x8 | [png](iphone13-webkit/route-settings-notifications.png) |
 | iphone13-webkit | 390 | route/notifications/rules | 0 | 24 | FAIL — too-small x5 | [png](iphone13-webkit/route-notifications-rules.png) |
 | iphone13-webkit | 390 | route/settings/employees | 0 | 37 | FAIL — too-small x6 | [png](iphone13-webkit/route-settings-employees.png) |
 | iphone13-webkit | 390 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](iphone13-webkit/route-settings-permissions.png) |
 | iphone13-webkit | 390 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](iphone13-webkit/route-settings.png) |
 | iphone13-webkit | 390 | branded-state-404 | 0 | 2 | pass | [png](iphone13-webkit/branded-state-404.png) |
+| iphone13-webkit | 390 | upload-capture-affordance | 0 | 32 | FAIL — too-small x4 | [png](iphone13-webkit/upload-capture-affordance.png) |
 | iphone13-webkit | 390 | cards/reimbursements-1 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-1.png) |
 | iphone13-webkit | 390 | cards/reimbursements-2 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-2.png) |
 | iphone13-webkit | 390 | cards/reimbursements-3 | 1 | 0 | pass | [png](iphone13-webkit/cards-reimbursements-3.png) |
@@ -181,8 +186,8 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | iphone13-webkit | 390 | cards/accounting-19 | 1 | 0 | pass | [png](iphone13-webkit/cards-accounting-19.png) |
 | iphone13-webkit | 390 | cards/accounting-20 | 1 | 0 | pass | [png](iphone13-webkit/cards-accounting-20.png) |
 | mobile-375 | 375 | route/expenses | 0 | 60 | FAIL — too-small x13 | [png](mobile-375/route-expenses.png) |
-| mobile-375 | 375 | route/expenses/upload | 0 | 27 | FAIL — too-small x4 | [png](mobile-375/route-expenses-upload.png) |
-| mobile-375 | 375 | route/expenses/manual | 0 | 35 | FAIL — too-small x6 | [png](mobile-375/route-expenses-manual.png) |
+| mobile-375 | 375 | route/expenses/upload | 0 | 32 | FAIL — too-small x4 | [png](mobile-375/route-expenses-upload.png) |
+| mobile-375 | 375 | route/expenses/manual | 0 | 36 | FAIL — too-small x6 | [png](mobile-375/route-expenses-manual.png) |
 | mobile-375 | 375 | route/expenses/evidence | 0 | 50 | FAIL — too-small x16 | [png](mobile-375/route-expenses-evidence.png) |
 | mobile-375 | 375 | route/expenses/categories | 0 | 61 | FAIL — too-small x35 | [png](mobile-375/route-expenses-categories.png) |
 | mobile-375 | 375 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](mobile-375/route-expenses-signatures.png) |
@@ -197,6 +202,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-375 | 375 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](mobile-375/route-settings-permissions.png) |
 | mobile-375 | 375 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](mobile-375/route-settings.png) |
 | mobile-375 | 375 | branded-state-404 | 0 | 2 | pass | [png](mobile-375/branded-state-404.png) |
+| mobile-375 | 375 | upload-capture-affordance | 0 | 32 | FAIL — too-small x4 | [png](mobile-375/upload-capture-affordance.png) |
 | mobile-375 | 375 | cards/reimbursements-1 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-1.png) |
 | mobile-375 | 375 | cards/reimbursements-2 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-2.png) |
 | mobile-375 | 375 | cards/reimbursements-3 | 1 | 0 | pass | [png](mobile-375/cards-reimbursements-3.png) |
@@ -238,15 +244,15 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-375 | 375 | cards/accounting-19 | 1 | 0 | pass | [png](mobile-375/cards-accounting-19.png) |
 | mobile-375 | 375 | cards/accounting-20 | 1 | 0 | pass | [png](mobile-375/cards-accounting-20.png) |
 | mobile-chromium | 412 | route/expenses | 0 | 60 | FAIL — too-small x13 | [png](mobile-chromium/route-expenses.png) |
-| mobile-chromium | 412 | route/expenses/upload | 0 | 27 | FAIL — too-small x4 | [png](mobile-chromium/route-expenses-upload.png) |
-| mobile-chromium | 412 | route/expenses/manual | 0 | 35 | FAIL — too-small x6 | [png](mobile-chromium/route-expenses-manual.png) |
+| mobile-chromium | 412 | route/expenses/upload | 0 | 32 | FAIL — too-small x4 | [png](mobile-chromium/route-expenses-upload.png) |
+| mobile-chromium | 412 | route/expenses/manual | 0 | 36 | FAIL — too-small x6 | [png](mobile-chromium/route-expenses-manual.png) |
 | mobile-chromium | 412 | route/expenses/evidence | 0 | 50 | FAIL — too-small x16 | [png](mobile-chromium/route-expenses-evidence.png) |
 | mobile-chromium | 412 | route/expenses/categories | 0 | 61 | FAIL — too-small x35 | [png](mobile-chromium/route-expenses-categories.png) |
 | mobile-chromium | 412 | route/expenses/signatures | 0 | 60 | FAIL — too-small x13 | [png](mobile-chromium/route-expenses-signatures.png) |
 | mobile-chromium | 412 | route/expenses/substitute-receipts | 0 | 27 | FAIL — too-small x6 | [png](mobile-chromium/route-expenses-substitute-receipts.png) |
 | mobile-chromium | 412 | route/settings/substitute-receipt | 0 | 34 | FAIL — too-small x13 | [png](mobile-chromium/route-settings-substitute-receipt.png) |
-| mobile-chromium | 412 | route/reimbursements | 0 | 72 | FAIL — too-small x19 | [png](mobile-chromium/route-reimbursements.png) |
-| mobile-chromium | 412 | route/dashboard | 0 | 45 | FAIL — too-small x9 | [png](mobile-chromium/route-dashboard.png) |
+| mobile-chromium | 412 | route/reimbursements | 0 | 71 | FAIL — too-small x19 | [png](mobile-chromium/route-reimbursements.png) |
+| mobile-chromium | 412 | route/dashboard | 0 | 44 | FAIL — too-small x9 | [png](mobile-chromium/route-dashboard.png) |
 | mobile-chromium | 412 | route/notifications | 0 | 177 | FAIL — too-small x108 | [png](mobile-chromium/route-notifications.png) |
 | mobile-chromium | 412 | route/settings/notifications | 0 | 27 | FAIL — too-small x8 | [png](mobile-chromium/route-settings-notifications.png) |
 | mobile-chromium | 412 | route/notifications/rules | 0 | 24 | FAIL — too-small x5 | [png](mobile-chromium/route-notifications-rules.png) |
@@ -254,6 +260,7 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 | mobile-chromium | 412 | route/settings/permissions | 0 | 37 | FAIL — too-small x5 | [png](mobile-chromium/route-settings-permissions.png) |
 | mobile-chromium | 412 | route/settings | 0 | 30 | FAIL — too-small x3 | [png](mobile-chromium/route-settings.png) |
 | mobile-chromium | 412 | branded-state-404 | 0 | 2 | pass | [png](mobile-chromium/branded-state-404.png) |
+| mobile-chromium | 412 | upload-capture-affordance | 0 | 32 | FAIL — too-small x4 | [png](mobile-chromium/upload-capture-affordance.png) |
 | mobile-chromium | 412 | cards/reimbursements-1 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-1.png) |
 | mobile-chromium | 412 | cards/reimbursements-2 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-2.png) |
 | mobile-chromium | 412 | cards/reimbursements-3 | 1 | 0 | pass | [png](mobile-chromium/cards-reimbursements-3.png) |
@@ -1152,6 +1159,21 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
   - rect 338,16 36x36
   - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
 
+### iphone13-chromium · upload-capture-affordance
+
+- **[too-small]** 123x40 is below the 44x44 touch target
+  - rect 72,14 123x40
+  - `<button class="flex h-10 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm`
+- **[too-small]** 123x40 is below the 44x44 touch target
+  - rect 203,14 123x40
+  - `<button type="button" class="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 sm`
+- **[too-small]** 36x36 is below the 44x44 touch target
+  - rect 338,16 36x36
+  - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+- **[too-small]** 308x40 is below the 44x44 touch target
+  - rect 41,582 308x40
+  - `<button type="button" class="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline">ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับ`
+
 ### iphone13-webkit · route/expenses
 
 - **[too-small]** 123x40 is below the 44x44 touch target
@@ -2006,6 +2028,21 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 - **[too-small]** 36x36 is below the 44x44 touch target
   - rect 338,16 36x36
   - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+
+### iphone13-webkit · upload-capture-affordance
+
+- **[too-small]** 123x40 is below the 44x44 touch target
+  - rect 72,14 123x40
+  - `<button class="flex h-10 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm`
+- **[too-small]** 123x40 is below the 44x44 touch target
+  - rect 203,14 123x40
+  - `<button type="button" class="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 sm`
+- **[too-small]** 36x36 is below the 44x44 touch target
+  - rect 338,16 36x36
+  - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+- **[too-small]** 308x40 is below the 44x44 touch target
+  - rect 41,582 308x40
+  - `<button type="button" class="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline">ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับ`
 
 ### mobile-375 · route/expenses
 
@@ -2862,6 +2899,21 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
   - rect 323,16 36x36
   - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
 
+### mobile-375 · upload-capture-affordance
+
+- **[too-small]** 116x40 is below the 44x44 touch target
+  - rect 72,14 116x40
+  - `<button class="flex h-10 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm`
+- **[too-small]** 116x40 is below the 44x44 touch target
+  - rect 196,14 116x40
+  - `<button type="button" class="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 sm`
+- **[too-small]** 36x36 is below the 44x44 touch target
+  - rect 323,16 36x36
+  - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+- **[too-small]** 293x40 is below the 44x44 touch target
+  - rect 41,585 293x40
+  - `<button type="button" class="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline">ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับ`
+
 ### mobile-chromium · route/expenses
 
 - **[too-small]** 134x40 is below the 44x44 touch target
@@ -3716,4 +3768,19 @@ Decision D11: desktop rows are measured, not enforced — they never block a pha
 - **[too-small]** 36x36 is below the 44x44 touch target
   - rect 360,16 36x36
   - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+
+### mobile-chromium · upload-capture-affordance
+
+- **[too-small]** 134x40 is below the 44x44 touch target
+  - rect 72,14 134x40
+  - `<button class="flex h-10 w-full min-w-0 items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 hover:border-brand-200 sm:w-auto sm`
+- **[too-small]** 134x40 is below the 44x44 touch target
+  - rect 214,14 134x40
+  - `<button type="button" class="flex h-10 w-full min-w-0 items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-bold text-gray-700 hover:border-brand-200 sm`
+- **[too-small]** 36x36 is below the 44x44 touch target
+  - rect 360,16 36x36
+  - `<button type="button" aria-label="การแจ้งเตือน" aria-expanded="false" class="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover`
+- **[too-small]** 330x40 is below the 44x44 touch target
+  - rect 41,757 330x40
+  - `<button type="button" class="mt-3 w-full text-center text-sm font-semibold text-brand-600 hover:underline">ไม่มีไฟล์ใบเสร็จ/ใบกำกับภาษี? บันทึกด้วยมือแล้วจัดทำใบรับรองแทนใบเสร็จรับ`
 

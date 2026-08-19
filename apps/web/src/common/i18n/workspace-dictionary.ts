@@ -679,6 +679,12 @@ export const workspaceDictionary = {
     'expenses.upload_what_title': 'หน้านี้ใช้ทำอะไร?',
     'expenses.upload_what_desc': 'ส่งรูปใบเสร็จ/บิลค่าใช้จ่าย ให้ AI อ่านชื่อผู้ขาย ยอดเงิน และภาษีให้อัตโนมัติ — ไม่ต้องคีย์เอง แล้วสร้างเป็นฉบับร่างให้ตรวจก่อนยืนยัน (ไม่ใช่การลงบัญชีทันที)',
     'expenses.upload_dropzone_title': 'ลากไฟล์มาวาง หรือคลิกเพื่อเลือก',
+    // Phone-only wording. The dropzone copy above stays exactly as it is for desktop: on a
+    // phone there is no drag, no file manager and no click, so telling the user to drag a file
+    // is an instruction they cannot follow on the device they are holding.
+    'expenses.upload_capture_cta': 'ถ่ายรูปใบเสร็จ',
+    'expenses.upload_pick_cta': 'เลือกจากคลังภาพหรือไฟล์',
+    'expenses.upload_capture_hint': 'ถ่ายใบเสร็จให้เห็นยอดรวมและวันที่ชัด ๆ · หรือส่งเข้ามาทาง LINE ก็ได้',
     'expenses.upload_dropzone_hint': 'รองรับ JPG/JPEG PNG HEIC (รูปจากไอโฟน) หรือ PDF · รูปใหญ่จะถูกย่ออัตโนมัติ · หรือส่งจาก LINE ได้เลย',
     'expenses.upload_receipt_date': 'วันที่อัพโหลดใบเสร็จ',
     'expenses.upload_note': 'หมายเหตุ (ไม่บังคับ)',
@@ -1948,6 +1954,9 @@ export const workspaceDictionary = {
     'expenses.upload_what_title': 'What is this page for?',
     'expenses.upload_what_desc': 'Send a photo of a receipt/expense bill and AI reads the vendor name, amount, and tax automatically — no manual typing — then creates a draft for you to review before confirming (not immediate posting)',
     'expenses.upload_dropzone_title': 'Drag a file here or click to select',
+    'expenses.upload_capture_cta': 'Take a photo of the receipt',
+    'expenses.upload_pick_cta': 'Choose from photos or files',
+    'expenses.upload_capture_hint': 'Frame the receipt so the total and the date are readable · or just send it over LINE',
     'expenses.upload_dropzone_hint': 'Supports JPG/JPEG, PNG, HEIC (iPhone photos), or PDF · large images are resized automatically · or send directly from LINE',
     'expenses.upload_receipt_date': 'Receipt date',
     'expenses.upload_note': 'Note (optional)',

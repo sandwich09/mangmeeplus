@@ -329,9 +329,27 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 
       <MangmeeCard className="p-6">
         {error && <div className="mb-4"><ErrorBanner message={error} /></div>}
+        {/* Phones get the camera, not a dropzone. A phone has no drag, no file manager and no
+            click, so the desktop copy below ("ลากไฟล์มาวาง หรือคลิกเพื่อเลือก") is an instruction the
+            user cannot follow on the device they are holding — while photographing the receipt
+            is the entire job. Desktop keeps its dropzone verbatim. */}
+        <div className="flex flex-col gap-3 sm:hidden">
+          <label className={cx(btnClass, 'h-12 w-full cursor-pointer text-base')}>
+            <span className="inline-flex items-center justify-center gap-2">📷 {t('expenses.upload_capture_cta', locale)}</span>
+            {/* `capture` restricts the picker to the camera, so the button below keeps PDF and HEIC reachable. */}
+            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleFileChange} />
+          </label>
+          <label className="flex h-12 w-full cursor-pointer items-center justify-center rounded-lg border border-gray-300 bg-white text-base font-medium text-gray-700">
+            {t('expenses.upload_pick_cta', locale)}
+            <input type="file" accept={RECEIPT_UPLOAD_ACCEPT} className="sr-only" onChange={handleFileChange} />
+          </label>
+          <p className="text-sm leading-6 text-gray-500">{t('expenses.upload_capture_hint', locale)}</p>
+          {preparing ? <p className="text-sm font-semibold text-brand-700">{t('expenses.upload_preparing', locale)}</p> : fileName && <p className="truncate rounded-lg bg-brand-25 px-3.5 py-2 text-sm font-semibold text-brand-700">✓ {fileName}</p>}
+        </div>
+
         <label
           className={cx(
-            'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-11 text-center transition',
+            'hidden cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed px-6 py-11 text-center transition sm:flex',
             dragActive ? 'border-brand-500 bg-brand-50 shadow-[0_0_0_4px_rgba(52,211,153,0.14)]' : 'border-brand-300 bg-brand-25 hover:bg-brand-50',
           )}
           onDragEnter={handleDrag}
