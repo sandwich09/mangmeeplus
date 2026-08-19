@@ -21,6 +21,8 @@ export type LineSubstituteReceiptValues = {
   itemDescription?: string;
   amount?: string;
   expenseCategoryId?: string;
+  /** R5: the sender stated there is no file to attach. Asked once, then never blocking again. */
+  evidenceNone?: boolean;
 };
 
 export type LineSubstituteReceiptContinuation = {
@@ -60,9 +62,31 @@ export type LineSubstituteReceiptContinuationResult = {
 
 // NFC, never NFKC: NFKC decomposes ำ (U+0E33 → U+0E4D U+0E32), which both mangles echoed user text
 // and stops every composed-ำ literal below (ทำใบรับรองต่อ, ไว้ทำทีหลัง, ไม่ทำแล้ว) from ever matching.
+const SUBSTITUTE_VOCABULARY = /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ใบรับรองแทนเงินสด|ทำใบรับรองต่อ)/u;
+
 export function isSubstituteReceiptConversationText(text: string): boolean {
-  const normalized = text.normalize('NFC').toLocaleLowerCase('th-TH');
-  return /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ใบรับรองแทนเงินสด|ทำใบรับรองต่อ)/u.test(normalized);
+  return SUBSTITUTE_VOCABULARY.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
+}
+
+/** R1: the expense fact inside a combined “ออกใบทดแทนใบเสร็จ ค่าวินมอไซต์ … 50 บาท” message.
+ *
+ *  The capture gate (`isLineTextExpenseCaptureEligible`) only accepts a description it can find
+ *  verbatim in the source text, so this returns ONE contiguous slice — the longer side of the
+ *  message around the vocabulary phrase — never a stitched-together remainder.
+ *
+ *  Undefined when nothing but the amount is left: spec R1 requires amount PLUS purpose/category, so
+ *  a bare “ทำใบทดแทนใบเสร็จ 50 บาท” — or one leaving only a request verb — must keep falling through
+ *  to target selection.
+ *  ponytail: a 4-character floor, not a verb denylist; it drops ทำ/ขอ/สร้าง-only leftovers and costs
+ *  a one-word purpose shorter than that (น้ำ), which still gets answered by target selection. */
+export function substituteRequestExpenseText(text: string): string | undefined {
+  const normalized = text.normalize('NFC');
+  const match = normalized.match(SUBSTITUTE_VOCABULARY);
+  if (match?.index === undefined) return undefined;
+  const before = normalized.slice(0, match.index).trim();
+  const after = normalized.slice(match.index + match[0].length).trim();
+  const description = normalizedText(after.length >= before.length ? after : before);
+  return description.replace(/[\d,.\s]|บาท|thb|baht|฿/giu, '').length >= 4 ? description : undefined;
 }
 
 function normalizedText(value: string): string {
@@ -74,8 +98,35 @@ function bounded(value: string | undefined, max = MAX_VALUE_LENGTH): string | un
   return text && text.length <= max ? text : undefined;
 }
 
+const LABELS = {
+  missingReceiptReason: 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ',
+  businessPurpose: 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ',
+  payeeName: 'ผู้รับเงิน|ผู้ขาย|ร้านค้า',
+  paymentMethod: 'วิธีชำระ(?:เงิน)?|ชำระด้วย|จ่ายด้วย',
+  itemDescription: 'รายการ|รายละเอียดรายการ',
+  amount: 'ยอด(?:รวม)?|จำนวนเงิน',
+  expenseCategoryId: 'หมวด(?:ค่าใช้จ่าย)?',
+} as const;
+const ANY_LABEL = Object.values(LABELS).join('|');
+
+/** The dispatcher's normalizeLineText collapses every newline to a space, so a multi-line LINE
+ *  message arrives as ONE line: a label must be matchable mid-line, and its value must stop at the
+ *  next label instead of swallowing it.
+ *
+ *  Mid-line a label is only a label when an explicit `:` follows it: without that,
+ *  “เหตุผล: ผู้ขายรายย่อยไม่ออกเอกสาร” reads its own reason text as a payee name, and ordinary prose
+ *  (“ค่าส่งของวันนี้ ผู้ขายเป็นคนจัดส่งเอง”) writes a legal field. คือ/เป็น stay valid only at the
+ *  start of a line, unchanged, which is what makes a bare “ชำระด้วยเงินสด” line an answer.
+ *
+ *  The value-ending lookahead stays permissive on purpose: truncating at a คือ/เป็น phrase loses a
+ *  value, while running past it would store the rest of the sentence in a certified field. */
 function labeled(text: string, labels: string): string | undefined {
-  const match = text.match(new RegExp(`(?:^|\\n)\\s*(?:${labels})\\s*(?::|คือ|เป็น)?\\s*([^,;\\n]+)`, 'imu'));
+  const label = `(?:${labels})`;
+  const sep = '(?::|คือ|เป็น)';
+  const match = text.match(new RegExp(
+    `(?:(?:^|\\n)\\s*${label}\\s*${sep}?|\\s+${label}\\s*:)\\s*(.+?)(?=\\s*(?:${ANY_LABEL})\\s*${sep}|[,;\\n]|$)`,
+    'imu',
+  ));
   return bounded(match?.[1]);
 }
 
@@ -131,6 +182,18 @@ function stateFromMetadata(metadata: Record<string, unknown> | null): LineSubsti
   return parseState(metadata?.[STATE_KEY]);
 }
 
+/** R1 guard for the dispatcher: `execute` resolves an existing OPEN/PAUSED workflow before it ever
+ *  looks at `recentCandidates`, so capturing a new draft for this chat would orphan it. Takes the
+ *  rows from `listLineSubstituteContinuationRows` so the state shape stays owned by this module. */
+export function hasActiveSubstituteContinuation(
+  rows: Array<{ sourceChannelMetadataJson: Record<string, unknown> | null }>,
+): boolean {
+  return rows.some((row) => {
+    const state = stateFromMetadata(row.sourceChannelMetadataJson);
+    return !!state && ACTIVE_STATUSES.has(state.status);
+  });
+}
+
 function extractValues(
   text: string,
   pendingField: string | null,
@@ -141,16 +204,16 @@ function extractValues(
   const declarative = nonQuestionLines(text);
   const reasonCode = reasonCodeOf(declarative);
   if (reasonCode) values.reasonCode = reasonCode;
-  const missingReceiptReason = labeled(declarative, 'เหตุผล(?:ที่ไม่มีใบเสร็จ)?|สาเหตุ');
+  const missingReceiptReason = labeled(declarative, LABELS.missingReceiptReason);
   if (missingReceiptReason) values.missingReceiptReason = missingReceiptReason;
-  const businessPurpose = labeled(declarative, 'วัตถุประสงค์(?:ทางธุรกิจ)?|ใช้เพื่อ');
+  const businessPurpose = labeled(declarative, LABELS.businessPurpose);
   if (businessPurpose) values.businessPurpose = businessPurpose;
-  const payeeName = labeled(declarative, 'ผู้รับเงิน|ผู้ขาย|ร้านค้า');
+  const payeeName = labeled(declarative, LABELS.payeeName);
   if (payeeName) values.payeeName = payeeName;
   if (/(ฉัน|ผม|ดิฉัน|หนู).*(เป็น|คือ).*(ผู้จ่าย|คนจ่าย)|ผู้จ่าย(?:เงิน)?\s*(?:คือ|เป็น)?\s*(ฉัน|ผม|ดิฉัน|หนู)/u.test(declarative)) {
     values.payerUserId = currentUserId;
   }
-  const labeledPayment = labeled(declarative, 'วิธีชำระ(?:เงิน)?|ชำระด้วย|จ่ายด้วย');
+  const labeledPayment = labeled(declarative, LABELS.paymentMethod);
   const plainPayment = pendingField === 'paymentMethod' && normalizedText(declarative).length <= 40
     ? declarative
     : undefined;
@@ -158,18 +221,26 @@ function extractValues(
   if (paymentMethod) values.paymentMethod = paymentMethod;
   const paymentDate = firstPaymentDate(declarative);
   if (paymentDate) values.paymentDate = paymentDate;
-  const itemDescription = labeled(declarative, 'รายการ|รายละเอียดรายการ');
+  const itemDescription = labeled(declarative, LABELS.itemDescription);
   if (itemDescription) values.itemDescription = itemDescription;
-  const amountLabel = labeled(declarative, 'ยอด(?:รวม)?|จำนวนเงิน');
+  const amountLabel = labeled(declarative, LABELS.amount);
   if (amountLabel) {
     const amount = extractValueCandidates(amountLabel).amounts[0]?.value;
     if (amount) values.amount = amount;
   }
-  const categoryLabel = labeled(declarative, 'หมวด(?:ค่าใช้จ่าย)?');
+  const categoryLabel = labeled(declarative, LABELS.expenseCategoryId);
   if (categoryLabel) {
     const wanted = normalizedText(categoryLabel).toLocaleLowerCase('th-TH');
     const category = activeCategories.find((item) => normalizedText(item.name).toLocaleLowerCase('th-TH') === wanted);
     if (category) values.expenseCategoryId = category.id;
+  }
+  // R5 ask-once: only the evidence question may be answered with “no evidence”. An unprompted
+  // “ไม่มีใบเสร็จ” is a reason code, never a statement that no file exists. The natural answer to
+  // “มีสลิปไหม” is a bare “ไม่มี”, so that short form counts too — but only while it is the question.
+  if (pendingField === 'evidenceNone'
+    && (/(ไม่มีหลักฐาน|ไม่มีสลิป|ไม่มีรูป|ไม่มีไฟล์)/u.test(declarative)
+      || /^ไม่มี\S{0,4}$/u.test(normalizedText(declarative)))) {
+    values.evidenceNone = true;
   }
 
   // A short unlabeled answer is accepted only for the exact source-generated pending question.
@@ -247,9 +318,12 @@ function preflight(
     result.push(blocker('owner_self_approver_not_ready', 'ยังไม่มีสมาชิกที่มีสิทธิ์อนุมัติค่าใช้จ่ายในสาขานี้'));
   }
   const activeAttachments = expense.attachments.filter((item) => item.status === 'ACTIVE');
-  const supporting = activeAttachments.filter((item) => item.purpose !== 'expense.payment.evidence');
   const payments = activeAttachments.filter((item) => item.purpose === 'expense.payment.evidence');
-  if (supporting.length === 0) result.push(blocker('supporting_evidence_required', 'แนบหลักฐานต้นทางหรือหลักฐานประกอบในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
+  // R5: evidence is required only when evidence exists. The assistant still asks — once — and a
+  // stated “ไม่มีหลักฐาน” clears the blocker instead of dead-ending a legal no-attachment document.
+  if (activeAttachments.length === 0 && !values.evidenceNone) {
+    result.push(blocker('supporting_evidence_required', 'แนบสลิป/รูปถ่ายประกอบในเว็บ หรือยืนยันว่าไม่มีหลักฐาน', true));
+  }
   if (((paymentMethod && paymentMethod !== 'CASH') || policy.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')
     && payments.length === 0) {
     result.push(blocker('payment_evidence_required', 'แนบหลักฐานการชำระเงินในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
@@ -265,6 +339,7 @@ const QUESTIONS: Record<string, string> = {
   payee_required: 'ผู้รับเงินหรือผู้ขายชื่ออะไรคะ?',
   payment_method_required: 'ชำระด้วยเงินสด โอน บัตร หรือเช็คคะ?',
   payment_date_required: 'ชำระเงินจริงวันที่เท่าไรคะ?',
+  supporting_evidence_required: 'มีสลิปหรือรูปถ่ายประกอบไหมคะ? ถ้ามี แนบไฟล์ในเว็บ ถ้าไม่มี ตอบ “ไม่มีหลักฐาน” ได้เลย',
 };
 
 const FIELD_BY_BLOCKER: Record<string, keyof LineSubstituteReceiptValues> = {
@@ -275,6 +350,7 @@ const FIELD_BY_BLOCKER: Record<string, keyof LineSubstituteReceiptValues> = {
   payee_required: 'payeeName',
   payment_method_required: 'paymentMethod',
   payment_date_required: 'paymentDate',
+  supporting_evidence_required: 'evidenceNone',
 };
 
 const VALUE_LABELS: Record<string, string> = {
@@ -288,6 +364,7 @@ const VALUE_LABELS: Record<string, string> = {
   itemDescription: 'รายการ',
   amount: 'ยอดเงิน',
   expenseCategoryId: 'หมวดค่าใช้จ่าย',
+  evidenceNone: 'หลักฐานประกอบ',
 };
 
 /** Resolves the path against the base ORIGIN (any path in webBaseUrl is dropped), matching
@@ -322,6 +399,7 @@ function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: 
     const shown = field === 'reasonCode' ? REASON_CODE_LABELS[value as SubstituteReceiptReasonCode]
       : field === 'paymentMethod' ? PAYMENT_METHOD_LABELS[value as ExpensePaymentMethod]
       : field === 'payerUserId' ? 'คุณ (ผู้ส่งข้อความ)'
+      : field === 'evidenceNone' ? 'ไม่มีไฟล์ประกอบ'
       : field === 'expenseCategoryId' ? categories.find((item) => item.id === value)?.name
       // UTC keeps a date-only value on its own calendar day regardless of server timezone.
       : field === 'paymentDate' ? new Date(`${value}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
@@ -574,7 +652,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       configured: Boolean(policyRow),
       approvalMode: policyRow?.approvalMode ?? 'OWNER_SELF' as const,
       approverUserIds: policyRow?.approverUserIds ?? [],
-      cashEvidencePolicy: policyRow?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      cashEvidencePolicy: policyRow?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
     };
     const policyReady = policy.approvalMode === 'DESIGNATED_APPROVERS'
       ? policy.approverUserIds.some((id) => eligibleApprovers.some((item) => item.userId === id) && id !== acceptedValues.payerUserId)

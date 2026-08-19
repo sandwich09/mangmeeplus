@@ -1,6 +1,13 @@
 # Agent Memory: LINE substitute-receipt assisted issuance
 
-Status: Spec v0.3 + implementation plan written 2026-08-19. No code changed. Next step is Phase 1 implementation (dead-end fix), pending owner go.
+Status: Implementing on branch `codex/line-substitute-receipt-assisted-issuance` (worktree off origin/develop), 2026-08-20. Phase 1 (dead-end fix: permission gate, absolute links, formatter replies, NFKC→NFC) and Phase 2 (R1 capture-first, R5 zero-attachment prepare + evidenceNone ask-once, R6 cash-default flip + migration, labeled() single-line robustness) implemented and committed after Opus adversarial review rounds (Phase 1: 8 findings fixed; Phase 2: BLOCK on stub-only capture evidence — capture-first now synthesizes captureHints from valueCandidates + substituteRequestExpenseText and is proven against the real CaptureLineExpenseNoteUseCase). Phases 3-5 next.
+
+Implementation findings worth keeping:
+- Repo has pre-existing Prisma schema drift (migration 20260809120000 wrote updatedAt DEFAULT CURRENT_TIMESTAMP vs @updatedAt models: DataRightsCase/RemoteRelease* + 4 index renames). Every `prisma migrate dev` re-emits that noise — hand-trim generated migrations to the intended statements (Phase 2's is one SET DEFAULT). Phases 4-5 migrations must do the same.
+- `hasActiveSubstituteContinuation(rows)` (continuation use case) is the "open substitute work in this chat" signal — reuse it for §11 media classification in Phase 4 instead of adding another.
+- The evidence question is the last collectable blocker, so "preflight clean" is exactly where R13's ให้ออกเอกสารเลยไหมคะ fires in Phase 4.
+- `evidenceNone` reaches the web via LineSubstituteReceiptPrefill but the wizard ignores it on apply (excluded from the prefill count); Phase 4 prepare-from-LINE should carry it so the ask stays once.
+- Capture-first fires only on: substitute vocabulary + amount candidate + capture permission + zero recent candidates + no open SUBSTITUTE/EXPENSE_DOCUMENT_CAPTURE clarification + no OPEN/PAUSED workflow in chat.
 Owner: thawatchai
 Scope: `docs/specs/line-substitute-receipt-assisted-issuance-spec.md`. Implementation will touch `apps/api` (line-ai webhook, expenses substitute-receipt + policy + storage delivery), `apps/web` (public delivery route, substitute wizard deep link), `packages/contracts`, and `prisma/schema.prisma`.
 

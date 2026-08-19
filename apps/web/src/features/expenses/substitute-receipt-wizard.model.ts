@@ -45,7 +45,7 @@ export type DetailsReadinessIssue =
   | 'payer'
   | 'paymentDate';
 
-export type EvidenceReadinessIssue = 'policy' | 'supportingEvidence' | 'paymentEvidence' | 'renderability';
+export type EvidenceReadinessIssue = 'policy' | 'paymentEvidence' | 'renderability';
 export type SubstituteReceiptRenderabilityIssue = 'too_many_lines' | 'line_description_too_long';
 export type SubstituteReceiptEvidenceRenderabilityIssue = 'too_many_evidence' | 'evidence_filename_too_long';
 export type SigningReadinessIssue = 'position' | 'preview' | 'signature' | 'acknowledgement';
@@ -262,16 +262,16 @@ export function evaluateDetailsReadiness(input: {
   return readiness(missing);
 }
 
+/** R5: a substitute receipt is valid with no attachment at all, so supporting files are asked for
+ *  but never gate prepare. Payment evidence still follows the payment method and company policy. */
 export function evaluateEvidenceReadiness(input: {
   policyReady: boolean;
-  supportingCount: number;
   paymentCount: number;
   requiresPaymentEvidence: boolean;
   renderabilityIssue?: SubstituteReceiptEvidenceRenderabilityIssue | null;
 }): WizardReadiness<EvidenceReadinessIssue> {
   const missing: EvidenceReadinessIssue[] = [];
   if (!input.policyReady) missing.push('policy');
-  if (input.supportingCount <= 0) missing.push('supportingEvidence');
   if (input.requiresPaymentEvidence && input.paymentCount <= 0) missing.push('paymentEvidence');
   if (input.renderabilityIssue) missing.push('renderability');
   return readiness(missing);

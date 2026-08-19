@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
-import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
+import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
 // Router-driven webhook dispatch tests (item 10B LINE Intake Router front stage).
 
@@ -112,6 +112,8 @@ type Harness = {
   updateExpenseCalls: any[];
   substituteCalls: any[];
   receiptContinuationCalls: any[];
+  /** Inputs the REAL capture use case handed to CreateExpenseDraftUseCase (realCapture only). */
+  draftsCreated: any[];
 };
 
 function makeHarness(opts: {
@@ -131,6 +133,12 @@ function makeHarness(opts: {
   captureLedger?: any[];
   captureError?: Error;
   substituteResult?: any;
+  /** Rows behind `hasActiveSubstituteContinuation`: a chat already mid-workflow must not fork a draft. */
+  substituteContinuationRows?: any[];
+  /** Runs the REAL CaptureLineExpenseNoteUseCase (deterministic eligibility gate included) instead
+   *  of the reply stub, so a capture path is proven against production logic, not a double. */
+  realCapture?: boolean;
+  substituteThrows?: Error;
   expenseDetail?: any;
   lineReplyResult?: 'ok' | 'failed_token' | 'failed_other';
   conversationTurns?: any[];
@@ -154,8 +162,56 @@ function makeHarness(opts: {
   const updateExpenseCalls: any[] = [];
   const substituteCalls: any[] = [];
   const receiptContinuationCalls: any[] = [];
+  const draftsCreated: any[] = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
+
+  // expenseRepo doubles as the repository the REAL capture use case reads and writes through.
+  const expenseRepo = {
+    listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
+    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
+    listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
+    recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
+    findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
+    runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
+      const matched = await detectWithinTx({ marker: 'tx' });
+      return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
+    },
+    createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
+    linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
+    updateExpense: async (input: any) => {
+      updateExpenseCalls.push(input);
+      return { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', ...input };
+    },
+    findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
+      id: expenseId,
+      primaryAttachmentId: 'pending-att-1',
+      attachments: [{
+        id: 'pending-att-1',
+        purpose: 'expense.receipt.primary',
+        checksumSha256: 'hash',
+        perceptualHash: '8f00aa55cc33f00f',
+      }],
+      vendorDocumentNumber: null,
+      vendorTaxIdSnapshot: null,
+      expenseDate: new Date('2026-07-29T00:00:00.000Z'),
+      grandTotalAmount: '0',
+      vendorCounterpartyId: null,
+      createdByUserId: 'user-1',
+    }),
+    findNearDuplicates: async () => [],
+    findExpenseIdsByAttachmentChecksum: async () => [],
+    createDuplicateCandidate: async () => undefined,
+  } as any;
+
+  // Only repositories, audit and outbox are doubled: the eligibility gate, hint validation and
+  // draft-line construction are the production ones.
+  const realCaptureExpenseNote = new CaptureLineExpenseNoteUseCase(
+    expenseRepo,
+    { execute: async (_ctx: any, input: any) => { draftsCreated.push(input); return { id: 'expense-note-real-1', updatedAt: new Date() }; } } as any,
+    { log: async () => undefined } as any,
+    { append: async () => undefined } as any,
+  );
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
@@ -198,9 +254,10 @@ function makeHarness(opts: {
     { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,
     // captureExpenseNote
     {
-      execute: async (_ctx: any, cmd: any) => {
+      execute: async (ctx: any, cmd: any) => {
         if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
+        if (opts.realCapture) return realCaptureExpenseNote.execute(ctx, cmd);
         return {
           expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
           warnings: [],
@@ -223,38 +280,7 @@ function makeHarness(opts: {
       },
     } as any,
     // expenseRepo (categories catalog for the router + RECEIPT-05 draft-from-attachment)
-    {
-      listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
-      listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
-      recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
-      findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
-      runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
-        const matched = await detectWithinTx({ marker: 'tx' });
-        return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
-      },
-      createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
-      linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
-      updateExpense: async (input: any) => { updateExpenseCalls.push(input); return { id: input.id }; },
-      findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
-        id: expenseId,
-        primaryAttachmentId: 'pending-att-1',
-        attachments: [{
-          id: 'pending-att-1',
-          purpose: 'expense.receipt.primary',
-          checksumSha256: 'hash',
-          perceptualHash: '8f00aa55cc33f00f',
-        }],
-        vendorDocumentNumber: null,
-        vendorTaxIdSnapshot: null,
-        expenseDate: new Date('2026-07-29T00:00:00.000Z'),
-        grandTotalAmount: '0',
-        vendorCounterpartyId: null,
-        createdByUserId: 'user-1',
-      }),
-      findNearDuplicates: async () => [],
-      findExpenseIdsByAttachmentChecksum: async () => [],
-      createDuplicateCandidate: async () => undefined,
-    } as any,
+    expenseRepo,
     // ledger: only the open-clarification read matters for the correction evidence tests
     (opts.openWaiting || opts.captureLedger
       ? {
@@ -277,7 +303,15 @@ function makeHarness(opts: {
         return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
       },
     } as any,
-    (opts.substituteResult ? { execute: async (_ctx: any, input: any) => { substituteCalls.push(input); return opts.substituteResult; } } : undefined) as any,
+    (opts.substituteResult || opts.substituteThrows
+      ? {
+        execute: async (_ctx: any, input: any) => {
+          substituteCalls.push(input);
+          if (opts.substituteThrows) throw opts.substituteThrows;
+          return opts.substituteResult;
+        },
+      }
+      : undefined) as any,
     opts.expenseDraftConversation,
   );
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -289,7 +323,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, receiptContinuationCalls };
+  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, receiptContinuationCalls, draftsCreated };
 }
 
 const TEXT_EVENT = {
@@ -954,6 +988,177 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.captured.length, 0);
     assert.equal(h.createExpenseCalls.length, 0);
     assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+  });
+
+  // R1: the UAT screenshot message — one turn is both a capture and a substitute request.
+  const COMBINED_MESSAGE = 'สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์ไปพบลูกค้า 50 บาท';
+  const blockedSubstituteResult = {
+    handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-note-1',
+    replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• ระบุเหตุผลที่ไม่มีใบเสร็จ',
+    acceptedFields: ['amount'], blockers: [{ code: 'reason_code_required' }],
+    pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+  };
+
+  it('creates the draft first and opens the continuation on it in one reply, never the dead end', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      captureLedger,
+      substituteResult: blockedSubstituteResult,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+
+    assert.equal(h.captured.length, 1, 'the expense fact in the message is captured, not discarded');
+    assert.equal(h.captured[0].draftConversationEnabled, false,
+      'the substitute continuation owns the next question; a second draft thread would ask another');
+    assert.equal(h.substituteCalls.length, 1);
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-note-1'],
+      'the continuation opens on the draft this turn created');
+    assert.equal(h.replies.length, 1, 'both outcomes arrive in one reply');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ผลคำขอเพิ่มเติม:/);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+    assert.equal(h.routeRequests.length, 0, 'the deterministic workflow boundary still skips the model router');
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+  });
+
+  it('passes the REAL capture eligibility gate and opens the continuation on the draft it created', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      captureLedger,
+      substituteResult: { ...blockedSubstituteResult, expenseId: 'expense-note-real-1' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+
+    // The gate (isLineTextExpenseCaptureEligible) needs an amount present in the source text AND a
+    // description copied verbatim from it; no model runs here, so the dispatcher synthesizes both.
+    assert.deepEqual(
+      { amount: h.captured[0]?.captureHints?.amount, description: h.captured[0]?.captureHints?.description },
+      { amount: '50', description: 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท' },
+    );
+    assert.equal(h.draftsCreated.length, 1, 'the real use case reached CreateExpenseDraftUseCase — the gate passed');
+    assert.deepEqual(h.draftsCreated[0].lines, [{
+      lineNumber: 1, description: 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท', quantity: '1', unitPrice: '50.0000', expenseCategoryId: undefined,
+    }], 'the validated amount became the draft line, so nothing was silently dropped');
+    assert.equal(h.updateExpenseCalls[0]?.status, 'NEEDS_REVIEW', 'a reviewable draft, never a confirmed expense');
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-note-real-1']);
+    assert.equal(h.replies.length, 1);
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ผลคำขอเพิ่มเติม:/);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+  });
+
+  it('keeps a real draft and degrades only the substitute half when the continuation fails', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      substituteThrows: new Error('continuation store unavailable'),
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(h.draftsCreated.length, 1, 'the committed draft is not rolled back by a reply-side failure');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ยังตรวจสอบไม่ได้ชั่วคราว/);
+  });
+
+  it('does not capture through the real gate when the message carries an amount but no purpose', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      substituteResult: blockedSubstituteResult,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ทำใบทดแทนใบเสร็จ 50 บาท' });
+    assert.equal(h.draftsCreated.length, 0, 'R1 wants amount PLUS purpose/category; an amount alone is not an expense');
+    assert.equal(h.substituteCalls.length, 1, 'the turn still answers through the continuation');
+    assert.equal(h.replies[0]?.includes('บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว'), false);
+  });
+
+  it('falls through to target selection without a capture when the turn cannot or must not create a draft', async () => {
+    const recentCaptures = [{
+      id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '200.00',
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT' as const, createdAt: new Date(),
+    }];
+    const noAmount = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      recentCaptures,
+      substituteResult: blockedSubstituteResult,
+    });
+    await noAmount.useCase.execute({ ...TEXT_EVENT, messageText: 'สร้างใบทดแทนใบเสร็จให้หน่อย' });
+    assert.equal(noAmount.captured.length, 0, 'no amount, nothing to capture');
+    assert.deepEqual(noAmount.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-1']);
+    assert.equal(noAmount.replies[0]?.includes('บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว'), false);
+
+    // The dead-end R1 removes is "no candidate at all". With one to target, capturing would create a
+    // duplicate AND hide the existing draft, which auto-targeted before Phase 2.
+    const hasCandidate = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      recentCaptures,
+      substituteResult: blockedSubstituteResult,
+    });
+    await hasCandidate.useCase.execute({ ...TEXT_EVENT, messageText: 'ทำใบรับรองแทนใบเสร็จรับเงินให้รายการ 50 บาท' });
+    assert.equal(hasCandidate.draftsCreated.length, 0, 'an existing candidate is targeted, never duplicated');
+    assert.deepEqual(hasCandidate.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-1'],
+      'the existing draft stays pickable');
+
+    // An open capture clarification owns this message's expense facts and its own ledger entry.
+    const captureClarificationOpen = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      openWaiting: [{
+        id: 'capture-clarify-1', question: 'ยอดเท่าไรคะ?', text: 'ค่าวินมอไซต์', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        entry: { id: 'capture-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      substituteResult: blockedSubstituteResult,
+    });
+    await captureClarificationOpen.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(captureClarificationOpen.draftsCreated.length, 0,
+      'capture-first neither consumes nor inherits an open capture clarification, so it stands down');
+
+    const incomplete = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+      substituteResult: blockedSubstituteResult,
+    });
+    await incomplete.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(incomplete.substituteCalls.length, 1, 'an incomplete capture degrades to target selection');
+    assert.deepEqual(incomplete.substituteCalls[0].recentCandidates, []);
+    assert.match(incomplete.replies[0] ?? '', /ใบรับรองแทนใบเสร็จรับเงิน/);
+
+    const alreadyOpen = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      substituteContinuationRows: [{
+        id: 'expense-open', updatedAt: new Date(),
+        sourceChannelMetadataJson: {
+          lineSubstituteReceiptContinuation: {
+            workflowId: 'wf-open', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+            expenseId: 'expense-open', chatKeyHash: 'chat-hash', status: 'PAUSED', acceptedValues: {},
+            provenance: {}, targetRevision: new Date().toISOString(),
+          },
+        },
+      }],
+      substituteResult: blockedSubstituteResult,
+    });
+    await alreadyOpen.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(alreadyOpen.captured.length, 0,
+      'an OPEN/PAUSED workflow already owns this chat; a new draft would be orphaned by state-first resolution');
+  });
+
+  it('dispatches the continuation unchanged for a user who may not capture expenses', async () => {
+    const h = makeHarness({
+      permissions: ['expense.review', 'line.ai.query'],
+      substituteResult: blockedSubstituteResult,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(h.captured.length, 0, 'no capture permission, no draft');
+    assert.equal(h.substituteCalls.length, 1);
+    assert.deepEqual(h.substituteCalls[0].recentCandidates, []);
+    assert.equal(h.replies[0]?.includes('ผลคำขอเพิ่มเติม:'), false, 'nothing to merge, so no merged reply');
   });
 
   it('answers an arbitrary intervening question normally, then resumes the same substitute workflow', async () => {

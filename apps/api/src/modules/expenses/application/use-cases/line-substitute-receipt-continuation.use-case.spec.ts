@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
-import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase } from './line-substitute-receipt-continuation.use-case';
+import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, substituteRequestExpenseText } from './line-substitute-receipt-continuation.use-case';
 
 const WEB_BASE = 'https://app.example.com';
 
@@ -76,7 +76,8 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.ok(codes.includes('payment_method_required'));
     assert.ok(codes.includes('payment_date_required'));
     assert.ok(codes.includes('supporting_evidence_required'));
-    assert.ok(codes.includes('payment_evidence_required'));
+    assert.equal(codes.includes('payment_evidence_required'), false,
+      'R6: with no policy row and no stated non-cash method, separate payment evidence is not demanded');
     assert.equal(codes.some((code) => code.includes('policy') || code.includes('designated')), false,
       'no policy row is the ready OWNER_SELF default, not feature-disabled');
     assert.deepEqual(result.policy, { configured: false, ready: true, approvalMode: 'OWNER_SELF' });
@@ -99,6 +100,124 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(result.replyText.includes('/companies/'), false, 'a forbidden reply carries no tenant path');
     assert.equal(result.replyText.includes('http'), false, 'a forbidden reply carries no link');
     assert.equal(h.saves.length, 0);
+  });
+
+  it('still demands payment evidence for a non-cash method and under an explicit strict policy', async () => {
+    const nonCash = await harness().useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ\nชำระด้วยโอน', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.ok(nonCash.blockers.some((item) => item.code === 'payment_evidence_required'),
+      'a transfer slip exists by nature, so non-cash still requires it');
+
+    const strict = await harness({
+      policy: { approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE' },
+    }).useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.ok(strict.blockers.some((item) => item.code === 'payment_evidence_required'),
+      'a company that deliberately chose the strict rule keeps it');
+  });
+
+  it('asks about evidence once and clears the blocker when the sender states there is none', async () => {
+    const h = harness({
+      expense: expense({
+        vendorNameSnapshot: 'ร้านน้ำแข็ง', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'ร้านไม่ออกใบเสร็จ',
+      }),
+    });
+    const asked = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(asked.status, 'BLOCKED');
+    assert.deepEqual(asked.blockers.map((item) => item.code), ['supporting_evidence_required']);
+    assert.match(asked.pendingQuestion ?? '', /มีสลิปหรือรูปถ่ายประกอบไหมคะ/);
+
+    const declared = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีหลักฐาน', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(declared.status, 'READY_FOR_WEB');
+    assert.deepEqual(declared.blockers, []);
+    assert.ok(declared.acceptedFields.includes('evidenceNone'));
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.evidenceNone, true,
+      'the declaration is persisted, so the question is never asked twice');
+    assert.equal(declared.replyText.includes('true'), false, 'the echo shows readable Thai, not a raw boolean');
+  });
+
+  it('accepts the bare “ไม่มี” people actually answer, but only while the evidence question is pending', async () => {
+    const h = harness({
+      expense: expense({
+        vendorNameSnapshot: 'ร้านน้ำแข็ง', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+        missingReceiptReason: 'ร้านไม่ออกใบเสร็จ',
+      }),
+    });
+    const asked = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    assert.deepEqual(asked.blockers.map((item) => item.code), ['supporting_evidence_required']);
+
+    const answered = await h.useCase.execute(ctx(), {
+      messageText: 'ไม่มีค่ะ', chatKeyHash: 'chat-hash', recentCandidates: [],
+    });
+    assert.equal(answered.status, 'READY_FOR_WEB', 'the question does not loop on its own natural answer');
+    assert.ok(answered.acceptedFields.includes('evidenceNone'));
+
+    // Same words with a different question pending must not silently declare "no evidence".
+    const other = harness();
+    await other.useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+    });
+    const stray = await other.useCase.execute(ctx(), {
+      messageText: 'ไม่มีค่ะ', chatKeyHash: 'chat-hash', recentCandidates: [],
+    });
+    assert.equal(stray.acceptedFields.includes('evidenceNone'), false);
+  });
+
+  it('reads a label mid-line and never invents one out of ordinary prose', async () => {
+    const h = harness();
+    // The dispatcher collapses newlines to spaces before this use case ever sees the message.
+    const collapsed = await h.useCase.execute(ctx(), {
+      messageText: 'สร้างใบทดแทนใบเสร็จ ผู้รับเงิน: ร้านน้ำแข็ง วัตถุประสงค์: เลี้ยงลูกค้า',
+      chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.match(collapsed.replyText, /• ผู้รับเงิน\/ผู้ขาย: ร้านน้ำแข็ง$/mu, 'the first value stops at the next label');
+    assert.match(collapsed.replyText, /• วัตถุประสงค์ทางธุรกิจ: เลี้ยงลูกค้า$/mu, 'the second label is not swallowed');
+
+    const question = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ สอบถามยอดขาย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(/• ยอดเงิน/u.test(question.replyText), false, 'a label inside a word is not a label');
+  });
+
+  it('never lets mid-line prose write a certified field: only an explicit “:” marks a label there', async () => {
+    // คือ/เป็น stay valid at the start of a line (unchanged); mid-line they are ordinary Thai words.
+    const prose: Array<[string, RegExp]> = [
+      ['ทำใบทดแทนใบเสร็จ ค่าส่งของวันนี้ ผู้ขายเป็นคนจัดส่งเอง', /• ผู้รับเงิน\/ผู้ขาย/u],
+      ['ทำใบทดแทนใบเสร็จ ค่าเดินทาง ยอดเป็น 50 บาทหรือเปล่า', /• ยอดเงิน/u],
+      ['ทำใบทดแทนใบเสร็จ สรุปแล้ว หมวดเป็นค่าเดินทาง', /• หมวดค่าใช้จ่าย/u],
+      ['ทำใบทดแทนใบเสร็จ ตอนนี้ รายการคือเรื่องที่ต้องคุยกันก่อน', /• รายการ/u],
+    ];
+    for (const [messageText, forbidden] of prose) {
+      const result = await harness().useCase.execute(ctx(), {
+        messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      });
+      assert.equal(forbidden.test(result.replyText), false, `${messageText} must not populate ${forbidden}`);
+    }
+  });
+
+  it('hands the capture gate one contiguous slice of the message, and nothing when only an amount is left', () => {
+    assert.equal(substituteRequestExpenseText('สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์ไปพบลูกค้า 50 บาท'), 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท');
+    // The phrase can trail the fact; the slice keeps the lead-in word verbatim because the gate
+    // matches the description against the source text, not against a cleaned-up paraphrase.
+    assert.equal(substituteRequestExpenseText('ค่าวินมอไซต์ไปพบลูกค้า 50 บาท ขอใบแทนใบเสร็จ'), 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท ขอ');
+    assert.equal(substituteRequestExpenseText('ทำใบทดแทนใบเสร็จ 50 บาท'), undefined, 'an amount alone is not a purpose');
+    assert.equal(substituteRequestExpenseText('ทำใบทดแทนใบเสร็จ'), undefined, 'a leftover request verb is not a purpose');
+    assert.equal(substituteRequestExpenseText('ขอใบแทนใบเสร็จ ค่าแท็กซี่ 120 บาท'), 'ค่าแท็กซี่ 120 บาท');
+    assert.equal(substituteRequestExpenseText('ค่ากาแฟ 65 บาท'), undefined, 'not a substitute request at all');
   });
 
   it('matches the composed-ำ vocabulary the formatter itself tells users to type', () => {

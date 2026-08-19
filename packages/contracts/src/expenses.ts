@@ -718,6 +718,8 @@ export type LineSubstituteReceiptPrefill = {
     itemDescription?: string;
     amount?: string;
     expenseCategoryId?: string;
+    /** The sender stated there is no file to attach; the wizard still offers upload. */
+    evidenceNone?: boolean;
   };
 };
 

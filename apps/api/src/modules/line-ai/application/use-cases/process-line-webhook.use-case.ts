@@ -26,7 +26,7 @@ import {
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 import { CorrectLineCapturedExpenseUseCase } from '../../../expenses/application/use-cases/line-correction.use-case';
-import { isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, type LineSubstituteReceiptContinuationResult } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import { hasActiveSubstituteContinuation, isSubstituteReceiptConversationText, LineSubstituteReceiptContinuationUseCase, substituteRequestExpenseText, type LineSubstituteReceiptContinuationResult } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
 import { isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
@@ -138,6 +138,10 @@ const MEDIA_CLARIFY_REPLY = [
   '3) สรุปหลายรายการ (เก็บไฟล์ไว้ตรวจ แต่ยังไม่สร้างค่าใช้จ่าย)',
 ].join('\n');
 const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
+/** One turn that both captured an expense and ran the substitute continuation reports both outcomes
+ *  under this separator; the capture stands on its own when the continuation cannot be evaluated. */
+const SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL = 'ผลคำขอเพิ่มเติม:';
+const SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED = '⏳ ส่วนใบรับรองแทนใบเสร็จรับเงินยังตรวจสอบไม่ได้ชั่วคราว รายการค่าใช้จ่ายด้านบนยังบันทึกสำเร็จและตรวจสอบได้ในเว็บ';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
@@ -1443,12 +1447,56 @@ export class ProcessLineWebhookUseCase {
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
         permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
       };
-      const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
-        messageText: normalizedText,
-        chatKeyHash: chatKeyHashOf(event),
-        recentCandidates: recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
-        webBaseUrl: this.config.webBaseUrl,
-      });
+      // R1: one message can be both a capture and a substitute request. Capture-first exists for the
+      // dead-end it removes — a requester with NO candidate to target — so it stays off whenever the
+      // existing target-selection flow can still do its job: a recent capture to point at, a
+      // substitute question already pending, or a capture clarification still waiting on this chat
+      // (that one owns the message's expense facts and its own ledger entry).
+      const captureFirstAmount = isSubstituteReceiptConversationText(normalizedText)
+        && canCaptureExpense
+        && recentCapturedExpenses.length === 0
+        && !hasSubstituteClarification
+        && !openWaiting.some((item) => item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
+        ? valueCandidates?.amounts[0]?.value
+        : undefined;
+      const captured = await this.captureBeforeSubstituteContinuation(
+        event, continuationCtx, normalizedText, captureFirstAmount,
+      );
+      const captureReply = captured
+        ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
+          textOnly: true,
+          amount: captured.insertedAmount,
+          categoryName: captured.categoryName,
+          sourceDocumentType: captured.expense.sourceDocumentType,
+          fields: {
+            ...(captured.expense.expenseDate ? { expenseDate: new Date(captured.expense.expenseDate).toISOString() } : {}),
+            ...(captured.expense.vendorNameSnapshot ? { vendorName: captured.expense.vendorNameSnapshot } : {}),
+          } as ReceiptOcrFieldResult,
+        })
+        : undefined;
+      let result: LineSubstituteReceiptContinuationResult;
+      try {
+        result = await this.substituteReceiptContinuation.execute(continuationCtx, {
+          messageText: normalizedText,
+          chatKeyHash: chatKeyHashOf(event),
+          recentCandidates: captured
+            ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
+            : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
+          webBaseUrl: this.config.webBaseUrl,
+        });
+      } catch (error) {
+        // The draft is already committed; a continuation failure degrades, it never sinks the capture.
+        if (!captureReply) throw error;
+        this.logger.warn({ msg: 'line_substitute_continuation_after_capture_failed', requestId, error: (error as Error).message });
+        const degraded = `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
+        await this.deliverCompletedReply(event, degraded, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: degraded, intent: 'EVIDENCE_CAPTURE',
+        });
+        await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+        return;
+      }
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
       const routeSideQuestion = hasSubstituteClarification
@@ -1459,12 +1507,13 @@ export class ProcessLineWebhookUseCase {
       if (routeSideQuestion) {
         substituteInterruption = result;
       } else {
-        const interruption = await interruptExpenseDraft();
-        const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
+        const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
+        const merged = `${captureReply ? `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n` : ''}${result.replyText}`;
+        const replyText = `${merged}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-          userMessagePreview: normalizedText, replyText, intent: 'CLARIFY',
+          userMessagePreview: normalizedText, replyText, intent: captured ? 'EVIDENCE_CAPTURE' : 'CLARIFY',
         });
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           openWaiting
@@ -2774,6 +2823,48 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
+  /** R1 capture-first: create the expense draft the substitute request describes, so the
+   *  continuation opens on a real target instead of dead-ending in target selection.
+   *
+   *  The capture gate is deterministic and unchanged (`isLineTextExpenseCaptureEligible`): it needs
+   *  an `amount` that occurs in the source text plus a `description` copied verbatim from it. No
+   *  model runs on this path, so both hints are synthesized here from the amount candidate the turn
+   *  already extracted and the non-vocabulary part of the message.
+   *
+   *  Returns undefined — and the turn falls through to the existing continuation dispatch — when
+   *  there is no amount, no purpose beside it, no capture permission, or this chat already has an
+   *  OPEN/PAUSED workflow (`execute` resolves that workflow before it looks at `recentCandidates`,
+   *  so a new draft would be orphaned). */
+  private async captureBeforeSubstituteContinuation(
+    event: LineTextEvent,
+    ctx: RequestContext,
+    normalizedText: string,
+    amount: string | undefined,
+  ): Promise<Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>> | undefined> {
+    if (!amount || !this.captureExpenseNote || !this.expenseRepo) return undefined;
+    const description = substituteRequestExpenseText(normalizedText);
+    if (!description) return undefined;
+    const openRows = await this.expenseRepo.listLineSubstituteContinuationRows({
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), scopes: ctx.scopes ?? {},
+    });
+    if (hasActiveSubstituteContinuation(openRows)) return undefined;
+    try {
+      return await this.captureExpenseNote.execute(ctx, {
+        messageText: normalizedText,
+        captureHints: { amount, description },
+        lineMessageId: event.lineMessageId ?? event.webhookEventId,
+        lineEventId: event.webhookEventId,
+        // The substitute continuation owns this conversation's next question; a second draft-
+        // conversation thread would ask the same user two different ones in the same reply.
+        draftConversationEnabled: false,
+        chatKeyHash: chatKeyHashOf(event),
+      });
+    } catch (error) {
+      if (!(error instanceof LineTextExpenseCaptureIncompleteError)) throw error;
+      return undefined;
+    }
+  }
+
   /** RECEIPT-05: the customer confirmed the pending media is an expense document. Build the
    *  reviewable draft from the ALREADY-persisted attachment and mark the row resolved. */
   private async resolvePendingMediaAsReceipt(
@@ -2832,11 +2923,11 @@ export class ProcessLineWebhookUseCase {
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
         });
-        reply = `${reply}\n\nผลคำขอเพิ่มเติม:\n${continuation.replyText}`;
+        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${continuation.replyText}`;
         pendingQuestion = continuation.pendingQuestion;
       } catch (error) {
         this.logger.warn({ msg: 'line_substitute_continuation_additional_outcome_failed', requestId, error: (error as Error).message });
-        reply = `${reply}\n\nผลคำขอเพิ่มเติม:\n⏳ ส่วนใบรับรองแทนใบเสร็จรับเงินยังตรวจสอบไม่ได้ชั่วคราว รายการค่าใช้จ่ายด้านบนยังบันทึกสำเร็จและตรวจสอบได้ในเว็บ`;
+        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
       }
     }
     await this.deliverCompletedReply(event, reply, companyId, access);

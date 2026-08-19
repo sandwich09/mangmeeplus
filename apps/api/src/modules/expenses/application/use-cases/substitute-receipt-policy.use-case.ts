@@ -37,7 +37,7 @@ export class GetSubstituteReceiptPolicyUseCase {
       approvalMode,
       approverUserIds,
       invalidApproverUserIds: approverUserIds.filter((userId) => !candidateIds.has(userId)),
-      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
       approverCandidates: candidates,
       updatedByUserId: policy?.updatedByUserId ?? null,
@@ -52,7 +52,7 @@ export class GetSubstituteReceiptPolicyUseCase {
       configured: Boolean(policy),
       ready: approvalMode === 'OWNER_SELF' || (policy?.approverUserIds.length ?? 0) > 0,
       approvalMode,
-      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
     };
   }

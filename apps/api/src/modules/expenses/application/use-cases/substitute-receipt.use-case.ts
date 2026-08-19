@@ -421,7 +421,6 @@ export class PrepareSubstituteReceiptUseCase {
         `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} linked evidence files.`,
       );
     }
-    if (!supportingIds.length) throw new BadRequestException('At least one original or supporting evidence attachment is required.');
     const attachments = await this.repo.findSubstituteEvidenceAttachments(ctx.companyId, expenseId, allIds);
     if (attachments.length !== allIds.length) throw new BadRequestException('Every evidence attachment must be ACTIVE and linked to this expense.');
     assertSubstituteReceiptEvidenceRenderable(attachments);
@@ -433,7 +432,7 @@ export class PrepareSubstituteReceiptUseCase {
     const paymentMethod = input.paymentMethod ?? expense.paymentMethod;
     if (!paymentMethod) throw new BadRequestException('Payment method is required.');
     if (paymentIds.length === 0 && (paymentMethod !== 'CASH'
-      || (policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')) {
+      || (policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')) {
       throw new BadRequestException(paymentMethod === 'CASH'
         ? 'Company policy requires separate payment evidence for cash expenses.'
         : 'Non-cash expenses require linked payment evidence.');
@@ -468,7 +467,8 @@ export class PrepareSubstituteReceiptUseCase {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.prepare',
         targetType: 'expense_substitute_receipt', targetId: evidence.id, requestId: ctx.requestId,
-        result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, version: evidence.version, payerUserId },
+        // R5: evidenceCount makes every self-certified no-evidence document listable in one query.
+        result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId, version: evidence.version, payerUserId, evidenceCount: allIds.length },
       });
       try {
         await notifySignaturePending(this.notify, ctx, evidence, [payer.userId], 'PAYER');
@@ -741,7 +741,7 @@ export class ApproveSubstituteReceiptUseCase {
       throw new ForbiddenException('You do not have expense.confirm for this branch.');
     }
     if (evidence.paymentMethod === 'CASH'
-      && (policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
+      && (policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY') === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE'
       && evidence.paymentEvidenceAttachmentIds.length === 0) {
       throw new ConflictException('Current company policy requires separate payment evidence for cash expenses. Supersede and prepare a new version.');
     }

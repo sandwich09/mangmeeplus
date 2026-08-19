@@ -239,7 +239,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     assert.equal(persisted, true);
   });
 
-  it('prepares without a policy row and retains the strict cash-evidence default', async () => {
+  it('prepares without a policy row under the permissive cash-evidence default', async () => {
     let captured: any;
     const baseRepo = {
       findByIdWithRelations: async () => expense(),
@@ -264,9 +264,50 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       ...input, paymentEvidenceAttachmentIds: ['att-payment'],
     });
     assert.deepEqual(captured.paymentEvidenceAttachmentIds, ['att-payment']);
-    await assert.rejects(() => new PrepareSubstituteReceiptUseCase({
+    // R6: no policy row now means ALLOW_SUPPORTING_EVIDENCE_ONLY — the same cash prepare passes.
+    await new PrepareSubstituteReceiptUseCase({
       ...baseRepo, getSubstituteReceiptPolicy: async () => null,
-    } as any, audit, notification).execute(ctx('finance-1'), 'exp-1', input), /requires separate payment evidence/);
+    } as any, audit, notification).execute(ctx('finance-1'), 'exp-1', input);
+    assert.deepEqual(captured.paymentEvidenceAttachmentIds, []);
+  });
+
+  it('R5: prepares a large cash expense with no attachment at all and audits evidenceCount 0', async () => {
+    const auditRows: any[] = [];
+    let captured: any;
+    const repo = {
+      findByIdWithRelations: async () => expense({ grandTotalAmount: '48500.00', attachments: [] }),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => null,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findSubstituteEvidenceAttachments: async () => [],
+      createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared({ supportingAttachmentIds: [] }); },
+    } as any;
+    const input = {
+      reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'วินมอเตอร์ไซค์ไม่ออกใบเสร็จ',
+      businessPurpose: 'เดินทางไปพบลูกค้า', payerUserId: 'payer-1',
+      paymentMethod: 'CASH' as const, idempotencyKey: 'idem-none', expectedExpenseUpdatedAt: now.toISOString(),
+    };
+    await new PrepareSubstituteReceiptUseCase(repo, {
+      log: async (row: any) => { auditRows.push(row); },
+    } as any, notification).execute(ctx('finance-1'), 'exp-1', input);
+    assert.deepEqual(captured.supportingAttachmentIds, []);
+    assert.deepEqual(captured.paymentEvidenceAttachmentIds, []);
+    assert.equal(auditRows[0].action, 'expense.substitute_receipt.prepare');
+    assert.equal(auditRows[0].metadataJson.evidenceCount, 0, 'auditors can list every no-evidence document in one query');
+
+    // The removed guard was unconditional; the rules that still gate the document are unchanged.
+    await assert.rejects(() => new PrepareSubstituteReceiptUseCase({
+      ...repo, getSubstituteReceiptPolicy: async () => ({
+        approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      }),
+    } as any, audit, notification).execute(ctx('finance-1'), 'exp-1', input),
+    /requires separate payment evidence/);
+    await assert.rejects(() => new PrepareSubstituteReceiptUseCase(repo, audit, notification)
+      .execute(ctx('finance-1'), 'exp-1', { ...input, paymentMethod: 'BANK_TRANSFER' }),
+    /Non-cash expenses require linked payment evidence/);
+    await assert.rejects(() => new PrepareSubstituteReceiptUseCase(repo, audit, notification)
+      .execute(ctx('finance-1'), 'exp-1', { ...input, businessPurpose: '  ' }),
+    /businessPurpose/);
   });
 });
 

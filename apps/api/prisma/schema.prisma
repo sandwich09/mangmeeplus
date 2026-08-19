@@ -2521,7 +2521,7 @@ model ExpenseSubstituteReceiptPolicy {
   companyId                String                               @unique
   approverUserIds          Json
   approvalMode             ExpenseSubstituteReceiptApprovalMode @default(OWNER_SELF)
-  cashEvidencePolicy       ExpenseCashEvidencePolicy            @default(REQUIRE_SEPARATE_PAYMENT_EVIDENCE)
+  cashEvidencePolicy       ExpenseCashEvidencePolicy            @default(ALLOW_SUPPORTING_EVIDENCE_ONLY)
   cashEvidenceInstructions String?
   createdByUserId          String
   updatedByUserId          String

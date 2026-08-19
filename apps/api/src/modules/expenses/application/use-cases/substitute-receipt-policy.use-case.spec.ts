@@ -10,7 +10,7 @@ const ctx = {
 } as any;
 
 describe('substitute receipt company policy', () => {
-  it('returns a ready owner-self strict default without a policy row', async () => {
+  it('returns a ready owner-self permissive cash default without a policy row', async () => {
     const repo = {
       getSubstituteReceiptPolicy: async () => null,
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
@@ -19,7 +19,10 @@ describe('substitute receipt company policy', () => {
     assert.equal(result.configured, false);
     assert.equal(result.ready, true);
     assert.equal(result.approvalMode, 'OWNER_SELF');
-    assert.equal(result.cashEvidencePolicy, 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE');
+    // R6: the code default matches the schema default; an explicit row still wins.
+    assert.equal(result.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
+    const runtime = await new GetSubstituteReceiptPolicyUseCase(repo).executeRuntime(ctx);
+    assert.equal(runtime.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
   });
 
   it('allows OWNER_SELF with no approvers and rejects an empty DESIGNATED_APPROVERS list', async () => {

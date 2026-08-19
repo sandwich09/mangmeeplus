@@ -148,10 +148,11 @@ test('counts unmet detail requirements, including invalid optional identity valu
 
 test('evaluates policy-driven evidence requirements', () => {
   assert.deepEqual(evaluateEvidenceReadiness({
-    policyReady: false, supportingCount: 0, paymentCount: 0, requiresPaymentEvidence: true,
-  }), { ready: false, missing: ['policy', 'supportingEvidence', 'paymentEvidence'], missingCount: 3 });
+    policyReady: false, paymentCount: 0, requiresPaymentEvidence: true,
+  }), { ready: false, missing: ['policy', 'paymentEvidence'], missingCount: 2 });
+  // R5: zero attachments is prepare-ready; the wizard asks for files, it does not demand them.
   assert.deepEqual(evaluateEvidenceReadiness({
-    policyReady: true, supportingCount: 1, paymentCount: 0, requiresPaymentEvidence: false,
+    policyReady: true, paymentCount: 0, requiresPaymentEvidence: false,
   }), { ready: true, missing: [], missingCount: 0 });
   assert.equal(substituteReceiptEvidenceRenderabilityIssue(
     Array.from({ length: 9 }, (_, index) => ({ id: `att-${index}`, originalFileName: `${index}.pdf` })),
@@ -166,7 +167,6 @@ test('evaluates policy-driven evidence requirements', () => {
   ), null);
   assert.deepEqual(evaluateEvidenceReadiness({
     policyReady: true,
-    supportingCount: 8,
     paymentCount: 1,
     requiresPaymentEvidence: true,
     renderabilityIssue: 'too_many_evidence',

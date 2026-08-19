@@ -305,8 +305,6 @@ const MESSAGE_LABELS: Record<string, string> = {
     'นโยบายบริษัทกำหนดให้รายการเงินสดต้องมีหลักฐานการจ่ายแยกไฟล์ กรุณายกเลิก version นี้แล้วจัดทำ version ใหม่',
   'The reviewed preview no longer matches. Generate and review a new preview before signing.':
     'ตัวอย่างที่ตรวจไว้ไม่ตรงกับฉบับปัจจุบัน กรุณาสร้างและตรวจตัวอย่างใหม่ก่อนลงนาม',
-  'At least one original or supporting evidence attachment is required.':
-    'ต้องเลือกหลักฐานต้นทางหรือหลักฐานประกอบอย่างน้อย 1 ไฟล์',
   'Cannot reach the authentication service. Please try again.':
     'เชื่อมต่อระบบยืนยันตัวตนไม่ได้ กรุณาลองใหม่อีกครั้ง',
   // Substitute-receipt eligibility (the rest of the กติกาใบแทน family)

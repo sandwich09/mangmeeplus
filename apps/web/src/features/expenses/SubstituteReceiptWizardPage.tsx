@@ -981,7 +981,7 @@ export function SubstituteReceiptWizardPage({
     if (selectedEvidenceRenderabilityIssue) {
       throw new Error(evidenceRenderabilityIssueMessage(selectedEvidenceRenderabilityIssue, locale));
     }
-    if (supportingIds.length === 0 || (requiresPaymentEvidence && paymentIds.length === 0)) {
+    if (requiresPaymentEvidence && paymentIds.length === 0) {
       throw new Error(t('expenses.substitute_wizard.evidence_required', locale));
     }
     const result = await generateSubstituteReceipt(companyId, detail.id, {
@@ -1925,9 +1925,14 @@ export function SubstituteReceiptWizardPage({
     );
   };
 
+  // evidenceNone is a LINE conversation answer ("no file exists"), not a wizard field: the apply
+  // block above ignores it, so counting it would promise a prefilled field the form never shows.
+  const prefilledFieldCount = linePrefill
+    ? Object.keys(linePrefill.acceptedValues).filter((field) => field !== 'evidenceNone').length
+    : 0;
+
   const evidenceReadiness = evaluateEvidenceReadiness({
     policyReady: Boolean(policy?.ready),
-    supportingCount: supportingIds.length,
     paymentCount: paymentIds.length,
     requiresPaymentEvidence,
     renderabilityIssue: selectedEvidenceRenderabilityIssue,
@@ -1952,7 +1957,8 @@ export function SubstituteReceiptWizardPage({
               'expense.receipt.supporting',
               'expenses.substitute_wizard.supporting_title',
               'expenses.substitute_wizard.supporting_help',
-              true,
+              // R5: still asked for and still uploadable here, but zero attachments is a legal document.
+              false,
               supportingIds,
               setSupportingIds,
               supportingFile,
@@ -1992,7 +1998,6 @@ export function SubstituteReceiptWizardPage({
           incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
           items={[
             { label: t('expenses.substitute_wizard.readiness_policy', locale), complete: !evidenceReadiness.missing.includes('policy') },
-            { label: t('expenses.substitute_wizard.supporting_title', locale), complete: !evidenceReadiness.missing.includes('supportingEvidence') },
             { label: requiresPaymentEvidence ? t('expenses.substitute_wizard.payment_evidence_title', locale) : t('expenses.substitute_wizard.payment_evidence_optional_short', locale), complete: !evidenceReadiness.missing.includes('paymentEvidence') },
             { label: t('expenses.substitute_wizard.readiness_renderable', locale), complete: !evidenceReadiness.missing.includes('renderability') },
           ]}
@@ -2266,8 +2271,8 @@ export function SubstituteReceiptWizardPage({
             {error && <div role="alert" aria-live="assertive" aria-atomic="true"><ErrorBanner message={error} /></div>}
             {info && <InfoBanner message={info} />}
             {linePrefill && <InfoBanner message={locale === 'th'
-              ? `โหลดข้อมูลที่ยืนยันผ่าน LINE แล้ว ${Object.keys(linePrefill.acceptedValues).length} ช่อง${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? ' · รายการ ยอด และหมวดเป็นข้อมูลเสนอ ต้องตรวจและแก้รายการค่าใช้จ่ายในเว็บก่อน' : ''}`
-              : `Loaded ${Object.keys(linePrefill.acceptedValues).length} accepted LINE fields${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? '; review proposed item, amount, and category values against the expense before preparing' : ''}`} />}
+              ? `โหลดข้อมูลที่ยืนยันผ่าน LINE แล้ว ${prefilledFieldCount} ช่อง${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? ' · รายการ ยอด และหมวดเป็นข้อมูลเสนอ ต้องตรวจและแก้รายการค่าใช้จ่ายในเว็บก่อน' : ''}`
+              : `Loaded ${prefilledFieldCount} accepted LINE fields${linePrefill.acceptedValues.itemDescription || linePrefill.acceptedValues.amount || linePrefill.acceptedValues.expenseCategoryId ? '; review proposed item, amount, and category values against the expense before preparing' : ''}`} />}
             <MangmeeCard className="p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div>
