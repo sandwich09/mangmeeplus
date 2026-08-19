@@ -20,10 +20,33 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
   const agent = new ResponseComposerAgent();
 
   it('describes capabilities without claiming that every feature is available', () => {
-    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง');
+    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', ['accounting.document.read', 'expense.read']);
     assert.match(reply, /ยอดขาย/);
     assert.match(reply, /ขึ้นกับสิทธิ์และฟีเจอร์/);
     assert.match(reply, /ต้องทำบนเว็บ/);
+  });
+
+  // UAT 2026-08-18: the answer listed every module the product has, so a company that never
+  // switched sales/CRM/tax on was offered them and got "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้" next turn.
+  it('offers only the capabilities this member can actually reach', () => {
+    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', ['expense.read', 'expense.receipt.line_upload']);
+    assert.match(reply, /ค่าใช้จ่ายและใบเสร็จ/);
+    assert.match(reply, /ส่งรูปใบเสร็จ/);
+    assert.doesNotMatch(reply, /ยอดขาย/);
+    assert.doesNotMatch(reply, /ภาษี/);
+    assert.doesNotMatch(reply, /ลูกค้า/);
+  });
+
+  it('does not invent capabilities for a member whose permissions open nothing', () => {
+    const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH', []);
+    assert.match(reply, /ยังไม่เปิดข้อมูลส่วนไหน/);
+    assert.doesNotMatch(reply, /•/);
+  });
+
+  it('keeps the English answer permission-scoped too', () => {
+    const reply = agent.composeCapabilityHelp('what can you do', 'en', 'en-US', ['inventory.product.read', 'inventory.report.read']);
+    assert.match(reply, /products and stock/);
+    assert.doesNotMatch(reply, /sales/);
   });
 
   it('uses the warm female employee persona for pure casual conversation', async () => {

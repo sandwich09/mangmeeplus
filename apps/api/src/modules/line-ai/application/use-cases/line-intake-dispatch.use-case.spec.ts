@@ -515,7 +515,8 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
 describe('LINE intake dispatch – text path', () => {
   it('keeps an immediate vague follow-up attached to the delivered capability answer without another model call', async () => {
     const h = makeHarness({
-      permissions: ['line.ai.query'],
+      // The examples are permission-backed: this member can read sales and send a receipt.
+      permissions: ['line.ai.query', 'crm.report.read', 'expense.receipt.line_upload'],
       conversationTurns: [{
         createdAt: new Date(), userMessagePreview: 'ทำอะไรได้บ้าง',
         replyPreview: 'น้องมั่งมีช่วยค้นและสรุปข้อมูลงานตามสิทธิ์ของคุณได้ค่ะ',

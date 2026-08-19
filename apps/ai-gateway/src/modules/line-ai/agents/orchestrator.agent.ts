@@ -342,7 +342,7 @@ export class OrchestratorAgent {
     const toolData = outputs.flatMap((o) => o.toolData ?? []);
     let replyText = composed.replyText;
     if (zeroToolIntent === 'capability_help') {
-      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale);
+      replyText = composer.composeCapabilityHelp(req.messageText, plan.language, req.userContext.locale, req.userContext.permissions);
     } else if (zeroToolIntent === 'casual_conversation') {
       replyText = await composer.composeCasual(req.messageText, provider, {
         planLanguage: plan.language,

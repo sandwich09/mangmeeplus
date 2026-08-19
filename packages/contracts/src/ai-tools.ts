@@ -921,3 +921,114 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
     requiresErpPermissionCheck: true,
   },
 ];
+
+/** One bullet of the "ทำอะไรได้บ้าง" answer, backed by the LINE tools of `modules`. */
+export type LineCapabilityGroup = {
+  modules: readonly string[];
+  labelTh: string;
+  labelEn: string;
+  exampleTh: string;
+  exampleEn: string;
+};
+
+/**
+ * UAT 2026-08-18: the capability answer listed every module the product has, so a company that
+ * never switched sales (or CRM, or tax) on was told น้องมั่งมี could summarize it — and the next
+ * question came back "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้". A bullet now appears only when at least one
+ * tool behind it passes this member's permissions, which is also the feature gate: permissions of a
+ * feature the company has not enabled are stripped at permission-resolve time
+ * (`feature-gate.logic.ts`), so they never reach this list.
+ *
+ * Groups stay one-feature-wide on purpose. Merging สินค้า with ลูกค้า would re-advertise a closed
+ * module the moment its neighbour is open.
+ */
+export const LINE_CAPABILITY_GROUPS: readonly LineCapabilityGroup[] = [
+  {
+    modules: ['accounting-documents'],
+    labelTh: 'ยอดขาย เอกสารขาย และลูกหนี้',
+    labelEn: 'sales, sales documents, and receivables',
+    exampleTh: 'ยอดขายวันนี้เท่าไหร่',
+    exampleEn: 'What are today’s sales?',
+  },
+  {
+    modules: ['expenses'],
+    labelTh: 'ค่าใช้จ่ายและใบเสร็จ',
+    labelEn: 'expenses and receipts',
+    exampleTh: 'ค่าใช้จ่ายเดือนนี้เท่าไหร่',
+    exampleEn: 'How much did we spend this month?',
+  },
+  {
+    modules: ['reimbursements'],
+    labelTh: 'คำขอเบิกเงินและรายการรออนุมัติ',
+    labelEn: 'reimbursement claims and pending approvals',
+    exampleTh: 'มีคำขอเบิกเงินรออนุมัติกี่รายการ',
+    exampleEn: 'How many reimbursements are waiting for approval?',
+  },
+  {
+    modules: ['ledger', 'banking', 'reports'],
+    labelTh: 'การเงิน บัญชี และรายงาน',
+    labelEn: 'finance, accounting, and reports',
+    exampleTh: 'สรุปการเงินเดือนนี้',
+    exampleEn: 'Summarize this month’s finances',
+  },
+  {
+    modules: ['tax'],
+    labelTh: 'ภาษี VAT และหัก ณ ที่จ่าย',
+    labelEn: 'tax, VAT, and withholding tax',
+    exampleTh: 'เดือนนี้ต้องยื่นภาษีอะไรบ้าง',
+    exampleEn: 'Which tax filings are due this month?',
+  },
+  {
+    modules: ['inventory'],
+    labelTh: 'สินค้าและสต็อก',
+    labelEn: 'products and stock',
+    exampleTh: 'ของอะไรใกล้หมด',
+    exampleEn: 'Which products are low in stock?',
+  },
+  {
+    modules: ['crm', 'crm-inbox', 'crm-sales'],
+    labelTh: 'ลูกค้า นัดหมาย งานติดตาม และแชทค้างตอบ',
+    labelEn: 'customers, bookings, follow-ups, and unanswered chats',
+    exampleTh: 'วันนี้มีนัดหมายกี่รายการ',
+    exampleEn: 'How many bookings are there today?',
+  },
+  {
+    modules: ['procurement'],
+    labelTh: 'จัดซื้อ ผู้ขาย และใบสั่งซื้อ',
+    labelEn: 'procurement, suppliers, and purchase orders',
+    exampleTh: 'ใบสั่งซื้อที่ยังค้างมีอะไรบ้าง',
+    exampleEn: 'Which purchase orders are still open?',
+  },
+  {
+    modules: ['workflow', 'dashboard-notifications'],
+    labelTh: 'งานค้าง การแจ้งเตือน และภาพรวมธุรกิจ',
+    labelEn: 'pending work, alerts, and the business overview',
+    exampleTh: 'วันนี้มีแจ้งเตือนอะไรบ้าง',
+    exampleEn: 'What alerts are open today?',
+  },
+  {
+    modules: ['employee-access', 'hr'],
+    labelTh: 'ข้อมูลพนักงานและวันลา',
+    labelEn: 'employee and leave information',
+    exampleTh: 'ตอนนี้บริษัทมีพนักงานกี่คน',
+    exampleEn: 'How many employees does the company have?',
+  },
+];
+
+/** Capability groups this member can actually reach, in display order. */
+export function availableLineCapabilityGroups(permissions: readonly string[]): LineCapabilityGroup[] {
+  return LINE_CAPABILITY_GROUPS.filter((group) => LINE_TOOL_REGISTRY.some(
+    (tool) => group.modules.includes(tool.sourceModule) && hasToolPermissions(tool, permissions),
+  ));
+}
+
+/** Sending a receipt/slip is a capability of its own, and it is not a read tool. */
+export const LINE_RECEIPT_CAPTURE_PERMISSIONS = [
+  'expense.receipt.line_upload',
+  'expense.receipt.upload',
+  'expense.create',
+] as const;
+
+export function canCaptureLineReceipt(permissions: readonly string[]): boolean {
+  return LINE_RECEIPT_CAPTURE_PERMISSIONS.some((permission) => permissions.includes(permission));
+}

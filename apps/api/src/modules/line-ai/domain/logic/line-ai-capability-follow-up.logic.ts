@@ -1,4 +1,5 @@
 import type { LineAiConversationContext } from '@watchdog-bms/contracts';
+import { availableLineCapabilityGroups, canCaptureLineReceipt } from '@watchdog-bms/contracts';
 import { normalizeLineText } from './line-ai-classifier.logic';
 
 export function isDeliveredCapabilityFollowUp(
@@ -12,21 +13,26 @@ export function isDeliveredCapabilityFollowUp(
     || lastReply.startsWith('Nong Mangmee can find and summarize work data');
 }
 
-export function capabilityFollowUpReply(text: string): string {
-  if (/^[a-z]/iu.test(normalizeLineText(text))) {
+/** Examples come from the same permission-backed groups the capability answer itself uses, so the
+ *  follow-up cannot re-offer a module the previous reply already left out. */
+const FOLLOW_UP_EXAMPLE_LIMIT = 3;
+
+export function capabilityFollowUpReply(text: string, permissions: readonly string[] = []): string {
+  const english = /^[a-z]/iu.test(normalizeLineText(text));
+  const groups = availableLineCapabilityGroups(permissions).slice(0, FOLLOW_UP_EXAMPLE_LIMIT);
+  const receipt = canCaptureLineReceipt(permissions);
+  if (english) {
     return [
       'For example:',
-      '• Ask “What are today\'s sales?” or “Which products are low in stock?”',
-      '• Ask for an expense, tax, customer, booking, or pending-work summary',
-      '• Send a receipt/slip to create a reviewable expense draft',
+      ...groups.map((group) => `• Ask “${group.exampleEn}”`),
+      ...(receipt ? ['• Send a receipt/slip to create a reviewable expense draft'] : []),
       'I only use data allowed by your current company permissions. Final approval, payment, issuance, and posting stay in the web app.',
     ].join('\n');
   }
   return [
     'ตัวอย่างค่ะ',
-    '• ถาม “ยอดขายวันนี้เท่าไหร่” หรือ “สินค้าอะไรใกล้หมด”',
-    '• ขอสรุปค่าใช้จ่าย ภาษี ลูกค้า นัดหมาย หรืองานค้าง',
-    '• ส่งรูปใบเสร็จ/สลิปเพื่อสร้างร่างค่าใช้จ่ายให้ตรวจสอบ',
+    ...groups.map((group) => `• ถาม “${group.exampleTh}”`),
+    ...(receipt ? ['• ส่งรูปใบเสร็จ/สลิปเพื่อสร้างร่างค่าใช้จ่ายให้ตรวจสอบ'] : []),
     'น้องมั่งมีจะใช้เฉพาะข้อมูลที่สิทธิ์ปัจจุบันของคุณเข้าถึงได้ ส่วนการอนุมัติ จ่ายเงิน ออกเอกสาร และลงบัญชีขั้นสุดท้ายยังทำในเว็บค่ะ',
   ].join('\n');
 }

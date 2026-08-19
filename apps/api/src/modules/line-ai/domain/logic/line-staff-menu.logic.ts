@@ -196,39 +196,96 @@ export function buildReceiptCapturePrompt(context: StaffMenuContext): LineReplyM
   };
 }
 
-/** One button per real approval queue the member can act on. Ordered as listed.
- *  [label, any-of permissions, web path, any-of feature keys]. */
+/** One button per real approval queue the member can act on. Ordered as listed. */
 const APPROVAL_SURFACES = [
-  ['คำขอเบิกเงิน', ['reimbursement.approve'], 'reimbursements?tab=approvals', ['reimbursement']],
-  ['ใบขอซื้อ/ใบสั่งซื้อ', ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'], 'procurement', ['procurement.purchase_requests', 'procurement.purchase_orders']],
+  {
+    key: 'reimbursement',
+    label: 'คำขอเบิกเงิน',
+    permissions: ['reimbursement.approve'],
+    path: 'reimbursements?tab=approvals',
+    features: ['reimbursement'],
+  },
+  {
+    key: 'procurement',
+    label: 'ใบขอซื้อ/ใบสั่งซื้อ',
+    permissions: ['procurement.purchase_request.approve', 'procurement.purchase_order.approve'],
+    path: 'procurement',
+    features: ['procurement.purchase_requests', 'procurement.purchase_orders'],
+  },
 ] as const;
+
+export type ApprovalSurfaceKey = (typeof APPROVAL_SURFACES)[number]['key'];
+
+/** What the approver has waiting: `total` is the whole queue, `items` the display lines the card
+ *  may show. A key left out means that queue could not be read — the card then links out without a
+ *  count instead of implying zero. */
+export type PendingApprovalSnapshot = Partial<Record<ApprovalSurfaceKey, { total: number; items: string[] }>>;
+
+/** LINE shows the shortlist; the web app stays the place the approval is actually made. */
+export const PENDING_APPROVAL_ITEM_LIMIT = 5;
 
 /** The single source both the quick-reply button and the card itself read. Hoisted, so the quick
  *  reply above can call it. */
 function availableApprovalSurfaces(permissions: Set<string>, entitled: ReadonlySet<string> | null) {
-  return APPROVAL_SURFACES.filter(([, required, , features]) =>
-    hasAny(permissions, required) && hasFeature(entitled, features));
+  return APPROVAL_SURFACES.filter((surface) =>
+    hasAny(permissions, surface.permissions) && hasFeature(entitled, surface.features));
 }
 
-export function buildPendingApprovalCard(context: StaffMenuContext): LineReplyMessage {
+/** The queues worth querying before the card is built. */
+export function availableApprovalSurfaceKeys(
+  context: Pick<StaffMenuContext, 'permissions' | 'entitledFeatureKeys'>,
+): ApprovalSurfaceKey[] {
+  return availableApprovalSurfaces(new Set(context.permissions), context.entitledFeatureKeys)
+    .map((surface) => surface.key);
+}
+
+export function buildPendingApprovalCard(context: StaffMenuContext, pending: PendingApprovalSnapshot = {}): LineReplyMessage {
   const base = context.webBaseUrl?.replace(/\/$/, '');
   const permissions = new Set(context.permissions);
   const companySegment = `/companies/${encodeURIComponent(context.companyId)}/`;
+  const surfaces = availableApprovalSurfaces(permissions, context.entitledFeatureKeys);
   const buttons = base
-    ? availableApprovalSurfaces(permissions, context.entitledFeatureKeys)
-      .map(([label, , path]) => ({
-        type: 'button', style: 'primary', color: '#12B76A',
-        action: { type: 'uri', label, uri: `${base}${companySegment}${path}` },
-      }))
+    ? surfaces.map((surface) => ({
+      type: 'button', style: 'primary', color: '#12B76A',
+      action: { type: 'uri', label: surface.label, uri: `${base}${companySegment}${surface.path}` },
+    }))
     : [];
+
+  const counted = surfaces.filter((surface) => pending[surface.key]);
+  const total = counted.reduce((sum, surface) => sum + pending[surface.key]!.total, 0);
+  const lines: Record<string, unknown>[] = [];
+  let listed = 0;
+  for (const surface of counted) {
+    const queue = pending[surface.key]!;
+    if (queue.total === 0) continue;
+    lines.push({ type: 'text', text: `${surface.label} (${queue.total})`, weight: 'bold', size: 'sm', color: '#101828', margin: 'md', wrap: true });
+    for (const item of queue.items.slice(0, PENDING_APPROVAL_ITEM_LIMIT - listed)) {
+      lines.push({ type: 'text', text: `• ${item}`, size: 'sm', color: '#475467', wrap: true });
+      listed += 1;
+    }
+  }
+
+  const summary = counted.length === 0
+    ? 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย'
+    : total === 0
+      ? 'ตอนนี้ไม่มีรายการรออนุมัติค่ะ'
+      : `มี ${total} รายการรอคุณอนุมัติ`;
+  const closing = total > 0
+    ? listed < total
+      ? `แสดง ${listed} จาก ${total} รายการ · เปิดในเว็บเพื่อดูทั้งหมดและยืนยันอย่างปลอดภัย`
+      : 'เปิดในเว็บเพื่อดูรายละเอียดและยืนยันอย่างปลอดภัย'
+    : undefined;
+
   return {
     type: 'flex',
-    altText: 'รายการรออนุมัติ',
+    altText: counted.length === 0 ? 'รายการรออนุมัติ' : `รายการรออนุมัติ ${total} รายการ`,
     contents: {
       type: 'bubble',
       body: { type: 'box', layout: 'vertical', spacing: 'md', contents: [
         { type: 'text', text: '✅ รายการรออนุมัติ', weight: 'bold', size: 'lg', color: '#101828' },
-        { type: 'text', text: 'เปิดรายการจริงในเว็บเพื่อดูรายละเอียด ตรวจเพดานวงเงิน และยืนยันอย่างปลอดภัย', wrap: true, color: '#667085', size: 'sm' },
+        { type: 'text', text: summary, wrap: true, color: '#667085', size: 'sm' },
+        ...lines,
+        ...(closing ? [{ type: 'text', text: closing, wrap: true, color: '#667085', size: 'xs', margin: 'md' }] : []),
       ] },
       ...(buttons.length > 0 ? { footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: buttons } } : {}),
     },

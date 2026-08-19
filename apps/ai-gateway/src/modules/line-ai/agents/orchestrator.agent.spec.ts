@@ -186,7 +186,10 @@ describe('OrchestratorAgent', () => {
     assert.equal(called, false);
     assert.deepEqual(result.outputs, []);
     assert.equal(result.presentation, undefined);
-    assert.match(result.replyText, /ยอดขาย/);
+    // This request carries inventory + ledger permissions only, so the answer offers those and
+    // never advertises a module this company/member cannot reach.
+    assert.match(result.replyText, /สินค้าและสต็อก/);
+    assert.doesNotMatch(result.replyText, /ยอดขาย/);
     assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
   });
 
