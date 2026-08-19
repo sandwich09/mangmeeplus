@@ -73,7 +73,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
         onClick={togglePanel}
         aria-label={t('shell.notifications', locale)}
         aria-expanded={open}
-        className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:border-brand-200 hover:bg-brand-25 hover:text-brand-700"
+        className="relative flex h-11 w-11 items-center justify-center rounded-lg border border-gray-200 sm:h-9 sm:w-9 text-gray-600 hover:border-brand-200 hover:bg-brand-25 hover:text-brand-700"
       >
         <DesignIcons.bell className="h-[18px] w-[18px]" />
         {badge && (

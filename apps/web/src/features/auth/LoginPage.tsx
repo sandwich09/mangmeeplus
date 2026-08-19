@@ -223,7 +223,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
 
   if (checkingSession) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="flex min-h-dvh items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
           <p className="text-sm text-gray-500">{t('auth.login.checking_session', locale)}</p>
         </div>
@@ -232,7 +232,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-dvh">
       <HeroPanel locale={locale} />
 
       <div className="flex flex-1 items-center justify-center p-6 sm:p-10">

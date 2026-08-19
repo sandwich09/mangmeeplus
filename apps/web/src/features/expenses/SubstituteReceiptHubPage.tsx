@@ -10,7 +10,7 @@ import type {
 } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
-import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
 import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -28,6 +28,7 @@ import {
   dateShort,
   err,
   ErrorBanner,
+  ghostClass,
   ICON,
   inputClass,
   KPI,
@@ -286,7 +287,7 @@ export function SubstituteReceiptHubPage({
               </p>
             </MangmeeCard>
           ) : <MangmeeCard className="overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="hidden overflow-x-auto md:block">
               <table className="mangmee-table min-w-full">
                 <thead>
                   <tr>
@@ -356,6 +357,61 @@ export function SubstituteReceiptHubPage({
                 </tbody>
               </table>
             </div>
+
+            {/* ทดแทนใบเสร็จ on a phone. Desktop keeps the six-column table above untouched; the
+                actions that lived in a last column no thumb reaches sit at the foot of each
+                card, full width. */}
+            <div className="space-y-3 p-3 md:hidden" data-testid="substitute-receipt-card-list">
+              {result.items.map((item) => {
+                const canOpenArtifact = !!item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED');
+                const canContinue = item.status === 'PREPARED' || item.status === 'PAYER_CERTIFIED';
+                return (
+                  <MangmeeCard key={item.evidenceId} className="overflow-hidden p-0">
+                    <div className="p-4" data-testid="substitute-receipt-card">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-gray-900">{item.documentNumber}</div>
+                          <div className="mt-0.5 truncate text-sm text-gray-600">{item.payeeName ?? t('expenses.substitute_hub.payee_missing', locale)}</div>
+                        </div>
+                        <div className="shrink-0 text-right font-bold tabular-nums text-gray-900">{baht0(item.grandTotalAmount)}</div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <StatusBadge status={STATUS_BADGES[item.status]} />
+                        <span className="text-xs text-gray-500">{t(STATUS_LABEL_KEYS[item.status], locale)}</span>
+                      </div>
+                      <div className="mt-2 text-xs text-gray-500">{dateShort(item.paymentDate ?? item.expenseDate)}</div>
+                    </div>
+                    {(canOpenArtifact || canContinue || item.status === 'SUPERSEDED') && (
+                      <div className="flex flex-col gap-2 border-t border-gray-100 p-3">
+                        {canOpenArtifact && (
+                          <>
+                            <button type="button" className={cx(ghostClass, 'w-full')} disabled={previewLoadingId === item.evidenceId}
+                              onClick={() => void openIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}>
+                              {previewLoadingId === item.evidenceId ? t('expenses.loading', locale) : t('expenses.substitute_hub.open_document', locale)}
+                            </button>
+                            <button type="button" className={cx(ghostClass, 'w-full')}
+                              onClick={() => void downloadIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}>
+                              {t('expenses.substitute.download_pdf', locale)}
+                            </button>
+                          </>
+                        )}
+                        {canContinue && (
+                          <button type="button" className={cx(btnClass, 'w-full')} onClick={() => router.push(wizardHref(item.evidenceId))}>
+                            {t('expenses.substitute_hub.continue', locale)}
+                          </button>
+                        )}
+                        {item.status === 'SUPERSEDED' && (
+                          <button type="button" className={cx(ghostClass, 'w-full')} onClick={() => router.push(wizardHref(item.evidenceId))}>
+                            {t('expenses.substitute_hub.view_history', locale)}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </MangmeeCard>
+                );
+              })}
+            </div>
+
           </MangmeeCard>}
         </div>
       ) : null}

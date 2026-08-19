@@ -115,6 +115,12 @@ export type LineUserContext = {
   companyId: string;
   membershipId: string;
   permissions: string[];
+  /** Server-resolved permissions removed only because their owning company feature is OFF.
+   * Internal policy evidence only: never place this map in model prompts or customer output. */
+  entitlementDeniedPermissions?: Record<string, string>;
+  /** Exact server-resolved feature set. `null` preserves the legacy fail-open convention;
+   * `undefined` keeps older callers/artifacts wire-compatible. Internal policy evidence only. */
+  entitledFeatureKeys?: string[] | null;
   roles: string[];
   branchIds?: string[];
   locationIds?: string[];

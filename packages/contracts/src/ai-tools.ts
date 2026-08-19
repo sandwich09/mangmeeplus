@@ -347,10 +347,10 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.list_recent',
-    description: 'List expense records with dates, vendors, totals, status, payment status, and web links.',
+    description: 'Read expense totals and bounded records for the current month by default or an explicit date range, including dates, vendors, status, payment status, and web links.',
     businessSubjects: ['expense'],
-    questionKinds: ['list', 'detail'],
-    category: 'read_detail',
+    questionKinds: ['summary', 'list', 'detail'],
+    category: 'read_summary',
     requiredPermissions: [],
     anyOfPermissions: ['expense.read', 'expense.review', 'expense.read_related', 'expense.read_own'],
     sourceModule: 'expenses',
@@ -375,7 +375,7 @@ export const LINE_TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'expense.get_daily_closing',
-    description: 'Read one actionable expense closing snapshot for a day: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency.',
+    description: 'Read a one-day operational expense-closing checklist only: occurred, paid, outstanding, due, overdue, review, evidence, duplicate, and bounded details by currency. Do not use for week, month, or date-range totals.',
     businessSubjects: ['expense'],
     questionKinds: ['summary', 'list', 'breakdown'],
     category: 'read_summary',

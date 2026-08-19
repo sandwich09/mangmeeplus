@@ -55,7 +55,7 @@ export default function ForgotPasswordPage() {
 
   if (submitted) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+      <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
         <div className="w-full max-w-md space-y-5 rounded-xl border border-gray-200 bg-white p-8">
           <div className="space-y-2">
             <h1 className="text-xl font-semibold text-gray-900">{t('auth.forgot.submitted.title', locale)}</h1>
@@ -73,7 +73,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-md space-y-6 rounded-xl border border-gray-200 bg-white p-8">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">

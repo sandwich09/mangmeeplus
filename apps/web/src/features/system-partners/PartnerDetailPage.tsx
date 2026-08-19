@@ -1031,7 +1031,7 @@ function PackageMenuSection({
           </aside>
         </div>
 
-        <div className="sticky bottom-0 z-20 flex flex-col gap-3 border-t border-gray-200 bg-white/95 px-5 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="mangmee-safe-bottom sticky bottom-0 z-20 flex flex-col gap-3 border-t border-gray-200 bg-white/95 px-5 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <p className="text-sm font-bold text-gray-700">
             มีการเปลี่ยนแปลง {visibleChangeCount} รายการ
           </p>
@@ -1400,7 +1400,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
 
   if (forbidden) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Access Denied</h1>
           <p className="text-sm text-gray-500 mt-1">You do not have permission to view partner details.</p>
@@ -1414,7 +1414,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
 
   if (notFound) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Partner Not Found</h1>
           <p className="text-sm text-gray-500 mt-1">Company ID: {companyId}</p>
@@ -1428,7 +1428,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Error</h1>
           <p className="text-sm text-gray-500 mt-1">{error}</p>
@@ -1442,7 +1442,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
 
   if (loading || !detail) {
     return (
-      <div className="min-h-screen bg-gray-50 p-6">
+      <div className="min-h-dvh bg-gray-50 p-6">
         <div className="mx-auto max-w-4xl space-y-4">
           {[...Array(4)].map((_, i) => (
             <div key={i} className="h-32 rounded-lg border border-gray-200 bg-white animate-pulse" />
@@ -1458,7 +1458,7 @@ export default function PartnerDetailPage({ companyId }: { companyId: string }) 
   const fieldsLocked = currentStatus === 'DISABLED' || currentStatus === 'ARCHIVED';
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-dvh bg-gray-50 p-6">
       {lifecycleAction && (
         <LifecycleConfirmModal
           action={lifecycleAction}

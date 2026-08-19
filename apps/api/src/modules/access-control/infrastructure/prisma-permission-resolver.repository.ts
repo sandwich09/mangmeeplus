@@ -108,6 +108,7 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
       roles,
       permissions,
       entitlementDeniedPermissions,
+      entitledFeatureKeys: entitled === null ? null : [...entitled],
       scopes: branchIds === undefined ? {} : { branchIds },
     };
   }

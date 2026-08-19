@@ -43,14 +43,17 @@ Do not use casual_conversation for current facts, news, weather, professional ad
 Use the feature/tool catalog from the user payload as the source of truth. Read each feature description before choosing.
 businessGlossary contains bounded Thai abbreviations for semantic classification. Use it only to understand the original message; never rewrite messageText, derive permission, infer numbers, or bypass the feature/tool catalog from a glossary entry. Clarify when surrounding context conflicts with a glossary meaning.
 Pick the best matching enabled feature before choosing tools.
-If the best matching feature is disabled, return UNROUTABLE with reason feature_disabled.
+If the best matching catalog tool is listed as disabled, return UNROUTABLE with reason tool_unavailable. Company entitlement is checked deterministically after routing; never guess it here.
 If no enabled or disabled feature matches, return UNROUTABLE with reason unsupported_module.
 For every business ROUTABLE intent, set requiredTools to the smallest matching enabled tool list and do not leave it empty. Only casual_conversation and capability_help may use requiredTools=[].
 Set subject to the user's business entity or meaning. Choose tools only when their businessSubjects include that subject.
 Never substitute a nearby subject: customer is not employee; sale/payment is not ledger/accounting_document; booking is not customer/employee.
 Do not choose disabled tools.
 For SAP Tax Code questions, use tax.get_tax_code_profile. Never infer an external code without company profile and effective date; legacy SAP ERP O1 can differ from current S/4HANA O1.
-For an owner daily-closing question about what expenses occurred today, what remains payable, or what must be checked before closing the shop, use expense.get_daily_closing instead of a generic expense total.
+For an expense total or bounded list over a month, week, or explicit date range, use expense.list_recent. This includes short owner wording such as how much was spent this month. Use expense.get_breakdown only when the user asks to group the period by category or branch.
+Use expense.get_daily_closing only for an explicit one-day operational close: what occurred that day, what remains payable/due/overdue, or what must be reviewed before closing the shop. Never substitute it for a period total.
+Do not use inventory search, stock, or aggregate sales tools to answer product-decision advice such as "ช่วงนี้ควรขายอะไรดี". The current catalog has no grounded product-level demand/margin recommendation; return unsupported_module.
+For a bill's purchased/paid items, route by the document's business direction: a supplier/outgoing expense bill uses expense.get_detail; a customer invoice or sales document uses accounting.get_document_detail. The word "สินค้า" alone never makes this an inventory question. Put the canonical record id in missingContext when it is absent so the tool loop asks one clarification instead of guessing.
 Treat domestic sale/purchase, import goods, imported services/PP36, export, zero-rated, exempt, and non-taxable questions as tax read requests. Tax configuration changes, recompute, filing, payment, and issue resolution are mutations and stay blocked.
 Do not use accounting/ledger tools to answer sales, CRM, tax, payroll, bank, or weather questions unless the enabled catalog explicitly says they match.
 Use receipt/evidence capture only when hasAttachment is true or the user clearly asks to record/review receipt evidence.
@@ -123,7 +126,7 @@ export const ROUTER_ENABLED_TOOLS = new Set([
 ]);
 
 // Registered-but-waiting tools for modules/read adapters not yet implemented (items 13/14/15/18): the model
-// can see they exist (disabled catalog) and users get a safe "feature not enabled" reply; flip
+// can see they exist (disabled catalog) and users get a safe channel-unavailable reply; flip
 // to ROUTER_ENABLED_TOOLS when the owning module ships.
 const ROUTER_DISABLED_TOOLS = new Set([
   'crm.suggest_sales_followups',
@@ -455,7 +458,7 @@ function normalizeToolAvailability(plan: AgentIntentPlan, messageText: string): 
     ...plan,
     status: 'PARTIAL',
     intents: enabledIntents,
-    refusals: [...plan.refusals, { request: messageText, reason: 'feature_disabled' }],
+    refusals: [...plan.refusals, { request: messageText, reason: 'tool_unavailable' }],
   };
 }
 
@@ -488,7 +491,7 @@ function disabledFeaturePlan(messageText: string): AgentIntentPlan {
     status: 'UNROUTABLE',
     language: /[\u0E00-\u0E7F]/.test(messageText) ? 'th' : 'en',
     intents: [],
-    refusals: [{ request: messageText, reason: 'feature_disabled' }],
+    refusals: [{ request: messageText, reason: 'tool_unavailable' }],
     requiresHumanReview: false,
   };
 }

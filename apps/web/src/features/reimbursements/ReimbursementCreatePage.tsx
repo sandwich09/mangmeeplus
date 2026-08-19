@@ -143,7 +143,7 @@ export function ReimbursementCreatePage({ companyId, canCreate }: { companyId: s
                 <MangmeeBadge tone="slate">{form.lines.length} รายการ</MangmeeBadge>
               </div>
               {form.lines.length >= 2 && (
-                <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                   onClick={() => setCollapsedLines(allLinesCollapsed ? {} : Object.fromEntries(form.lines.map((_line, i) => [i, true])))}>
                   {allLinesCollapsed ? 'ขยายทั้งหมด' : 'ย่อทั้งหมด'}
                 </button>

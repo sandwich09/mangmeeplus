@@ -1,6 +1,6 @@
 # Agent Memory: UAT AI not responding (PDF OCR prefill + LINE reply)
 
-Status: Code fixes done and verified locally; UAT config actions + live acceptance pending.
+Status: Employee LINE webhook repaired and accepted on UAT 2026-08-18; the historical PDF/CRM-OA items below remain separate.
 Owner: Claude (investigation + fix)
 Scope: UAT report "AI ไม่ตอบ" covering (a) expense receipt OCR prefill on PDF upload and (b) LINE AI not replying on either OA.
 
@@ -204,3 +204,48 @@ the raw UAT page URL. Android therefore opened the QR in Samsung Internet, where
 showed LINE's generic unknown-error dialog before account linking. Server-generated employee
 and owner QR packages now prefer `https://liff.line.me/<LINE_LIFF_ID>/employee?token=...`,
 which opens through LINE/LIFF on mobile; the raw API page remains only as the local fallback.
+
+## Employee LINE webhook recovery (2026-08-18)
+
+- The newly created `ป๋อจ้าน Company` had one active membership and one active LINE identity.
+  The identity was stored against the current UAT Messaging channel, was reachable through the
+  UAT OA profile API, and the company context was correct. No webhook event arrived after the
+  20:30 ICT link, while earlier UAT test events had completed normally.
+- UAT services were healthy on immutable source
+  `75ae7e154591bf6464fe1c52ef66e0c6139e26e8` from Deploy UAT run `32091272835`;
+  api-web, AI Gateway, and workers digests each carried the exact `git-<source>` tag. Public API,
+  AI Gateway, and authenticated DB readiness returned HTTP 200.
+- LINE readback showed the employee OA `uat-mangmeeplus` / `@234jrspv` active at
+  `https://uat.mangmeeplus.com/v1/line/webhook`. A provider-side webhook test returned
+  `REQUEST_TIMEOUT`, even though `GET /v1/health` through the same custom domain returned 200.
+  Testing the canonical ECS Express URL from SSM plus `/v1/line/webhook` returned `200 OK`.
+- Config-only repair: updated the LINE Messaging webhook endpoint to
+  `/watchdog-bms/uat/ecs-express-api-web-url` + `/v1/line/webhook`. Immediate GET readback matched
+  the exact endpoint with `active=true`, and LINE's configured-endpoint test returned
+  `success=true`, `statusCode=200`, `reason=OK`. Production and UAT runtime services were not
+  changed or redeployed.
+- Whole-chain acceptance reused the existing signed synthetic webhook smoke against the linked
+  LINE account. Event `smoke-query-1787060761165` reached terminal `completed` for the target
+  company, cleared its recovery payload, and persisted an `AiTurn` as `COMPLETED` in 3,149 ms with
+  no error. Completion is written only after LINE reply/push delivery succeeds, so this proves
+  webhook -> identity/company -> AI -> outbound LINE delivery on the repaired path without reading
+  or logging the reply content.
+- Keep the direct SSM-derived UAT API endpoint until the custom-domain POST timeout is diagnosed.
+  A custom-domain health GET is not sufficient webhook evidence; always run LINE's webhook test.
+
+## Production employee LINE webhook recovery (2026-08-18)
+
+- A read-only check found the same failure on the Production shared employee OA `มั่งมี Plus` /
+  `@458wpnio`: its active endpoint `https://mangmeeplus.com/v1/line/webhook` returned
+  `REQUEST_TIMEOUT` from LINE's provider test, while the canonical Production ECS Express API
+  endpoint returned `success=true`, `statusCode=200`, `reason=OK`.
+- After explicit owner authorization, the change guarded the exact bot id, exact old endpoint,
+  active state, SSM origin shape, and a successful provider preflight before mutation. It updated
+  only the LINE Messaging webhook endpoint to
+  `/watchdog-bms/production/ecs-express-api-web-url` + `/v1/line/webhook`.
+- Immediate readback matched the new endpoint with `active=true`; testing the configured endpoint
+  returned `success=true`, `statusCode=200`, `reason=OK`. No ECS service, image, database,
+  Production customer gate, Cloudflare configuration, or application code was changed.
+- Scope is the shared employee LINE AI OA. Per-company CRM customer OA webhook endpoints were not
+  inspected or changed. No synthetic business message was generated in Production; a real employee
+  resend remains the customer-visible acceptance.

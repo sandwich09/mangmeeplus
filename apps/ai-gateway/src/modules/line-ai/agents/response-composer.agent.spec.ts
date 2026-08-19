@@ -49,6 +49,41 @@ describe('ResponseComposerAgent – Nong Mangmee zero-tool replies', () => {
     assert.doesNotMatch(reply, /sales/);
   });
 
+  it('names the disabled business capability without leaking keys, links, or permission wording', () => {
+    const reply = agent.compose({
+      status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
+      refusals: [{ request: 'ของอะไรใกล้หมด', reason: 'feature_disabled' }],
+    }, [], 'ของอะไรใกล้หมด', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
+    assert.match(reply.replyText, /ระบบคลังสินค้า/);
+    assert.equal(reply.replyText.includes('ไม่มีสิทธิ์'), false);
+    assert.equal(reply.replyText.includes('inventory'), false);
+    assert.deepEqual(reply.sourceRefs, []);
+    assert.deepEqual(reply.webLinks, []);
+  });
+
+  it('keeps feature-disabled and genuine permission reasons distinct when both clauses are blocked', () => {
+    const reply = agent.compose({
+      status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
+      refusals: [
+        { request: 'ของอะไรใกล้หมด', reason: 'feature_disabled' },
+        { request: 'ขอดูข้อมูลลูกค้า', reason: 'forbidden' },
+      ],
+    }, [], 'ของอะไรใกล้หมด และขอดูข้อมูลลูกค้า', 'th-TH', { featureDisabledTools: ['inventory.list_low_stock'] });
+    assert.match(reply.replyText, /ระบบคลังสินค้า/);
+    assert.match(reply.replyText, /ไม่มีสิทธิ์/);
+    assert.deepEqual(reply.sourceRefs, []);
+    assert.deepEqual(reply.webLinks, []);
+  });
+
+  it('declines product recommendations instead of substituting stock or aggregate sales', () => {
+    const reply = agent.compose({
+      status: 'UNROUTABLE', language: 'th', intents: [], requiresHumanReview: false,
+      refusals: [{ request: 'ช่วงนี้ควรขายอะไรดี', reason: 'unsupported_module' }],
+    }, [], 'ช่วงนี้ควรขายอะไรดี');
+    assert.match(reply.replyText, /ยอดขาย กำไร และสต็อก/);
+    assert.deepEqual(reply.webLinks, []);
+  });
+
   it('uses the warm female employee persona for pure casual conversation', async () => {
     let capturedSystemPrompt = '';
     let capturedPayload: any;

@@ -132,7 +132,7 @@ export default function DataRightsNewPage({ remediation }: { remediation?: DataR
   };
 
   return (
-    <main className="min-h-screen bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="min-h-dvh bg-[#f6f8f7] px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-5xl space-y-5">
         <Link href="/system/data-rights" className="inline-flex items-center gap-2 text-sm font-semibold text-gray-600 hover:text-emerald-700">← กลับไปรายการคำขอ</Link>
 

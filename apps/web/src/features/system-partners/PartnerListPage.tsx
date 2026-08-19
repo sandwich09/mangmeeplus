@@ -109,7 +109,7 @@ export default function PartnerListPage() {
   const totalPages = Math.ceil(total / pageSize);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-dvh bg-gray-50 p-6">
       <div className="mx-auto max-w-6xl space-y-4">
         {/* No BackLink: this is the /system section root. '/' redirects to /login, so a back link
             here would sign-post the admin straight out of the console. SystemHeader carries the

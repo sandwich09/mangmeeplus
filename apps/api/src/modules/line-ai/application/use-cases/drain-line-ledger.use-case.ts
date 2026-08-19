@@ -264,6 +264,8 @@ export class DrainLineLedgerUseCase {
         companyId: entry.companyId,
         membershipId: access.membershipId,
         permissions: access.permissions,
+        entitlementDeniedPermissions: access.entitlementDeniedPermissions,
+        entitledFeatureKeys: access.entitledFeatureKeys,
         roles: access.roles,
         branchIds: access.scopes.branchIds,
         locale: 'th-TH',

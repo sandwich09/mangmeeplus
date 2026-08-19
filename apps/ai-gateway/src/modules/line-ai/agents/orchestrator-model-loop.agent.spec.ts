@@ -4,7 +4,7 @@ import { OrchestratorAgent } from './orchestrator.agent';
 import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
 
 // Exercises the model-driven tool loop: when a provider is available the model chooses which
-// tool to call next (bounded by the routed agent's allowlist), with deterministic fact-shaping
+// planned tool to call next (bounded by requiredTools and the routed agent's allowlist), with deterministic fact-shaping
 // and a deterministic fallback. The mocked provider drives router/loop/polish calls.
 
 const originalFetch = globalThis.fetch;
@@ -25,13 +25,18 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   return { aiMaxToolCalls: 8, modelProvider: 'openai', openAiApiKey: 'k', openAiModel: 'gpt-test', bedrockRegion: undefined, bedrockModelId: undefined, aiToolTimeoutMs: 10000, ...overrides } as any;
 }
 
-// Inventory plan whose requiredTools (get_stock_balance) differ from the loop's chosen tool, so
-// a call to the chosen tool proves the model loop — not deterministic fallback — drove selection.
 const INVENTORY_PLAN = {
   status: 'ROUTABLE', language: 'th',
   intents: [{ intent: 'read_detail', subject: 'inventory', agent: 'inventory', priority: 1, requiredTools: ['inventory.get_stock_balance'], missingContext: [] }],
   refusals: [], requiresHumanReview: false,
 };
+
+function inventoryPlan(requiredTools: string[]) {
+  return {
+    ...INVENTORY_PLAN,
+    intents: [{ ...INVENTORY_PLAN.intents[0], requiredTools }],
+  };
+}
 
 // router call → plan; loop call (payload.availableTools) → next choice from queue; polish (payload.reply) → echo.
 function installFetch(plan: unknown, loopChoices: unknown[], payloads: any[] = []) {
@@ -90,14 +95,13 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
     assert.deepEqual(deniedCalls, []);
   });
 
-  it('lets the model choose which tool to call (not the plan requiredTools)', async () => {
+  it('rejects a nearby tool outside requiredTools and falls back to the planned tool', async () => {
     const calledTools: string[] = [];
     installFetch(INVENTORY_PLAN, [{ callTool: 'inventory.list_low_stock' }, { done: true }]);
     const orchestrator = new OrchestratorAgent(trackingErpTools(calledTools), makeConfig());
-    const result = await orchestrator.run(makeReq('ดูสต็อกสินค้าใกล้หมด'));
-    assert.ok(calledTools.includes('inventory.list_low_stock'), 'model-chosen tool was called');
-    assert.ok(!calledTools.includes('inventory.get_stock_balance'), 'plan requiredTools did NOT drive selection');
-    assert.ok(result.replyText.includes('สินค้าใกล้หมด'), 'reply carries the grounded fact');
+    await orchestrator.run(makeReq('ดูสต็อก'));
+    assert.ok(!calledTools.includes('inventory.list_low_stock'), 'unplanned nearby tool never executed');
+    assert.deepEqual(calledTools, ['inventory.get_stock_balance'], 'deterministic fallback kept the plan boundary');
   });
 
   it('passes whitelisted model input to the tool and drops non-whitelisted or malformed fields', async () => {
@@ -112,7 +116,7 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
         };
       },
     } as any;
-    installFetch(INVENTORY_PLAN, [{
+    installFetch(inventoryPlan(['inventory.summarize_stock_movements']), [{
       callTool: 'inventory.summarize_stock_movements',
       // fromDate valid; toDate malformed (dropped); productId whitelisted; hack not whitelisted
       input: { fromDate: '2026-06-01', toDate: 'yesterday', productId: 'p1', hack: 'x' },
@@ -151,7 +155,7 @@ describe('OrchestratorAgent – model-driven tool loop', () => {
 	    };
 	    const req = makeReq('อันที่สองล่ะ');
 	    req.conversationContext = context;
-	    installFetch(INVENTORY_PLAN, [{ callTool: 'inventory.list_low_stock' }, { done: true }], payloads);
+	    installFetch(inventoryPlan(['inventory.list_low_stock']), [{ callTool: 'inventory.list_low_stock' }, { done: true }], payloads);
 	    const orchestrator = new OrchestratorAgent(trackingErpTools([]), makeConfig());
 
 	    await orchestrator.run(req);
@@ -200,7 +204,7 @@ describe('OrchestratorAgent – loop date membership (item 10F)', () => {
       },
     } as any;
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-    installFetch(INVENTORY_PLAN, [{
+    installFetch(inventoryPlan(['inventory.summarize_stock_movements']), [{
       callTool: 'inventory.summarize_stock_movements',
       // fromDate = BE year kept as CE (corruption) → dropped; toDate = today → allowed
       input: { fromDate: '2537-12-09', toDate: today },
@@ -227,7 +231,7 @@ describe('OrchestratorAgent – loop date membership (item 10F)', () => {
         };
       },
     } as any;
-    installFetch(INVENTORY_PLAN, [{
+    installFetch(inventoryPlan(['inventory.summarize_stock_movements']), [{
       callTool: 'inventory.summarize_stock_movements',
       input: { fromDate: '1994-12-09' },
     }, { done: true }]);
@@ -250,7 +254,7 @@ describe('OrchestratorAgent – loop date membership (item 10F)', () => {
         };
       },
     } as any;
-    installFetch(INVENTORY_PLAN, [{
+    installFetch(inventoryPlan(['inventory.summarize_stock_movements']), [{
       callTool: 'inventory.summarize_stock_movements',
       input: { fromDate: '2026-06-01', toDate: '2026-06-30' },
     }, { done: true }]);
@@ -262,7 +266,7 @@ describe('OrchestratorAgent – loop date membership (item 10F)', () => {
 
   it('exposes valueCandidates to the loop payload as DATA', async () => {
     const payloads: any[] = [];
-    installFetch(INVENTORY_PLAN, [{ callTool: 'inventory.list_low_stock' }, { done: true }], payloads);
+    installFetch(inventoryPlan(['inventory.list_low_stock']), [{ callTool: 'inventory.list_low_stock' }, { done: true }], payloads);
     const req = makeReq('บิล ๖๐ กับของใกล้หมด');
     req.valueCandidates = extractValueCandidates(req.messageText, '2026-07-07');
     const orchestrator = new OrchestratorAgent(trackingErpTools([]), makeConfig());

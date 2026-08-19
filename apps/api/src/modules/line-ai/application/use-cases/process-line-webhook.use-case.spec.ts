@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -174,6 +174,8 @@ function makeUseCase(
   prisma: any,
 	  opts: {
 	    permissions?: string[];
+	    entitlementDeniedPermissions?: Record<string, string>;
+	    entitledFeatureKeys?: string[] | null;
 	    roles?: string[];
 	    branchIds?: string[];
 	    aiGatewayFn?: (req?: any) => any;
@@ -200,7 +202,12 @@ function makeUseCase(
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
     { webBaseUrl: 'https://app.example.com' } as any,
-    { resolveAccess: async () => ({ membershipId: 'mem-1', roles, permissions, scopes: branchIds === undefined ? {} : { branchIds } }) } as any,
+    { resolveAccess: async () => ({
+      membershipId: 'mem-1', roles, permissions,
+      entitlementDeniedPermissions: opts.entitlementDeniedPermissions,
+      entitledFeatureKeys: opts.entitledFeatureKeys,
+      scopes: branchIds === undefined ? {} : { branchIds },
+    }) } as any,
     { log: async (entry: any) => { auditEvents.push(entry); } } as any,
     {
 	      requestLineTurn: async (req: any) => {
@@ -489,8 +496,10 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('allows the turn when ai_line_assistant entitlement is enabled', async () => {
     const { prisma, updates } = makePrisma({ entitlements: [{ featureKey: 'ai_line_assistant', enabled: true }] });
-    const { useCase, getAiGatewayCalled } = makeUseCase(prisma, {
+    const { useCase, getAiGatewayCalled, aiGatewayRequests } = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant', 'product_catalog'],
       aiGatewayFn: () => ({
         requestId: 'req-ai',
         replyText: 'สรุปแดชบอร์ดวันนี้',
@@ -508,6 +517,8 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute(BASE_EVENT);
 
     assert.equal(getAiGatewayCalled(), true);
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitlementDeniedPermissions, { 'inventory.report.read': 'inventory' });
+    assert.deepEqual(aiGatewayRequests[0]?.userContext.entitledFeatureKeys, ['ai_line_assistant', 'product_catalog']);
     assert.equal((updates.at(-1) as any).data.status, 'completed');
   });
 
@@ -547,6 +558,30 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute(BASE_EVENT);
 
     assert.equal(aiGatewayRequests[0]?.entitledFeatureKeys, undefined);
+  });
+
+  it('reports an expenses feature switch instead of blaming the member permission', async () => {
+    const { prisma, updates } = makePrisma({ entitlements: [
+      { featureKey: 'ai_line_assistant', enabled: true },
+      { featureKey: 'expenses', enabled: false },
+    ] });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      entitlementDeniedPermissions: {
+        'expense.receipt.line_upload': 'expenses.upload',
+        'expense.receipt.upload': 'expenses.upload',
+        'expense.create': 'expenses',
+      },
+      entitledFeatureKeys: ['ai_line_assistant'],
+      intakeRouteFn: () => ROUTED_EXPENSE_DOCUMENT,
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-expense-off', messageText: 'ค่ากาแฟ 65 บาท' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(replies[0] ?? '', /ระบบค่าใช้จ่ายและเอกสาร/);
+    assert.equal((replies[0] ?? '').includes('ไม่มีสิทธิ์'), false);
+    assert.equal((updates.at(-1) as any).data.status, 'feature_disabled');
   });
 
   it('delivers a successful business query as one themed Flex answer card', async () => {
@@ -2063,5 +2098,37 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
     // No company means no entitlement question to ask; a fabricated observation would be worse
     // than none.
     assert.deepEqual(since(), []);
+  });
+});
+
+function expenseWithLines(lines: unknown[]) {
+  return {
+    id: 'expense-1', sourceDocumentType: 'RECEIPT', grandTotalAmount: '125.00', currency: 'THB',
+    expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
+    aiVerificationSummaryJson: { recognizedFields: { lines }, missingFields: [] },
+  } as any;
+}
+
+describe('LINE grounded receipt item follow-up', () => {
+  it('recognizes low-tech references to the current bill as a document question', () => {
+    for (const question of [
+      'บิลนี้จ่ายค่าสินค้าอะไร', 'ใบนี้ซื้ออะไรบ้าง', 'เอกสารนี้มีรายการอะไร',
+    ]) assert.equal(isGroundedReceiptFollowUp(question), true, question);
+  });
+
+  it('answers only the printed line items and links to the selected expense record', () => {
+    const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expenseWithLines([
+      { description: 'กระดาษ A4', quantity: '2', amount: '100.00', evidenceSignal: 'กระดาษ A4 2 100' },
+      { description: 'ปากกา', quantity: '1', amount: '25.00', evidenceSignal: 'ปากกา 1 25' },
+    ]), undefined, 'บิลนี้จ่ายค่าสินค้าอะไร');
+    assert.match(reply, /กระดาษ A4 × 2 – 100\.00/);
+    assert.match(reply, /ปากกา × 1 – 25\.00/);
+    assert.match(reply, /\/companies\/company-1\/expenses\/expense-1/);
+    assert.equal(reply.includes('สต็อก'), false, 'a bill item question is not inventory');
+  });
+
+  it('states honestly when no printed item rows were readable', () => {
+    const reply = formatGroundedReceiptFollowUp(undefined, 'company-1', expenseWithLines([]), undefined, 'บิลนี้ซื้ออะไร');
+    assert.match(reply, /ยังอ่านรายการสินค้า.*ไม่ได้ชัดเจน/);
   });
 });

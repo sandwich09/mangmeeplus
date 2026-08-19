@@ -1,12 +1,11 @@
 # Agent Memory: UAT environment
 
-Status: UAT is running source `06866aa4deb759c1a124e2b69762774efa41df22` on all three
-services as of 2026-08-11 via Deploy UAT/auto run `31484248203`.
+Status: UAT is running source `75ae7e154591bf6464fe1c52ef66e0c6139e26e8` on all three
+services as of 2026-08-18 via Deploy UAT run `32091272835`.
 The immutable api-web, AI Gateway and workers rollouts, digest/health verification and launch-build
-retirement all succeeded after the controller waited for standard ECS convergence. That run did not
-issue signed UAT acceptance because the then-current policy keyed signing to the requested `auto`
-input instead of its resolved `all` target; the resolved-all acceptance change recorded here removes
-that duplicate-deploy requirement for subsequent runs.
+retirement all succeeded. The run published one non-expired signed UAT Passport, deployment
+acceptance, and accepted-release artifact for the exact source. No Production deploy was dispatched
+as part of the 2026-08-18 LINE webhook repair.
 Owner: Platform/Security release owner
 Scope: GitHub UAT environment, OIDC roles, isolated AWS runtime/data resources, immutable deployment workflow, and verification.
 Decisions:
@@ -236,6 +235,16 @@ Verification:
   Public `https://uat.mangmeeplus.com/v1/health` and `/login` returned HTTP 200, the AI
   Gateway `/v1/health` and workers `/health` returned `status=ok`. Production was not
   changed.
+- Employee LINE webhook repair on 2026-08-18: LINE's provider-side test timed out against
+  `https://uat.mangmeeplus.com/v1/line/webhook` even though the custom-domain health GET passed.
+  The same test passed against the canonical UAT api-web URL stored at
+  `/watchdog-bms/uat/ecs-express-api-web-url`, so the active OA endpoint was updated to that value
+  plus `/v1/line/webhook`. Readback was active and exact; the configured-endpoint test returned
+  `200 OK`. A signed synthetic query for the real LINE identity linked to `ป๋อจ้าน Company`
+  completed the webhook -> company -> AI -> LINE delivery chain, with the event terminal
+  `completed`, payload cleared, and `AiTurn=COMPLETED` in 3,149 ms. No runtime deploy or Production
+  change was made. Keep this direct endpoint until custom-domain POST timeout is fixed; health GET
+  alone does not validate LINE webhook delivery.
 Next:
 - Root cause of the repeated UAT start failures is closed: production A5 interface endpoints use
   VPC-wide private DNS, so UAT AWS-service calls were redirected into endpoint SG/policies that only

@@ -52,8 +52,14 @@ const BACKFILL_BLOCKER_LABELS: Record<ExpenseBackfillBlocker, string> = {
 function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; onToggle: () => void }) {
   return (
     <button role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}
-      className={cx('relative h-6 w-11 flex-shrink-0 rounded-full transition disabled:cursor-not-allowed disabled:opacity-40', on ? 'bg-brand-500' : 'bg-gray-300')}>
-      <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+      // The pill stays 24px; the button itself carries the 44px touch height on a phone and
+      // the negative margin cancels it out of the layout, so no row shifts. A ::after overlay
+      // would have looked equivalent and been invisible to getBoundingClientRect — the thing
+      // that measures whether this is really a 44px target.
+      className="relative -my-2.5 flex h-11 w-11 flex-shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 sm:my-0 sm:h-6">
+      <span className={cx('relative block h-6 w-11 rounded-full transition', on ? 'bg-brand-500' : 'bg-gray-300')}>
+        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+      </span>
     </button>
   );
 }
@@ -63,7 +69,7 @@ export function IconBtn({ title, tone, disabled, onClick, children }: { title: s
     // unconditionally, and `cx` is a plain join, so the primary tone's `bg-brand-500` lost the
     // cascade to it — the button rendered white with a white glyph, i.e. an empty box.
     <button type="button" title={title} aria-label={title} disabled={disabled} onClick={onClick}
-      className={cx('flex h-8 w-8 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40',
+      className={cx('flex h-11 w-11 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8',
         tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:border-brand-600 hover:bg-brand-600'
           : tone === 'danger' ? 'border-gray-200 bg-white text-error-500 hover:border-[#FECDCA] hover:bg-gray-50'
             : 'border-gray-200 bg-white text-gray-500 hover:border-brand-200 hover:bg-gray-50 hover:text-brand-600')}>
@@ -730,7 +736,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                       aria-pressed={flagFilter === filter.key}
                       onClick={() => setFlagFilter((current) => current === filter.key && filter.key !== 'all' ? 'all' : filter.key)}
                       className={cx(
-                        'inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition',
+                        'inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
                         flagFilter === filter.key
                           ? 'border-brand-400 bg-brand-50 text-brand-700'
                           : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200',
@@ -744,7 +750,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     </button>
                   ))}
                 </div>
-                <div className="overflow-x-auto">
+                <div className="hidden overflow-x-auto md:block">
                   {/* เลขที่ค่าใช้จ่าย/ประเภท fold into เอกสาร, ส่งเข้า folds into วันที่, and ไฟล์ is
                       covered by the ไม่มีไฟล์ chip — 12 columns down to 9 without losing a signal. */}
                   <table className="mangmee-table [&_td]:!px-3 [&_th]:!px-3">
@@ -825,15 +831,71 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     </tbody>
                   </table>
                 </div>
+
+                {/* หลักฐานทางบัญชี on a phone. The desktop table stays byte-identical above; this
+                    list carries the same signals in reading order — state, document, amount,
+                    what needs fixing — with the row action last instead of in a ninth column
+                    the thumb never reaches. Reuses the shape shipped for the expenses list. */}
+                <div className="space-y-3 p-3 md:hidden" data-testid="evidence-card-list">
+                  {pagedRows.map((r) => {
+                    const flags = deriveEvidenceRowFlags(r);
+                    const rowState = evidenceRowState(flags);
+                    const actionFlags = flags.filter((flag) => flag.key === 'NO_FILE' || flag.key === 'NO_VENDOR' || flag.key === 'NO_CATEGORY');
+                    const amount = Number(r.grandTotalAmount);
+                    return (
+                      <MangmeeCard key={r.expenseId} className={cx('overflow-hidden p-0', rowState === 'attention' && 'border-l-4 border-l-warning-500')}>
+                        <button
+                          type="button"
+                          data-testid="evidence-card"
+                          aria-label={`เปิดรายการค่าใช้จ่าย ${r.expenseNumber ?? r.expenseId}`}
+                          className="block min-h-11 w-full p-4 text-left"
+                          onClick={() => onOpenExpense(r.expenseId)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className={cx('truncate text-xs font-bold tabular-nums', r.expenseNumber ? 'text-brand-700' : 'text-gray-400')}>{r.expenseNumber || 'ยังไม่มีเลขที่'}</div>
+                              <div className="mt-0.5 truncate text-sm font-semibold text-gray-900">{r.vendorNameSnapshot?.trim() || '—'}</div>
+                            </div>
+                            <div className="shrink-0 text-right text-sm font-bold tabular-nums text-gray-900">{amount === 0 ? <span className="font-normal text-gray-400">—</span> : amount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <MangmeeBadge tone={rowState === 'attention' ? 'amber' : 'brand'}>{rowState === 'attention' ? 'ต้องตรวจ' : 'ครบ'}</MangmeeBadge>
+                            <MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : 'slate'}>{r.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : 'ยังไม่ลงบัญชี'}</MangmeeBadge>
+                            {actionFlags.map((flag) => (
+                              <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
+                            ))}
+                          </div>
+                          <div className="mt-2 text-xs text-gray-500">{dateShort(r.expenseDate)} · ส่งเข้า {dateShort(r.uploadedAt)}</div>
+                        </button>
+                        {(canPostLedger && r.pendingPostingSourceType) || (canReadLedger && r.journalEntryId) ? (
+                          <div className="border-t border-gray-100 px-4 py-2">
+                            {canPostLedger && r.pendingPostingSourceType ? (
+                              <button type="button" className={cx(ghostClass, 'w-full')} disabled={postingExpenseId === r.expenseId}
+                                onClick={() => { if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
+                                {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
+                              </button>
+                            ) : (
+                              <a className="flex min-h-11 items-center justify-center font-semibold text-brand-700 hover:underline"
+                                href={`/companies/${companyId}/journal?sourceId=${encodeURIComponent(r.expenseId)}`}>
+                                {r.journalEntryNumber ?? 'ดู JV'}
+                              </a>
+                            )}
+                          </div>
+                        ) : null}
+                      </MangmeeCard>
+                    );
+                  })}
+                </div>
+
                 {visibleRows.length > 0 && (
                   <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-gray-500">
                     <div className="tabular-nums">แสดง {bounds.from}-{bounds.to} จาก {visibleRows.length} รายการ</div>
                     {bounds.totalPages > 1 && (
                       <div className="flex items-center gap-2">
-                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                           disabled={bounds.page <= 1} onClick={() => setPage(bounds.page - 1)}>ก่อนหน้า</button>
                         <span className="tabular-nums rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700">{bounds.page} / {bounds.totalPages}</span>
-                        <button type="button" className={cx(ghostClass, '!min-h-9 !px-3 !py-1.5 !text-xs')}
+                        <button type="button" className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                           disabled={bounds.page >= bounds.totalPages} onClick={() => setPage(bounds.page + 1)}>ถัดไป</button>
                       </div>
                     )}
@@ -915,7 +977,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
 
 function FolderBtn({ active, label, count, incomplete, onClick }: { active: boolean; label: ReactNode; count?: number; incomplete?: boolean; onClick: () => void }) {
   return (
-    <button className={cx('flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
+    <button className={cx('flex w-full items-center justify-between gap-2 min-h-11 rounded-lg px-3 py-2 text-left text-sm font-medium sm:min-h-0', active ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')} onClick={onClick}>
       <span>{label}</span>
       {count != null && <span className="text-xs text-gray-400">{count} รายการ {incomplete && <span className="text-warning-700" title="บางรายการไม่มีไฟล์หลักฐาน">⚠</span>}</span>}
     </button>
