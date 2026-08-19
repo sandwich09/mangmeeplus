@@ -31,7 +31,12 @@ export default async function CompanyWorkspaceLayout({
     // and name it on the screen. Without it the page reads as "your access was revoked" even in the
     // usual case: a deep link opened in a browser still signed in as a different account.
     const current = await fetchServerSession();
-    return <CompanyAccessUnavailable displayName={current?.displayName ?? null} />;
+    return (
+      <CompanyAccessUnavailable
+        displayName={current?.displayName ?? null}
+        companyName={sessionResult.companyName ?? null}
+      />
+    );
   }
   const returnTo = `/companies/${companyId}/dashboard`;
   if (sessionResult.session.mustChangePassword) {

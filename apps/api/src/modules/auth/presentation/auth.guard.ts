@@ -163,7 +163,26 @@ export class AuthGuard implements CanActivate {
       throw new ForbiddenException('Route company does not match request context.');
     }
 
-    req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId);
+    try {
+      req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId);
+    } catch (error) {
+      // The company-access screen can name the blocked destination without widening access to any
+      // company data endpoint. Other forbidden responses keep their existing shape.
+      if (error instanceof ForbiddenException && companyId && cleanPath === '/v1/auth/me') {
+        const company = await this.prisma.client.company.findUnique({
+          where: { id: companyId },
+          select: { name: true },
+        }).catch(() => null);
+        if (company) {
+          throw new ForbiddenException({
+            code: 'company_access_unavailable',
+            message: 'No access to the requested company.',
+            companyName: company.name,
+          });
+        }
+      }
+      throw error;
+    }
 
     // Block business module access until temporary password is changed.
     // Null credential (LINE-only users) is treated as no block.

@@ -267,6 +267,30 @@ describe('AuthGuard', () => {
     assert.equal(resolve.execute.mock.callCount(), 0);
   });
 
+  it('names the requested company only on a scoped auth/me access denial', async () => {
+    const resolve = { execute: async () => { throw new ForbiddenException('No active company membership.'); } } as any;
+    const prisma = {
+      client: {
+        ...noopPrisma.client,
+        company: { findUnique: async () => ({ name: 'ป๋อจ้าน Company' }) },
+      },
+    } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolve, localConfig, prisma, acceptedLegal);
+
+    await assert.rejects(
+      () => guard.canActivate(makeContext({ authHeader: 'Bearer valid.token', xCompanyId: 'co-target', path: '/v1/auth/me' })),
+      (error: unknown) => {
+        assert.ok(error instanceof ForbiddenException);
+        assert.deepEqual(error.getResponse(), {
+          code: 'company_access_unavailable',
+          message: 'No access to the requested company.',
+          companyName: 'ป๋อจ้าน Company',
+        });
+        return true;
+      },
+    );
+  });
+
   it('authenticates before reporting a conflicting company selector', async () => {
     const guard = new AuthGuard(makeReflector(false), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal);
 
