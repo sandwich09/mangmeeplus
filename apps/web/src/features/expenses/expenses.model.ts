@@ -8,6 +8,8 @@ import type {
   SubstituteReceiptEvidenceSummary, TransactionTaxComponentPreview, TransactionTaxSnapshot,
   BuyerEntityKind,
   ExpensePaymentSummary,
+  ExpenseVatCaptureSnapshotV1,
+  ExpenseVatSourceInput,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -291,6 +293,7 @@ export type ExpenseDetail = ExpenseSummary & {
   substituteReceiptEvidence: SubstituteReceiptEvidenceSummary | null;
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
+  vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;
   aiVerificationConfidence: number | null;
   note: string | null;
   reviewedByUserId: string | null;
@@ -365,6 +368,7 @@ export type ExpenseDraftReviewValues = {
   vendorDocumentNumber: string;
   expenseDate: string;
   vatMode: ExpenseVatMode;
+  vatSource?: ExpenseVatSourceInput;
   lines: Array<{
     description: string;
     quantity: string;
@@ -423,6 +427,7 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
     expenseDate: values.expenseDate,
     vatMode: values.vatMode,
+    ...(values.vatSource && { vatSource: values.vatSource }),
     lines: values.lines.map((line, index) => ({
       lineNumber: index + 1,
       description: line.description.trim(),
@@ -441,6 +446,57 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
       ...(line.transactionContext && { transactionContext: line.transactionContext }),
     })),
   };
+}
+
+export function expenseVatSourceFromSnapshot(
+  snapshot: ExpenseVatCaptureSnapshotV1 | null | undefined,
+): ExpenseVatSourceInput {
+  if (!snapshot || snapshot.version !== 1) return { inputType: 'NONE' };
+  return {
+    inputType: snapshot.source.inputType,
+    ...(snapshot.source.vatRatePercent !== null && { vatRatePercent: String(Number(snapshot.source.vatRatePercent)) }),
+    ...(snapshot.source.vatAmount !== null && { vatAmount: Number(snapshot.source.vatAmount).toFixed(2) }),
+    ...(snapshot.source.lineSources?.length && {
+      lines: snapshot.source.lineSources.map((line) => ({
+        lineNumber: line.lineNumber,
+        inputType: line.inputType,
+        ...(line.vatRatePercent !== undefined && { vatRatePercent: String(Number(line.vatRatePercent)) }),
+        ...(line.vatAmount !== undefined && { vatAmount: Number(line.vatAmount).toFixed(2) }),
+      })),
+    }),
+  };
+}
+
+export function expenseVatSourceValidationMessage(source: ExpenseVatSourceInput, vatMode?: ExpenseVatMode): string | null {
+  const needsRate = source.inputType === 'RATE' || source.inputType === 'BOTH';
+  const needsAmount = source.inputType === 'AMOUNT' || source.inputType === 'BOTH';
+  const rate = Number(source.vatRatePercent);
+  const amount = Number(source.vatAmount);
+  const percentText = source.vatRatePercent?.trim() ?? '';
+  const amountText = source.vatAmount?.trim() ?? '';
+  if (needsRate && (!/^(?:0|[1-9]\d?)(?:\.\d{1,4})?$/.test(percentText) || !Number.isFinite(rate) || rate < 0 || rate >= 100)) {
+    return 'กรอกอัตรา VAT เป็นเปอร์เซ็นต์ 0–99.9999 ไม่เกิน 4 ตำแหน่ง';
+  }
+  if (needsAmount && (!/^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/.test(amountText) || !Number.isFinite(amount) || amount < 0)) {
+    return 'กรอกจำนวน VAT จากเอกสารเป็นบาท ไม่เกิน 2 ตำแหน่ง';
+  }
+  for (const line of source.lines ?? []) {
+    const lineError = expenseVatSourceValidationMessage({
+      inputType: line.inputType,
+      ...(line.vatRatePercent !== undefined && { vatRatePercent: line.vatRatePercent }),
+      ...(line.vatAmount !== undefined && { vatAmount: line.vatAmount }),
+    });
+    if (lineError) return `รายการ ${line.lineNumber}: ${lineError}`;
+  }
+  const sourceAmounts = [source.vatAmount, ...(source.lines ?? []).map((line) => line.vatAmount)]
+    .filter((value): value is string => value !== undefined);
+  const sourceRates = [source.vatRatePercent, ...(source.lines ?? []).map((line) => line.vatRatePercent)]
+    .filter((value): value is string => value !== undefined);
+  if ((vatMode === 'NO_VAT' || vatMode === 'EXEMPT')
+    && (sourceAmounts.some((value) => Number(value) > 0) || sourceRates.some((value) => Number(value) > 0))) {
+    return 'เอกสารไม่มี VAT หรือได้รับยกเว้น จึงระบุอัตราหรือจำนวน VAT มากกว่า 0 ไม่ได้';
+  }
+  return null;
 }
 
 // The RD form follows the payee's taxpayer class, so the label carries the form it decides.

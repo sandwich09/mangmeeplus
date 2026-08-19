@@ -4,11 +4,14 @@ import {
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
   type ExpenseVatMode,
+  type ExpenseVatCaptureSnapshotV1,
+  type ExpenseVatSourceInput,
   type ReceiptOcrFieldResult,
 } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { reconcileExpenseDuplicateCandidates } from './expense-duplicate-detection';
 import { calcDocumentTotals, calcLineTotals } from '../../domain/logic/expense-totals.logic';
+import { reconcileExpenseVat, vatSourceFromSnapshot } from '../../domain/logic/expense-vat-reconciliation.logic';
 
 export function toMoney4(value: string | undefined | null): string {
   const n = Number(String(value ?? '').replace(/,/g, ''));
@@ -34,6 +37,20 @@ const MAX_OCR_ITEM_LINES = 40;
 function positiveMoney(value: string | undefined): number | undefined {
   const n = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export function ocrVatSource(fields: ReceiptOcrFieldResult): ExpenseVatSourceInput {
+  const rawRate = Number(String(fields.vatRate ?? '').replace(/,/g, ''));
+  const rawAmount = Number(String(fields.vatAmount ?? '').replace(/,/g, ''));
+  const hasRate = typeof fields.vatRate === 'string' && fields.vatRate.trim() !== ''
+    && Number.isFinite(rawRate) && rawRate >= 0 && rawRate < 1;
+  const hasAmount = typeof fields.vatAmount === 'string' && fields.vatAmount.trim() !== ''
+    && Number.isFinite(rawAmount) && rawAmount >= 0;
+  return {
+    inputType: hasRate && hasAmount ? 'BOTH' : hasRate ? 'RATE' : hasAmount ? 'AMOUNT' : 'NONE',
+    ...(hasRate && { vatRatePercent: (rawRate * 100).toFixed(4) }),
+    ...(hasAmount && { vatAmount: rawAmount.toFixed(2) }),
+  };
 }
 
 function saneVat(vat: number, taxable: number): boolean {
@@ -447,7 +464,7 @@ export class ReceiptOcrApplyService {
   ): Promise<ReceiptOcrApplyOutcome> {
     const completed = completeWhtFields(completeVatFields(verifyDiscountAmount(fields)));
     const lineTotal = completed.grandTotalAmount ?? completed.subtotalAmount;
-    const prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
+    let prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
     const data: Record<string, unknown> = {
       aiVerificationStatus: 'PARTIAL',
       aiVerifiedFieldsJson: fields, // provenance: the original AI output, never the completed one
@@ -463,17 +480,13 @@ export class ReceiptOcrApplyService {
     if (date) data['expenseDate'] = date;
     const vatMode = validVatMode(completed.vatMode);
     if (vatMode) data['vatMode'] = vatMode;
-    if (prepared) {
-      Object.assign(data, prepared.totals);
-      data['outstandingAmount'] = prepared.totals.netPayableAmount;
-    }
-
     const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<AppliedReceiptResult | 'stale'> => {
       const currentExpense = await tx.expenseRecord.findFirst({
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
           expenseCategoryId: true,
           updatedAt: true,
+          vatCaptureSnapshotJson: true,
           expenseCategory: { select: { id: true, name: true, companyId: true } },
         },
       });
@@ -482,6 +495,40 @@ export class ReceiptOcrApplyService {
         return 'stale';
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
+      if (prepared) {
+        const prior = currentExpense.vatCaptureSnapshotJson as ExpenseVatCaptureSnapshotV1 | null;
+        const keepReviewerSource = prior?.version === 1 && prior.source.origin === 'REVIEWER';
+        const source = keepReviewerSource ? vatSourceFromSnapshot(prior) : ocrVatSource(fields);
+        const vat = reconcileExpenseVat({
+          vatMode: vatMode ?? 'NO_VAT',
+          lines: prepared.lines.map((line, index) => ({
+            lineNumber: index + 1,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            discountAmount: line.totals.discountAmount,
+            vatRate: line.vatRate,
+            whtRate: line.whtRate,
+          })),
+          source,
+          sourceOrigin: keepReviewerSource ? 'REVIEWER' : 'OCR',
+          sourceTaxableAmount: keepReviewerSource ? prior.source.taxableAmount : fields.taxableAmount ?? null,
+          sourceGrossAmount: keepReviewerSource ? prior.source.grossAmount : fields.grandTotalAmount ?? null,
+          sourceEvidenceRefs: keepReviewerSource ? prior.source.evidenceRefs : undefined,
+          capturedAt: keepReviewerSource ? prior.source.capturedAt : undefined,
+        });
+        prepared = {
+          ...prepared,
+          totals: vat.totals,
+          lines: prepared.lines.map((line, index) => ({
+            ...line,
+            vatRate: vat.lines[index]!.vatRate,
+            totals: vat.lines[index]!.totals,
+          })),
+        };
+        Object.assign(data, vat.totals);
+        data['outstandingAmount'] = vat.totals.netPayableAmount;
+        data['vatCaptureSnapshotJson'] = vat.snapshot;
+      }
       let effectiveCategory = currentExpense?.expenseCategory
         && (currentExpense.expenseCategory.companyId === null || currentExpense.expenseCategory.companyId === ctx.companyId)
         ? currentExpense.expenseCategory
