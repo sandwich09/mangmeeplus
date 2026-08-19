@@ -26,6 +26,9 @@ type Props = {
   children: ReactNode;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'className' | 'children' | 'style'>;
 
+// Measurable (laid out, capped like the placed panel) but not yet visible.
+const UNPLACED: CSSProperties = { position: 'fixed', top: 0, left: 0, maxWidth: 'calc(100vw - 16px)', visibility: 'hidden' };
+
 export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth = false, className, children, ...rest }: Props) {
   const [style, setStyle] = useState<CSSProperties | null>(null);
 
@@ -45,7 +48,7 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
       }
       const below = window.innerHeight - rect.bottom - 8;
       const above = rect.top - 8;
-      const panelWidth = panelRef.current?.getBoundingClientRect().width ?? (minAnchorWidth ? rect.width : 0);
+      const panelWidth = Math.max(panelRef.current?.getBoundingClientRect().width ?? 0, minAnchorWidth ? rect.width : 0);
       const left = Math.min(Math.max(rect.left, 8), Math.max(8, window.innerWidth - panelWidth - 8));
       // Fixed panels cannot be scrolled into view, so a panel that does not fit below
       // hangs off the trigger's top edge instead (pinned by `bottom`, so a short panel
@@ -77,11 +80,14 @@ export function PopoverPanel({ open, anchorRef, panelRef, height, minAnchorWidth
     };
   }, [open, height, minAnchorWidth, anchorRef, panelRef]);
 
-  // No panel before it has been measured: one frame later beats a frame at 0,0.
-  if (!open || !style || typeof document === 'undefined') return null;
+  // Mounted invisible until placed, never withheld: `place` reads the panel's own
+  // width to keep it inside the viewport, and a panel that is not in the DOM yet
+  // measures 0 — which pins a wide panel to the trigger's left edge and lets it hang
+  // off the right of a phone screen until the next scroll re-runs `place`.
+  if (!open || typeof document === 'undefined') return null;
 
   return createPortal(
-    <div ref={panelRef} {...rest} style={style} className={className}>{children}</div>,
+    <div ref={panelRef} {...rest} style={style ?? UNPLACED} className={className}>{children}</div>,
     document.body,
   );
 }
