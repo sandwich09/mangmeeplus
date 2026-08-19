@@ -1,6 +1,6 @@
 # Agent Memory: Expense VAT Source Capture and Reconciliation
 
-Status: Core implementation verified and ready for PR on codex/expense-vat-source-reconciliation.
+Status: Core implementation verified; PR #188 is open against develop.
 
 Owner: Product / Finance / Expense team.
 
@@ -49,6 +49,7 @@ Artifacts:
 - [[specs/expense-vat-source-reconciliation-spec|Expense VAT Source Capture and Reconciliation Spec]]
 - [[plans/expense-vat-source-reconciliation-plan|Expense VAT Source Capture and Reconciliation Plan]]
 - [[specs/expense-receipt-upload-spec|Expense Receipt Upload Spec]] section 19l.
+- Pull request: https://github.com/MangmeeDev/mangmeeplus/pull/188
 
 Verification:
 
@@ -65,10 +66,10 @@ Verification:
   additional charges, stale apply, reviewer precedence, and changed re-extraction layouts.
 - Downstream Transaction Tax, tax adapter, journal, template posting, fixed export contract,
   and reimbursement coverage passed in the full API suite.
+- Rebased onto origin/develop at 03e620d; full API and web suites passed again after rebase.
 - git diff --check passed.
 
 Next:
 
-- Push and open a PR to develop.
 - Follow up with browser/accountant UAT, rollout metrics/kill switch, and a versioned
   evidence-export extension before release.
