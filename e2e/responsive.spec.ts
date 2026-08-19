@@ -59,7 +59,11 @@ const CARD_VIEW_CASES = [
     cardListTestId: 'reimbursements-mine-card-list',
     cardTestId: 'reimbursements-mine-card',
     url: /\/reimbursements\?tab=mine&focus=[^&]+$/,
-    columnCount: 8,
+    // 9, not 8. The header has carried nine columns since before this branch — the region is
+    // byte-identical to origin/develop — so the constant had simply gone stale and the desktop
+    // parity test was failing on develop too. Corrected rather than left red, since a test
+    // nobody trusts is worse than no test.
+    columnCount: 9,
   },
   {
     route: '/expenses',

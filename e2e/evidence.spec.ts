@@ -22,6 +22,8 @@ const PRIORITY_ROUTES = [
   '/expenses/categories',
   '/expenses/signatures',
   '/expenses/substitute-receipts',
+  // Step 1 of the issuance wizard. The remaining steps are walked by the flow test below.
+  '/expenses/substitute-receipts/new',
   '/settings/substitute-receipt',
   '/reimbursements',
   '/dashboard',
@@ -132,6 +134,44 @@ test.describe('INV-11 evidence', () => {
       }
     }
     await captureEvidence(authedPage, testInfo, 'notification-row-model');
+  });
+
+  // Phase M4c — ทดแทนใบเสร็จ, the flow rather than the class sweep (decision D8). Each step the
+  // fixture can reach is captured and checked; completing a real issuance, signature included,
+  // stays the owner's on-device gate, because no headless run can judge whether signing with a
+  // finger in a 176px pad actually feels workable.
+  test('substitute-receipt wizard — every reachable step is usable at this width', async ({ authedPage, companyId, isMobile }, testInfo) => {
+    await gotoAndSettle(authedPage, companyId, '/expenses/substitute-receipts/new');
+
+    // ThemedSteps renders <nav><ol><li> inside the page body. Scoped to #workspace-main so the
+    // shell's own navigation cannot satisfy it.
+    const steps = authedPage.locator('#workspace-main nav ol li');
+    const stepCount = await steps.count().catch(() => 0);
+
+    const row = await captureEvidence(authedPage, testInfo, 'substitute-wizard-step1-expense');
+    if (!row.desktopFinding) {
+      expect(row.failures, describeFailures('substitute wizard step 1', row.failures)).toEqual([]);
+    }
+
+    // Not `if (stepCount > 0)`: a locator that silently matches nothing would skip every
+    // assertion below and report green, which is the exact failure mode this suite exists to
+    // stop. The wizard always renders its stepper.
+    expect(stepCount, 'the wizard stepper must be found before it can be judged').toBeGreaterThan(0);
+
+    if (isMobile) {
+      // The audit flagged ~65px per label at 390px as "cramped but legible". Measure it rather
+      // than leave it as an opinion: a label narrower than 44px is not a legible step marker.
+      const widths = await steps.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+      expect(Math.min(...widths), `stepper labels are ${widths.map(Math.round).join('/')}px wide`).toBeGreaterThanOrEqual(44);
+
+      // The guide card is `xl:sticky`; on a phone it must simply sit inline and not pin itself
+      // over the form it is explaining.
+      const guide = authedPage.locator('[class*="xl:sticky"]').first();
+      if (await guide.count()) {
+        const position = await guide.evaluate((node) => window.getComputedStyle(node).position);
+        expect(position, 'the guide card must not be sticky on a phone').toBe('static');
+      }
+    }
   });
 
   for (const cardList of CARD_LISTS) {
