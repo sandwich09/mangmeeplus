@@ -105,6 +105,14 @@ describe('UpdateEmployeeUseCase branch scope', () => {
 const SALES_ROLE: FakeRole = { id: 'r-sales', key: 'SALES', permissions: [{ permission: { key: 'crm.customer.read' } }] };
 const ADMIN_ROLE: FakeRole = { id: 'r-admin', key: 'ADMIN', permissions: [{ permission: { key: 'access.role.manage' } }, { permission: { key: 'admin.user.manage' } }] };
 const FINANCE_ROLE: FakeRole = { id: 'r-finance', key: 'FINANCE', permissions: [{ permission: { key: 'accounting.payment.create' } }] };
+const ENTITLEMENT_FILTERED_ROLE: FakeRole = {
+  id: 'r-filtered',
+  key: 'CUSTOM',
+  permissions: [
+    { permission: { key: 'access.employee.read' } },
+    { permission: { key: 'crm.customer.read' } },
+  ],
+};
 const managerCmd = { ...baseCmd, requestingUserId: 'manager-1', requesterPermissions: ['access.employee.read', 'access.employee.update', 'access.employee.disable', 'access.role.read'] };
 
 describe('UpdateEmployeeUseCase role assignment guards', () => {
@@ -120,6 +128,20 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     const { prisma, writes } = makePrisma({ candidateRoles: [SALES_ROLE] });
     await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...managerCmd, requesterPermissions: [...managerCmd.requesterPermissions, 'crm.customer.read'], roleIds: ['r-sales'] });
     assert.deepEqual(writes.assignedRoleIds, ['r-sales']);
+  });
+
+  it('allows an update when the resolver proves the disabled-feature role permission belongs to the requester', async () => {
+    const { prisma, writes } = makePrisma({
+      candidateRoles: [ENTITLEMENT_FILTERED_ROLE],
+    });
+
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({
+      ...managerCmd,
+      requesterEntitlementDeniedPermissions: { 'crm.customer.read': 'crm' },
+      roleIds: ['r-filtered'],
+    });
+
+    assert.deepEqual(writes.assignedRoleIds, ['r-filtered']);
   });
 
   it('lets an access.role.manage holder (Admin) assign the ADMIN role', async () => {

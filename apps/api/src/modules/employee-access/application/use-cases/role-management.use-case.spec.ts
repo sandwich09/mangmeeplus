@@ -215,7 +215,7 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
     } as any;
   }
 
-  async function flagsFor(requester?: { permissions: string[]; isOwner: boolean }) {
+  async function flagsFor(requester?: { permissions: string[]; entitlementDeniedPermissions?: Record<string, string>; isOwner: boolean }) {
     const result = await new ListRolesUseCase(grantFixturePrisma()).execute(COMPANY_ID, requester);
     return Object.fromEntries(result.map((role) => [role.key, role.assignableByCurrentUser]));
   }
@@ -231,6 +231,33 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
       await flagsFor({ permissions: ['crm.customer.read', 'ledger.account.manage', 'access.employee.update'], isOwner: false }),
       { OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false },
     );
+  });
+
+  it('accepts a role whose disabled-feature permission is a resolver-proven raw grant', async () => {
+    const prisma = {
+      client: {
+        role: {
+          findMany: async () => [{
+            id: 'role-admin', scopeKey: 'system', key: 'ADMIN', name: 'Admin', description: null,
+            isSystem: true, status: 'ACTIVE',
+            permissions: [
+              { permission: { key: 'access.role.manage' } },
+              { permission: { key: 'crm.customer.read' } },
+            ],
+          }],
+        },
+        companyFeatureEntitlement: { findMany: async () => [{ featureKey: 'crm', enabled: false }] },
+      },
+    } as any;
+
+    const [role] = await new ListRolesUseCase(prisma).execute(COMPANY_ID, {
+      permissions: ['access.role.manage'],
+      entitlementDeniedPermissions: { 'crm.customer.read': 'crm' },
+      isOwner: false,
+    });
+
+    assert.equal(role.assignableByCurrentUser, true);
+    assert.equal(role.effectivePermissionCount, 1);
   });
 
   it('adds people-manager roles once the admin holds access.role.manage, financial still owner-gated', async () => {

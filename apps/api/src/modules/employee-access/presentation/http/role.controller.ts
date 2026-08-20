@@ -27,7 +27,11 @@ export class RoleController {
   @RequirePermissions('access.role.read')
   @ApiOperation({ summary: 'List system and company custom roles' })
   list(@ReqCtx() ctx: RequestContext) {
-    return this.listRoles.execute(ctx.companyId, { permissions: ctx.permissions, isOwner: ctx.roles.includes('OWNER') });
+    return this.listRoles.execute(ctx.companyId, {
+      permissions: ctx.permissions,
+      entitlementDeniedPermissions: ctx.entitlementDeniedPermissions,
+      isOwner: ctx.roles.includes('OWNER'),
+    });
   }
 
   @Get(':roleId')

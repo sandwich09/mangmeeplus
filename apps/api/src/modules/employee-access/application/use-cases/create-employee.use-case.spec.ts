@@ -228,6 +228,25 @@ describe('CreateEmployeeUseCase', () => {
     );
   });
 
+  it('allows a role when the resolver proves its disabled-feature permission belongs to the requester', async () => {
+    const permissions = [
+      { permission: { key: 'access.employee.read' } },
+      { permission: { key: 'crm.customer.read' } },
+    ];
+    const { useCase, state } = makeUseCase({
+      roles: [{ id: 'role-custom', key: 'CUSTOM', permissions }],
+    });
+
+    await useCase.execute({
+      ...baseCommand,
+      roleIds: ['role-custom'],
+      requesterPermissions: ['access.employee.read'],
+      requesterEntitlementDeniedPermissions: { 'crm.customer.read': 'crm' },
+    });
+
+    assert.equal(state.membershipRoles[0].roleId, 'role-custom');
+  });
+
   it('requires owner approval to grant FINANCE even when the requester holds its permissions', async () => {
     const permissions = [{ permission: { key: 'accounting.payment.create' } }];
     const { useCase } = makeUseCase({ roles: [{ id: 'role-finance', key: 'FINANCE', permissions }] });

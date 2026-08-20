@@ -7,7 +7,11 @@ import { ROLE_INCLUDE, toRoleSummary } from '../dto/employee-access.mapper';
 import { loadEntitledFeatureKeys } from '../entitlement.helper';
 
 /** Requester context for the per-role grant decision; omitted by request-less readers (access matrix). */
-export type RoleListRequester = { permissions: readonly string[]; isOwner: boolean };
+export type RoleListRequester = {
+  permissions: readonly string[];
+  entitlementDeniedPermissions?: Readonly<Record<string, string>>;
+  isOwner: boolean;
+};
 
 @Injectable()
 export class ListRolesUseCase {
@@ -35,7 +39,12 @@ export class ListRolesUseCase {
         // Same rule the write path enforces, so a picker filtered on this flag cannot dead-end in a 403.
         ...(requester && {
           assignableByCurrentUser: summary.status === 'ACTIVE'
-            && roleGrantViolation([summary], requester.permissions, requester.isOwner) === undefined,
+            && roleGrantViolation(
+              [summary],
+              requester.permissions,
+              requester.entitlementDeniedPermissions,
+              requester.isOwner,
+            ) === undefined,
         }),
       };
     });
