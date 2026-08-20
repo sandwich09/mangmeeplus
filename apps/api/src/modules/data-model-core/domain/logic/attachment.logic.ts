@@ -17,16 +17,56 @@ const CANONICAL_EXTENSION_BY_MIME_TYPE: Readonly<Record<string, string>> = {
   'image/jpeg': 'jpg',
 };
 
+// `expense.signature.asset` is deliberately absent: it is the signature LIBRARY's purpose, written
+// only against `company.signature_asset`, and nothing has ever created it on an expense. Leaving it
+// admissible here let a client hang a signature image off an expense through the generic links
+// endpoint, which is one of the two ways the owner-only download gate ended up 403-ing reviewers.
 const EXPENSE_ATTACHMENT_PURPOSES = new Set([
   'expense.receipt.primary',
   'expense.receipt.supporting',
   'expense.payment.evidence',
   'expense.review.evidence',
-  'expense.signature.asset',
 ]);
 
 export function isAllowedAttachmentTarget(targetType: string, purpose: string): boolean {
   return targetType === 'expense.record' && EXPENSE_ATTACHMENT_PURPOSES.has(purpose);
+}
+
+export const SIGNATURE_ASSET_TARGET_TYPE = 'company.signature_asset';
+
+type AttachmentLinkReader = {
+  attachmentLink: { findFirst(args: any): Promise<{ targetType: string } | null> };
+};
+
+/**
+ * The signature library and everything else must never share the same bytes.
+ *
+ * D14 makes a signature image owner-only on the SHARED download path, so an attachment carrying both
+ * a `company.signature_asset` link and, say, an `expense.record` one hands every reviewer of that
+ * expense a 403 and a blank document viewer. Loosening the gate is not the fix: it would let anyone
+ * holding `expense.review` link a victim's signature onto an expense they can read and then download
+ * it. So the state itself is refused, at every place a link is written.
+ *
+ * Runs on the caller's transaction client when there is one, so a link written moments earlier in
+ * the same transaction still counts. Returns the refusal message, or `null` when the link is fine.
+ */
+export async function findAttachmentLinkConflict(
+  db: AttachmentLinkReader,
+  input: { companyId: string; attachmentId: string; targetType: string },
+): Promise<string | null> {
+  const isSignature = input.targetType === SIGNATURE_ASSET_TARGET_TYPE;
+  const clash = await db.attachmentLink.findFirst({
+    where: {
+      companyId: input.companyId,
+      attachmentId: input.attachmentId,
+      targetType: isSignature ? { not: SIGNATURE_ASSET_TARGET_TYPE } : SIGNATURE_ASSET_TARGET_TYPE,
+    },
+    select: { targetType: true },
+  });
+  if (!clash) return null;
+  return isSignature
+    ? 'This file is already attached to a document, so it cannot also be saved as a personal signature.'
+    : 'A personal signature image cannot be attached to anything else.';
 }
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB

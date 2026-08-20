@@ -20,11 +20,30 @@ function browserStorage(): Storage | null {
   return typeof window !== 'undefined' ? window.localStorage : null;
 }
 
+function browserSessionStorage(): Storage | null {
+  return typeof window !== 'undefined' ? window.sessionStorage : null;
+}
+
 export function clearStoredAuthTokens(storage: Storage | null = browserStorage()): void {
   if (!storage) return;
   for (const key of AUTH_STORAGE_KEYS) {
     storage.removeItem(key);
   }
+}
+
+/**
+ * Unsent work in progress — the substitute-receipt wizard's typed reason, business purpose and payee
+ * identity, the expense notices — lives in sessionStorage. Sign-out is a same-tab navigation, so
+ * anything left there is readable by the NEXT person to sign in on this tab, and on this product
+ * that text goes verbatim onto a statutory tax document.
+ *
+ * The whole per-tab store is dropped rather than a list of keys: this origin owns all of it, none of
+ * it is meant to outlive the session, and a draft added next month is covered the day it is added —
+ * which is the only version of this that stays true.
+ */
+export function clearStoredDrafts(storage: Storage | null = browserSessionStorage()): void {
+  try { storage?.clear(); }
+  catch { /* private mode can refuse; the key is user-scoped as well, so this is defence in depth */ }
 }
 
 export async function logoutCurrentSession(redirectTo = '/login'): Promise<boolean> {
@@ -45,6 +64,7 @@ export async function logoutCurrentSession(redirectTo = '/login'): Promise<boole
   if (!response.ok) return false;
 
   clearStoredAuthTokens();
+  clearStoredDrafts();
   if (typeof window !== 'undefined') {
     window.location.assign(redirectTo);
   }

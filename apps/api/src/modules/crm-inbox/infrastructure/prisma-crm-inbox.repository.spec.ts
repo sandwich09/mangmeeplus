@@ -1,5 +1,6 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { HttpException } from '@nestjs/common';
 import { PrismaCrmInboxRepository } from './prisma-crm-inbox.repository';
 import { CrmAiContextRepository } from './crm-ai-context.repository';
 
@@ -1493,5 +1494,39 @@ describe('PrismaCrmInboxRepository.eraseCustomerData', () => {
     });
     assert.equal(customerUpdates, 0);
     assert.equal(auditCreates, 0);
+  });
+});
+
+describe('PrismaCrmInboxRepository.linkPaymentProof attachment-link guard', () => {
+  /**
+   * The guard returns the sentence the caller is meant to read, and this was the one call site of
+   * seven that threw a bare `Error` with it. The use case maps its own sentinel codes and rethrows
+   * everything else, so the intended block arrived as a 500 and the explanation was never seen.
+   */
+  it('refuses a signature image with an HttpException, not a bare Error', async () => {
+    let created = 0;
+    const tx: any = {
+      $queryRaw: async () => [],
+      crmConversation: { findFirst: async () => ({ customerId: 'cust-1', assignedToUserId: null }) },
+      crmCustomer: { findFirst: async () => ({ id: 'cust-1' }) },
+      crmMessage: { findFirst: async () => ({ id: 'msg-1' }) },
+      attachmentObject: { findFirst: async () => ({ id: 'att-1' }) },
+      attachmentLink: {
+        findFirst: async () => ({ targetType: 'company.signature_asset' }),
+        create: async () => { created += 1; },
+      },
+    };
+    const repo = new PrismaCrmInboxRepository({ client: { $transaction: async (run: any) => run(tx) } } as any);
+
+    const error = await repo.linkPaymentProof({
+      companyId: 'co-1', attachmentId: 'att-1', conversationId: 'conv-1',
+      purpose: 'crm.payment_proof', targetType: 'crm.conversation', userId: 'staff-1',
+      actorScope: { actorUserId: 'staff-1', canAccessAll: true, expectedAssignedToUserId: null },
+    }).then(() => null, (cause: unknown) => cause);
+
+    assert.ok(error instanceof HttpException, 'a bare Error here is a 500 the user cannot act on');
+    assert.equal((error as HttpException).getStatus(), 400);
+    assert.match((error as HttpException).message, /personal signature image cannot be attached/);
+    assert.equal(created, 0, 'and nothing is linked');
   });
 });

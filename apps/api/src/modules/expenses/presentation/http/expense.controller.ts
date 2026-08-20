@@ -64,6 +64,7 @@ import {
   SetSignatureDerivedAssetUseCase,
   FillSignatureUseCase,
   ListSignatureAssetsUseCase,
+  GetSignatureImageUseCase,
   SIGNATURE_OWNER_PERMISSIONS,
 } from '../../application/use-cases/signature-asset.use-case';
 import {
@@ -597,7 +598,34 @@ export class ExpenseSignatureController {
     private readonly createAsset: CreateSignatureAssetUseCase,
     private readonly archive: ArchiveSignatureAssetUseCase,
     private readonly setDerived: SetSignatureDerivedAssetUseCase,
+    private readonly signatureImage: GetSignatureImageUseCase,
   ) {}
+
+  /**
+   * The bytes behind `previewUrl`. Same-origin through this API rather than a raw presigned storage
+   * URL, because Chrome's ORB refuses a cross-origin storage response bound into `<img src>` — the
+   * signer saw a broken image and certified blind. Owner-only, enforced in the use case.
+   */
+  @Get('images/:attachmentId')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
+  async signatureImageBytes(
+    @ReqCtx() ctx: RequestContext,
+    @Param('attachmentId') attachmentId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { bytes, mimeType, fileName } = await this.signatureImage.execute(ctx, attachmentId);
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    // The uploaded name is the signer's own, and on this product that is Thai — “ลายเซ็น.png”. A
+    // non-latin1 byte in a header value is `ERR_INVALID_CHAR`, so quoting it raw turned the one
+    // request that shows the signer their signature into a 500 and put them back to certifying
+    // blind. RFC 5987 form, same as the payment-voucher download above: an ASCII fallback for the
+    // quoted parameter, the real name only in the percent-encoded one.
+    const asciiName = mimeType === 'image/jpeg' ? 'signature.jpg' : 'signature.png';
+    return new StreamableFile(bytes, {
+      type: mimeType,
+      disposition: `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    });
+  }
 
   /**
    * `RequirePermissions` is ALL-of, and a personal signature has three equivalent authorities — the

@@ -12,7 +12,6 @@ import type { Request } from 'express';
 import { Prisma } from '../../generated/prisma/client';
 import { InvalidCivilDateError } from '@watchdog-bms/contracts';
 import type { AppLogger } from '../logger/logger.service';
-import { maskLoggedPath } from '../logger/log-path';
 
 // M-02: module logs are wired to pino (main.ts `logger: new NestPinoLoggerBridge(...)`), but Nest's
 // default 500 handling carries no request context. This filter keeps the exact default response (via
@@ -44,7 +43,7 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
         {
           requestId: req.headers['x-request-id'],
           method: req.method,
-          path: maskLoggedPath(req.path),
+          path: req.path,
           prismaCode: translated.prismaCode,
           ...(translated.target && { target: translated.target }),
         },
@@ -63,7 +62,7 @@ export class AllExceptionsFilter extends BaseExceptionFilter {
         {
           requestId: req.headers['x-request-id'],
           method: req.method,
-          path: maskLoggedPath(req.path),
+          path: req.path,
           err: exception instanceof Error
             ? { name: e.name, message: e.message, stack: e.stack, ...(e.code !== undefined && { code: e.code }), ...(e.meta !== undefined && { meta: e.meta }) }
             : exception,

@@ -12,6 +12,22 @@ export function toSourceDocumentType(value: string | undefined | null): SourceDo
   return SOURCE_DOCUMENT_TYPES.includes(value as SourceDocumentType) ? (value as SourceDocumentType) : 'NEEDS_REVIEW';
 }
 
+/**
+ * A LINE text note has no file, so the capture stamps `missingReceiptReason` to keep the
+ * evidence-gap rules (ledger auto-post, daily closing, status logic) reading "no file, reason
+ * recorded". It is a MARKER, never the payer's answer: `isAutoMissingReceiptReason` is what stops it
+ * satisfying the substitute-receipt question and what keeps it off the certificate, which prints
+ * this field verbatim. Thai, because anything reachable by a customer must be.
+ */
+export const LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER = 'บันทึกค่าใช้จ่ายจากข้อความใน LINE ยังไม่ได้แนบไฟล์หลักฐาน';
+/** Rows captured before the marker was Thai still carry this exact sentence. */
+const LEGACY_LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER = 'LINE text-only expense note; evidence file not attached';
+
+export function isAutoMissingReceiptReason(value: string | null | undefined): boolean {
+  const text = value?.trim();
+  return text === LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER || text === LEGACY_LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER;
+}
+
 export type TaxEvidenceInput = {
   sourceDocumentType: SourceDocumentType;
   grandTotalAmount?: string | null;

@@ -72,9 +72,11 @@ import {
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile } from '@/common/files/upload-file.logic';
 import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import {
+  clearSubstituteWizardDraft,
   defaultSubstituteReceiptReason,
   evaluateDetailsReadiness,
   evaluateEvidenceReadiness,
+  evaluateExpensePrerequisites,
   evaluateManualLinesReadiness,
   evaluateSigningReadiness,
   isSubstituteReceiptCandidateEligible,
@@ -85,6 +87,9 @@ import {
   MAX_SUBSTITUTE_MANUAL_LINES,
   mayApproveSubstituteReceipt,
   payeeTaxIdDigits,
+  payerWrittenMissingReason,
+  readSubstituteWizardDraft,
+  resolveSubstituteTurn,
   resolveWizardEntryMode,
   resolveWizardSignatureSource,
   resolveWizardStep,
@@ -93,11 +98,14 @@ import {
   substituteReceiptRenderabilityIssue,
   validatePayeeIdentity,
   wizardJourneyStage,
+  writeSubstituteWizardDraft,
   type CandidateSortKey,
+  type ExpensePrerequisiteIssue,
   type PayeeIdentityIssue,
   type SubstituteReceiptEvidenceRenderabilityIssue,
   type SubstituteManualLineDraft,
   type SubstituteReceiptRenderabilityIssue,
+  type SubstituteWizardDraftStep,
   type WizardEntryMode,
   type WizardJourneyStage,
   type WizardStep,
@@ -163,8 +171,25 @@ const todayIso = () => {
   return `${today.getFullYear()}-${month}-${day}`;
 };
 
+const PREREQUISITE_KEYS: Record<ExpensePrerequisiteIssue, DictionaryKey> = {
+  reviewedAmount: 'expenses.substitute_wizard.prerequisite_amount',
+  reviewedCategory: 'expenses.substitute_wizard.prerequisite_category',
+  renderability: 'expenses.substitute_wizard.render_limit_action_help',
+};
+
 function RequiredMark() {
   return <span className="ml-1 font-extrabold text-error-700" aria-hidden="true">*</span>;
+}
+
+/** Owner directive: an action is never disabled silently. Whatever still blocks the primary button
+ *  of a step is named right under it, in the same words the readiness list uses. */
+function BlockedReason({ labels, prefix }: { labels: string[]; prefix: string }) {
+  if (labels.length === 0) return null;
+  return (
+    <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">
+      <span className="font-bold text-warning-700">{prefix}</span> {labels.join(' · ')}
+    </p>
+  );
 }
 
 function RequiredLegend({ label }: { label: string }) {
@@ -492,6 +517,7 @@ export function SubstituteReceiptWizardPage({
   const [info, setInfo] = useState<string | null>(null);
   const [linePrefill, setLinePrefill] = useState<LineSubstituteReceiptPrefill | null>(null);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const [candidates, setCandidates] = useState<ExpenseDetail[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(!evidenceId);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
@@ -552,6 +578,9 @@ export function SubstituteReceiptWizardPage({
   const newRouteRef = useRef<HTMLButtonElement>(null);
   const pendingFocusTargetRef = useRef<'candidate' | 'manual' | 'selection' | 'details' | null>(null);
   const [focusRevision, setFocusRevision] = useState(0);
+  const signerPositionRef = useRef<HTMLInputElement>(null);
+  /** Which expense's saved draft has already been applied — persistence starts only after that. */
+  const [draftHydratedFor, setDraftHydratedFor] = useState<string | null>(null);
   const previewScope = [
     companyId,
     initialExpenseId ?? '',
@@ -632,6 +661,9 @@ export function SubstituteReceiptWizardPage({
   const manualMissingCount = manualLinesReadiness.missingCount + (manualDate ? 0 : 1);
   const manualTotal = useMemo(() => manualLinesTotal(manualLines), [manualLines]);
   const selectedExpenseRenderabilityIssue = detail ? substituteReceiptRenderabilityIssue(detail) : null;
+  // W2: the prepare blockers that live on the expense itself. Evaluated as soon as an expense is
+  // chosen so they are visible before anything is typed, not one per failed จัดทำเอกสาร.
+  const expensePrerequisites = detail ? evaluateExpensePrerequisites(detail) : null;
   const selectedEvidenceAttachments = useMemo(() => {
     const selectedIds = new Set([...supportingIds, ...paymentIds]);
     return detail?.attachments.filter((attachment) => selectedIds.has(attachment.id)) ?? [];
@@ -677,10 +709,17 @@ export function SubstituteReceiptWizardPage({
     if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
   };
 
+  /** Last line of defence for the two expense-level blockers; the buttons are already gated on them,
+   *  so reaching this means the expense changed under an open wizard. */
+  const assertExpensePrerequisites = (target: ExpenseDetail) => {
+    const issue = evaluateExpensePrerequisites(target).missing.find((candidate) => candidate !== 'renderability');
+    if (issue) throw new Error(t(PREREQUISITE_KEYS[issue], locale));
+  };
+
   const initializeDraft = useCallback((nextDetail: ExpenseDetail) => {
     setDetail(nextDetail);
     setReasonCode(defaultSubstituteReceiptReason(nextDetail.sourceDocumentType));
-    setMissingReason(nextDetail.missingReceiptReason ?? '');
+    setMissingReason(payerWrittenMissingReason(nextDetail.missingReceiptReason));
     setBusinessPurpose(nextDetail.note ?? '');
     setPayeeName(nextDetail.vendorNameSnapshot ?? '');
     setPayeeAddress('');
@@ -818,11 +857,60 @@ export function SubstituteReceiptWizardPage({
     return () => { cancelled = true; };
   }, [canReview, companyId, detail, receiptEvidence, userId]);
 
+  // W1: only the pre-prepare steps need saving — once evidence exists the server status resumes the
+  // wizard on its own, and a prepared certificate must never be re-seeded from stale typing.
+  const draftScopeId = !evidenceId && detail && !receiptEvidence ? detail.id : null;
+  const draftStep: SubstituteWizardDraftStep | null = activeStep === 'expense' || activeStep === 'details' || activeStep === 'evidence'
+    ? activeStep
+    : null;
+
+  useEffect(() => {
+    if (!draftScopeId || draftHydratedFor === draftScopeId) return;
+    const stored = readSubstituteWizardDraft(typeof window === 'undefined' ? null : window.sessionStorage, companyId, draftScopeId, userId);
+    if (stored) {
+      setActiveStep(stored.step);
+      setConsent(stored.consent);
+      setReasonCode(stored.reasonCode);
+      setMissingReason(stored.missingReason);
+      setBusinessPurpose(stored.businessPurpose);
+      setPayeeName(stored.payeeName);
+      setPayeeAddress(stored.payeeAddress);
+      setPayeeTaxId(stored.payeeTaxId);
+      if (stored.payerId) setPayerId(stored.payerId);
+      setPaymentMethod(stored.paymentMethod);
+      if (stored.paymentDate) setPaymentDate(stored.paymentDate);
+      setSupportingIds(stored.supportingIds);
+      setPaymentIds(stored.paymentIds);
+      setInfo(t('expenses.substitute_wizard.draft_restored', locale));
+    }
+    setDraftHydratedFor(draftScopeId);
+  }, [companyId, draftHydratedFor, draftScopeId, locale, userId]);
+
+  useEffect(() => {
+    if (!draftScopeId || !draftStep || draftHydratedFor !== draftScopeId || typeof window === 'undefined') return;
+    writeSubstituteWizardDraft(window.sessionStorage, companyId, draftScopeId, userId, {
+      step: draftStep,
+      consent, reasonCode, missingReason, businessPurpose,
+      payeeName, payeeAddress, payeeTaxId,
+      payerId, paymentMethod, paymentDate,
+      supportingIds, paymentIds,
+    });
+  }, [
+    businessPurpose, companyId, consent, draftHydratedFor, draftScopeId, draftStep, missingReason,
+    paymentDate, paymentIds, paymentMethod, payeeAddress, payeeName, payeeTaxId, payerId,
+    reasonCode, supportingIds, userId,
+  ]);
+
+  // The guard has to be a ref: `busy` state only reaches the disabled attribute after a re-render,
+  // so a double click certified twice — the second call 409'd and the screen showed the stale-data
+  // error next to the success banner of the write that had actually landed.
   const run = async (action: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError(null);
     setInfo(null);
-    try { await action(); } catch (cause) { setError(err(cause)); } finally { setBusy(false); }
+    try { await action(); } catch (cause) { setError(err(cause)); } finally { busyRef.current = false; setBusy(false); }
   };
 
   const selectExpense = (nextDetail: ExpenseDetail, mode: WizardEntryMode = 'existing') => {
@@ -929,6 +1017,7 @@ export function SubstituteReceiptWizardPage({
     if (!canReview) throw new Error(t('expenses.substitute_wizard.review_permission_required', locale));
     const renderabilityIssue = substituteReceiptRenderabilityIssue(detail);
     if (renderabilityIssue) throw new Error(renderabilityIssueMessage(renderabilityIssue, locale));
+    assertExpensePrerequisites(detail);
     const nextDocType = detail.sourceDocumentType === 'NEEDS_REVIEW' ? 'EXPENSE_NOTE_TEXT' as const : detail.sourceDocumentType;
     const nextTaxStatus = detail.taxEvidenceStatus === 'NEEDS_REVIEW' ? 'SUPPORTING_ONLY' as const : detail.taxEvidenceStatus;
     if (nextDocType !== detail.sourceDocumentType || nextTaxStatus !== detail.taxEvidenceStatus) {
@@ -1012,6 +1101,7 @@ export function SubstituteReceiptWizardPage({
 
   const prepare = async () => {
     if (!detail) throw new Error(t('expenses.substitute_wizard.expense_required', locale));
+    assertExpensePrerequisites(detail);
     assertAllowed(payeeName, payeeAddress, missingReason, businessPurpose);
     const firstPayeeIssue = Object.values(payeeIdentityIssues)[0];
     if (firstPayeeIssue) throw new Error(t(PAYEE_ISSUE_KEYS[firstPayeeIssue], locale));
@@ -1044,6 +1134,9 @@ export function SubstituteReceiptWizardPage({
     });
     setReceiptEvidence(result);
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
+    // The typed answers are now on the server: the local copy must not outlive them and rehydrate
+    // a certificate that has already been prepared.
+    if (typeof window !== 'undefined') clearSubstituteWizardDraft(window.sessionStorage, companyId, detail.id, userId);
     setActiveStep('certify');
     router.push(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(result.id)}`);
   };
@@ -1306,6 +1399,16 @@ export function SubstituteReceiptWizardPage({
     && mayApprove);
   const activeJourneyStage = wizardJourneyStage(activeStep);
   const activeJourneyIndex = JOURNEY_STAGES.indexOf(activeJourneyStage);
+  // "Not yet" and "not yours" are different states: the payer and the approver are usually two
+  // people, so the header says whose turn it is rather than leaving a dead button to explain it.
+  const turn = receiptEvidence
+    ? resolveSubstituteTurn({ status: receiptEvidence.status, payerUserId: receiptEvidence.payerUserId, userId, mayApprove })
+    : null;
+  const turnLabel = !turn || turn.stage === 'done' ? null
+    : turn.mine ? t('expenses.substitute_wizard.turn_mine', locale)
+      : turn.waitingFor === 'payer'
+        ? t('expenses.substitute_wizard.waiting_payer', locale).replace('{name}', receiptEvidence?.payerName ?? '')
+        : t('expenses.substitute_wizard.waiting_approver', locale);
 
   const renderReadOnlySummary = (step: WizardStep) => {
     if (!detail || !receiptEvidence) return null;
@@ -1328,6 +1431,45 @@ export function SubstituteReceiptWizardPage({
         <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.step_evidence', locale)}</h2>
         <p>{t('expenses.substitute_wizard.supporting_files', locale).replace('{count}', String(receiptEvidence.supportingAttachmentIds.length))}</p>
         <p>{t('expenses.substitute_wizard.payment_files', locale).replace('{count}', String(receiptEvidence.paymentEvidenceAttachmentIds.length))}</p>
+      </MangmeeCard>
+    );
+  };
+
+  // One readiness list per step, and the same labels are what the blocked primary button names —
+  // a section can no longer read "ครบแล้ว พร้อมไปต่อ" while the server is still going to refuse.
+  const expenseStepReadinessItems = [
+    { label: t('expenses.substitute_wizard.readiness_expense', locale), complete: !selectedExpenseRenderabilityIssue },
+    { label: t('expenses.substitute_wizard.readiness_reviewed_amount', locale), complete: !expensePrerequisites?.missing.includes('reviewedAmount') },
+    { label: t('expenses.substitute_wizard.readiness_reviewed_category', locale), complete: !expensePrerequisites?.missing.includes('reviewedCategory') },
+    { label: t('expenses.substitute_wizard.readiness_tax_ack', locale), complete: consent },
+    { label: t('expenses.substitute_wizard.readiness_permission', locale), complete: canReview },
+  ];
+  const expenseStepBlockers = expenseStepReadinessItems.filter((item) => !item.complete).map((item) => item.label);
+
+  /** The two blockers the wizard cannot repair, named with the screen that can repair them. The
+   *  renderability limit keeps its own banner below, which already carries the "split it" wording. */
+  const renderPrerequisiteCard = () => {
+    const blocking = expensePrerequisites?.missing.filter((issue) => issue !== 'renderability') ?? [];
+    if (!detail || blocking.length === 0) return null;
+    return (
+      <MangmeeCard className="border-warning-200 bg-warning-50 p-4">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 shrink-0 text-warning-700">{ICON.alert}</span>
+          <div className="min-w-0 space-y-2">
+            <p className="text-sm font-extrabold text-warning-700">{t('expenses.substitute_wizard.prerequisite_title', locale)}</p>
+            <ul className="list-disc space-y-1 pl-4 text-sm leading-6 text-warning-700">
+              {blocking.map((issue) => <li key={issue}>{t(PREREQUISITE_KEYS[issue], locale)}</li>)}
+            </ul>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Link className={btnClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>
+                {t('expenses.substitute_wizard.prerequisite_open_expense', locale)}
+              </Link>
+              <p className="min-w-0 flex-1 text-xs font-medium leading-5 text-warning-700">
+                {t('expenses.substitute_wizard.prerequisite_return_hint', locale)}
+              </p>
+            </div>
+          </div>
+        </div>
       </MangmeeCard>
     );
   };
@@ -1689,6 +1831,7 @@ export function SubstituteReceiptWizardPage({
               )}
             </div>
             <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+            {renderPrerequisiteCard()}
             {selectedExpenseRenderabilityIssue && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2">
                 <p className="text-xs font-semibold leading-5 text-warning-700">
@@ -1711,8 +1854,9 @@ export function SubstituteReceiptWizardPage({
                 </div>
               </div>
             </MangmeeCard>
-            <div className="flex justify-end border-t border-gray-100 pt-3">
-              <button type="button" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy || !consent || !canReview || Boolean(selectedExpenseRenderabilityIssue)} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue_to_details', locale)}</button>
+            <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-3 sm:flex-row-reverse sm:items-center sm:justify-start">
+              <button type="button" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy || expenseStepBlockers.length > 0} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue_to_details', locale)}</button>
+              <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={expenseStepBlockers} />
             </div>
           </div>
           <ReadinessCard
@@ -1720,11 +1864,7 @@ export function SubstituteReceiptWizardPage({
             description={t('expenses.substitute_wizard.readiness_description', locale)}
             completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
             incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
-            items={[
-              { label: t('expenses.substitute_wizard.readiness_expense', locale), complete: !selectedExpenseRenderabilityIssue },
-              { label: t('expenses.substitute_wizard.readiness_tax_ack', locale), complete: consent },
-              { label: t('expenses.substitute_wizard.readiness_permission', locale), complete: canReview },
-            ]}
+            items={expenseStepReadinessItems}
           />
         </div>
       )}
@@ -1742,6 +1882,16 @@ export function SubstituteReceiptWizardPage({
     payerEligible: payers.some((payer) => payer.userId === payerId),
     paymentDate,
   }) : null;
+  const detailsStepReadinessItems = detailsReadiness ? [
+    { label: t('expenses.substitute_wizard.payee_name', locale), complete: !detailsReadiness.missing.includes('payeeName') },
+    { label: t('expenses.substitute_wizard.missing_reason', locale), complete: !detailsReadiness.missing.includes('missingReason') },
+    { label: t('expenses.substitute_wizard.business_purpose', locale), complete: !detailsReadiness.missing.includes('businessPurpose') },
+    { label: t('expenses.substitute_wizard.payer', locale), complete: !detailsReadiness.missing.includes('payer') },
+    { label: t('expenses.substitute_wizard.payment_date', locale), complete: !detailsReadiness.missing.includes('paymentDate') },
+    ...(payeeAddress.trim() ? [{ label: t('expenses.substitute_wizard.payee_address', locale), complete: !detailsReadiness.missing.includes('payeeAddress') }] : []),
+    ...(payeeTaxId.trim() ? [{ label: t('expenses.substitute_wizard.payee_tax_id', locale), complete: !detailsReadiness.missing.includes('payeeTaxId') }] : []),
+  ] : [];
+  const detailsStepBlockers = detailsStepReadinessItems.filter((item) => !item.complete).map((item) => item.label);
 
   const renderDetailsStep = () => detail && detailsReadiness && (
     <div className="space-y-4">
@@ -1854,9 +2004,13 @@ export function SubstituteReceiptWizardPage({
               </div>
             </section>
           </MangmeeCard>
-          <div className="flex justify-between gap-3 border-t border-gray-100 pt-3">
+          {renderPrerequisiteCard()}
+          <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => { setActiveStep('expense'); requestWorkflowFocus('selection'); }}>{t('expenses.substitute_wizard.back', locale)}</button>
-            <button type="button" className={btnClass} disabled={busy || payersLoading || !detailsReadiness.ready} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
+              <button type="button" className={btnClass} disabled={busy || payersLoading || detailsStepBlockers.length > 0} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
+              <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={detailsStepBlockers} />
+            </div>
           </div>
         </div>
         <ReadinessCard
@@ -1864,15 +2018,7 @@ export function SubstituteReceiptWizardPage({
           description={t('expenses.substitute_wizard.readiness_description', locale)}
           completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
           incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
-          items={[
-            { label: t('expenses.substitute_wizard.payee_name', locale), complete: !detailsReadiness.missing.includes('payeeName') },
-            { label: t('expenses.substitute_wizard.missing_reason', locale), complete: !detailsReadiness.missing.includes('missingReason') },
-            { label: t('expenses.substitute_wizard.business_purpose', locale), complete: !detailsReadiness.missing.includes('businessPurpose') },
-            { label: t('expenses.substitute_wizard.payer', locale), complete: !detailsReadiness.missing.includes('payer') },
-            { label: t('expenses.substitute_wizard.payment_date', locale), complete: !detailsReadiness.missing.includes('paymentDate') },
-            ...(payeeAddress.trim() ? [{ label: t('expenses.substitute_wizard.payee_address', locale), complete: !detailsReadiness.missing.includes('payeeAddress') }] : []),
-            ...(payeeTaxId.trim() ? [{ label: t('expenses.substitute_wizard.payee_tax_id', locale), complete: !detailsReadiness.missing.includes('payeeTaxId') }] : []),
-          ]}
+          items={detailsStepReadinessItems}
         />
       </div>
     </div>
@@ -1992,6 +2138,16 @@ export function SubstituteReceiptWizardPage({
     requiresPaymentEvidence,
     renderabilityIssue: selectedEvidenceRenderabilityIssue,
   });
+  // The expense-level blockers are repeated here because this is the step whose button calls the
+  // endpoint that enforces them.
+  const evidenceStepReadinessItems = [
+    { label: t('expenses.substitute_wizard.readiness_reviewed_amount', locale), complete: !expensePrerequisites?.missing.includes('reviewedAmount') },
+    { label: t('expenses.substitute_wizard.readiness_reviewed_category', locale), complete: !expensePrerequisites?.missing.includes('reviewedCategory') },
+    { label: t('expenses.substitute_wizard.readiness_policy', locale), complete: !evidenceReadiness.missing.includes('policy') },
+    { label: requiresPaymentEvidence ? t('expenses.substitute_wizard.payment_evidence_title', locale) : t('expenses.substitute_wizard.payment_evidence_optional_short', locale), complete: !evidenceReadiness.missing.includes('paymentEvidence') },
+    { label: t('expenses.substitute_wizard.readiness_renderable', locale), complete: !evidenceReadiness.missing.includes('renderability') },
+  ];
+  const evidenceStepBlockers = evidenceStepReadinessItems.filter((item) => !item.complete).map((item) => item.label);
 
   const renderEvidenceStep = () => detail && (
     <div className="space-y-4">
@@ -2041,21 +2197,22 @@ export function SubstituteReceiptWizardPage({
             {t('expenses.substitute_wizard.evidence_limit_help', locale)
               .replace('{count}', String(SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments))}
           </p>
-          <div className="flex justify-between gap-3 border-t border-gray-100 pt-3">
+          {renderPrerequisiteCard()}
+          <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
-            <button type="button" className={btnClass} disabled={busy || !evidenceReadiness.ready} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.prepare', locale)}</button>
+            <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
+              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.prepare', locale)}</button>
+              <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={evidenceStepBlockers} />
+            </div>
           </div>
+          <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{t('expenses.substitute_wizard.next_step_certify', locale)}</p>
         </div>
         <ReadinessCard
           title={t('expenses.substitute_wizard.readiness_title', locale)}
           description={t('expenses.substitute_wizard.evidence_readiness_description', locale)}
           completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
           incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
-          items={[
-            { label: t('expenses.substitute_wizard.readiness_policy', locale), complete: !evidenceReadiness.missing.includes('policy') },
-            { label: requiresPaymentEvidence ? t('expenses.substitute_wizard.payment_evidence_title', locale) : t('expenses.substitute_wizard.payment_evidence_optional_short', locale), complete: !evidenceReadiness.missing.includes('paymentEvidence') },
-            { label: t('expenses.substitute_wizard.readiness_renderable', locale), complete: !evidenceReadiness.missing.includes('renderability') },
-          ]}
+          items={evidenceStepReadinessItems}
         />
       </div>
     </div>
@@ -2089,6 +2246,13 @@ export function SubstituteReceiptWizardPage({
       signatureReady: paperSignature || signatureSource !== 'none',
       acknowledged: certificationAcknowledged,
     });
+    const certifyItems = [
+      { label: t('expenses.substitute_wizard.payer_position', locale), complete: !signingReadiness.missing.includes('position') },
+      { label: t('expenses.substitute_wizard.preview_document', locale), complete: !signingReadiness.missing.includes('preview') },
+      ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !signingReadiness.missing.includes('signature') }]),
+      { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !signingReadiness.missing.includes('acknowledgement') },
+    ];
+    const certifyBlockers = certifyItems.filter((item) => !item.complete).map((item) => item.label);
     return (
       <div className="space-y-4">
         {ownerSelfCollapse && (
@@ -2113,7 +2277,7 @@ export function SubstituteReceiptWizardPage({
               </div>
               <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
                 <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.payer_position', locale)}<RequiredMark /></span>
-                <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
+                <input ref={signerPositionRef} className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
                 <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
               </label>
               <div className="rounded-2xl border border-gray-200 p-4">
@@ -2122,8 +2286,18 @@ export function SubstituteReceiptWizardPage({
                   {previewChecksum && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.preview_help', locale)}</p>
+                {/* W6: this button used to sit dead with no explanation while the readiness list
+                    still counted it as outstanding. It now names the field and jumps to it. */}
+                {!signerPosition.trim() && (
+                  <p className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-warning-50 px-3 py-2 text-xs font-semibold leading-5 text-warning-700">
+                    <span>{t('expenses.substitute_wizard.preview_blocked_position', locale)}</span>
+                    <button type="button" className="font-extrabold text-brand-700 underline underline-offset-2" onClick={() => signerPositionRef.current?.focus()}>
+                      {t('expenses.substitute_wizard.go_to_position', locale)}
+                    </button>
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className={ghostClass} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
+                  <button type="button" className={ghostClass} title={signerPosition.trim() ? undefined : t('expenses.substitute_wizard.preview_blocked_position', locale)} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
                     <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
                   </button>
                   {/* R8: the printable route out of this step — same document, both signature boxes
@@ -2144,9 +2318,11 @@ export function SubstituteReceiptWizardPage({
                 <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
                 <span>{t('expenses.substitute_wizard.certify_acknowledgement', locale)}<RequiredMark /></span>
               </label>
-              <div className="flex justify-end border-t border-gray-100 pt-4">
-                <button type="button" className={btnClass} disabled={busy || !signingReadiness.ready} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
+              <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-4 sm:flex-row-reverse sm:items-center sm:justify-start">
+                <button type="button" className={btnClass} disabled={busy || certifyBlockers.length > 0} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
+                <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={certifyBlockers} />
               </div>
+              <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{t('expenses.substitute_wizard.next_step_approve', locale)}</p>
             </MangmeeCard>
           </div>
           <ReadinessCard
@@ -2154,12 +2330,7 @@ export function SubstituteReceiptWizardPage({
             description={t('expenses.substitute_wizard.signing_readiness_description', locale)}
             completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
             incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
-            items={[
-              { label: t('expenses.substitute_wizard.payer_position', locale), complete: !signingReadiness.missing.includes('position') },
-              { label: t('expenses.substitute_wizard.preview_document', locale), complete: !signingReadiness.missing.includes('preview') },
-              ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !signingReadiness.missing.includes('signature') }]),
-              { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !signingReadiness.missing.includes('acknowledgement') },
-            ]}
+            items={certifyItems}
           />
         </div>
       </div>
@@ -2175,6 +2346,13 @@ export function SubstituteReceiptWizardPage({
       signatureReady: paperSignature || signatureSource !== 'none',
       acknowledged: approvalAcknowledged,
     });
+    const approveItems = [
+      { label: t('expenses.substitute_wizard.open_certified', locale), complete: !approvalReadiness.missing.includes('preview') },
+      { label: t('expenses.substitute_wizard.approver_position', locale), complete: !approvalReadiness.missing.includes('position') },
+      ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !approvalReadiness.missing.includes('signature') }]),
+      { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !approvalReadiness.missing.includes('acknowledgement') },
+    ];
+    const approveBlockers = approveItems.filter((item) => !item.complete).map((item) => item.label);
     return (
       <div className="space-y-4">
         {ownerSelfCollapse && (
@@ -2204,11 +2382,14 @@ export function SubstituteReceiptWizardPage({
               <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_certified', locale)}</span>
               </button>
+              {!receiptEvidence.certifiedArtifactAttachmentId && (
+                <p className="mt-2 text-xs font-semibold leading-5 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
+              )}
             </div>
             <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
               <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.approver_position', locale)}<RequiredMark /></span>
               {/* Same rule as the payer step: editing the position invalidates the reviewed badge. */}
-              <input className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setCertifiedPreviewed(false); }} />
+              <input ref={signerPositionRef} className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setCertifiedPreviewed(false); }} />
               <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
             </label>
             <div className="rounded-2xl border border-gray-200 p-4">
@@ -2221,8 +2402,9 @@ export function SubstituteReceiptWizardPage({
               <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)} />
               <span>{t('expenses.substitute_wizard.approve_acknowledgement', locale)}<RequiredMark /></span>
             </label>
-            <div className="flex justify-end border-t border-gray-100 pt-4">
-              <button type="button" className={btnClass} disabled={busy || !approvalReadiness.ready} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
+            <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-4 sm:flex-row-reverse sm:items-center sm:justify-start">
+              <button type="button" className={btnClass} disabled={busy || approveBlockers.length > 0} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
+              <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={approveBlockers} />
             </div>
           </MangmeeCard>
           <ReadinessCard
@@ -2230,12 +2412,7 @@ export function SubstituteReceiptWizardPage({
             description={t('expenses.substitute_wizard.approval_readiness_description', locale)}
             completeLabel={t('expenses.substitute_wizard.readiness_ready', locale)}
             incompleteLabel={(count) => t('expenses.substitute_wizard.readiness_missing', locale).replace('{count}', String(count))}
-            items={[
-              { label: t('expenses.substitute_wizard.open_certified', locale), complete: !approvalReadiness.missing.includes('preview') },
-              { label: t('expenses.substitute_wizard.approver_position', locale), complete: !approvalReadiness.missing.includes('position') },
-              ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !approvalReadiness.missing.includes('signature') }]),
-              { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !approvalReadiness.missing.includes('acknowledgement') },
-            ]}
+            items={approveItems}
           />
         </div>
       </div>
@@ -2266,6 +2443,11 @@ export function SubstituteReceiptWizardPage({
             )}
             <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t('expenses.substitute_wizard.back_to_expense', locale)}</Link>
           </div>
+          {/* The issued file is offered only once it exists; when it does not, say so rather than
+              leaving the row of actions one button short with no explanation. */}
+          {!receiptEvidence.artifactAttachmentId && (
+            <p className="mt-4 text-sm font-semibold leading-6 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
+          )}
         </div>
         <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
           {([
@@ -2348,7 +2530,14 @@ export function SubstituteReceiptWizardPage({
                     .replace('{current}', String(activeJourneyIndex + 1))
                     .replace('{total}', String(JOURNEY_STAGES.length))}</p>
                 </div>
-                <MangmeeBadge tone="brand">{t(JOURNEY_STAGE_KEYS[activeJourneyStage], locale)}</MangmeeBadge>
+                <div className="flex flex-col items-start gap-1 sm:items-end">
+                  <MangmeeBadge tone="brand">{t(JOURNEY_STAGE_KEYS[activeJourneyStage], locale)}</MangmeeBadge>
+                  {turnLabel && (
+                    <p className={cx('text-xs font-bold leading-5', turn?.mine ? 'text-brand-700' : 'text-warning-700')}>
+                      {t('expenses.substitute_wizard.turn_label', locale)}: {turnLabel}
+                    </p>
+                  )}
+                </div>
               </div>
               <ThemedSteps
                 aria-label={t('expenses.substitute_wizard.journey_label', locale)}

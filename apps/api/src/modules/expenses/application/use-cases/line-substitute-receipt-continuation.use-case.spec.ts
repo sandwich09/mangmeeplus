@@ -60,14 +60,12 @@ async function onePagePdf(pages = 1): Promise<Buffer> {
 }
 
 function harness(overrides: {
-  expense?: any; policy?: any; approvers?: any[]; candidates?: any[];
+  expense?: any; policy?: any; approvers?: any[]; candidates?: any[]; categories?: Array<{ id: string; name: string }>;
   /** Bytes the stored scan attachment resolves to, for the R11 composability gate. */
   scanObject?: { bytes: Buffer; mimeType: string } | null;
   /** R13 choice 1 asks this before it prepares: an ACTIVE personal signature or nothing. */
   signature?: { id: string } | null;
   prepareError?: Error;
-  /** §12: a link that cannot be minted must degrade the reply, never sink the turn. */
-  deliveryError?: Error;
 } = {}) {
   let current = overrides.expense ?? expense();
   const saves: any[] = [];
@@ -135,7 +133,7 @@ function harness(overrides: {
       return state ? [{ id: current.id, updatedAt: current.updatedAt, sourceChannelMetadataJson: current.sourceChannelMetadataJson }] : [];
     },
     findByIdWithRelations: async (_companyId: string, id: string) => id === current.id ? current : null,
-    listCategories: async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
+    listCategories: async () => overrides.categories ?? [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
     getSubstituteReceiptPolicy: async () => overrides.policy ?? null,
     listEligibleSubstituteReceiptApprovers: async () => overrides.approvers ?? [{ userId: 'user-1', displayName: 'เจ้าของ' }],
     findActiveMemberIdentity: async (_companyId: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
@@ -168,6 +166,8 @@ function harness(overrides: {
       current = {
         ...current,
         updatedAt: now,
+        // Mirrors the repository: the collected category is written to the ROW in the same CAS write.
+        ...(input.expenseCategoryId ? { expenseCategoryId: input.expenseCategoryId } : {}),
         sourceChannelMetadataJson: { ...current.sourceChannelMetadataJson, lineSubstituteReceiptContinuation: continuation },
       };
       saves.push({ ...input, continuation });
@@ -181,36 +181,13 @@ function harness(overrides: {
     { log: async (entry: any) => { audits.push(entry); } } as any,
     { execute: async () => ({}) } as any,
   );
-  // §12: the link use case itself is proven end to end in substitute-receipt-download.use-case.spec.
-  // What matters here is WHEN the continuation asks for one, for which kind, and what the reply says.
-  const deliveries: any[] = [];
-  const liveLinks = new Set<string>();
-  const deliveryLink = {
-    // FIX-3: the row is the throttle. A mint makes the link live; the continuation must consult
-    // this before minting on any turn the sender did not explicitly ask on.
-    hasLiveLink: async (_ctx: any, evidenceId: string, kind: string) => {
-      if (overrides.deliveryError) throw overrides.deliveryError;
-      return liveLinks.has(`${evidenceId}:${kind}`);
-    },
-    execute: async (_ctx: any, input: any) => {
-      if (overrides.deliveryError) throw overrides.deliveryError;
-      deliveries.push(input);
-      liveLinks.add(`${input.evidenceId}:${input.kind}`);
-      return {
-        url: `${WEB_BASE}/d/${'A'.repeat(43)}`,
-        expiresAt: new Date('2026-08-23T04:00:00.000Z'),
-        linkId: `link-${deliveries.length}`,
-      };
-    },
-  } as any;
   return {
     useCase: new LineSubstituteReceiptContinuationUseCase(
       repo, prepare,
       { log: async (entry: any) => { audits.push(entry); } } as any,
       { getObject: async () => overrides.scanObject ?? { bytes: await onePagePdf(), mimeType: 'application/pdf' } } as any,
-      deliveryLink,
     ),
-    repo, saves, prepares, audits, links, scanLinks, deliveries, liveLinks, getExpense: () => current,
+    repo, saves, prepares, audits, links, scanLinks, getExpense: () => current,
     /** The state a LINE-prepared expense is in once the web approval issued it: an evidence row plus
      *  the CONSUMED continuation the prepare left behind, which still holds the provenance. */
     issue: (patch: Record<string, unknown> = {}) => {
@@ -405,9 +382,9 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
 
   it('hands the capture gate one contiguous slice of the message, and nothing when only an amount is left', () => {
     assert.equal(substituteRequestExpenseText('สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์ไปพบลูกค้า 50 บาท'), 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท');
-    // The phrase can trail the fact; the slice keeps the lead-in word verbatim because the gate
-    // matches the description against the source text, not against a cleaned-up paraphrase.
-    assert.equal(substituteRequestExpenseText('ค่าวินมอไซต์ไปพบลูกค้า 50 บาท ขอใบแทนใบเสร็จ'), 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท ขอ');
+    // The phrase can trail the fact. `ขอใบแทน` is itself entry vocabulary and matches first, so the
+    // slice is the fact alone — still verbatim source text, which is all the capture gate requires.
+    assert.equal(substituteRequestExpenseText('ค่าวินมอไซต์ไปพบลูกค้า 50 บาท ขอใบแทนใบเสร็จ'), 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท');
     assert.equal(substituteRequestExpenseText('ทำใบทดแทนใบเสร็จ 50 บาท'), undefined, 'an amount alone is not a purpose');
     assert.equal(substituteRequestExpenseText('ทำใบทดแทนใบเสร็จ'), undefined, 'a leftover request verb is not a purpose');
     assert.equal(substituteRequestExpenseText('ขอใบแทนใบเสร็จ ค่าแท็กซี่ 120 บาท'), 'ค่าแท็กซี่ 120 บาท');
@@ -598,7 +575,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       return h;
     };
 
-    for (const phrase of ['ทำต่อ', 'ทำใบรับรองต่อ', 'ขอลิงก์ใหม่', '1', 'ใช่']) {
+    for (const phrase of ['ทำต่อ', 'ทำใบรับรองต่อ', '1', 'ใช่']) {
       const h = await openToMissingReason();
       const result = await h.useCase.execute(ctx(), { messageText: phrase, chatKeyHash: 'chat-hash', recentCandidates: [] });
       assert.equal(result.acceptedFields.includes('missingReceiptReason'), false, `“${phrase}” must not become the reason`);
@@ -818,7 +795,10 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.deepEqual(asked.blockers, []);
     assert.equal(asked.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ', 'pendingQuestion is what routes the answer back here');
     assert.match(asked.replyText, /ทำต่อ: ให้ออกเอกสารเลยไหมคะ/);
-    assert.match(asked.replyText, /1\) ออกเอกสาร \(ใช้ลายเซ็นที่บันทึกไว้\)/);
+    // Choice 1 describes what taking it actually does. With no saved signature that is TWO steps, and
+    // the old unconditional “ใช้ลายเซ็นที่บันทึกไว้” promised one — an option offered as ready when it
+    // was not.
+    assert.match(asked.replyText, /1\) ออกเอกสาร \(ยังไม่มีลายเซ็นที่บันทึกไว้ ระบบจะขอรูปลายเซ็นก่อน 1 ครั้ง/);
     assert.match(asked.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
     assert.match(asked.replyText, /3\) แก้ข้อมูลก่อน/);
     assert.match(asked.replyText, /ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร/, 'nothing is produced unasked');
@@ -828,14 +808,33 @@ describe('R13 — the assistant asks before producing the document', () => {
     );
   });
 
-  // The whole table, both directions. Reserving a document number is irreversible, so the only
-  // messages allowed to do it are the ones that unambiguously say so.
+  it('promises the one-step route only when a saved signature really exists', async () => {
+    const { asked } = await readyHarness({ signature: { id: 'signature-1' } });
+
+    assert.match(asked.replyText, /1\) ออกเอกสาร \(ใช้ลายเซ็นที่บันทึกไว้\)/);
+    assert.equal(/ระบบจะขอรูปลายเซ็น/u.test(asked.replyText), false);
+  });
+
+  // The whole table, both directions, in the words a Thai shop owner actually types. Reserving a
+  // document number is irreversible, so every row here has to be unambiguous — and everything that is
+  // NOT on the table has to land on the friendly re-ask below, never on a document.
   const ACCEPTED: Array<[string, 'ISSUE' | 'FORM' | 'EDIT']> = [
     ['1', 'ISSUE'], ['1.', 'ISSUE'], ['1)', 'ISSUE'],
     ['ออกเอกสาร', 'ISSUE'], ['ออกเอกสารเลย', 'ISSUE'], ['ออกเอกสารเลยค่ะ', 'ISSUE'],
     ['ออกเอกสาร (ใช้ลายเซ็นที่บันทึกไว้)', 'ISSUE'], ['ใช้ลายเซ็นที่บันทึกไว้', 'ISSUE'],
+    ['ออกใบให้เลย', 'ISSUE'], ['ออกให้เลยครับ', 'ISSUE'], ['ออกได้เลย', 'ISSUE'],
+    ['ทำเลย', 'ISSUE'], ['ทำเลยค่ะ', 'ISSUE'], ['จัดไป', 'ISSUE'], ['จัดการเลยนะ', 'ISSUE'],
+    ['สร้างเอกสารเลย', 'ISSUE'], ['พิมพ์เอกสารเลยค่ะ', 'ISSUE'], ['ดำเนินการต่อ', 'ISSUE'],
+    // The plain yes/no answers to “ให้ออกเอกสารเลยไหมคะ”, which name no action at all.
+    ['ใช่', 'ISSUE'], ['ใช่ค่ะ', 'ISSUE'], ['ตกลง', 'ISSUE'], ['ตกลงครับ', 'ISSUE'],
+    ['เอาเลย', 'ISSUE'], ['เอาสิ', 'ISSUE'], ['โอเคเลยค่ะ', 'ISSUE'], ['ได้เลย', 'ISSUE'], ['ยืนยัน', 'ISSUE'],
+    ['เอาสิ ออกเลย', 'ISSUE'],
     ['2', 'FORM'], ['ขอฟอร์มไปเซ็นเอง', 'FORM'], ['ขอฟอร์ม', 'FORM'], ['ขอฟอร์มไปเซ็นเองค่ะ', 'FORM'],
+    ['เอาฟอร์ม', 'FORM'], ['ขอแบบฟอร์มค่ะ', 'FORM'], ['พิมพ์ฟอร์มมาให้หน่อย', 'FORM'],
+    ['เซ็นเอง', 'FORM'], ['จะเซ็นเองครับ', 'FORM'], ['ขอกระดาษไปเซ็น', 'FORM'], ['ลงนามเองนะคะ', 'FORM'],
     ['3', 'EDIT'], ['แก้ข้อมูลก่อน', 'EDIT'], ['ขอแก้ข้อมูล', 'EDIT'],
+    ['แก้ไขก่อน', 'EDIT'], ['ขอแก้ก่อนค่ะ', 'EDIT'], ['แก้หน่อย', 'EDIT'],
+    ['ขอเปลี่ยนหน่อย', 'EDIT'], ['เปลี่ยนข้อมูลก่อน', 'EDIT'], ['ข้อมูลผิด', 'EDIT'],
   ];
   const DECLINED = [
     'ขอบคุณค่ะ ไม่ต้องออกเอกสาร',
@@ -844,11 +843,21 @@ describe('R13 — the assistant asks before producing the document', () => {
     'ไว้ค่อยออกเอกสารทีหลัง',
     'ขอฟอร์มไปเซ็นเอง ไม่ต้องออกเอกสาร',
     'เดี๋ยวก่อน อย่าเพิ่งออกเอกสาร',
+    // A refusal that names no action at all still has to land on DECLINE, not on the re-ask.
+    'ยังไม่ต้องออก',
+    'ยังไม่เอา',
+    'ไว้ทีหลังนะคะ',
+    'ภายหลังค่อยว่ากัน',
     // normalizeLineText collapses newlines before this use case ever sees them, so the refusal on
     // line 2 arrives mid-line and must still be read.
     'ออกเอกสารเลย\nไม่ ๆ เดี๋ยวก่อน',
   ];
-  const NOT_A_CHOICE = ['ออกเอกสารได้ไหม', 'ออกเอกสารยังไง', 'ขอฟอร์มยังไงคะ', 'ทำต่อ', 'ใช่'];
+  // Everything the deterministic table cannot claim. No word list is ever complete, so the contract
+  // for this column is not "reject" — it is "re-ask with the three choices in view".
+  const NOT_A_CHOICE = [
+    'ออกเอกสารได้ไหม', 'ออกเอกสารยังไง', 'ขอฟอร์มยังไงคะ', 'ต่างกันยังไง',
+    'ทำต่อ', 'ครับ', 'ค่ะ', 'อืม', 'ส่งไปทางไลน์ได้ป่ะ', 'เอกสารนี้เก็บไว้กี่ปี',
+  ];
 
   for (const [messageText, expected] of ACCEPTED) {
     it(`accepts “${messageText}” as ${expected}`, async () => {
@@ -873,8 +882,8 @@ describe('R13 — the assistant asks before producing the document', () => {
       assert.match(result.replyText, /ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่ งานนี้ยังเปิดอยู่/);
       assert.equal(
         h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
-        undefined,
-        'the decision is cleared, so the next turn re-derives it from a fresh preflight',
+        'ISSUE_CONFIRM',
+        'M5: “บอกได้ตลอดเมื่อพร้อม” only holds while the decision is still listening',
       );
       assert.equal(
         h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.businessPurpose,
@@ -884,13 +893,88 @@ describe('R13 — the assistant asks before producing the document', () => {
     });
   }
 
-  for (const messageText of NOT_A_CHOICE) {
-    it(`treats “${messageText}” as not an answer and re-asks`, async () => {
+  // S2: Thai is unspaced, so a refusal cannot be recognised from a bare particle. Every phrase below
+  // carries ไม่ / ยัง / อย่า / ค่อย somewhere and refuses NOTHING — “อย่า” sits inside “อย่างอื่น”,
+  // “ค่อย” inside “ค่อยๆ”, and the rest are ordinary status reports. Read as refusals, each one told
+  // the sender their document had been declined and re-opened the decision they never touched.
+  const MUST_NOT_DECLINE = [
+    'ยังไม่ได้ถ่ายรูปเลย',
+    'อย่างอื่นไม่มีแล้ว',
+    'ค่อยๆ ทำนะ',
+    'ร้านยังไม่เปิด',
+    'ผมยังอยู่ที่ออฟฟิศ',
+    'อย่าลืมนะครับ',
+    'วันนี้ไม่ว่างเลย',
+    'ยอดนี้ยังไม่รวม vat',
+    'ยังไม่ได้จ่ายเลย',
+    'ไม่เป็นไรค่ะ',
+  ];
+  for (const messageText of MUST_NOT_DECLINE) {
+    it(`does not read “${messageText}” as a refusal of the document`, async () => {
       const h = await readyHarness({ signature: { id: 'signature-1' } });
       const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
-      assert.equal(h.prepares.length, 0, 'a question is never an instruction');
+      assert.equal(h.prepares.length, 0, 'a non-answer still reserves nothing');
+      assert.equal(
+        /ยังไม่ออกเอกสารและยังไม่ได้จองเลขที่/.test(result.replyText),
+        false,
+        'the sender refused nothing, so the assistant must not report a refusal back to them',
+      );
+    });
+  }
+
+  // S1: the decline deliberately leaves the decision listening, which also leaves this chat's
+  // clarification open — and that clarification re-enters the continuation on EVERY later message.
+  // A question was already handed back to the router; a declarative sentence was not, so the sender
+  // could not record another expense until they finished this document.
+  it('S1: hands back a declarative message the open decision cannot read, so the chat is not captured', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+
+    const declined = await h.useCase.execute(ctx(), { messageText: 'ยังไม่ต้องออก', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(declined.decisionUnread, undefined, 'a decline IS an answer to the decision');
+
+    const capture = await h.useCase.execute(ctx(), { messageText: 'ค่าแท็กซี่ 200 บาท', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 0);
+    assert.equal(capture.decisionUnread, true, 'the dispatcher must be free to route this to the intake router');
+    assert.match(capture.resumeCapsule ?? '', /ยังอยู่/, 'and the waiting decision still travels with that turn');
+
+    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 1, 'the invitation is still true after an unrelated message');
+    assert.match(later.replyText, /รอยืนยัน/);
+  });
+
+  it('S1: the “พัก” escape stays visible in the re-ask, not only in the first decline reply', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+
+    await h.useCase.execute(ctx(), { messageText: 'ยังไม่ต้องออก', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const reAsked = await h.useCase.execute(ctx(), { messageText: 'อ่ะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.match(reAsked.replyText, /พิมพ์ “พัก” เพื่อพักงานนี้ไว้/);
+  });
+
+  it('M5: the invitation after a decline is true — a later “ออกเอกสารเลย” still issues', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+
+    const declined = await h.useCase.execute(ctx(), { messageText: 'ยังไม่ต้องออก', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 0);
+    assert.ok(declined.pendingQuestion, 'the pending question is what keeps this chat listening');
+
+    const later = await h.useCase.execute(ctx(), { messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 1, 'the answer the invitation asked for is received');
+    assert.match(later.replyText, /รอยืนยัน/);
+  });
+
+  for (const messageText of NOT_A_CHOICE) {
+    it(`re-asks with the three choices for “${messageText}”`, async () => {
+      const h = await readyHarness({ signature: { id: 'signature-1' } });
+      const result = await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+      assert.equal(h.prepares.length, 0, 'an unrecognised answer never produces a document');
       assert.equal(result.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+      // The point of the unmatched path: the options are visible again, so the next turn works.
+      assert.match(result.replyText, /1\) ออกเอกสาร/);
+      assert.match(result.replyText, /2\) ขอฟอร์มไปเซ็นเอง/);
+      assert.match(result.replyText, /3\) แก้ข้อมูลก่อน/);
     });
   }
 
@@ -1048,18 +1132,24 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.match(form.replyText, /LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร/);
   });
 
-  it('choice 3 lists the editable fields, clears the decision, and resumes value collection', async () => {
+  it('M3: choice 3 lists the editable fields UNNUMBERED, with an example, and never numbers a dead option', async () => {
     const h = await readyHarness();
 
     const editing = await h.useCase.execute(ctx(), { messageText: '3', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 0);
-    assert.match(editing.replyText, /วัตถุประสงค์ทางธุรกิจ/);
-    assert.match(editing.replyText, /วิธีชำระเงิน/);
+    assert.match(editing.replyText, /• วัตถุประสงค์ทางธุรกิจ — เช่น “วัตถุประสงค์: ไปพบลูกค้า”/);
+    assert.match(editing.replyText, /• วิธีชำระเงิน/);
+    assert.match(editing.replyText, /• หมวดค่าใช้จ่าย/);
+    // The numbers used to be printed and did nothing: “3” bounced straight back to the issue ask.
+    assert.equal(/^1\) วัตถุประสงค์/mu.test(editing.replyText), false, 'the field list is not numbered');
+    // “ไม่มีหลักฐาน” is only read while the evidence question is pending, so listing it as editable
+    // here would offer an edit that silently does nothing.
+    assert.equal(editing.replyText.includes('• หลักฐานประกอบ'), false, 'no option that cannot be taken now');
     assert.equal(
       h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
-      undefined,
-      'the decision is off the table until the edit lands',
+      'ISSUE_CONFIRM',
+      'the numbered escape stays open while the sender edits',
     );
 
     const edited = await h.useCase.execute(ctx(), {
@@ -1075,7 +1165,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     const confused = await h.useCase.execute(ctx(), { messageText: 'อ่ะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 0);
-    assert.match(confused.replyText, /ตอบเป็นหมายเลข 1-3/);
+    assert.match(confused.replyText, /เลือกจาก 3 ข้อนี้ ตอบเลขข้อได้เลย/);
     assert.equal(confused.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
     assert.equal(confused.replyText.includes('สิ่งที่ยังต้องทำทั้งหมด'), false, 'the full status card is not replayed');
     assert.match(confused.resumeCapsule ?? '', /งานใบรับรองแทนใบเสร็จรับเงินของรายการ EXP-001 ยังอยู่/);
@@ -1553,10 +1643,7 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
   });
 });
 
-// ─── Phase 5: spec §12 delivery links, §13 badges ─────────────────────────────
-
-const DELIVERY_URL = `${WEB_BASE}/d/${'A'.repeat(43)}`;
-const EXPIRY_LINE = 'ลิงก์นี้เปิดได้ถึง';
+// ─── Phase 5: spec §13 badges ─────────────────────────────────────────────────
 
 describe('spec §13 — the state badge', () => {
   it('maps every state in the table, refusals first', () => {
@@ -1601,49 +1688,8 @@ describe('spec §13 — the state badge', () => {
   });
 });
 
-describe('spec §12 — delivery links in the conversation', () => {
-  it('Journey B: the form choice hands over a delivery link, not a web login', async () => {
-    const h = await readyHarness();
-
-    const result = await h.useCase.execute(ctx(), {
-      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-
-    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'UNSIGNED_FORM_PDF' }]);
-    assert.equal(result.badge, '🖊️ รอลงนาม');
-    // FIX-5: the label sits on the URL's own line, so the card lifts it into the button.
-    assert.match(result.replyText, new RegExp(`ดาวน์โหลดแบบฟอร์ม \\(ลิงก์หมดอายุใน 3 วัน\\): ${DELIVERY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-    assert.match(result.replyText, new RegExp(EXPIRY_LINE));
-    assert.match(result.replyText, /ขอใหม่ได้ตลอด/);
-    // The web page stays as the secondary line: certification and approval still happen there.
-    assert.match(result.replyText, /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\/company-1\/expenses\/substitute-receipts\/evidence-1/);
-  });
-
-  it('the issue choice reserves a number without minting any link', async () => {
-    const h = await readyHarness({ signature: { id: 'sig-1' } });
-
-    const result = await h.useCase.execute(ctx(), {
-      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-
-    assert.deepEqual(h.deliveries, [], 'nothing is issued yet, so there is nothing to deliver');
-    assert.equal(result.badge, '🔵 รอยืนยัน');
-  });
-
-  it('§12.8 — a group chat never receives a link, and none is minted for it', async () => {
-    const h = await readyHarness();
-
-    const result = await h.useCase.execute(ctx(), {
-      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE, groupChat: true,
-    });
-
-    assert.deepEqual(h.deliveries, []);
-    assert.doesNotMatch(result.replyText, /\/d\//);
-    assert.match(result.replyText, /ไม่ส่งในแชทกลุ่ม/);
-    assert.match(result.replyText, /แชทส่วนตัว/);
-  });
-
-  it('an ISSUED document is delivered on the next turn, with number, amount and the §12.7 expiry line', async () => {
+describe('spec §12 removed — the document is downloaded from the web, never pushed into LINE', () => {
+  it('reports an ISSUED document with its number and amount, and points at the web page to download', async () => {
     const h = harness();
     h.issue();
 
@@ -1652,183 +1698,353 @@ describe('spec §12 — delivery links in the conversation', () => {
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
     });
 
-    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }]);
     assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
     assert.match(result.replyText, /SUB-202608-00007/);
     assert.match(result.replyText, /200\.00 บาท/);
-    assert.match(result.replyText, new RegExp(`ดาวน์โหลดเอกสาร \\(ลิงก์หมดอายุใน 3 วัน\\): ${DELIVERY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-    assert.match(result.replyText, /ลิงก์นี้เปิดได้ถึง .* แล้วจะหมดอายุ ขอใหม่ได้ตลอด/);
-  });
-
-  it('§12.7 — “ขอลิงก์ใหม่” mints a fresh link for the issued document without touching the old one', async () => {
-    const h = harness();
-    h.issue();
-
-    const first = await h.useCase.execute(ctx(), {
-      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-    const second = await h.useCase.execute(ctx(), {
-      messageText: 'ลิงก์หมดอายุ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-
-    assert.equal(h.deliveries.length, 2, 'each ask mints its own link — neither revokes the other');
-    assert.deepEqual(h.deliveries[1], { expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' });
-    assert.equal(first.badge, '✅ ออกเอกสารแล้ว');
-    assert.equal(second.badge, '✅ ออกเอกสารแล้ว');
+    assert.match(result.replyText, /ดาวน์โหลดเอกสารที่ออกแล้ว/);
+    assert.equal(result.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);
+    assert.match(result.replyText, /เปิดในเว็บ:/);
+    assert.doesNotMatch(result.replyText, /\/d\//, 'no delivery link is pushed into the chat');
     assert.deepEqual(h.saves, [], 'reporting an issued document writes no continuation state');
   });
 
-  it('routes the phrase to this use case without letting it become an expense description', () => {
-    assert.equal(isSubstituteReceiptConversationText('ขอลิงก์ใหม่'), true);
-    assert.equal(isSubstituteReceiptConversationText('ลิงก์หมดอายุแล้วค่ะ'), true);
-    assert.equal(substituteRequestExpenseText('ขอลิงก์ใหม่ 50 บาท'), undefined);
-  });
-
-  it('falls through when this chat has issued nothing, so the phrase never hijacks a live workflow', async () => {
-    const h = await readyHarness();
-
-    const result = await h.useCase.execute(ctx(), {
-      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-
-    assert.deepEqual(h.deliveries, []);
-    assert.equal(result.status, 'READY_FOR_WEB');
-    assert.match(result.replyText, /ให้ออกเอกสารเลยไหมคะ/);
-  });
-
-  it('degrades to the web path when the link cannot be minted, instead of losing the turn', async () => {
-    const h = harness({ deliveryError: new Error('storage down') });
-    h.issue();
-
-    const result = await h.useCase.execute(ctx(), {
-      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
-    });
-
-    assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
-    assert.match(result.replyText, /ยังสร้างลิงก์ดาวน์โหลดให้ไม่ได้ตอนนี้/);
-    assert.match(result.replyText, /เปิดในเว็บ:/);
-  });
-
-  it('reports a PREPARED paper-route form as awaiting ink, and mints the form on a plain resume (F5)', async () => {
+  it('reports a PREPARED paper-route form as awaiting ink and points at the web form (F5)', async () => {
     const h = harness();
     h.issue({ status: 'PREPARED', signatureMode: 'PAPER', wetSignedScanAttachmentId: null });
 
-    // A plain resume turn (not “ขอลิงก์ใหม่”) on a PREPARED paper form with no signed scan yet.
     const resumed = await h.useCase.execute(ctx(), {
       messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
     });
 
-    assert.equal(resumed.badge, '🖊️ รอลงนาม', 'paper route waits for ink, not a web click');
+    assert.equal(resumed.badge, '🖊️ รอลงนาม', 'paper route waits for ink, not a web sign-off');
+    assert.match(resumed.replyText, /แบบฟอร์มรอลงนาม/);
     assert.match(resumed.replyText, /พิมพ์แล้วเซ็นด้วยมือ/);
     assert.doesNotMatch(resumed.replyText, /เหลือลงนามรับรองและอนุมัติในเว็บ/, 'a paper user is not sent to sign digitally');
-    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'UNSIGNED_FORM_PDF' }],
-      'the form link is minted even on a plain resume');
+    assert.doesNotMatch(resumed.replyText, /\/d\//, 'the form is on the web page, not a pushed link');
   });
 
-  it('re-mints a delivery link after a web confirm has moved the expense to CONFIRMED (F7)', async () => {
-    const h = harness();
-    h.issue();
-    // The web confirm moved the expense out of the editable correction-candidate window.
-    (h.getExpense() as any).status = 'CONFIRMED';
-    // The real query filters by expense status: the row is visible only to a lookup whose status set
-    // includes CONFIRMED, which the shared correction-candidate default does not.
-    const NARROW = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'];
-    (h.useCase as any).repo.listLineSubstituteContinuationRows = async (input: any) =>
-      (input.statuses ?? NARROW).includes(h.getExpense().status)
-        ? [{ id: h.getExpense().id, updatedAt: h.getExpense().updatedAt, sourceChannelMetadataJson: h.getExpense().sourceChannelMetadataJson }]
-        : [];
+  it('the taught resend phrase is no longer special — it falls through to normal handling, minting nothing', async () => {
+    const h = await readyHarness();
 
     const result = await h.useCase.execute(ctx(), {
       messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
     });
 
-    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }],
-      'the confirmed document is still found and re-delivered');
-    assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
-    assert.match(result.replyText, /SUB-202608-00007/);
-    assert.doesNotMatch(result.replyText, /ยังไม่พบรายการ/);
+    assert.equal(result.status, 'READY_FOR_WEB');
+    assert.match(result.replyText, /ให้ออกเอกสารเลยไหมคะ/);
+    assert.doesNotMatch(result.replyText, /\/d\//);
   });
 });
 
-describe('FIX-3 — a fresh temp copy is minted deliberately, never on every turn', () => {
-  const carryOn = { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE };
+// ── QA round 9 defects ────────────────────────────────────────────────────────────────────────────
+// Everything below was found by driving the real DI graph against a seeded database, not by reading
+// the code. Each block names the journey that broke.
 
-  it('Journey A still gets exactly one link with its ISSUED card', async () => {
-    const h = harness();
-    h.issue();
+describe('B1 — the expense category is a collectable field, asked in Thai', () => {
+  const CATEGORIES = [
+    { id: 'cat-travel', name: 'ค่าเดินทาง' },
+    { id: 'cat-food', name: 'ค่าอาหาร' },
+    { id: 'cat-office', name: 'ค่าอุปกรณ์สำนักงาน' },
+  ];
 
-    const first = await h.useCase.execute(ctx(), carryOn);
+  /** Exactly the shape a LINE text capture leaves behind: no category anywhere, and the capture-time
+   *  missing-receipt marker on the row. */
+  function uncategorised(overrides: Record<string, unknown> = {}) {
+    return expense({
+      expenseCategoryId: null, accountHintKey: null,
+      lines: [{ description: 'ค่าวินมอไซต์ไปพบลูกค้า', expenseCategoryId: null, accountHintKey: null }],
+      vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+      missingReceiptReason: 'LINE text-only expense note; evidence file not attached',
+      attachments: [{ id: 'att-1', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }],
+      ...overrides,
+    });
+  }
 
-    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }]);
-    assert.match(first.replyText, new RegExp(`ดาวน์โหลดเอกสาร \\(ลิงก์หมดอายุใน 3 วัน\\): ${WEB_BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/d/`));
+  it('asks for the category in Thai with the company list, instead of the old English dead end', async () => {
+    const h = harness({ expense: uncategorised(), categories: CATEGORIES });
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+
+    const category = result.blockers.find((item) => item.code === 'reviewed_category_required');
+    assert.ok(category, 'the machine code is unchanged — the web resolves its own Thai from it');
+    assert.equal(category.collectableInLine, true, 'and it is now answerable in chat');
+    assert.equal(/[A-Za-z]{4,}/u.test(category.message), false, `still English: ${category.message}`);
+    assert.match(result.replyText, /ทำต่อ: ค่าใช้จ่ายนี้อยู่หมวดไหนคะ/);
+    assert.match(result.replyText, /1\) ค่าเดินทาง/);
+    assert.match(result.replyText, /2\) ค่าอาหาร/);
+    assert.equal(result.pendingQuestion?.startsWith('ค่าใช้จ่ายนี้อยู่หมวดไหนคะ'), true);
   });
 
-  it('repeating the substitute vocabulary never copies the PDF again', async () => {
-    const h = harness();
-    h.issue();
+  for (const [label, answer] of [['a typed name', 'ค่าอาหาร'], ['a numbered choice', '2'], ['a labelled name', 'หมวด: ค่าอาหาร']] as const) {
+    it(`accepts ${label} and clears the blocker on the same turn`, async () => {
+      const h = harness({ expense: uncategorised(), categories: CATEGORIES });
+      await h.useCase.execute(ctx(), {
+        messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash',
+        recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+      });
 
-    await h.useCase.execute(ctx(), carryOn);
-    const second = await h.useCase.execute(ctx(), carryOn);
-    const third = await h.useCase.execute(ctx(), carryOn);
+      const answered = await h.useCase.execute(ctx(), {
+        messageText: answer, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      });
 
-    assert.equal(h.deliveries.length, 1, 'one document, one live link');
-    for (const result of [second, third]) {
-      assert.equal(result.badge, '✅ ออกเอกสารแล้ว', 'the status is still reported in full');
-      assert.match(result.replyText, /SUB-202608-00007/);
-      assert.doesNotMatch(result.replyText, /\/d\//, 'no second link is handed out');
-      assert.match(result.replyText, /ส่งลิงก์ดาวน์โหลดให้แล้วก่อนหน้านี้/);
-      assert.match(result.replyText, /ขอลิงก์ใหม่/, 'and the way to a new one is stated');
+      assert.ok(answered.acceptedFields.includes('expenseCategoryId'), answered.replyText);
+      assert.equal(
+        answered.blockers.some((item) => item.code === 'reviewed_category_required'), false,
+        'the answer the user gave actually clears the blocker it was asked for',
+      );
+      // The category is an expense field: it has to reach the ROW, or the prepare (and the web
+      // wizard) would still refuse the very thing the sender just answered.
+      assert.equal(h.getExpense().expenseCategoryId, 'cat-food');
+      assert.match(answered.replyText, /หมวดค่าใช้จ่าย/);
+      // The echo promises “ยังไม่แก้รายการ” for every other field — and the category is the one that IS
+      // written to the row, so the promise must not be made about it.
+      assert.equal(answered.replyText.includes('(ยังไม่แก้รายการ)'), false);
+      assert.match(answered.replyText, /หมวดค่าใช้จ่ายบันทึกลงรายการให้แล้ว/);
+    });
+  }
+
+  it('does not read a category out of long prose that merely contains one of the names', async () => {
+    const h = harness({ expense: uncategorised(), categories: CATEGORIES });
+    await h.useCase.execute(ctx(), {
+      messageText: '\u0e17\u0e33\u0e43\u0e1a\u0e23\u0e31\u0e1a\u0e23\u0e2d\u0e07\u0e41\u0e17\u0e19\u0e43\u0e1a\u0e40\u0e2a\u0e23\u0e47\u0e08\u0e23\u0e31\u0e1a\u0e40\u0e07\u0e34\u0e19', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    const prose = await h.useCase.execute(ctx(), {
+      // Long, and it happens to contain \u201c\u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07\u201d. A certified field is never read out of prose.
+      messageText: '\u0e1e\u0e2d\u0e14\u0e35\u0e40\u0e14\u0e37\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e21\u0e35\u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07\u0e2b\u0e25\u0e32\u0e22\u0e23\u0e2d\u0e1a\u0e21\u0e32\u0e01 \u0e40\u0e14\u0e35\u0e4b\u0e22\u0e27\u0e08\u0e30\u0e2a\u0e48\u0e07\u0e2a\u0e23\u0e38\u0e1b\u0e43\u0e2b\u0e49\u0e17\u0e35\u0e2b\u0e25\u0e31\u0e07\u0e19\u0e30\u0e04\u0e30',
+      chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(prose.acceptedFields.includes('expenseCategoryId'), false, prose.replyText);
+    assert.equal(h.getExpense().expenseCategoryId, null);
+  });
+
+  it('offers one row per name when the global defaults duplicate the company\u2019s own', async () => {
+    const h = harness({
+      expense: uncategorised(),
+      categories: [
+        { id: 'global-travel', name: '\u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', companyId: null },
+        { id: 'cat-travel', name: '\u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', companyId: 'company-1' },
+        { id: 'cat-food', name: '\u0e04\u0e48\u0e32\u0e2d\u0e32\u0e2b\u0e32\u0e23', companyId: 'company-1' },
+      ] as any,
+    });
+
+    const asked = await h.useCase.execute(ctx(), {
+      messageText: '\u0e17\u0e33\u0e43\u0e1a\u0e23\u0e31\u0e1a\u0e23\u0e2d\u0e07\u0e41\u0e17\u0e19\u0e43\u0e1a\u0e40\u0e2a\u0e23\u0e47\u0e08\u0e23\u0e31\u0e1a\u0e40\u0e07\u0e34\u0e19', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    const numbered = asked.replyText.split('\n').filter((line) => /^\d+\) /u.test(line));
+    assert.deepEqual(numbered, ['1) \u0e04\u0e48\u0e32\u0e40\u0e14\u0e34\u0e19\u0e17\u0e32\u0e07', '2) \u0e04\u0e48\u0e32\u0e2d\u0e32\u0e2b\u0e32\u0e23'], 'no label appears twice under two numbers');
+
+    const answered = await h.useCase.execute(ctx(), {
+      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(h.getExpense().expenseCategoryId, 'cat-travel', 'the company\u2019s own row wins over the global default');
+  });
+
+  it('runs the whole journey to a clean preflight and the R13 ask, then prepares', async () => {
+    const h = harness({ expense: uncategorised(), categories: CATEGORIES, signature: { id: 'signature-1' } });
+
+    await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน ค่าวินมอไซต์ไปพบลูกค้า', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+    for (const messageText of [
+      '1',
+      'ไม่มีใบเสร็จ',
+      'เหตุผล: วินมอเตอร์ไซค์ไม่ออกใบเสร็จให้',
+      'วัตถุประสงค์: ไปพบลูกค้า',
+      'ฉันเป็นผู้จ่าย',
+    ]) {
+      await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     }
+    const ready = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(ready.blockers, [], `still blocked: ${ready.replyText}`);
+    assert.equal(ready.pendingQuestion, 'ให้ออกเอกสารเลยไหมคะ');
+
+    const issued = await h.useCase.execute(ctx(), {
+      messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(h.prepares.length, 1, issued.replyText);
   });
 
-  it('“ขอลิงก์ใหม่” always mints, however many are already live (§12.7)', async () => {
-    const h = harness();
-    h.issue();
+  it('states every eligibility blocker in Thai, whatever the reason', async () => {
+    const h = harness({
+      expense: expense({ status: 'CONFIRMED', currency: 'USD', grandTotalAmount: '0', taxEvidenceStatus: 'NEEDS_REVIEW' }),
+    });
 
-    await h.useCase.execute(ctx(), carryOn);
-    await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ขอลิงก์ใหม่' });
-    await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ลิงก์หมดอายุ' });
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
 
-    assert.equal(h.deliveries.length, 3);
-    assert.deepEqual(new Set(h.deliveries.map((item) => item.kind)), new Set(['ISSUED_PDF']));
+    const english = result.blockers.filter((item) => /[A-Za-z]{4,}/u.test(item.message.replace(/\((?:สถานะตอนนี้: )?[A-Z_]+\)|\(THB\)/gu, '')));
+    assert.deepEqual(english.map((item) => item.code), [], `English reached a Thai chat: ${JSON.stringify(english)}`);
   });
+});
 
-  it('mints again once the live link is gone', async () => {
-    const h = harness();
-    h.issue();
+describe('B2 — the capture-time missing-receipt marker is never an answer and never a document field', () => {
+  function captured(marker: string) {
+    return expense({
+      vendorNameSnapshot: 'วินมอเตอร์ไซค์', paymentMethod: 'CASH', paidAt: new Date('2026-08-15T00:00:00.000Z'),
+      missingReceiptReason: marker,
+      attachments: [{ id: 'att-1', status: 'ACTIVE', purpose: 'expense.receipt.supporting' }],
+    });
+  }
 
-    await h.useCase.execute(ctx(), carryOn);
-    h.liveLinks.clear();
-    await h.useCase.execute(ctx(), carryOn);
+  for (const marker of [
+    'LINE text-only expense note; evidence file not attached',
+    'บันทึกค่าใช้จ่ายจากข้อความใน LINE ยังไม่ได้แนบไฟล์หลักฐาน',
+  ]) {
+    it(`asks the real reason question even though the row already carries “${marker.slice(0, 24)}…”`, async () => {
+      const h = harness({ expense: captured(marker), signature: { id: 'signature-1' } });
 
-    assert.equal(h.deliveries.length, 2, 'an expired or revoked link leaves the reader with nothing');
+      const started = await h.useCase.execute(ctx(), {
+        messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน\nไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย',
+        chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+      });
+
+      assert.ok(
+        started.blockers.some((item) => item.code === 'missing_receipt_reason_required'),
+        'a machine marker is not the payer certifying why there is no receipt',
+      );
+      assert.equal(started.pendingQuestion, 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?');
+
+      await h.useCase.execute(ctx(), {
+        messageText: 'วินมอเตอร์ไซค์ไม่ออกใบเสร็จให้ค่ะ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      });
+      await h.useCase.execute(ctx(), {
+        messageText: 'ออกเอกสารเลย', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+      });
+
+      assert.equal(h.prepares.length, 1);
+      assert.equal(
+        h.prepares[0].missingReceiptReason, 'วินมอเตอร์ไซค์ไม่ออกใบเสร็จให้ค่ะ',
+        'the certificate prints what the payer wrote, never the capture marker',
+      );
+    });
+  }
+
+  it('still treats a reason a person actually wrote as answered', async () => {
+    const h = harness({ expense: captured('ผู้ขายรายย่อยไม่ออกใบเสร็จ') });
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(result.blockers.some((item) => item.code === 'missing_receipt_reason_required'), false);
   });
+});
 
-  it('Journey B: the form link is delivered by the prepare, and re-requested by name', async () => {
+describe('B5 — the paper choice survives the next turn', () => {
+  it('turn 1 asks, turn 2 prints the form, turn 3 still says “waiting for ink”', async () => {
+    const h = await readyHarness({ signature: { id: 'signature-1' } });
+
+    const form = await h.useCase.execute(ctx(), {
+      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(form.badge, '🖊️ รอลงนาม');
+    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+    // The prepare records the paper choice on the consumed state; `signatureMode` stays DIGITAL
+    // until the wet-signed scan arrives, which is exactly the window this bug lived in.
+    assert.equal(h.getExpense().substituteReceiptEvidence.signatureMode, 'DIGITAL');
+
+    const resumed = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(resumed.badge, '🖊️ รอลงนาม', 'a paper-route sender is never told to sign in the web');
+    assert.match(resumed.replyText, /พิมพ์แล้วเซ็นด้วยมือ/);
+    assert.doesNotMatch(resumed.replyText, /เหลือลงนามรับรองและอนุมัติในเว็บ/);
+  });
+});
+
+describe('M1/M4/M6 — the cheap ones a shop owner hits every day', () => {
+  it('M1: cancelling keeps the collected answers, exactly as the reply promises', async () => {
     const h = await readyHarness();
-    await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-    assert.deepEqual(h.deliveries.map((item) => item.kind), ['UNSIGNED_FORM_PDF']);
 
-    // Asking about the same PREPARED work again reports it without copying the sheet.
-    const status = await h.useCase.execute(ctx(), carryOn);
-    assert.equal(h.deliveries.length, 1);
-    assert.equal(status.badge, '🔵 รอยืนยัน');
-    assert.doesNotMatch(status.replyText, /\/d\//);
+    const cancelled = await h.useCase.execute(ctx(), {
+      messageText: 'ยกเลิก', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    assert.equal(cancelled.status, 'CANCELLED');
+    assert.match(cancelled.replyText, /ข้อมูลที่ตอบไว้ยังเก็บอยู่กับรายการนี้/);
 
-    // §12.7 must still reach Journey B's sheet, or an expired form link would be a dead end.
-    const reissued = await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ขอลิงก์ใหม่' });
-    assert.deepEqual(h.deliveries.map((item) => item.kind), ['UNSIGNED_FORM_PDF', 'UNSIGNED_FORM_PDF']);
-    assert.match(reissued.replyText, /ดาวน์โหลดแบบฟอร์ม \(ลิงก์หมดอายุใน 3 วัน\)/);
+    const resumed = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    const state = h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation;
+    assert.equal(state.acceptedValues.businessPurpose, 'ไปพบลูกค้า', 'the answers survive the cancel');
+    assert.equal(state.acceptedValues.payerUserId, 'user-1');
+    assert.deepEqual(resumed.blockers, [], 'so the sender is not asked all eight questions again');
   });
 
-  it('a group chat is refused before anything is minted or even looked up', async () => {
-    const h = harness();
-    h.issue();
+  it('M4: the card names the expense by something a person can match, never a raw id', async () => {
+    const h = harness({
+      expense: expense({
+        expenseNumber: null, expenseDate: new Date('2026-08-15T00:00:00.000Z'), vendorNameSnapshot: 'วินมอเตอร์ไซค์',
+      }),
+    });
 
-    const result = await h.useCase.execute(ctx(), { ...carryOn, groupChat: true });
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
 
-    assert.deepEqual(h.deliveries, []);
-    assert.match(result.replyText, /ไม่ส่งในแชทกลุ่ม/);
+    // The id may still ride inside the web link — that is a URL, not something a person reads. What
+    // must not happen is a cuid printed as the NAME of the expense.
+    const prose = result.replyText.split('\n').filter((line) => !line.includes('http'));
+    assert.equal(prose.some((line) => line.includes('expense-1')), false, `raw id in the customer’s face:\n${prose.join('\n')}`);
+    assert.equal((result.resumeCapsule ?? '').split('\n').filter((line) => !line.includes('http')).some((line) => line.includes('expense-1')), false);
+    assert.match(result.replyText, /รายการ: 15 ส\.ค\. · วินมอเตอร์ไซค์ · 200\.00 บาท/);
   });
+
+  it('M6: the file badge is only shown when a file is what is missing', async () => {
+    assert.equal(
+      substituteReceiptBadge({ status: 'BLOCKED', blockers: [{ code: 'payment_evidence_required', message: 'x', collectableInLine: false }] }),
+      '🟠 รอไฟล์หลักฐาน',
+    );
+    assert.equal(
+      substituteReceiptBadge({ status: 'BLOCKED', blockers: [{ code: 'owner_self_approver_not_ready', message: 'x', collectableInLine: false }] }),
+      '🌐 ต้องจัดการในเว็บ',
+      'no file will ever clear an approver-policy gap',
+    );
+  });
+});
+
+describe('entry vocabulary — the words a customer uses to ask for this document', () => {
+  const ENTERS = [
+    'ทำใบรับรองแทนใบเสร็จรับเงิน', 'ขอใบรับรองแทนใบเสร็จ', 'ทำใบทดแทนใบเสร็จ', 'ขอใบแทนใบเสร็จ',
+    'ทำใบรับรองต่อ', 'ขอใบแทนหน่อยค่ะ', 'ทำเอกสารแทนใบเสร็จให้หน่อย', 'ขอใบรับรองแทนเงินสด',
+    'ไม่มีใบเสร็จทำยังไงคะ', 'ไม่มีบิลทำไงดี', 'ไม่มีใบกำกับภาษี ต้องทำอะไร',
+  ];
+  const STAYS_OUT = [
+    // The stronger document R15 explains — it must never be routed here.
+    'ขอใบสำคัญรับเงิน', 'ทำใบสำคัญรับเงินให้หน่อย',
+    // Ordinary expense capture that merely mentions a missing receipt.
+    'ค่ากาแฟ 65 บาท ไม่มีใบเสร็จ', 'ค่าแท็กซี่ 120 บาท ไม่มีบิล', 'ยอดขายเดือนนี้เท่าไหร่', 'ขอใบเสนอราคา',
+  ];
+
+  for (const text of ENTERS) {
+    it(`treats “${text}” as a substitute-receipt request`, () => {
+      assert.equal(isSubstituteReceiptConversationText(text), true);
+    });
+  }
+  for (const text of STAYS_OUT) {
+    it(`leaves “${text}” alone`, () => {
+      assert.equal(isSubstituteReceiptConversationText(text), false);
+    });
+  }
 });

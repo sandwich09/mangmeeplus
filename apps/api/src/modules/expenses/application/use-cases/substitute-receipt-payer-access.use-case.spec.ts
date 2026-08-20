@@ -16,6 +16,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { validateHeaderValue } from 'node:http';
 import { ForbiddenException } from '@nestjs/common';
 import { ROLE_GRANTS, SYSTEM_ROLES } from '../../../auth/permission-registry';
 import {
@@ -215,7 +216,7 @@ describe('signature endpoint access (F2)', () => {
     const repo = { listSignatureAssets: async () => [] } as any;
     const storage = { createDownloadUrl: async () => ({ url: 'u', expiresAt: new Date() }) } as any;
     assert.deepEqual(
-      await new ListSignatureAssetsUseCase(repo, storage, { log: async () => undefined } as any).execute(REVIEW_ONLY),
+      await new ListSignatureAssetsUseCase(repo, { log: async () => undefined } as any).execute(REVIEW_ONLY),
       [],
     );
   });
@@ -234,4 +235,36 @@ describe('signature endpoint access (F2)', () => {
       switchToHttp: () => ({ getRequest: () => ({ context: ctx }) }),
     } as any;
   }
+
+  /**
+   * The route exists so the signer SEES the signature before certifying. On this product the
+   * uploaded file is named in Thai — “ลายเซ็น.png” — and a non-latin1 byte in a header value is
+   * `ERR_INVALID_CHAR`, so quoting the name raw turned that one request into a 500 and put the
+   * signer straight back to certifying blind. Node's own header validator is the check, because it
+   * is the thing that used to throw.
+   */
+  it('serves a Thai-named signature image with a header Node will actually accept', async () => {
+    for (const [fileName, mimeType, expectedAscii] of [
+      ['ลายเซ็น.png', 'image/png', 'signature.png'],
+      ['ลายเซ็นของผม.jpg', 'image/jpeg', 'signature.jpg'],
+      ['signature "quoted"\r\n.png', 'image/png', 'signature.png'],
+    ] as const) {
+      const controller = new ExpenseSignatureController(
+        null as any, null as any, null as any, null as any, null as any,
+        { execute: async () => ({ bytes: Buffer.from([1]), mimeType, fileName }) } as any,
+      );
+      const headers: Record<string, string> = {};
+      const file = await controller.signatureImageBytes(
+        REVIEW_ONLY,
+        'att-1',
+        { setHeader: (name: string, value: string) => { headers[name] = value; } } as any,
+      );
+
+      const disposition = String(file.getHeaders().disposition);
+      assert.doesNotThrow(() => validateHeaderValue('Content-Disposition', disposition), fileName);
+      assert.match(disposition, new RegExp(`^inline; filename="${expectedAscii}"; filename\\*=UTF-8''`));
+      assert.ok(disposition.includes(encodeURIComponent(fileName)), 'the signer’s own filename still reaches clients that read RFC 5987');
+      assert.equal(headers['Cache-Control'], 'private, no-store, max-age=0');
+    }
+  });
 });
