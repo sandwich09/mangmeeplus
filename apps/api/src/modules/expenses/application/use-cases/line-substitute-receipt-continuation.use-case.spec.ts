@@ -581,6 +581,42 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       'a phrase already parsed as reason type is not guessed into another slot');
   });
 
+  it('never captures a taught control phrase as the pending certified field (F2)', async () => {
+    // Drive to where missingReceiptReason is the pending field: open, then answer the reason CODE so
+    // reason_code_required clears and missingReceiptReason becomes the first missing field.
+    const openToMissingReason = async () => {
+      const h = harness();
+      await h.useCase.execute(ctx(), {
+        messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+        recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
+      });
+      await h.useCase.execute(ctx(), { messageText: 'ใบเสร็จหาย', chatKeyHash: 'chat-hash', recentCandidates: [] });
+      assert.equal(
+        h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.missingFields[0],
+        'missingReceiptReason', 'setup: missingReceiptReason should be the pending field',
+      );
+      return h;
+    };
+
+    for (const phrase of ['ทำต่อ', 'ทำใบรับรองต่อ', 'ขอลิงก์ใหม่', '1', 'ใช่']) {
+      const h = await openToMissingReason();
+      const result = await h.useCase.execute(ctx(), { messageText: phrase, chatKeyHash: 'chat-hash', recentCandidates: [] });
+      assert.equal(result.acceptedFields.includes('missingReceiptReason'), false, `“${phrase}” must not become the reason`);
+      assert.equal(
+        h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.missingReceiptReason,
+        undefined, `“${phrase}” must stay a blocker, not a saved legal value`,
+      );
+    }
+
+    const genuine = await openToMissingReason();
+    const saved = await genuine.useCase.execute(ctx(), { messageText: 'ลืมขอใบเสร็จจากร้าน', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(saved.acceptedFields.includes('missingReceiptReason'), true, 'a genuine short reason still saves');
+    assert.equal(
+      genuine.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.acceptedValues.missingReceiptReason,
+      'ลืมขอใบเสร็จจากร้าน',
+    );
+  });
+
   it('answers an intervening VAT question from current source state and resumes without consuming a field', async () => {
     const h = harness();
     await h.useCase.execute(ctx(), {
@@ -667,6 +703,29 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(cancelled.replyText.includes('/companies/'), false);
     const afterCancel = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
     assert.equal(afterCancel.status, 'TARGET_REQUIRED', 'closed values are not resurrected as active conversation state');
+  });
+
+  it('clears the issue decision on pause so a resume re-derives it instead of preparing (F6)', async () => {
+    const h = await readyHarness();
+    assert.equal(
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      'ISSUE_CONFIRM', 'setup: ready means the decision is pending',
+    );
+    const paused = await h.useCase.execute(ctx(), { messageText: 'พัก', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(paused.status, 'PAUSED');
+    assert.equal(
+      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+      undefined, 'pause clears the pending decision',
+    );
+
+    const preparesBefore = h.prepares.length;
+    // The taught resume phrase re-opens the workflow and re-offers the decision — it neither prepares
+    // nor lands in the “ยังไม่แน่ใจว่าจะให้ทำอะไรต่อ” non-answer branch that left the workflow PAUSED.
+    const resumed = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'OPEN', 'resume writes status OPEN');
+    assert.equal(resumed.replyText.includes('ยังไม่แน่ใจว่าจะให้ทำอะไรต่อ'), false);
+    assert.match(resumed.replyText, /ให้ออกเอกสารเลยไหมคะ/);
+    assert.equal(h.prepares.length, preparesBefore, 'resuming never prepares');
   });
 
   it('routes a valid receipt to normal review unless unavailability/incompleteness is proven', async () => {
@@ -1095,8 +1154,10 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.equal(h.prepares.length, 0, 'prepare refused before it reached the repository');
     assert.equal(refused.status, 'BLOCKED');
     assert.deepEqual(refused.blockers.map((item) => item.code), ['substitute_prepare_failed']);
-    assert.match(refused.replyText, /ยังเตรียมเอกสารไม่ได้: .*at most 8/u);
-    assert.equal(refused.replyText.includes('Error'), false, 'no raw exception reaches the chat');
+    assert.match(refused.replyText, /ยังเตรียมเอกสารไม่ได้ในตอนนี้/u);
+    // F12: no raw English exception, and a structural failure is not re-offered as a one-tap “1” retry.
+    assert.equal(/at most|Error|Exception/i.test(refused.replyText), false, 'no raw exception reaches the chat');
+    assert.equal(refused.replyText.includes('1) ออกเอกสาร'), false, 'a failed prepare is not re-offered as “1) ออกเอกสาร”');
   });
 });
 
@@ -1231,7 +1292,7 @@ function scanHarness(
 
 const SCAN = {
   expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SUB-202608-00007',
-  amountLabel: '200.0000 THB', preparedAt: '2026-08-16T09:05:00.000Z',
+  amountLabel: '200.00 บาท', preparedAt: '2026-08-16T09:05:00.000Z',
 };
 
 describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
@@ -1253,7 +1314,7 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
   it('asks D9 by document number and amount, and reads back only its own answers', () => {
     const question = substituteScanConfirmQuestion(SCAN);
     assert.match(question, /SUB-202608-00007/);
-    assert.match(question, /200\.0000 THB/);
+    assert.match(question, /200\.00 บาท/);
     assert.match(question, /1\) ใช่/);
     assert.match(question, /2\) ไม่ใช่ เป็นหลักฐานอื่น/);
     assert.equal(substituteScanConfirmAnswer('1'), 'YES');
@@ -1356,7 +1417,7 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
     const context = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
 
     assert.deepEqual(context?.awaitingScans.map((item) => item.documentNumber), ['SUB-202608-00009', 'SUB-202608-00007']);
-    assert.match(substituteScanPickQuestion(context!.awaitingScans), /1\) SUB-202608-00009 ยอด 99\.0000 THB/);
+    assert.match(substituteScanPickQuestion(context!.awaitingScans), /1\) SUB-202608-00009 ยอด 99\.00 บาท/);
     assert.match(substituteScanPickQuestion(context!.awaitingScans), /2\) SUB-202608-00007/);
   });
 
@@ -1594,7 +1655,7 @@ describe('spec §12 — delivery links in the conversation', () => {
     assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }]);
     assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
     assert.match(result.replyText, /SUB-202608-00007/);
-    assert.match(result.replyText, /200\.0000 THB/);
+    assert.match(result.replyText, /200\.00 บาท/);
     assert.match(result.replyText, new RegExp(`ดาวน์โหลดเอกสาร \\(ลิงก์หมดอายุใน 3 วัน\\): ${DELIVERY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
     assert.match(result.replyText, /ลิงก์นี้เปิดได้ถึง .* แล้วจะหมดอายุ ขอใหม่ได้ตลอด/);
   });
@@ -1646,6 +1707,47 @@ describe('spec §12 — delivery links in the conversation', () => {
     assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
     assert.match(result.replyText, /ยังสร้างลิงก์ดาวน์โหลดให้ไม่ได้ตอนนี้/);
     assert.match(result.replyText, /เปิดในเว็บ:/);
+  });
+
+  it('reports a PREPARED paper-route form as awaiting ink, and mints the form on a plain resume (F5)', async () => {
+    const h = harness();
+    h.issue({ status: 'PREPARED', signatureMode: 'PAPER', wetSignedScanAttachmentId: null });
+
+    // A plain resume turn (not “ขอลิงก์ใหม่”) on a PREPARED paper form with no signed scan yet.
+    const resumed = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(resumed.badge, '🖊️ รอลงนาม', 'paper route waits for ink, not a web click');
+    assert.match(resumed.replyText, /พิมพ์แล้วเซ็นด้วยมือ/);
+    assert.doesNotMatch(resumed.replyText, /เหลือลงนามรับรองและอนุมัติในเว็บ/, 'a paper user is not sent to sign digitally');
+    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'UNSIGNED_FORM_PDF' }],
+      'the form link is minted even on a plain resume');
+  });
+
+  it('re-mints a delivery link after a web confirm has moved the expense to CONFIRMED (F7)', async () => {
+    const h = harness();
+    h.issue();
+    // The web confirm moved the expense out of the editable correction-candidate window.
+    (h.getExpense() as any).status = 'CONFIRMED';
+    // The real query filters by expense status: the row is visible only to a lookup whose status set
+    // includes CONFIRMED, which the shared correction-candidate default does not.
+    const NARROW = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'];
+    (h.useCase as any).repo.listLineSubstituteContinuationRows = async (input: any) =>
+      (input.statuses ?? NARROW).includes(h.getExpense().status)
+        ? [{ id: h.getExpense().id, updatedAt: h.getExpense().updatedAt, sourceChannelMetadataJson: h.getExpense().sourceChannelMetadataJson }]
+        : [];
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }],
+      'the confirmed document is still found and re-delivered');
+    assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
+    assert.match(result.replyText, /SUB-202608-00007/);
+    assert.doesNotMatch(result.replyText, /ยังไม่พบรายการ/);
   });
 });
 

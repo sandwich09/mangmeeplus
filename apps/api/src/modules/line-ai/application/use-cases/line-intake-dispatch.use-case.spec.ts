@@ -329,6 +329,7 @@ function makeHarness(opts: {
           mediaContextCalls.push(chatKeyHash);
           return opts.substituteMediaContext;
         },
+        hasPendingIssueDecision: async () => false,
         attachMedia: async (_ctx: any, input: any) => {
           attachMediaCalls.push(input);
           return { replyText: `📎 แนบแล้ว ${input.purpose}` };

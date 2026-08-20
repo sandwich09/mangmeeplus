@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
   ReceiptUploadCompletionDto,
@@ -75,7 +76,7 @@ import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense
 import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-cases/line-substitute-receipt-continuation.use-case';
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
-  CreateExpenseCategoryInput, UpdateExpenseCategoryInput, CreateSignatureAssetInput,
+  CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
   SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
@@ -617,8 +618,18 @@ export class ExpenseSignatureController {
 
   @Post()
   @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
-  createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetInput & { checksumSha256?: string; byteSize?: number }) {
-    return this.createAsset.execute(ctx, { ...body, submittedFromChannel: 'WEB' });
+  createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetDto) {
+    // Built field-by-field, never spread: `attachmentAlreadyActive`/`lineMessageId` are LINE-only
+    // internals the use case honours, and spreading a caller's body would let a web request skip the
+    // PENDING_UPLOAD/ownership gate and point a signature asset at any ACTIVE attachment. Channel is
+    // set server-side; the LINE path calls the use case directly, so it keeps those fields.
+    return this.createAsset.execute(ctx, {
+      attachmentId: body.attachmentId,
+      label: body.label,
+      checksumSha256: body.checksumSha256,
+      byteSize: body.byteSize,
+      submittedFromChannel: 'WEB',
+    });
   }
 
   /** Own signature, or — for an `expense.signature.manage` holder — anyone's. */

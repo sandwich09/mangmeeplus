@@ -38,11 +38,17 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
    *
    * `ownerUserId: null` means the link outlived its asset row: unresolvable ownership, which the
    * caller must treat as "not yours" rather than "not a signature".
+   *
+   * The normal case is one link, but the schema allows the same bytes to be linked to more than one
+   * asset. Ordered by creation so the ORIGINAL owner is authoritative: a later link cannot hand
+   * someone else's signature image to whoever added it, so the D14 gate denies anyone but the first
+   * (real) owner. `findFirst` without an order would pick arbitrarily and could return the later one.
    */
   async findSignatureAssetOwner(input: FindAttachmentInput): Promise<{ ownerUserId: string | null } | null> {
     const link = await (this.prisma.client as any).attachmentLink.findFirst({
       where: { companyId: input.companyId, attachmentId: input.id, targetType: 'company.signature_asset' },
       select: { targetId: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     if (!link) return null;
     const asset = await (this.prisma.client as any).companySignatureAsset.findFirst({

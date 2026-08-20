@@ -2435,11 +2435,15 @@ export class PrismaExpenseRepository {
     chatKeyHash: string;
     scopes: { branchIds?: string[] };
     take?: number;
+    /** F7: the delivery-link reissue widens this past the editable correction-candidate window so an
+     *  issued/prepared document can still be re-minted after a web confirm moves the expense to
+     *  CONFIRMED. Defaulted (not widened) for the shared correction-candidate callers. */
+    statuses?: readonly string[];
   }): Promise<Array<{ id: string; updatedAt: Date; sourceChannelMetadataJson: Record<string, unknown> | null }>> {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
-        status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any },
+        status: { in: (input.statuses ?? ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) as any },
         sourceChannelMetadataJson: {
           path: ['lineSubstituteReceiptContinuation', 'userId'],
           equals: input.userId,

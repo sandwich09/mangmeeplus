@@ -2453,6 +2453,13 @@ export class ProcessLineWebhookUseCase {
       ...(captionCandidates && { valueCandidates: captionCandidates }),
     });
 
+    // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
+    // substitute workflow in this chat is parked at the issue decision — not only on the numbered
+    // route. Computed lazily at each signature site so non-signature uploads pay for no extra query.
+    const pendingIssueDecisionSteer = () => this.substituteReceiptContinuation
+      ? this.substituteReceiptContinuation.hasPendingIssueDecision(ctx, chatKeyHashOf(event))
+      : Promise.resolve(false);
+
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'SIGNATURE_UPLOAD_TICKET') {
       if (!canSubmitSignature) {
         await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY);
@@ -2465,7 +2472,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -2486,7 +2493,7 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status !== 'ROUTED'
       && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
       && this.initSignatureUpload && this.createSignatureAsset) {
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -3209,8 +3216,9 @@ export class ProcessLineWebhookUseCase {
         event: { lineMessageId: pending.lineMessageId },
         companyId: ctx.companyId,
         attachmentId: pending.attachmentId,
-        // Journey A: the ask that produced this question left an issue decision pending.
-        steerToPendingDecision: true,
+        // F8: steer to “ตอบ 1” only when a workflow is actually parked at the issue decision — read
+        // from the live continuation, since this route can also be reached with no decision pending.
+        steerToPendingDecision: await this.substituteReceiptContinuation.hasPendingIssueDecision(ctx, chatKeyHash),
       });
       await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
       await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');

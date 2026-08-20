@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
+  CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
   ReceiptUploadCompletionDto,
@@ -132,5 +133,30 @@ describe('expense body DTOs (audit H-23)', () => {
       await assert.rejects(() => run(SetSignatureDerivedAssetDto, { checksumSha256: 'abc' }), BadRequestException);
       assert.equal((await run(SetSignatureDerivedAssetDto, { attachmentId: 'att-1' })).attachmentId, 'att-1');
     });
+  });
+
+  describe('CreateSignatureAssetDto', () => {
+    it('accepts the web fields a legit create sends', async () => {
+      const result = await run(CreateSignatureAssetDto, { attachmentId: 'att-1', label: 'ลายเซ็นของฉัน' });
+      assert.equal(result.attachmentId, 'att-1');
+      assert.equal(result.label, 'ลายเซ็นของฉัน');
+    });
+
+    it('requires an attachmentId', async () => {
+      await assert.rejects(() => run(CreateSignatureAssetDto, { label: 'x' }), BadRequestException);
+    });
+
+    // The mass-assignment defence: the use case honours `attachmentAlreadyActive` (skips the
+    // PENDING_UPLOAD/ownership gate) and `lineMessageId`, so a web caller who could smuggle either in
+    // would point a signature asset at any ACTIVE attachment. forbidNonWhitelisted rejects them here.
+    for (const attack of [
+      { attachmentId: 'att-1', attachmentAlreadyActive: true },
+      { attachmentId: 'att-1', lineMessageId: 'm-1' },
+      { attachmentId: 'att-1', submittedFromChannel: 'LINE' },
+    ]) {
+      it(`rejects the internal-only key in ${JSON.stringify(attack)}`, async () => {
+        await assert.rejects(() => run(CreateSignatureAssetDto, attack), BadRequestException);
+      });
+    }
   });
 });

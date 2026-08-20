@@ -2421,13 +2421,14 @@ model ExpenseDuplicateCandidate {
   @@index([companyId, expenseId, status])
 }
 
-// Company-level reusable signature assets (item 09). Stored through shared
-// attachment primitives; only OWNER-level approval activates an asset.
+// Company-level reusable signature assets (item 09). Stored through shared attachment primitives.
+// Owner decision 2026-08-20: a signature is a PERSONAL asset, ACTIVE from creation by its own owner —
+// there is no approval step. PENDING_OWNER_APPROVAL is retained only so historical rows stay readable.
 model CompanySignatureAsset {
   id                   String                 @id @default(cuid())
   companyId            String
   label                String?
-  status               SignatureAssetStatus   @default(PENDING_OWNER_APPROVAL)
+  status               SignatureAssetStatus   @default(ACTIVE)
   originalAttachmentId String
   derivedAttachmentId  String?
   submittedByUserId    String

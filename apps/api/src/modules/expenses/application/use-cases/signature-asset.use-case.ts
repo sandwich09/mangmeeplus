@@ -79,7 +79,7 @@ export async function signatureInlineUrl(
     });
     return signed.url;
   } catch {
-    // ponytail: a preview is an aid, never the gate. A storage hiccup must not blank the queue.
+    // ponytail: a preview is an aid, never the gate. A storage hiccup must not blank the signature row.
     return null;
   }
 }

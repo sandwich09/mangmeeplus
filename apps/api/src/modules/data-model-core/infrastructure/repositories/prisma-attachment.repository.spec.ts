@@ -48,6 +48,11 @@ describe('PrismaAttachmentRepository.findSignatureAssetOwner', () => {
     assert.deepEqual((attachmentLink.findFirst.mock.calls as any[])[0].arguments[0].where, {
       companyId: 'co-1', attachmentId: 'att-1', targetType: 'company.signature_asset',
     });
+    // Deterministic, earliest-first: when the same bytes carry more than one link the original
+    // owner wins, so a later link cannot make the D14 gate hand the image to whoever added it.
+    assert.deepEqual((attachmentLink.findFirst.mock.calls as any[])[0].arguments[0].orderBy, [
+      { createdAt: 'asc' }, { id: 'asc' },
+    ]);
     assert.deepEqual((companySignatureAsset.findFirst.mock.calls as any[])[0].arguments[0].where, {
       id: 'sig-1', companyId: 'co-1',
     });

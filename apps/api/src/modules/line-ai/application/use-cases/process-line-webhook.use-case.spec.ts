@@ -1372,6 +1372,38 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(delivered.join('\n'), /expenses\/signatures\?signatureId=sig-9/);
   });
 
+  // F8: the “ตอบ 1” steer used to fire only on the numbered pending-media route. A captioned photo
+  // took the deterministic route and stranded a sender who was mid-issue-decision with no steer.
+  it('steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)', async () => {
+    const runCaption = async (pendingIssueDecision: boolean) => {
+      const { prisma } = makePrisma();
+      const delivered: string[] = [];
+      const { useCase } = makeUseCase(prisma, {
+        permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.signature.manage'],
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE' }),
+        sendReplyFn: async (_t: string, messages: any[]) => { delivered.push(JSON.stringify(messages)); return 'ok'; },
+        initReceiptUpload: { execute: async () => ({ expenseId: 'exp-1', attachmentId: 'att-1' }) },
+        completeReceiptUpload: { execute: async () => undefined },
+        initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
+        createSignatureAsset: { execute: async () => ({ id: 'sig-9', status: 'ACTIVE' }) },
+        substituteReceiptContinuation: { hasPendingIssueDecision: async () => pendingIssueDecision },
+      });
+      (useCase as any).downloadLineMedia = async () => ({
+        fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+      });
+      (useCase as any).uploadLineMedia = async () => undefined;
+      await useCase.executeReceiptUpload({
+        webhookEventId: `evt-sig-${pendingIssueDecision}`, lineUserId: 'line-user-secret',
+        replyToken: 'reply-sig', lineMessageId: 'line-msg-sig', messageType: 'image', messagingChannelId: 'msg-channel-1',
+      }, 'ลายเซ็นของผมครับ');
+      return delivered.join('\n');
+    };
+
+    assert.match(await runCaption(true), /ตอบ 1 เพื่อออกเอกสาร/, 'steers when a decision is pending');
+    assert.doesNotMatch(await runCaption(false), /ตอบ 1 เพื่อออกเอกสาร/, 'no steer when nothing is pending');
+  });
+
   // F1: `ลายเซ็น` is a substring test, and plenty of real receipts mention it ("ค่าทำป้ายลายเซ็น").
   // Reading that as intent filed the receipt as the newest reusable signature for legal documents —
   // ACTIVE and signable on the spot — and lost the expense entirely. A router that saw both the
@@ -1431,6 +1463,8 @@ describe('ProcessLineWebhookUseCase', () => {
         createSignatureAsset: { execute: async (_c: any, cmd: any) => { created.push(cmd); return { id: 'sig-7', status: 'ACTIVE' }; } },
         substituteReceiptContinuation: {
           loadOpenMediaContext: async () => ({ expenseId: 'exp-1', awaitingScans: [], signatureRequested: true }),
+          // F8: this chat is parked at the issue decision, so the signature answer steers to “ตอบ 1”.
+          hasPendingIssueDecision: async () => true,
         },
       });
       const ctxForAnswer = {

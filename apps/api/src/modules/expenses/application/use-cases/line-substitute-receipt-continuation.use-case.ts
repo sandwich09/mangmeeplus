@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, HttpException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { ExpensePaymentMethod, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
 import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
@@ -17,6 +17,10 @@ const STATE_KEY = 'lineSubstituteReceiptContinuation';
 export const SCAN_NOT_LINKABLE = 'substitute_wet_signed_scan_not_linkable';
 const ACTIVE_STATUSES = new Set(['OPEN', 'PAUSED']);
 const MAX_VALUE_LENGTH = 500;
+/** F7: the expense statuses the delivery-link reissue searches. Wider than the correction-candidate
+ *  default because a document outlives its expense's editable window — a web confirm moves the
+ *  expense to CONFIRMED while its issued/prepared document stays deliverable. */
+const REISSUE_EXPENSE_STATUSES = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION', 'CONFIRMED'] as const;
 
 export type LineSubstituteReceiptValues = {
   reasonCode?: SubstituteReceiptReasonCode;
@@ -97,6 +101,14 @@ export function isSubstituteReceiptConversationText(text: string): boolean {
 export function isDeliveryLinkRequestText(text: string): boolean {
   return DELIVERY_LINK_REQUEST.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
 }
+
+/** Whole-message pause/cancel controls, anchored so answers like “ไม่มี”/“ไม่มีใบเสร็จ” stay out.
+ *  Shared by `execute`'s turn routing and the short-answer capture guard in `extractValues`. */
+const SUBSTITUTE_PAUSE = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u;
+const SUBSTITUTE_CANCEL = /^(ยกเลิก|ยกเลิกงานนี้|ไม่ทำแล้ว)$/u;
+/** The resume/acknowledgement/number replies the bot itself teaches (R15 “ทำต่อ”, a bare choice
+ *  number, a yes). None is ever the value of a certified field, so the short-answer capture skips them. */
+const SUBSTITUTE_CONTROL_REPLY = /^(ทำต่อ|ใช่|ตกลง|ครับ|ค่ะ|โอเค|โอเก|ok|\d{1,2})$/iu;
 
 /** R1: the expense fact inside a combined “ออกใบทดแทนใบเสร็จ ค่าวินมอไซต์ … 50 บาท” message.
  *
@@ -273,9 +285,20 @@ function extractValues(
     values.evidenceNone = true;
   }
 
-  // A short unlabeled answer is accepted only for the exact source-generated pending question.
+  // A short unlabeled answer is accepted only for the exact source-generated pending question — but
+  // never when it is a control phrase the bot itself taught the sender to type here: resume/pause/
+  // cancel words, the delivery-link request, a bare choice number, a yes. Captured, any of these
+  // would become e.g. missingReceiptReason on the issued legal document; skipped, it stays a blocker
+  // and routes as the control it is.
   const plain = bounded(text, 200);
-  if (plain && Object.keys(values).length === 0 && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)) {
+  const lowered = plain?.toLocaleLowerCase('th-TH') ?? '';
+  const controlPhrase = !!plain && (
+    isSubstituteReceiptConversationText(plain)
+    || SUBSTITUTE_PAUSE.test(lowered)
+    || SUBSTITUTE_CANCEL.test(lowered)
+    || SUBSTITUTE_CONTROL_REPLY.test(plain)
+  );
+  if (plain && !controlPhrase && Object.keys(values).length === 0 && !/[?？]|ไหม|หรือไม่|อย่างไร|ยังไง/u.test(plain)) {
     if (pendingField === 'missingReceiptReason') values.missingReceiptReason = plain;
     if (pendingField === 'businessPurpose') values.businessPurpose = plain;
     if (pendingField === 'payeeName') values.payeeName = plain;
@@ -352,11 +375,11 @@ function preflight(
   // R5: evidence is required only when evidence exists. The assistant still asks — once — and a
   // stated “ไม่มีหลักฐาน” clears the blocker instead of dead-ending a legal no-attachment document.
   if (activeAttachments.length === 0 && !values.evidenceNone) {
-    result.push(blocker('supporting_evidence_required', 'แนบสลิป/รูปถ่ายประกอบในเว็บ หรือยืนยันว่าไม่มีหลักฐาน', true));
+    result.push(blocker('supporting_evidence_required', 'ส่งรูปสลิป/รูปถ่ายประกอบเข้ามาในแชทนี้ หรือแนบในเว็บ หรือยืนยันว่าไม่มีหลักฐาน', true));
   }
   if (((paymentMethod && paymentMethod !== 'CASH') || policy.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE')
     && payments.length === 0) {
-    result.push(blocker('payment_evidence_required', 'แนบหลักฐานการชำระเงินในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
+    result.push(blocker('payment_evidence_required', 'ส่งรูปหลักฐานการชำระเงินเข้ามาในแชทนี้ หรือแนบในเว็บ (ข้อความใช้แทนไฟล์ไม่ได้)'));
   }
   return result;
 }
@@ -369,7 +392,7 @@ const QUESTIONS: Record<string, string> = {
   payee_required: 'ผู้รับเงินหรือผู้ขายชื่ออะไรคะ?',
   payment_method_required: 'ชำระด้วยเงินสด โอน บัตร หรือเช็คคะ?',
   payment_date_required: 'ชำระเงินจริงวันที่เท่าไรคะ?',
-  supporting_evidence_required: 'มีสลิปหรือรูปถ่ายประกอบไหมคะ? ถ้ามี แนบไฟล์ในเว็บ ถ้าไม่มี ตอบ “ไม่มีหลักฐาน” ได้เลย',
+  supporting_evidence_required: 'มีสลิปหรือรูปถ่ายประกอบไหมคะ? ถ้ามี ส่งรูปเข้ามาในแชทนี้ หรือแนบในเว็บ ถ้าไม่มี ตอบ “ไม่มีหลักฐาน” ได้เลย',
 };
 
 const FIELD_BY_BLOCKER: Record<string, keyof LineSubstituteReceiptValues> = {
@@ -458,7 +481,7 @@ export type LineSubstituteMediaScan = {
   evidenceId: string;
   documentNumber: string;
   amountLabel: string;
-  /** Bytes that arrived before this belong to some earlier question, never to the D9 confirm. */
+  /** When the form was prepared, so `loadOpenMediaContext` can offer the awaiting scans newest-first. */
   preparedAt: string;
 };
 
@@ -619,17 +642,6 @@ export function substituteMediaAnswer(
   return matched.length === 1 ? matched[0] : undefined;
 }
 
-/** Nest wraps a validation message in the exception body, so `.message` alone reports
- *  “Bad Request Exception” for the object form prepare throws. */
-function exceptionText(error: unknown): string {
-  const body = error instanceof HttpException ? error.getResponse() : null;
-  if (typeof body === 'string') return body;
-  if (body && typeof body === 'object' && typeof (body as { message?: unknown }).message === 'string') {
-    return (body as { message: string }).message;
-  }
-  return error instanceof Error ? error.message : String(error);
-}
-
 const VALUE_LABELS: Record<string, string> = {
   reasonCode: 'กรณีที่ใช้ใบเสร็จเดิมไม่ได้',
   missingReceiptReason: 'เหตุผลที่ไม่มีใบเสร็จ',
@@ -669,6 +681,16 @@ const REASON_CODE_LABELS: Record<SubstituteReceiptReasonCode, string> = {
   RECEIPT_UNAVAILABLE: 'ไม่มีใบเสร็จ/ใบเสร็จหาย',
   OTHER: 'กรณีอื่น',
 };
+
+/** The 2-decimal + บาท form every other LINE reply uses, so “200.00 บาท” matches the printed form
+ *  D9 asks the sender to confirm against — never the stored decimal's “200.0000 THB”. Non-finite or
+ *  non-THB degrades to the raw pair rather than mislabelling another currency as บาท. */
+function bahtAmount(expense: { grandTotalAmount: string; currency: string }): string {
+  const amount = Number(expense.grandTotalAmount);
+  return Number.isFinite(amount) && expense.currency === 'THB'
+    ? `${amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
+    : `${expense.grandTotalAmount} ${expense.currency}`;
+}
 
 /** Every echoed bullet shows a value the sender can recognise: no ids, no enum codes, no ISO dates. */
 function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }>): string[] {
@@ -770,7 +792,7 @@ function resumeCapsule(
   const lines = [`↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ ${expense.expenseNumber ?? expense.id} ยังอยู่`];
   if (acceptedFields.length) lines.push(`รับเพิ่มแล้ว: ${acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (state.pendingQuestion) lines.push(`ทำต่อ: ${state.pendingQuestion}`);
-  else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่วนไฟล์/การลงนาม/อนุมัติทำในเว็บ`);
+  else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่งไฟล์หลักฐานเข้ามาในแชทนี้หรือแนบในเว็บก็ได้ ส่วนการลงนาม/อนุมัติทำในเว็บ`);
   if (webPath) lines.push(`เปิดในเว็บ: ${webPath}`);
   return lines.join('\n');
 }
@@ -788,7 +810,7 @@ function formatResult(input: {
   const lines = [
     '📄 ใบรับรองแทนใบเสร็จรับเงิน',
     `รายการ: ${input.expense.expenseNumber ?? input.expense.id}`,
-    `ยอดปัจจุบัน: ${input.expense.grandTotalAmount} ${input.expense.currency}`,
+    `ยอดปัจจุบัน: ${bahtAmount(input.expense)}`,
   ];
   if (input.acceptedFields.length) lines.push(`✅ รับข้อมูลเข้าร่างแล้ว (ยังไม่แก้รายการ): ${input.acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (input.sideAnswer) lines.push('', input.sideAnswer);
@@ -904,7 +926,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         expenseId: expense.id,
         evidenceId: evidence.id,
         documentNumber: evidence.documentNumber,
-        amountLabel: `${expense.grandTotalAmount} ${expense.currency}`,
+        amountLabel: bahtAmount(expense),
         preparedAt: evidence.preparedAt,
       });
     }
@@ -921,6 +943,21 @@ export class LineSubstituteReceiptContinuationUseCase {
       && states.some((state) => ACTIVE_STATUSES.has(state.status) && state.signatureRequested === true);
     const signatureRequested = asked && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
     return { expenseId, awaitingScans, signatureRequested };
+  }
+
+  /** F8: is a substitute workflow in this chat parked at the issue decision? A signature photo filed
+   *  on ANY route (router ticket, caption, numbered answer) should steer the sender back to “ตอบ 1”
+   *  exactly when this is true — and never otherwise, so the steer is computed from the live decision
+   *  rather than hard-coded per route. */
+  async hasPendingIssueDecision(ctx: RequestContext, chatKeyHash: string): Promise<boolean> {
+    if (!ctx.permissions.includes('expense.review')) return false;
+    const rows = await this.repo.listLineSubstituteContinuationRows({
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
+    });
+    return rows.some((row) => {
+      const state = stateFromMetadata(row.sourceChannelMetadataJson);
+      return !!state && ACTIVE_STATUSES.has(state.status) && state.pendingDecision === 'ISSUE_CONFIRM';
+    });
   }
 
   /** §11/§14: a file the sender offered as evidence for the open work, attached under the purpose
@@ -1058,11 +1095,12 @@ export class LineSubstituteReceiptContinuationUseCase {
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
-    // §12.7: “ขอลิงก์ใหม่” is answered from the documents this chat already issued — every status is
-    // read, because the state that produced the document was CONSUMED by its own prepare. When this
-    // chat has issued nothing, the phrase means nothing and the ordinary flow continues.
+    // §12.7: “ขอลิงก์ใหม่” is answered from the documents this chat already issued — the state that
+    // produced the document was CONSUMED by its own prepare, and the expense may since have been
+    // confirmed, so the reissue runs its own wider lookup. When this chat has issued nothing, the
+    // phrase means nothing and the ordinary flow continues.
     if (isDeliveryLinkRequestText(input.messageText)) {
-      const reissued = await this.reissueDeliveryLink(ctx, input, rows);
+      const reissued = await this.reissueDeliveryLink(ctx, input);
       if (reissued) return reissued;
     }
     const states = rows
@@ -1140,10 +1178,17 @@ export class LineSubstituteReceiptContinuationUseCase {
     // R15's question offers “ไม่ทำต่อ” as the way out, so the plain refusals join the pause set. They
     // stay whole-message anchored, which is what keeps “ไม่มี” (the evidence answer) and “ไม่มีใบเสร็จ”
     // (a reason code) out of it.
-    const pause = /^(พัก|พักไว้ก่อน|ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u.test(lowered);
-    const cancel = /^(ยกเลิก|ยกเลิกงานนี้|ไม่ทำแล้ว)$/u.test(lowered);
+    const pause = SUBSTITUTE_PAUSE.test(lowered);
+    const cancel = SUBSTITUTE_CANCEL.test(lowered);
     if (pause || cancel) {
-      const nextState = { ...selected.state, status: pause ? 'PAUSED' as const : 'CANCELLED' as const };
+      // Clear the decision (as DECLINE/EDIT do): otherwise a paused “ready” workflow keeps
+      // pendingDecision, the taught resume phrase falls into answerIssueDecision's non-answer branch,
+      // and a later “1” prepares straight out of a PAUSED workflow. Resuming re-derives it cleanly.
+      const nextState = {
+        ...selected.state,
+        status: pause ? 'PAUSED' as const : 'CANCELLED' as const,
+        pendingDecision: undefined, pendingQuestion: null,
+      };
       const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {}, continuation: nextState as unknown as Record<string, unknown>,
@@ -1267,7 +1312,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     ctx: RequestContext,
     input: { webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
-    evidence: { id: string; documentNumber: string; status: string },
+    evidence: { id: string; documentNumber: string; status: string; signatureMode: 'DIGITAL' | 'PAPER'; wetSignedScanAttachmentId: string | null },
     /** §12.7: the sender typed “ขอลิงก์ใหม่”, so a fresh token is minted even beside a live one.
      *  On an ordinary turn only the FIRST card mints — otherwise repeating the substitute vocabulary
      *  would copy the whole PDF to a new key every time. */
@@ -1275,22 +1320,30 @@ export class LineSubstituteReceiptContinuationUseCase {
   ): Promise<LineSubstituteReceiptContinuationResult> {
     const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
     const issued = evidence.status === 'ISSUED';
+    // R10/§16: a PREPARED paper-route form with no signed scan yet is waiting for INK, not a web
+    // click. Reporting it as “🔵 รอยืนยัน · sign in web” sends a paper user to sign digitally (D9);
+    // it must lead with the form link and the paper wording even on a plain resume turn.
+    const awaitingPaperSignature = evidence.status === 'PREPARED'
+      && evidence.signatureMode === 'PAPER' && !evidence.wetSignedScanAttachmentId;
     // Journey A gets exactly one link with its ISSUED card: nothing is live yet, so the first card
-    // mints. Journey B's sheet is delivered by the prepare, so PREPARED only re-mints when asked.
+    // mints. Journey B's sheet is delivered by the prepare, so PREPARED only re-mints when asked —
+    // or, for the paper route still waiting for ink, on any resume so the sender can reach the form.
     const kind: DocumentDeliveryLinkKind | undefined = issued ? 'ISSUED_PDF'
-      : evidence.status === 'PREPARED' && explicitRequest ? 'UNSIGNED_FORM_PDF'
+      : evidence.status === 'PREPARED' && (explicitRequest || awaitingPaperSignature) ? 'UNSIGNED_FORM_PDF'
       : undefined;
     const delivery = kind
       ? await this.deliver(ctx, input, expense.id, evidence.id, kind, explicitRequest)
       : undefined;
-    const badge = substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: evidence.status });
-    const amount = `${expense.grandTotalAmount} ${expense.currency}`;
+    const badge = substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature });
+    const amount = bahtAmount(expense);
     const headline = [
-      `${issued ? '✅ ออกเอกสารแล้ว' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
+      `${issued ? '✅ ออกเอกสารแล้ว' : awaitingPaperSignature ? '🖊️ รอลงนาม' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
       `รายการ ${expense.expenseNumber ?? expense.id} · ยอด ${amount}`,
       issued
         ? 'เอกสารออกเรียบร้อยแล้ว'
-        : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
+        : awaitingPaperSignature
+          ? 'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED — พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาในแชทนี้'
+          : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
     ];
     if (delivery && 'url' in delivery) {
       headline.push(deliveryLinkLine(kind!, delivery.url), delivery.expiryLine);
@@ -1304,6 +1357,10 @@ export class LineSubstituteReceiptContinuationUseCase {
         boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
         question: issued
           ? 'กดลิงก์ดาวน์โหลดด้านบนได้เลยค่ะ ถ้าลิงก์หมดอายุ พิมพ์ “ขอลิงก์ใหม่” ได้ตลอด'
+          : awaitingPaperSignature
+            ? (delivery && 'url' in delivery
+              ? 'กดลิงก์ดาวน์โหลดแบบฟอร์มด้านบน พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาได้เลยค่ะ'
+              : 'พิมพ์ “ขอลิงก์ใหม่” เพื่อรับลิงก์แบบฟอร์ม พิมพ์แล้วเซ็นด้วยมือ แล้วถ่ายส่งกลับมาได้เลยค่ะ')
           : delivery && 'url' in delivery
             ? 'กดลิงก์ดาวน์โหลดแบบฟอร์มด้านบน พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ'
             : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ',
@@ -1314,12 +1371,20 @@ export class LineSubstituteReceiptContinuationUseCase {
 
   /** §12.7 — “ขอลิงก์ใหม่” finds the newest document this chat produced and mints a fresh link for
    *  it: the issued certificate, or the unsigned sheet while Journey B is still waiting for ink.
-   *  `undefined` means this chat has neither, and the turn continues as normal. */
+   *  `undefined` means this chat has neither, and the turn continues as normal.
+   *
+   *  F7: keyed off the DOCUMENT, not the correction-candidate window. Issuing does not move the
+   *  expense, but a later web confirm moves it to CONFIRMED, at which point the shared narrow-status
+   *  query would drop the row and this would fall through to “ยังไม่พบรายการ”. The reissue therefore
+   *  runs its own wider-status lookup; the shared correction-candidate query is left untouched. */
   private async reissueDeliveryLink(
     ctx: RequestContext,
-    input: { webBaseUrl?: string; groupChat?: boolean },
-    rows: Array<{ sourceChannelMetadataJson: Record<string, unknown> | null }>,
+    input: { webBaseUrl?: string; groupChat?: boolean; chatKeyHash: string },
   ): Promise<LineSubstituteReceiptContinuationResult | undefined> {
+    const rows = await this.repo.listLineSubstituteContinuationRows({
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash,
+      scopes: ctx.scopes ?? {}, take: 5, statuses: REISSUE_EXPENSE_STATUSES,
+    });
     for (const row of rows) {
       const state = stateFromMetadata(row.sourceChannelMetadataJson);
       if (!state) continue;
@@ -1499,7 +1564,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         expectedExpenseUpdatedAt: state.targetRevision,
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
-      const amount = `${expense.grandTotalAmount} ${expense.currency}`;
+      const amount = bahtAmount(expense);
       // §12: Journey B must reach the printable sheet without a web session, so the FORM route leads
       // with a delivery link. The web page stays as the secondary line — it is where certification
       // and approval happen anyway.
@@ -1547,11 +1612,14 @@ export class LineSubstituteReceiptContinuationUseCase {
           replyText: formatResult({ status: 'STALE', expense, state, acceptedFields: [], blockers: [], webPath }),
         };
       }
-      const blockers = [blocker('substitute_prepare_failed', `ยังเตรียมเอกสารไม่ได้: ${exceptionText(error)}`)];
+      // Generic Thai only — the raw API error is often English and never belongs in a customer chat.
+      const blockers = [blocker('substitute_prepare_failed', 'ยังเตรียมเอกสารไม่ได้ในตอนนี้ค่ะ ตรวจสอบและดำเนินการต่อในเว็บได้เลย')];
       return {
         handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
         acceptedFields: [], blockers, webPath,
-        replyText: formatResult({ status: 'BLOCKED', expense, state, acceptedFields: [], blockers, webPath }),
+        // A structural failure means the same “1) ออกเอกสาร” would fail again, so the decision is
+        // cleared for this reply rather than re-offered as a one-tap retry; the web page is the way on.
+        replyText: formatResult({ status: 'BLOCKED', expense, state: { ...state, pendingDecision: undefined }, acceptedFields: [], blockers, webPath }),
       };
     }
   }

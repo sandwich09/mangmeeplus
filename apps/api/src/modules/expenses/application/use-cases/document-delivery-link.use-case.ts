@@ -1,6 +1,6 @@
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import type { RequestContext } from '@watchdog-bms/contracts';
+import { DOCUMENT_DELIVERY_TOKEN_PATTERN, type RequestContext } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -23,8 +23,6 @@ export const DELIVERY_OBJECT_PREFIX = 'line-delivery/';
 export const DELIVERY_PRESIGNED_SECONDS = 120;
 /** 32 random bytes as unpadded base64url — 43 characters. Shared by the token and the object key. */
 const RANDOM_BYTES = 32;
-/** The exact shape `safeTenantLink` allows and the resolver accepts. Anything else never reaches the database. */
-export const DELIVERY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 function opaqueRandom(): string {
   return randomBytes(RANDOM_BYTES).toString('base64url');
@@ -179,7 +177,7 @@ export class ResolveDocumentDeliveryLinkUseCase {
   ) {}
 
   async execute(input: { token: string; clientIp: string; requestId: string }): Promise<ResolvedDocumentDeliveryLink> {
-    if (!DELIVERY_TOKEN_PATTERN.test(input.token)) return { status: 'REFUSED' };
+    if (!DOCUMENT_DELIVERY_TOKEN_PATTERN.test(input.token)) return { status: 'REFUSED' };
     const link = await this.prisma.client.documentDeliveryLink.findUnique({
       where: { tokenHashSha256: deliveryTokenHash(input.token) },
     });
