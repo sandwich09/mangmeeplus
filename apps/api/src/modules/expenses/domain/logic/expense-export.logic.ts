@@ -59,6 +59,8 @@ export type AccountantIndexSource = {
   substituteReceiptRef: string | null;
   primaryAttachmentId: string | null;
   attachments: ExpenseAttachmentRef[];
+  /** R11: ids that carry this expense's hand-signed certificate, never its supporting evidence. */
+  wetSignedScanAttachmentIds?: string[];
   webUrl: string;
   notes: string | null;
 };
@@ -80,10 +82,16 @@ export function accountingPeriod(expenseDate: string | null, uploadedAt: string)
   return source.slice(0, 7);
 }
 
+/** R11: the photographed hand-signed form is part of the certificate, not evidence supporting the
+ *  expense. Sweeping it into `supporting_evidence_refs` would tell an accountant the payment was
+ *  documented twice, and would put the signature page in the supporting-evidence folder. */
+export const WET_SIGNED_SCAN_EVIDENCE_ROLE = 'substitute.wet_signed_scan';
+
 export function buildAccountantIndexRow(source: AccountantIndexSource): AccountantPackageIndexRow {
   const primary = source.attachments.find((a) => a.id === source.primaryAttachmentId)
     ?? source.attachments.find((a) => a.purpose === 'expense.receipt.primary');
-  const supporting = source.attachments.filter((a) => a.id !== primary?.id);
+  const wetSignedScanIds = new Set(source.wetSignedScanAttachmentIds ?? []);
+  const supporting = source.attachments.filter((a) => a.id !== primary?.id && !wetSignedScanIds.has(a.id));
   return {
     company_name: source.companyName,
     company_tax_id: source.companyTaxId ?? '',
@@ -180,6 +188,8 @@ export type ManifestEntrySource = {
   expenseId: string;
   expenseNumber: string | null;
   attachment: ExpenseAttachmentRef;
+  /** R11: set when this attachment is an evidence's wet-signed scan, so its role says so. */
+  isWetSignedScan?: boolean;
   sourceDocumentType: SourceDocumentType;
   taxEvidenceStatus: TaxEvidenceStatus;
   downloadUrl: string;
@@ -195,7 +205,7 @@ export function buildManifestEntry(source: ManifestEntrySource): EvidenceManifes
     file_name: source.attachment.originalFileName,
     mime_type: source.attachment.mimeType,
     file_size_bytes: source.attachment.byteSize,
-    evidence_role: source.attachment.purpose,
+    evidence_role: source.isWetSignedScan ? WET_SIGNED_SCAN_EVIDENCE_ROLE : source.attachment.purpose,
     source_document_type: source.sourceDocumentType,
     tax_evidence_status: source.taxEvidenceStatus,
     download_url: source.downloadUrl,

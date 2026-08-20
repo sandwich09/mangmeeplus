@@ -2,6 +2,7 @@ import { Inject, Injectable, NestMiddleware } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { AppConfigService } from '../config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../logger/logger.service';
+import { maskLoggedPath } from '../logger/log-path';
 
 @Injectable()
 export class RequestLoggerMiddleware implements NestMiddleware {
@@ -23,7 +24,8 @@ export class RequestLoggerMiddleware implements NestMiddleware {
       this.logger[level]({
         requestId,
         method: req.method,
-        path: req.path,
+        // A bearer token in the path is a credential, and the key-name redactor cannot see it.
+        path: maskLoggedPath(req.path),
         status,
         durationMs: Date.now() - startMs,
         // ponytail: authorization header intentionally omitted; pino redact covers * patterns

@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
-import { CreateSignatureAssetUseCase, ApproveSignatureAssetUseCase, RejectSignatureAssetUseCase, FillSignatureUseCase } from './signature-asset.use-case';
+import sharp from 'sharp';
+import { CreateSignatureAssetUseCase, ArchiveSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase } from './signature-asset.use-case';
+import { normalizeSignatureImage, SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import { CreateAccountantPackageUseCase, GetSharedEvidenceViewUseCase } from './expense-evidence.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
 
@@ -327,62 +329,337 @@ describe('expense category management', () => {
 describe('signature asset lifecycle', () => {
   const completeUpload = { execute: async () => undefined } as any;
 
-  function makeSigRepo(status = 'PENDING_OWNER_APPROVAL') {
+  /** Bytes big enough to bust the certify budget: uniform colour compresses to nothing, so the
+   *  source has to be noise. Built once — three cases share it, and each build is a 6 MB raw
+   *  buffer plus sharp's own working set. */
+  let noisyFixture: Promise<Buffer> | undefined;
+  function noisyJpeg(): Promise<Buffer> {
+    noisyFixture ??= (async () => {
+      const width = 1700;
+      const height = 1300;
+      const raw = Buffer.allocUnsafe(width * height * 3);
+      for (let i = 0; i < raw.length; i += 1) raw[i] = (i * 2654435761) % 256;
+      return sharp(raw, { raw: { width, height, channels: 3 } }).jpeg({ quality: 100 }).toBuffer();
+    })();
+    return noisyFixture;
+  }
+
+  /**
+   * A signature-shaped photo: paper with dark ink through the middle.
+   *
+   * `paper` defaults to the WARM cast a real phone shot has under indoor light — a blue-channel
+   * deficit. That is the case a per-channel rule gets wrong: normalising the colour image applies
+   * one shared scale, the blue channel stays low, and an all-three-channels test lets blue alone
+   * decide, erasing next to nothing. Noise is on by default for the same reason: a perfectly flat
+   * fixture passes rules that real photos defeat.
+   */
+  async function inkOnPaper(paper: [number, number, number] = [246, 247, 236], noise = 6): Promise<Buffer> {
+    const width = 400;
+    const height = 200;
+    const raw = Buffer.allocUnsafe(width * height * 3);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const ink = y > 90 && y < 110;
+        const jitter = noise ? ((((x * 7919) + (y * 104729)) % (noise * 2)) - noise) : 0;
+        const offset = ((y * width) + x) * 3;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const base = ink ? 22 : paper[channel]!;
+          raw[offset + channel] = Math.max(0, Math.min(255, base + jitter));
+        }
+      }
+    }
+    return sharp(raw, { raw: { width, height, channels: 3 } }).jpeg({ quality: 95 }).toBuffer();
+  }
+
+  /** Share of fully transparent pixels, and whether the ink band survived. */
+  async function alphaProfile(png: Buffer) {
+    const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let clear = 0;
+    for (let pixel = 0; pixel < info.width * info.height; pixel += 1) {
+      if (data[(pixel * info.channels) + 3] === 0) clear += 1;
+    }
+    const alphaAt = (x: number, y: number) => data[(((y * info.width) + x) * info.channels) + 3]!;
+    return { transparentShare: clear / (info.width * info.height), alphaAt, info };
+  }
+
+  function makeSigRepo(status = 'ACTIVE', options: { sourceBytes?: Buffer; submittedByUserId?: string } = {}) {
     const updates: any[] = [];
+    const created: any[] = [];
+    const generated: any[] = [];
+    const links: any[] = [];
+    const listed: any[] = [];
+    let row: any = { id: 'sig-1', status, submittedByUserId: options.submittedByUserId ?? 'uploader-1' };
     return {
       updates,
+      created,
+      generated,
+      links,
+      listed,
       repo: {
         findSignatureAssetByLineMessageId: async () => null,
-        createSignatureAsset: async (input: any) => ({ id: 'sig-1', status: 'PENDING_OWNER_APPROVAL', ...input }),
-        linkAttachmentToTarget: async () => undefined,
-        findSignatureAssetById: async () => ({ id: 'sig-1', status, submittedByUserId: 'uploader-1' }),
-        updateSignatureAsset: async (_c: string, id: string, data: any) => { updates.push(data); return { id, ...data }; },
+        createSignatureAsset: async (input: any) => { created.push(input); row = { id: 'sig-1', ...input }; return row; },
+        linkAttachmentToTarget: async (...args: any[]) => { links.push(args); },
+        findSignatureAssetById: async () => row,
+        // Returns the row as it stands after the write, exactly like the real update.
+        updateSignatureAsset: async (_c: string, id: string, data: any) => { updates.push(data); row = { ...row, id, ...data }; return row; },
         createSignatureFill: async (input: any) => ({ id: 'fill-1', appliedAt: new Date(), ...input }),
         findById: async () => ({ id: 'exp-1', status: 'NEEDS_REVIEW' }),
         linkAttachment: async () => undefined,
+        findActiveMemberIdentity: async () => ({ userId: 'user-1', displayName: 'สมชาย ใจดี' }),
+        // Absent bytes means "not an image the transform can read": the derive is skipped, which is
+        // the shape most of these lifecycle assertions want.
+        findActiveAttachmentObject: async () => options.sourceBytes
+          ? { bucket: 'b', objectKey: 'k', mimeType: 'image/jpeg', checksumSha256: null, byteSize: options.sourceBytes.byteLength, originalFileName: 'sig.jpg' }
+          : null,
+        createGeneratedSignatureAttachment: async (input: any) => { generated.push(input); return 'att-derived'; },
+        listSignatureAssets: async (...args: any[]) => { listed.push(args); return []; },
+        listUserDisplayNames: async () => new Map(),
+      } as any,
+      storage: {
+        getObject: async () => ({ bytes: options.sourceBytes ?? Buffer.alloc(0) }),
+        putObject: async (input: any) => ({
+          bucket: 'b', objectKey: input.objectKey, storageProvider: 'local',
+          byteSize: input.bytes.byteLength, checksumSha256: 'sum', objectVersionId: 'v1',
+        }),
+        createDownloadUrl: async () => ({ url: 'https://signed.example/sig.png', expiresAt: new Date() }),
       } as any,
     };
   }
 
-  it('creates pending assets and is idempotent by LINE message id', async () => {
-    const { repo } = makeSigRepo();
-    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit);
+  it('creates ACTIVE assets and is idempotent by LINE message id', async () => {
+    const { repo, storage } = makeSigRepo();
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage);
     const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
-    assert.equal(asset.status, 'PENDING_OWNER_APPROVAL');
+    assert.equal(asset.status, 'ACTIVE');
 
-    repo.findSignatureAssetByLineMessageId = async () => ({ id: 'sig-existing', status: 'PENDING_OWNER_APPROVAL' });
+    repo.findSignatureAssetByLineMessageId = async () => ({ id: 'sig-existing', status: 'ACTIVE' });
     const again = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-2', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
     assert.equal(again.id, 'sig-existing');
   });
 
-  it('only expense.signature.approve can activate, and only from pending', async () => {
-    const { repo, updates } = makeSigRepo();
-    const approve = new ApproveSignatureAssetUseCase(repo, audit);
-    await assert.rejects(() => approve.execute(ctx(['expense.signature.manage']), 'sig-1'), /expense.signature.approve/);
-    await approve.execute(ctx(['expense.signature.approve']), 'sig-1');
-    assert.equal(updates.at(-1).status, 'ACTIVE');
-
-    const activeRepo = makeSigRepo('ACTIVE').repo;
-    const approveActive = new ApproveSignatureAssetUseCase(activeRepo, audit);
-    await assert.rejects(() => approveActive.execute(ctx(['expense.signature.approve']), 'sig-1'), /Cannot approve/);
+  // Owner decision 2026-08-20: the acts of signing are what authorise keeping a signature. A payer
+  // holding only `expense.review` used to be refused outright, which is the F8 dead end at its root.
+  it('accepts either signing act, or housekeeping, and refuses anyone else', async () => {
+    for (const permission of ['expense.review', 'expense.confirm', 'expense.signature.manage']) {
+      const { repo, storage } = makeSigRepo();
+      const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage)
+        .execute(ctx([permission]), { attachmentId: 'att-1' });
+      assert.equal(asset.status, 'ACTIVE', permission);
+    }
+    const denied = makeSigRepo();
+    await assert.rejects(
+      () => new CreateSignatureAssetUseCase(denied.repo, completeUpload, audit, denied.storage)
+        .execute(ctx(['expense.read', 'expense.signature.approve']), { attachmentId: 'att-1' }),
+      /expense.signature.manage/,
+    );
   });
 
-  it('reject requires a reason', async () => {
-    const { repo } = makeSigRepo();
-    const reject = new RejectSignatureAssetUseCase(repo, audit);
-    await assert.rejects(() => reject.execute(ctx(['expense.signature.approve']), 'sig-1', ' '), /reason/i);
+  // A13: the read above loses the race under redelivery, so the unique index has to be the one that
+  // decides — and losing it must return the winner rather than surface a Prisma error in LINE.
+  it('returns the winning asset when the unique index rejects a raced LINE redelivery', async () => {
+    const { repo, storage } = makeSigRepo();
+    repo.createSignatureAsset = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
+    let lookups = 0;
+    repo.findSignatureAssetByLineMessageId = async () => (lookups++ === 0 ? null : { id: 'sig-winner', status: 'ACTIVE' });
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage);
+    const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
+      attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
+    });
+    assert.equal(asset.id, 'sig-winner');
+
+    // A web asset carries no lineMessageId, so a P2002 there is a real fault and must still throw.
+    repo.createSignatureAsset = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
+    await assert.rejects(() => useCase.execute(ctx(['expense.signature.manage']), { attachmentId: 'att-2' }), /unique/);
+  });
+
+  // Owner decision 2026-08-20 (superseding D10/D11) + A14. Staff and owner land in exactly the same
+  // place, which is the whole point: a signature is personal, so nobody is waiting on anybody.
+  it('activates every signature at creation, by its own submitter, with no approval row', async () => {
+    for (const permissions of [['expense.signature.manage', 'expense.signature.approve'], ['expense.review']]) {
+      const harness = makeSigRepo();
+      const audits: any[] = [];
+      const asset = await new CreateSignatureAssetUseCase(
+        harness.repo, completeUpload, { log: async (entry: any) => { audits.push(entry); } } as any, harness.storage,
+      ).execute(ctx(permissions, 'line'), { attachmentId: 'att-1', submittedFromChannel: 'LINE' });
+
+      assert.equal(asset.status, 'ACTIVE', permissions.join('+'));
+      assert.equal(harness.created[0].status, 'ACTIVE');
+      assert.equal(harness.created[0].approvedByUserId, 'user-1', 'activated by the person whose signature it is');
+      assert.ok(harness.created[0].approvedAt instanceof Date);
+      // A14: a LINE asset used to arrive with no label at all.
+      assert.match(harness.created[0].label, /^สมชาย ใจดี \d{4}-\d{2}-\d{2}$/);
+      // One row, and it is not an approval: there is no second party to record.
+      assert.deepEqual(audits.map((entry) => entry.action), ['expense.signature.create']);
+      assert.equal(audits[0].metadataJson.activationMode, 'personal');
+      assert.equal(audits[0].metadataJson.status, 'ACTIVE');
+    }
+
+    const labelled = makeSigRepo();
+    await new CreateSignatureAssetUseCase(labelled.repo, completeUpload, audit, labelled.storage)
+      .execute(ctx(['expense.confirm'], 'line'), { attachmentId: 'att-1', label: 'ลายเซ็นพนักงาน', submittedFromChannel: 'LINE' });
+    assert.equal(labelled.created[0].label, 'ลายเซ็นพนักงาน');
+  });
+
+  // A5 + A9: one server-side pass fixes both the alpha channel LINE JPEG never had and the size
+  // certification refuses, and it lands as the derived half of the same two-attachment shape the
+  // web canvas produces — without demoting the asset it was just created with.
+  it('derives a transparent, under-budget image at creation and leaves the new asset usable', async () => {
+    const oversized = await noisyJpeg();
+    assert.ok(oversized.byteLength > SIGNATURE_MAX_BYTES, 'fixture must exceed the certify budget');
+    const { repo, storage, updates, generated } = makeSigRepo('ACTIVE', { sourceBytes: oversized });
+    const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage)
+      .execute(ctx(['expense.signature.manage'], 'line'), { attachmentId: 'att-raw', submittedFromChannel: 'LINE' });
+
+    assert.equal(generated.length, 1);
+    assert.ok(generated[0].byteSize <= SIGNATURE_MAX_BYTES, `derived render is ${generated[0].byteSize} bytes`);
+    assert.ok(['image/png', 'image/jpeg'].includes(generated[0].mimeType));
+    assert.equal(updates.at(-1).derivedAttachmentId, 'att-derived');
+    // Only the derivative is written; the status the asset was created with is never touched again.
+    assert.equal(updates.at(-1).status, undefined);
+    assert.equal(asset.status, 'ACTIVE');
+  });
+
+  // F3: the case a per-channel rule silently fails. A warm phone photo keeps its blue deficit
+  // through a shared-scale normalise, so an all-three-channels test erased ~0.1% of the paper and
+  // the certificate still got an opaque white rectangle.
+  it('clears warm-cast paper and keeps the ink, and does the same for neutral paper', async () => {
+    for (const [label, paper] of [
+      ['warm cast (blue-deficient), noisy', [246, 247, 236]],
+      ['neutral, noisy', [244, 244, 244]],
+    ] as Array<[string, [number, number, number]]>) {
+      const cleaned = await normalizeSignatureImage(await inkOnPaper(paper), 'image/jpeg', { removeBackground: true });
+      assert.equal(cleaned?.mimeType, 'image/png', label);
+      const { transparentShare, alphaAt, info } = await alphaProfile(cleaned!.bytes);
+      assert.ok(transparentShare >= 0.8, `${label}: only ${(transparentShare * 100).toFixed(1)}% transparent`);
+      assert.equal(alphaAt(2, 2), 0, `${label}: paper must become transparent`);
+      assert.equal(alphaAt(Math.floor(info.width / 2), Math.floor(info.height / 2)), 255, `${label}: ink must survive`);
+    }
+
+    const opaque = await normalizeSignatureImage(await inkOnPaper(), 'image/jpeg', { removeBackground: false });
+    assert.equal(opaque?.mimeType, 'image/jpeg');
+    assert.equal(await normalizeSignatureImage(Buffer.from('not an image'), 'image/jpeg', { removeBackground: true }), undefined);
+  });
+
+  // F4: an alpha PNG of a noisy photo can exceed the certify budget at every edge. Storing it would
+  // point the reusable-signature lookup at an image certification refuses outright, in preference
+  // to the original it would have accepted.
+  it('never returns a render the certify gate would refuse, and falls back to the opaque encode', async () => {
+    const noisy = await noisyJpeg();
+    const transparent = await normalizeSignatureImage(noisy, 'image/jpeg', { removeBackground: true });
+    assert.equal(transparent, undefined, 'an over-budget alpha PNG must not be returned');
+    const fallback = await normalizeSignatureImage(noisy, 'image/jpeg', { removeBackground: false });
+    assert.ok(fallback && fallback.bytes.byteLength <= SIGNATURE_MAX_BYTES, 'the opaque encode is the way under budget');
+    assert.equal(fallback!.mimeType, 'image/jpeg');
+  });
+
+  // F5: the web canvas shows the user both renditions and posts its own derived PNG. Deriving here
+  // too burns a second sharp pass on an attachment the client overwrites — and overrides a user who
+  // looked at the preview and chose to keep the background.
+  it('derives only for LINE; the web client owns that decision on its own channel', async () => {
+    const photo = await inkOnPaper();
+    for (const [channel, expected] of [['WEB', 0], ['LINE', 1]] as Array<['WEB' | 'LINE', number]>) {
+      const harness = makeSigRepo('ACTIVE', { sourceBytes: photo });
+      await new CreateSignatureAssetUseCase(harness.repo, completeUpload, audit, harness.storage)
+        .execute(ctx(['expense.signature.manage']), { attachmentId: 'att-raw', submittedFromChannel: channel });
+      assert.equal(harness.generated.length, expected, `${channel} derive count`);
+    }
+  });
+
+  // Housekeeping is the one thing a second party still does to a personal signature: retire it.
+  // Own-vs-any is the whole rule — a signer archives their own, `expense.signature.manage` archives
+  // anyone's, and the audit row says which of the two happened.
+  it('lets a signer archive their own signature and only a manage holder archive someone else’s', async () => {
+    const own = makeSigRepo('ACTIVE', { submittedByUserId: 'user-1' });
+    const ownAudits: any[] = [];
+    await new ArchiveSignatureAssetUseCase(own.repo, { log: async (entry: any) => { ownAudits.push(entry); } } as any)
+      .execute(ctx(['expense.review']), 'sig-1');
+    assert.equal(own.updates.at(-1).status, 'ARCHIVED');
+    assert.ok(own.updates.at(-1).archivedAt instanceof Date);
+    assert.equal(ownAudits[0].metadataJson.housekeeping, false);
+
+    const other = makeSigRepo('ACTIVE', { submittedByUserId: 'uploader-1' });
+    await assert.rejects(
+      () => new ArchiveSignatureAssetUseCase(other.repo, audit).execute(ctx(['expense.review', 'expense.confirm']), 'sig-1'),
+      /expense.signature.manage/,
+    );
+    assert.deepEqual(other.updates, [], 'a refused archive writes nothing');
+
+    const keeper = makeSigRepo('ACTIVE', { submittedByUserId: 'uploader-1' });
+    const keeperAudits: any[] = [];
+    await new ArchiveSignatureAssetUseCase(keeper.repo, { log: async (entry: any) => { keeperAudits.push(entry); } } as any)
+      .execute(ctx(['expense.signature.manage']), 'sig-1');
+    assert.equal(keeper.updates.at(-1).status, 'ARCHIVED');
+    assert.equal(keeperAudits[0].metadataJson.housekeeping, true);
+    assert.equal(keeperAudits[0].metadataJson.submittedByUserId, 'uploader-1');
+
+    const stranger = makeSigRepo('ACTIVE');
+    await assert.rejects(
+      () => new ArchiveSignatureAssetUseCase(stranger.repo, audit).execute(ctx(['expense.read']), 'sig-1'),
+      /expense.signature.manage/,
+    );
+  });
+
+  // A7 + the personal-signature decision: the image belongs to exactly one person. A housekeeping
+  // holder gets other people's ROWS so they can retire them, and never their pictures.
+  it('previews only the caller’s own signature, and hands housekeeping rows names instead of images', async () => {
+    const { repo, storage } = makeSigRepo();
+    const mints: any[] = [];
+    const audits: any[] = [];
+    const listArgs: any[] = [];
+    const auditing = { log: async (entry: any) => { audits.push(entry); } } as any;
+    storage.createDownloadUrl = async (input: any) => { mints.push(input); return { url: 'https://signed.example/sig.png', expiresAt: new Date() }; };
+    repo.listSignatureAssets = async (...args: any[]) => { listArgs.push(args); return [
+      { id: 'sig-mine', status: 'ACTIVE', submittedByUserId: 'user-1', originalAttachmentId: 'att-1', derivedAttachmentId: 'att-derived' },
+      { id: 'sig-theirs', status: 'ACTIVE', submittedByUserId: 'uploader-1', originalAttachmentId: 'att-2', derivedAttachmentId: null },
+    ]; };
+    repo.listUserDisplayNames = async () => new Map([['uploader-1', 'สมหญิง พนักงาน']]);
+    repo.findActiveAttachmentObject = async (_c: string, id: string) => ({ bucket: 'b', objectKey: id, mimeType: 'image/png', checksumSha256: null, byteSize: 10, originalFileName: 'x.png' });
+    const useCase = new ListSignatureAssetsUseCase(repo, storage, auditing);
+
+    const keeper = await useCase.execute(ctx(['expense.signature.manage']));
+    assert.equal(keeper[0]!.previewUrl, 'https://signed.example/sig.png', 'own row keeps its picture');
+    assert.equal(keeper[0]!.submittedByDisplayName, null);
+    assert.equal(keeper[0]!.originalAttachmentId, 'att-1', 'own row still names its own bytes');
+    assert.equal(keeper[0]!.derivedAttachmentId, 'att-derived');
+    assert.equal(keeper[1]!.previewUrl, null, 'housekeeping never mints another person’s signature');
+    assert.equal(keeper[1]!.submittedByDisplayName, 'สมหญิง พนักงาน', 'and has to say whose it is');
+    // Withholding the URL was not enough on its own: an attachment id is a route to the same image
+    // through GET /attachments/:id/download-url, which every housekeeping role can call. The row a
+    // manage holder may retire must not name the bytes behind it at all.
+    assert.equal('originalAttachmentId' in keeper[1]!, false, 'no id to hand the generic download endpoint');
+    assert.equal('derivedAttachmentId' in keeper[1]!, false);
+    // F6: this path skips the audited generic download gate, so it writes its own row — naming the
+    // asset and the attachment, never the URL or its token.
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, 'expense.signature.preview_url.create');
+    assert.equal(audits[0].targetId, 'sig-mine');
+    assert.equal(audits[0].metadataJson.attachmentId, 'att-derived');
+    assert.equal(JSON.stringify(audits[0]).includes('signed.example'), false);
+    // F14: a preview with no filename saves as "download".
+    assert.equal(mints[0].fileName, 'x.png');
+    assert.equal(mints[0].disposition, 'inline');
+    assert.equal(listArgs[0][2], undefined, 'housekeeping reads the whole company');
+
+    // Without housekeeping the query itself is narrowed to the caller: other people's rows are not
+    // filtered out of a response, they are never read.
+    const signer = await useCase.execute(ctx(['expense.review']));
+    assert.equal(listArgs[1][2], 'user-1');
+    assert.equal(signer.find((asset) => asset.id === 'sig-theirs')!.previewUrl, null);
+    assert.equal(signer.find((asset) => asset.id === 'sig-theirs')!.submittedByDisplayName, null, 'no name lookup without housekeeping');
+
+    await assert.rejects(() => useCase.execute(ctx(['expense.read', 'expense.signature.approve'])), /expense.signature.manage/);
   });
 
   it('fill requires web channel, review permission, and an ACTIVE signature', async () => {
-    const pending = makeSigRepo('PENDING_OWNER_APPROVAL');
-    const fillPending = new FillSignatureUseCase(pending.repo, completeUpload, audit);
+    const archived = makeSigRepo('ARCHIVED');
+    const fillArchived = new FillSignatureUseCase(archived.repo, completeUpload, audit);
     await assert.rejects(
-      () => fillPending.execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
-      /ACTIVE approved signatures/,
+      () => fillArchived.execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
+      /ACTIVE signatures/,
     );
 
     const active = makeSigRepo('ACTIVE');

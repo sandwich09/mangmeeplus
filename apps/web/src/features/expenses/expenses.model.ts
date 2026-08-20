@@ -739,6 +739,16 @@ export const ATTACHMENT_PURPOSE_LABELS: Record<string, string> = {
   'expense.signature.asset': 'รูปลายเซ็น',
 };
 
+/** R11: the hand-signed scan is linked with the certification-chain purpose that system-rendered
+ *  artifacts use, so the purpose alone would call a photograph of real ink “เอกสารที่ผ่านการตรวจ”.
+ *  It stays visible — that photo is the only place the signatures exist — under its own name. */
+export function isWetSignedScanAttachment(
+  attachmentId: string,
+  evidence: { wetSignedScanAttachmentId?: string | null } | null | undefined,
+): boolean {
+  return Boolean(evidence?.wetSignedScanAttachmentId) && evidence!.wetSignedScanAttachmentId === attachmentId;
+}
+
 export const MIME_TYPE_LABELS: Record<string, string> = {
   'application/pdf': 'เอกสาร PDF',
   'image/jpeg': 'รูปภาพ JPEG',
@@ -948,7 +958,6 @@ export type ExpenseCapabilities = {
   canResolveDuplicates: boolean;
   canManageCategories: boolean;
   canManageSignatures: boolean;
-  canApproveSignatures: boolean;
   canViewSharedEvidence: boolean;
   canExportPackage: boolean;
   canReadLedger: boolean;
@@ -972,7 +981,6 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
     canResolveDuplicates: has('expense.duplicate.resolve'),
     canManageCategories: has('expense.category.manage'),
     canManageSignatures: has('expense.signature.manage'),
-    canApproveSignatures: has('expense.signature.approve'),
     canViewSharedEvidence: has('expense.evidence.read'),
     // POST /accountant-package requires both expense.export AND expense.read.
     canExportPackage: has('expense.export') && has('expense.read'),
@@ -1093,7 +1101,10 @@ export function canAccessExpenseTab(tab: ExpensesTab, caps: ExpenseCapabilities)
     upload: caps.canUploadReceipts,
     manual: caps.canCreate,
     categories: caps.canManageCategories,
-    signatures: false, // feature-disabled: no consumer for approved signatures yet (owner decision 2026-08-05)
+    // "ลายเซ็นของฉัน" (owner decision 2026-08-20): a signature is personal, so the screen belongs
+    // to whoever performs either signing act — plus the housekeeping holder, who also sees other
+    // people's rows there.
+    signatures: caps.canReview || caps.canConfirm || caps.canManageSignatures,
     evidence: caps.canViewSharedEvidence,
   };
   return allowed[tab];

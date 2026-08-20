@@ -433,3 +433,29 @@ Bedrock **ไม่เคยเป็นต้นเหตุ** — $3.20 ทั
 และสูงกว่า เหตุผลที่ pin สองทางไม่ใช่ทางเดียว: `ensure_log_group()` เขียนค่าลง log group ทุกกลุ่ม
 ที่มันแตะในทุก deploy ถ้าปล่อยไม่ pin ค่าที่ใครก็ตามใส่มาจะกลายเป็นนโยบายใหม่ในรอบถัดไป
 โดยไม่มีใครตัดสินใจ — ซึ่งเป็นสาเหตุที่ทำให้ค่าจริงกับเอกสารหลุดจากกันตั้งแต่แรก
+
+## 8. Delivery links ของใบรับรองแทนใบเสร็จ (`/d/{token}`) — สิ่งที่ ops ต้องตั้งก่อนปล่อยฟีเจอร์
+
+Feature branch `codex/line-substitute-receipt-assisted-issuance` ส่งเอกสารเข้า LINE เป็นลิงก์
+`{web}/d/{token}` ที่ 302 ไปยัง presigned GET ของ **สำเนาชั่วคราว** ใน bucket แนบไฟล์เดิม
+(`S3_BUCKET`) ใต้ prefix `line-delivery/` — key เป็น base64url สุ่ม 43 ตัวอักษร ไม่มี id บริษัท/
+เอกสาร/ผู้ใช้/วันที่ปน ต้นฉบับไม่ถูกย้ายหรือลบ
+
+สิ่งที่ระบบ **ไม่ทำเอง** และต้องตั้งที่ AWS ก่อนใช้จริง:
+
+1. **Lifecycle rule บน prefix `line-delivery/`**: expire ที่ **3 วัน** (อายุ token ตายตัว 72 ชม.
+   ฝั่งแอปจะปฏิเสธเองหลังหมดอายุ — lifecycle มีไว้ลบ bytes) และเพราะ bucket เปิด versioning
+   (`putObject` ของแอป assert VersionId) ต้องตั้ง **NoncurrentVersionExpiration (1 วัน)** ด้วย
+   ไม่งั้นการ revoke (ลบ object → เกิด delete marker) จะทิ้ง noncurrent version ที่มีข้อมูลส่วน
+   บุคคลค้างไว้ตลอด บวก **AbortIncompleteMultipartUpload** กัน marker สะสม
+2. **IAM**: role ที่แจก presigned GET ต้อง **ไม่มี `s3:ListBucket`** บน prefix นี้ (spec §12.3);
+   create ใช้ `s3:PutObject`, revoke ใช้ `s3:DeleteObject`
+3. Presigned GET อายุ **120 วินาที**, `disposition: inline`, ชื่อไฟล์กลาง `substitute-receipt.pdf`
+4. **Local dev**: `LocalStorageAdapter` ไม่มี lifecycle เลย — สำเนาใน `$TMPDIR/watchdog-bms-local-storage/`
+   อยู่จนกว่าจะล้าง temp เอง และมัน ignore อายุ presign (คืน path relative บน API origin)
+5. **Platform access = CLOSED**: route `/v1/document-delivery/:token` เป็น `@Public()` แต่ไม่อยู่ใน
+   `CLOSED_PUBLIC_PATHS` → ช่วงปิดระบบ ลิงก์จะขึ้นหน้า "ลิงก์นี้ใช้ไม่ได้แล้ว" แทนเอกสาร
+   (ตั้งใจ fail-closed; ถ้า owner อยากให้ลิงก์รอดช่วงปิดระบบ ให้เพิ่ม path เข้า allowlist นั้น)
+6. **Log hygiene**: path ที่มี token ถูก mask เป็น `/v1/document-delivery/:token` ในทุกจุดที่ log
+   path (request logger / exception filter / rate-limit security event) — ถ้าเพิ่มจุด log ใหม่
+   ที่แตะ `req.path` ต้องผ่าน `maskLoggedPath()` เสมอ token เป็น bearer credential ของเอกสารกฎหมาย

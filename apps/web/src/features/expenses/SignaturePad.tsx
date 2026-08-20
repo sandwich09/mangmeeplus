@@ -27,7 +27,8 @@ export function SignaturePad({
   onConfirm,
 }: {
   busy: boolean;
-  onChange: () => void;
+  /** Reports whether the pad now holds unconfirmed strokes, so the caller can keep submit blocked. */
+  onChange: (hasStrokes: boolean) => void;
   onConfirm: (file: File, preview: { original: string; cleaned: string }) => void;
 }) {
   const locale = useWorkspaceLocale();
@@ -110,7 +111,7 @@ export function SignaturePad({
     strokesRef.current.push([pointFromEvent(event)]);
     setEmpty(isSignaturePadEmpty(strokesRef.current));
     setError(null);
-    onChange();
+    onChange(!isSignaturePadEmpty(strokesRef.current));
     paint();
   };
 
@@ -133,7 +134,7 @@ export function SignaturePad({
     activePointerRef.current = null;
     setEmpty(true);
     setError(null);
-    onChange();
+    onChange(false);
     paint();
   };
 

@@ -19,6 +19,7 @@ No authorization behavior changes; this narrows what the UI offers to what the s
 ## 3. Source Docs
 
 - Related specs: [[specs/employee-access-role-management-spec|10C Spec]] (§ role-grant subset rule), [[specs/employee-access-role-management-v2-phase1-spec|10C+ Phase 1 Spec]] (granter-scope filtering, `grantableByCurrentUser` precedent on capability packs), [[specs/branch-scope-visibility-spec|Branch Scope Visibility Spec]] (R3 "show only what you may pick" precedent), [[specs/permission-matrix|Permission Matrix]]
+- Cache decision: [[adr/0012-private-no-store-api-default|ADR 0012]]
 - Related plans: [[plans/employee-access-role-picker-scope-plan|Employee Access Role Picker Scope Plan]]
 - Discovery/task memory: `docs/agent-memory/employee-role-dropdown-scope.md`
 - Authorization source of truth: `roleGrantViolation` in `apps/api/src/modules/employee-access/domain/logic/employee-access.logic.ts` and the self/owner-target checks in `update-employee.use-case.ts`.
@@ -52,7 +53,7 @@ No authorization behavior changes; this narrows what the UI offers to what the s
 ## 7. Business Rules
 
 - **R1 — Grantable-only options.** Both assignment pickers (access-overview role listbox; wizard role chips) render only roles the requesting user can grant. Grantability = the API's own rule set: role is ACTIVE; key ∉ {OWNER, SYSTEM_ADMIN}; requester is OWNER, or (a) the role's raw permission keys are a subset of the requester's effective permissions, (b) FINANCE/ACCOUNTANT additionally require `access.role.financial.assign`, and (c) people-manager roles (`PRIVILEGED_GRANT_KEYS`) additionally require `access.role.manage`.
-- **R2 — Server-computed flag.** `GET /companies/:id/settings/roles` returns `assignableByCurrentUser: boolean` per role, computed by reusing `roleGrantViolation` per role with the requester's context. The web filters on the flag and never re-implements permission math (mirrors capability packs' `grantableByCurrentUser`). This keeps entitlement filtering consistent automatically (requester permissions are entitlement-filtered per Item 10A AC-FE-2, while role rows are raw — the server already makes that call today).
+- **R2 — Server-computed flag and fresh contract.** `GET /companies/:id/settings/roles` returns `assignableByCurrentUser: boolean` per role, computed by reusing `roleGrantViolation` per role with the requester's context. The web filters on the flag and never re-implements permission math (mirrors capability packs' `grantableByCurrentUser`). Because this catalog is session/tenant/permission-contextual, API responses default to `Cache-Control: private, no-store, max-age=0`, the browser request uses `cache: 'no-store'`, and a missing boolean is a visible invalid-response error rather than an empty role state. This keeps entitlement filtering consistent automatically (requester permissions are entitlement-filtered per Item 10A AC-FE-2, while role rows are raw — the server already makes that call today).
 - **R3 — Current role pinned.** The target employee's current role is always shown as the selected value and remains selectable (re-selecting is a no-op; the API only evaluates grants when the set actually changes). It is never offered for OTHER employees if not grantable.
 - **R4 — Self row is read-only.** The API always rejects changing one's own roles, so on the viewer's own row the picker renders as a read-only badge (same treatment as the OWNER row) with the caption "ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้". Same rule in the wizard when the edit target is the viewer.
 - **R5 — Owner rows offer no edit entry.** Hide "แก้ไขข้อมูลพนักงาน" on OWNER rows in access-overview: the wizard's save payload always carries `roleIds` and the API rejects any role write on an OWNER target, so today the action can only end in a 403 (bug B1). (The role picker on owner rows is already a read-only badge.)
@@ -84,8 +85,9 @@ No authorization behavior changes; this narrows what the UI offers to what the s
 
 - Endpoint: `GET /v1/companies/:companyId/settings/roles` (existing).
 - Change: each `RoleSummary` gains `assignableByCurrentUser`, computed per role as `roleGrantViolation([role], ctx.permissions, ctx.roles.includes('OWNER')) === undefined` (plus ACTIVE-status check).
+- Cache contract: browser API responses are private/non-storable by default and API ETags are disabled; intentionally public cacheable routes must override the policy explicitly. Next/static asset caching is a separate web-process policy and is unchanged.
 - Validation/idempotency: read-only; no change.
-- Error cases: unchanged.
+- Error cases: a role catalog missing `assignableByCurrentUser` is rejected by the web as `invalid_response` and shown through the existing load-error state.
 
 ## 12. UI Behavior
 
@@ -123,6 +125,7 @@ No authorization behavior changes; this narrows what the UI offers to what the s
 
 - Unit (api): `list-roles.use-case` flag matrix — owner / default admin / admin+role.manage / manager / financial roles / subset violation / inactive role.
 - Unit (web): picker predicate + self-row/owner-row/degenerate-list rendering logic (pure helpers).
+- Contract/cache regression: the web rejects the pre-flag role shape; API middleware emits private `no-store` by default while preserving an explicit route override.
 - Permission: e2e harness `pageAs` (`e2e/_roles-reference.spec.ts`) — MANAGER and ADMIN see filtered pickers; existing `settings.spec.ts` access-overview flow stays green.
 - Edge case: role-change 403 path refetches (mock revocation).
 

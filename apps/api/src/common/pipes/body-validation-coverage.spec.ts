@@ -58,13 +58,13 @@ export function unvalidatedBodyParams(): Array<{ file: string; param: string; ty
  * Ordering is by module so a conversion pass can take one module at a time — the DTO for a
  * controller is usually one file, and the fields come from the use case it calls.
  *
- * expenses went 28 -> 16 and transaction-tax 16 -> 11: their inline object literals became classes
- * in expense.dtos.ts and transaction-tax.dtos.ts. What is left in both is imported contract types,
- * whose field sets have to be read from the contract before they can be declared — a guess there
- * costs a 400 on a legitimate request.
+ * expenses went 28 -> 15 and transaction-tax 16 -> 11: their inline object literals became classes
+ * in expense.dtos.ts and transaction-tax.dtos.ts (the signature-create body was the latest, a
+ * mass-assignment fix). What is left in both is imported contract types, whose field sets have to be
+ * read from the contract before they can be declared — a guess there costs a 400 on a legitimate request.
  */
 const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
-  'modules/expenses/presentation/http/expense.controller.ts': 16,
+  'modules/expenses/presentation/http/expense.controller.ts': 15,
   'modules/tax/presentation/http/transaction-tax.controller.ts': 11,
   'modules/crm/presentation/http/crm-customer.controller.ts': 9,
   'modules/tax/presentation/http/tax.controller.ts': 9,
@@ -75,7 +75,7 @@ const KNOWN_UNVALIDATED_BY_FILE: Readonly<Record<string, number>> = {
 };
 
 /** Total across every controller, including the long tail not listed individually above. */
-const KNOWN_UNVALIDATED_TOTAL = 150;
+const KNOWN_UNVALIDATED_TOTAL = 149;
 
 describe('request body validation coverage (audit H-23)', () => {
   it('does not grow the unvalidated-body backlog', () => {

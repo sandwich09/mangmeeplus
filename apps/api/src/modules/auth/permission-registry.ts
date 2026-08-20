@@ -170,7 +170,6 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'expense.ai.verify',                   description: 'Run AI verification on receipts',       riskLevel: 'MEDIUM' },
   { key: 'expense.category.manage',             description: 'Manage expense categories',             riskLevel: 'MEDIUM' },
   { key: 'expense.signature.manage',            description: 'Upload/manage company signature assets', riskLevel: 'HIGH' },
-  { key: 'expense.signature.approve',           description: 'Approve company signature assets (owner-level)', riskLevel: 'HIGH' },
   { key: 'expense.export',                      description: 'Export expense data',                   riskLevel: 'MEDIUM' },
   // Item 11 tax permissions
   { key: 'tax.profile.read',            description: 'Read company tax profile',              riskLevel: 'LOW' },

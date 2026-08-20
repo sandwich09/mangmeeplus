@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import sharp from 'sharp';
 
 const A4_WIDTH = 595.28;
@@ -172,12 +172,114 @@ function printableDocumentNumber(value: string | undefined): string | null {
   return normalized.length > 48 ? `${normalized.slice(0, 45)}...` : normalized;
 }
 
+/**
+ * R11 — the issued artifact of the PAPER route: the scan of the hand-signed sheet first, then the
+ * system attestation page. The scan is reproduced as-is; only the attestation is rendered, and it
+ * goes through the same rasterizer (and therefore the same Thai-font guard) as every other page.
+ *
+ * No new dependency: `pdf-lib` already embeds JPEG/PNG and copies pages out of a source PDF, which
+ * covers every media type the intake accepts.
+ */
+export async function renderSubstituteReceiptPaperArtifactPdf(
+  scan: { bytes: Buffer; mimeType: string },
+  attestationSvg: Buffer,
+  documentNumber?: string,
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  await addWetSignedScanPages(pdf, scan);
+  // The attestation is rendered UNSTAMPED here and the whole document is stamped below, so the scan
+  // pages and the attestation carry one identical mark instead of two sizes of the same word.
+  const attestation = await PDFDocument.load(
+    await renderSubstituteReceiptPdf(attestationSvg, documentNumber, { omitPageFooter: true }),
+  );
+  const attestationPages = await pdf.copyPages(attestation, attestation.getPageIndices());
+  for (const page of attestationPages) pdf.addPage(page);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const pages = pdf.getPages();
+  const safeDocumentNumber = printableDocumentNumber(documentNumber);
+  const stamp = options.stateStamp;
+  // One size for the whole document: the narrowest page decides, so nothing overflows anywhere.
+  const stampSize = stamp
+    ? Math.min(96, ...pages.map((page) => (page.getSize().width - MARGIN * 2)
+      / (font.widthOfTextAtSize(stamp, 1) || 1)))
+    : 0;
+  pages.forEach((page, index) => {
+    const { width, height } = page.getSize();
+    if (stamp) {
+      page.drawText(stamp, {
+        x: (width - font.widthOfTextAtSize(stamp, stampSize)) / 2,
+        y: height / 2,
+        size: stampSize,
+        font,
+        color: rgb(0.78, 0.03, 0.03),
+        opacity: 0.32,
+      });
+    }
+    // R11 identity: every page of a composed artifact says which document it belongs to and where
+    // it sits, so a scan page separated from the attestation is still traceable — and the
+    // attestation's own "Page 1/1" is corrected to its real position in the composed file.
+    const label = `Page ${index + 1}/${pages.length}`;
+    const identity = safeDocumentNumber ? `ID: ${safeDocumentNumber}` : 'ID: -';
+    page.drawText(identity, { x: MARGIN, y: 7, size: 7.5, font, color: rgb(0.35, 0.35, 0.35) });
+    page.drawText(label, {
+      x: width - MARGIN - font.widthOfTextAtSize(label, 7.5), y: 7, size: 7.5, font, color: rgb(0.35, 0.35, 0.35),
+    });
+  });
+  pdf.setTitle(safeDocumentNumber ?? 'substitute-receipt');
+  pdf.setSubject(`Wet-signed scan + system attestation${stamp ? ` | State: ${stamp}` : ''}`);
+  return Buffer.from(await pdf.save());
+}
+
+/** Reproduces the scan into `pdf` and returns the pages it added. Every failure mode a stored scan
+ *  can have — undecodable bytes, an encrypted PDF, an unsupported type, more pages than the artifact
+ *  may hold — surfaces HERE, which is why `substituteWetSignedScanRejection` runs this same path at
+ *  link time: an artifact that cannot be composed must be refused before it is ever issued. */
+async function addWetSignedScanPages(pdf: PDFDocument, scan: { bytes: Buffer; mimeType: string }): Promise<PDFPage[]> {
+  if (scan.mimeType === 'application/pdf') {
+    const source = await PDFDocument.load(scan.bytes);
+    // +1 for the attestation page the composed artifact always ends with.
+    if (source.getPageCount() + 1 > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) {
+      throw new Error(`Substitute-receipt PDF exceeds the ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit.`);
+    }
+    return (await pdf.copyPages(source, source.getPageIndices())).map((page) => pdf.addPage(page));
+  }
+  if (scan.mimeType !== 'image/jpeg' && scan.mimeType !== 'image/png') {
+    throw new Error('A wet-signed scan must be a JPEG, PNG, or PDF.');
+  }
+  const image = scan.mimeType === 'image/jpeg' ? await pdf.embedJpg(scan.bytes) : await pdf.embedPng(scan.bytes);
+  const page = pdf.addPage([A4_WIDTH, A4_HEIGHT]);
+  const scale = Math.min(CONTENT_WIDTH / image.width, CONTENT_HEIGHT / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  page.drawImage(image, { x: (A4_WIDTH - width) / 2, y: A4_HEIGHT - MARGIN - height, width, height });
+  return [page];
+}
+
+/**
+ * R11 gate, run BEFORE a scan is linked: returns a human reason when these bytes could never be
+ * composed into the issued artifact, or `undefined` when they can. Linking an uncomposable scan is
+ * the worst available outcome — it certifies and issues cleanly, and then every download of the
+ * finished legal document fails with no way back.
+ */
+export async function substituteWetSignedScanRejection(scan: { bytes: Buffer; mimeType: string }): Promise<string | undefined> {
+  try {
+    await addWetSignedScanPages(await PDFDocument.create(), scan);
+    return undefined;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return /safety limit|must be a JPEG/.test(reason)
+      ? reason
+      : `The scanned form cannot be read as a printable document (${reason.slice(0, 120)}).`;
+  }
+}
+
 /** `documentNumber` is passed in rather than parsed back out of the SVG: the caller already holds the
  * evidence row, and scraping rendered text would break silently the next time the layout changes. */
 export async function renderSubstituteReceiptPdf(
   svg: Buffer,
   documentNumber?: string,
-  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED' | 'UNSIGNED'; omitPageFooter?: boolean } = {},
 ): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
@@ -251,6 +353,9 @@ export async function renderSubstituteReceiptPdf(
         opacity: 0.32,
       });
     }
+    // Composed into a larger artifact this page is not page 1 of 1, and stamping a wrong position
+    // is worse than stamping none: the caller re-foots every page once it knows the real order.
+    if (options.omitPageFooter) continue;
     const pageLabel = `Page ${index + 1}/${slices.length}`;
     page.drawText(identity, { x: MARGIN, y: 17, size: stampSize, font: stampFont, color: rgb(0.35, 0.35, 0.35) });
     page.drawText(pageLabel, {

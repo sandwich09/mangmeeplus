@@ -9,17 +9,40 @@ const ctx = {
   companyId: 'co-1', userId: 'owner-1', requestId: 'req-1', permissions: ['company.setup.manage'],
 } as any;
 
+/** A8 mints a signed inline URL for the caller's own reusable signature; nothing else in this
+ *  file touches storage. */
+const storage = {
+  createDownloadUrl: async () => ({ url: 'https://signed.example/signature.png', expiresAt: new Date() }),
+} as any;
+
+/** F6: every preview mint writes an audit row; these cases only need it to exist. */
+const audit = { log: async () => undefined } as any;
+
 describe('substitute receipt company policy', () => {
-  it('returns a ready owner-self strict default without a policy row', async () => {
+  it('returns a ready owner-self permissive cash default without a policy row', async () => {
+    let reusableSignature: unknown = null;
     const repo = {
       getSubstituteReceiptPolicy: async () => null,
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
+      findReusableSignatureAsset: async () => reusableSignature,
     } as any;
-    const result = await new GetSubstituteReceiptPolicyUseCase(repo).execute(ctx);
+    const result = await new GetSubstituteReceiptPolicyUseCase(repo, storage, audit).execute(ctx);
     assert.equal(result.configured, false);
     assert.equal(result.ready, true);
     assert.equal(result.approvalMode, 'OWNER_SELF');
-    assert.equal(result.cashEvidencePolicy, 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE');
+    // R6: the code default matches the schema default; an explicit row still wins.
+    assert.equal(result.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
+    const runtime = await new GetSubstituteReceiptPolicyUseCase(repo, storage, audit).executeRuntime(ctx);
+    assert.equal(runtime.cashEvidencePolicy, 'ALLOW_SUPPORTING_EVIDENCE_ONLY');
+    // R9: the signing UI asks for an upload only while this caller has no reusable signature.
+    assert.equal(runtime.hasReusableSignature, false);
+    // A8: with no signature there is nothing to show, and the field must not invent one.
+    assert.equal(runtime.reusableSignaturePreviewUrl, null);
+    reusableSignature = { id: 'att-library', bucket: 'b', objectKey: 'k', mimeType: 'image/png' };
+    const withSignature = await new GetSubstituteReceiptPolicyUseCase(repo, storage, audit).executeRuntime(ctx);
+    assert.equal(withSignature.hasReusableSignature, true);
+    // A8: “ใช้ลายเซ็นที่บันทึกไว้” now shows the image the certificate will carry.
+    assert.equal(withSignature.reusableSignaturePreviewUrl, 'https://signed.example/signature.png');
   });
 
   it('allows OWNER_SELF with no approvers and rejects an empty DESIGNATED_APPROVERS list', async () => {
@@ -38,7 +61,7 @@ describe('substitute receipt company policy', () => {
         };
       },
     } as any;
-    const get = new GetSubstituteReceiptPolicyUseCase(repo);
+    const get = new GetSubstituteReceiptPolicyUseCase(repo, storage, audit);
     const useCase = new UpdateSubstituteReceiptPolicyUseCase(repo, get, { log: async () => undefined } as any);
     const result = await useCase.execute(ctx, {
       approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
@@ -64,7 +87,7 @@ describe('substitute receipt company policy', () => {
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
       upsertSubstituteReceiptPolicy: async (input: any) => { saved = input; return policy; },
     } as any;
-    const get = new GetSubstituteReceiptPolicyUseCase(repo);
+    const get = new GetSubstituteReceiptPolicyUseCase(repo, storage, audit);
     const useCase = new UpdateSubstituteReceiptPolicyUseCase(repo, get, { log: async (entry: any) => { audited = entry; } } as any);
     await assert.rejects(() => useCase.execute(ctx, {
       approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['staff-1'], cashEvidencePolicy: 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',

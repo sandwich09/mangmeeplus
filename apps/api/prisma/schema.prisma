@@ -2066,6 +2066,20 @@ enum SubstituteReceiptEvidenceStatus {
   SUPERSEDED
 }
 
+// DIGITAL embeds a signature image in the rendered artifact; PAPER carries the ink on a photographed
+// sheet instead, so the issued artifact is that scan plus a system attestation page (spec R10/R11).
+enum SubstituteReceiptSignatureMode {
+  DIGITAL
+  PAPER
+}
+
+// Which surface reserved the document number (spec R7). LINE may prepare; it may never sign,
+// approve, issue, or download.
+enum SubstituteReceiptPreparedChannel {
+  WEB
+  LINE
+}
+
 enum ExpenseCashEvidencePolicy {
   REQUIRE_SEPARATE_PAYMENT_EVIDENCE
   ALLOW_SUPPORTING_EVIDENCE_ONLY
@@ -2408,13 +2422,14 @@ model ExpenseDuplicateCandidate {
   @@index([companyId, expenseId, status])
 }
 
-// Company-level reusable signature assets (item 09). Stored through shared
-// attachment primitives; only OWNER-level approval activates an asset.
+// Company-level reusable signature assets (item 09). Stored through shared attachment primitives.
+// Owner decision 2026-08-20: a signature is a PERSONAL asset, ACTIVE from creation by its own owner —
+// there is no approval step. PENDING_OWNER_APPROVAL is retained only so historical rows stay readable.
 model CompanySignatureAsset {
   id                   String                 @id @default(cuid())
   companyId            String
   label                String?
-  status               SignatureAssetStatus   @default(PENDING_OWNER_APPROVAL)
+  status               SignatureAssetStatus   @default(ACTIVE)
   originalAttachmentId String
   derivedAttachmentId  String?
   submittedByUserId    String
@@ -2431,8 +2446,8 @@ model CompanySignatureAsset {
   company              Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fills                SignatureFillRecord[]
 
+  @@unique([companyId, lineMessageId])
   @@index([companyId, status])
-  @@index([companyId, lineMessageId])
 }
 
 // Audit-backed record of an active signature filled into substitute receipt /
@@ -2497,6 +2512,10 @@ model ExpenseSubstituteReceiptEvidence {
   approvedAt                      DateTime?
   artifactAttachmentId            String?                         @unique
   checksumSha256                  String?
+  signatureMode                   SubstituteReceiptSignatureMode  @default(DIGITAL)
+  wetSignedScanAttachmentId       String?                         @unique
+  wetSignedScanChecksumSha256     String?
+  preparedFromChannel             SubstituteReceiptPreparedChannel @default(WEB)
   supersededAt                    DateTime?
   supersedeReason                 String?
   issuedByUserId                  String?
@@ -2522,7 +2541,7 @@ model ExpenseSubstituteReceiptPolicy {
   companyId                String                               @unique
   approverUserIds          Json
   approvalMode             ExpenseSubstituteReceiptApprovalMode @default(OWNER_SELF)
-  cashEvidencePolicy       ExpenseCashEvidencePolicy            @default(REQUIRE_SEPARATE_PAYMENT_EVIDENCE)
+  cashEvidencePolicy       ExpenseCashEvidencePolicy            @default(ALLOW_SUPPORTING_EVIDENCE_ONLY)
   cashEvidenceInstructions String?
   createdByUserId          String
   updatedByUserId          String
@@ -2531,6 +2550,35 @@ model ExpenseSubstituteReceiptPolicy {
   company                  Company                              @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, updatedAt])
+}
+
+enum DocumentDeliveryLinkKind {
+  ISSUED_PDF
+  UNSIGNED_FORM_PDF
+}
+
+/// Spec §12/R16: a delivery link is a credential, so the row holds only the SHA-256 of the token —
+/// the token itself is never stored and cannot be recovered from here. `tempObjectKey` points at an
+/// opaque COPY of the PDF under the `line-delivery/` prefix (§12.2: no identifier appears in the
+/// key); the source artifact is never moved or deleted. Deliberately relation-free: a link outlives
+/// nothing and must not add cascade semantics to Company/User/Evidence.
+model DocumentDeliveryLink {
+  id              String                   @id @default(cuid())
+  companyId       String
+  recipientUserId String
+  evidenceId      String
+  kind            DocumentDeliveryLinkKind
+  tokenHashSha256 String                   @unique
+  tempBucket      String
+  tempObjectKey   String
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  openCount       Int                      @default(0)
+  lastOpenedAt    DateTime?
+  createdByUserId String
+  createdAt       DateTime                 @default(now())
+
+  @@index([companyId, evidenceId, expiresAt])
 }
 
 // ─── Item 10: Double-Entry Ledger ─────────────────────────────────────────────
@@ -7198,21 +7246,26 @@ enum LineIntakePendingMediaStatus {
   RESOLVED_RECEIPT
   RESOLVED_ILLUSTRATION
   RESOLVED_MULTI_ENTRY_REVIEW
+  RESOLVED_SIGNATURE
   EXPIRED
 }
 
 model LineIntakePendingMedia {
-  id            String                       @id @default(cuid())
-  companyId     String
-  userId        String
-  lineMessageId String
-  attachmentId  String
-  caption       String?
-  mimeType      String
-  status        LineIntakePendingMediaStatus @default(PENDING)
-  expiresAt     DateTime
-  createdAt     DateTime                     @default(now())
-  updatedAt     DateTime                     @updatedAt
+  id                String                       @id @default(cuid())
+  companyId         String
+  userId            String
+  lineMessageId     String
+  attachmentId      String
+  caption           String?
+  mimeType          String
+  status            LineIntakePendingMediaStatus @default(PENDING)
+  /// Which question these bytes are waiting on, and the chat it was asked in. A numbered answer is
+  /// resolved against THIS, never against whatever question the current state would ask now — the
+  /// two lists differ, and reading "2" off the wrong list inverts the customer's answer.
+  askedQuestionJson Json?
+  expiresAt         DateTime
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
 
   @@unique([companyId, lineMessageId])
   @@index([companyId, userId, status])

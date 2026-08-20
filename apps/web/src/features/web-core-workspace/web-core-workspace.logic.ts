@@ -271,13 +271,23 @@ export function buildNavItems(
           tone: 'slate',
         });
       }
-      // Company-signature stamping is feature-disabled (owner decision 2026-08-05): approved
-      // assets had no consumer (the signature-fill step was never wired), so the menu entry is
-      // hidden until the stamping flow ships. API + data stay intact.
+      // Un-parked 2026-08-20 (owner decision), reversing the 2026-08-05 park: substitute-receipt
+      // certification consumes these assets. Since the personal-signature decision the screen is
+      // "ลายเซ็นของฉัน", so whoever performs either signing act reaches their own — plus the
+      // housekeeping holder, whose list is other people's rows.
       //
       // The nav is built here, not from FEATURE_CATALOG — that catalog only decides what a company may
       // buy. A submenu missing from this list simply does not exist for the user, however the catalog
       // is wired.
+      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.signature.manage'])) {
+        childItems.push({
+          key: 'expenses.signatures',
+          label: t('expenses.tab_signatures' as Parameters<typeof t>[0], locale),
+          href: `/companies/${companyId}/expenses/signatures`,
+          icon: iconMap.StampIcon,
+          tone: 'slate',
+        });
+      }
       if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own'])) {
         childItems.push({
           key: 'expenses.substitute_receipt',

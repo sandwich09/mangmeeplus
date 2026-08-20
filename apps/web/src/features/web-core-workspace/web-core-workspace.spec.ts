@@ -455,6 +455,8 @@ describe('buildNavItems', () => {
       'expenses.upload',
       'expenses.manual',
       'expenses.categories',
+      // Un-parked 2026-08-20 (owner decision): substitute receipts certify with these assets.
+      'expenses.signatures',
       'expenses.substitute_receipt',
       'expenses.substitute_receipt_policy',
       'expenses.evidence',
@@ -464,10 +466,32 @@ describe('buildNavItems', () => {
       '/companies/owner-company/expenses/upload',
       '/companies/owner-company/expenses/manual',
       '/companies/owner-company/expenses/categories',
+      '/companies/owner-company/expenses/signatures',
       '/companies/owner-company/expenses/substitute-receipts',
       '/companies/owner-company/settings/substitute-receipt',
       '/companies/owner-company/expenses/evidence',
     ]);
+  });
+
+  // "ลายเซ็นของฉัน" (owner decision 2026-08-20): the entry is where a signer keeps their own
+  // signature, so either signing act reaches it. `expense.signature.approve` opens nothing now —
+  // it gates a lifecycle that no longer exists.
+  it('gives the signature entry to a signer, and nothing to an approve-only holder', () => {
+    for (const permission of ['expense.confirm', 'expense.signature.manage']) {
+      const permissions = ['expense.read_own', permission];
+      const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+      const expenses = buildNavItems(modules, 'owner-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
+      assert.equal(
+        expenses?.subItems?.find((sub) => sub.key === 'expenses.signatures')?.href,
+        '/companies/owner-company/expenses/signatures',
+        permission,
+      );
+    }
+
+    const stale = ['expense.read_own', 'expense.signature.approve'];
+    const staleNav = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, stale), 'owner-company', 'th', {}, stale)
+      .find((nav) => nav.key === 'expenses');
+    assert.equal(staleNav?.subItems?.some((sub) => sub.key === 'expenses.signatures'), false);
   });
 
   it('shows only the list submenu to a read-only expense user', () => {

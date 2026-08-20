@@ -43,6 +43,22 @@ export class CreateDownloadUrlUseCase {
     if (await this.attachments.isSubstituteRawSignature({ id: existing.id, companyId: ctx.companyId })) {
       throw new ForbiddenException('Raw substitute-receipt signatures are never available through generic attachment downloads.');
     }
+    // A signature is a personal asset (owner decision 2026-08-20): only the person whose signature
+    // it is may ever fetch the image. The gate above covers only images a certificate already
+    // RECORDED, so a library asset that has not signed anything yet used to be downloadable by
+    // anyone holding `attachment.read` — which every housekeeping role holds, and housekeeping
+    // authorises deleting someone's signature, never looking at it. The owner's own preview does not
+    // come through here (it is minted by `signatureInlineUrl`), so this costs them nothing.
+    const signature = await this.attachments.findSignatureAssetOwner({ id: existing.id, companyId: ctx.companyId });
+    if (signature && signature.ownerUserId !== ctx.userId) {
+      void this.audit.log({
+        companyId: ctx.companyId, actorUserId: ctx.userId,
+        action: 'attachment.download_url.create', targetType: 'attachment', targetId: existing.id,
+        requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
+        metadataJson: { reason: 'personal_signature_not_owned' },
+      });
+      throw new ForbiddenException('A personal signature image is only available to the person it belongs to.');
+    }
 
     const signed = await this.storage.createDownloadUrl({
       bucket: existing.bucket,

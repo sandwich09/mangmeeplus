@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type {
   RequestContext,
   SubstituteReceiptPolicySettings,
@@ -6,7 +6,9 @@ import type {
   UpdateSubstituteReceiptPolicyInput,
 } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
+import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
+import { signatureInlineUrl } from './signature-asset.use-case';
 
 const CASH_POLICIES = new Set(['REQUIRE_SEPARATE_PAYMENT_EVIDENCE', 'ALLOW_SUPPORTING_EVIDENCE_ONLY']);
 const APPROVAL_MODES = new Set(['OWNER_SELF', 'DESIGNATED_APPROVERS']);
@@ -21,7 +23,11 @@ function parseInstructions(value: unknown): string | null {
 
 @Injectable()
 export class GetSubstituteReceiptPolicyUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository) {}
+  constructor(
+    private readonly repo: PrismaExpenseRepository,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly audit: AuditService,
+  ) {}
 
   async execute(ctx: RequestContext): Promise<SubstituteReceiptPolicySettings> {
     const [policy, candidates] = await Promise.all([
@@ -37,7 +43,7 @@ export class GetSubstituteReceiptPolicyUseCase {
       approvalMode,
       approverUserIds,
       invalidApproverUserIds: approverUserIds.filter((userId) => !candidateIds.has(userId)),
-      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
       approverCandidates: candidates,
       updatedByUserId: policy?.updatedByUserId ?? null,
@@ -46,14 +52,25 @@ export class GetSubstituteReceiptPolicyUseCase {
   }
 
   async executeRuntime(ctx: RequestContext): Promise<SubstituteReceiptRuntimePolicy> {
-    const policy = await this.repo.getSubstituteReceiptPolicy(ctx.companyId);
+    // R9: the signing UI asks for an upload only when this caller has no reusable signature yet.
+    const [policy, reusableSignature] = await Promise.all([
+      this.repo.getSubstituteReceiptPolicy(ctx.companyId),
+      this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId),
+    ]);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     return {
       configured: Boolean(policy),
       ready: approvalMode === 'OWNER_SELF' || (policy?.approverUserIds.length ?? 0) > 0,
       approvalMode,
-      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE',
+      cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
+      hasReusableSignature: Boolean(reusableSignature),
+      // A8: “ใช้ลายเซ็นที่บันทึกไว้” asked the signer to certify a legal document with an image they
+      // had never seen. This is that image — resolved for THIS caller only, by the same
+      // derived-first lookup that will certify with it, so no permission question arises.
+      reusableSignaturePreviewUrl: reusableSignature
+        ? await signatureInlineUrl(this.storage, this.audit, ctx, reusableSignature)
+        : null,
     };
   }
 }

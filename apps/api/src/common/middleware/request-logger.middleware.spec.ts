@@ -7,9 +7,10 @@ import assert from 'node:assert/strict';
 import type { NextFunction, Request, Response } from 'express';
 import type { AppConfigService } from '../config/app-config.service';
 import type { AppLogger } from '../logger/logger.service';
+import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 
-function run(requestLogEnabled: boolean) {
+function run(requestLogEnabled: boolean, path = '/v1/companies') {
   const lines: Array<Record<string, unknown>> = [];
   const logger = {
     info: (obj: Record<string, unknown>) => void lines.push(obj),
@@ -19,7 +20,7 @@ function run(requestLogEnabled: boolean) {
   const middleware = new RequestLoggerMiddleware(logger, { requestLogEnabled } as AppConfigService);
 
   let finish: (() => void) | undefined;
-  const req = { method: 'GET', path: '/v1/companies', headers: { 'x-request-id': 'req-1' } } as unknown as Request;
+  const req = { method: 'GET', path, headers: { 'x-request-id': 'req-1' } } as unknown as Request;
   const res = { statusCode: 200, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
 
   let nextCalls = 0;
@@ -43,6 +44,19 @@ describe('RequestLoggerMiddleware', () => {
     assert.equal(lines.length, 0);
   });
 
+  // FIX-1: `/document-delivery/{token}` carries a bearer credential in the URL, and the shared
+  // redactor only ever inspects KEY names — a plain-text path log hands every log reader the document.
+  it('masks a delivery token out of the logged path and leaves every other path alone', () => {
+    const masked = run(true, `/v1/document-delivery/${'A'.repeat(43)}`);
+    assert.equal(masked.lines[0]?.['path'], '/v1/document-delivery/:token');
+
+    assert.equal(run(true).lines[0]?.['path'], '/v1/companies');
+    assert.equal(
+      run(true, '/v1/companies/c1/expenses/e1').lines[0]?.['path'],
+      '/v1/companies/c1/expenses/e1',
+    );
+  });
+
   it('does not even register a finish listener when disabled', () => {
     const listeners: string[] = [];
     const logger = { info: () => {}, warn: () => {}, error: () => {} } as unknown as AppLogger;
@@ -53,5 +67,33 @@ describe('RequestLoggerMiddleware', () => {
       (() => {}) as NextFunction,
     );
     assert.deepEqual(listeners, []);
+  });
+});
+
+describe('ApiCacheControlMiddleware', () => {
+  function runCacheControl(initial?: string) {
+    const headers = new Map<string, string>();
+    if (initial) headers.set('cache-control', initial);
+    const response = {
+      hasHeader: (name: string) => headers.has(name.toLowerCase()),
+      setHeader: (name: string, value: string) => void headers.set(name.toLowerCase(), value),
+    } as unknown as Response;
+    let nextCalls = 0;
+
+    apiCacheControl(
+      {} as Request,
+      response,
+      (() => { nextCalls += 1; }) as NextFunction,
+    );
+
+    return { cacheControl: headers.get('cache-control'), nextCalls };
+  }
+
+  it('makes API responses private and non-storable by default', () => {
+    assert.deepEqual(runCacheControl(), { cacheControl: PRIVATE_NO_STORE, nextCalls: 1 });
+  });
+
+  it('preserves an explicit route cache policy', () => {
+    assert.deepEqual(runCacheControl('public, max-age=60'), { cacheControl: 'public, max-age=60', nextCalls: 1 });
   });
 });
