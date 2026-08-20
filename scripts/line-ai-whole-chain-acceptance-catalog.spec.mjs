@@ -82,7 +82,14 @@ describe('LINE AI whole-chain acceptance catalog', () => {
       'packages/contracts/src',
     ];
     const { spawnSync } = await import('node:child_process');
-    const search = spawnSync('rg', ['-n', 'maxTurns:\\s*16|LINE_AI_CONTEXT_MAX_TURNS\\s*=\\s*16', ...sourceFiles], {
+    // `git grep` instead of ripgrep: the GitHub runner has no `rg`, so spawnSync returned
+    // status null (ENOENT) and this gate failed for a missing tool rather than real drift.
+    // `--untracked` keeps ripgrep's working-tree reach; POSIX classes keep the pattern ERE-safe.
+    const search = spawnSync('git', [
+      'grep', '--untracked', '-nE',
+      'maxTurns:[[:space:]]*16|LINE_AI_CONTEXT_MAX_TURNS[[:space:]]*=[[:space:]]*16',
+      '--', ...sourceFiles,
+    ], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
     });
