@@ -1,6 +1,6 @@
 # Agent Memory: Employee role cache contract
 
-Status: Entitlement-alignment and employee self-service baseline complete locally; not deployed
+Status: Entitlement-alignment and employee self-service baseline pushed to PR #201; review required; not deployed
 Owner: Codex
 Scope: Diagnose why the employee role picker remained empty on UAT after the cache-boundary release, correct the shared grant rule across list/create/update, add the internal-employee self-service role baseline, and verify regression/gap/impact before a single deployment.
 Decisions:
@@ -55,4 +55,4 @@ Verification:
 - API and Web typechecks passed; API boot DI smoke resolved every provider in 162ms.
 - Impact audit: no schema migration or new dependency; production boot's existing `sync-permissions.ts` creates the new permission, reconciles protected system-role grants, and additively backfills only custom roles anchored by `expense.create`. Entitlement OFF still strips the new mutations. Signature list now reads fewer rows and removes the user-name query; ordinary request latency is not increased.
 - `git diff --check`: passed after the combined code and documentation update.
-Next: Commit and push the isolated branch to update PR #201. After required review and merge, deploy to UAT only through the mandatory deployment protocol, then verify role listing/add-employee plus employee expense, reimbursement, and owner-only signature journeys. No deployment was performed in this fix task.
+Next: Obtain the required review and merge PR #201 to `develop`. Then deploy to UAT only through the mandatory deployment protocol and verify role listing/add-employee plus employee expense, reimbursement, and owner-only signature journeys. No deployment was performed in this fix task.
