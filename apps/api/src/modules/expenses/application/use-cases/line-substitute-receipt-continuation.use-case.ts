@@ -99,11 +99,17 @@ export type LineSubstituteReceiptContinuationResult = {
 //  * “ใบสำคัญรับเงิน” is a DIFFERENT, stronger document and must never enter here (R15 explains it);
 //  * a bare “ไม่มีใบเสร็จ” beside an amount is an ordinary expense capture (and a reason code), so
 //    the no-receipt phrasings are admitted only when the sender also asks what to do about it.
+// The document word STANDS ALONE: “ใบทดแทนของค่าวินมอไซค์” is ordinary Thai (“the substitute
+// document FOR the motorcycle-taxi fare”), and requiring ใบเสร็จ/เงินสด/บิล right behind it sent that
+// UAT turn to plain expense capture. Neither boundary above moves — none of the standalone words is
+// a substring of ใบสำคัญรับเงิน, and none appears in a bare “…ไม่มีใบเสร็จ” capture.
 const SUBSTITUTE_VOCABULARY = new RegExp([
   // Longest form first at each starting position: `substituteRequestExpenseText` splits the message
   // on this match, so a short alternative winning would leave “ใบเสร็จ” glued to the expense text.
-  'ใบรับรองแทนใบเสร็จ(?:รับเงิน)?', 'ใบทดแทนใบเสร็จ', 'ขอใบแทน(?:ใบเสร็จ)?', 'ใบแทนใบเสร็จ',
-  'ใบรับรองแทนเงินสด', 'เอกสารแทนใบเสร็จ', 'ใบรับรองแทนบิล',
+  'ใบรับรองแทนใบเสร็จ(?:รับเงิน)?', 'ใบรับรองแทนเงินสด', 'ใบรับรองแทนบิล', 'ใบรับรองแทน',
+  'ใบทดแทนใบเสร็จ', 'ใบทดแทน',
+  'ขอใบแทน(?:ใบเสร็จ)?', 'ใบแทนใบเสร็จ', 'ใบแทน',
+  'เอกสารแทนใบเสร็จ',
   // The resume phrase the assistant itself teaches.
   'ทำใบรับรองต่อ',
   'ไม่มี(?:ใบเสร็จ|บิล|ใบกำกับภาษี|หลักฐาน)[^]{0,12}(?:ทำยังไง|ทำไง|ทำอย่างไร|ต้องทำอะไร|ต้องทำยังไง|ทำอะไรดี)',
@@ -120,6 +126,13 @@ const SUBSTITUTE_CANCEL = /^(ยกเลิก|ยกเลิกงานน�
 /** The resume/acknowledgement/number replies the bot itself teaches (R15 “ทำต่อ”, a bare choice
  *  number, a yes). None is ever the value of a certified field, so the short-answer capture skips them. */
 const SUBSTITUTE_CONTROL_REPLY = /^(ทำต่อ|ใช่|ตกลง|ครับ|ค่ะ|โอเค|โอเก|ok|\d{1,2})$/iu;
+
+/** The preposition the request phrase leaves glued to the front of the expense text once the document
+ *  word may stand alone: “ใบทดแทน|ของค่าวินมอไซค์…” would title the draft “ของค่าวินมอไซค์…”. Only the
+ *  unambiguous ones are dropped — `ของ` solely in front of a cost/act noun (`ของขวัญ`, `ของใช้` are
+ *  words of their own and must survive), and `สำหรับ`, which is never the head of a word. What is left
+ *  is still ONE contiguous slice of the source text, which is what the capture gate matches against. */
+const LEADING_PREPOSITION = /^(?:ของ(?=ค่า|การ)|สำหรับ)\s*/u;
 
 /** R1: the expense fact inside a combined “ออกใบทดแทนใบเสร็จ ค่าวินมอไซต์ … 50 บาท” message.
  *
@@ -138,7 +151,8 @@ export function substituteRequestExpenseText(text: string): string | undefined {
   if (match?.index === undefined) return undefined;
   const before = normalized.slice(0, match.index).trim();
   const after = normalized.slice(match.index + match[0].length).trim();
-  const description = normalizedText(after.length >= before.length ? after : before);
+  const description = normalizedText(after.length >= before.length ? after : before)
+    .replace(LEADING_PREPOSITION, '');
   return description.replace(/[\d,.\s]|บาท|thb|baht|฿/giu, '').length >= 4 ? description : undefined;
 }
 
@@ -1257,9 +1271,12 @@ export class LineSubstituteReceiptContinuationUseCase {
       const candidateIndex = selection ?? (input.recentCandidates.length === 1 ? 0 : null);
       if (candidateIndex === null || !input.recentCandidates[candidateIndex]) {
         const hasChoices = input.recentCandidates.length > 0;
+        // With no candidate the sender is not being sent away: the dispatcher carries this request
+        // one turn, so the expense fact they type NEXT becomes the target. The web link on the card
+        // below stays the other exit.
         const question = hasChoices
           ? 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)'
-          : 'เปิดในเว็บเพื่อเลือกรายการค่าใช้จ่ายก่อนได้ไหมคะ?';
+          : 'พิมพ์ยอดและรายละเอียดค่าใช้จ่ายในแชทนี้ได้เลยค่ะ เช่น “ค่าวินมอไซค์ 50 บาท”';
         const categories = offeredCategories(await this.repo.listCategories(ctx.companyId));
         return {
           handled: true,

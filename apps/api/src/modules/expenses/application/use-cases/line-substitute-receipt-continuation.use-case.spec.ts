@@ -391,6 +391,25 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(substituteRequestExpenseText('ค่ากาแฟ 65 บาท'), undefined, 'not a substitute request at all');
   });
 
+  it('drops the preposition a standalone document word leaves in front of the expense text', () => {
+    // The UAT sentence. Splitting on `ใบทดแทน` alone would have titled the draft “ของค่าวินมอไซค์…”.
+    assert.equal(
+      substituteRequestExpenseText('ทำรายการใบทดแทนของค่าวินมอไซค์ไปพบลูกค้า 50 บาท'),
+      'ค่าวินมอไซค์ไปพบลูกค้า 50 บาท',
+    );
+    assert.equal(substituteRequestExpenseText('อยากได้ใบแทนสำหรับค่าที่จอดรถ 40 บาท'), 'ค่าที่จอดรถ 40 บาท');
+    // `ของ` is only a preposition in front of a cost/act noun — `ของขวัญ` is a word of its own.
+    assert.equal(substituteRequestExpenseText('ทำใบทดแทนของขวัญลูกค้า 500 บาท'), 'ของขวัญลูกค้า 500 บาท');
+    // Whatever survives is still ONE contiguous slice of the source, which is the capture gate's rule.
+    for (const message of [
+      'ทำรายการใบทดแทนของค่าวินมอไซค์ไปพบลูกค้า 50 บาท',
+      'อยากได้ใบแทนสำหรับค่าที่จอดรถ 40 บาท',
+      'ทำใบทดแทนของขวัญลูกค้า 500 บาท',
+    ]) {
+      assert.equal(message.includes(substituteRequestExpenseText(message)!), true, message);
+    }
+  });
+
   it('matches the composed-ำ vocabulary the formatter itself tells users to type', () => {
     assert.equal(isSubstituteReceiptConversationText('ทำใบรับรองต่อ'), true);
     assert.equal(isSubstituteReceiptConversationText('ขอใบแทนใบเสร็จหน่อย'), true);
@@ -2029,12 +2048,19 @@ describe('entry vocabulary — the words a customer uses to ask for this documen
     'ทำใบรับรองแทนใบเสร็จรับเงิน', 'ขอใบรับรองแทนใบเสร็จ', 'ทำใบทดแทนใบเสร็จ', 'ขอใบแทนใบเสร็จ',
     'ทำใบรับรองต่อ', 'ขอใบแทนหน่อยค่ะ', 'ทำเอกสารแทนใบเสร็จให้หน่อย', 'ขอใบรับรองแทนเงินสด',
     'ไม่มีใบเสร็จทำยังไงคะ', 'ไม่มีบิลทำไงดี', 'ไม่มีใบกำกับภาษี ต้องทำอะไร',
+    // The document word standing alone. The UAT turn that fell through to plain expense capture is
+    // the first of these: “ใบทดแทน**ของ**ค่าวินมอไซค์” is ordinary Thai, not a missing keyword.
+    'ทำรายการใบทดแทนของค่าวินมอไซค์ไปพบลูกค้า', 'ขอใบทดแทนหน่อย',
+    'อยากได้ใบแทนสำหรับค่าที่จอดรถ 40 บาท', 'ขอใบรับรองแทนของค่าทางด่วน 80 บาท',
   ];
   const STAYS_OUT = [
     // The stronger document R15 explains — it must never be routed here.
-    'ขอใบสำคัญรับเงิน', 'ทำใบสำคัญรับเงินให้หน่อย',
+    'ขอใบสำคัญรับเงิน', 'ทำใบสำคัญรับเงินให้หน่อย', 'ออกใบสำคัญรับเงิน 500 บาท',
     // Ordinary expense capture that merely mentions a missing receipt.
     'ค่ากาแฟ 65 บาท ไม่มีใบเสร็จ', 'ค่าแท็กซี่ 120 บาท ไม่มีบิล', 'ยอดขายเดือนนี้เท่าไหร่', 'ขอใบเสนอราคา',
+    // The follow-up turn of the same UAT journey: the fact alone carries no document word, which is
+    // why the dispatcher has to carry the request rather than this list having to guess.
+    'ค่าวินมอไซค์ 50 บาท', 'ต้องทำยังไงต่อ', 'ใบกำกับภาษีเต็มรูป',
   ];
 
   for (const text of ENTERS) {
