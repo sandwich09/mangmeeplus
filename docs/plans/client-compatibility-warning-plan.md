@@ -1,6 +1,6 @@
 # Generic Client Compatibility Notice Implementation Plan
 
-Status: IMPLEMENTED - local verification complete; PR/UAT/real-device validation pending
+Status: IMPLEMENTED - PR #193 open; UAT/real-device validation pending
 Date: 2026-08-20
 
 ## Linked Spec

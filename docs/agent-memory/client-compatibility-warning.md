@@ -1,6 +1,6 @@
 # Agent Memory: client-compatibility-warning
 
-Status: IMPLEMENTED / LOCALLY VERIFIED / COMMITTED - push, PR, UAT, and real-device smoke pending
+Status: IMPLEMENTED / LOCALLY VERIFIED - PR #193 open; UAT and real-device smoke pending
 Owner: Codex
 Scope: Define one generic customer notice for a positively unsupported main-web/LIFF environment or
 a bounded login boot failure, without device/version/case-specific UI.
@@ -29,6 +29,7 @@ Open questions:
 - None blocking. Case-specific customer guidance requires a future explicit product decision.
 
 Artifacts:
+- Pull request: https://github.com/MangmeeDev/mangmeeplus/pull/193 (base `develop`)
 - Spec: `docs/specs/client-compatibility-warning-spec.md`
 - Plan: `docs/plans/client-compatibility-warning-plan.md`
 - Communication PDF: `output/pdf/mangmeeplus-device-version-support-summary.pdf`
@@ -64,5 +65,5 @@ Verification:
   Production deployment, or customer `OPEN` acceptance.
 
 Next:
-- Push the feature branch and open a PR to `develop`; keep `output/` untracked. UAT/Production must
-  follow the mandatory release runbook in a separate step.
+- Review and merge PR #193; keep `output/` untracked. UAT/Production must follow the mandatory
+  release runbook in a separate step.
