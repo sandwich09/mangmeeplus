@@ -16,7 +16,8 @@ import { t } from '@/common/i18n/workspace-i18n.logic';
 import { useLocale } from '@/common/i18n/use-locale';
 import { formatMessage, localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { MangmeeLogo } from '@/common/components/brand/MangmeeLogo';
-import { loginAsDevOwner, loginWithPassword, refreshSessionSilently } from './auth.api';
+import { GenericClientNotice } from '@/common/client-support/GenericClientNotice';
+import { loginAsDevOwner, loginWithPassword, refreshSessionWithOutcome } from './auth.api';
 import { buildQrCells, rememberPendingRedirect } from './auth.logic';
 
 const SHOW_DEV_LOGIN = process.env.NODE_ENV !== 'production';
@@ -121,6 +122,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   const [checkingSession, setCheckingSession] = useState(
     shouldAttemptSessionRecovery(searchParams.get(RECOVERY_PARAM)),
   );
+  const [sessionRecoveryUnavailable, setSessionRecoveryUnavailable] = useState(false);
   const [locale, setLocale] = useLocale();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -148,17 +150,18 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
   }, [lineModal, lineSeconds]);
 
   // Restore the session from the refresh cookie, then bounce back through /login so the server
-  // route re-validates it and picks the landing path. A failed refresh clears every auth cookie
-  // through the BFF response, so the form below is a clean sign-in, never a loop.
+  // route re-validates it and picks the landing path. Only a real 401 is signed-out; a timeout or
+  // unavailable BFF gets the generic recovery state instead of a misleading login form.
   useEffect(() => {
     if (!checkingSession) return;
     let active = true;
-    void refreshSessionSilently().then((restored) => {
+    void refreshSessionWithOutcome().then((outcome) => {
       if (!active) return;
-      if (restored) {
+      if (outcome === 'restored') {
         window.location.assign(recoveryReturnUrl(nextPath));
         return;
       }
+      if (outcome !== 'signed_out') setSessionRecoveryUnavailable(true);
       setCheckingSession(false);
     });
     return () => {
@@ -166,6 +169,13 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (sessionRecoveryUnavailable) {
+    const retryParams = new URLSearchParams();
+    if (nextPath) retryParams.set('next', nextPath);
+    const retryQuery = retryParams.toString();
+    return <GenericClientNotice alert retryHref={retryQuery ? `/login?${retryQuery}` : '/login'} />;
+  }
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();

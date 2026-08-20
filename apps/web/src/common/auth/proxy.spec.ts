@@ -22,6 +22,12 @@ function request(path: string, opts: { cookie?: string; method?: string; headers
 
 const VALID_COOKIE = 'watchdog_token=header.payload.signature';
 const CHUNKED_COOKIE = 'watchdog_token.0=header.payload; watchdog_token.1=.signature';
+const IOS_15_LINE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_8 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Line/13.20.0';
+const HTML_NAVIGATION = {
+  accept: 'text/html,application/xhtml+xml',
+  'sec-fetch-dest': 'document',
+  'user-agent': IOS_15_LINE,
+};
 
 describe('proxy — page routes', () => {
   it('never redirects away from /login, whatever the access cookie looks like', () => {
@@ -51,6 +57,34 @@ describe('proxy — page routes', () => {
       assert.equal(proxy(request('/companies/c1/dashboard', { cookie })).status, 200);
       assert.equal(proxy(request('/system/partners', { cookie })).status, 200);
     }
+  });
+
+  it('shows the generic compatibility notice before auth for a recognized old client', () => {
+    for (const cookie of [undefined, VALID_COOKIE]) {
+      const res = proxy(request('/companies/c1/dashboard?tab=open', { cookie, headers: HTML_NAVIGATION }));
+      assert.equal(res.status, 307);
+      assert.equal(
+        res.headers.get('location'),
+        `${ORIGIN}/unsupported-browser?next=%2Fcompanies%2Fc1%2Fdashboard%3Ftab%3Dopen`,
+      );
+      assert.equal(res.headers.get('cache-control'), 'private, no-store, max-age=0');
+      assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.match(res.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/);
+    }
+  });
+
+  it('keeps the generic notice and policy pages reachable from an old client', () => {
+    for (const path of ['/unsupported-browser?next=%2Flogin', '/privacy', '/terms', '/data-deletion', '/maintenance', '/legal/releases/2026-08']) {
+      const res = proxy(request(path, { headers: HTML_NAVIGATION }));
+      assert.equal(res.status, 200, path);
+      assert.equal(res.headers.get('location'), null, path);
+    }
+  });
+
+  it('does not compatibility-gate unsafe methods, non-HTML fetches, or unknown clients', () => {
+    assert.equal(proxy(request('/login', { method: 'POST', headers: HTML_NAVIGATION })).status, 200);
+    assert.equal(proxy(request('/login', { headers: { ...HTML_NAVIGATION, accept: 'application/json' } })).status, 200);
+    assert.equal(proxy(request('/login', { headers: { ...HTML_NAVIGATION, 'user-agent': 'CustomClient/1.0' } })).status, 200);
   });
 
   it('adds nonce CSP and production security headers to login and protected responses', () => {
@@ -136,5 +170,6 @@ describe('proxy — api gate', () => {
       proxy(request('/api/auth/refresh', { method: 'POST', cookie: VALID_COOKIE, headers: { origin: ORIGIN } })).status,
       200,
     );
+    assert.equal(proxy(request('/api/v1/auth/me', { headers: HTML_NAVIGATION })).status, 200);
   });
 });

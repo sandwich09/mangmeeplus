@@ -14,6 +14,13 @@ export function validLineChannelId(value: string | null): string {
   return value && LINE_CHANNEL_ID_PATTERN.test(value) ? value : '';
 }
 
+export const LIFF_CLIENT_NOTICE_HTML = `<section id="client-notice" data-client-compatibility-notice="generic" hidden role="alert" style="text-align:center">
+  <h1>ไม่สามารถเปิด Mangmee Plus ได้</h1>
+  <p>กรุณาอัปเดตระบบปฏิบัติการ เบราว์เซอร์ และ LINE เป็นเวอร์ชันล่าสุด แล้วลองอีกครั้ง หากยังใช้งานไม่ได้ กรุณาเปิดผ่านอุปกรณ์อื่นหรือติดต่อเจ้าหน้าที่</p>
+  <p><strong>Mangmee Plus could not be opened.</strong> Update your operating system, browser, and LINE, then try again. If the problem continues, use another device or contact support.</p>
+  <p><a class="btn" href="">ลองใหม่ / Try again</a> <a class="btn" href="mailto:contact@mangmeeplus.com">ติดต่อเจ้าหน้าที่ / Contact support</a></p>
+</section>`;
+
 // Static same-origin code: untrusted query values stay runtime data and never enter an executable HTML parser context.
 export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
 (function () {
@@ -28,6 +35,38 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const detailEl = document.getElementById('detail');
   const actionBtn = document.getElementById(mode === 'customer' ? 'register' : 'link');
   const openLineEl = document.getElementById('open-line');
+  const noticeEl = document.getElementById('client-notice');
+  const contentEl = document.getElementById('liff-content');
+
+  function compareVersion(actual, minimum) {
+    const length = Math.max(actual.length, minimum.length);
+    for (let index = 0; index < length; index += 1) {
+      const difference = (actual[index] || 0) - (minimum[index] || 0);
+      if (difference !== 0) return difference;
+    }
+    return 0;
+  }
+
+  function clientIsUnsupported(userAgent) {
+    if (!userAgent) return false;
+    const isIos = /(?:iPhone|iPad|iPod)/i.test(userAgent) || (/Macintosh/i.test(userAgent) && /Mobile\//i.test(userAgent));
+    if (isIos) {
+      const ios = userAgent.match(/(?:CPU(?: iPhone)? )?OS (\d+)[._](\d+)/i) || userAgent.match(/Version\/(\d+)\.(\d+)/i);
+      if (ios && compareVersion([Number(ios[1]), Number(ios[2])], [15, 0]) < 0) return true;
+    }
+    const android = userAgent.match(/Android\s+(\d+)(?:\.(\d+))?/i);
+    if (android && Number(android[1]) < 8) return true;
+    const line = userAgent.match(/Line\/(\d+)\.(\d+)(?:\.(\d+))?/i);
+    if (line && compareVersion([Number(line[1]), Number(line[2]), Number(line[3] || 0)], [13, 20, 0]) <= 0) return true;
+    return false;
+  }
+
+  if (clientIsUnsupported(navigator.userAgent || '')) {
+    if (actionBtn) actionBtn.disabled = true;
+    if (contentEl) contentEl.hidden = true;
+    if (noticeEl) noticeEl.hidden = false;
+    return;
+  }
 
   if (openLineEl && oaAddUrl) {
     openLineEl.href = oaAddUrl;

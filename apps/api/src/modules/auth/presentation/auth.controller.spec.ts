@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { BadRequestException, HttpException, UnauthorizedException, ValidationPipe } from '@nestjs/common';
 import { HEADERS_METADATA } from '@nestjs/common/constants';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../common/pipes/validation-pipe.options';
@@ -8,6 +9,7 @@ import { LineLoginVerifierAdapter } from '../infrastructure/line-login-verifier.
 import { SetAiAssistantPreferenceUseCase } from '../application/use-cases/set-ai-assistant-preference.use-case';
 import { CURRENT_LEGAL_DOCUMENTS, LEGAL_ACCEPTANCE_STATEMENT_VERSION } from '@watchdog-bms/contracts';
 import { AcceptLegalDocumentsDto, AuthController, EmployeeLineLinkDto, LineExchangeDto, LineLinkDto, PasswordResetRequestDto } from './auth.controller';
+import { LIFF_PAGE_SCRIPT } from '../../../common/security/liff-page.security';
 
 const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
@@ -43,6 +45,32 @@ function assertOnlyExternalScripts(html: string): void {
     assert.match(attributes!, /\bsrc="[^"]+"/);
     assert.equal(body!.trim(), '');
   }
+}
+
+function runLiffClientGate(userAgent: string) {
+  const elements: Record<string, Record<string, any>> = {
+    status: { textContent: '' },
+    detail: { textContent: '' },
+    register: { disabled: false, addEventListener() {} },
+    'open-line': { hidden: true, href: '' },
+    'client-notice': { hidden: true },
+    'liff-content': { hidden: false },
+  };
+  runInNewContext(LIFF_PAGE_SCRIPT, {
+    document: {
+      body: { dataset: { liffMode: 'customer', liffId: '', apiBase: '', devMode: 'false', oaAddUrl: '' } },
+      getElementById: (id: string) => elements[id] ?? null,
+    },
+    navigator: { userAgent },
+    location: { href: 'https://api.example.test/v1/auth/line/customer-register-page', origin: 'https://api.example.test', search: '' },
+    history: { replaceState() {} },
+    localStorage: { getItem: () => null, removeItem() {}, setItem() {} },
+    URL,
+    URLSearchParams,
+    setTimeout,
+    fetch: globalThis.fetch,
+  });
+  return elements;
 }
 
 describe('AuthController password reset request', () => {
@@ -272,6 +300,8 @@ describe('AuthController LIFF page security (H-08)', () => {
     assert.equal(html.includes('__h08_xss__'), false);
     assertOnlyExternalScripts(html);
     assert.match(html, /data-liff-mode="employee"/);
+    assert.match(html, /data-client-compatibility-notice="generic"/);
+    assert.match(html, /id="liff-content"/);
   });
 
   it('serves static same-origin client code and a CSP without inline script permission', async () => {
@@ -285,6 +315,25 @@ describe('AuthController LIFF page security (H-08)', () => {
       const scriptSrc = headers['content-security-policy']!.split(';').find((directive) => directive.trim().startsWith('script-src'))!;
       assert.equal(scriptSrc.includes("'unsafe-inline'"), false);
       assert.equal(headers['referrer-policy'], 'no-referrer');
+    }
+  });
+
+  it('disables LIFF actions below the vendor floors and fails open for supported or unknown clients', () => {
+    const cases: Array<[string, boolean]> = [
+      ['Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) Mobile/15E148 Line/14.1.0', true],
+      ['Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) Mobile/15E148 Line/14.1.0', false],
+      ['Mozilla/5.0 (Linux; Android 7.1) AppleWebKit/537.36 Line/14.1.0', true],
+      ['Mozilla/5.0 (Linux; Android 8.0) AppleWebKit/537.36 Line/14.1.0', false],
+      ['Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Mobile/15E148 Line/13.20.0', true],
+      ['Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Mobile/15E148 Line/13.20.1', false],
+      ['CustomClient/1.0', false],
+    ];
+
+    for (const [userAgent, unsupported] of cases) {
+      const elements = runLiffClientGate(userAgent);
+      assert.equal(elements['client-notice'].hidden, !unsupported, userAgent);
+      assert.equal(elements['liff-content'].hidden, unsupported, userAgent);
+      assert.equal(elements.register.disabled, unsupported, userAgent);
     }
   });
 
