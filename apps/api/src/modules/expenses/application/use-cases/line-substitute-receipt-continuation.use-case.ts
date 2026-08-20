@@ -5,6 +5,9 @@ import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { collectSubstituteReceiptEligibilityIssues } from './substitute-receipt.use-case';
+// LINE renders a bare `/companies/...` as plain text, so these four sites shipped an untappable
+// string. `webPath` itself stays a path — only the user-facing render is absolutised.
+import { webLink } from '../../../../common/http/web-link';
 
 const STATE_KEY = 'lineSubstituteReceiptContinuation';
 const ACTIVE_STATUSES = new Set(['OPEN', 'PAUSED']);
@@ -302,7 +305,7 @@ function resumeCapsule(
   if (acceptedFields.length) lines.push(`รับเพิ่มแล้ว: ${acceptedFields.map((field) => VALUE_LABELS[field] ?? field).join(', ')}`);
   if (state.pendingQuestion) lines.push(`ทำต่อ: ${state.pendingQuestion}`);
   else lines.push(`ยังมี ${state.missingFields.length} ช่องที่ตอบผ่าน LINE ได้; ส่วนไฟล์/การลงนาม/อนุมัติทำในเว็บ`);
-  if (webPath) lines.push(`เปิดในเว็บ: ${webPath}`);
+  if (webPath) lines.push(`เปิดในเว็บ: ${webLink(webPath)}`);
   return lines.join('\n');
 }
 
@@ -325,7 +328,12 @@ function formatResult(input: {
   if (input.sideAnswer) lines.push('', input.sideAnswer);
   if (input.status === 'PAUSED') return [...lines, '⏸️ พักงานนี้ไว้แล้ว ข้อมูลที่รับไว้ยังอยู่', 'พิมพ์ “ทำใบรับรองต่อ” เพื่อกลับมาทำต่อ'].join('\n');
   if (input.status === 'CANCELLED') return [...lines, '🛑 ยกเลิกเฉพาะขั้นตอนสนทนานี้แล้ว รายการค่าใช้จ่ายและไฟล์หลักฐานไม่ได้ถูกลบ'].join('\n');
-  if (input.status === 'STALE') return [...lines, '⚠️ รายการถูกแก้ไขจากเว็บหรือผู้ใช้อื่น จึงไม่ได้นำข้อความล่าสุดไปทับข้อมูล', `ตรวจสอบสถานะปัจจุบันในเว็บ: ${input.webPath}`].join('\n');
+  // `webPath` is optional (FORBIDDEN results carry none), and the old template interpolated it
+  // unguarded — a stale forbidden result printed "…ในเว็บ: undefined".
+  if (input.status === 'STALE') {
+    return [...lines, '⚠️ รายการถูกแก้ไขจากเว็บหรือผู้ใช้อื่น จึงไม่ได้นำข้อความล่าสุดไปทับข้อมูล',
+      ...(input.webPath ? [`ตรวจสอบสถานะปัจจุบันในเว็บ: ${webLink(input.webPath)}`] : [])].join('\n');
+  }
   if (input.blockers.length) {
     lines.push('', 'สิ่งที่ยังต้องทำทั้งหมด:');
     input.blockers.forEach((item) => lines.push(`• ${item.message}`));
@@ -338,7 +346,7 @@ function formatResult(input: {
   }
   lines.push('', 'LINE ยังไม่ได้เตรียม ลงนาม อนุมัติ หรือออกเอกสาร');
   lines.push('เอกสารภายในนี้ไม่ใช่ใบกำกับภาษีและไม่ทำให้ VAT ซื้อเครดิตได้');
-  if (input.webPath) lines.push(`เปิดตรวจสอบในเว็บ: ${input.webPath}`);
+  if (input.webPath) lines.push(`เปิดตรวจสอบในเว็บ: ${webLink(input.webPath)}`);
   const next = input.blockers.find((item) => item.collectableInLine && QUESTIONS[item.code]);
   if (next) lines.push('', `ทำต่อ: ${QUESTIONS[next.code]}`);
   if (input.sideAnswer && input.state.status === 'OPEN') {
@@ -403,7 +411,7 @@ export class LineSubstituteReceiptContinuationUseCase {
           status: 'TARGET_REQUIRED',
           replyText: choices
             ? `กรุณาเลือกรายการที่จะทำใบรับรองแทนใบเสร็จรับเงินก่อนค่ะ\n${choices}`
-            : `ยังระบุรายการค่าใช้จ่ายไม่ได้ค่ะ กรุณาเปิดรายการในเว็บก่อน\n/companies/${ctx.companyId}/expenses/substitute-receipts/new`,
+            : `ยังระบุรายการค่าใช้จ่ายไม่ได้ค่ะ กรุณาเปิดรายการในเว็บก่อน\n${webLink(`/companies/${ctx.companyId}/expenses/substitute-receipts/new`)}`,
           acceptedFields: [], blockers: [],
         };
       }

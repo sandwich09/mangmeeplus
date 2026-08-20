@@ -5,10 +5,9 @@
  */
 import type { LineAiRefusalReason, LineAiWebLink } from '@watchdog-bms/contracts';
 import type { SourceRef } from '@watchdog-bms/contracts';
-
-// ponytail: reuse the deploy-injected web URL (same chain as notification.use-cases.ts);
-// WATCHDOG_WEB_BASE_URL stays as an explicit override, no env is set for it today.
-const BASE_WEB_URL = process.env['WATCHDOG_WEB_BASE_URL'] ?? process.env['WEB_BASE_URL'] ?? process.env['PUBLIC_BASE_URL'] ?? 'https://mangmeeplus.com';
+// One base-URL resolution for the whole app. The previous local const fell back to the production
+// host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
+import { webLink } from '../../../../common/http/web-link';
 
 // ---- Refusal messages ----
 
@@ -47,7 +46,7 @@ export const REFUSAL_MESSAGES: Record<LineAiRefusalReason, string> = {
 export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): string {
   const base = REFUSAL_MESSAGES[reason];
   if (webPath) {
-    return `${base}\n🌐 ${BASE_WEB_URL}${webPath}`;
+    return `${base}\n🌐 ${webLink(webPath)}`;
   }
   return base;
 }
@@ -59,9 +58,7 @@ export function buildSourceLabels(sourceRefs: SourceRef[]): string[] {
 }
 
 export function buildWebLinks(sourceRefs: SourceRef[]): LineAiWebLink[] {
-  return sourceRefs
-    .filter((ref) => !!ref.webPath)
-    .map((ref) => ({ label: ref.label, path: `${BASE_WEB_URL}${ref.webPath}` }));
+  return sourceRefs.flatMap((ref) => (ref.webPath ? [{ label: ref.label, path: webLink(ref.webPath) }] : []));
 }
 
 // ---- Thai answer templates ----

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { ACCESS_TOKEN_COOKIE, CSRF_COOKIE, CSRF_ERROR_CODE, CSRF_HEADER } from '@/common/auth/auth-cookies.constants';
+import { ACCESS_TOKEN_COOKIE, CSRF_COOKIE, CSRF_ERROR_CODE, CSRF_HEADER, REQUEST_PATH_HEADER } from '@/common/auth/auth-cookies.constants';
 import {
   isCsrfTokenValid,
   isProtectedPagePath,
@@ -46,6 +46,10 @@ export function proxy(request: NextRequest) {
   requestHeaders.set('Content-Security-Policy', csp);
   const next = () => secureResponse(NextResponse.next({ request: { headers: requestHeaders } }), csp);
   const { pathname, search } = request.nextUrl;
+  // Server components cannot read the requested URL. The company layout needs it so the
+  // change-password and legal-acceptance gates can return the user to the page they opened
+  // (a LINE deep link) instead of the dashboard. Set from nextUrl, so a client-sent value cannot win.
+  requestHeaders.set(REQUEST_PATH_HEADER, `${pathname}${search}`);
   const method = request.method;
   // Large access tokens are chunked into `<name>.0..N` (see auth-cookies.constants).
   const hasAccessCookie = Boolean(

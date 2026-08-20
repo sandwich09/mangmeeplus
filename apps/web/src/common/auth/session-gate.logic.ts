@@ -177,3 +177,14 @@ export function resolvePasswordChangeTarget(
 
   return pendingCompanyId ? `/companies/${pendingCompanyId}/dashboard` : '/';
 }
+
+/**
+ * Where the change-password and legal-acceptance gates should return a company visitor. The
+ * requested path wins so a LINE deep link survives the round trip; anything outside this company —
+ * a missing header, another tenant, a gate page itself — falls back to the dashboard.
+ */
+export function companyGateReturnPath(requestedPath: string | null | undefined, companyId: string): string {
+  const dashboard = `/companies/${companyId}/dashboard`;
+  const sanitized = usablePostAcceptanceLanding(sanitizeNextPath(requestedPath));
+  return sanitized?.startsWith(`/companies/${companyId}/`) ? sanitized : dashboard;
+}

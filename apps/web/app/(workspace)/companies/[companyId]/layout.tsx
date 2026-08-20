@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
 import { fetchServerSession, fetchServerSessionResult } from '@/common/auth/server-session';
 import CompanyAccessUnavailable from '@/features/auth/CompanyAccessUnavailable';
-import { legalAcceptancePath } from '@/common/auth/session-gate.logic';
+import { companyGateReturnPath, legalAcceptancePath } from '@/common/auth/session-gate.logic';
+import { REQUEST_PATH_HEADER } from '@/common/auth/auth-cookies.constants';
 
 export default async function CompanyWorkspaceLayout({
   children,
@@ -38,7 +40,9 @@ export default async function CompanyWorkspaceLayout({
       />
     );
   }
-  const returnTo = `/companies/${companyId}/dashboard`;
+  // Return to the page that was actually opened, not the dashboard: a LINE deep link tapped by a
+  // user with a pending password change or an unaccepted legal release used to lose its destination.
+  const returnTo = companyGateReturnPath((await headers()).get(REQUEST_PATH_HEADER), companyId);
   if (sessionResult.session.mustChangePassword) {
     redirect(`/change-password?next=${encodeURIComponent(returnTo)}`);
   }
