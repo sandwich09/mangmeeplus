@@ -368,6 +368,12 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
 
+/** Spec §12.8 — `pushTargetId` is the group or room id when the message did not arrive in a 1:1
+ *  chat. A per-recipient delivery link is never posted where the other members can read it. */
+export function isGroupChatEvent(event: { lineUserId: string; pushTargetId?: string }): boolean {
+  return !!event.pushTargetId && event.pushTargetId !== event.lineUserId;
+}
+
 export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
@@ -1014,9 +1020,11 @@ export class ProcessLineWebhookUseCase {
     text: string,
     companyId: string,
     access: { permissions: string[]; roles: string[] },
+    /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
+    badge?: string,
   ): Promise<void> {
     await this.deliverRequiredMessages(event, [await this.withCompletionMenu(
-      buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId),
+      buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
       access,
     )]);
@@ -1550,6 +1558,9 @@ export class ProcessLineWebhookUseCase {
             ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
             : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
           webBaseUrl: this.config.webBaseUrl,
+          // §12.8: a group/room chat pushes to the group id, not the sender's, so a delivery link
+          // posted here would be readable by everyone in it. The continuation withholds it.
+          groupChat: isGroupChatEvent(event),
         });
       } catch (error) {
         // The draft is already committed; a continuation failure degrades, it never sinks the capture.
@@ -1577,7 +1588,7 @@ export class ProcessLineWebhookUseCase {
         const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
         const merged = `${captureReply ? `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n` : ''}${result.replyText}`;
         const replyText = `${merged}${interruption ? `\n\n${interruption}` : ''}`;
-        await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
+        await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess, result.badge);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText, intent: captured ? 'EVIDENCE_CAPTURE' : 'CLARIFY',
@@ -3124,14 +3135,14 @@ export class ProcessLineWebhookUseCase {
     scan: LineSubstituteMediaScan,
   ): Promise<{ outcome: 'handled' }> {
     try {
-      const { replyText } = await this.substituteReceiptContinuation!.linkWetSignedScan(ctx, {
+      const { replyText, badge } = await this.substituteReceiptContinuation!.linkWetSignedScan(ctx, {
         expenseId: scan.expenseId,
         evidenceId: scan.evidenceId,
         attachmentId: pending.attachmentId,
         checksumSha256: await this.pendingMediaChecksum(ctx.companyId, pending.attachmentId),
         webBaseUrl: this.config.webBaseUrl,
       });
-      return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText);
+      return this.deliverSubstituteMediaOutcome(event, ctx, access, pending, text, replyText, badge);
     } catch (error: unknown) {
       if (!(error instanceof HttpException)) throw error;
       const body = error.getResponse();
@@ -3202,8 +3213,9 @@ export class ProcessLineWebhookUseCase {
     pending: { id: string },
     text: string,
     replyText: string,
+    badge?: string,
   ): Promise<{ outcome: 'handled' }> {
-    await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
+    await this.deliverCompletedReply(event, replyText, ctx.companyId, access, badge);
     await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
     await this.persistIntakeTurn({
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
@@ -3312,6 +3324,7 @@ export class ProcessLineWebhookUseCase {
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
+          groupChat: isGroupChatEvent(event),
         });
         reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${continuation.replyText}`;
         pendingQuestion = continuation.pendingQuestion;

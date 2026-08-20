@@ -2559,3 +2559,43 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     assert.equal(pendingMediaRows[0].status, 'PENDING', 'a refused scan keeps the bytes for a retry');
   });
 });
+
+describe('spec §12.8/§13 — chat kind and state badge reach the continuation and the card', () => {
+  const permissions = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'];
+  const issuedResult = {
+    handled: true, status: 'READY_FOR_WEB', workflowId: 'wf-1', expenseId: 'expense-note-1',
+    badge: '✅ ออกเอกสารแล้ว', acceptedFields: [], blockers: [],
+    replyText: '✅ ออกเอกสารแล้ว — เลขที่ SUB-202608-00007',
+  };
+
+  it('tells the continuation this is a 1:1 chat, and hands the badge to the delivered card', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-badge-dm', messageText: 'ขอลิงก์ใหม่' });
+
+    assert.equal(h.substituteCalls[0].groupChat, false);
+    assert.match(h.replies[0] ?? '', /✅ ออกเอกสารแล้ว/);
+  });
+
+  it('marks a group or room turn so no per-recipient link is ever posted into it', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT, webhookEventId: 'evt-badge-group', messageText: 'ขอลิงก์ใหม่',
+      pushTargetId: 'group-secret-1',
+    });
+
+    assert.equal(h.substituteCalls[0].groupChat, true);
+  });
+
+  it('treats a 1:1 push target that equals the sender as the 1:1 chat it is', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT, webhookEventId: 'evt-badge-self', messageText: 'ขอลิงก์ใหม่',
+      pushTargetId: TEXT_EVENT.lineUserId,
+    });
+
+    assert.equal(h.substituteCalls[0].groupChat, false);
+  });
+});

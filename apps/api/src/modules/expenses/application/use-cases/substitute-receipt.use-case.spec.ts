@@ -12,6 +12,10 @@ import {
   PreviewSubstituteReceiptUseCase,
 } from './substitute-receipt.use-case';
 import { SetSignatureDerivedAssetUseCase } from './signature-asset.use-case';
+import {
+  CreateDocumentDeliveryLinkUseCase,
+  ResolveDocumentDeliveryLinkUseCase,
+} from './document-delivery-link.use-case';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { buildSubstituteCertificationText, canonicalSnapshotHash, type SubstituteReceiptSnapshot } from '../../domain/logic/substitute-receipt.logic';
 import { buildDedupKey } from '../../../dashboard-notifications/domain/logic/notification.logic';
@@ -1163,5 +1167,138 @@ describe('substitute receipt paper route (R11/R12)', () => {
         .execute(ctx('payer-1'), 'exp-1', 'sub-1', input(digitalPreview.previewChecksumSha256)),
       /Signature must be an ACTIVE PNG\/JPEG uploaded by the payer/,
     );
+  });
+});
+
+describe('Journey A end to end — LINE prepare → certify → approve → delivery link', () => {
+  it('hands the recipient the exact bytes the approval issued, through one 3-day token', async () => {
+    const objects = new Map<string, Buffer>();
+    const audits: any[] = [];
+    const auditCollector = { log: async (entry: any) => { audits.push(entry); } } as any;
+    const storage = {
+      getObject: async (input: any) => {
+        const bytes = objects.get(input.objectKey);
+        if (!bytes) return { bytes: png, mimeType: 'image/png' };
+        return { bytes, mimeType: 'image/svg+xml' };
+      },
+      putObject: async (input: any) => {
+        objects.set(input.objectKey, input.bytes);
+        return { bucket: 'b', objectKey: input.objectKey, storageProvider: 'local', byteSize: input.bytes.length };
+      },
+      deleteObject: async (input: any) => { objects.delete(input.objectKey); },
+      createDownloadUrl: async (input: any) => {
+        assert.ok(objects.has(input.objectKey), 'the delivery copy must still exist to be signed for');
+        return { url: `https://s3.test/${input.objectKey}`, expiresAt: new Date(now.getTime() + input.expiresInSeconds * 1_000) };
+      },
+    } as any;
+
+    const library = { id: 'att-library', bucket: 'b', objectKey: 'library', mimeType: 'image/png', byteSize: png.length, checksumSha256: null };
+    let evidence: any = null;
+    let issuedArtifactKey = '';
+    const repo = {
+      findByIdWithRelations: async () => expense(),
+      findById: async () => expense(),
+      findActiveMemberIdentity: async (_company: string, userId: string) => ({ userId, displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', approverUserIds: [], cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'payer-1', displayName: 'สมชาย' }],
+      // R5: the ค่าวินมอไซต์ case has nothing to photograph, so the whole journey runs with zero
+      // attachments — the resolver honours the ids it is given rather than inventing one.
+      findSubstituteEvidenceAttachments: async (_c: string, _e: string, ids: string[]) =>
+        ids.map((id) => ({ id, purpose: 'expense.receipt.supporting', originalFileName: `${id}.jpg`, mimeType: 'image/jpeg', checksumSha256: id })),
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      findPersonalSignatureAttachment: async () => null,
+      findReusableSignatureAsset: async (_c: string, _u: string, attachmentId?: string) => (!attachmentId || attachmentId === library.id ? library : null),
+      createPreparedSubstituteEvidence: async (input: any) => {
+        evidence = prepared({ ...input, id: 'sub-1', preparedFromChannel: input.preparedFromChannel });
+        return evidence;
+      },
+      findSubstituteEvidence: async () => evidence,
+      markSubstituteEvidenceCertified: async (input: any) => {
+        evidence = prepared({
+          ...evidence, status: 'PAYER_CERTIFIED', payerPosition: input.payerPosition,
+          snapshotJson: input.snapshotJson, snapshotChecksumSha256: input.snapshotChecksumSha256,
+          payerSignatureAttachmentId: input.payerSignatureAttachmentId,
+          payerSignatureChecksumSha256: input.payerSignatureChecksumSha256,
+          certifiedArtifactAttachmentId: 'certified-artifact',
+          certifiedArtifactChecksumSha256: 'certified-checksum', certifiedAt: now,
+        });
+        return evidence;
+      },
+      issueSubstituteEvidence: async (input: any) => {
+        issuedArtifactKey = input.artifact.objectKey;
+        evidence = prepared({ ...evidence, status: 'ISSUED', artifactAttachmentId: 'issued-artifact', issuedAt: now });
+        return evidence;
+      },
+      findSubstituteArtifactAttachment: async () => ({ bucket: 'b', objectKey: issuedArtifactKey, mimeType: 'image/svg+xml' }),
+    } as any;
+
+    // R7: LINE prepares. Preview, certify and approve stay on the authenticated web.
+    const lineCtx = { ...ctx('payer-1'), authProvider: 'line' };
+    await new PrepareSubstituteReceiptUseCase(repo, auditCollector, notification).execute(lineCtx, 'exp-1', {
+      reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
+      businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', paymentEvidenceAttachmentIds: [],
+      supportingAttachmentIds: [], idempotencyKey: 'idem-1',
+      expectedExpenseUpdatedAt: now.toISOString(),
+    } as any);
+    assert.equal(evidence.preparedFromChannel, 'LINE');
+
+    const preview = await new PreviewSubstituteReceiptUseCase(repo).execute(ctx('payer-1'), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' });
+    await new CertifySubstituteReceiptUseCase(repo, storage, auditCollector, notification, cleanup)
+      .execute(ctx('payer-1'), 'exp-1', 'sub-1', {
+        payerPosition: 'พนักงาน', certificationAcknowledged: true,
+        previewChecksumSha256: preview.previewChecksumSha256,
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+    await new ApproveSubstituteReceiptUseCase(repo, storage, auditCollector, cleanup)
+      .execute(ctx('payer-1', ['expense.confirm'], ['OWNER']), 'exp-1', 'sub-1', {
+        approverPosition: 'เจ้าของ', approvalAcknowledged: true,
+        certifiedArtifactChecksumSha256: 'certified-checksum',
+        expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString(),
+      });
+    assert.equal(evidence.status, 'ISSUED');
+
+    // §12: the chat gets a token on our own origin, never a storage URL.
+    const rows: any[] = [];
+    const prismaFake = {
+      client: {
+        documentDeliveryLink: {
+          create: async ({ data, select }: any) => {
+            const row = { id: 'link-1', openCount: 0, revokedAt: null, lastOpenedAt: null, ...data };
+            rows.push(row);
+            return select ? { id: row.id, expiresAt: row.expiresAt } : row;
+          },
+          findUnique: async ({ where }: any) => rows.find((row) => row.tokenHashSha256 === where.tokenHashSha256) ?? null,
+          update: async ({ where, data, select }: any) => {
+            const row = rows.find((item) => item.id === where.id);
+            if (data.openCount?.increment) row.openCount += data.openCount.increment;
+            if (data.lastOpenedAt) row.lastOpenedAt = data.lastOpenedAt;
+            return select ? { openCount: row.openCount } : row;
+          },
+        },
+      },
+    } as any;
+    const link = await new CreateDocumentDeliveryLinkUseCase(
+      { execute: async () => expense() } as any, repo, prismaFake, storage, auditCollector,
+      { webBaseUrl: 'https://app.mangmeeplus.test' } as any,
+    ).execute(ctx('payer-1'), { expenseId: 'exp-1', evidenceId: 'sub-1', kind: 'ISSUED_PDF' });
+
+    const token = new URL(link.url).pathname.slice(3);
+    const resolved = await new ResolveDocumentDeliveryLinkUseCase(prismaFake, storage, auditCollector)
+      .execute({ token, clientIp: '203.0.113.9', requestId: 'open-1' });
+
+    assert.equal(resolved.status, 'OK');
+    // The bytes behind the 302 are a PDF derived from the artifact THIS approval stored — not a
+    // second render, and not the certified interim artifact.
+    const delivered = objects.get(new URL((resolved as any).url).pathname.slice(1))!;
+    assert.equal(delivered.subarray(0, 5).toString('latin1'), '%PDF-');
+    const pdf = await (await import('pdf-lib')).PDFDocument.load(delivered);
+    assert.equal(pdf.getTitle(), evidence.documentNumber);
+    assert.match(objects.get(issuedArtifactKey)!.toString('utf8'), /ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.equal(rows[0].openCount, 1);
+    assert.deepEqual(
+      audits.map((entry) => entry.action).filter((action) => action.startsWith('document.delivery')),
+      ['document.delivery.link.create', 'document.delivery.link.open'],
+    );
+    assert.equal(objects.has(issuedArtifactKey), true, '§12.1: the source artifact is still there');
   });
 });

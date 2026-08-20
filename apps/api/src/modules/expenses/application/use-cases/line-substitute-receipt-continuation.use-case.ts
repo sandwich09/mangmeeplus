@@ -8,6 +8,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { substituteWetSignedScanRejection } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import { CreateDocumentDeliveryLinkUseCase, type DocumentDeliveryLinkKind } from './document-delivery-link.use-case';
 
 const STATE_KEY = 'lineSubstituteReceiptContinuation';
 /** One coded shape for “these bytes may not become this document's signed original”, shared by the
@@ -62,6 +63,8 @@ export type LineSubstituteReceiptContinuationResult = {
   handled: true;
   status: 'READY_FOR_WEB' | 'BLOCKED' | 'INELIGIBLE' | 'FORBIDDEN' | 'TARGET_REQUIRED' | 'PAUSED' | 'CANCELLED' | 'STALE';
   replyText: string;
+  /** §13: the state badge the card renders above the body. Additive — absent means no badge row. */
+  badge?: string;
   workflowId?: string;
   expenseId?: string;
   acceptedFields: string[];
@@ -77,8 +80,17 @@ export type LineSubstituteReceiptContinuationResult = {
 // and stops every composed-ำ literal below (ทำใบรับรองต่อ, ไว้ทำทีหลัง, ไม่ทำแล้ว) from ever matching.
 const SUBSTITUTE_VOCABULARY = /(ใบรับรองแทนใบเสร็จ(?:รับเงิน)?|ใบทดแทนใบเสร็จ|ใบแทนใบเสร็จ|ใบรับรองแทนเงินสด|ทำใบรับรองต่อ)/u;
 
+/** §12.7 — the phrase that re-mints an expired delivery link, kept OUT of `SUBSTITUTE_VOCABULARY`
+ *  so R1's capture-first slice can never read “ขอลิงก์ใหม่” as an expense description. */
+const DELIVERY_LINK_REQUEST = /(ขอลิงก์ใหม่|ลิงก์หมดอายุ)/u;
+
 export function isSubstituteReceiptConversationText(text: string): boolean {
-  return SUBSTITUTE_VOCABULARY.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
+  const normalized = text.normalize('NFC').toLocaleLowerCase('th-TH');
+  return SUBSTITUTE_VOCABULARY.test(normalized) || DELIVERY_LINK_REQUEST.test(normalized);
+}
+
+export function isDeliveryLinkRequestText(text: string): boolean {
+  return DELIVERY_LINK_REQUEST.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
 }
 
 /** R1: the expense fact inside a combined “ออกใบทดแทนใบเสร็จ ค่าวินมอไซต์ … 50 บาท” message.
@@ -655,6 +667,45 @@ function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: 
   });
 }
 
+export const SUBSTITUTE_BADGES = {
+  forbidden: '🔒 ไม่มีสิทธิ์',
+  ineligible: '⛔ ทำไม่ได้',
+  issued: '✅ ออกเอกสารแล้ว',
+  awaitingSignature: '🖊️ รอลงนาม',
+  awaitingConfirmation: '🔵 รอยืนยัน',
+  ready: '🟢 ข้อมูลครบ',
+  awaitingFile: '🟠 รอไฟล์หลักฐาน',
+} as const;
+
+/**
+ * Spec §13's table, as one function. The order matters: a refusal outranks any progress, an existing
+ * document outranks the conversation that produced it, and only when neither applies do the blockers
+ * decide. `undefined` for the states §13 names no badge for — pause, cancel, stale, target selection
+ * — because inventing one there would state a status the card cannot back up.
+ */
+export function substituteReceiptBadge(input: {
+  status: LineSubstituteReceiptContinuationResult['status'];
+  blockers?: LineSubstituteReceiptBlocker[];
+  evidenceStatus?: string;
+  /** R10: a PREPARED evidence whose chat asked for a printable sheet is waiting for ink, not a click. */
+  awaitingPaperSignature?: boolean;
+}): string | undefined {
+  if (input.status === 'FORBIDDEN') return SUBSTITUTE_BADGES.forbidden;
+  if (input.status === 'INELIGIBLE') return SUBSTITUTE_BADGES.ineligible;
+  if (input.evidenceStatus === 'ISSUED' || input.evidenceStatus === 'SUPERSEDED') return SUBSTITUTE_BADGES.issued;
+  if (input.evidenceStatus === 'PREPARED') {
+    return input.awaitingPaperSignature ? SUBSTITUTE_BADGES.awaitingSignature : SUBSTITUTE_BADGES.awaitingConfirmation;
+  }
+  if (input.evidenceStatus === 'PAYER_CERTIFIED') return SUBSTITUTE_BADGES.awaitingConfirmation;
+  if (input.status === 'PAUSED' || input.status === 'CANCELLED' || input.status === 'STALE'
+    || input.status === 'TARGET_REQUIRED') return undefined;
+  const blockers = input.blockers ?? [];
+  if (!blockers.length) return SUBSTITUTE_BADGES.ready;
+  return blockers.some((item) => item.collectableInLine)
+    ? `🟡 ยังขาดข้อมูล ${blockers.length} อย่าง`
+    : SUBSTITUTE_BADGES.awaitingFile;
+}
+
 /** Replies emitted before a target exists (or without permission) keep formatResult's shape:
  *  what is understood → what is missing → boundary → VAT caveat → link → exactly one question. */
 function formatStandalone(input: {
@@ -752,6 +803,30 @@ function formatResult(input: {
   return lines.join('\n');
 }
 
+/** Journey A step 8's button wording. It sits on the URL's own line so the card renderer lifts it
+ *  into the button label instead of numbering it `เปิดลิงก์ 1` and stranding the colon in the body. */
+const DOWNLOAD_LABEL = { ISSUED_PDF: 'ดาวน์โหลดเอกสาร', UNSIGNED_FORM_PDF: 'ดาวน์โหลดแบบฟอร์ม' } as const;
+
+function deliveryLinkLine(kind: DocumentDeliveryLinkKind, url: string): string {
+  return `${DOWNLOAD_LABEL[kind]} (ลิงก์หมดอายุใน 3 วัน): ${url}`;
+}
+
+/** §12.7's expiry line, in the sender's own calendar. */
+function deliveryExpiryLine(expiresAt: Date): string {
+  const shown = expiresAt.toLocaleString('th-TH', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok',
+  });
+  return `ลิงก์นี้เปิดได้ถึง ${shown} แล้วจะหมดอายุ ขอใหม่ได้ตลอด`;
+}
+
+/** §12.8/PDPA — the document carries a payee name and an amount, so a link is never posted where
+ *  people who are not its recipient can read it. A group chat gets the status and the instruction. */
+const GROUP_CHAT_NO_LINK = 'ลิงก์ดาวน์โหลดเป็นข้อมูลส่วนบุคคล จึงไม่ส่งในแชทกลุ่มค่ะ ทักแชทส่วนตัวกับน้องมั่งมีแล้วพิมพ์ “ขอลิงก์ใหม่” เพื่อรับลิงก์';
+
+/** Every mint copies a whole PDF to a new opaque key, so a reader who simply asks about the same
+ *  document again must not create another one. §12.7's "ขอใหม่ได้ตลอด" is a deliberate act. */
+const LINK_ALREADY_SENT = 'ส่งลิงก์ดาวน์โหลดให้แล้วก่อนหน้านี้ และยังเปิดได้อยู่ค่ะ ถ้าลิงก์หมดอายุหรือเปิดไม่ได้ พิมพ์ “ขอลิงก์ใหม่” ได้เลย';
+
 @Injectable()
 export class LineSubstituteReceiptContinuationUseCase {
   constructor(
@@ -759,7 +834,34 @@ export class LineSubstituteReceiptContinuationUseCase {
     private readonly prepare: PrepareSubstituteReceiptUseCase,
     private readonly audit: AuditService,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly deliveryLink: CreateDocumentDeliveryLinkUseCase,
   ) {}
+
+  /**
+   * §12 — a delivery link, or the reason there is none. Never throws into a reply path: a chat that
+   * cannot be handed a link still gets its status, and the web page remains the way to the document.
+   */
+  private async deliver(
+    ctx: RequestContext,
+    input: { groupChat?: boolean | undefined },
+    expenseId: string,
+    evidenceId: string,
+    kind: DocumentDeliveryLinkKind,
+    /** False on an incidental turn: mint only when this recipient has no live link for this
+     *  document. True when the sender asked in so many words — §12.7 lets a second token exist. */
+    explicitRequest = true,
+  ): Promise<{ url: string; expiryLine: string } | { refusal: string } | undefined> {
+    if (input.groupChat) return { refusal: GROUP_CHAT_NO_LINK };
+    try {
+      if (!explicitRequest && await this.deliveryLink.hasLiveLink(ctx, evidenceId, kind)) {
+        return { refusal: LINK_ALREADY_SENT };
+      }
+      const link = await this.deliveryLink.execute(ctx, { expenseId, evidenceId, kind });
+      return { url: link.url, expiryLine: deliveryExpiryLine(link.expiresAt) };
+    } catch {
+      return undefined;
+    }
+  }
 
   /** R14/§11: the open substitute work an arriving photo could belong to. `undefined` means this
    *  chat has none, and the media turn must behave exactly as it did before this existed. */
@@ -801,7 +903,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     attachmentId: string;
     purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
     webBaseUrl?: string;
-  }): Promise<{ replyText: string }> {
+  }): Promise<{ replyText: string; badge?: string }> {
     if (!ctx.permissions.includes('expense.receipt.upload')) {
       throw new ForbiddenException('Missing permission: expense.receipt.upload');
     }
@@ -834,7 +936,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     attachmentId: string;
     checksumSha256: string;
     webBaseUrl?: string;
-  }): Promise<{ replyText: string }> {
+  }): Promise<{ replyText: string; badge?: string }> {
     if (!ctx.permissions.includes('expense.review')) {
       throw new ForbiddenException('Missing permission: expense.review');
     }
@@ -870,6 +972,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     }
     const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${input.evidenceId}`);
     return {
+      badge: SUBSTITUTE_BADGES.awaitingConfirmation,
       replyText: formatStandalone({
         headline: [
           `🔵 รอยืนยัน — รับฟอร์มที่เซ็นแล้วของเลขที่ ${linked.documentNumber} ไว้เป็นต้นฉบับลายเซ็นสดแล้วค่ะ`,
@@ -910,11 +1013,14 @@ export class LineSubstituteReceiptContinuationUseCase {
     chatKeyHash: string;
     recentCandidates: Array<{ id: string; label: string }>;
     webBaseUrl?: string;
+    /** §12.8: this turn is happening in a group or room, so no delivery link may be emitted. */
+    groupChat?: boolean;
   }): Promise<LineSubstituteReceiptContinuationResult> {
     // R3: the permission a link needs is checked before any target is discovered, so no link is offered.
     if (!ctx.permissions.includes('expense.review')) {
       return {
         handled: true, status: 'FORBIDDEN', acceptedFields: [],
+        badge: substituteReceiptBadge({ status: 'FORBIDDEN' }),
         blockers: [blocker('expense_review_forbidden', 'ไม่มีสิทธิ์ตรวจทานเพื่อจัดทำใบรับรองแทนใบเสร็จรับเงิน')],
         replyText: formatStandalone({
           headline: 'จัดทำใบรับรองแทนใบเสร็จรับเงินต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
@@ -925,6 +1031,13 @@ export class LineSubstituteReceiptContinuationUseCase {
     const rows = await this.repo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
     });
+    // §12.7: “ขอลิงก์ใหม่” is answered from the documents this chat already issued — every status is
+    // read, because the state that produced the document was CONSUMED by its own prepare. When this
+    // chat has issued nothing, the phrase means nothing and the ordinary flow continues.
+    if (isDeliveryLinkRequestText(input.messageText)) {
+      const reissued = await this.reissueDeliveryLink(ctx, input, rows);
+      if (reissued) return reissued;
+    }
     const states = rows
       .map((row) => ({ row, state: stateFromMetadata(row.sourceChannelMetadataJson) }))
       .filter((item): item is { row: typeof rows[number]; state: LineSubstituteReceiptContinuation } =>
@@ -980,7 +1093,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       // OPEN state over it would wipe the provenance the consumed continuation still holds and ask
       // three questions that are already answered. Report the document instead, and write nothing.
       const live = expense.substituteReceiptEvidence;
-      if (live && live.status !== 'SUPERSEDED') return this.existingEvidenceCard(ctx, input.webBaseUrl, expense, live);
+      if (live && live.status !== 'SUPERSEDED') return this.existingEvidenceCard(ctx, input, expense, live);
       const now = new Date().toISOString();
       selected = {
         row: { id: expense.id, updatedAt: expense.updatedAt, sourceChannelMetadataJson: expense.sourceChannelMetadataJson },
@@ -1101,9 +1214,11 @@ export class LineSubstituteReceiptContinuationUseCase {
       : ineligible
         ? absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`)
         : workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
+    const badge = substituteReceiptBadge({ status, blockers });
     return {
       handled: true, status, workflowId: state.workflowId, expenseId: expense.id,
       acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath,
+      ...(badge ? { badge } : {}),
       policy: policyFacts,
       sideQuestionAnswered: Boolean(sideAnswer),
       resumeCapsule: resumeCapsule(expense, state, Object.keys(acceptedNow), targetPath),
@@ -1112,40 +1227,88 @@ export class LineSubstituteReceiptContinuationUseCase {
     };
   }
 
-  /** The evidence already exists, so the conversation reports it instead of starting over. Nothing
-   *  is written: the consumed continuation keeps the provenance of every value it collected. */
-  private existingEvidenceCard(
+  /**
+   * The evidence already exists, so the conversation reports it instead of starting over. Nothing is
+   * written to the continuation: the consumed state keeps the provenance of every value it collected.
+   *
+   * This is also where an ISSUED document is DELIVERED. There is a `sendPush` primitive, but nothing
+   * durable holds the raw chat id to push to — the continuation stores only a one-way `chatKeyHash`
+   * — so the ✅ card rides the sender's next turn here (and “ขอลิงก์ใหม่” makes that turn happen on
+   * demand) rather than inventing a chat-address store on the approve path.
+   */
+  private async existingEvidenceCard(
     ctx: RequestContext,
-    webBaseUrl: string | undefined,
+    input: { webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
     evidence: { id: string; documentNumber: string; status: string },
-  ): LineSubstituteReceiptContinuationResult {
-    const webPath = absoluteLink(webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
+    /** §12.7: the sender typed “ขอลิงก์ใหม่”, so a fresh token is minted even beside a live one.
+     *  On an ordinary turn only the FIRST card mints — otherwise repeating the substitute vocabulary
+     *  would copy the whole PDF to a new key every time. */
+    explicitRequest = false,
+  ): Promise<LineSubstituteReceiptContinuationResult> {
+    const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
     const issued = evidence.status === 'ISSUED';
+    // Journey A gets exactly one link with its ISSUED card: nothing is live yet, so the first card
+    // mints. Journey B's sheet is delivered by the prepare, so PREPARED only re-mints when asked.
+    const kind: DocumentDeliveryLinkKind | undefined = issued ? 'ISSUED_PDF'
+      : evidence.status === 'PREPARED' && explicitRequest ? 'UNSIGNED_FORM_PDF'
+      : undefined;
+    const delivery = kind
+      ? await this.deliver(ctx, input, expense.id, evidence.id, kind, explicitRequest)
+      : undefined;
+    const badge = substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: evidence.status });
+    const amount = `${expense.grandTotalAmount} ${expense.currency}`;
+    const headline = [
+      `${issued ? '✅ ออกเอกสารแล้ว' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
+      `รายการ ${expense.expenseNumber ?? expense.id} · ยอด ${amount}`,
+      issued
+        ? 'เอกสารออกเรียบร้อยแล้ว'
+        : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
+    ];
+    if (delivery && 'url' in delivery) {
+      headline.push(deliveryLinkLine(kind!, delivery.url), delivery.expiryLine);
+    } else if (delivery) headline.push(delivery.refusal);
+    else if (issued) headline.push('ยังสร้างลิงก์ดาวน์โหลดให้ไม่ได้ตอนนี้ เปิดดาวน์โหลดในเว็บได้ค่ะ');
     return {
       handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath,
+      ...(badge ? { badge } : {}),
       replyText: formatStandalone({
-        headline: [
-          `${issued ? '✅ ออกเอกสารแล้ว' : '🔵 รอยืนยัน'} — เลขที่ ${evidence.documentNumber}`,
-          `รายการ ${expense.expenseNumber ?? expense.id} · ยอด ${expense.grandTotalAmount} ${expense.currency}`,
-          issued
-            ? 'เอกสารออกเรียบร้อยแล้ว เปิดดูและดาวน์โหลดได้ในเว็บ'
-            : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
-        ].join('\n'),
+        headline: headline.join('\n'),
         boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
         question: issued
-          ? 'เปิดลิงก์ด้านบนเพื่อดาวน์โหลดเอกสารได้เลยค่ะ'
-          : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ',
+          ? 'กดลิงก์ดาวน์โหลดด้านบนได้เลยค่ะ ถ้าลิงก์หมดอายุ พิมพ์ “ขอลิงก์ใหม่” ได้ตลอด'
+          : delivery && 'url' in delivery
+            ? 'กดลิงก์ดาวน์โหลดแบบฟอร์มด้านบน พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ'
+            : 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ',
         webPath,
       }),
     };
+  }
+
+  /** §12.7 — “ขอลิงก์ใหม่” finds the newest document this chat produced and mints a fresh link for
+   *  it: the issued certificate, or the unsigned sheet while Journey B is still waiting for ink.
+   *  `undefined` means this chat has neither, and the turn continues as normal. */
+  private async reissueDeliveryLink(
+    ctx: RequestContext,
+    input: { webBaseUrl?: string; groupChat?: boolean },
+    rows: Array<{ sourceChannelMetadataJson: Record<string, unknown> | null }>,
+  ): Promise<LineSubstituteReceiptContinuationResult | undefined> {
+    for (const row of rows) {
+      const state = stateFromMetadata(row.sourceChannelMetadataJson);
+      if (!state) continue;
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, state.expenseId, undefined, ctx.scopes ?? {});
+      const evidence = expense?.substituteReceiptEvidence;
+      if (!expense || (evidence?.status !== 'ISSUED' && evidence?.status !== 'PREPARED')) continue;
+      return this.existingEvidenceCard(ctx, input, expense, evidence, true);
+    }
+    return undefined;
   }
 
   /** R13 answer handling. `undefined` means "not an answer to this question, but it does carry
    *  values" — the normal collect-and-re-ask path owns those, so a correction is never lost. */
   private async answerIssueDecision(
     ctx: RequestContext,
-    input: { messageText: string; webBaseUrl?: string },
+    input: { messageText: string; webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
     categories: Array<{ id: string; name: string }>,
@@ -1229,7 +1392,7 @@ export class LineSubstituteReceiptContinuationUseCase {
    *  asset's status decides which of the three true situations the sender is actually in. */
   private async askForSignature(
     ctx: RequestContext,
-    input: { webBaseUrl?: string },
+    input: { webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
   ): Promise<LineSubstituteReceiptContinuationResult> {
@@ -1242,14 +1405,16 @@ export class LineSubstituteReceiptContinuationUseCase {
     const waiting = latest?.status === 'PENDING_OWNER_APPROVAL';
     const rejected = latest?.status === 'REJECTED';
     const question = waiting ? 'ระหว่างรออนุมัติ จะขอฟอร์มไปเซ็นเองก่อนไหมคะ (ตอบ 2)' : sendPhoto;
+    const signatureBlocker = blocker(
+      waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
+      waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
+      true,
+    );
     return {
       handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
       acceptedFields: [],
-      blockers: [blocker(
-        waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
-        waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
-        true,
-      )],
+      badge: substituteReceiptBadge({ status: 'BLOCKED', blockers: [signatureBlocker] }),
+      blockers: [signatureBlocker],
       // The decision stays pending and nothing is written, so “1” after the photo lands here again.
       pendingQuestion: question,
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId),
@@ -1276,7 +1441,7 @@ export class LineSubstituteReceiptContinuationUseCase {
    *  work to the one web page where certification and approval happen. */
   private async prepareFromLine(
     ctx: RequestContext,
-    input: { webBaseUrl?: string },
+    input: { webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
     choice: 'ISSUE' | 'FORM',
@@ -1312,9 +1477,26 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       const webPath = absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/${evidence.id}`);
       const amount = `${expense.grandTotalAmount} ${expense.currency}`;
+      // §12: Journey B must reach the printable sheet without a web session, so the FORM route leads
+      // with a delivery link. The web page stays as the secondary line — it is where certification
+      // and approval happen anyway.
+      const delivery = choice === 'FORM'
+        ? await this.deliver(ctx, input, expense.id, evidence.id, 'UNSIGNED_FORM_PDF')
+        : undefined;
+      const formLines = [
+        `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
+        `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
+        'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว',
+      ];
+      if (delivery && 'url' in delivery) formLines.push(deliveryLinkLine('UNSIGNED_FORM_PDF', delivery.url), delivery.expiryLine);
+      else if (delivery) formLines.push(delivery.refusal);
+      const badge = substituteReceiptBadge({
+        status: 'READY_FOR_WEB', evidenceStatus: evidence.status, awaitingPaperSignature: choice === 'FORM',
+      });
       return {
         handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
         acceptedFields: [], blockers: [], webPath,
+        ...(badge ? { badge } : {}),
         replyText: formatStandalone({
           headline: choice === 'ISSUE'
             ? [
@@ -1322,15 +1504,13 @@ export class LineSubstituteReceiptContinuationUseCase {
               `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
               'ขั้นต่อไปทำในเว็บหน้าเดียว: ผู้จ่ายลงนามรับรอง แล้วผู้มีสิทธิ์อนุมัติ',
             ].join('\n')
-            : [
-              `🖊️ รอลงนาม — เตรียมเอกสารและจองเลขที่ ${evidence.documentNumber} ไว้แล้ว`,
-              `ยอด ${amount} · ผู้จ่าย ${evidence.payerName}`,
-              'แบบฟอร์มรอลงนามมีลายน้ำ UNSIGNED และยังไม่ใช่เอกสารที่ออกแล้ว',
-            ].join('\n'),
+            : formLines.join('\n'),
           boundary: 'LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร',
           question: choice === 'ISSUE'
             ? 'เปิดลิงก์ด้านบนเพื่อลงนามรับรองและอนุมัติในเว็บได้เลยค่ะ'
-            : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ',
+            : delivery && 'url' in delivery
+              ? 'กดลิงก์ดาวน์โหลดแบบฟอร์มด้านบน พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ'
+              : 'เปิดลิงก์ด้านบน กดดาวน์โหลด “แบบฟอร์มรอลงนาม” พิมพ์แล้วเซ็นด้วยมือได้เลยค่ะ',
           webPath,
         }),
       };

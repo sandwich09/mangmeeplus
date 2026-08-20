@@ -21,7 +21,7 @@ const CLIENT_VERSION = '7.8.0';
 
 type Reply = { body: Record<string, unknown>; status: number };
 
-function run(exception: unknown) {
+function run(exception: unknown, path = '/v1/procurement/suppliers') {
   const replies: Reply[] = [];
   const warns: Array<Record<string, unknown>> = [];
   const errors: Array<Record<string, unknown>> = [];
@@ -30,7 +30,7 @@ function run(exception: unknown) {
     error: (obj: Record<string, unknown>) => void errors.push(obj),
   } as unknown as AppLogger;
 
-  const req = { method: 'POST', path: '/v1/procurement/suppliers', headers: { 'x-request-id': 'req-1' } };
+  const req = { method: 'POST', path, headers: { 'x-request-id': 'req-1' } };
   const res = {};
   const host = {
     switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
@@ -187,5 +187,30 @@ describe('AllExceptionsFilter — what must NOT be remapped (spec §15.3)', () =
     assert.deepEqual(reply.body['message'], ['supplierType must be one of ...'], 'DTO field errors survive');
     assert.equal(warns.length, 0);
     assert.equal(errors.length, 0);
+  });
+});
+
+// FIX-1: both enriched log paths in this filter print `req.path` verbatim, and the shared redactor
+// only ever inspects KEY names — so a `/document-delivery/{token}` failure would publish a live
+// bearer credential to CloudWatch.
+describe('AllExceptionsFilter — a bearer token in the path never reaches the log', () => {
+  const DELIVERY_PATH = `/v1/document-delivery/${'A'.repeat(43)}`;
+
+  it('masks the token on the 4xx Prisma-translation warn', () => {
+    const { warns } = run(
+      new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: CLIENT_VERSION }),
+      DELIVERY_PATH,
+    );
+    assert.equal(warns[0]?.['path'], '/v1/document-delivery/:token');
+  });
+
+  it('masks the token on the enriched 5xx error', () => {
+    const { errors } = run(new Error('storage exploded'), DELIVERY_PATH);
+    assert.equal(errors[0]?.['path'], '/v1/document-delivery/:token');
+  });
+
+  it('leaves an ordinary path exactly as it was', () => {
+    const { errors } = run(new Error('boom'));
+    assert.equal(errors[0]?.['path'], '/v1/procurement/suppliers');
   });
 });

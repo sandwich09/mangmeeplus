@@ -538,6 +538,9 @@ export type LineAiAnswerCard = {
   text: string;
   sourceLabels?: string[];
   webLink?: LineAiWebLink;
+  /** Spec §13: one state badge rendered as its own row above the body. Additive — a card without
+   *  one renders exactly as it did before, and an older gateway never sends one. */
+  badge?: string;
 };
 
 export type LineAiAnswerPresentation = {

@@ -539,6 +539,88 @@ export class PreviewSubstituteReceiptUseCase {
   }
 }
 
+/**
+ * The bytes of the issued certificate, with no caller identity in sight. Extracted from the web
+ * download so the §12 delivery link can copy exactly the same document without either duplicating
+ * the R11 paper-route composition or borrowing a web `RequestContext` it does not have — the
+ * `assertWeb` boundary (§16) stays on the endpoints, where it belongs.
+ */
+export async function composeIssuedSubstituteReceiptPdf(
+  repo: PrismaExpenseRepository,
+  storage: AttachmentStoragePort,
+  companyId: string,
+  expenseId: string,
+  evidence: SubstituteReceiptEvidenceRecord,
+): Promise<{ data: Buffer; fileName: string; stateStamp?: 'VOID' | 'SUPERSEDED'; scanLinked: boolean }> {
+  if (!['ISSUED', 'SUPERSEDED'].includes(evidence.status) || !evidence.artifactAttachmentId) {
+    throw new ConflictException('The substitute-receipt certificate has not been issued yet.');
+  }
+  const attachment = await repo.findSubstituteArtifactAttachment(
+    companyId,
+    expenseId,
+    evidence.artifactAttachmentId,
+  );
+  if (!attachment) throw new NotFoundException('Issued substitute-receipt artifact not found.');
+  const svg = await storage.getObject({
+    bucket: attachment.bucket,
+    objectKey: attachment.objectKey,
+    ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
+  });
+  // The immutable, checksummed SVG remains authoritative; this PDF is a derived printout generated on demand.
+  const stateStamp = evidence.status === 'SUPERSEDED'
+    ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
+    : undefined;
+  // R11: on the paper route the stored artifact is the attestation page, and the signatures live
+  // on the scan — so the document handed over is the scan first, then that page.
+  const scan = evidence.signatureMode === 'PAPER' && evidence.wetSignedScanAttachmentId
+    ? await repo.findSubstituteArtifactAttachment(
+      companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf'],
+    )
+    : null;
+  if (evidence.signatureMode === 'PAPER' && !scan) {
+    throw new ConflictException('The hand-signed scan of this substitute receipt is no longer available.');
+  }
+  let data: Buffer;
+  if (scan) {
+    const scanObject = await storage.getObject({
+      bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}),
+    });
+    // R11: the scan's checksum is recorded on the evidence precisely so the bytes handed over can
+    // be proven to be the ones that were certified. Silently printing different bytes would be a
+    // forged document, so a mismatch refuses with a code the web can explain.
+    if (sha256(scanObject.bytes) !== evidence.wetSignedScanChecksumSha256) {
+      throw new ConflictException({
+        code: 'substitute_wet_signed_scan_checksum_mismatch',
+        message: 'The stored hand-signed scan no longer matches the checksum recorded at certification.',
+      });
+    }
+    try {
+      data = await renderSubstituteReceiptPaperArtifactPdf(
+        { bytes: scanObject.bytes, mimeType: scan.mimeType },
+        svg.bytes,
+        evidence.documentNumber,
+        { ...(stateStamp ? { stateStamp } : {}) },
+      );
+    } catch (error) {
+      // Linking validates composability, so reaching here means the stored object changed under
+      // us. It is still a state the reader can act on, never an unexplained 500.
+      throw new ConflictException({
+        code: 'substitute_wet_signed_scan_not_renderable',
+        message: `The hand-signed scan can no longer be composed into the certificate (${(error as Error).message.slice(0, 120)}).`,
+      });
+    }
+  } else {
+    data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
+  }
+  const stateSuffix = stateStamp ? `-${stateStamp}` : '';
+  return {
+    data,
+    fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}${stateSuffix}.pdf`,
+    ...(stateStamp ? { stateStamp } : {}),
+    scanLinked: !!scan,
+  };
+}
+
 @Injectable()
 export class DownloadSubstituteReceiptPdfUseCase {
   constructor(
@@ -553,66 +635,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     await this.getExpense.execute(ctx, expenseId);
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    if (!['ISSUED', 'SUPERSEDED'].includes(evidence.status) || !evidence.artifactAttachmentId) {
-      throw new ConflictException('The substitute-receipt certificate has not been issued yet.');
-    }
-    const attachment = await this.repo.findSubstituteArtifactAttachment(
-      ctx.companyId,
-      expenseId,
-      evidence.artifactAttachmentId,
-    );
-    if (!attachment) throw new NotFoundException('Issued substitute-receipt artifact not found.');
-    const svg = await this.storage.getObject({
-      bucket: attachment.bucket,
-      objectKey: attachment.objectKey,
-      ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
-    });
-    // The immutable, checksummed SVG remains authoritative; this PDF is a derived printout generated on demand.
-    const stateStamp = evidence.status === 'SUPERSEDED'
-      ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
-      : undefined;
-    // R11: on the paper route the stored artifact is the attestation page, and the signatures live
-    // on the scan — so the document handed over is the scan first, then that page.
-    const scan = evidence.signatureMode === 'PAPER' && evidence.wetSignedScanAttachmentId
-      ? await this.repo.findSubstituteArtifactAttachment(
-        ctx.companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf'],
-      )
-      : null;
-    if (evidence.signatureMode === 'PAPER' && !scan) {
-      throw new ConflictException('The hand-signed scan of this substitute receipt is no longer available.');
-    }
-    let data: Buffer;
-    if (scan) {
-      const scanObject = await this.storage.getObject({
-        bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}),
-      });
-      // R11: the scan's checksum is recorded on the evidence precisely so the bytes handed over can
-      // be proven to be the ones that were certified. Silently printing different bytes would be a
-      // forged document, so a mismatch refuses with a code the web can explain.
-      if (sha256(scanObject.bytes) !== evidence.wetSignedScanChecksumSha256) {
-        throw new ConflictException({
-          code: 'substitute_wet_signed_scan_checksum_mismatch',
-          message: 'The stored hand-signed scan no longer matches the checksum recorded at certification.',
-        });
-      }
-      try {
-        data = await renderSubstituteReceiptPaperArtifactPdf(
-          { bytes: scanObject.bytes, mimeType: scan.mimeType },
-          svg.bytes,
-          evidence.documentNumber,
-          { ...(stateStamp ? { stateStamp } : {}) },
-        );
-      } catch (error) {
-        // Linking validates composability, so reaching here means the stored object changed under
-        // us. It is still a state the reader can act on, never an unexplained 500.
-        throw new ConflictException({
-          code: 'substitute_wet_signed_scan_not_renderable',
-          message: `The hand-signed scan can no longer be composed into the certificate (${(error as Error).message.slice(0, 120)}).`,
-        });
-      }
-    } else {
-      data = await renderSubstituteReceiptPdf(svg.bytes, evidence.documentNumber, { stateStamp });
-    }
+    const composed = await composeIssuedSubstituteReceiptPdf(this.repo, this.storage, ctx.companyId, expenseId, evidence);
     void this.audit.log({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -627,13 +650,12 @@ export class DownloadSubstituteReceiptPdfUseCase {
         artifactAttachmentId: evidence.artifactAttachmentId,
         evidenceStatus: evidence.status,
         supersedeReason: evidence.supersedeReason,
-        derivedStamp: stateStamp ?? null,
+        derivedStamp: composed.stateStamp ?? null,
         signatureMode: evidence.signatureMode,
-        ...(scan ? { wetSignedScanAttachmentId: evidence.wetSignedScanAttachmentId } : {}),
+        ...(composed.scanLinked ? { wetSignedScanAttachmentId: evidence.wetSignedScanAttachmentId } : {}),
       },
     });
-    const stateSuffix = stateStamp ? `-${stateStamp}` : '';
-    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}${stateSuffix}.pdf` };
+    return { data: composed.data, fileName: composed.fileName };
   }
 }
 
@@ -642,7 +664,28 @@ export class DownloadSubstituteReceiptPdfUseCase {
  * signature boxes blank, an `UNSIGNED` watermark, the document number printed large, and the line
  * that says the sheet is not yet a document. It is DERIVED on demand and never stored: no
  * attachment, no artifact id, nothing that could later be mistaken for the issued certificate.
+ *
+ * Extracted alongside `composeIssuedSubstituteReceiptPdf` so the §12 delivery link renders exactly
+ * this sheet — Journey B must reach it without a web session.
  */
+export async function composeUnsignedSubstituteReceiptFormPdf(
+  repo: PrismaExpenseRepository,
+  companyId: string,
+  expense: ExpenseRecordWithRelations,
+  evidence: SubstituteReceiptEvidenceRecord,
+): Promise<{ data: Buffer; fileName: string }> {
+  if (evidence.status !== 'PREPARED') throw new ConflictException(`The unsigned form exists only while the evidence is PREPARED, found ${evidence.status}.`);
+  // Someone is about to sign this sheet by hand: it must carry the values the certification will,
+  // not a stale copy of them.
+  assertPreparedExpenseUnchanged(expense, evidence);
+  const snapshot = await buildSnapshot(repo, companyId, expense, evidence, UNSIGNED_FORM_POSITION_BLANK, PREVIEW_CERTIFIED_AT);
+  const svg = renderSubstituteReceiptSvg(snapshot, undefined, undefined, undefined, { unsignedForm: true });
+  return {
+    data: await renderSubstituteReceiptPdf(svg, evidence.documentNumber, { stateStamp: 'UNSIGNED' }),
+    fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}-UNSIGNED.pdf`,
+  };
+}
+
 @Injectable()
 export class DownloadSubstituteReceiptFormPdfUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
@@ -652,16 +695,10 @@ export class DownloadSubstituteReceiptFormPdfUseCase {
     if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    if (evidence.status !== 'PREPARED') throw new ConflictException(`The unsigned form exists only while the evidence is PREPARED, found ${evidence.status}.`);
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId);
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
-    // Someone is about to sign this sheet by hand: it must carry the values the certification will,
-    // not a stale copy of them.
-    assertPreparedExpenseUnchanged(expense, evidence);
-    const snapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, UNSIGNED_FORM_POSITION_BLANK, PREVIEW_CERTIFIED_AT);
-    const svg = renderSubstituteReceiptSvg(snapshot, undefined, undefined, undefined, { unsignedForm: true });
-    const data = await renderSubstituteReceiptPdf(svg, evidence.documentNumber, { stateStamp: 'UNSIGNED' });
+    const composed = await composeUnsignedSubstituteReceiptFormPdf(this.repo, ctx.companyId, expense, evidence);
     // The sheet carries payee name and amount, so its egress is audited exactly like the issued
     // artifact's — the only difference is that this one has no stored attachment to name.
     void this.audit.log({
@@ -675,7 +712,7 @@ export class DownloadSubstituteReceiptFormPdfUseCase {
       riskLevel: 'LOW',
       metadataJson: { expenseId, evidenceStatus: evidence.status, version: evidence.version, derivedStamp: 'UNSIGNED' },
     });
-    return { data, fileName: `${evidence.documentNumber.replace(/["\r\n]/g, '_')}-UNSIGNED.pdf` };
+    return composed;
   }
 }
 

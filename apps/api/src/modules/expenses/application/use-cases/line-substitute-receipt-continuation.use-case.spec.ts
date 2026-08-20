@@ -10,6 +10,7 @@ import {
   substituteMediaAnswer,
   substituteMediaChoices,
   substituteMediaQuestion,
+  substituteReceiptBadge,
   substituteRequestExpenseText,
   substituteScanConfirmAnswer,
   substituteScanConfirmQuestion,
@@ -61,6 +62,8 @@ function harness(overrides: {
   /** The newest asset of any status — what tells "already sent, waiting for approval" from "none". */
   latestSignature?: { status: string; rejectReason: string | null } | null;
   prepareError?: Error;
+  /** §12: a link that cannot be minted must degrade the reply, never sink the turn. */
+  deliveryError?: Error;
 } = {}) {
   let current = overrides.expense ?? expense();
   const saves: any[] = [];
@@ -159,13 +162,57 @@ function harness(overrides: {
     { log: async (entry: any) => { audits.push(entry); } } as any,
     { execute: async () => ({}) } as any,
   );
+  // §12: the link use case itself is proven end to end in substitute-receipt-download.use-case.spec.
+  // What matters here is WHEN the continuation asks for one, for which kind, and what the reply says.
+  const deliveries: any[] = [];
+  const liveLinks = new Set<string>();
+  const deliveryLink = {
+    // FIX-3: the row is the throttle. A mint makes the link live; the continuation must consult
+    // this before minting on any turn the sender did not explicitly ask on.
+    hasLiveLink: async (_ctx: any, evidenceId: string, kind: string) => {
+      if (overrides.deliveryError) throw overrides.deliveryError;
+      return liveLinks.has(`${evidenceId}:${kind}`);
+    },
+    execute: async (_ctx: any, input: any) => {
+      if (overrides.deliveryError) throw overrides.deliveryError;
+      deliveries.push(input);
+      liveLinks.add(`${input.evidenceId}:${input.kind}`);
+      return {
+        url: `${WEB_BASE}/d/${'A'.repeat(43)}`,
+        expiresAt: new Date('2026-08-23T04:00:00.000Z'),
+        linkId: `link-${deliveries.length}`,
+      };
+    },
+  } as any;
   return {
     useCase: new LineSubstituteReceiptContinuationUseCase(
       repo, prepare,
       { log: async (entry: any) => { audits.push(entry); } } as any,
       { getObject: async () => overrides.scanObject ?? { bytes: await onePagePdf(), mimeType: 'application/pdf' } } as any,
+      deliveryLink,
     ),
-    saves, prepares, audits, links, scanLinks, getExpense: () => current,
+    saves, prepares, audits, links, scanLinks, deliveries, liveLinks, getExpense: () => current,
+    /** The state a LINE-prepared expense is in once the web approval issued it: an evidence row plus
+     *  the CONSUMED continuation the prepare left behind, which still holds the provenance. */
+    issue: (patch: Record<string, unknown> = {}) => {
+      current = {
+        ...current,
+        substituteReceiptEvidence: {
+          id: 'evidence-1', documentNumber: 'SUB-202608-00007', status: 'ISSUED',
+          signatureMode: 'DIGITAL', wetSignedScanAttachmentId: null, preparedAt: current.updatedAt.toISOString(),
+          ...patch,
+        },
+        sourceChannelMetadataJson: {
+          ...current.sourceChannelMetadataJson,
+          lineSubstituteReceiptContinuation: {
+            workflowId: 'wf-1', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+            expenseId: current.id, chatKeyHash: 'chat-hash', status: 'CONSUMED', acceptedValues: {}, provenance: {},
+            resolvedFields: [], missingFields: [], attachmentRefs: [], pendingQuestion: null,
+            targetRevision: current.updatedAt.toISOString(), lastActivityAt: current.updatedAt.toISOString(),
+          },
+        },
+      };
+    },
   };
 }
 
@@ -1373,5 +1420,244 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
     assert.equal(next.blockers.some((item) => item.code === 'supporting_evidence_required'), false);
     assert.equal(next.replyText.includes('มีสลิปหรือรูปถ่ายประกอบไหมคะ'), false);
     assert.match(next.replyText, /ข้อมูลครบแล้ว พร้อมออกเอกสาร/);
+  });
+});
+
+// ─── Phase 5: spec §12 delivery links, §13 badges ─────────────────────────────
+
+const DELIVERY_URL = `${WEB_BASE}/d/${'A'.repeat(43)}`;
+const EXPIRY_LINE = 'ลิงก์นี้เปิดได้ถึง';
+
+describe('spec §13 — the state badge', () => {
+  it('maps every state in the table, refusals first', () => {
+    const collectable = [{ code: 'a', message: 'a', collectableInLine: true }, { code: 'b', message: 'b', collectableInLine: true }];
+    const fileOnly = [{ code: 'payment_evidence_required', message: 'x', collectableInLine: false }];
+
+    assert.equal(substituteReceiptBadge({ status: 'FORBIDDEN' }), '🔒 ไม่มีสิทธิ์');
+    assert.equal(substituteReceiptBadge({ status: 'INELIGIBLE' }), '⛔ ทำไม่ได้');
+    assert.equal(substituteReceiptBadge({ status: 'BLOCKED', blockers: collectable }), '🟡 ยังขาดข้อมูล 2 อย่าง');
+    assert.equal(substituteReceiptBadge({ status: 'BLOCKED', blockers: fileOnly }), '🟠 รอไฟล์หลักฐาน');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', blockers: [] }), '🟢 ข้อมูลครบ');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: 'PREPARED' }), '🔵 รอยืนยัน');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: 'PREPARED', awaitingPaperSignature: true }), '🖊️ รอลงนาม');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: 'PAYER_CERTIFIED' }), '🔵 รอยืนยัน');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: 'ISSUED' }), '✅ ออกเอกสารแล้ว');
+    assert.equal(substituteReceiptBadge({ status: 'READY_FOR_WEB', evidenceStatus: 'SUPERSEDED' }), '✅ ออกเอกสารแล้ว');
+  });
+
+  it('outranks progress with a refusal, and states nothing for the states §13 does not name', () => {
+    // An INELIGIBLE turn that happens to carry a document must not read as "ออกเอกสารแล้ว".
+    assert.equal(substituteReceiptBadge({ status: 'INELIGIBLE', evidenceStatus: 'ISSUED' }), '⛔ ทำไม่ได้');
+    for (const status of ['PAUSED', 'CANCELLED', 'STALE', 'TARGET_REQUIRED'] as const) {
+      assert.equal(substituteReceiptBadge({ status, blockers: [] }), undefined, status);
+    }
+  });
+
+  it('rides the reply out of the use case, so the card can render a row above the body', async () => {
+    const forbidden = await harness().useCase.execute(
+      { ...ctx(), permissions: [] },
+      { messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE },
+    );
+    assert.equal(forbidden.badge, '🔒 ไม่มีสิทธิ์');
+
+    const blocked = await harness().useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+    assert.match(blocked.badge ?? '', /^🟡 ยังขาดข้อมูล \d+ อย่าง$/);
+
+    const ready = await readyHarness();
+    assert.equal(ready.asked.badge, '🟢 ข้อมูลครบ');
+  });
+});
+
+describe('spec §12 — delivery links in the conversation', () => {
+  it('Journey B: the form choice hands over a delivery link, not a web login', async () => {
+    const h = await readyHarness();
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'UNSIGNED_FORM_PDF' }]);
+    assert.equal(result.badge, '🖊️ รอลงนาม');
+    // FIX-5: the label sits on the URL's own line, so the card lifts it into the button.
+    assert.match(result.replyText, new RegExp(`ดาวน์โหลดแบบฟอร์ม \\(ลิงก์หมดอายุใน 3 วัน\\): ${DELIVERY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.match(result.replyText, new RegExp(EXPIRY_LINE));
+    assert.match(result.replyText, /ขอใหม่ได้ตลอด/);
+    // The web page stays as the secondary line: certification and approval still happen there.
+    assert.match(result.replyText, /เปิดในเว็บ: https:\/\/app\.example\.com\/companies\/company-1\/expenses\/substitute-receipts\/evidence-1/);
+  });
+
+  it('the issue choice reserves a number without minting any link', async () => {
+    const h = await readyHarness({ signature: { id: 'sig-1' } });
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(h.deliveries, [], 'nothing is issued yet, so there is nothing to deliver');
+    assert.equal(result.badge, '🔵 รอยืนยัน');
+  });
+
+  it('§12.8 — a group chat never receives a link, and none is minted for it', async () => {
+    const h = await readyHarness();
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE, groupChat: true,
+    });
+
+    assert.deepEqual(h.deliveries, []);
+    assert.doesNotMatch(result.replyText, /\/d\//);
+    assert.match(result.replyText, /ไม่ส่งในแชทกลุ่ม/);
+    assert.match(result.replyText, /แชทส่วนตัว/);
+  });
+
+  it('an ISSUED document is delivered on the next turn, with number, amount and the §12.7 expiry line', async () => {
+    const h = harness();
+    h.issue();
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }]);
+    assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
+    assert.match(result.replyText, /SUB-202608-00007/);
+    assert.match(result.replyText, /200\.0000 THB/);
+    assert.match(result.replyText, new RegExp(`ดาวน์โหลดเอกสาร \\(ลิงก์หมดอายุใน 3 วัน\\): ${DELIVERY_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    assert.match(result.replyText, /ลิงก์นี้เปิดได้ถึง .* แล้วจะหมดอายุ ขอใหม่ได้ตลอด/);
+  });
+
+  it('§12.7 — “ขอลิงก์ใหม่” mints a fresh link for the issued document without touching the old one', async () => {
+    const h = harness();
+    h.issue();
+
+    const first = await h.useCase.execute(ctx(), {
+      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+    const second = await h.useCase.execute(ctx(), {
+      messageText: 'ลิงก์หมดอายุ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(h.deliveries.length, 2, 'each ask mints its own link — neither revokes the other');
+    assert.deepEqual(h.deliveries[1], { expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' });
+    assert.equal(first.badge, '✅ ออกเอกสารแล้ว');
+    assert.equal(second.badge, '✅ ออกเอกสารแล้ว');
+    assert.deepEqual(h.saves, [], 'reporting an issued document writes no continuation state');
+  });
+
+  it('routes the phrase to this use case without letting it become an expense description', () => {
+    assert.equal(isSubstituteReceiptConversationText('ขอลิงก์ใหม่'), true);
+    assert.equal(isSubstituteReceiptConversationText('ลิงก์หมดอายุแล้วค่ะ'), true);
+    assert.equal(substituteRequestExpenseText('ขอลิงก์ใหม่ 50 บาท'), undefined);
+  });
+
+  it('falls through when this chat has issued nothing, so the phrase never hijacks a live workflow', async () => {
+    const h = await readyHarness();
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.deepEqual(h.deliveries, []);
+    assert.equal(result.status, 'READY_FOR_WEB');
+    assert.match(result.replyText, /ให้ออกเอกสารเลยไหมคะ/);
+  });
+
+  it('degrades to the web path when the link cannot be minted, instead of losing the turn', async () => {
+    const h = harness({ deliveryError: new Error('storage down') });
+    h.issue();
+
+    const result = await h.useCase.execute(ctx(), {
+      messageText: 'ขอลิงก์ใหม่', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
+    });
+
+    assert.equal(result.badge, '✅ ออกเอกสารแล้ว');
+    assert.match(result.replyText, /ยังสร้างลิงก์ดาวน์โหลดให้ไม่ได้ตอนนี้/);
+    assert.match(result.replyText, /เปิดในเว็บ:/);
+  });
+});
+
+describe('FIX-3 — a fresh temp copy is minted deliberately, never on every turn', () => {
+  const carryOn = { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE };
+
+  it('Journey A still gets exactly one link with its ISSUED card', async () => {
+    const h = harness();
+    h.issue();
+
+    const first = await h.useCase.execute(ctx(), carryOn);
+
+    assert.deepEqual(h.deliveries, [{ expenseId: 'expense-1', evidenceId: 'evidence-1', kind: 'ISSUED_PDF' }]);
+    assert.match(first.replyText, new RegExp(`ดาวน์โหลดเอกสาร \\(ลิงก์หมดอายุใน 3 วัน\\): ${WEB_BASE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/d/`));
+  });
+
+  it('repeating the substitute vocabulary never copies the PDF again', async () => {
+    const h = harness();
+    h.issue();
+
+    await h.useCase.execute(ctx(), carryOn);
+    const second = await h.useCase.execute(ctx(), carryOn);
+    const third = await h.useCase.execute(ctx(), carryOn);
+
+    assert.equal(h.deliveries.length, 1, 'one document, one live link');
+    for (const result of [second, third]) {
+      assert.equal(result.badge, '✅ ออกเอกสารแล้ว', 'the status is still reported in full');
+      assert.match(result.replyText, /SUB-202608-00007/);
+      assert.doesNotMatch(result.replyText, /\/d\//, 'no second link is handed out');
+      assert.match(result.replyText, /ส่งลิงก์ดาวน์โหลดให้แล้วก่อนหน้านี้/);
+      assert.match(result.replyText, /ขอลิงก์ใหม่/, 'and the way to a new one is stated');
+    }
+  });
+
+  it('“ขอลิงก์ใหม่” always mints, however many are already live (§12.7)', async () => {
+    const h = harness();
+    h.issue();
+
+    await h.useCase.execute(ctx(), carryOn);
+    await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ขอลิงก์ใหม่' });
+    await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ลิงก์หมดอายุ' });
+
+    assert.equal(h.deliveries.length, 3);
+    assert.deepEqual(new Set(h.deliveries.map((item) => item.kind)), new Set(['ISSUED_PDF']));
+  });
+
+  it('mints again once the live link is gone', async () => {
+    const h = harness();
+    h.issue();
+
+    await h.useCase.execute(ctx(), carryOn);
+    h.liveLinks.clear();
+    await h.useCase.execute(ctx(), carryOn);
+
+    assert.equal(h.deliveries.length, 2, 'an expired or revoked link leaves the reader with nothing');
+  });
+
+  it('Journey B: the form link is delivered by the prepare, and re-requested by name', async () => {
+    const h = await readyHarness();
+    await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.deepEqual(h.deliveries.map((item) => item.kind), ['UNSIGNED_FORM_PDF']);
+
+    // Asking about the same PREPARED work again reports it without copying the sheet.
+    const status = await h.useCase.execute(ctx(), carryOn);
+    assert.equal(h.deliveries.length, 1);
+    assert.equal(status.badge, '🔵 รอยืนยัน');
+    assert.doesNotMatch(status.replyText, /\/d\//);
+
+    // §12.7 must still reach Journey B's sheet, or an expired form link would be a dead end.
+    const reissued = await h.useCase.execute(ctx(), { ...carryOn, messageText: 'ขอลิงก์ใหม่' });
+    assert.deepEqual(h.deliveries.map((item) => item.kind), ['UNSIGNED_FORM_PDF', 'UNSIGNED_FORM_PDF']);
+    assert.match(reissued.replyText, /ดาวน์โหลดแบบฟอร์ม \(ลิงก์หมดอายุใน 3 วัน\)/);
+  });
+
+  it('a group chat is refused before anything is minted or even looked up', async () => {
+    const h = harness();
+    h.issue();
+
+    const result = await h.useCase.execute(ctx(), { ...carryOn, groupChat: true });
+
+    assert.deepEqual(h.deliveries, []);
+    assert.match(result.replyText, /ไม่ส่งในแชทกลุ่ม/);
   });
 });

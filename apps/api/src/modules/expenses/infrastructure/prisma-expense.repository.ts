@@ -825,6 +825,19 @@ export class PrismaExpenseRepository {
     return row ? mapSubstituteEvidence(row) : null;
   }
 
+  /** Just enough of an evidence row to authorise an action that only knows its id — the delivery
+   *  link carries `evidenceId` and no expense, and every evidence mutation is branch-scoped. */
+  async findSubstituteEvidenceScope(
+    companyId: string,
+    evidenceId: string,
+  ): Promise<{ expenseId: string; branchId: string | null } | null> {
+    const row = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findFirst({
+      where: { id: evidenceId, companyId },
+      select: { expenseId: true, branchId: true },
+    });
+    return row ?? null;
+  }
+
   async listSubstituteEvidenceHistory(companyId: string, expenseId: string): Promise<import('@watchdog-bms/contracts').SubstituteReceiptEvidenceSummary[]> {
     const rows = await (this.prisma.client as any).expenseSubstituteReceiptEvidence.findMany({
       where: { companyId, expenseId }, orderBy: { version: 'desc' },

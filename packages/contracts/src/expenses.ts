@@ -147,6 +147,14 @@ export const SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS = Object.freeze({
   maxEvidenceFileNameLength: 255,
 });
 
+/**
+ * Spec §12 delivery links. 32 random bytes as unpadded base64url — exactly 43 characters of the
+ * base64url alphabet. One definition, because three places must agree on it: the API mints and
+ * resolves it, `safeTenantLink` allows exactly this shape into a LINE card, and the web's public
+ * `/d/[token]` page is the only route it ever names.
+ */
+export const DOCUMENT_DELIVERY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
 export const EXPENSE_SEQUENCE_KEY = 'expense.record';
 
 export const EXPENSE_STATUS_LABELS: Record<ExpenseStatus, string> = {

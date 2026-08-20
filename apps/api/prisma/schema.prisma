@@ -2550,6 +2550,35 @@ model ExpenseSubstituteReceiptPolicy {
   @@index([companyId, updatedAt])
 }
 
+enum DocumentDeliveryLinkKind {
+  ISSUED_PDF
+  UNSIGNED_FORM_PDF
+}
+
+/// Spec §12/R16: a delivery link is a credential, so the row holds only the SHA-256 of the token —
+/// the token itself is never stored and cannot be recovered from here. `tempObjectKey` points at an
+/// opaque COPY of the PDF under the `line-delivery/` prefix (§12.2: no identifier appears in the
+/// key); the source artifact is never moved or deleted. Deliberately relation-free: a link outlives
+/// nothing and must not add cascade semantics to Company/User/Evidence.
+model DocumentDeliveryLink {
+  id              String                   @id @default(cuid())
+  companyId       String
+  recipientUserId String
+  evidenceId      String
+  kind            DocumentDeliveryLinkKind
+  tokenHashSha256 String                   @unique
+  tempBucket      String
+  tempObjectKey   String
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  openCount       Int                      @default(0)
+  lastOpenedAt    DateTime?
+  createdByUserId String
+  createdAt       DateTime                 @default(now())
+
+  @@index([companyId, evidenceId, expiresAt])
+}
+
 // ─── Item 10: Double-Entry Ledger ─────────────────────────────────────────────
 
 enum LedgerAccountClass {
