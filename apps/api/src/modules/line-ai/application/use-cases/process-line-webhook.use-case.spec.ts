@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
 import { branchScopeFallbackLabel, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
@@ -2130,5 +2131,49 @@ describe('LINE grounded receipt item follow-up', () => {
   it('states honestly when no printed item rows were readable', () => {
     const reply = formatGroundedReceiptFollowUp(undefined, 'company-1', expenseWithLines([]), undefined, 'บิลนี้ซื้ออะไร');
     assert.match(reply, /ยังอ่านรายการสินค้า.*ไม่ได้ชัดเจน/);
+  });
+});
+
+/**
+ * The link helper used to live in this file and was copied twice more, each copy falling back to a
+ * different environment's host. Registered here because this spec already runs in CI.
+ */
+describe('web link resolution', () => {
+  const saved = { web: process.env['WEB_BASE_URL'], pub: process.env['PUBLIC_BASE_URL'] };
+  const restore = () => {
+    if (saved.web === undefined) delete process.env['WEB_BASE_URL']; else process.env['WEB_BASE_URL'] = saved.web;
+    if (saved.pub === undefined) delete process.env['PUBLIC_BASE_URL']; else process.env['PUBLIC_BASE_URL'] = saved.pub;
+  };
+
+  it('joins a base and a path without doubling the slash', () => {
+    assert.equal(absoluteWebLink('https://uat.mangmeeplus.com/', '/companies/c1/expenses/e1'), 'https://uat.mangmeeplus.com/companies/c1/expenses/e1');
+    assert.equal(absoluteWebLink('https://uat.mangmeeplus.com', 'companies/c1'), 'https://uat.mangmeeplus.com/companies/c1');
+  });
+
+  it('leaves an already-absolute URL alone', () => {
+    assert.equal(absoluteWebLink('https://uat.mangmeeplus.com', 'https://other.example/x'), 'https://other.example/x');
+  });
+
+  it('returns the bare path rather than inventing a host', () => {
+    assert.equal(absoluteWebLink(undefined, '/companies/c1'), '/companies/c1');
+    assert.equal(absoluteWebLink('', '/companies/c1'), '/companies/c1');
+  });
+
+  it('prefers WEB_BASE_URL, then PUBLIC_BASE_URL, and never a hard-coded host', () => {
+    try {
+      process.env['WEB_BASE_URL'] = 'https://uat.mangmeeplus.com';
+      process.env['PUBLIC_BASE_URL'] = 'https://api.example';
+      assert.equal(webBaseUrlFromEnv(), 'https://uat.mangmeeplus.com');
+      assert.equal(webLink('/companies/c1'), 'https://uat.mangmeeplus.com/companies/c1');
+
+      delete process.env['WEB_BASE_URL'];
+      assert.equal(webBaseUrlFromEnv(), 'https://api.example');
+
+      delete process.env['PUBLIC_BASE_URL'];
+      assert.equal(webBaseUrlFromEnv(), undefined);
+      assert.equal(webLink('/companies/c1'), '/companies/c1');
+    } finally {
+      restore();
+    }
   });
 });

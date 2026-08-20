@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  companyGateReturnPath,
   isSystemAdmin,
   legalAcceptanceContextCompanyId,
   legalAcceptancePath,
@@ -207,5 +208,24 @@ describe('resolvePasswordChangeTarget', () => {
     assert.equal(resolvePasswordChangeTarget(null, '/companies/c2/inbox', 'c1'), '/companies/c2/inbox');
     assert.equal(resolvePasswordChangeTarget(null, '//evil.example', 'c1'), '/companies/c1/dashboard');
     assert.equal(resolvePasswordChangeTarget(null, null, null), '/');
+  });
+});
+
+describe('companyGateReturnPath', () => {
+  it('returns a company visitor to the page they actually opened', () => {
+    assert.equal(
+      companyGateReturnPath('/companies/c1/expenses/e1?tab=signatures', 'c1'),
+      '/companies/c1/expenses/e1?tab=signatures',
+    );
+  });
+
+  it('falls back to the dashboard for anything outside this company', () => {
+    const dashboard = '/companies/c1/dashboard';
+    assert.equal(companyGateReturnPath(null, 'c1'), dashboard, 'missing header');
+    assert.equal(companyGateReturnPath('/companies/c2/expenses/e1', 'c1'), dashboard, 'another tenant');
+    assert.equal(companyGateReturnPath('/companies/c1x/expenses/e1', 'c1'), dashboard, 'id prefix is not a match');
+    assert.equal(companyGateReturnPath('//evil.example', 'c1'), dashboard, 'protocol-relative');
+    assert.equal(companyGateReturnPath('/legal-acceptance?next=/companies/c1/x', 'c1'), dashboard, 'the gate itself');
+    assert.equal(companyGateReturnPath('/change-password', 'c1'), dashboard, 'the other gate');
   });
 });

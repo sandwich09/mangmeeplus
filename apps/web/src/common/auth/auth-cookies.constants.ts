@@ -17,6 +17,8 @@ export const HOME_PATH_COOKIE = 'watchdog_home';
 export const PERSIST_COOKIE = 'watchdog_persist';
 
 export const CSRF_HEADER = 'x-csrf-token';
+/** Requested path+query, published by the proxy so server components can read the real URL. */
+export const REQUEST_PATH_HEADER = 'x-request-path';
 
 /**
  * Stable code on the middleware's CSRF rejection. It marks the one 403 the browser client may
