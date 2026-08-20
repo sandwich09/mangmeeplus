@@ -528,14 +528,6 @@ export async function createSignatureAsset(
   );
 }
 
-export async function approveSignatureAsset(companyId: string, signatureId: string): Promise<SignatureAssetSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expense-signatures/${signatureId}/approve`, { method: 'POST', body: '{}' });
-}
-
-export async function rejectSignatureAsset(companyId: string, signatureId: string, reason: string): Promise<SignatureAssetSummary> {
-  return apiFetch(`/v1/companies/${companyId}/expense-signatures/${signatureId}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
-}
-
 export async function archiveSignatureAsset(companyId: string, signatureId: string): Promise<SignatureAssetSummary> {
   return apiFetch(`/v1/companies/${companyId}/expense-signatures/${signatureId}/archive`, { method: 'POST', body: '{}' });
 }

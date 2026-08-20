@@ -6,8 +6,8 @@ import { EmptyState, LoadingState } from '@/common/components/state';
 import { pageBounds } from '@/common/table/paging.logic';
 import {
   listManageCategories, createExpenseCategory, updateExpenseCategory,
-  listSignatureAssets, initSignatureUpload, createSignatureAsset, approveSignatureAsset,
-  rejectSignatureAsset, archiveSignatureAsset, setSignatureDerivedAsset, uploadReceiptFile,
+  listSignatureAssets, initSignatureUpload, createSignatureAsset,
+  archiveSignatureAsset, setSignatureDerivedAsset, uploadReceiptFile,
   getSharedEvidence, createAccountantPackage, downloadIndexXlsx,
 } from './expenses.api';
 import {
@@ -21,6 +21,7 @@ import { Modal } from '@/common/components/modal';
 import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
 import { IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
+import { SignaturePad } from './SignaturePad';
 import { err, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
 import {
   deriveEvidenceRowFlags,
@@ -284,7 +285,22 @@ export function SignatureThumb({ url, alt, className }: { url: string; alt: stri
   );
 }
 
-export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { companyId: string; canApprove: boolean; focusSignatureId?: string }) {
+/**
+ * "ลายเซ็นของฉัน" (owner decision 2026-08-20, superseding D10/D11). A signature is a personal asset:
+ * you keep your own, you are the only one who ever sees it, and it signs from the moment it is
+ * saved. There is no queue, no badge and no approve/reject — those all belonged to a model where a
+ * second person had to look at the picture, and nobody can verify handwriting anyway.
+ *
+ * `canManageOthers` adds the one thing the personal model still needs from a second party:
+ * housekeeping over OTHER people's signatures (departed staff, abuse) — names and dates, never the
+ * image, because deleting a signature does not require looking at one.
+ */
+export function SignaturePanel({ companyId, userId, canManageOthers, focusSignatureId }: {
+  companyId: string;
+  userId: string;
+  canManageOthers: boolean;
+  focusSignatureId?: string;
+}) {
   const toast = useToast();
   const [assets, setAssets] = useState<SignatureAssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -300,16 +316,15 @@ export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { co
   const [fileName, setFileName] = useState('');
   const [preview, setPreview] = useState<{ original: string; derived: string } | null>(null);
   const [derivedBlob, setDerivedBlob] = useState<Blob | null>(null);
+  const [method, setMethod] = useState<'upload' | 'draw'>('upload');
   const [saving, setSaving] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  const [rejectId, setRejectId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
-  // F11: the deep-linked asset lives in the pending list OR the table, never both — and since
-  // auto-approve (2026-08-20) the table is the common case, which had no ref at all.
+  // F11: the deep link names one row; it may be the caller's own or, for a housekeeping holder, one
+  // in the other-people table. A row the caller cannot see is simply not highlighted.
   const focusRef = useRef<HTMLElement>(null);
 
   // `keepVisible` as in CategoryManagePanel above: a refresh after a write must not swap the table
-  // for the spinner, or approving one signature unmounts and remounts every row.
+  // for the spinner, or archiving one signature unmounts and remounts every row.
   const load = useCallback(async (keepVisible = false) => {
     if (!keepVisible) setLoading(true);
     setError(null);
@@ -350,8 +365,15 @@ export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { co
     }
   };
 
-  const submit = async (withDerived: boolean) => {
-    const file = fileRef.current?.files?.[0];
+  const resetDraft = () => {
+    setLabel(''); setFileName(''); setPreview(null); setDerivedBlob(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // `source` is the drawn PNG when the pad produced one — already transparent and cropped, so it
+  // needs no derived pass — and the chosen file otherwise.
+  const submit = async (withDerived: boolean, source?: File) => {
+    const file = source ?? fileRef.current?.files?.[0];
     if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
     const forbidden = findForbiddenChars(label);
     if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
@@ -370,11 +392,10 @@ export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { co
         );
         await setSignatureDerivedAsset(companyId, asset.id, { attachmentId: derivedIntent.attachmentId, byteSize: derivedBlob.size });
       }
-      setLabel(''); setFileName(''); setPreview(null); setDerivedBlob(null);
-      if (fileRef.current) fileRef.current.value = '';
+      resetDraft();
       await load(true);
       setShowUpload(false);
-      toast.success('อัปโหลดลายเซ็นเรียบร้อยแล้ว');
+      toast.success('บันทึกลายเซ็นแล้ว ใช้ลงนามได้ทันที');
     } catch (e) { setActionError(err(e)); }
     finally { setSaving(false); }
   };
@@ -390,125 +411,159 @@ export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { co
     finally { setBusyId(null); }
   };
 
-  const pending = assets.filter((a) => a.status === 'PENDING_OWNER_APPROVAL');
-  const others = assets.filter((a) => a.status !== 'PENDING_OWNER_APPROVAL');
+  // The API already decides what the caller may see; `userId` is what tells the two groups apart.
+  // Newest-first is the order certification resolves in, so the first live own row IS the signature
+  // that signs — replacing simply means saving a newer one.
+  const mine = assets.filter((a) => a.submittedByUserId === userId);
+  const current = mine.find((a) => a.status === 'ACTIVE');
+  const previous = mine.filter((a) => a.id !== current?.id);
+  const housekeeping = assets.filter((a) => a.submittedByUserId !== userId);
+  const focusRefFor = (id: string) => (id === focusSignatureId ? (focusRef as React.RefObject<never>) : undefined);
+  const openUpload = () => { setActionError(null); resetDraft(); setMethod('upload'); setShowUpload(true); };
 
   return (
     <div className="space-y-4">
-      <HowItWorks title="ลายเซ็นและตราประทับทำงานอย่างไร" steps={['อัปโหลดรูปลายเซ็น/ตราประทับ (ระบบลบพื้นหลังให้)', 'เจ้าของกิจการอนุมัติก่อนใช้งาน', 'ประทับลงเอกสารค่าใช้จ่ายจากหน้ารีวิว']} />
+      <HowItWorks title="ลายเซ็นของฉันทำงานอย่างไร" steps={['เซ็นบนหน้าจอ หรืออัปโหลดรูปลายเซ็น/ตราประทับ (ระบบลบพื้นหลังให้)', 'ใช้ลงนามได้ทันที ไม่ต้องรออนุมัติ และเห็นได้เฉพาะคุณ', 'ประทับลงเอกสารค่าใช้จ่ายจากหน้ารีวิว']} />
       {actionError && <ErrorBanner message={actionError} />}
       <StateBanner error={error} />
 
       {!error && (
         <div className="space-y-4">
-          <div className="space-y-4">
-            {pending.length > 0 && (
-              <MangmeeCard className="border-warning-100 bg-warning-50 p-4">
-                <div className="text-sm font-bold text-warning-700">รอเจ้าของกิจการอนุมัติ ({pending.length})</div>
-                <div className="mt-3 space-y-2">
-                  {pending.map((a) => (
-                    <div
-                      key={a.id}
-                      ref={a.id === focusSignatureId ? (focusRef as React.RefObject<HTMLDivElement>) : undefined}
-                      className={cx(
-                        'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-4 py-3 text-sm',
-                        // A2: the LINE ticket links to one specific row; without this the owner lands
-                        // on a queue and has to guess which line the message was about.
-                        a.id === focusSignatureId ? 'border-brand-400 ring-2 ring-brand-200' : 'border-warning-100',
-                      )}
-                    >
-                      <div className="flex items-center gap-3">
-                        {/* A7: an owner cannot approve what they cannot see. */}
-                        {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็นรออนุมัติ'} />}
-                        <div>
-                          <span className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</span>
-                          <span className="ml-2 text-xs text-gray-500">ส่งจาก {a.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(a.createdAt)}</span>
+          <MangmeeCard className="overflow-hidden">
+            <div className="mangmee-card-header flex items-center justify-between gap-3 text-sm font-bold text-gray-800">
+              <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-[9px]" style={{ background: '#F4EBFF', color: '#6941C6' }}>{ICON.signature}</span>ลายเซ็นของฉัน</span>
+              <button className={btnClass} onClick={openUpload}>{current ? 'เปลี่ยนลายเซ็น' : 'เพิ่มลายเซ็น'}</button>
+            </div>
+            {loading ? <LoadingState label="กำลังโหลด..." /> : (
+              <div className="p-4">
+                {current ? (
+                  <div
+                    ref={focusRefFor(current.id)}
+                    className={cx('flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-3',
+                      current.id === focusSignatureId && 'border-brand-400 ring-2 ring-brand-200')}
+                  >
+                    <div className="flex items-center gap-3">
+                      {current.previewUrl && <SignatureThumb url={current.previewUrl} alt={current.label ?? 'ลายเซ็นของฉัน'} />}
+                      <div>
+                        <div className="font-semibold text-gray-800">{current.label ?? 'ลายเซ็นของฉัน'}</div>
+                        <div className="text-xs text-gray-500">
+                          บันทึกจาก {current.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(current.createdAt)}
+                          {current.derivedAttachmentId && <span className="ml-2 text-brand-600">พื้นหลังโปร่งใส</span>}
                         </div>
                       </div>
-                      {canApprove && (
-                        <div className="flex gap-2">
-                          <button className="mangmee-btn mangmee-btn-primary h-9 px-3 text-xs" disabled={busyId === a.id} onClick={() => doAction(() => approveSignatureAsset(companyId, a.id), 'อนุมัติลายเซ็นเรียบร้อยแล้ว', a.id)}>{busyId === a.id ? 'กำลังดำเนินการ...' : 'อนุมัติ'}</button>
-                          <button className="mangmee-btn mangmee-btn-danger h-9 px-3 text-xs" onClick={() => { setRejectId(a.id); setRejectReason(''); }}>ปฏิเสธ</button>
-                        </div>
-                      )}
-                      {canApprove && rejectId === a.id && (
-                        <div className="flex basis-full gap-2 pt-2">
-                          <input className={cx(inputClass, 'h-9')} placeholder="เหตุผลการปฏิเสธ" value={rejectReason} onChange={(e) => setRejectReason(stripDisallowed(e.target.value))} />
-                          <button className={cx(ghostClass, 'h-9')} onClick={() => doAction(async () => {
-                            const forbidden = findForbiddenChars(rejectReason);
-                            if (forbidden.length > 0) throw new Error(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`);
-                            await rejectSignatureAsset(companyId, a.id, rejectReason.trim()); setRejectId(null);
-                          }, 'ปฏิเสธลายเซ็นเรียบร้อยแล้ว')} disabled={actionBusy || !rejectReason.trim()}>{actionBusy ? 'กำลังดำเนินการ...' : 'ยืนยันปฏิเสธ'}</button>
-                        </div>
-                      )}
                     </div>
-                  ))}
-                </div>
-              </MangmeeCard>
-            )}
+                    <button
+                      className={cx(dangerClass, 'h-9 px-3 text-xs')}
+                      disabled={busyId === current.id}
+                      onClick={() => doAction(() => archiveSignatureAsset(companyId, current.id), 'ลบลายเซ็นเรียบร้อยแล้ว', current.id)}
+                    >
+                      {busyId === current.id ? 'กำลังดำเนินการ...' : 'ลบลายเซ็น'}
+                    </button>
+                  </div>
+                ) : (
+                  <EmptyState title="ยังไม่มีลายเซ็นของคุณ" description="เซ็นบนหน้าจอหรืออัปโหลดรูปลายเซ็น แล้วใช้ลงนามเอกสารได้ทันที" />
+                )}
 
-            <MangmeeCard className="overflow-hidden">
-              <div className="mangmee-card-header flex items-center justify-between gap-3 text-sm font-bold text-gray-800">
-                <span className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-[9px]" style={{ background: '#F4EBFF', color: '#6941C6' }}>{ICON.signature}</span>ลายเซ็นทั้งหมด</span>
-                <button className={btnClass} onClick={() => { setActionError(null); setShowUpload(true); }}>อัปโหลดลายเซ็นใหม่</button>
-              </div>
-              {loading ? <LoadingState label="กำลังโหลด..." /> : (
-                <div className="overflow-x-auto">
-                  <table className="mangmee-table">
-                    <thead><tr>{['ลายเซ็น', 'สถานะ', 'ช่องทาง', 'อนุมัติเมื่อ', ''].map((h) => <th key={h} className={cx('!text-[13px]', (h === 'สถานะ' || h === 'ช่องทาง' || h === 'อนุมัติเมื่อ') && 'whitespace-nowrap', h === '' && 'w-px whitespace-nowrap text-right')}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {others.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-gray-500">ยังไม่มีลายเซ็น</td></tr>}
-                      {others.map((a) => (
-                        <tr
+                {previous.length > 0 && (
+                  <div className="mt-4">
+                    <div className="mb-2 text-xs font-semibold text-gray-500">ลายเซ็นเดิมของฉัน</div>
+                    <div className="space-y-2">
+                      {previous.map((a) => (
+                        <div
                           key={a.id}
-                          ref={a.id === focusSignatureId ? (focusRef as React.RefObject<HTMLTableRowElement>) : undefined}
-                          className={cx(a.status === 'ARCHIVED' && 'opacity-60', a.id === focusSignatureId && 'bg-brand-25 ring-2 ring-inset ring-brand-200')}
+                          ref={focusRefFor(a.id)}
+                          className={cx('flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 py-2 text-sm',
+                            a.status === 'ARCHIVED' && 'opacity-60',
+                            a.id === focusSignatureId && 'border-brand-400 ring-2 ring-brand-200')}
                         >
-                          <td className="font-semibold text-gray-800">
-                            <span className="flex items-center gap-3">
-                              {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็น'} className="max-h-12" />}
-                              <span>{a.label ?? 'ลายเซ็นไม่มีชื่อ'}{a.derivedAttachmentId && <span className="ml-2 text-xs font-normal text-brand-600">(พื้นหลังโปร่งใส)</span>}</span>
-                            </span>
-                          </td>
-                          <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
-                          <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
-                          <td className="whitespace-nowrap text-xs text-gray-500">{a.approvedAt ? dateShort(a.approvedAt) : '-'}</td>
-                          <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="เก็บถาวร" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'เก็บลายเซ็นถาวรเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}</td>
-                        </tr>
+                          <span className="flex items-center gap-3">
+                            {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็น'} className="max-h-12" />}
+                            <span className="text-gray-700">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}<span className="ml-2 text-xs text-gray-500">{dateShort(a.createdAt)}</span></span>
+                          </span>
+                          <span className="flex items-center gap-2">
+                            <MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge>
+                            {a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}
+                          </span>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </MangmeeCard>
-          </div>
-
-          <Modal open={showUpload} title="อัปโหลดลายเซ็นใหม่" size="md" onClose={() => { if (!saving) setShowUpload(false); }}>
-            {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}
-            <div className="mt-0.5 mb-3 text-sm text-gray-500">ต้องได้รับอนุมัติจากเจ้าของก่อนใช้งาน · การประทับทำจากหน้ารีวิวค่าใช้จ่าย</div>
-            <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 hover:border-brand-300 hover:bg-brand-25">
-              <span className="text-2xl">✍️</span>
-              {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : 'เลือกรูปลายเซ็น (PNG/JPEG)'}
-              <input ref={fileRef} type="file" accept={IMAGE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => { setPreview(null); setDerivedBlob(null); setFileName(e.target.files?.[0]?.name ?? ''); }} />
-            </label>
-            <input className={cx(inputClass, 'mt-3')} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button className={ghostClass} onClick={buildPreview} disabled={saving}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
-              <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังส่ง...' : derivedBlob ? 'ส่งขออนุมัติ (พร้อมไฟล์โปร่งใส)' : 'ส่งขออนุมัติ'}</button>
-            </div>
-            {preview && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="mb-1 text-xs text-gray-500">ต้นฉบับ</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={preview.original} alt="original signature" className="max-h-32 rounded-lg border bg-white" />
-                </div>
-                <div>
-                  <p className="mb-1 text-xs text-gray-500">พื้นหลังโปร่งใส</p>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={preview.derived} alt="derived signature" className="max-h-32 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} />
-                </div>
+                    </div>
+                  </div>
+                )}
               </div>
+            )}
+          </MangmeeCard>
+
+          {/* Housekeeping only: names, channel and dates. No image column — the permission authorises
+              deleting someone's signature, never looking at it. */}
+          {canManageOthers && !loading && housekeeping.length > 0 && (
+            <MangmeeCard className="overflow-hidden">
+              <div className="mangmee-card-header text-sm font-bold text-gray-800">ลายเซ็นของคนอื่นในบริษัท (จัดการเท่านั้น ไม่แสดงรูป)</div>
+              <div className="overflow-x-auto">
+                <table className="mangmee-table">
+                  <thead><tr>{['เจ้าของ', 'ชื่อ/ป้ายกำกับ', 'สถานะ', 'ช่องทาง', 'บันทึกเมื่อ', ''].map((h) => <th key={h} className={cx('!text-[13px]', 'whitespace-nowrap', h === '' && 'w-px text-right')}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {housekeeping.map((a) => (
+                      <tr
+                        key={a.id}
+                        ref={focusRefFor(a.id)}
+                        className={cx(a.status === 'ARCHIVED' && 'opacity-60', a.id === focusSignatureId && 'bg-brand-25 ring-2 ring-inset ring-brand-200')}
+                      >
+                        <td className="font-semibold text-gray-800">{a.submittedByDisplayName ?? 'ผู้ใช้ที่ถูกลบแล้ว'}</td>
+                        <td className="text-gray-700">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</td>
+                        <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
+                        <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
+                        <td className="whitespace-nowrap text-xs text-gray-500">{dateShort(a.createdAt)}</td>
+                        <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </MangmeeCard>
+          )}
+
+          <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!saving) setShowUpload(false); }}>
+            {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}
+            <div className="mt-0.5 mb-3 text-sm text-gray-500">ใช้ลงนามได้ทันทีหลังบันทึก · การประทับทำจากหน้ารีวิวค่าใช้จ่าย{current ? ' · ลายเซ็นใหม่จะถูกใช้แทนอันเดิม' : ''}</div>
+            <div className="mb-3 flex gap-2">
+              {([['upload', 'อัปโหลดรูป'], ['draw', 'เซ็นบนหน้าจอ']] as const).map(([key, text]) => (
+                <button key={key} className={cx(method === key ? btnClass : ghostClass, 'h-9 px-3 text-xs')} disabled={saving} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
+              ))}
+            </div>
+            <input className={cx(inputClass, 'mb-3')} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
+            {method === 'draw' ? (
+              // The pad exports an already-cropped transparent PNG, so it needs no derived pass.
+              <SignaturePad
+                busy={saving}
+                onChange={() => setActionError(null)}
+                onConfirm={(file) => void submit(false, file)}
+              />
+            ) : (
+              <>
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 hover:border-brand-300 hover:bg-brand-25">
+                  <span className="text-2xl">✍️</span>
+                  {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : 'เลือกรูปลายเซ็น (PNG/JPEG)'}
+                  <input ref={fileRef} type="file" accept={IMAGE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => { setPreview(null); setDerivedBlob(null); setFileName(e.target.files?.[0]?.name ?? ''); }} />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className={ghostClass} onClick={buildPreview} disabled={saving}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
+                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
+                </div>
+                {preview && (
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="mb-1 text-xs text-gray-500">ต้นฉบับ</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={preview.original} alt="original signature" className="max-h-32 rounded-lg border bg-white" />
+                    </div>
+                    <div>
+                      <p className="mb-1 text-xs text-gray-500">พื้นหลังโปร่งใส</p>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={preview.derived} alt="derived signature" className="max-h-32 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} />
+                    </div>
+                  </div>
+                )}
+              </>
             )}
             <canvas ref={canvasRef} className="hidden" />
           </Modal>

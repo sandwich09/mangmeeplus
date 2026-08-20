@@ -272,14 +272,14 @@ export function buildNavItems(
         });
       }
       // Un-parked 2026-08-20 (owner decision), reversing the 2026-08-05 park: substitute-receipt
-      // certification consumes approved signature assets, so the approval queue is on the critical
-      // path — and the LINE assistant links people straight to it. Approvers are named alongside
-      // managers because the queue is theirs to clear.
+      // certification consumes these assets. Since the personal-signature decision the screen is
+      // "ลายเซ็นของฉัน", so whoever performs either signing act reaches their own — plus the
+      // housekeeping holder, whose list is other people's rows.
       //
       // The nav is built here, not from FEATURE_CATALOG — that catalog only decides what a company may
       // buy. A submenu missing from this list simply does not exist for the user, however the catalog
       // is wired.
-      if (hasAnyPermission(userPermissions, ['expense.signature.manage', 'expense.signature.approve'])) {
+      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.signature.manage'])) {
         childItems.push({
           key: 'expenses.signatures',
           label: t('expenses.tab_signatures' as Parameters<typeof t>[0], locale),

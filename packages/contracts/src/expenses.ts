@@ -264,6 +264,9 @@ export const TAX_EVIDENCE_STATUS_LABELS: Record<TaxEvidenceStatus, string> = {
   NEEDS_REVIEW: 'รอตรวจหลักฐานภาษี',
 };
 
+/** PENDING_OWNER_APPROVAL and REJECTED are history only since the personal-signature decision
+ *  (2026-08-20): nothing creates them any more, and the 2026-08-20 data migration activated every
+ *  row that was still pending. The labels stay so an old REJECTED row still reads as one. */
 export const SIGNATURE_ASSET_STATUS_LABELS: Record<SignatureAssetStatus, string> = {
   PENDING_OWNER_APPROVAL: 'รอเจ้าของกิจการอนุมัติ',
   ACTIVE: 'ใช้งานได้',
@@ -574,8 +577,11 @@ export type SignatureAssetSummary = {
   companyId: string;
   label: string | null;
   status: SignatureAssetStatus;
-  originalAttachmentId: string;
-  derivedAttachmentId: string | null;
+  /** Present only on the caller's OWN rows. A housekeeping row names no attachment, because an id is
+   *  a route to the image through the generic download endpoint — and housekeeping authorises
+   *  deleting someone's signature, never seeing it. */
+  originalAttachmentId?: string;
+  derivedAttachmentId?: string | null;
   submittedByUserId: string;
   submittedFromChannel: SignatureSubmitChannel;
   approvedByUserId: string | null;
@@ -585,9 +591,12 @@ export type SignatureAssetSummary = {
   rejectReason: string | null;
   createdAt: string;
   updatedAt: string;
-  /** A7: short-lived inline URL for the derived (or original) image, so an approver can see what
-   *  they are approving. Null for a viewer who is neither an approver/manager nor the submitter. */
+  /** A7: short-lived inline URL for the derived (or original) image. Minted ONLY for the caller's
+   *  own signature — a personal asset is nobody else's to look at, housekeeping holders included. */
   previewUrl?: string | null;
+  /** Housekeeping rows only (other people's signatures, for an `expense.signature.manage` holder):
+   *  who it belongs to. Null on the caller's own rows, which need no attribution. */
+  submittedByDisplayName?: string | null;
 };
 
 export type CreateSignatureAssetInput = {

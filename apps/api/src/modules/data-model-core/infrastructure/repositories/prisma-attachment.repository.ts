@@ -28,6 +28,30 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
     return Boolean(row);
   }
 
+  /**
+   * Whose personal signature these bytes are — `null` when the attachment is not a signature at all.
+   *
+   * The sibling above only sees images a certificate already RECORDED, so a library asset that has
+   * not signed anything yet sails past it. Every signature image carries exactly one AttachmentLink
+   * with `targetType = 'company.signature_asset'` (written for the original at creation and for the
+   * background-removed render), which is what makes the whole library visible to one lookup.
+   *
+   * `ownerUserId: null` means the link outlived its asset row: unresolvable ownership, which the
+   * caller must treat as "not yours" rather than "not a signature".
+   */
+  async findSignatureAssetOwner(input: FindAttachmentInput): Promise<{ ownerUserId: string | null } | null> {
+    const link = await (this.prisma.client as any).attachmentLink.findFirst({
+      where: { companyId: input.companyId, attachmentId: input.id, targetType: 'company.signature_asset' },
+      select: { targetId: true },
+    });
+    if (!link) return null;
+    const asset = await (this.prisma.client as any).companySignatureAsset.findFirst({
+      where: { id: link.targetId, companyId: input.companyId },
+      select: { submittedByUserId: true },
+    });
+    return { ownerUserId: asset?.submittedByUserId ?? null };
+  }
+
   async findSubstituteEvidenceRetentionHold(
     input: FindAttachmentInput,
     tx?: Prisma.TransactionClient,

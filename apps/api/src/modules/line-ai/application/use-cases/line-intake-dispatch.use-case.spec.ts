@@ -291,7 +291,7 @@ function makeHarness(opts: {
     {
       execute: async (_ctx: any, cmd: any) => {
         signatureCreated.push(cmd);
-        return { id: 'sig-1', status: 'PENDING_OWNER_APPROVAL', submittedFromChannel: 'LINE' };
+        return { id: 'sig-1', status: 'ACTIVE', submittedFromChannel: 'LINE' };
       },
     } as any,
     // expenseRepo (categories catalog for the router + RECEIPT-05 draft-from-attachment)
@@ -1361,7 +1361,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(Buffer.from(captured.init?.body as Uint8Array), Buffer.from('receipt'));
   });
 
-  it('signature-like image creates a pending signature ticket, not an expense draft', async () => {
+  it('signature-like image is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
       permissions: ['expense.signature.manage', 'expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
@@ -1371,21 +1371,23 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.signatureCreated.length, 1);
     assert.equal(h.signatureCreated[0].submittedFromChannel, 'LINE');
     assert.equal(h.signatureCreated[0].lineMessageId, 'msg-media-1');
-    assert.match(h.replies[0] ?? '', /รอเจ้าของกิจการอนุมัติ/);
+    // Owner decision 2026-08-20: the photo IS the signature the moment it lands. A reply that
+    // promises an approval step would describe a queue that no longer exists.
+    assert.match(h.replies[0] ?? '', /ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ/);
     // A2: `?tab=signatures` was a no-op query on a route that redirected away. The link now names
     // the un-parked screen and the row inside it.
     assert.match(h.replies[0] ?? '', /expenses\/signatures\?signatureId=/);
     assert.ok(!/บันทึกข้อมูลค่าใช้จ่าย/.test(h.replies[0] ?? ''));
   });
 
-  it('signature route without signature permission is refused', async () => {
+  it('signature route without any signing or housekeeping permission is refused', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal(h.signatureCreated.length, 0);
-    assert.match(h.replies[0] ?? '', /ไม่มีสิทธิ์ส่งลายเซ็น/);
+    assert.match(h.replies[0] ?? '', /ไม่มีสิทธิ์เก็บลายเซ็นประจำตัว/);
   });
 
   it('receipt image routes to expense capture with document type + tax evidence from hints', async () => {

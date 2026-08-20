@@ -5,7 +5,6 @@ import { CreateUploadIntentUseCase } from '../../../data-model-core/application/
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
 import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { AuditService } from '../../../audit/application/audit.service';
-import { CreateOrUpdateNotificationEventUseCase } from '../../../dashboard-notifications/application/use-cases/notification.use-cases';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import type { RequestContext, CreateSignatureAssetInput, SignatureFillInput } from '@watchdog-bms/contracts';
 import type { SignatureAssetRecord } from '../../domain/models/expense.model';
@@ -17,83 +16,38 @@ function hasPerm(ctx: RequestContext, perm: string): boolean {
 
 const SIGNATURE_ATTACHMENT_PURPOSE = 'expense.signature.asset';
 
-/** The one screen a signature notification can be acted on — the same deep link the LINE ticket
- *  reply hands out, so both arrive at the named row. */
-function signatureDeepLink(companyId: string, signatureId: string): string {
-  return `/companies/${companyId}/expenses/signatures?signatureId=${signatureId}`;
+/**
+ * Owner decision 2026-08-20 (superseding D10/D11): a signature is a PERSONAL asset — no approval
+ * step, visible only to its owner, usable the moment it is saved. What the model gates is therefore
+ * the signing act, not a queue: `expense.review` and `expense.confirm` are the two acts the
+ * substitute-receipt flow performs, and every payer/approver in it holds one. `expense.signature.
+ * manage` is housekeeping over OTHER people's rows and comes along so its holder can keep their own.
+ *
+ * Authenticity does not come from this list: it comes from the authenticated signing act plus the
+ * audit trail, and forgery is prevented by the ownership binding (`submittedByUserId`), which every
+ * lookup still enforces.
+ */
+export const SIGNATURE_OWNER_PERMISSIONS = ['expense.review', 'expense.confirm', 'expense.signature.manage'] as const;
+
+/** Shared with the LINE flow, so the ask, the numbered choice and the write agree on one rule. */
+export function maySubmitSignature(permissions: readonly string[]): boolean {
+  return SIGNATURE_OWNER_PERMISSIONS.some((key) => permissions.includes(key));
 }
 
-const SIGNATURE_NOTICES = {
-  PENDING: {
-    triggerKey: 'expense.signature_approval_pending',
-    title: 'ลายเซ็นรอเจ้าของกิจการอนุมัติ',
-    body: 'มีลายเซ็นส่งเข้ามาใหม่ เปิดระบบเพื่อดูรูปและอนุมัติ',
-  },
-  APPROVED: {
-    triggerKey: 'expense.signature_approved',
-    title: 'ลายเซ็นของคุณได้รับอนุมัติแล้ว',
-    body: 'ใช้ลงนามเอกสารได้ทันที ถ้ามีคำถามค้างอยู่ใน LINE ตอบคำถามนั้นเพื่อออกเอกสารต่อได้เลย',
-  },
-  REJECTED: {
-    triggerKey: 'expense.signature_rejected',
-    title: 'ลายเซ็นของคุณไม่ผ่านการอนุมัติ',
-    body: 'ส่งรูปลายเซ็นใหม่อีกครั้งได้เลย',
-  },
-  DEMOTED: {
-    triggerKey: 'expense.signature_needs_reapproval',
-    title: 'ลายเซ็นกลับไปรอเจ้าของกิจการอนุมัติ',
-    body: 'มีการเปลี่ยนรูปลายเซ็นที่อนุมัติไว้แล้ว จึงต้องอนุมัติใหม่ก่อนใช้ลงนาม',
-  },
-} as const;
-
-/**
- * Every signature-lifecycle notice, in one shape. Recipients exclude the actor — the convention
- * `notifySignaturePending` (substitute-receipt.use-case) already set, and the reason the solo-owner
- * auto-approve makes no noise at all: they are both submitter and approver.
- *
- * Never throws: a notification failure must not lose an approval that already happened.
- */
-async function notifySignature(
-  notify: CreateOrUpdateNotificationEventUseCase | undefined,
-  logger: Logger,
-  ctx: RequestContext,
-  signatureId: string,
-  notice: { triggerKey: string; title: string; body: string },
-  recipientUserIds: string[],
-): Promise<void> {
-  const recipients = [...new Set(recipientUserIds)].filter((userId) => userId && userId !== ctx.userId);
-  if (!notify || recipients.length === 0) return;
-  try {
-    await notify.execute({
-      companyId: ctx.companyId,
-      triggerKey: notice.triggerKey,
-      sourceModule: 'expenses',
-      sourceType: 'company_signature_asset',
-      sourceId: signatureId,
-      severity: 'action',
-      title: notice.title,
-      body: notice.body,
-      deepLinkHref: signatureDeepLink(ctx.companyId, signatureId),
-      recipientUserIds: recipients,
-    });
-  } catch (error) {
-    logger.warn({
-      msg: 'signature_notification_failed',
-      signatureId,
-      triggerKey: notice.triggerKey,
-      error: error instanceof Error ? error.message : String(error),
-    });
+function assertSignatureOwner(ctx: RequestContext): void {
+  if (!maySubmitSignature(ctx.permissions)) {
+    throw new ForbiddenException(`Missing permission: one of ${SIGNATURE_OWNER_PERMISSIONS.join(', ')}`);
   }
 }
 
 /**
- * A7/A8: a short-lived inline URL for a signature image, so nobody approves or signs with an image
- * they cannot see.
+ * A7/A8: a short-lived inline URL for a signature image, so nobody signs with an image they cannot
+ * see.
  *
  * Deliberately not routed through `CreateDownloadUrlUseCase`: that gate refuses any attachment
  * already recorded as a certificate's payer/approver signature, which is precisely the attachment
- * an approver has to look at. The permission decision therefore belongs to each caller and is
- * stated at each call site.
+ * its owner has to look at. The permission decision therefore belongs to each caller and is stated
+ * at each call site.
  */
 export async function signatureInlineUrl(
   storage: AttachmentStoragePort,
@@ -136,7 +90,7 @@ export class InitSignatureUploadUseCase {
   constructor(private readonly createIntent: CreateUploadIntentUseCase) {}
 
   async execute(ctx: RequestContext, cmd: { originalFileName: string; mimeType: string; byteSize: number }) {
-    if (!hasPerm(ctx, 'expense.signature.manage')) throw new ForbiddenException('Missing permission: expense.signature.manage');
+    assertSignatureOwner(ctx);
     if (cmd.mimeType !== 'image/png' && cmd.mimeType !== 'image/jpeg') {
       throw new BadRequestException('Signature images must be PNG or JPEG');
     }
@@ -148,10 +102,10 @@ export class InitSignatureUploadUseCase {
  * Creates a company signature asset from a completed attachment. Every path (web upload/draw/import,
  * LINE AI intake, the LINE numbered-answer route) lands here.
  *
- * Lifecycle starts at PENDING_OWNER_APPROVAL and the pending queue in web IS the approval ticket —
- * EXCEPT for a submitter who already holds `expense.signature.approve` (owner decision 2026-08-20).
- * The backend has always let them approve their own submission; a solo owner would simply be
- * clicking approve on their own photo, so creation does it for them and records `autoApproved`.
+ * The asset is ACTIVE from creation and belongs to its submitter (owner decision 2026-08-20): there
+ * is no approval step to wait for on any channel. `approvedByUserId`/`approvedAt` are kept and mean
+ * "activated" — by the person whose signature it is — so the columns every reader already joins on
+ * stay populated and the audit answers "since when was this usable".
  *
  * Two things are also fixed up here rather than at each caller, because both bite every channel:
  * the image is downscaled into what certification will accept, and its paper is made transparent
@@ -166,7 +120,6 @@ export class CreateSignatureAssetUseCase {
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly audit: AuditService,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
-    private readonly notify: CreateOrUpdateNotificationEventUseCase,
   ) {}
 
   async execute(
@@ -181,9 +134,9 @@ export class CreateSignatureAssetUseCase {
       attachmentAlreadyActive?: boolean;
     },
   ): Promise<SignatureAssetRecord> {
-    if (!hasPerm(ctx, 'expense.signature.manage')) throw new ForbiddenException('Missing permission: expense.signature.manage');
+    assertSignatureOwner(ctx);
 
-    // LINE retries must not create duplicate pending assets.
+    // LINE retries must not create duplicate assets.
     if (cmd.lineMessageId) {
       const existing = await this.repo.findSignatureAssetByLineMessageId(ctx.companyId, cmd.lineMessageId);
       if (existing) return existing;
@@ -197,7 +150,6 @@ export class CreateSignatureAssetUseCase {
       });
     }
 
-    const autoApproved = hasPerm(ctx, 'expense.signature.approve');
     let asset: SignatureAssetRecord;
     try {
       asset = await this.repo.createSignatureAsset({
@@ -207,7 +159,10 @@ export class CreateSignatureAssetUseCase {
         submittedByUserId: ctx.userId,
         submittedFromChannel: cmd.submittedFromChannel ?? 'WEB',
         lineMessageId: cmd.lineMessageId,
-        ...(autoApproved ? { status: 'ACTIVE', approvedByUserId: ctx.userId, approvedAt: new Date() } : {}),
+        // Activated by its owner, at creation. Nothing else may set these columns any more.
+        status: 'ACTIVE',
+        approvedByUserId: ctx.userId,
+        approvedAt: new Date(),
       });
     } catch (error) {
       // A redelivery that raced past the read above now loses at the unique index instead of
@@ -224,19 +179,10 @@ export class CreateSignatureAssetUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.signature.create', targetType: 'company_signature_asset', targetId: asset.id,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { submittedFromChannel: asset.submittedFromChannel, status: asset.status, autoApproved },
+      // `activationMode` is what an auditor reads to know no second party was involved — there is no
+      // longer an `expense.signature.approve` row for this asset to look for.
+      metadataJson: { submittedFromChannel: asset.submittedFromChannel, status: asset.status, activationMode: 'personal' },
     });
-
-    if (autoApproved) {
-      // The approval really happened, so it gets the row an auditor querying approvals looks for.
-      // `create` alone, with `autoApproved` in its metadata, is invisible to that query.
-      void this.audit.log({
-        companyId: ctx.companyId, actorUserId: ctx.userId,
-        action: 'expense.signature.approve', targetType: 'company_signature_asset', targetId: asset.id,
-        requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-        metadataJson: { submittedByUserId: asset.submittedByUserId, autoApproved: true },
-      });
-    }
 
     // The web canvas owns background removal on its own channel: it shows the user both renditions
     // and posts the derived PNG itself moments later. Deriving here too would burn a second sharp
@@ -245,23 +191,13 @@ export class CreateSignatureAssetUseCase {
     const derivedAttachmentId = (cmd.submittedFromChannel ?? 'WEB') === 'WEB'
       ? undefined
       : await this.deriveUsableImage(ctx, asset.id, cmd.attachmentId);
-    // No demote here, unlike `SetSignatureDerivedAssetUseCase`: that guard exists for RE-pointing an
-    // already-approved asset at an image nobody approved. This is the first derive of a brand-new
-    // asset in its own creation flow — sending it straight back for approval would make the
-    // auto-approve above meaningless.
-    const created = derivedAttachmentId
+    return derivedAttachmentId
       ? await this.repo.updateSignatureAsset(ctx.companyId, asset.id, { derivedAttachmentId })
       : asset;
-
-    if (!autoApproved) {
-      await notifySignature(this.notify, this.logger, ctx, created.id, SIGNATURE_NOTICES.PENDING,
-        await this.repo.listUserIdsWithPermission(ctx.companyId, 'expense.signature.approve'));
-    }
-    return created;
   }
 
-  /** A14: a LINE asset arrived with no label at all, so the queue read "ลายเซ็นไม่มีชื่อ" for every
-   *  row and an owner with three staff could not tell them apart. */
+  /** A14: a LINE asset arrived with no label at all, so every row read "ลายเซ็นไม่มีชื่อ" — which is
+   *  still what the housekeeping table would show a manage holder trying to name a departed staffer. */
   private async defaultLabel(ctx: RequestContext): Promise<string | undefined> {
     const identity = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, null);
     return identity ? `${identity.displayName} ${todayCivilDate()}` : undefined;
@@ -325,84 +261,27 @@ export class CreateSignatureAssetUseCase {
   }
 }
 
-@Injectable()
-export class ApproveSignatureAssetUseCase {
-  private readonly logger = new Logger(ApproveSignatureAssetUseCase.name);
-
-  constructor(
-    private readonly repo: PrismaExpenseRepository,
-    private readonly audit: AuditService,
-    private readonly notify: CreateOrUpdateNotificationEventUseCase,
-  ) {}
-
-  async execute(ctx: RequestContext, signatureId: string): Promise<SignatureAssetRecord> {
-    if (!hasPerm(ctx, 'expense.signature.approve')) throw new ForbiddenException('Missing permission: expense.signature.approve');
-    const asset = await this.repo.findSignatureAssetById(ctx.companyId, signatureId);
-    if (!asset) throw new NotFoundException('Signature asset not found');
-    if (asset.status !== 'PENDING_OWNER_APPROVAL') throw new BadRequestException(`Cannot approve signature in status ${asset.status}`);
-
-    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, {
-      status: 'ACTIVE',
-      approvedByUserId: ctx.userId,
-      approvedAt: new Date(),
-    });
-    void this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId,
-      action: 'expense.signature.approve', targetType: 'company_signature_asset', targetId: signatureId,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { submittedByUserId: asset.submittedByUserId },
-    });
-    // The submitter's next LINE turn will find `hasReusableSignature` true, but nothing tells them
-    // that — the assistant only speaks when spoken to.
-    await notifySignature(this.notify, this.logger, ctx, signatureId, SIGNATURE_NOTICES.APPROVED, [asset.submittedByUserId]);
-    return updated;
-  }
-}
-
-@Injectable()
-export class RejectSignatureAssetUseCase {
-  private readonly logger = new Logger(RejectSignatureAssetUseCase.name);
-
-  constructor(
-    private readonly repo: PrismaExpenseRepository,
-    private readonly audit: AuditService,
-    private readonly notify: CreateOrUpdateNotificationEventUseCase,
-  ) {}
-
-  async execute(ctx: RequestContext, signatureId: string, reason: string): Promise<SignatureAssetRecord> {
-    if (!hasPerm(ctx, 'expense.signature.approve')) throw new ForbiddenException('Missing permission: expense.signature.approve');
-    if (!reason?.trim()) throw new BadRequestException('Reject reason is required');
-    const asset = await this.repo.findSignatureAssetById(ctx.companyId, signatureId);
-    if (!asset) throw new NotFoundException('Signature asset not found');
-    if (asset.status !== 'PENDING_OWNER_APPROVAL') throw new BadRequestException(`Cannot reject signature in status ${asset.status}`);
-
-    const rejectReason = reason.trim().slice(0, 300);
-    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, {
-      status: 'REJECTED',
-      rejectedByUserId: ctx.userId,
-      rejectedAt: new Date(),
-      rejectReason,
-    });
-    void this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId,
-      action: 'expense.signature.reject', targetType: 'company_signature_asset', targetId: signatureId,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-    });
-    await notifySignature(this.notify, this.logger, ctx, signatureId,
-      { ...SIGNATURE_NOTICES.REJECTED, body: `เหตุผล: ${rejectReason}\n${SIGNATURE_NOTICES.REJECTED.body}` },
-      [asset.submittedByUserId]);
-    return updated;
-  }
-}
-
+/**
+ * Retire a signature. Two authorities, deliberately unequal: its owner retires their own, and an
+ * `expense.signature.manage` holder retires ANYONE's — the housekeeping the personal model still
+ * needs (departed staff, abuse). That holder cannot see the image; deleting a signature never
+ * requires looking at one.
+ *
+ * Certified documents are untouched: they resolve by recorded attachment id, and the pinned
+ * re-resolution accepts any status.
+ */
 @Injectable()
 export class ArchiveSignatureAssetUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService) {}
 
   async execute(ctx: RequestContext, signatureId: string): Promise<SignatureAssetRecord> {
-    if (!hasPerm(ctx, 'expense.signature.manage')) throw new ForbiddenException('Missing permission: expense.signature.manage');
+    assertSignatureOwner(ctx);
     const asset = await this.repo.findSignatureAssetById(ctx.companyId, signatureId);
     if (!asset) throw new NotFoundException('Signature asset not found');
+    const housekeeping = asset.submittedByUserId !== ctx.userId;
+    if (housekeeping && !hasPerm(ctx, 'expense.signature.manage')) {
+      throw new ForbiddenException('Missing permission: expense.signature.manage');
+    }
     if (asset.status === 'ARCHIVED') return asset;
 
     const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, { status: 'ARCHIVED', archivedAt: new Date() });
@@ -410,6 +289,7 @@ export class ArchiveSignatureAssetUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.signature.archive', targetType: 'company_signature_asset', targetId: signatureId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { submittedByUserId: asset.submittedByUserId, housekeeping },
     });
     return updated;
   }
@@ -420,23 +300,21 @@ export class ArchiveSignatureAssetUseCase {
  * The original signature asset is always kept.
  *
  * Substitute-receipt certification (R9) prefers `derivedAttachmentId`, so re-pointing it swaps the
- * image that signs legal artifacts. Only the submitter may do it, and doing it to an ACTIVE asset
- * sends that asset back for owner approval — an approved signature is never silently replaced by an
- * image nobody approved. Certified documents are unaffected: they resolve by recorded attachment id.
+ * image that signs legal artifacts — which is exactly why ONLY the submitter may do it. That
+ * ownership check is the whole integrity story now: re-pointing your own personal signature is
+ * updating your own signature, and there is no approval left to send it back to. Certified
+ * documents are unaffected: they resolve by recorded attachment id.
  */
 @Injectable()
 export class SetSignatureDerivedAssetUseCase {
-  private readonly logger = new Logger(SetSignatureDerivedAssetUseCase.name);
-
   constructor(
     private readonly repo: PrismaExpenseRepository,
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly audit: AuditService,
-    private readonly notify: CreateOrUpdateNotificationEventUseCase,
   ) {}
 
   async execute(ctx: RequestContext, signatureId: string, cmd: { attachmentId: string; checksumSha256?: string; byteSize?: number }): Promise<SignatureAssetRecord> {
-    if (!hasPerm(ctx, 'expense.signature.manage')) throw new ForbiddenException('Missing permission: expense.signature.manage');
+    assertSignatureOwner(ctx);
     const asset = await this.repo.findSignatureAssetById(ctx.companyId, signatureId);
     if (!asset) throw new NotFoundException('Signature asset not found');
     if (asset.status === 'ARCHIVED' || asset.status === 'REJECTED') {
@@ -445,33 +323,17 @@ export class SetSignatureDerivedAssetUseCase {
     if (asset.submittedByUserId !== ctx.userId) {
       throw new ForbiddenException('Only the signature submitter may attach its background-removed image.');
     }
-    // The demote protects an approval given by someone else. A submitter who holds the approval
-    // permission is that someone else (owner decision 2026-08-20 auto-approve) — sending their own
-    // asset back to their own queue is ceremony, and it would silently undo the auto-approve for
-    // every web upload, which posts its derived PNG moments after creation.
-    const selfApproved = hasPerm(ctx, 'expense.signature.approve');
-    const demotedFromActive = asset.status === 'ACTIVE' && !selfApproved;
 
     await this.completeUpload.execute(ctx, { attachmentId: cmd.attachmentId, checksumSha256: cmd.checksumSha256, byteSize: cmd.byteSize });
     await this.repo.linkAttachmentToTarget(cmd.attachmentId, 'company.signature_asset', signatureId, SIGNATURE_ATTACHMENT_PURPOSE, ctx.companyId, ctx.userId);
-    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, {
-      derivedAttachmentId: cmd.attachmentId,
-      ...(demotedFromActive ? { status: 'PENDING_OWNER_APPROVAL' } : {}),
-    });
+    const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, { derivedAttachmentId: cmd.attachmentId });
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.signature.background_remove', targetType: 'company_signature_asset', targetId: signatureId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { derivedAttachmentId: cmd.attachmentId, demotedFromActive, selfApproved },
+      metadataJson: { derivedAttachmentId: cmd.attachmentId },
     });
-    if (demotedFromActive) {
-      // Approval holders only. Only the submitter may re-point, so they are always the actor and
-      // `notifySignature` always drops them — naming them here just reads as a promise it cannot
-      // keep. The people with something waiting again are the ones who can clear it.
-      await notifySignature(this.notify, this.logger, ctx, signatureId, SIGNATURE_NOTICES.DEMOTED,
-        await this.repo.listUserIdsWithPermission(ctx.companyId, 'expense.signature.approve'));
-    }
     return updated;
   }
 }
@@ -501,7 +363,7 @@ export class FillSignatureUseCase {
 
     const asset = await this.repo.findSignatureAssetById(ctx.companyId, input.signatureAssetId);
     if (!asset) throw new NotFoundException('Signature asset not found');
-    if (asset.status !== 'ACTIVE') throw new BadRequestException('Only ACTIVE approved signatures can be filled into documents');
+    if (asset.status !== 'ACTIVE') throw new BadRequestException('Only ACTIVE signatures can be filled into documents');
 
     if (input.renderedAttachmentId) {
       await this.completeUpload.execute(ctx, { attachmentId: input.renderedAttachmentId, checksumSha256: input.checksumSha256, byteSize: input.byteSize });
@@ -527,6 +389,18 @@ export class FillSignatureUseCase {
   }
 }
 
+/**
+ * "ลายเซ็นของฉัน", plus housekeeping. A signature is personal, so the caller always gets their OWN
+ * rows WITH a preview, and never anyone else's image — not the manage holder either, whose key
+ * authorises deletion, not viewing. Manage holders additionally get other people's rows stripped of
+ * `previewUrl` (id, label, submitter, dates, status), which is what identifying a departed staffer's
+ * signature actually needs.
+ */
+export type SignatureAssetListItem =
+  Omit<SignatureAssetRecord, 'originalAttachmentId' | 'derivedAttachmentId'>
+  & Partial<Pick<SignatureAssetRecord, 'originalAttachmentId' | 'derivedAttachmentId'>>
+  & { previewUrl: string | null; submittedByDisplayName: string | null };
+
 @Injectable()
 export class ListSignatureAssetsUseCase {
   constructor(
@@ -535,24 +409,31 @@ export class ListSignatureAssetsUseCase {
     private readonly audit: AuditService,
   ) {}
 
-  async execute(ctx: RequestContext, status?: string): Promise<Array<SignatureAssetRecord & { previewUrl: string | null }>> {
-    const canManage = hasPerm(ctx, 'expense.signature.manage') || hasPerm(ctx, 'expense.signature.approve');
-    const canReview = hasPerm(ctx, 'expense.review');
-    if (!canManage && !canReview) throw new ForbiddenException('Missing permission: expense.signature.manage');
-    // Reviewers only see ACTIVE assets (fill picker); managers/approvers see the full queue.
-    const assets = canManage
-      ? await this.repo.listSignatureAssets(ctx.companyId, status)
-      : await this.repo.listSignatureAssets(ctx.companyId, 'ACTIVE');
+  async execute(ctx: RequestContext, status?: string): Promise<SignatureAssetListItem[]> {
+    assertSignatureOwner(ctx);
+    const canManage = hasPerm(ctx, 'expense.signature.manage');
+    const assets = await this.repo.listSignatureAssets(ctx.companyId, status, canManage ? undefined : ctx.userId);
+    const names = canManage
+      ? await this.repo.listUserDisplayNames(assets.map((asset) => asset.submittedByUserId))
+      : new Map<string, string>();
 
-    return Promise.all(assets.map(async (asset) => ({
-      ...asset,
-      // A7: an owner was approving an image they could not see. Narrowest rule that fixes that —
-      // whoever may act on the asset, plus the person whose signature it is. A reviewer who is
-      // neither reads the row without the picture, exactly as before.
-      previewUrl: canManage || asset.submittedByUserId === ctx.userId
-        ? await this.previewUrl(ctx, asset)
-        : null,
-    })));
+    return Promise.all(assets.map(async (asset) => {
+      const own = asset.submittedByUserId === ctx.userId;
+      // Withholding only the picture was not enough: the attachment ids ARE a way to the picture
+      // through the generic download endpoint, which every housekeeping role can call. A row nobody
+      // may look at has no business naming the bytes behind it.
+      const { originalAttachmentId, derivedAttachmentId, ...row } = asset;
+      if (!own) {
+        return { ...row, previewUrl: null, submittedByDisplayName: names.get(asset.submittedByUserId) ?? null };
+      }
+      return {
+        ...row,
+        originalAttachmentId,
+        derivedAttachmentId,
+        previewUrl: await this.previewUrl(ctx, asset),
+        submittedByDisplayName: null,
+      };
+    }));
   }
 
   /** Derived first, same preference `findReusableSignatureAsset` certifies with, so the preview is

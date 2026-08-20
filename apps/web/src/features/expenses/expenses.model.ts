@@ -902,7 +902,6 @@ export type ExpenseCapabilities = {
   canResolveDuplicates: boolean;
   canManageCategories: boolean;
   canManageSignatures: boolean;
-  canApproveSignatures: boolean;
   canViewSharedEvidence: boolean;
   canExportPackage: boolean;
   canReadLedger: boolean;
@@ -926,7 +925,6 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
     canResolveDuplicates: has('expense.duplicate.resolve'),
     canManageCategories: has('expense.category.manage'),
     canManageSignatures: has('expense.signature.manage'),
-    canApproveSignatures: has('expense.signature.approve'),
     canViewSharedEvidence: has('expense.evidence.read'),
     // POST /accountant-package requires both expense.export AND expense.read.
     canExportPackage: has('expense.export') && has('expense.read'),
@@ -1047,10 +1045,10 @@ export function canAccessExpenseTab(tab: ExpensesTab, caps: ExpenseCapabilities)
     upload: caps.canUploadReceipts,
     manual: caps.canCreate,
     categories: caps.canManageCategories,
-    // Un-parked 2026-08-20 (owner decision). The 2026-08-05 park said approved signatures had no
-    // consumer; substitute receipts certify with them now, so the approval queue is on the critical
-    // path. Approvers get in as well as managers: the queue exists for them.
-    signatures: caps.canManageSignatures || caps.canApproveSignatures,
+    // "ลายเซ็นของฉัน" (owner decision 2026-08-20): a signature is personal, so the screen belongs
+    // to whoever performs either signing act — plus the housekeeping holder, who also sees other
+    // people's rows there.
+    signatures: caps.canReview || caps.canConfirm || caps.canManageSignatures,
     evidence: caps.canViewSharedEvidence,
   };
   return allowed[tab];

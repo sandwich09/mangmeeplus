@@ -900,70 +900,59 @@ describe('re-pointing a signature derivative (R9 hardening)', () => {
       originalAttachmentId: 'att-original', derivedAttachmentId: null, ...assetOverrides,
     };
     const entries: any[] = [];
-    const notices: any[] = [];
     let updated: any;
     const repo = {
       findSignatureAssetById: async () => asset,
       linkAttachmentToTarget: async () => undefined,
       updateSignatureAsset: async (_company: string, _id: string, data: any) => { updated = data; return { ...asset, ...data }; },
-      listUserIdsWithPermission: async () => ['owner-1'],
     } as any;
     const useCase = new SetSignatureDerivedAssetUseCase(repo, { execute: async () => ({}) } as any, {
       log: async (entry: any) => { entries.push(entry); },
-    } as any, { execute: async (input: any) => { notices.push(input); } } as any);
-    return { useCase, entries, notices, updated: () => updated };
+    } as any);
+    return { useCase, entries, updated: () => updated };
   }
 
-  const manage = (userId: string) => ctx(userId, ['expense.signature.manage']);
+  const signer = (userId: string) => ctx(userId, ['expense.signature.manage']);
 
+  /**
+   * The invariant that survives the personal-signature decision unchanged, and the only one that
+   * matters here: re-pointing swaps the image that signs legal artifacts, so nobody but the owner
+   * may do it. Holding `expense.signature.manage` does not make someone else's signature yours.
+   */
   it('lets only the submitter re-point their own signature', async () => {
     const { useCase } = harness();
     await assert.rejects(
-      () => useCase.execute(manage('approver-1'), 'sig-1', { attachmentId: 'att-swapped' }),
+      () => useCase.execute(signer('approver-1'), 'sig-1', { attachmentId: 'att-swapped' }),
       /Only the signature submitter/,
     );
     await assert.rejects(
-      () => useCase.execute(ctx('payer-1', []), 'sig-1', { attachmentId: 'att-swapped' }),
+      () => useCase.execute(ctx('payer-1', ['expense.read']), 'sig-1', { attachmentId: 'att-swapped' }),
       /expense.signature.manage/,
     );
   });
 
-  it('sends an ACTIVE asset back for owner approval when its derivative is replaced', async () => {
-    const { useCase, entries, notices, updated } = harness();
-    const result = await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-swapped' });
-    // The lookup prefers the derivative, so a swapped image must not keep the owner's approval.
-    assert.equal(updated().status, 'PENDING_OWNER_APPROVAL');
-    assert.equal(updated().derivedAttachmentId, 'att-swapped');
-    assert.equal(result.status, 'PENDING_OWNER_APPROVAL');
-    assert.equal(entries[0].metadataJson.demotedFromActive, true);
-    // A6(d): a signature that silently stops working is exactly the state nobody was told about.
-    assert.equal(notices.length, 1);
-    assert.equal(notices[0].triggerKey, 'expense.signature_needs_reapproval');
-    assert.deepEqual(notices[0].recipientUserIds, ['owner-1']);
+  // Superseded by the owner decision of 2026-08-20: re-pointing your OWN personal signature is
+  // updating your own signature. There is no approval to take away, so an ACTIVE asset stays ACTIVE
+  // — which is also what kept every web upload usable, since the canvas posts its transparent PNG
+  // moments after creation.
+  it('keeps the asset usable and records only the new derivative', async () => {
+    for (const permission of ['expense.signature.manage', 'expense.review', 'expense.confirm']) {
+      const { useCase, entries, updated } = harness();
+      const result = await useCase.execute(ctx('payer-1', [permission]), 'sig-1', { attachmentId: 'att-swapped' });
+      assert.equal('status' in updated(), false, permission);
+      assert.equal(updated().derivedAttachmentId, 'att-swapped');
+      assert.equal(result.status, 'ACTIVE');
+      assert.equal(entries[0].action, 'expense.signature.background_remove');
+      assert.equal(entries[0].metadataJson.derivedAttachmentId, 'att-swapped');
+    }
   });
 
-  // A9/A10 interplay: with the owner decision of 2026-08-20 the submitter can be the approver, and
-  // the web canvas posts its background-removed PNG moments after creation. Demoting there would
-  // undo the auto-approve on every single web upload.
-  it('keeps an approval holder’s own asset ACTIVE when they re-point it', async () => {
-    const { useCase, entries, notices, updated } = harness();
-    const result = await useCase.execute(
-      ctx('payer-1', ['expense.signature.manage', 'expense.signature.approve']),
-      'sig-1',
-      { attachmentId: 'att-derived' },
+  it('refuses to re-point a retired signature', async () => {
+    const { useCase } = harness({ status: 'ARCHIVED' });
+    await assert.rejects(
+      () => useCase.execute(signer('payer-1'), 'sig-1', { attachmentId: 'att-derived' }),
+      /Cannot attach derived asset/,
     );
-    assert.equal('status' in updated(), false);
-    assert.equal(result.status, 'ACTIVE');
-    assert.equal(entries[0].metadataJson.demotedFromActive, false);
-    assert.equal(entries[0].metadataJson.selfApproved, true);
-    assert.deepEqual(notices, []);
-  });
-
-  it('leaves the normal upload flow alone: a pending asset stays pending', async () => {
-    const { useCase, entries, updated } = harness({ status: 'PENDING_OWNER_APPROVAL' });
-    await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-derived' });
-    assert.equal('status' in updated(), false);
-    assert.equal(entries[0].metadataJson.demotedFromActive, false);
   });
 });
 

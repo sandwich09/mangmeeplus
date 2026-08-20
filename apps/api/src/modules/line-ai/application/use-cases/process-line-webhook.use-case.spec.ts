@@ -1347,7 +1347,7 @@ describe('ProcessLineWebhookUseCase', () => {
       initReceiptUpload: { execute: async () => { receiptIntents += 1; return { expenseId: 'exp-1', attachmentId: 'att-1' }; } },
       completeReceiptUpload: { execute: async () => undefined },
       initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
-      createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { created.push(cmd); return { id: 'sig-9', status: 'PENDING_OWNER_APPROVAL' }; } },
+      createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { created.push(cmd); return { id: 'sig-9', status: 'ACTIVE' }; } },
     });
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
@@ -1374,7 +1374,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
   // F1: `ลายเซ็น` is a substring test, and plenty of real receipts mention it ("ค่าทำป้ายลายเซ็น").
   // Reading that as intent filed the receipt as the newest reusable signature for legal documents —
-  // auto-approved ACTIVE for an owner — and lost the expense entirely. A router that saw both the
+  // ACTIVE and signable on the spot — and lost the expense entirely. A router that saw both the
   // caption and the picture outranks a regex; the deterministic route is for when it said nothing.
   it('leaves a ROUTED expense capture alone even when its caption mentions ลายเซ็น', async () => {
     const { prisma } = makePrisma();
@@ -1409,9 +1409,9 @@ describe('ProcessLineWebhookUseCase', () => {
   });
 
   // A3 answer half + F9. Certification resolves signatures through a PNG/JPEG-only lookup, so a PDF
-  // answered as "my signature" would become an ACTIVE asset that can never sign anything — and for
-  // an owner it auto-approves straight into that dead end.
-  it('turns the numbered signature answer into an asset, and refuses a PDF outright', async () => {
+  // answered as "my signature" would become an ACTIVE asset that can never sign anything — a dead
+  // end from the first turn, since nothing is held for review any more.
+  it('turns the numbered signature answer into a usable asset that steers back to the decision, and refuses a PDF outright', async () => {
     const answerEvent = {
       webhookEventId: 'evt-sig-answer', lineUserId: 'line-user-secret', replyToken: 'reply-sig-answer',
       messageText: '1', messagingChannelId: 'msg-channel-1',
@@ -1428,7 +1428,7 @@ describe('ProcessLineWebhookUseCase', () => {
       const { useCase, replies } = makeUseCase(prisma, {
         permissions: ['expense.receipt.upload', 'expense.signature.manage', 'attachment.create'],
         initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig' }) },
-        createSignatureAsset: { execute: async (_c: any, cmd: any) => { created.push(cmd); return { id: 'sig-7', status: 'PENDING_OWNER_APPROVAL' }; } },
+        createSignatureAsset: { execute: async (_c: any, cmd: any) => { created.push(cmd); return { id: 'sig-7', status: 'ACTIVE' }; } },
         substituteReceiptContinuation: {
           loadOpenMediaContext: async () => ({ expenseId: 'exp-1', awaitingScans: [], signatureRequested: true }),
         },
@@ -1453,6 +1453,10 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(image.created[0].attachmentAlreadyActive, true);
     // F13: closed as a signature, not mislabelled as a receipt.
     assert.equal(image.resolved[0].data.status, 'RESOLVED_SIGNATURE');
+    // Journey A: usable at once, and the sender is put back on the decision they were answering
+    // rather than left at "saved!" one keystroke from the document.
+    assert.match(image.replies.join('\n'), /ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ/);
+    assert.match(image.replies.join('\n'), /ตอบ 1 เพื่อออกเอกสารต่อได้เลยค่ะ/);
 
     const pdf = await run('application/pdf');
     assert.equal(pdf.created.length, 0, 'a PDF must never become a signature asset');

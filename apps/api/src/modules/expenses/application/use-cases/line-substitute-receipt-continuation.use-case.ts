@@ -8,6 +8,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { substituteWetSignedScanRejection } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import { maySubmitSignature } from './signature-asset.use-case';
 import { CreateDocumentDeliveryLinkUseCase, type DocumentDeliveryLinkKind } from './document-delivery-link.use-case';
 
 const STATE_KEY = 'lineSubstituteReceiptContinuation';
@@ -916,7 +917,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     // F8: and only for someone who may actually submit one — offering the choice to anyone else
     // ends in a refusal reply after they have already picked it. The permission can also be lost
     // between the ask and the photo, so it is re-read here rather than trusted from the flag.
-    const asked = ctx.permissions.includes('expense.signature.manage')
+    const asked = maySubmitSignature(ctx.permissions)
       && states.some((state) => ACTIVE_STATUSES.has(state.status) && state.signatureRequested === true);
     const signatureRequested = asked && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
     return { expenseId, awaitingScans, signatureRequested };
@@ -1412,27 +1413,22 @@ export class LineSubstituteReceiptContinuationUseCase {
     return this.prepareFromLine(ctx, input, expense, state, choice);
   }
 
-  /** Journey A step 5, and the loop it must not become. A LINE-uploaded signature is stored
-   *  `PENDING_OWNER_APPROVAL`, which the ACTIVE-only reusable lookup cannot see — so asking for a
-   *  photo again would repeat forever while the photo already sits in the owner's queue. The newest
-   *  asset's status decides which of the three true situations the sender is actually in. */
+  /**
+   * Journey A step 5, and no longer a loop: a signature saved from LINE is ACTIVE immediately
+   * (owner decision 2026-08-20), so the only two states left are "you have one" — handled by the
+   * caller, which never gets here — and "you have none", which asks for the photo. Nothing waits on
+   * anyone, so there is no pending or rejected script to write.
+   */
   private async askForSignature(
     ctx: RequestContext,
     input: { webBaseUrl?: string; groupChat?: boolean },
     expense: ExpenseRecordWithRelations,
     state: LineSubstituteReceiptContinuation,
   ): Promise<LineSubstituteReceiptContinuationResult> {
-    const latest = await this.repo.findLatestSignatureAssetStatus(ctx.companyId, ctx.userId);
-    // F8: `expense.signature.manage` is the permission that submitting a signature needs. Without
-    // it the whole "send me a photo" script is a dead end — the photo arrives, the answer is
-    // refused, and the sender is back where they started. The paper route is the real path, so it
-    // is the only one offered.
-    const maySubmit = ctx.permissions.includes('expense.signature.manage');
     // A3: written once, so the photo that arrives next has a numbered choice that can become a
     // signature. Best-effort by design — a stale-revision refusal here must not swallow the ask
-    // itself, and `loadOpenMediaContext` re-checks the live signature anyway. Skipped entirely for
-    // someone who cannot submit: nothing they send can become a signature.
-    if (maySubmit && state.signatureRequested !== true) {
+    // itself, and `loadOpenMediaContext` re-checks the live signature anyway.
+    if (state.signatureRequested !== true) {
       try {
         await this.repo.saveLineSubstituteContinuation({
           companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
@@ -1443,23 +1439,8 @@ export class LineSubstituteReceiptContinuationUseCase {
         // Left unrecorded: the sender still gets the ask, and the caption route still works.
       }
     }
-    const sendPhoto = 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ';
-    const howTo = [
-      'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้',
-      'ระบบจะเก็บเป็นลายเซ็นประจำตัว (รอเจ้าของกิจการอนุมัติก่อนใช้งาน) แล้วใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก',
-    ];
-    const waiting = maySubmit && latest?.status === 'PENDING_OWNER_APPROVAL';
-    const rejected = maySubmit && latest?.status === 'REJECTED';
-    const askForForm = 'ขอฟอร์มไปเซ็นด้วยมือก่อนไหมคะ (ตอบ 2)';
-    const question = !maySubmit ? askForForm
-      : waiting ? 'ระหว่างรออนุมัติ จะขอฟอร์มไปเซ็นเองก่อนไหมคะ (ตอบ 2)'
-        : sendPhoto;
-    const signatureBlocker = blocker(
-      !maySubmit ? 'reusable_signature_not_submittable'
-        : waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
-      !maySubmit ? 'ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบ' : waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
-      true,
-    );
+    const question = 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ';
+    const signatureBlocker = blocker('reusable_signature_required', 'ยังไม่มีลายเซ็นที่บันทึกไว้', true);
     return {
       handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
       acceptedFields: [],
@@ -1469,24 +1450,11 @@ export class LineSubstituteReceiptContinuationUseCase {
       pendingQuestion: question,
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId),
       replyText: formatStandalone({
-        headline: (!maySubmit
-          ? [
-            'ยังไม่มีลายเซ็นที่บันทึกไว้ และบัญชีนี้ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบค่ะ',
-            'ทางที่ทำได้เลยคือขอฟอร์มไปเซ็นด้วยมือ แล้วถ่ายรูปฟอร์มที่เซ็นแล้วส่งกลับเข้ามา',
-          ]
-          : waiting
-            ? [
-              'ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บค่ะ',
-              'พออนุมัติแล้วจะใช้ลงนามได้ทันที ไม่ต้องส่งรูปใหม่',
-              'ถ้าไม่อยากรอ ขอฟอร์มไปเซ็นด้วยมือก่อนได้',
-            ]
-            : rejected
-              ? [
-                `ลายเซ็นที่ส่งมาก่อนหน้านี้ไม่ผ่านการอนุมัติค่ะ${latest?.rejectReason ? ` (เหตุผล: ${latest.rejectReason})` : ''}`,
-                ...howTo,
-              ]
-              : ['ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ', ...howTo]).join('\n'),
-        ...(waiting || !maySubmit ? { choices: ISSUE_DECISION_CHOICES } : {}),
+        headline: [
+          'ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ',
+          'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้',
+          'ระบบจะเก็บเป็นลายเซ็นประจำตัว ใช้ได้ทันทีและใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก',
+        ].join('\n'),
         question,
       }),
     };

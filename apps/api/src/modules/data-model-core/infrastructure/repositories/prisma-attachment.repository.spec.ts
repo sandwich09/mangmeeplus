@@ -27,6 +27,46 @@ function makeRepo(input?: { directEvidence?: object | null; snapshotEvidence?: o
   };
 }
 
+/**
+ * The lookup that closes the two-call signature leak. `isSubstituteRawSignature` beside it only
+ * matches images a certificate already RECORDED, so the library link is what makes an asset that has
+ * not signed anything yet visible to the download gate.
+ */
+describe('PrismaAttachmentRepository.findSignatureAssetOwner', () => {
+  function setup(input: { link?: object | null; asset?: object | null } = {}) {
+    const attachmentLink = { findFirst: mock.fn(async () => input.link ?? null) };
+    const companySignatureAsset = { findFirst: mock.fn(async () => input.asset ?? null) };
+    const client = { attachmentLink, companySignatureAsset };
+    return { repo: new PrismaAttachmentRepository({ client } as any), attachmentLink, companySignatureAsset };
+  }
+
+  it('reads the owner through the signature-asset link, tenant-scoped', async () => {
+    const { repo, attachmentLink, companySignatureAsset } = setup({
+      link: { targetId: 'sig-1' }, asset: { submittedByUserId: 'payer-1' },
+    });
+    assert.deepEqual(await repo.findSignatureAssetOwner({ id: 'att-1', companyId: 'co-1' }), { ownerUserId: 'payer-1' });
+    assert.deepEqual((attachmentLink.findFirst.mock.calls as any[])[0].arguments[0].where, {
+      companyId: 'co-1', attachmentId: 'att-1', targetType: 'company.signature_asset',
+    });
+    assert.deepEqual((companySignatureAsset.findFirst.mock.calls as any[])[0].arguments[0].where, {
+      id: 'sig-1', companyId: 'co-1',
+    });
+  });
+
+  it('says "not a signature" only when no link exists, and fails closed on an orphaned one', async () => {
+    const plain = setup();
+    assert.equal(await plain.repo.findSignatureAssetOwner({ id: 'att-1', companyId: 'co-1' }), null);
+    assert.equal(plain.companySignatureAsset.findFirst.mock.callCount(), 0, 'no link, no second query');
+
+    const orphaned = setup({ link: { targetId: 'sig-gone' }, asset: null });
+    assert.deepEqual(
+      await orphaned.repo.findSignatureAssetOwner({ id: 'att-1', companyId: 'co-1' }),
+      { ownerUserId: null },
+      'a link with no asset is still a signature — it just belongs to nobody the gate can match',
+    );
+  });
+});
+
 describe('PrismaAttachmentRepository substitute-evidence retention', () => {
   it('retains certified, issued, and superseded artifacts and signatures', async () => {
     const { repo, expenseSubstituteReceiptEvidence, attachmentLink } = makeRepo({ directEvidence: { id: 'evidence-1' } });

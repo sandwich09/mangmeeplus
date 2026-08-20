@@ -93,9 +93,7 @@ export const ROUTE_PERMISSION_RULES: readonly RoutePermissionRule[] = [
     anyOf: [
       'expense.read', 'expense.read_related', 'expense.read_own', 'expense.receipt.upload', 'expense.create',
       'expense.confirm', 'expense.category.manage', 'expense.signature.manage',
-      // The un-parked signature queue (2026-08-20) is the approver's screen, and an owner who never
-      // uploads a signature holds only this key — without it the nav entry would 403 its own target.
-      'expense.signature.approve', 'expense.evidence.read',
+      'expense.evidence.read',
     ],
   },
   {

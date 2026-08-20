@@ -128,13 +128,9 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   // Separate key from the payer stage on purpose — a shared key put both stages on one dedup/alert
   // state and the payer notification's cooldown suppressed this one. See SIGNATURE_STAGES.
   'expense.substitute_receipt_approval_pending',
-  // Signature library lifecycle (signature-asset.use-case). One key per direction, for the same
-  // reason the two substitute stages are separate: a shared key puts both on one dedup/cooldown
-  // state, and the approver's notice would swallow the submitter's answer.
-  'expense.signature_approval_pending',
-  'expense.signature_approved',
-  'expense.signature_rejected',
-  'expense.signature_needs_reapproval',
+  // The four `expense.signature_*` keys are gone with the approval lifecycle they announced: a
+  // personal signature (owner decision 2026-08-20) is usable the moment it is saved, so there is
+  // nobody to tell and nothing to wait for.
   // Reports emits this on every completed export (report.use-cases.ts). While it sat in the future
   // list below, the preference gate — which defaults to exactly this array — dropped the LINE push
   // every time, and the preferences screen offers only implemented keys so nobody could opt in

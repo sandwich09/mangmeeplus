@@ -59,12 +59,11 @@ import {
 import {
   InitSignatureUploadUseCase,
   CreateSignatureAssetUseCase,
-  ApproveSignatureAssetUseCase,
-  RejectSignatureAssetUseCase,
   ArchiveSignatureAssetUseCase,
   SetSignatureDerivedAssetUseCase,
   FillSignatureUseCase,
   ListSignatureAssetsUseCase,
+  SIGNATURE_OWNER_PERMISSIONS,
 } from '../../application/use-cases/signature-asset.use-case';
 import {
   GetSharedEvidenceViewUseCase,
@@ -595,57 +594,43 @@ export class ExpenseSignatureController {
     private readonly listAssets: ListSignatureAssetsUseCase,
     private readonly initUpload: InitSignatureUploadUseCase,
     private readonly createAsset: CreateSignatureAssetUseCase,
-    private readonly approve: ApproveSignatureAssetUseCase,
-    private readonly rejectAsset: RejectSignatureAssetUseCase,
     private readonly archive: ArchiveSignatureAssetUseCase,
     private readonly setDerived: SetSignatureDerivedAssetUseCase,
   ) {}
 
   /**
-   * `RequirePermissions` is ALL-of, so this endpoint demanded `expense.signature.manage` from
-   * everyone — including the owner whose only signature key is `approve`, whose queue this is, and
-   * whom the un-parked screen (2026-08-20) sends here by nav entry and by LINE deep link. The use
-   * case has always resolved all three authorities itself, and narrows the rows for a reviewer.
+   * `RequirePermissions` is ALL-of, and a personal signature has three equivalent authorities — the
+   * two signing acts plus housekeeping — so every route here uses the any-of decorator. Own-vs-any
+   * scope is the use case's to decide: it is about WHOSE row this is, which a decorator cannot see.
    */
   @Get()
-  @RequireAnyPermission('expense.signature.manage', 'expense.signature.approve', 'expense.review')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   list(@ReqCtx() ctx: RequestContext, @Query('status') status?: string) {
     return this.listAssets.execute(ctx, status);
   }
 
   @Post('uploads')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: UploadIntentDto) {
     return this.initUpload.execute(ctx, body);
   }
 
   @Post()
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetInput & { checksumSha256?: string; byteSize?: number }) {
     return this.createAsset.execute(ctx, { ...body, submittedFromChannel: 'WEB' });
   }
 
-  @Post(':signatureId/approve')
-  @RequirePermissions('expense.signature.approve')
-  approveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
-    return this.approve.execute(ctx, signatureId);
-  }
-
-  @Post(':signatureId/reject')
-  @RequirePermissions('expense.signature.approve')
-  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: ReasonRequiredDto) {
-    return this.rejectAsset.execute(ctx, signatureId, body?.reason ?? '');
-  }
-
+  /** Own signature, or — for an `expense.signature.manage` holder — anyone's. */
   @Post(':signatureId/archive')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   archiveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
     return this.archive.execute(ctx, signatureId);
   }
 
-  /** Records the web-canvas background-removed derived PNG. Original is kept. */
+  /** Records the web-canvas background-removed derived PNG. Original is kept. Submitter only. */
   @Post(':signatureId/derived')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: SetSignatureDerivedAssetDto) {
     return this.setDerived.execute(ctx, signatureId, body);
   }

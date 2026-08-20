@@ -461,7 +461,6 @@ describe('expenseCapabilities', () => {
     assert.equal(expenseCapabilities(['expense.duplicate.resolve']).canResolveDuplicates, true);
     assert.equal(expenseCapabilities(['expense.category.manage']).canManageCategories, true);
     assert.equal(expenseCapabilities(['expense.signature.manage']).canManageSignatures, true);
-    assert.equal(expenseCapabilities(['expense.signature.approve']).canApproveSignatures, true);
     // Evidence moved off expense.read onto its own key, so expense.read alone no longer grants it.
     assert.equal(expenseCapabilities(['expense.evidence.read']).canViewSharedEvidence, true);
     assert.equal(expenseCapabilities(['expense.read']).canViewSharedEvidence, false);
@@ -475,12 +474,15 @@ describe('expenseCapabilities', () => {
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.evidence.read'])), true);
   });
 
-  // Un-parked 2026-08-20 (owner decision). It was hard-false, so the route redirected away and the
-  // LINE assistant's approval link went nowhere.
-  it('opens the signature tab for managers and approvers, and nobody else', () => {
+  // "ลายเซ็นของฉัน" (owner decision 2026-08-20): the screen is where you keep your OWN signature, so
+  // it belongs to whoever performs either signing act. `expense.signature.approve` no longer opens
+  // anything — a reviewer, who could not get in before, is exactly who needs it.
+  it('opens the signature tab for either signing act and for housekeeping, and nobody else', () => {
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.review'])), true);
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.confirm'])), true);
     assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.manage'])), true);
-    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.approve'])), true);
-    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.review'])), false);
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.approve'])), false);
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.read'])), false);
   });
 
   it('keeps related-view authority read-only', () => {

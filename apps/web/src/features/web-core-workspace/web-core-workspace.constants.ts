@@ -173,9 +173,6 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
       'expense.confirm',
       'expense.category.manage',
       'expense.signature.manage',
-      // The un-parked signature queue (2026-08-20) is the approver's screen, and an owner who never
-      // uploads a signature holds only this key.
-      'expense.signature.approve',
       'expense.evidence.read',
     ],
     status: 'ready',

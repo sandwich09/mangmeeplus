@@ -171,17 +171,16 @@ describe('substitute-receipt payer access (audit H-4)', () => {
 });
 
 /**
- * F2, same failure shape one screen over. `RequirePermissions` is ALL-of, so the signature-queue
- * endpoint demanded `expense.signature.manage` from everyone — including the owner whose only
- * signature key is `approve`, whose queue it is, and whom the un-parked screen (2026-08-20) sends
- * there by nav entry and by LINE deep link. The use case, the capability model, the nav gate and
- * the route gate all say manage-or-approve; only the decorator disagreed, so the screen loaded and
- * its one API call 403'd.
+ * F2, same failure shape one screen over: `RequirePermissions` is ALL-of, so a signature endpoint
+ * demanded every listed key at once. Since the personal-signature decision (2026-08-20) there are
+ * three EQUIVALENT authorities — the two signing acts plus housekeeping — so every route on this
+ * controller must use the any-of decorator, and every route must accept the same three. Own-vs-any
+ * scope is the use case's call: a decorator cannot see whose row is being asked for.
  */
-describe('signature queue access (F2)', () => {
-  const APPROVE_ONLY = {
-    requestId: 'req-1', authSubject: 'owner-1', userId: 'owner-1', companyId: 'co-1',
-    membershipId: 'mem-1', roles: ['OWNER'], permissions: ['expense.signature.approve'],
+describe('signature endpoint access (F2)', () => {
+  const REVIEW_ONLY = {
+    requestId: 'req-1', authSubject: 'payer-1', userId: 'payer-1', companyId: 'co-1',
+    membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.review'],
     scopes: {}, authProvider: 'watchdog',
   } as any;
 
@@ -193,19 +192,30 @@ describe('signature queue access (F2)', () => {
     };
   }
 
-  it('lets an approve-only owner through the guard and the use case alike', async () => {
-    const gate = acceptedByController('list');
-    // ALL-of would make every listed key mandatory; this endpoint has three equivalent authorities.
-    assert.deepEqual(gate.all, [], 'the queue must not use the ALL-of decorator');
-    assert.ok(gate.any.includes('expense.signature.approve'), 'the approver owns this queue');
-    assert.ok(gate.any.includes('expense.signature.manage'));
-    assert.ok(gate.any.includes('expense.review'), 'reviewers still get the ACTIVE fill picker');
-    assert.ok(new DenyByDefaultGuard(reflectorFor(gate)).canActivate(guardContext(APPROVE_ONLY)));
+  it('gates every signature route on the same three authorities, and lets a payer through', async () => {
+    const handlers: Array<keyof ExpenseSignatureController> = [
+      'list', 'initSignatureUpload', 'createSignature', 'archiveSignature', 'setDerivedAsset',
+    ];
+    for (const handler of handlers) {
+      const gate = acceptedByController(handler);
+      assert.deepEqual(gate.all, [], `${handler}: must not use the ALL-of decorator`);
+      assert.deepEqual(
+        [...gate.any].sort(),
+        ['expense.confirm', 'expense.review', 'expense.signature.manage'],
+        `${handler}: the three equivalent authorities`,
+      );
+      assert.ok(new DenyByDefaultGuard(reflectorFor(gate)).canActivate(guardContext(REVIEW_ONLY)), handler);
+    }
+    // The approval lifecycle is gone: no route may still be reachable on its permission.
+    assert.equal(
+      handlers.some((handler) => acceptedByController(handler).any.includes('expense.signature.approve')),
+      false,
+    );
 
     const repo = { listSignatureAssets: async () => [] } as any;
     const storage = { createDownloadUrl: async () => ({ url: 'u', expiresAt: new Date() }) } as any;
     assert.deepEqual(
-      await new ListSignatureAssetsUseCase(repo, storage, { log: async () => undefined } as any).execute(APPROVE_ONLY),
+      await new ListSignatureAssetsUseCase(repo, storage, { log: async () => undefined } as any).execute(REVIEW_ONLY),
       [],
     );
   });

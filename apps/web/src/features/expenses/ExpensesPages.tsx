@@ -1927,7 +1927,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
           {tab === 'upload' && <UploadPanel companyId={companyId} {...(branchId ? { branchId } : {})} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
           {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} onSuccess={openListExpense} />}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
-          {tab === 'signatures' && <SignaturePanel companyId={companyId} canApprove={caps.canApproveSignatures} {...(focusSignatureId ? { focusSignatureId } : {})} />}
+          {tab === 'signatures' && <SignaturePanel companyId={companyId} userId={userId} canManageOthers={caps.canManageSignatures} {...(focusSignatureId ? { focusSignatureId } : {})} />}
           {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}
         </>
       )}

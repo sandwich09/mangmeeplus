@@ -48,7 +48,7 @@ import {
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
 import { isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
-import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase } from '../../../expenses/application/use-cases/signature-asset.use-case';
+import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
@@ -142,11 +142,11 @@ const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบ�
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
-const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์ส่งลายเซ็นบริษัทผ่าน LINE ค่ะ';
-const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะสร้างคำขอให้เจ้าของกิจการอนุมัติในเว็บก่อนใช้งานค่ะ';
-const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการอัปโหลดลายเซ็นบริษัท ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
-const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี/ยื่นภาษี หรือเปิดใช้ลายเซ็นได้ค่ะ\nกรุณาทำรายการในเว็บแอป MangmeePlus นะคะ';
-const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อขออนุมัติใช้งานค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
+const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
+const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
+const CLARIFY_REPLY = '🤔 น้องมั่งมียังไม่แน่ใจว่าต้องการทำอะไรกับข้อความ/รูปนี้ค่ะ\n• ถ้าเป็นหลักฐานค่าใช้จ่าย (ใบเสร็จ/สลิป/บิล/สกรีนช็อต) ส่งรูปอีกครั้งพร้อมข้อความ เช่น "บันทึกค่าใช้จ่าย"\n• ถ้าต้องการเก็บลายเซ็นประจำตัว ส่งรูปอีกครั้งพร้อมข้อความ เช่น "อัปโหลดลายเซ็น"';
+const MUTATION_REFUSAL_REPLY = '🔒 น้องมั่งมีไม่สามารถทำรายการอนุมัติ/จ่ายเงิน/ลงบัญชี หรือยื่นภาษีได้ค่ะ\nกรุณาทำรายการในเว็บแอป MangmeePlus นะคะ';
+const MEDIA_UNSUPPORTED_REPLY = 'ℹ️ ระบบรองรับ: ส่งรูป/ไฟล์หลักฐานค่าใช้จ่ายเพื่อบันทึกร่าง หรือส่งรูปลายเซ็นเพื่อเก็บเป็นลายเซ็นประจำตัวค่ะ\nการยืนยัน/จ่ายเงิน/ลงบัญชีต้องทำในเว็บแอปนะคะ';
 const MEDIA_SECURITY_REJECTED_REPLY = '⚠️ ไม่สามารถรับไฟล์นี้ได้ค่ะ กรุณาส่งไฟล์ PDF, PNG, JPG หรือ JPEG ที่ไฟล์ไม่เสียหายและผ่านการตรวจสอบความปลอดภัยนะคะ';
 /** RECEIPT-05 (owner decision 2026-07-12): the ONE clarify question asked when media arrives
  *  with a business-question caption, instead of silently discarding the image. */
@@ -319,28 +319,26 @@ function formatBusinessDocumentReply(
   }
 }
 
+/**
+ * A signature is personal and usable the moment it is saved (owner decision 2026-08-20), so there
+ * is one reply, not two. `steerToPendingDecision` is set when the photo answered the substitute
+ * flow's own ask: that chat has a decision waiting, and leaving the sender at "saved!" would strand
+ * Journey A one keystroke from the document it was about.
+ */
 function formatSignatureTicketReply(
   webBaseUrl: string | undefined,
   companyId: string,
   signatureId: string,
-  /** A10: an owner who may approve signatures had theirs approved at creation, so the "you cannot
-   *  use it yet" line would be a plain lie to the person most likely to try. */
-  status: string,
+  steerToPendingDecision = false,
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/signatures?signatureId=${signatureId}`);
-  return status === 'ACTIVE'
-    ? [
-      '✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว',
-      'สถานะ: อนุมัติแล้ว ใช้ลงนามเอกสารได้ทันที',
-      '',
-      `เปิดดูลายเซ็น:\n${link}`,
-    ].join('\n')
-    : [
-      '✍️ รับรูปลายเซ็นแล้ว และสร้างคำขออนุมัติในเว็บให้แล้ว',
-      'สถานะ: รอเจ้าของกิจการอนุมัติ (ยังใช้งานลายเซ็นไม่ได้)',
-      '',
-      `เปิดดูคำขออนุมัติ:\n${link}`,
-    ].join('\n');
+  return [
+    '✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว',
+    'สถานะ: ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ',
+    ...(steerToPendingDecision ? ['', 'ตอบ 1 เพื่อออกเอกสารต่อได้เลยค่ะ'] : []),
+    '',
+    `เปิดดูลายเซ็น:\n${link}`,
+  ].join('\n');
 }
 
 type LineCompanyMembership = {
@@ -1261,7 +1259,7 @@ export class ProcessLineWebhookUseCase {
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
     const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
       .some((perm) => resolvedAccess.permissions.includes(perm));
-    const canSubmitSignature = resolvedAccess.permissions.includes('expense.signature.manage');
+    const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
     const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
@@ -2370,7 +2368,7 @@ export class ProcessLineWebhookUseCase {
     }
 
     const canCaptureExpense = access.permissions.includes('expense.receipt.line_upload') || access.permissions.includes('expense.receipt.upload');
-    const canSubmitSignature = access.permissions.includes('expense.signature.manage');
+    const canSubmitSignature = maySubmitSignature(access.permissions);
     if (!canCaptureExpense && !canSubmitSignature) {
       await this.deliverReply(event, receiptDeniedReply(access));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_receipt_line_upload' } });
@@ -2458,7 +2456,7 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'SIGNATURE_UPLOAD_TICKET') {
       if (!canSubmitSignature) {
         await this.deliverReply(event, SIGNATURE_FORBIDDEN_REPLY);
-        await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_expense_signature_manage', route: 'signature' } });
+        await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.reject', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'MEDIUM', metadataJson: { reason: 'missing_signature_owner_permission', route: 'signature' } });
         await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
         return;
       }
@@ -2980,8 +2978,8 @@ export class ProcessLineWebhookUseCase {
    * decide it is one — the router's ticket, an explicit ลายเซ็น caption while the router is
    * degraded, and the numbered answer to the substitute media question. `attachmentId` names bytes
    * that are already stored and completed (the pending-media row); without it the media is uploaded
-   * here. Everything downstream — de-duplication on `lineMessageId`, the auto-approve, the
-   * background removal and the size fix — lives in `CreateSignatureAssetUseCase`, once.
+   * here. Everything downstream — de-duplication on `lineMessageId`, the activation, the background
+   * removal and the size fix — lives in `CreateSignatureAssetUseCase`, once.
    */
   private async createLineSignatureAsset(input: {
     ctx: RequestContext;
@@ -2990,6 +2988,8 @@ export class ProcessLineWebhookUseCase {
     /** Omitted only when `attachmentId` names bytes that are already stored. */
     media?: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer };
     attachmentId?: string;
+    /** Only the substitute media answer sets this: that chat has an issue decision waiting. */
+    steerToPendingDecision?: boolean;
   }): Promise<string> {
     let attachmentId = input.attachmentId;
     if (!attachmentId) {
@@ -3009,7 +3009,7 @@ export class ProcessLineWebhookUseCase {
       lineMessageId: input.event.lineMessageId,
       ...(input.attachmentId ? { attachmentAlreadyActive: true } : {}),
     });
-    return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, asset.status);
+    return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision);
   }
 
   /** §11 arrival half. The bytes are held by the SAME pending-media row the receipt clarify uses,
@@ -3035,7 +3035,7 @@ export class ProcessLineWebhookUseCase {
     const classified = classifySubstituteMedia(input.caption, context.awaitingScans.length > 0);
     // A signature belongs to the signature library, not inside a certificate. The router's ticket
     // and the A4 caption route above claim the turns they can; what still reaches here with a
-    // signature caption is a sender without `expense.signature.manage`, or a routed capture whose
+    // signature caption is a sender who may not keep a signature at all, or a routed capture whose
     // caption merely mentions ลายเซ็น. Either way it must not become the D9 confirm, where one
     // “ใช่” would file it as a legal document's wet-signed original.
     if (classified === 'SIGNATURE') return undefined;
@@ -3193,12 +3193,12 @@ export class ProcessLineWebhookUseCase {
     if (answer === 'SIGNATURE') {
       // A3: the photo the assistant asked for, finally reaching the library. §14's rule stands —
       // the answer is checked against the permission the action needs, not the one that parked it.
-      if (!ctx.permissions.includes('expense.signature.manage') || !this.initSignatureUpload || !this.createSignatureAsset) {
+      if (!maySubmitSignature(ctx.permissions) || !this.initSignatureUpload || !this.createSignatureAsset) {
         return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_FORBIDDEN_REPLY);
       }
       // F9: certification resolves signatures through a PNG/JPEG-only lookup, so a PDF answered as
-      // "my signature" would become an ACTIVE asset that can never sign anything — and for an owner
-      // it would auto-approve into exactly that dead end. Refuse it while the sender is still here.
+      // "my signature" would become an ACTIVE asset that can never sign anything — a dead end from
+      // the first turn now that nothing is held for review. Refuse it while the sender is still here.
       if (pending.mimeType !== 'image/png' && pending.mimeType !== 'image/jpeg') {
         return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_NEED_IMAGE_REPLY);
       }
@@ -3209,6 +3209,8 @@ export class ProcessLineWebhookUseCase {
         event: { lineMessageId: pending.lineMessageId },
         companyId: ctx.companyId,
         attachmentId: pending.attachmentId,
+        // Journey A: the ask that produced this question left an issue decision pending.
+        steerToPendingDecision: true,
       });
       await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
       await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');

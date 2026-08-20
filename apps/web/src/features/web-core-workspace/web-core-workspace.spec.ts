@@ -473,14 +473,25 @@ describe('buildNavItems', () => {
     ]);
   });
 
-  // The queue is the approver's to clear, so the approval permission alone has to reach it — an
-  // owner who never uploads a signature holds only that one.
-  it('gives a signature approver the queue entry without any other expense permission', () => {
-    const permissions = ['expense.read_own', 'expense.signature.approve'];
-    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
-    const expenses = buildNavItems(modules, 'owner-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
-    const signatures = expenses?.subItems?.find((sub) => sub.key === 'expenses.signatures');
-    assert.equal(signatures?.href, '/companies/owner-company/expenses/signatures');
+  // "ลายเซ็นของฉัน" (owner decision 2026-08-20): the entry is where a signer keeps their own
+  // signature, so either signing act reaches it. `expense.signature.approve` opens nothing now —
+  // it gates a lifecycle that no longer exists.
+  it('gives the signature entry to a signer, and nothing to an approve-only holder', () => {
+    for (const permission of ['expense.confirm', 'expense.signature.manage']) {
+      const permissions = ['expense.read_own', permission];
+      const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+      const expenses = buildNavItems(modules, 'owner-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
+      assert.equal(
+        expenses?.subItems?.find((sub) => sub.key === 'expenses.signatures')?.href,
+        '/companies/owner-company/expenses/signatures',
+        permission,
+      );
+    }
+
+    const stale = ['expense.read_own', 'expense.signature.approve'];
+    const staleNav = buildNavItems(filterModulesByPermissions(WORKSPACE_MODULES, stale), 'owner-company', 'th', {}, stale)
+      .find((nav) => nav.key === 'expenses');
+    assert.equal(staleNav?.subItems?.some((sub) => sub.key === 'expenses.signatures'), false);
   });
 
   it('shows only the list submenu to a read-only expense user', () => {

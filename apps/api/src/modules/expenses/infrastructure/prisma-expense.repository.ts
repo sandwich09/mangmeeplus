@@ -1246,23 +1246,6 @@ export class PrismaExpenseRepository {
     return null;
   }
 
-  /**
-   * R13: "is a signature already on its way?". `findReusableSignatureAsset` answers "may this sign
-   * something now", which is silent about an asset still waiting for owner approval — and a LINE
-   * upload lands exactly there. Without this the assistant repeats the same ask-for-a-photo reply
-   * forever while the photo it already received sits in the queue.
-   */
-  async findLatestSignatureAssetStatus(
-    companyId: string,
-    userId: string,
-  ): Promise<{ status: string; rejectReason: string | null } | null> {
-    return this.prisma.client.companySignatureAsset.findFirst({
-      where: { companyId, submittedByUserId: userId },
-      orderBy: { createdAt: 'desc' },
-      select: { status: true, rejectReason: true },
-    });
-  }
-
   async createPreparedSubstituteEvidence(input: {
     companyId: string;
     expenseId: string;
@@ -2740,7 +2723,8 @@ export class PrismaExpenseRepository {
     submittedByUserId: string;
     submittedFromChannel: SignatureSubmitChannel;
     lineMessageId?: string;
-    /** A10 auto-approve: a submitter who already holds the approval permission lands ACTIVE. */
+    /** Always ACTIVE since the personal-signature decision (2026-08-20); the column keeps the enum
+     *  so archived/rejected history stays readable. */
     status?: string;
     approvedByUserId?: string;
     approvedAt?: Date;
@@ -2804,19 +2788,16 @@ export class PrismaExpenseRepository {
     return attachment.id;
   }
 
-  /** Who may act on a company-level thing, by permission key. Same role join the approver lookup
-   *  above uses; branch scope is irrelevant because signature assets are company-central. */
-  async listUserIdsWithPermission(companyId: string, permissionKey: string): Promise<string[]> {
-    const memberships = await this.prisma.client.companyMembership.findMany({
-      where: {
-        companyId,
-        status: 'ACTIVE',
-        user: { status: 'ACTIVE' },
-        roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: permissionKey } } } } } },
-      },
-      select: { userId: true },
+  /** Whose signature a housekeeping row is. The manage holder may delete anyone's signature and may
+   *  never see the image, so the name is the only thing that tells the rows apart. */
+  async listUserDisplayNames(userIds: string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(userIds)];
+    if (ids.length === 0) return new Map();
+    const users = await this.prisma.client.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, displayName: true },
     });
-    return [...new Set(memberships.map((membership) => membership.userId))];
+    return new Map(users.map((user) => [user.id, user.displayName]));
   }
 
   async findSignatureAssetById(companyId: string, id: string): Promise<SignatureAssetRecord | null> {
@@ -2829,9 +2810,15 @@ export class PrismaExpenseRepository {
     return s ? mapSignatureAsset(s) : null;
   }
 
-  async listSignatureAssets(companyId: string, status?: string): Promise<SignatureAssetRecord[]> {
+  /** `submittedByUserId` is what "ลายเซ็นของฉัน" reads with: without it a caller with no
+   *  housekeeping authority would page through a company-wide list to find their own row. */
+  async listSignatureAssets(companyId: string, status?: string, submittedByUserId?: string): Promise<SignatureAssetRecord[]> {
     const rows = await this.prisma.client.companySignatureAsset.findMany({
-      where: { companyId, ...(status ? { status: status as any } : {}) },
+      where: {
+        companyId,
+        ...(status ? { status: status as any } : {}),
+        ...(submittedByUserId ? { submittedByUserId } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });

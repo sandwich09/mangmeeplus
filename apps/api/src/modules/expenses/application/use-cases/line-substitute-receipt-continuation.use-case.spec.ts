@@ -19,6 +19,7 @@ import {
 import { PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PDFDocument } from 'pdf-lib';
+import { CreateSignatureAssetUseCase } from './signature-asset.use-case';
 
 const WEB_BASE = 'https://app.example.com';
 
@@ -30,9 +31,9 @@ function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContex
   };
 }
 
-/** F8: submitting a signature needs `expense.signature.manage`. Whoever holds it gets the
- *  send-me-a-photo script; whoever does not gets the paper route, because for them the photo
- *  script ends in a refusal. */
+/** Keeping a signature is authorised by the acts of signing (owner decision 2026-08-20), so the
+ *  default ctx above already qualifies. This adds the housekeeping key on top, to show the two
+ *  personas now get the identical script — the F8 dead end had no one left to strand. */
 const SIGNER = ['expense.review', 'expense.confirm', 'expense.signature.manage'];
 
 function expense(overrides: Record<string, unknown> = {}) {
@@ -64,8 +65,6 @@ function harness(overrides: {
   scanObject?: { bytes: Buffer; mimeType: string } | null;
   /** R13 choice 1 asks this before it prepares: an ACTIVE personal signature or nothing. */
   signature?: { id: string } | null;
-  /** The newest asset of any status — what tells "already sent, waiting for approval" from "none". */
-  latestSignature?: { status: string; rejectReason: string | null } | null;
   prepareError?: Error;
   /** §12: a link that cannot be minted must degrade the reply, never sink the turn. */
   deliveryError?: Error;
@@ -76,10 +75,25 @@ function harness(overrides: {
   const audits: any[] = [];
   const links: any[] = [];
   const scanLinks: any[] = [];
+  // Journey A writes through the REAL CreateSignatureAssetUseCase, so the store has to behave like
+  // the table: what that use case creates is what the very next turn's lookup finds.
+  const signatureAssets: any[] = [];
   const repo = {
     findReusableSignatureAsset: async (_companyId: string, _userId: string, attachmentId?: string) =>
-      attachmentId ? null : overrides.signature ?? null,
-    findLatestSignatureAssetStatus: async () => overrides.latestSignature ?? null,
+      attachmentId ? null : signatureAssets.find((asset) => asset.status === 'ACTIVE') ?? overrides.signature ?? null,
+    findSignatureAssetByLineMessageId: async (_companyId: string, lineMessageId: string) =>
+      signatureAssets.find((asset) => asset.lineMessageId === lineMessageId) ?? null,
+    createSignatureAsset: async (input: any) => {
+      const asset = { id: `signature-${signatureAssets.length + 1}`, ...input };
+      signatureAssets.unshift(asset);
+      return asset;
+    },
+    linkAttachmentToTarget: async () => undefined,
+    updateSignatureAsset: async (_companyId: string, id: string, data: any) => {
+      const index = signatureAssets.findIndex((asset) => asset.id === id);
+      signatureAssets[index] = { ...signatureAssets[index], ...data };
+      return signatureAssets[index];
+    },
     findSubstituteEvidenceAttachments: async (_companyId: string, _expenseId: string, ids: string[]) =>
       (current.attachments ?? [])
         .filter((item: any) => ids.includes(item.id))
@@ -196,7 +210,7 @@ function harness(overrides: {
       { getObject: async () => overrides.scanObject ?? { bytes: await onePagePdf(), mimeType: 'application/pdf' } } as any,
       deliveryLink,
     ),
-    saves, prepares, audits, links, scanLinks, deliveries, liveLinks, getExpense: () => current,
+    repo, saves, prepares, audits, links, scanLinks, deliveries, liveLinks, getExpense: () => current,
     /** The state a LINE-prepared expense is in once the web approval issued it: an evidence row plus
      *  the CONSUMED continuation the prepare left behind, which still holds the provenance. */
     issue: (patch: Record<string, unknown> = {}) => {
@@ -821,84 +835,93 @@ describe('R13 — the assistant asks before producing the document', () => {
     });
   }
 
-  it('choice 1 without any signature asks a signer for the photo and keeps the decision pending', async () => {
+  // Two states, not four (owner decision 2026-08-20): you have a signature, or you send one. The
+  // photo becomes usable on arrival, so nothing here may promise a wait.
+  it('choice 1 without any signature asks for the photo and keeps the decision pending', async () => {
+    for (const permissions of [SIGNER, undefined]) {
+      const h = await readyHarness();
+
+      const answered = await h.useCase.execute(ctx(permissions), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+      assert.equal(h.prepares.length, 0, 'no signature means nothing is prepared');
+      assert.match(answered.replyText, /เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น/);
+      assert.match(answered.replyText, /ส่งรูปเข้ามาในแชทนี้/);
+      assert.match(answered.replyText, /ใช้ได้ทันที/);
+      // The standing “LINE ยังไม่ได้ลงนาม อนุมัติ หรือออกเอกสาร” footer stays; what must never come
+      // back is a signature that waits on somebody.
+      assert.equal(/อนุมัติ(ลายเซ็น|ก่อนใช้)|รอเจ้าของ|ไม่ผ่านการอนุมัติ/u.test(answered.replyText), false);
+      assert.equal(answered.pendingQuestion, 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
+      assert.equal(answered.blockers[0]?.code, 'reusable_signature_required');
+      assert.equal(
+        h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
+        'ISSUE_CONFIRM',
+        'the workflow stays open with the decision still pending, so “1” after the photo lands here again',
+      );
+    }
+  });
+
+  // F8 is gone at its root: the permission that used to strand a payer here is no longer the one
+  // this action needs. Both personas get the same script, and the paper escape still works.
+  it('keeps the paper escape open from the ask, for a payer with or without the housekeeping key', async () => {
+    for (const permissions of [SIGNER, undefined]) {
+      const h = await readyHarness();
+      await h.useCase.execute(ctx(permissions), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+      const form = await h.useCase.execute(ctx(permissions), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+      assert.equal(h.prepares.length, 1);
+      assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+    }
+  });
+
+  /**
+   * Journey A with the approval step removed (owner decision 2026-08-20, superseding D10/D11).
+   * Both sides of the photo are the real use cases: the continuation asks, the real
+   * CreateSignatureAssetUseCase saves, and the SAME sender's next “1” prepares. Nobody opens the web
+   * in between, and no approval is ever recorded — which is the whole claim of the decision.
+   */
+  it('completes Journey A with no approval wait: ask → photo → 1 → prepared', async () => {
     const h = await readyHarness();
 
-    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const asked = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 0, 'nothing is prepared without a signature');
+    assert.equal(asked.pendingQuestion, 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
 
-    assert.equal(h.prepares.length, 0, 'no signature means nothing is prepared');
-    assert.match(answered.replyText, /เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น/);
-    assert.match(answered.replyText, /ส่งรูปเข้ามาในแชทนี้/);
-    assert.equal(answered.pendingQuestion, 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ');
-    assert.equal(
-      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
-      'ISSUE_CONFIRM',
-      'the workflow stays open with the decision still pending, so “1” after the photo lands here again',
+    // The photo arrives with a numbered choice that can become a signature…
+    const media = await h.useCase.loadOpenMediaContext(ctx(SIGNER), 'chat-hash');
+    assert.ok(substituteMediaChoices(media!).includes('SIGNATURE'));
+
+    // …and answering it stores an asset that is usable immediately.
+    const asset = await new CreateSignatureAssetUseCase(
+      h.repo,
+      { execute: async () => undefined } as any,
+      { log: async (entry: any) => { h.audits.push(entry); } } as any,
+      { getObject: async () => ({ bytes: Buffer.alloc(0) }) } as any,
+    ).execute(ctx(SIGNER), {
+      attachmentId: 'att-signature', submittedFromChannel: 'LINE', lineMessageId: 'line-msg-signature',
+    });
+    assert.equal(asset.status, 'ACTIVE', 'saved and signable, with nothing in between');
+
+    const issued = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 1, 'the very next turn prepares');
+    assert.equal(issued.status, 'READY_FOR_WEB');
+    assert.match(issued.replyText, /SUB-202608-00007/);
+    assert.deepEqual(
+      h.audits.filter((entry) => /signature\.(approve|reject)/u.test(entry.action ?? '')),
+      [],
+      'no approval or rejection is recorded anywhere in the journey',
     );
   });
 
-  it('does not repeat the ask-for-a-photo reply while the photo already sits in the approval queue', async () => {
-    // A LINE-uploaded signature is stored PENDING_OWNER_APPROVAL, which the ACTIVE-only reusable
-    // lookup cannot see. Without the status read this reply repeats forever.
-    const h = await readyHarness({ latestSignature: { status: 'PENDING_OWNER_APPROVAL', rejectReason: null } });
-
-    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-
-    assert.match(answered.replyText, /ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บ/);
-    assert.equal(answered.replyText.includes('เซ็นบนกระดาษขาว'), false, 'it must not ask for the same photo again');
-    assert.match(answered.replyText, /ขอฟอร์มไปเซ็นเอง/, 'the paper route is the way forward while approval is pending');
-    assert.equal(answered.blockers[0]?.code, 'reusable_signature_pending_approval');
-    assert.equal(
-      h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision,
-      'ISSUE_CONFIRM',
-    );
-
-    // …and the offered way out works on the very next turn.
-    const form = await h.useCase.execute(ctx(SIGNER), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-    assert.equal(h.prepares.length, 1, 'the loop progresses instead of repeating');
-    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
-  });
-
-  // F8: the script asked staff for a photo they have no permission to submit — they sent it, the
-  // answer was refused, and they were back where they started. The paper route is their real path.
-  it('steers a member who cannot submit signatures straight to the paper form', async () => {
-    const h = await readyHarness();
-
-    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-
-    assert.equal(answered.replyText.includes('เซ็นบนกระดาษขาว'), false, 'never ask for a photo they cannot submit');
-    assert.equal(answered.replyText.includes('ส่งรูปลายเซ็นเข้ามา'), false);
-    assert.match(answered.replyText, /ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบ/);
-    assert.match(answered.replyText, /ขอฟอร์มไปเซ็นด้วยมือ/);
-    assert.equal(answered.blockers[0]?.code, 'reusable_signature_not_submittable');
-    // The one offered way out has to work on the next turn.
-    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-    assert.equal(h.prepares.length, 1);
-    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
-  });
-
-  // …and the numbered media question must not offer a choice that ends in the same refusal.
-  it('omits the signature choice from the media question for a member who cannot submit one', async () => {
+  // …and the numbered media question offers the choice to whoever the ask was written for.
+  it('offers the signature choice to a payer on either signing act', async () => {
     const h = await readyHarness();
     await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
-    const signer = await h.useCase.loadOpenMediaContext(ctx(SIGNER), 'chat-hash');
-    assert.equal(signer?.signatureRequested, true);
-    assert.ok(substituteMediaChoices(signer!).includes('SIGNATURE'));
-
-    const staff = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
-    assert.equal(staff?.signatureRequested, false, 'the flag was written, the permission is what decides');
-    assert.equal(substituteMediaChoices(staff!).includes('SIGNATURE'), false);
-  });
-
-  it('says a rejected signature was rejected, with its reason, instead of asking again blindly', async () => {
-    const h = await readyHarness({ latestSignature: { status: 'REJECTED', rejectReason: 'ลายเซ็นไม่ชัด' } });
-
-    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
-
-    assert.match(answered.replyText, /ไม่ผ่านการอนุมัติ/);
-    assert.match(answered.replyText, /ลายเซ็นไม่ชัด/);
-    assert.match(answered.replyText, /เซ็นบนกระดาษขาว/, 'a rejected signature still needs a new photo');
+    for (const permissions of [SIGNER, undefined, ['expense.review']]) {
+      const context = await h.useCase.loadOpenMediaContext(ctx(permissions), 'chat-hash');
+      assert.equal(context?.signatureRequested, true, String(permissions));
+      assert.ok(substituteMediaChoices(context!).includes('SIGNATURE'));
+    }
   });
 
   it('choice 1 with a saved signature prepares from LINE and points at the signing page', async () => {
