@@ -414,6 +414,10 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
 
   // The API returns only the caller's rows. Newest-first is the order certification resolves in, so the first live row IS the signature
   // that signs — replacing simply means saving a newer one.
+  //
+  // At most one row is ACTIVE (D14, enforced by a partial unique index and by the retire-on-create
+  // transaction), so this `find` cannot silently promote a second signature into the card the way it
+  // did while several ACTIVE rows could pile up: deleting the current one now empties the card.
   const current = assets.find((a) => a.status === 'ACTIVE');
   const previous = assets.filter((a) => a.id !== current?.id);
   const focusRefFor = (id: string) => (id === focusSignatureId ? (focusRef as React.RefObject<never>) : undefined);
@@ -464,7 +468,13 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
 
                 {previous.length > 0 && (
                   <div className="mt-4">
-                    <div className="mb-2 text-xs font-semibold text-gray-500">ลายเซ็นเดิมของฉัน</div>
+                    {/* Named for what these rows ARE, not for when they were saved. They are still
+                        pictured here, so without saying it the user reads the list as "my signature
+                        is still there" right after pressing ลบลายเซ็น. */}
+                    <div className="mb-2">
+                      <div className="text-xs font-semibold text-gray-500">ลายเซ็นที่เลิกใช้แล้ว</div>
+                      <div className="text-xs text-gray-400">ลบแล้วหรือถูกแทนที่ ใช้ลงนามใหม่ไม่ได้ · เก็บไว้เพื่อให้เอกสารที่ลงนามไปแล้วยังใช้ได้</div>
+                    </div>
                     <div className="space-y-2">
                       {previous.map((a) => (
                         <div

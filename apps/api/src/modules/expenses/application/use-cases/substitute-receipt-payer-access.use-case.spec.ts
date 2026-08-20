@@ -174,8 +174,9 @@ describe('substitute-receipt payer access (audit H-4)', () => {
 /**
  * F2, same failure shape one screen over: `RequirePermissions` is ALL-of, so a signature endpoint
  * demanded every listed key at once. Since the personal-signature decision (2026-08-20) there are
- * compatible authorities — the two signing acts plus the legacy self-access key — so every route on this
- * controller must use the any-of decorator, and every route must accept the same three. Own-vs-any
+ * compatible authorities — the two signing acts, the personal self-manage key, and the legacy manage
+ * key — so every route on this controller must use the any-of decorator, and every route must accept
+ * the same four. Own-vs-any
  * scope is the use case's call: a decorator cannot see whose row is being asked for.
  */
 describe('signature endpoint access (F2)', () => {
@@ -193,7 +194,7 @@ describe('signature endpoint access (F2)', () => {
     };
   }
 
-  it('gates every signature route on the same three authorities, and lets a payer through', async () => {
+  it('gates every signature route on the same four authorities, and lets a payer through', async () => {
     const handlers: Array<keyof ExpenseSignatureController> = [
       'list', 'initSignatureUpload', 'createSignature', 'archiveSignature', 'setDerivedAsset',
     ];
@@ -202,8 +203,8 @@ describe('signature endpoint access (F2)', () => {
       assert.deepEqual(gate.all, [], `${handler}: must not use the ALL-of decorator`);
       assert.deepEqual(
         [...gate.any].sort(),
-        ['expense.confirm', 'expense.review', 'expense.signature.manage'],
-        `${handler}: the three equivalent authorities`,
+        ['expense.confirm', 'expense.review', 'expense.signature.manage', 'expense.signature.self_manage'],
+        `${handler}: the four equivalent authorities`,
       );
       assert.ok(new DenyByDefaultGuard(reflectorFor(gate)).canActivate(guardContext(REVIEW_ONLY)), handler);
     }

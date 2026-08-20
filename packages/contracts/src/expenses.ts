@@ -334,7 +334,10 @@ export const SIGNATURE_ASSET_STATUS_LABELS: Record<SignatureAssetStatus, string>
   PENDING_OWNER_APPROVAL: 'รอเจ้าของกิจการอนุมัติ',
   ACTIVE: 'ใช้งานได้',
   REJECTED: 'ปฏิเสธ',
-  ARCHIVED: 'เก็บถาวร',
+  // The button that produces this state says ลบลายเซ็น, so the badge says the same thing back.
+  // "เก็บถาวร" read as filing something away — next to a still-visible preview it looked like the
+  // delete had not happened.
+  ARCHIVED: 'เลิกใช้แล้ว',
 };
 
 export type ExpenseCategorySummary = {

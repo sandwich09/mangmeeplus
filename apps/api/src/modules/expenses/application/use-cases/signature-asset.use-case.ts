@@ -132,6 +132,11 @@ export class InitSignatureUploadUseCase {
  * "activated" — by the person whose signature it is — so the columns every reader already joins on
  * stay populated and the audit answers "since when was this usable".
  *
+ * D14 says ONE current signature per person, and saving a new one is how you replace it, so the
+ * repository retires the submitter's previous ACTIVE row inside this create's own transaction. The
+ * retirement is a status move only — `archivedAt` records it on the row, in the same request as the
+ * `expense.signature.create` audit below that caused it.
+ *
  * Two things are also fixed up here rather than at each caller, because both bite every channel:
  * the image is downscaled into what certification will accept, and its paper is made transparent
  * (a LINE JPEG has no alpha, so it otherwise prints as a white rectangle over the certificate).

@@ -2751,20 +2751,40 @@ export class PrismaExpenseRepository {
     approvedByUserId?: string;
     approvedAt?: Date;
   }): Promise<SignatureAssetRecord> {
-    const s = await this.prisma.client.companySignatureAsset.create({
-      data: {
-        companyId: input.companyId,
-        label: input.label,
-        originalAttachmentId: input.originalAttachmentId,
-        submittedByUserId: input.submittedByUserId,
-        submittedFromChannel: input.submittedFromChannel as any,
-        lineMessageId: input.lineMessageId,
-        ...(input.status !== undefined && { status: input.status as any }),
-        ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
-        ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
-      },
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      // D14: ONE current signature per person. Saving a new one retires the previous one here, in the
+      // same transaction, under the per-owner advisory lock — so two uploads racing serialise instead
+      // of landing two ACTIVE rows, and a rollback (the LINE redelivery that loses at the
+      // lineMessageId unique index) takes the retirement back with it. Migration
+      // 20260821000000 adds the partial unique index that is the referee if a future write path
+      // forgets this. Without the rule, the panel's "current" signature was whichever ACTIVE row came
+      // first, so deleting it silently promoted the next one and delete looked like a no-op.
+      //
+      // Only `status`/`archivedAt` move: the retired row keeps its attachment ids, so the pinned
+      // re-resolution at approve still resolves what certify recorded, and the substitute-evidence
+      // retention hold still protects those bytes.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.submittedByUserId}:signature-asset`}))`;
+      if ((input.status ?? 'ACTIVE') === 'ACTIVE') {
+        await tx.companySignatureAsset.updateMany({
+          where: { companyId: input.companyId, submittedByUserId: input.submittedByUserId, status: 'ACTIVE' },
+          data: { status: 'ARCHIVED', archivedAt: new Date() },
+        });
+      }
+      const s = await tx.companySignatureAsset.create({
+        data: {
+          companyId: input.companyId,
+          label: input.label,
+          originalAttachmentId: input.originalAttachmentId,
+          submittedByUserId: input.submittedByUserId,
+          submittedFromChannel: input.submittedFromChannel as any,
+          lineMessageId: input.lineMessageId,
+          ...(input.status !== undefined && { status: input.status as any }),
+          ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
+          ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
+        },
+      });
+      return mapSignatureAsset(s);
     });
-    return mapSignatureAsset(s);
   }
 
   /**
