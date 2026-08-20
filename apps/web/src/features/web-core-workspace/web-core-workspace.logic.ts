@@ -273,13 +273,13 @@ export function buildNavItems(
       }
       // Un-parked 2026-08-20 (owner decision), reversing the 2026-08-05 park: substitute-receipt
       // certification consumes these assets. Since the personal-signature decision the screen is
-      // "ลายเซ็นของฉัน", so whoever performs either signing act reaches their own — plus the
-      // housekeeping holder, whose list is other people's rows.
+      // "ลายเซ็นของฉัน", so whoever performs either signing act reaches only their own. The legacy
+      // manage grant still opens the page but does not widen what its holder can see or invoke.
       //
       // The nav is built here, not from FEATURE_CATALOG — that catalog only decides what a company may
       // buy. A submenu missing from this list simply does not exist for the user, however the catalog
       // is wired.
-      if (hasAnyPermission(userPermissions, ['expense.review', 'expense.confirm', 'expense.signature.manage'])) {
+      if (hasAnyPermission(userPermissions, ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage'])) {
         childItems.push({
           key: 'expenses.signatures',
           label: t('expenses.tab_signatures' as Parameters<typeof t>[0], locale),

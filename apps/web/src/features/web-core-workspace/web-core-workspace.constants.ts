@@ -172,6 +172,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
       'expense.create',
       'expense.confirm',
       'expense.category.manage',
+      'expense.signature.self_manage',
       'expense.signature.manage',
       'expense.evidence.read',
     ],

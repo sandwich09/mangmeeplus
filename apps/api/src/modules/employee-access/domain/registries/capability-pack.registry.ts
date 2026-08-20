@@ -264,7 +264,7 @@ const RAW_PACKS: RawPack[] = [
     key: 'pack.expense.self', module: 'expense', featureEntitlementKey: 'expenses',
     nameTh: 'บันทึกค่าใช้จ่ายของฉัน', nameEn: 'Capture own expenses',
     description: 'สร้างและอัปโหลดใบเสร็จค่าใช้จ่ายของตัวเอง',
-    permissionKeys: ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request'],
+    permissionKeys: ['expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.ocr.request', 'expense.signature.self_manage'],
   },
   {
     key: 'pack.expense.review', module: 'expense', featureEntitlementKey: 'expenses',

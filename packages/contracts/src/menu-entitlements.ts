@@ -177,6 +177,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
       // substitute-receipt submenu it gates becomes unreachable.
       'expense.confirm',
       'expense.category.manage',
+      'expense.signature.self_manage',
       'expense.signature.manage',
       'expense.evidence.read',
     ],

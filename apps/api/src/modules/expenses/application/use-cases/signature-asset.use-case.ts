@@ -20,14 +20,14 @@ const SIGNATURE_ATTACHMENT_PURPOSE = 'expense.signature.asset';
  * Owner decision 2026-08-20 (superseding D10/D11): a signature is a PERSONAL asset — no approval
  * step, visible only to its owner, usable the moment it is saved. What the model gates is therefore
  * the signing act, not a queue: `expense.review` and `expense.confirm` are the two acts the
- * substitute-receipt flow performs, and every payer/approver in it holds one. `expense.signature.
- * manage` is housekeeping over OTHER people's rows and comes along so its holder can keep their own.
+ * substitute-receipt flow performs. `expense.signature.self_manage` is the self-service grant;
+ * `expense.signature.manage` remains accepted only for compatibility and never widens ownership.
  *
  * Authenticity does not come from this list: it comes from the authenticated signing act plus the
  * audit trail, and forgery is prevented by the ownership binding (`submittedByUserId`), which every
  * lookup still enforces.
  */
-export const SIGNATURE_OWNER_PERMISSIONS = ['expense.review', 'expense.confirm', 'expense.signature.manage'] as const;
+export const SIGNATURE_OWNER_PERMISSIONS = ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage'] as const;
 
 /** Shared with the LINE flow, so the ask, the numbered choice and the write agree on one rule. */
 export function maySubmitSignature(permissions: readonly string[]): boolean {
@@ -221,8 +221,7 @@ export class CreateSignatureAssetUseCase {
       : asset;
   }
 
-  /** A14: a LINE asset arrived with no label at all, so every row read "ลายเซ็นไม่มีชื่อ" — which is
-   *  still what the housekeeping table would show a manage holder trying to name a departed staffer. */
+  /** A14: a LINE asset arrived with no label at all, so its owner saw "ลายเซ็นไม่มีชื่อ". */
   private async defaultLabel(ctx: RequestContext): Promise<string | undefined> {
     const identity = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, null);
     return identity ? `${identity.displayName} ${todayCivilDate()}` : undefined;
@@ -287,10 +286,7 @@ export class CreateSignatureAssetUseCase {
 }
 
 /**
- * Retire a signature. Two authorities, deliberately unequal: its owner retires their own, and an
- * `expense.signature.manage` holder retires ANYONE's — the housekeeping the personal model still
- * needs (departed staff, abuse). That holder cannot see the image; deleting a signature never
- * requires looking at one.
+ * Retire a personal signature. Permission opens the operation; ownership decides whose row it is.
  *
  * Certified documents are untouched: they resolve by recorded attachment id, and the pinned
  * re-resolution accepts any status.
@@ -303,10 +299,7 @@ export class ArchiveSignatureAssetUseCase {
     assertSignatureOwner(ctx);
     const asset = await this.repo.findSignatureAssetById(ctx.companyId, signatureId);
     if (!asset) throw new NotFoundException('Signature asset not found');
-    const housekeeping = asset.submittedByUserId !== ctx.userId;
-    if (housekeeping && !hasPerm(ctx, 'expense.signature.manage')) {
-      throw new ForbiddenException('Missing permission: expense.signature.manage');
-    }
+    if (asset.submittedByUserId !== ctx.userId) throw new ForbiddenException('You can only archive your own signature');
     if (asset.status === 'ARCHIVED') return asset;
 
     const updated = await this.repo.updateSignatureAsset(ctx.companyId, signatureId, { status: 'ARCHIVED', archivedAt: new Date() });
@@ -314,7 +307,7 @@ export class ArchiveSignatureAssetUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.signature.archive', targetType: 'company_signature_asset', targetId: signatureId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { submittedByUserId: asset.submittedByUserId, housekeeping },
+      metadataJson: { submittedByUserId: asset.submittedByUserId },
     });
     return updated;
   }
@@ -419,16 +412,12 @@ export class FillSignatureUseCase {
 }
 
 /**
- * "ลายเซ็นของฉัน", plus housekeeping. A signature is personal, so the caller always gets their OWN
- * rows WITH a preview, and never anyone else's image — not the manage holder either, whose key
- * authorises deletion, not viewing. Manage holders additionally get other people's rows stripped of
- * `previewUrl` (id, label, submitter, dates, status), which is what identifying a departed staffer's
- * signature actually needs.
+ * "ลายเซ็นของฉัน" means exactly that: every caller gets only their own rows and previews.
  */
 export type SignatureAssetListItem =
   Omit<SignatureAssetRecord, 'originalAttachmentId' | 'derivedAttachmentId'>
   & Partial<Pick<SignatureAssetRecord, 'originalAttachmentId' | 'derivedAttachmentId'>>
-  & { previewUrl: string | null; submittedByDisplayName: string | null };
+  & { previewUrl: string | null };
 
 @Injectable()
 export class ListSignatureAssetsUseCase {
@@ -439,27 +428,12 @@ export class ListSignatureAssetsUseCase {
 
   async execute(ctx: RequestContext, status?: string): Promise<SignatureAssetListItem[]> {
     assertSignatureOwner(ctx);
-    const canManage = hasPerm(ctx, 'expense.signature.manage');
-    const assets = await this.repo.listSignatureAssets(ctx.companyId, status, canManage ? undefined : ctx.userId);
-    const names = canManage
-      ? await this.repo.listUserDisplayNames(assets.map((asset) => asset.submittedByUserId))
-      : new Map<string, string>();
+    const assets = await this.repo.listSignatureAssets(ctx.companyId, ctx.userId, status);
 
     return Promise.all(assets.map(async (asset) => {
-      const own = asset.submittedByUserId === ctx.userId;
-      // Withholding only the picture was not enough: the attachment ids ARE a way to the picture
-      // through the generic download endpoint, which every housekeeping role can call. A row nobody
-      // may look at has no business naming the bytes behind it.
-      const { originalAttachmentId, derivedAttachmentId, ...row } = asset;
-      if (!own) {
-        return { ...row, previewUrl: null, submittedByDisplayName: names.get(asset.submittedByUserId) ?? null };
-      }
       return {
-        ...row,
-        originalAttachmentId,
-        derivedAttachmentId,
+        ...asset,
         previewUrl: await this.previewUrl(ctx, asset),
-        submittedByDisplayName: null,
       };
     }));
   }

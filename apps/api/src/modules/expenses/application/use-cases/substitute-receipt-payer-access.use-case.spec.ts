@@ -174,7 +174,7 @@ describe('substitute-receipt payer access (audit H-4)', () => {
 /**
  * F2, same failure shape one screen over: `RequirePermissions` is ALL-of, so a signature endpoint
  * demanded every listed key at once. Since the personal-signature decision (2026-08-20) there are
- * three EQUIVALENT authorities — the two signing acts plus housekeeping — so every route on this
+ * compatible authorities — the two signing acts plus the legacy self-access key — so every route on this
  * controller must use the any-of decorator, and every route must accept the same three. Own-vs-any
  * scope is the use case's call: a decorator cannot see whose row is being asked for.
  */

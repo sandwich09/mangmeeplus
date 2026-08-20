@@ -32,7 +32,7 @@ function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContex
 }
 
 /** Keeping a signature is authorised by the acts of signing (owner decision 2026-08-20), so the
- *  default ctx above already qualifies. This adds the housekeeping key on top, to show the two
+ *  default ctx above already qualifies. This adds the legacy self-access key on top, to show the two
  *  personas now get the identical script — the F8 dead end had no one left to strand. */
 const SIGNER = ['expense.review', 'expense.confirm', 'expense.signature.manage'];
 
@@ -1024,7 +1024,7 @@ describe('R13 — the assistant asks before producing the document', () => {
 
   // F8 is gone at its root: the permission that used to strand a payer here is no longer the one
   // this action needs. Both personas get the same script, and the paper escape still works.
-  it('keeps the paper escape open from the ask, for a payer with or without the housekeeping key', async () => {
+  it('keeps the paper escape open from the ask, for a payer with or without the legacy signature key', async () => {
     for (const permissions of [SIGNER, undefined]) {
       const h = await readyHarness();
       await h.useCase.execute(ctx(permissions), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });

@@ -533,7 +533,7 @@ Rules:
 - `expenseNumber` uses Data Model Core document sequence when official numbering is required.
 - Substitute evidence uses the same expense as its source but persists a separate immutable/versioned snapshot and actual readable artifact. Link the artifact as `expense.review.evidence`, keep the original source classification and attachments, and expose only artifact-backed references in accountant exports. A generated timestamp without a resolvable artifact is an incomplete legacy state and must remain `NEEDS_REVIEW`.
 - Signature assets have lifecycle `PENDING_OWNER_APPROVAL`, `ACTIVE`, `REJECTED`, or `ARCHIVED`. Only `ACTIVE` signature assets can be filled into documents. Pending/rejected/archived signature assets must remain hidden from fill pickers except for owners/admins reviewing the signature asset.
-  - **Superseded 2026-08-20 by [[specs/line-substitute-receipt-assisted-issuance-spec|LINE Substitute-Receipt spec]] D14:** signatures are now personal assets created `ACTIVE` on save with no approval step. `PENDING_OWNER_APPROVAL`/`REJECTED` remain in the enum as history only; nothing produces them. Visibility is owner-only (the submitter), with `expense.signature.manage` allowed to delete without viewing. This bullet and the two "PENDING_OWNER_APPROVAL" mentions below (LINE signature intake, signature-asset store) describe the retired approval model.
+  - **Superseded 2026-08-20 by [[specs/line-substitute-receipt-assisted-issuance-spec|LINE Substitute-Receipt spec]] D14:** signatures are now personal assets created `ACTIVE` on save with no approval step. `PENDING_OWNER_APPROVAL`/`REJECTED` remain in the enum as history only; nothing produces them. Visibility, invocation, replacement, and archival are owner-only (the submitter), including for `expense.signature.manage` holders. This bullet and the two "PENDING_OWNER_APPROVAL" mentions below (LINE signature intake, signature-asset store) describe the retired approval model.
 - If a signature is filled into a substitute receipt or review evidence document, persist the active signature asset id, applier user id, applied timestamp, and rendered evidence attachment id. Do not treat signature fill as expense confirmation or reimbursement approval.
 
 ### ExpenseLine
@@ -888,7 +888,7 @@ POST /line/expense-receipts
 - Internal endpoint/use case called by LINE webhook after signature verification and account context resolution. For media/file messages it downloads LINE media server-side, stores attachment evidence, creates draft ExpenseRecord with captureSource LINE_UPLOAD, queues extraction and AI verification, and replies with draft status/deep link. For text-only expense notes it uses AI semantic extraction for amount/purpose/date/category hints, creates a no-receipt review draft with bounded LINE provenance, and replies with draft status/deep link.
 
 POST /line/expense-signatures
-- Permission: resolved from linked LINE user: expense.signature.manage or explicit signature-request permission if later split.
+- Permission: resolved from linked LINE user: expense.signature.self_manage (legacy `expense.signature.manage` is accepted for compatibility); always owner-scoped.
 - Internal endpoint/use case called by LINE webhook after signature verification, account context resolution, and AI semantic signature-upload intent detection. Detection may use the image and accompanying text/conversation context, but must not depend on static keyword dictionaries. Downloads the LINE image server-side, stores it as a company-scoped pending signature candidate with lifecycle `PENDING_OWNER_APPROVAL`, creates a web approval ticket/request for OWNER review, and replies with pending status plus web ticket link. It must not create an expense draft, activate the signature, remove background, apply the signature, or imply a signed document exists.
 
 POST /line/expense-receipts/:lineMessageId/retry-verification
@@ -943,7 +943,7 @@ PATCH /expense-categories/:categoryId
 - Updates category display, status/archive state, sort order, and hints.
 
 POST /expense-signatures
-- Permission: expense.signature.manage.
+- Permission: expense.signature.self_manage or legacy expense.signature.manage; creates only the caller's personal signature.
 - Stores a company-scoped signature asset from upload/draw/import using shared attachment primitives, creates it as `PENDING_OWNER_APPROVAL`, and creates an owner approval request when workflow/task primitives are available. Keeps original asset and audit metadata.
 
 POST /expense-signatures/:signatureId/approve
@@ -955,7 +955,7 @@ POST /expense-signatures/:signatureId/reject
 - Rejects a pending company signature asset with a reason. Rejected assets cannot be filled into documents.
 
 POST /expense-signatures/:signatureId/remove-background
-- Permission: expense.signature.manage.
+- Permission: expense.signature.self_manage or legacy expense.signature.manage, and the caller must own the signature.
 - Creates a derived transparent signature asset for document fill preview/use. First pass should use deterministic light-background removal: normalize/crop the signature image, make near-white/light pixels transparent, preserve dark ink pixels, and let the user preview before saving the derived PNG. It does not overwrite the original signature asset.
 
 POST /expenses/:expenseId/signature-fill
@@ -1007,6 +1007,7 @@ expense.duplicate.resolve
 expense.ocr.request
 expense.ai.verify
 expense.category.manage
+expense.signature.self_manage
 expense.signature.manage
 expense.signature.approve
 expense.export
@@ -1016,14 +1017,13 @@ Default grants:
 
 ```text
 OWNER: all expense permissions
-ADMIN: expense.read, expense.read_own, expense.receipt.line_upload, expense.category.manage, expense.signature.manage, expense.export
-MANAGER: expense.read for team/ABAC, expense.read_own, expense.receipt.line_upload, expense.review for team/ABAC, expense.duplicate.resolve for team/ABAC
+INTERNAL EMPLOYEE BASELINE: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts, expense.signature.self_manage
+ADMIN: employee baseline plus expense.read, expense.category.manage, expense.signature.manage, expense.export
+MANAGER: employee baseline plus expense.read for team/ABAC, expense.review for team/ABAC, expense.duplicate.resolve for team/ABAC
 FINANCE: all expense permissions except expense.signature.approve and role/system admin-only grants if split later
-ACCOUNTANT: expense.read, expense.read_own, expense.receipt.line_upload, expense.export
+ACCOUNTANT: employee baseline plus expense.read, expense.export
 AUDITOR_READONLY: expense.read, expense.export
-STAFF: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts
-SALES, INVENTORY: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts when company policy grants operational expense capture
-MARKETING: expense.read_own, expense.receipt.line_upload
+SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
 
 `expense.ai.verify` is normally granted to service/internal actors, not broad human roles. `expense.receipt.line_upload`, `expense.ai.verify`, `expense.signature.manage`, `expense.signature.approve`, `expense.confirm`, `expense.void`, `expense.payment.record`, and `expense.export` are sensitive and must be audited.
