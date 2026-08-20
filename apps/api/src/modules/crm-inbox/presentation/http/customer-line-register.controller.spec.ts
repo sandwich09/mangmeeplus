@@ -61,6 +61,8 @@ describe('CustomerLineRegisterController LIFF page security (H-08)', () => {
     assert.equal(channelLookups, 0);
     assert.equal(html.includes(payload), false);
     assert.equal(html.includes('__h08_customer_xss__'), false);
+    assert.match(html, /data-client-compatibility-notice="generic"/);
+    assert.match(html, /id="liff-content"/);
     const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
     assert.equal(scripts.length, 2);
     assert.ok(scripts.every(([, attributes, body]) => /\bsrc="[^"]+"/.test(attributes!) && body!.trim() === ''));

@@ -8,6 +8,7 @@ import { Public } from '../../../../common/security/public.decorator';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import {
   escapeHtml,
+  LIFF_CLIENT_NOTICE_HTML,
   LIFF_PAGE_CSP,
   LINE_CHANNEL_ID_PATTERN,
   LINE_ID_TOKEN_MAX_LENGTH,
@@ -79,7 +80,8 @@ export class CustomerLineRegisterController {
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
     main{max-width:560px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600}
+    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
+    [hidden]{display:none!important}
     button:disabled{opacity:.5}
     pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}
     label{display:flex;gap:8px;align-items:flex-start;margin:12px 0}
@@ -87,12 +89,15 @@ export class CustomerLineRegisterController {
 </head>
 <body data-liff-mode="customer" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}">
   <main>
-    <h1>ลงทะเบียนลูกค้า LINE — ${companyDisplayName}</h1>
-    <pre>${escapeHtml(PDPA_CONSENT_NOTICE_TEXT)}</pre>
-    <label><input id="consent" type="checkbox" required /> <span>ยินยอมตามประกาศความเป็นส่วนตัวนี้</span></label>
-    <p id="status">Ready</p>
-    <button id="register">Register</button>
-    <pre id="detail"></pre>
+    ${LIFF_CLIENT_NOTICE_HTML}
+    <div id="liff-content">
+      <h1>ลงทะเบียนลูกค้า LINE — ${companyDisplayName}</h1>
+      <pre>${escapeHtml(PDPA_CONSENT_NOTICE_TEXT)}</pre>
+      <label><input id="consent" type="checkbox" required /> <span>ยินยอมตามประกาศความเป็นส่วนตัวนี้</span></label>
+      <p id="status">Ready</p>
+      <button id="register">Register</button>
+      <pre id="detail"></pre>
+    </div>
   </main>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="/v1/auth/line/link-page.js"></script>

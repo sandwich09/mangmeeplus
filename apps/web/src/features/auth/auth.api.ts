@@ -42,14 +42,31 @@ export function loginAsDevOwner(): Promise<LoginSessionResponse> {
   return publicApi.post<LoginSessionResponse>('/api/auth/dev-login', {});
 }
 
-/** Attempt to restore a session from the refresh cookie. Resolves false when signed out. */
-export async function refreshSessionSilently(): Promise<boolean> {
+export type SessionRefreshOutcome = 'restored' | 'signed_out' | 'unavailable' | 'timeout';
+
+/** A bounded refresh keeps an auth outage from leaving the login screen spinning forever. */
+export async function refreshSessionWithOutcome(timeoutMs = 10_000): Promise<SessionRefreshOutcome> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch('/api/auth/refresh', { method: 'POST', credentials: 'include' });
-    return res.ok;
+    const res = await fetch('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (res.ok) return 'restored';
+    return res.status === 401 ? 'signed_out' : 'unavailable';
   } catch {
-    return false;
+    return controller.signal.aborted ? 'timeout' : 'unavailable';
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+/** Boolean compatibility wrapper for mutation retry callers: only a restored session may retry. */
+export async function refreshSessionSilently(): Promise<boolean> {
+  return (await refreshSessionWithOutcome()) === 'restored';
 }
 
 /** Always resolves with the same generic message — the API never reveals whether the username exists. */

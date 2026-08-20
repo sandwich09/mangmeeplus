@@ -25,6 +25,7 @@ import {
   COMPANY_ID_PATTERN,
   EMPLOYEE_LINE_LINK_TOKEN_PATTERN,
   escapeHtml,
+  LIFF_CLIENT_NOTICE_HTML,
   LIFF_PAGE_CSP,
   LIFF_PAGE_SCRIPT,
   LINE_CHANNEL_ID_PATTERN,
@@ -312,16 +313,21 @@ export class AuthController {
   <style>
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px;line-height:1.5;color:#111827;background:#f9fafb}
     main{max-width:520px;margin:auto;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px}
-    button{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600}
+    button,a.btn{border:0;border-radius:6px;background:#16a34a;color:white;padding:10px 14px;font-weight:600;display:inline-block;text-decoration:none}
+    [hidden]{display:none!important}
+    button:disabled{opacity:.5}
     pre{white-space:pre-wrap;background:#f3f4f6;border-radius:6px;padding:12px}
   </style>
 </head>
 <body data-liff-mode="account" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}" data-dev-mode="${String(devMode)}" data-oa-add-url="${escapeHtml(oaAddUrl)}">
   <main>
-    <h1>WatchDog LINE Link</h1>
-    <p id="status">Ready</p>
-    <button id="link">Link LINE account</button>
-    <pre id="detail"></pre>
+    ${LIFF_CLIENT_NOTICE_HTML}
+    <div id="liff-content">
+      <h1>WatchDog LINE Link</h1>
+      <p id="status">Ready</p>
+      <button id="link">Link LINE account</button>
+      <pre id="detail"></pre>
+    </div>
   </main>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="/v1/auth/line/link-page.js"></script>
@@ -410,11 +416,14 @@ export class AuthController {
 </head>
 <body data-liff-mode="employee" data-liff-id="${escapeHtml(liffId)}" data-api-base="${escapeHtml(apiBase)}" data-oa-add-url="${escapeHtml(oaAddUrl)}">
   <main>
-    <h1>Link your LINE account</h1>
-    <p id="status">Ready</p>
-    <button id="link">Link LINE account</button>
-    <a id="open-line" class="btn" hidden>Open LINE</a>
-    <pre id="detail"></pre>
+    ${LIFF_CLIENT_NOTICE_HTML}
+    <div id="liff-content">
+      <h1>Link your LINE account</h1>
+      <p id="status">Ready</p>
+      <button id="link">Link LINE account</button>
+      <a id="open-line" class="btn" hidden>Open LINE</a>
+      <pre id="detail"></pre>
+    </div>
   </main>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="/v1/auth/line/link-page.js"></script>
