@@ -3,6 +3,7 @@
  * No NestJS, Prisma, HTTP, or timer imports — the caller passes time in.
  * Spec: docs/specs/line-ai-message-buffering-spec.md
  */
+import { createHmac } from 'node:crypto';
 
 export type LineBufferTextItem = {
   kind: 'text' | 'command';
@@ -12,6 +13,9 @@ export type LineBufferTextItem = {
   lineMessageId?: string;
   /** LINE event timestamp (ms) — used to heal cross-POST arrival reordering. */
   timestamp: number;
+  /** Wall-clock (ms) when durable acceptance succeeded/reclaimed. Anchors the debounce boundary,
+   *  the long-wait status timer, and the API trace to first durable acceptance (spec §10/§12). */
+  acceptedAt: number;
   /** Process-local arrival sequence — tie-break for identical timestamps. */
   seq: number;
 };
@@ -25,6 +29,7 @@ export type LineBufferMediaItem = {
   fileName?: string;
   fileSize?: number;
   timestamp: number;
+  acceptedAt: number;
   seq: number;
 };
 
@@ -99,6 +104,98 @@ export function fittingPrefixCount(pending: LineBufferItem[], incoming: LineBuff
     count += 1;
   }
   return count;
+}
+
+/**
+ * API-owned buffer/ingress trace leg for one dispatched LINE turn (latency/autonomy §12). It carries
+ * ONLY the ingress/buffer/queue timings the buffer owns (durable-acceptance anchor, buffer wait, queue
+ * wait) — NOT any lumped "dispatch" duration, and deliberately NOT the runtime-owned
+ * `LineAiStageDurations`. The precise downstream durations are the separate `line.ai.stage` seams. It
+ * is ONE leg of a correlation chain joined by `webhookEventId`; the other legs are emitted where the
+ * API actually observes each stage, and are true to what each store holds:
+ *   - `line.ai.accepted` / this trace `acceptedAtMs` → durable acceptance;
+ *   - `line.ai.loading_started` / `line.ai.loading_accepted` → 1:1 loading milestones (server-side);
+ *   - `line.ai.stage` (webhookEventId) → distinct API-observed stage durations: intake_route,
+ *     gateway_turn, persistence, line_delivery (emitted by ProcessLineWebhookUseCase, not lumped here);
+ *   - `line.ai.turn_summary` (webhookEventId + requestId) → intent, refused/refusalReason/errorCode,
+ *     model provider + ids (from lineage/usage), model-call and tool-call counts, deliveryResult, and
+ *     usage token totals. `fallbackReason` is a DISTINCT field, always null (not observable, never
+ *     conflated with refusal/error); lane and cost are also explicit null (lanes are Phase 4; cost is
+ *     metered separately in recordCompanyAiUsage);
+ *   - persisted `AiTurn` (webhookEventId) → intent/agent, refused/refusalReason/errorCode, and
+ *     `observabilityJson` (runtime `stageDurationsMs`, `modelCallCount`). It does NOT store lane,
+ *     usage/cost, or requestId;
+ *   - gateway `ai.turn.complete` (requestId) → per-model-call durations/tokens/throttle;
+ *   - `line.ai.terminal` (webhookEventId) → the terminal outcome CLASS (delivered / refused /
+ *     unavailable / …), not the raw reply-vs-push mode — that lives in `line.ai.turn_summary`.
+ * Every event above carries no raw message text or LINE user id. Remaining Phase-0 limitation:
+ * finer sub-durations INSIDE the gateway turn (per model call / per tool) belong to the runtime
+ * `stageDurationsMs` and gateway leg, and true fused-plan-vs-lane timing is Phase 3+; not claimed here.
+ */
+export type LineAiApiTraceSegment = 'text' | 'command' | 'media';
+
+export type LineAiApiTrace = {
+  webhookEventId: string;
+  chat: 'one_to_one' | 'group';
+  segment: LineAiApiTraceSegment;
+  /** Immutable durable-acceptance milestone (epoch ms) — the anchor every duration is measured from. */
+  acceptedAtMs: number;
+  /** First buffered bubble (accepted) → flush. */
+  bufferWaitMs: number;
+  /** Flush → worker dequeue (turn start). */
+  queueWaitMs: number;
+  /** Whether accept-time loading was requested for this turn (Phase 1, 1:1 non-command only). */
+  loadingRequested: boolean;
+};
+
+/** Assemble one API trace (ingress/buffer/queue only — NO lumped dispatch duration; the precise
+ *  downstream seams are the `line.ai.stage` events). Clamps a negative/undefined interval to 0 so a
+ *  clock skew or an absent accept-time never reports a nonsensical duration. Pure. */
+export function buildLineAiApiTrace(input: {
+  webhookEventId: string;
+  oneToOne: boolean;
+  segment: LineAiApiTraceSegment;
+  /** Durable-acceptance instant of the batch's first bubble (the timing anchor). */
+  firstAcceptedAtMs: number | null;
+  flushedAtMs: number;
+  dequeuedAtMs: number;
+  loadingRequested: boolean;
+}): LineAiApiTrace {
+  const clamp = (ms: number) => (Number.isFinite(ms) && ms > 0 ? Math.round(ms) : 0);
+  return {
+    webhookEventId: input.webhookEventId,
+    chat: input.oneToOne ? 'one_to_one' : 'group',
+    segment: input.segment,
+    acceptedAtMs: input.firstAcceptedAtMs ?? 0,
+    bufferWaitMs: input.firstAcceptedAtMs === null ? 0 : clamp(input.flushedAtMs - input.firstAcceptedAtMs),
+    queueWaitMs: clamp(input.dequeuedAtMs - input.flushedAtMs),
+    loadingRequested: input.loadingRequested,
+  };
+}
+
+/**
+ * Concurrent debounce cohorts for the latency/autonomy experiment: 1,000 ms primary candidate,
+ * 1,500 ms conservative candidate, and the implemented 2,500 ms control (spec §10). The control is
+ * present so ~1/3 of assigned traffic stays on the current behaviour for a matched comparison.
+ */
+export const LINE_AI_DEBOUNCE_COHORTS_MS = [1_000, 1_500, 2_500] as const;
+
+/**
+ * Stable, privacy-safe debounce-cohort assignment (spec §10). When the experiment is off, has no
+ * secret, or the (company, chat) key is unknown, EVERY chat keeps `configuredMs` — so the default
+ * path is unchanged. When on, an experiment-secret HMAC of the assignment key deterministically picks
+ * one concurrent cohort. Only the resulting millisecond value leaves this function: neither the raw
+ * identifiers nor the HMAC bytes are returned, so a caller has nothing identifier-shaped to log.
+ */
+export function debounceCohortMs(input: {
+  enabled: boolean;
+  secret: string | undefined;
+  assignmentKey: string;
+  configuredMs: number;
+}): number {
+  if (!input.enabled || !input.secret || !input.assignmentKey) return input.configuredMs;
+  const digest = createHmac('sha256', input.secret).update(input.assignmentKey).digest();
+  return LINE_AI_DEBOUNCE_COHORTS_MS[digest.readUInt32BE(0) % LINE_AI_DEBOUNCE_COHORTS_MS.length];
 }
 
 /** Milliseconds until the buffer should flush; <= 0 means flush now. */

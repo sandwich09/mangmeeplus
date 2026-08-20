@@ -581,6 +581,21 @@ describe('aiGatewayConfigSchema – item 10B new keys', () => {
     assert.equal(result.data?.LINE_AI_AGENT_ORCHESTRATION_ENABLED, false);
   });
 
+  it('defaults every latency/autonomy Phase 3–6 flag OFF and the family allowlist EMPTY', () => {
+    const parsed = aiGatewayConfigSchema.parse(base);
+    assert.equal(parsed.LINE_AI_FUSED_PLAN_SHADOW_ENABLED, false);
+    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, false);
+    assert.equal(parsed.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES, '');
+    assert.equal(parsed.LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED, false);
+    assert.equal(parsed.LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED, false);
+    assert.equal(parsed.LINE_AI_SMALL_ROUTER_SHADOW_ENABLED, false);
+  });
+
+  it('parses an explicit deterministic-family allowlist as a comma list', () => {
+    const parsed = aiGatewayConfigSchema.parse({ ...base, LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: 'single_metric, list' });
+    assert.equal(parsed.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES, 'single_metric, list');
+  });
+
   it('defaults LINE_AI_AGENT_RUNTIME to disabled', () => {
     const result = aiGatewayConfigSchema.safeParse(base);
     assert.equal(result.success, true);
@@ -654,6 +669,45 @@ describe('apiConfigSchema LINE expense draft rollout gate', () => {
 
   it('accepts an explicit UAT enable', () => {
     assert.equal(apiConfigSchema.parse({ ...base, LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: 'true' }).LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED, true);
+  });
+});
+
+describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
+  const base = { APP_ENV: 'local', SERVICE_NAME: 'api', DATABASE_URL: 'postgresql://local', S3_BUCKET: 'local' };
+
+  it('defaults every new flag OFF and leaves the debounce default and experiment secret unset', () => {
+    const parsed = apiConfigSchema.parse(base);
+    assert.equal(parsed.LINE_AI_LOADING_ON_ACCEPT_ENABLED, false);
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED, false);
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET, undefined);
+    // Phase 3/4 forwarding gates default off (API forwards nothing extra unless one is on).
+    assert.equal(parsed.LINE_AI_FUSED_PLAN_SHADOW_ENABLED, false);
+    assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, false);
+    // Substitute semantic routing defaults to the exact legacy regex-first behavior.
+    assert.equal(parsed.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE, 'off');
+    // Old debounce path preserved: the implemented 2,500 ms default is unchanged.
+    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2500);
+  });
+
+  it('enabling the experiment without a secret still parses (the buffer then keeps the configured debounce)', () => {
+    const parsed = apiConfigSchema.parse({ ...base, LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED: 'true' });
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED, true);
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET, undefined);
+    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2500);
+  });
+
+  it('accepts explicit opt-in values', () => {
+    const parsed = apiConfigSchema.parse({ ...base, LINE_AI_LOADING_ON_ACCEPT_ENABLED: 'true', LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED: 'true', LINE_AI_DEBOUNCE_EXPERIMENT_SECRET: 's3cr3t' });
+    assert.equal(parsed.LINE_AI_LOADING_ON_ACCEPT_ENABLED, true);
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED, true);
+    assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET, 's3cr3t');
+  });
+
+  it('accepts the three substitute semantic-routing modes and rejects an unknown one', () => {
+    for (const mode of ['off', 'shadow', 'primary'] as const) {
+      assert.equal(apiConfigSchema.parse({ ...base, LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE: mode }).LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE, mode);
+    }
+    assert.equal(apiConfigSchema.safeParse({ ...base, LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE: 'canary' }).success, false);
   });
 });
 

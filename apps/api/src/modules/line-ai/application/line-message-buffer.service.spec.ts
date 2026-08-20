@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { Prisma } from '../../../generated/prisma/client';
 import { LineMessageBufferService } from './line-message-buffer.service';
 import type { LineBufferEnvelope } from './line-message-buffer.service';
-import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../domain/logic/line-message-buffer.logic';
+import { LINE_BUFFER_ORPHAN_REPROCESS_MS, debounceCohortMs } from '../domain/logic/line-message-buffer.logic';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Real macrotask boundary (setImmediate is never mocked here) — flushes the async dispatch chain that
+// runs after a mock-timer tick fires the backstop callback.
+const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise<void>((resolve) => setImmediate(resolve)); };
 
 type Row = {
   webhookEventId: string;
@@ -21,13 +24,18 @@ function makeHarness(opts: {
   debounceMs?: number;
   maxWaitMs?: number;
   loadingEnabled?: boolean;
+  loadingOnAcceptEnabled?: boolean;
+  loadingAccepted?: boolean;
+  loadingGate?: Promise<void>;
+  debounceExperimentEnabled?: boolean;
+  debounceExperimentSecret?: string;
   executeImpl?: (event: any) => Promise<void>;
   receiptOutcomes?: Array<'done' | 'defer_text'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
-  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string }) => Promise<{ status: 'continue' } | { status: 'required'; companyId: string }>;
+  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
 } = {}) {
   const rows = new Map<string, Row>();
   const executed: any[] = [];
@@ -85,7 +93,13 @@ function makeHarness(opts: {
   const config = {
     lineAiBufferDebounceMs: opts.debounceMs ?? 20,
     lineAiBufferMaxWaitMs: opts.maxWaitMs ?? 500,
-    lineAiLoadingAnimationEnabled: opts.loadingEnabled ?? false,
+    // Loading-on-accept is a SUB-feature of the master animation flag (both must be on). For test
+    // ergonomics the master defaults ON whenever accept-loading is requested, UNLESS a test sets
+    // loadingEnabled explicitly (the gate test sets it false to prove accept-loading stays dark).
+    lineAiLoadingAnimationEnabled: opts.loadingEnabled ?? opts.loadingOnAcceptEnabled ?? false,
+    lineAiLoadingOnAcceptEnabled: opts.loadingOnAcceptEnabled ?? false,
+    lineAiDebounceExperimentEnabled: opts.debounceExperimentEnabled ?? false,
+    lineAiDebounceExperimentSecret: opts.debounceExperimentSecret,
   } as any;
 
   const audit = { log: async (entry: any) => { auditLogs.push(entry); } } as any;
@@ -101,7 +115,11 @@ function makeHarness(opts: {
       pushes.push({ to, text: messages[0]?.text ?? '' });
       return opts.pushResult ?? 'ok';
     },
-    startLoadingAnimation: async (chatId: string) => { loadingCalls.push(chatId); },
+    startLoadingAnimation: async (chatId: string) => {
+      loadingCalls.push(chatId);
+      if (opts.loadingGate) await opts.loadingGate;
+      return opts.loadingAccepted ?? true;
+    },
   } as any;
 
   const useCase = {
@@ -574,7 +592,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
   });
 
   it('pushes one contextual status after 2 seconds and restores loading before the answer', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let releaseTurn!: () => void;
       let completeTurn!: () => void;
@@ -616,7 +634,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
   });
 
   it('keeps a reply completed within 2 seconds to loading only', async (t) => {
-    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let completeTurn!: () => void;
       const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
@@ -639,5 +657,516 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     } finally {
       t.mock.timers.reset();
     }
+  });
+
+  it('keeps the legacy 2s-from-processing-start wait status when loading-on-accept is off (no immediate status at a 2.5s debounce)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      let releaseTurn!: () => void;
+      let markStarted!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const order: string[] = [];
+      const h = makeHarness({
+        debounceMs: 2_500, maxWaitMs: 60_000,
+        loadingEnabled: true, loadingOnAcceptEnabled: false, // legacy default
+        executeImpl: async (event) => { markStarted(); order.push('turn'); await gate; await event.beforeReply?.(); order.push('reply'); },
+      });
+
+      await h.service.enqueue(textEnv('legacy-wait', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts ~2.5s after acceptance
+      await settle();
+      await started;
+      // Processing started well past 2s of durable acceptance, yet the status must NOT be immediate.
+      assert.equal(h.pushes.length, 0, 'no immediate wait status at processing start');
+      t.mock.timers.tick(1_999);   // legacy delay is 2s FROM PROCESSING START, not from acceptance
+      await settle();
+      assert.equal(h.pushes.length, 0, 'no status before the legacy 2s from processing start');
+      t.mock.timers.tick(1);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
+      // Ordering: the status is delivered before the final answer.
+      releaseTurn();
+      await settle();
+      assert.deepEqual(order, ['turn', 'reply']);
+      assert.equal(h.pushes.length, 1, 'exactly one status, ordered before the final');
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('re-times the wait status from durable acceptance ONLY when the accept spinner was actually shown (P2-B)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      let releaseTurn!: () => void; let markStarted!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      // Accept-loading ON and ACCEPTED by LINE: the spinner has been up since durable acceptance (t=0), so
+      // when processing starts ~2.5s later the 2s window has already elapsed → the status is due at once.
+      const h = makeHarness({
+        debounceMs: 2_500, maxWaitMs: 60_000,
+        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: true,
+        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
+      });
+      await h.service.enqueue(textEnv('accept-retime', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
+      await settle();
+      await started;
+      t.mock.timers.tick(1);       // the re-timed status delay is 0 (already elapsed) → fires immediately
+      await settle();
+      assert.equal(h.pushes.length, 1, 'accepted accept-loading re-times the status from acceptance (immediate here)');
+      releaseTurn();
+      await settle();
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('a REJECTED accept-loading falls back to the legacy 2s-from-processing-start (never immediate) (P2-B)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      let releaseTurn!: () => void; let markStarted!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      // Accept-loading ON but LINE REJECTED it (loadingAccepted:false): no spinner was shown, so the status
+      // must NOT collapse to immediate at a 2.5s debounce — it uses the legacy 2s FROM PROCESSING START.
+      const h = makeHarness({
+        debounceMs: 2_500, maxWaitMs: 60_000,
+        loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: false,
+        executeImpl: async (event) => { markStarted(); await gate; await event.beforeReply?.(); },
+      });
+      await h.service.enqueue(textEnv('accept-reject', 'ช่วยเปรียบเทียบยอดขายสองสาขา'));
+      t.mock.timers.tick(2_501);   // flush the 2.5s debounce → processing starts
+      await settle();
+      await started;
+      assert.equal(h.pushes.length, 0, 'no immediate status even though acceptance was >2s ago (spinner was rejected)');
+      t.mock.timers.tick(1_999);
+      await settle();
+      assert.equal(h.pushes.length, 0, 'still nothing before the legacy 2s from processing start');
+      t.mock.timers.tick(1);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'status after exactly the legacy 2s from processing start');
+      releaseTurn();
+      await settle();
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+});
+
+describe('LineMessageBufferService – loading on accept (latency/autonomy §10, default off)', () => {
+  it('requests one coalesced 1:1 loading after acceptance, before the debounce wait', async () => {
+    // Both flags on; the 5 s debounce means no batch has dispatched yet, so the only loading call so far is
+    // the accept-time one (the processing-start loading only fires later, at dispatch).
+    const h = makeHarness({ debounceMs: 5_000, loadingOnAcceptEnabled: true });
+    await h.service.enqueue(textEnv('a1', 'ขอ'));
+    await h.service.enqueue(textEnv('a2', 'ยอดขาย'));
+    await h.service.enqueue(textEnv('a3', 'วันนี้'));
+    // Fired synchronously in enqueue, before the batch is ever dispatched.
+    assert.deepEqual(h.loadingCalls, ['user-1']);
+    assert.equal(h.executed.length, 0);
+  });
+
+  it('requires the MASTER animation flag: the accept flag alone shows NO loading (P2-A)', async () => {
+    // Master off, accept on → loading-on-accept is a sub-feature and stays dark: no LINE request, no event.
+    const h = makeHarness({ debounceMs: 5_000, loadingEnabled: false, loadingOnAcceptEnabled: true });
+    await h.service.enqueue(textEnv('a1', 'ขอ'));
+    await h.service.enqueue(textEnv('a2', 'ยอดขาย'));
+    assert.deepEqual(h.loadingCalls, [], 'no accept-loading when the master animation flag is off');
+    assert.equal(h.serviceLogs.filter((entry) => entry.msg === 'line.ai.loading_started').length, 0, 'no loading_started telemetry either');
+  });
+
+  it('does not request accept-time loading for group chats', async () => {
+    const h = makeHarness({ debounceMs: 5_000, loadingOnAcceptEnabled: true });
+    await h.service.enqueue(textEnv('g1', 'สวัสดี', { userId: 'user-1', chatId: 'group-1' }));
+    assert.deepEqual(h.loadingCalls, []);
+  });
+
+  it('does not request accept-time loading for an idle command', async () => {
+    const h = makeHarness({ debounceMs: 5_000, loadingOnAcceptEnabled: true });
+    await h.service.enqueue(textEnv('c1', '/companies'));
+    assert.deepEqual(h.loadingCalls, []);
+  });
+
+  it('leaves loading at processing start when the accept flag is off (unchanged path)', async () => {
+    const h = makeHarness({ debounceMs: 10, loadingEnabled: true, loadingOnAcceptEnabled: false });
+    await h.service.enqueue(textEnv('o1', 'สวัสดี'));
+    // No accept-time call; the single call is the existing processing-start loading.
+    await sleep(60);
+    assert.deepEqual(h.loadingCalls, ['user-1']);
+  });
+});
+
+describe('LineMessageBufferService – debounce experiment cohort (latency/autonomy §10, default off)', () => {
+  it('applies a stable cohort only when on with a secret and a resolved company', async () => {
+    // Company present → effective debounce becomes a cohort (>=1000 ms), so a single bubble does NOT
+    // take the configured 0 ms serialize-now path.
+    const withCompany = makeHarness({
+      debounceMs: 0, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
+    });
+    await withCompany.service.enqueue(textEnv('exp-1', 'ยอดขายวันนี้'));
+    await sleep(20);
+    assert.equal(withCompany.executed.length, 0, 'the cohort debounce holds the bubble past the 0 ms path');
+    await withCompany.service.onModuleDestroy();
+    assert.equal(withCompany.executed.length, 1);
+
+    // No resolved company → no assignment; the configured 0 ms serialize-now path is unchanged.
+    const noCompany = makeHarness({
+      debounceMs: 0, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue' }),
+    });
+    await noCompany.service.enqueue(textEnv('exp-2', 'ยอดขายวันนี้'));
+    await sleep(20);
+    assert.equal(noCompany.executed.length, 1, 'no company → configured debounce, immediate flush');
+  });
+
+  it('keeps the configured debounce for everyone when the experiment is off', async () => {
+    const h = makeHarness({
+      debounceMs: 0, maxWaitMs: 60_000,
+      debounceExperimentEnabled: false, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
+    });
+    await h.service.enqueue(textEnv('off-1', 'ยอดขายวันนี้'));
+    await sleep(20);
+    assert.equal(h.executed.length, 1, 'experiment off → configured 0 ms path, immediate flush');
+  });
+
+  it('preserves the configured debounce path when the experiment is on but the secret is missing', async () => {
+    const h = makeHarness({
+      debounceMs: 0, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: undefined,
+      preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
+    });
+    await h.service.enqueue(textEnv('nosecret-1', 'ยอดขายวันนี้'));
+    await sleep(20);
+    assert.equal(h.executed.length, 1, 'no secret → no assignment, configured 0 ms path unchanged');
+  });
+
+  it('freezes the batch cohort at open; a later bubble resolving a DIFFERENT company does not re-assign it', async () => {
+    // Precondition: the two authoritative companies map to different cohorts for this chat.
+    const co1 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-1:chat-frz', configuredMs: 2_500 });
+    const co2 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-2:chat-frz', configuredMs: 2_500 });
+    assert.notEqual(co1, co2, 'test precondition: co-1 and co-2 resolve to different cohorts for this chat');
+
+    let call = 0;
+    const h = makeHarness({
+      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue' as const, companyId: call++ === 0 ? 'co-1' : 'co-2' }),
+    });
+    try {
+      await h.service.enqueue(textEnv('frz-1', 'ก', { chatId: 'chat-frz', userId: 'user-1' })); // opens batch → freezes co-1 cohort
+      await h.service.enqueue(textEnv('frz-2', 'ข', { chatId: 'chat-frz', userId: 'user-1' })); // joins; preflight now resolves co-2
+      const state = (h.service as any).chats.get('chat-frz:user-1');
+      assert.equal(state.debounceMs, co1, 'cohort frozen at open (co-1), NOT re-assigned to co-2 by the later bubble');
+    } finally {
+      await h.service.onModuleDestroy();
+    }
+  });
+
+  it('unresolved company stays on the configured debounce even with the experiment on', async () => {
+    const h = makeHarness({
+      debounceMs: 0, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue' as const }), // no companyId resolved
+    });
+    await h.service.enqueue(textEnv('unres-1', 'ยอดขายวันนี้'));
+    await sleep(20);
+    assert.equal(h.executed.length, 1, 'no company → configured 0 ms path, immediate flush');
+  });
+
+  it('assigns the SAME cohort to two users in one group (cluster is company+chat, not per user), buffers stay isolated', async () => {
+    const h = makeHarness({
+      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
+      preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
+    });
+    try {
+      await h.service.enqueue(textEnv('g-a', 'ก', { chatId: 'group-9', userId: 'user-A' }));
+      await h.service.enqueue(textEnv('g-b', 'ข', { chatId: 'group-9', userId: 'user-B' }));
+      const stateA = (h.service as any).chats.get('group-9:user-A');
+      const stateB = (h.service as any).chats.get('group-9:user-B');
+      assert.ok(stateA && stateB && stateA !== stateB, 'buffers are isolated per (chat,user)');
+      assert.equal(stateA.debounceMs, stateB.debounceMs, 'cohort shared across users of the same (company,chat)');
+      assert.ok([1_000, 1_500, 2_500].includes(stateA.debounceMs), 'cohort is one of the declared values');
+    } finally {
+      await h.service.onModuleDestroy();
+    }
+  });
+});
+
+describe('LineMessageBufferService – deterministic debounce boundary (latency/autonomy §10)', () => {
+  // Fake timers ACTUALLY fire here (tick advances the clock and runs due callbacks). The backstop is
+  // armed strictly after the logical boundary (+1 ms), so a bubble arriving at exactly the boundary
+  // (gap == debounce) still joins even though the scheduler drives the timer.
+  it('joins at exactly gap == debounce when the backstop timer is one ms past the boundary', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      const h = makeHarness({ debounceMs: 1_000, maxWaitMs: 60_000 });
+      await h.service.enqueue(textEnv('j1', 'ขอ'));   // t=0; backstop fires at t=1001
+      t.mock.timers.tick(1_000);                        // advance to the boundary; backstop (1001) does NOT fire
+      await settle();
+      assert.equal(h.executed.length, 0, 'boundary reached but not passed → no flush yet');
+      await h.service.enqueue(textEnv('j2', 'ยอดขาย')); // acceptedAt=1000; scheduledFlushAt(1000) < 1000 is false → join
+      t.mock.timers.tick(2_000);                        // fire the joined buffer's backstop
+      await settle();
+      assert.equal(h.executed.length, 1, 'gap == debounce joins one turn');
+      assert.equal(h.executed[0].messageText, 'ขอ\nยอดขาย');
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('splits at gap == debounce + 1 when the backstop timer fires', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      const h = makeHarness({ debounceMs: 1_000, maxWaitMs: 60_000 });
+      await h.service.enqueue(textEnv('s1', 'ขอ'));   // t=0; backstop fires at t=1001
+      t.mock.timers.tick(1_001);                        // fire the backstop → s1 flushes
+      await settle();
+      assert.equal(h.executed.length, 1, 's1 flushed by its own backstop');
+      await h.service.enqueue(textEnv('s2', 'ยอดขาย')); // t=1001; open empty → separate batch
+      t.mock.timers.tick(2_000);
+      await settle();
+      assert.equal(h.executed.length, 2, 'gap > debounce splits into two turns');
+      assert.deepEqual(h.executed.map((event) => event.messageText), ['ขอ', 'ยอดขาย']);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('a stale (superseded/cleared-but-queued) backstop callback cannot clear or disable the current schedule', async () => {
+    // Capture the service's setTimeout callbacks so a stale one can be fired by hand — the case fake
+    // timers cannot model (clearTimeout removes it from their queue).
+    const captured: Array<{ cb: () => void; handle: number; cleared: boolean }> = [];
+    let nextHandle = 1;
+    const realSetTimeout = global.setTimeout;
+    const realClearTimeout = global.clearTimeout;
+    (global as any).setTimeout = (cb: () => void) => { const handle = nextHandle++; captured.push({ cb, handle, cleared: false }); return handle; };
+    (global as any).clearTimeout = (handle: number) => { const found = captured.find((entry) => entry.handle === handle); if (found) found.cleared = true; };
+    try {
+      const h = makeHarness({ debounceMs: 1_000, maxWaitMs: 60_000 });
+      await h.service.enqueue(textEnv('a', 'ขอ'));   // arms backstop #1 (generation 1)
+      await h.service.enqueue(textEnv('b', 'ยอด'));  // joins within debounce → clears #1, arms #2 (gen 2)
+      const state = (h.service as any).chats.get('user-1:user-1');
+      assert.equal(captured.length, 2);
+      assert.equal(captured[0].cleared, true, 'the first backstop was cleared on reschedule');
+      const liveTimer = state.debounceTimer;
+      const liveGeneration = state.flushGeneration;
+
+      // Fire the STALE callback #1: it must return without touching the live schedule.
+      captured[0].cb();
+      assert.equal(state.debounceTimer, liveTimer, 'stale callback did not erase the current timer reference');
+      assert.equal(state.flushGeneration, liveGeneration, 'stale callback did not change the generation');
+      assert.equal(state.open.length, 2, 'the joined buffer is still open under the live schedule');
+
+      // The CURRENT callback #2 still owns the schedule and flushes once its boundary has passed.
+      const realDateNow = Date.now;
+      Date.now = () => Number.MAX_SAFE_INTEGER;
+      try { captured[1].cb(); } finally { Date.now = realDateNow; }
+      assert.equal(state.debounceTimer, null, 'current callback cleared its own reference');
+      assert.equal(state.open.length, 0, 'current schedule flushed the joined buffer');
+    } finally {
+      (global as any).setTimeout = realSetTimeout;
+      (global as any).clearTimeout = realClearTimeout;
+    }
+  });
+});
+
+describe('LineMessageBufferService – API end-to-end trace (latency/autonomy §12)', () => {
+  it('emits one privacy-safe api_trace per dispatched turn, correlated by webhookEventId', async () => {
+    const h = makeHarness({ debounceMs: 20 });
+    await h.service.enqueue(textEnv('t1', 'ขอ'));
+    await h.service.enqueue(textEnv('t2', 'ยอดขาย'));
+    await sleep(60);
+    const traces = h.serviceLogs.filter((entry) => entry.msg === 'line.ai.api_trace');
+    assert.equal(traces.length, 1, 'one joined turn → one trace');
+    const trace = traces[0];
+    assert.equal(trace.webhookEventId, 't2', 'keyed by the synthesized (last) bubble');
+    assert.equal(trace.chat, 'one_to_one');
+    assert.equal(trace.segment, 'text');
+    assert.ok(Number.isInteger(trace.acceptedAtMs) && trace.acceptedAtMs > 0, 'carries the durable-acceptance milestone');
+    assert.ok(Number.isInteger(trace.bufferWaitMs) && trace.bufferWaitMs >= 0);
+    assert.ok(Number.isInteger(trace.queueWaitMs) && trace.queueWaitMs >= 0);
+    // No lumped dispatch duration (that is decomposed into the line.ai.stage seams), and no raw ids/text.
+    const keys = Object.keys(trace);
+    assert.ok(!keys.includes('dispatchMs'), 'no lumped dispatch aggregation on the api_trace');
+    assert.ok(!keys.includes('lineUserId') && !keys.includes('chatId') && !keys.includes('text'));
+  });
+
+  it('marks a group chat trace as group', async () => {
+    const h = makeHarness({ debounceMs: 0 });
+    await h.service.enqueue(textEnv('grp', 'ยอดขาย', { userId: 'user-1', chatId: 'group-9' }));
+    await sleep(20);
+    const trace = h.serviceLogs.find((entry) => entry.msg === 'line.ai.api_trace');
+    assert.equal(trace?.chat, 'group');
+  });
+
+  it('emits loading_started at acceptance and loading_accepted at the ordered consumption', async () => {
+    const h = makeHarness({ debounceMs: 20, loadingOnAcceptEnabled: true, loadingAccepted: true });
+    await h.service.enqueue(textEnv('load-1', 'ยอดขายวันนี้'));
+    // loading_started is emitted synchronously at acceptance…
+    assert.equal(h.serviceLogs.find((entry) => entry.msg === 'line.ai.loading_started')?.webhookEventId, 'load-1');
+    // …loading_accepted only once the turn consumes/awaits the request (before its reply).
+    await sleep(60);
+    assert.equal(h.serviceLogs.find((entry) => entry.msg === 'line.ai.loading_accepted')?.webhookEventId, 'load-1');
+  });
+
+  it('does not emit loading_accepted when LINE rejects the loading request', async () => {
+    const h = makeHarness({ debounceMs: 20, loadingOnAcceptEnabled: true, loadingAccepted: false });
+    await h.service.enqueue(textEnv('load-2', 'ยอดขายวันนี้'));
+    await sleep(60);
+    assert.ok(h.serviceLogs.some((entry) => entry.msg === 'line.ai.loading_started'));
+    assert.ok(!h.serviceLogs.some((entry) => entry.msg === 'line.ai.loading_accepted'));
+  });
+
+  it('orders the accept-loading request and loading_accepted strictly before the final reply (fast/debounce-0 turn)', async () => {
+    let releaseLoading!: () => void;
+    const loadingGate = new Promise<void>((resolve) => { releaseLoading = resolve; });
+    const order: string[] = [];
+    const h = makeHarness({
+      debounceMs: 0, loadingOnAcceptEnabled: true, loadingAccepted: true, loadingGate,
+      executeImpl: async (event) => { order.push('turn'); await event.beforeReply?.(); order.push('reply'); },
+    });
+    await h.service.enqueue(textEnv('ord-1', 'ยอดขายวันนี้'));
+    await sleep(20);
+    // The turn is blocked awaiting the (gated) loading request; nothing has replied yet.
+    assert.deepEqual(order, [], 'turn must not run before the loading request resolves');
+    assert.ok(!h.serviceLogs.some((entry) => entry.msg === 'line.ai.loading_accepted'));
+
+    releaseLoading();
+    await sleep(20);
+    assert.deepEqual(order, ['turn', 'reply']);
+    const acceptedIdx = h.serviceLogs.findIndex((entry) => entry.msg === 'line.ai.loading_accepted');
+    assert.ok(acceptedIdx >= 0, 'loading_accepted was emitted');
+  });
+
+  it('does not fire a duplicate processing-start loading when accept-loading covers the turn', async () => {
+    // Both features on: exactly one loading request for the single turn (the reused accept-time one).
+    const h = makeHarness({ debounceMs: 10, loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: true });
+    await h.service.enqueue(textEnv('dup-1', 'ยอดขายวันนี้'));
+    await sleep(60);
+    assert.deepEqual(h.loadingCalls, ['user-1'], 'accept-loading reused, not duplicated at processing start');
+  });
+
+  it('binds each batch’s loading to its own batch — no overwrite or cross-consumption while a first batch is blocked with multiple groups', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    const h = makeHarness({
+      debounceMs: 20, loadingOnAcceptEnabled: true, loadingAccepted: true, loadingGate: gate,
+      executeImpl: async (event) => { order.push('turn:' + event.messageText); await event.beforeReply?.(); order.push('reply:' + event.messageText); },
+    });
+    const startedIds = () => h.serviceLogs.filter((e) => e.msg === 'line.ai.loading_started').map((e) => e.webhookEventId);
+    const acceptedIds = () => h.serviceLogs.filter((e) => e.msg === 'line.ai.loading_accepted').map((e) => e.webhookEventId);
+
+    // Batch 1: a text opener (fires its loading) plus a command → one batch with TWO groups.
+    await h.service.enqueue(textEnv('b1a', 'ยอดขายวันนี้'));
+    await h.service.enqueue(textEnv('cmd1', '/company 1')); // command forces the flush → batch1 = [text, command]
+    await sleep(40);
+    // Batch 1 is dequeued and blocked awaiting ITS OWN loading; no turn has run.
+    assert.equal(order.length, 0, 'batch1 blocked on its own loading before any group ran');
+    assert.deepEqual(acceptedIds(), []);
+
+    // Batch 2 arrives while batch 1 is processing → its own loading, bound to batch 2.
+    await h.service.enqueue(textEnv('b2a', 'ของอะไรใกล้หมด'));
+    await sleep(40);
+    assert.deepEqual(startedIds(), ['b1a', 'b2a'], 'each batch requested its own loading; the second never overwrote the first');
+    assert.deepEqual(acceptedIds(), [], 'neither loading consumed while gated');
+
+    // Release both loading requests. Each batch proceeds after — and only after — its own loading.
+    release();
+    await sleep(80);
+    assert.deepEqual(acceptedIds(), ['b1a', 'b2a'], 'each batch consumed only its own loading, in batch order');
+    // Loading was awaited before each batch’s finals: the gate held every turn until release.
+    assert.ok(order.includes('reply:ยอดขายวันนี้'), 'batch1 content final delivered');
+    assert.ok(order.includes('reply:ของอะไรใกล้หมด'), 'batch2 content final delivered');
+    assert.equal(order.indexOf('turn:ยอดขายวันนี้') < order.indexOf('turn:ของอะไรใกล้หมด'), true, 'batch order preserved');
+  });
+
+  it('api_trace.loadingRequested is false for a COMMAND segment even in a batch that bound loading', async () => {
+    // A text opener binds accept-loading, then a command forces the flush → one batch, two segments.
+    const h = makeHarness({ debounceMs: 5_000, loadingOnAcceptEnabled: true, loadingAccepted: true });
+    await h.service.enqueue(textEnv('mix-q', 'ยอดขายวันนี้'));  // text opener → binds loading
+    await h.service.enqueue(textEnv('mix-c', '/company 2'));    // command forces flush → mixed batch
+    await sleep(40);
+    const textTrace = h.serviceLogs.find((entry) => entry.msg === 'line.ai.api_trace' && entry.segment === 'text');
+    const commandTrace = h.serviceLogs.find((entry) => entry.msg === 'line.ai.api_trace' && entry.segment === 'command');
+    assert.ok(textTrace && commandTrace, 'both a text and a command api_trace were emitted');
+    assert.equal(textTrace.loadingRequested, true, 'the text segment reports the batch bound loading');
+    assert.equal(commandTrace.loadingRequested, false, 'the command segment never reports loading, even in a loading batch');
+  });
+
+  it('api_trace.loadingRequested reflects the batch actual bound accept-loading, not a config guess', async () => {
+    const traceFor = (h: ReturnType<typeof makeHarness>, id: string) =>
+      h.serviceLogs.find((entry) => entry.msg === 'line.ai.api_trace' && entry.webhookEventId === id);
+
+    // Flag off → no loading bound → false.
+    const off = makeHarness({ debounceMs: 0, loadingOnAcceptEnabled: false });
+    await off.service.enqueue(textEnv('r-off', 'ยอดขาย'));
+    await sleep(20);
+    assert.equal(traceFor(off, 'r-off')?.loadingRequested, false);
+
+    // Flag on, 1:1 text → loading bound → true.
+    const on = makeHarness({ debounceMs: 0, loadingOnAcceptEnabled: true, loadingAccepted: true });
+    await on.service.enqueue(textEnv('r-on', 'ยอดขาย'));
+    await sleep(20);
+    assert.equal(traceFor(on, 'r-on')?.loadingRequested, true);
+
+    // Flag on but GROUP chat → not 1:1 → no loading bound → false.
+    const grp = makeHarness({ debounceMs: 0, loadingOnAcceptEnabled: true });
+    await grp.service.enqueue(textEnv('r-grp', 'ยอดขาย', { userId: 'user-1', chatId: 'group-1' }));
+    await sleep(20);
+    assert.equal(traceFor(grp, 'r-grp')?.loadingRequested, false);
+  });
+
+  it('api_trace.loadingRequested is false for a TEXT turn whose batch bound no loading (command-opened, merged while busy)', async () => {
+    // The case that distinguishes actual truth from a config guess: flag ON + 1:1 + a text turn, yet
+    // its batch carries no accept-loading because a command opened the batch (during prior processing)
+    // and the text merged into it.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let blocked = false;
+    const h = makeHarness({
+      debounceMs: 0, loadingOnAcceptEnabled: true, loadingAccepted: true,
+      executeImpl: async (event) => { if (event.messageText === 'block' && !blocked) { blocked = true; await gate; } await event.beforeReply?.(); },
+    });
+    await h.service.enqueue(textEnv('blk', 'block'));       // batch0 → processing, gated (worker busy)
+    await sleep(20);
+    await h.service.enqueue(textEnv('cmd', '/company 1'));  // opens+flushes a command batch (no loading), stays pending
+    await h.service.enqueue(textEnv('q', 'ยอดขายวันนี้'));   // merges into the pending command batch (still no loading)
+    await sleep(20);
+    release();
+    await sleep(60);
+    const textTrace = h.serviceLogs.find((entry) => entry.msg === 'line.ai.api_trace' && entry.webhookEventId === 'q' && entry.segment === 'text');
+    assert.ok(textTrace, 'a text-segment trace was emitted');
+    assert.equal(textTrace.loadingRequested, false, 'text turn in a no-loading batch reports false, not a config guess');
+  });
+
+  it('re-shows processing-start loading for a batch whose accept-loading spinner was dismissed by a prior batch final (overlap)', async () => {
+    let releaseBatch1!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseBatch1 = resolve; });
+    let batch1Turn = false;
+    const h = makeHarness({
+      debounceMs: 0, loadingEnabled: true, loadingOnAcceptEnabled: true, loadingAccepted: true,
+      executeImpl: async (event) => { if (event.messageText === 'batch1' && !batch1Turn) { batch1Turn = true; await gate; } await event.beforeReply?.(); },
+    });
+    await h.service.enqueue(textEnv('b1', 'batch1'));  // idle → accept-loading (call 1), suppressed at processing
+    await sleep(20);
+    assert.deepEqual(h.loadingCalls, ['user-1'], 'batch1 accept-loading only (suppressed processing-start)');
+    await h.service.enqueue(textEnv('b2', 'batch2'));  // during batch1 processing → accept-loading (call 2), firedDuringProcessing
+    await sleep(20);
+    assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+    releaseBatch1();                                    // batch1 final dismisses batch2's spinner
+    await sleep(60);
+    assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'batch2 re-showed processing-start loading (not suppressed)');
   });
 });

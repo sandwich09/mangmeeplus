@@ -15,8 +15,10 @@ import {
   LINE_AI_CONTEXT_WINDOW_MINUTES,
   LINE_AI_CONTEXT_MAX_TURNS,
   LINE_AI_RUNTIME_CONTRACT_VERSION,
+  parseLineAiPreparedPlan,
+  asIntakeRouteIntent,
 } from '@watchdog-bms/contracts';
-import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
+import type { LineAiPreparedPlan, LineAiTurnRequest, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
 import type { AgentRunResult } from '../modules/line-ai/agents/agent-types';
 import { drainUsage, runWithUsageContext } from '../common/usage/usage-context';
 
@@ -63,6 +65,10 @@ export type RuntimePayload = {
   modelPolicy?: LineAiTurnRequest['modelPolicy'];
   attachments?: unknown[];
   conversationContext?: LineAiTurnRequest['conversationContext'];
+  /** Optional additive fused plan (latency/autonomy §7); re-parsed and bounded here, never cast. */
+  preparedPlan?: LineAiPreparedPlan;
+  /** Trusted outer intake provenance; re-validated by explicit membership here, never cast. */
+  intakeIntent?: LineIntakeRouteIntent;
 };
 
 type RuntimeOrchestrator = { run(req: LineAiTurnRequest): Promise<AgentRunResult> };
@@ -239,6 +245,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
       modelPolicy: parseModelPolicy(p['modelPolicy']),
       attachments,
       conversationContext: parseConversationContext(p['conversationContext']),
+      preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
+      intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
     };
   }
   if (typeof p['turnId'] !== 'string' || !p['turnId']) return null;
@@ -263,6 +271,8 @@ export function validatePayload(body: unknown): RuntimePayload | null {
     modelPolicy: parseModelPolicy(p['modelPolicy']),
     attachments,
     conversationContext: parseConversationContext(p['conversationContext']),
+    preparedPlan: parseLineAiPreparedPlan(p['preparedPlan']),
+    intakeIntent: asIntakeRouteIntent(p['intakeIntent']),
   };
 }
 
@@ -277,6 +287,8 @@ export function payloadToTurnRequest(p: RuntimePayload): LineAiTurnRequest {
     attachments: (p.attachments ?? []) as LineAiTurnRequest['attachments'],
     conversationContext: p.conversationContext,
     ...(p.entitledFeatureKeys && { entitledFeatureKeys: p.entitledFeatureKeys }),
+    ...(p.preparedPlan ? { preparedPlan: p.preparedPlan } : {}),
+    ...(p.intakeIntent ? { intakeIntent: p.intakeIntent } : {}),
     userContext: {
       lineUserId: '',
       internalUserId: p.userId,

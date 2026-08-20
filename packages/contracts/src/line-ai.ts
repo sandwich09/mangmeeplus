@@ -178,6 +178,18 @@ export type LineAiTurnRequest = {
   valueCandidates?: LineAiValueCandidates;
   /** Item 10F: the chat's open waiting_user ledger entries (bounded). DATA, never instructions. */
   openClarifications?: LineAiOpenClarification[];
+  /** Optional additive prepared plan the API forwarded (latency/autonomy §7). Untrusted model
+   *  advice with no authority; every receiver re-parses it with `parseLineAiPreparedPlan`. Absent
+   *  from an older API caller — the gateway/runtime then falls back to full orchestration. */
+  preparedPlan?: LineAiPreparedPlan;
+  /**
+   * TRUSTED intake provenance: the outer LINE intake-route intent, bound ONLY by the API from the
+   * already-parsed `LineIntakeRoutePlan.intent` (never from the untrusted `preparedPlan` wrapper).
+   * Every receiver (API → Gateway → AgentCore) re-validates it against `LINE_INTAKE_ROUTE_INTENTS`
+   * with no unsafe cast. The simple-read lane requires this to equal `BUSINESS_READ_QUESTION`; it
+   * grants no authority, only gates which lane may consider the request.
+   */
+  intakeIntent?: LineIntakeRouteIntent;
 };
 
 export type LineAiAttachment = {
@@ -374,6 +386,32 @@ export type LineIntakeRouteIntent =
   | 'CLARIFY'
   | 'UNSUPPORTED';
 
+/** Runtime mirror of {@link LineIntakeRouteIntent} (parity-tested) so bounded parsers can validate an
+ *  untrusted intake-intent string by explicit membership instead of a blind cast. */
+export const LINE_INTAKE_ROUTE_INTENTS = [
+  'EXPENSE_DOCUMENT_CAPTURE',
+  'EXPENSE_DRAFT_CONTINUATION',
+  'EXPENSE_CAPTURE_CORRECTION',
+  'SUBSTITUTE_RECEIPT_CONTINUATION',
+  'BUSINESS_DOCUMENT_REFERENCE',
+  'SIGNATURE_UPLOAD_TICKET',
+  'BUSINESS_READ_QUESTION',
+  'MUTATION_REQUEST_REFUSAL',
+  'CLARIFY',
+  'UNSUPPORTED',
+] as const satisfies readonly LineIntakeRouteIntent[];
+
+const LINE_INTAKE_ROUTE_INTENT_SET: ReadonlySet<string> = new Set(LINE_INTAKE_ROUTE_INTENTS);
+
+/** Receiver-boundary validator: narrow an untrusted value to a known intake-route intent by explicit
+ *  membership (no unsafe cast), or `undefined`. Used by every API→Gateway→AgentCore hop that carries
+ *  the trusted outer `LineAiTurnRequest.intakeIntent` provenance. */
+export function asIntakeRouteIntent(value: unknown): LineIntakeRouteIntent | undefined {
+  return typeof value === 'string' && LINE_INTAKE_ROUTE_INTENT_SET.has(value)
+    ? (value as LineIntakeRouteIntent)
+    : undefined;
+}
+
 /** Prisma `AiTurnIntent` mirror (parity-tested). Distinct from apps/api's
  *  `AI_TURN_INTENTS`, which is the narrower normalization subset. */
 export const AI_TURN_INTENT_VALUES = [
@@ -435,6 +473,24 @@ export type LineExpenseDraftRouteContext = {
   questions: Array<{ id: string; prompt: string; itemRef?: string }>;
 };
 
+/**
+ * Bounded, server-derived substitute-receipt context for semantic routing (substitute-semantic-routing
+ * spec §4). It carries only what the ROUTE decision needs — no ids, no free text, no permission
+ * material — and is DATA the model may read to disambiguate a substitute continuation from a new
+ * expense or a side question. It NEVER grants authority; the API re-reads authoritative state before any
+ * dispatch.
+ */
+export type LineIntakeSubstituteContext = {
+  /** Whether this user has an open/paused substitute-receipt workflow (or more than one). */
+  workflowState: 'none' | 'open' | 'paused' | 'multiple';
+  /** True when an open workflow is currently waiting on a specific question. */
+  hasPendingQuestion: boolean;
+  /** Bounded stage of the prepared workflow, or 'none' when nothing is in progress. */
+  preparedState: 'none' | 'in_progress' | 'prepared';
+  /** Count of recent LINE-captured expenses that could be a substitute target (bounded, small). */
+  recentCandidateCount: number;
+};
+
 export type LineIntakeRouteRequest = {
   requestId: string;
   companyId: string;
@@ -460,7 +516,34 @@ export type LineIntakeRouteRequest = {
   recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
   /** Resumable persistent drafts for this linked user/company/personal chat (bounded <= 5). */
   activeExpenseDrafts?: LineExpenseDraftRouteContext[];
+  /** Bounded server-derived substitute-receipt context for semantic routing. DATA, never authority. */
+  substituteContext?: LineIntakeSubstituteContext;
+  /** TRUSTED capability flags the API turns on per request (from server config). When all are absent/off
+   *  the intake router uses the EXACT legacy prompt/payload/catalog/cost — no fused or substitute
+   *  sections are constructed. Never derived from the message or client. Bound at the receiver with
+   *  {@link asIntakeRouterCapabilities} — only a literal `true` activates a section. */
+  capabilities?: LineIntakeRouterCapabilities;
 };
+
+/** The two trusted, server-set intake-router capability flags. */
+export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean };
+
+/** Receiver-boundary validator for the TRUSTED capability flags (same role as {@link asIntakeRouteIntent}).
+ *  Accepts ONLY a literal boolean `true` for each of the two known keys; EVERY other shape — a truthy
+ *  non-boolean (`1`, `"true"`, `{}`, `[]`), a `false`, `null`, a non-object, or any unknown/nested key — is
+ *  discarded. So a malformed or hostile `line-intake-route` body can NEVER activate the fused-plan or
+ *  substitute prompt sections (and their ~21KB catalog / larger token budget): activation requires the API
+ *  to have set an actual boolean `true`. Returns a bounded object carrying at most the two known keys. */
+export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapabilities {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const caps: LineIntakeRouterCapabilities = {};
+  // OWN literal-true only: Object.hasOwn ignores anything reachable via the prototype chain (a `__proto__`
+  // key, a polluted Object.prototype), so only a real own boolean `true` the API set can activate a section.
+  if (Object.hasOwn(raw, 'fusedPlan') && raw.fusedPlan === true) caps.fusedPlan = true;
+  if (Object.hasOwn(raw, 'substituteSemantic') && raw.substituteSemantic === true) caps.substituteSemantic = true;
+  return caps;
+}
 
 /** One correction target offered to the router. The model may only select from this list. */
 export type LineIntakeCorrectionCandidate = {
@@ -526,6 +609,9 @@ export type LineIntakeRoutePlan = {
   resolvedClarificationIds?: string[];
   /** One entry per model call the gateway made for this request; absent from an older gateway. */
   usage?: AiUsageEntry[];
+  /** Optional additive fused plan (latency/autonomy §7). Additive and optional so an older
+   *  gateway that never produced one, or a caller that ignores it, both stay wire-compatible. */
+  preparedPlan?: LineAiPreparedPlan;
 };
 
 export type LineAiWebLink = {
@@ -666,6 +752,35 @@ export type AgentIntentPlan = {
   requiresHumanReview: boolean;
 };
 
+// ─── LINE AI Prepared Plan (latency/autonomy §7) ─────────────────────────────
+// One optional additive wrapper around the existing `AgentIntentPlan`; NOT a second plan
+// hierarchy. `responseMode`, `answerShape`, and `confidence` are untrusted model advice, never
+// execution authority — the server derives the lane only from verified invariants and treats
+// confidence as veto-only (a value below the simple floor forces upward fallback; it can never
+// make an ineligible plan eligible). Every receiver re-parses this with `parseLineAiPreparedPlan`
+// (packages/contracts/src/line-ai-prepared-plan.ts) and never casts raw wire JSON into the type.
+
+export type LineAiPreparedPlanComplexity = 'simple' | 'complex';
+export type LineAiPreparedPlanResponseMode =
+  | 'deterministic' | 'casual_composer' | 'simple_grounded' | 'full_agentic';
+export type LineAiPreparedPlanAnswerShape = 'single_metric' | 'list' | 'summary' | 'comparison';
+
+export type LineAiPreparedCall = {
+  toolName: string;
+  input: Record<string, unknown>;
+};
+
+export type LineAiPreparedPlan = {
+  version: 1;
+  complexity: LineAiPreparedPlanComplexity;
+  /** Untrusted model advice; veto-only, never grants authority. */
+  confidence: number;
+  intentPlan: AgentIntentPlan;
+  proposedCalls: LineAiPreparedCall[];
+  responseMode: LineAiPreparedPlanResponseMode;
+  answerShape?: LineAiPreparedPlanAnswerShape;
+};
+
 export type AgentFact = {
   label: string;
   value: string;
@@ -701,6 +816,9 @@ export type SpecialistOutput = {
   requiresHumanReview: boolean;
   /** Bounded raw tool data snapshots for the model answer layer (grounding source). */
   toolData?: Array<{ tool: string; data: unknown }>;
+  /** As-of timestamp of the primary successful tool result, carried so a deterministic formatter can
+   *  state data freshness without re-invoking the tool. Absent when no tool returned a dated result. */
+  asOf?: string;
 };
 
 /** Error codes for domain-level failures. */

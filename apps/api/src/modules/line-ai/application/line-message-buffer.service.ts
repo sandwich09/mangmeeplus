@@ -26,7 +26,9 @@ import {
 import type { LineTextEvent, LineReceiptUploadEvent } from './use-cases/process-line-webhook.use-case';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
 import {
+  buildLineAiApiTrace,
   bufferAtCapacity,
+  debounceCohortMs,
   fittingPrefixCount,
   joinGroupText,
   lineWaitStatusText,
@@ -77,16 +79,40 @@ export type LineBufferEnvelope = {
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วส่งอีกครั้งนะคะ';
 const DISPATCH_ERROR_REPLY = '⏳ ขออภัยค่ะ ระบบตอบกลับไม่ได้ชั่วคราว กรุณาลองส่งข้อความอีกครั้งนะคะ';
 
+/** Accept-time loading request BOUND to one buffer/batch (never a global chat slot), so a later batch
+ *  can neither overwrite it nor have it consumed by an earlier batch's turn. `consumed` makes exactly
+ *  one content turn in its own batch await it. `firedDuringProcessing` records that a prior batch was
+ *  still in flight when this request was made, so its spinner will be dismissed by that prior batch's
+ *  final and this batch must re-show processing-start loading rather than suppress it. */
+type BatchLoading = { promise: Promise<boolean>; webhookEventId: string; consumed: boolean; firedDuringProcessing: boolean };
+
+type PendingMeta = { firstAcceptedAt: number; flushedAt: number; loading: BatchLoading | null };
+
 type ChatState = {
   chatId: string;
   lineUserId: string;
   messagingChannelId: string;
+  /** Effective debounce for this chat: the configured value, or the experiment cohort when the
+   *  debounce experiment is on and this (company, chat) resolved to one. */
+  debounceMs: number;
   /** Debouncing bubbles — not yet committed to a batch. */
   open: LineBufferItem[];
-  firstOpenAt: number | null;
+  /** Durable-acceptance instant of the first bubble in the open buffer — the timing anchor. */
+  firstAcceptedAt: number | null;
+  /** Logical timestamp the open buffer is scheduled to flush (from accepted times). Drives the
+   *  deterministic gap<=debounce join / gap>debounce split on the next bubble; the backstop timer is
+   *  armed strictly AFTER this, independent of timer-callback order. */
+  scheduledFlushAt: number | null;
   debounceTimer: NodeJS.Timeout | null;
+  /** Incremented on every (re)schedule; a fired timer whose captured generation is stale is ignored. */
+  flushGeneration: number;
+  /** Accept-time loading for the CURRENT open buffer; moves into pendingMeta.loading at flush so it
+   *  rides with its own batch. */
+  openLoading: BatchLoading | null;
   /** Flushed batch waiting for the worker; absorbs later flushes until dequeued. */
   pending: LineBufferItem[] | null;
+  /** Ingress/queue timing + the bound accept-loading for the pending batch (spec §10/§12). */
+  pendingMeta: PendingMeta | null;
   processing: boolean;
   /** One rate-limit reply per congestion episode, not per dropped bubble. */
   overflowNotified: boolean;
@@ -108,9 +134,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
     private readonly processWebhook: ProcessLineWebhookUseCase,
   ) {}
 
-  private get timing(): LineBufferFlushTiming {
+  private timingFor(state: ChatState): LineBufferFlushTiming {
     return {
-      debounceMs: this.config.lineAiBufferDebounceMs,
+      debounceMs: state.debounceMs,
       maxWaitMs: this.config.lineAiBufferMaxWaitMs,
     };
   }
@@ -163,12 +189,12 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // Company-context controls intentionally remain available while acceptance is pending so a
     // multi-company user can switch to the intended membership. Their raw command/reply token is
     // memory-only; a crash may require the harmless control to be resent.
-    const accepted = await this.acceptEvent(envelope, legal.status !== 'required');
-    if (!accepted) return;
+    const acceptedAt = await this.acceptEvent(envelope, legal.status !== 'required');
+    if (acceptedAt === null) return;
     // Everything below is synchronous: no interleaving between state reads and
     // writes, which is what keeps the buffer race-free on the event loop.
     try {
-      this.appendAccepted(envelope);
+      this.appendAccepted(envelope, acceptedAt, legal.companyId);
     } catch (error) {
       // The event row exists but the payload never reached memory. Mark it
       // immediately reclaimable before returning non-2xx to LINE.
@@ -256,7 +282,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
    *  in someone's buffer/turn → drop; old `received` row → orphaned by a crash,
    *  and the payload comes back either from a LINE redelivery or from the orphan
    *  sweep replaying `payloadJson` (spec §11.1) → accept. */
-  private async acceptEvent(envelope: LineBufferEnvelope, persistPayload = true): Promise<boolean> {
+  private async acceptEvent(envelope: LineBufferEnvelope, persistPayload = true): Promise<number | null> {
     const webhookEventId = envelope.item.webhookEventId;
     // The payload rides the row this call already writes before the 200 ack — no extra query,
     // and it is what the orphan sweep replays when this process dies mid-turn.
@@ -274,7 +300,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
         },
       });
       this.emitAccepted(webhookEventId);
-      return true;
+      // Exact durable-acceptance instant: captured only once the row is committed. Threaded onward
+      // as the single anchor for the debounce boundary, wait-status timer, and API trace.
+      return Date.now();
     } catch {
       // Unique violation (row exists) or DB hiccup — inspect the row.
     }
@@ -284,31 +312,31 @@ export class LineMessageBufferService implements OnModuleDestroy {
       // webhook and let LINE redeliver instead of acknowledging data loss.
       throw new Error('LINE_WEBHOOK_EVENT_NOT_DURABLE');
     }
-    if (existing.status !== 'received') return false;
+    if (existing.status !== 'received') return null;
     if (existing.errorCode?.startsWith('RETRYABLE_')) {
       const reclaimed = await this.prisma.client.lineWebhookEventLog.updateMany({
         where: { webhookEventId, status: 'received', errorCode: existing.errorCode },
         data: { errorCode: null, processedAt: null, payloadJson },
       });
-      return reclaimed.count === 1;
+      return reclaimed.count === 1 ? Date.now() : null;
     }
     const orphaned = Date.now() - (existing.processedAt ?? existing.createdAt).getTime() >= LINE_BUFFER_ORPHAN_REPROCESS_MS;
-    if (!orphaned) return false;
+    if (!orphaned) return null;
     if (persistPayload) {
-      return true;
+      return Date.now();
     }
     const scrubbed = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { webhookEventId, status: 'received' },
       data: { payloadJson: Prisma.DbNull },
     });
-    return scrubbed.count === 1;
+    return scrubbed.count === 1 ? Date.now() : null;
   }
 
   private emitAccepted(webhookEventId: string): void {
     this.logger.log({ msg: 'line.ai.accepted', surface: 'employee_oa', webhookEventId });
   }
 
-  private appendAccepted(envelope: LineBufferEnvelope): void {
+  private appendAccepted(envelope: LineBufferEnvelope, acceptedAt: number, companyId?: string): void {
     const key = `${envelope.chatId}:${envelope.lineUserId}`;
     let state = this.chats.get(key);
     if (!state) {
@@ -316,10 +344,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
         chatId: envelope.chatId,
         lineUserId: envelope.lineUserId,
         messagingChannelId: envelope.messagingChannelId,
+        debounceMs: this.config.lineAiBufferDebounceMs,
         open: [],
-        firstOpenAt: null,
+        firstAcceptedAt: null,
+        scheduledFlushAt: null,
         debounceTimer: null,
+        flushGeneration: 0,
+        openLoading: null,
         pending: null,
+        pendingMeta: null,
         processing: false,
         overflowNotified: false,
         drain: null,
@@ -330,7 +363,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
 
     const incoming = envelope.item;
     const kind = incoming.kind === 'text' && parseLineCompanyCommand(incoming.text) ? 'command' : incoming.kind;
-    const item = { ...incoming, kind, seq: this.seq++ } as LineBufferItem;
+    const item = { ...incoming, kind, seq: this.seq++, acceptedAt } as LineBufferItem;
+
+    // Deterministic boundary (spec §10): if the open buffer's scheduled flush already lies strictly
+    // before this bubble's accepted time, the quiet window elapsed and the open buffer is its own
+    // completed turn — flush it before this bubble opens a new one. Because the decision compares
+    // accepted timestamps, gap == debounce joins and gap > debounce splits regardless of whether the
+    // backstop timer callback has fired.
+    if (state.open.length > 0 && state.scheduledFlushAt !== null && state.scheduledFlushAt < acceptedAt) {
+      this.flushOpen(key, state);
+    }
 
     // Command fast path: an idle chat gets /company handled with zero added
     // latency. A non-idle chat must keep send order (a company switch changes
@@ -339,30 +381,94 @@ export class LineMessageBufferService implements OnModuleDestroy {
     const idle = state.open.length === 0 && !state.pending && !state.processing;
     if (item.kind === 'command' && idle) {
       state.pending = [item];
+      state.pendingMeta = { firstAcceptedAt: acceptedAt, flushedAt: acceptedAt, loading: null };
       this.kickWorker(key, state);
       return;
     }
 
     state.open.push(item);
-    if (state.firstOpenAt === null) state.firstOpenAt = Date.now();
+    if (state.firstAcceptedAt === null) {
+      state.firstAcceptedAt = acceptedAt;
+      // Freeze the debounce cohort when a NEW open batch starts and hold it for the whole batch. Cluster
+      // is (company, CHAT) per spec §10 — keyed on chatId only, NOT the buffer key (chat+user, kept for
+      // isolation): every user in one group/chat shares one cohort while their buffers stay independent,
+      // and two users resolving DIFFERENT authoritative companies are different clusters. A later bubble
+      // (even one that resolves a different/late company) must not silently re-assign an open batch;
+      // an unresolved company (no companyId) stays on the configured debounce.
+      state.debounceMs = debounceCohortMs({
+        enabled: this.config.lineAiDebounceExperimentEnabled,
+        secret: this.config.lineAiDebounceExperimentSecret,
+        assignmentKey: companyId ? `${companyId}:${envelope.chatId}` : '',
+        configuredMs: this.config.lineAiBufferDebounceMs,
+      });
+      // Request loading once, when a non-command bubble opens a NEW batch (no pending batch this
+      // buffer would merge into), right after durable acceptance and before the debounce wait. The
+      // promise is bound to THIS open buffer and rides into its own pending batch. Commands stay
+      // immediate / no-loading.
+      if (item.kind !== 'command' && state.pending === null) this.startLoadingOnAccept(state, item.webhookEventId);
+    }
 
-    if (item.kind === 'command' || bufferAtCapacity(state.open) || this.timing.debounceMs === 0) {
+    if (item.kind === 'command' || bufferAtCapacity(state.open) || state.debounceMs === 0) {
       this.flushOpen(key, state);
       return;
     }
-    this.scheduleFlush(key, state);
+    this.scheduleFlush(key, state, acceptedAt);
   }
 
-  private scheduleFlush(key: string, state: ChatState): void {
-    if (state.debounceTimer) clearTimeout(state.debounceTimer);
-    const delay = nextFlushDelayMs(state.firstOpenAt ?? Date.now(), Date.now(), this.timing);
-    if (delay <= 0) {
-      state.debounceTimer = null;
-      this.flushOpen(key, state);
-      return;
+  /** Best-effort loading right after durable acceptance (spec §10). Default off; on, it is 1:1-only
+   *  (LINE has no group loading) and the ack is never delayed (the promise is not awaited here). The
+   *  request is BOUND to this open buffer (state.openLoading) and rides into its own pending batch, so
+   *  a later batch never overwrites it. loading_accepted is emitted only when the batch's own first
+   *  content turn consumes/awaits it (dispatchBatch), never here — so neither the request nor
+   *  loading_accepted can be observed after that batch's final answer. */
+  private startLoadingOnAccept(state: ChatState, webhookEventId: string): void {
+    // Loading-on-accept is a SUB-feature of the master loading animation: both must be on. With the master
+    // flag off there is no spinner anywhere (accept or processing-start), so this early accept path stays
+    // dark too — no LINE loading request, no loading_started telemetry.
+    if (!this.config.lineAiLoadingAnimationEnabled || !this.config.lineAiLoadingOnAcceptEnabled) return;
+    if (state.chatId !== state.lineUserId) return;
+    this.emitLoadingEvent('loading_started', webhookEventId);
+    state.openLoading = {
+      promise: this.lineReply.startLoadingAnimation(state.lineUserId).catch(() => false),
+      webhookEventId,
+      consumed: false,
+      // A prior batch in flight will dismiss this spinner with its own final reply.
+      firedDuringProcessing: state.processing,
+    };
+  }
+
+  private emitLoadingEvent(event: 'loading_started' | 'loading_accepted', webhookEventId: string): void {
+    try {
+      this.logger.log({ msg: `line.ai.${event}`, surface: 'employee_oa', webhookEventId });
+    } catch {
+      // Telemetry cannot change the outcome it observes.
     }
+  }
+
+  private scheduleFlush(key: string, state: ChatState, acceptedAt: number): void {
+    if (state.debounceTimer) clearTimeout(state.debounceTimer);
+    // The LOGICAL boundary is a pure function of accepted times (last bubble + debounce, capped by
+    // first accepted + max-wait); the next bubble's arrival compares against it (join if <=, split if >).
+    const anchor = state.firstAcceptedAt ?? acceptedAt;
+    state.scheduledFlushAt = acceptedAt + nextFlushDelayMs(anchor, acceptedAt, this.timingFor(state));
+    // Arm the quiet-buffer backstop STRICTLY AFTER the boundary (+1 ms) so a bubble arriving at exactly
+    // the boundary (gap == debounce) still joins instead of racing a timer that fires on the boundary.
+    const generation = ++state.flushGeneration;
+    const fireAt = state.scheduledFlushAt + 1;
+    const delay = Math.max(0, fireAt - Date.now());
     state.debounceTimer = setTimeout(() => {
+      // Ownership check FIRST: a stale (superseded/cleared-but-already-queued) callback whose captured
+      // generation no longer matches must not touch state — clearing state.debounceTimer here would
+      // erase the LIVE schedule's timer reference. Only the callback that still owns the current
+      // schedule proceeds and clears its own reference.
+      if (generation !== state.flushGeneration) return;
       state.debounceTimer = null;
+      if (state.open.length === 0) return;
+      // Re-arm if the logical boundary has not genuinely passed yet (clock skew / early wake).
+      if (state.scheduledFlushAt !== null && Date.now() <= state.scheduledFlushAt) {
+        this.scheduleFlush(key, state, acceptedAt);
+        return;
+      }
       this.flushOpen(key, state);
     }, delay);
   }
@@ -372,16 +478,27 @@ export class LineMessageBufferService implements OnModuleDestroy {
       clearTimeout(state.debounceTimer);
       state.debounceTimer = null;
     }
+    // Invalidate any already-queued backstop callback for the buffer being flushed.
+    state.flushGeneration += 1;
     if (state.open.length === 0) {
       this.maybeCleanup(key, state);
       return;
     }
     const items = state.open;
+    const firstAcceptedAt = state.firstAcceptedAt;
+    const openLoading = state.openLoading;
     state.open = [];
-    state.firstOpenAt = null;
+    state.firstAcceptedAt = null;
+    state.scheduledFlushAt = null;
+    state.openLoading = null;
 
     if (!state.pending) {
       state.pending = items;
+      // New batch enters the queue now, carrying THIS buffer's accept-loading. A later merge extends
+      // this same already-queued batch and preserves both its timing anchor and its bound loading;
+      // loading is only ever fired for a buffer that opens with no pending batch, so a merging buffer
+      // never carries a second loading to overwrite it.
+      state.pendingMeta = { firstAcceptedAt: firstAcceptedAt ?? items[0]?.acceptedAt ?? Date.now(), flushedAt: Date.now(), loading: openLoading };
     } else {
       // Merge-into-pending keeps queue depth structurally bounded (spec §7):
       // at most one processing batch + one pending batch + the open buffer.
@@ -436,10 +553,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
     try {
       while (state.pending) {
         const batch = state.pending;
+        const meta = state.pendingMeta;
+        const dequeuedAt = Date.now();
         state.pending = null;
+        state.pendingMeta = null;
         state.overflowNotified = false;
         try {
-          await this.dispatchBatch(state, batch);
+          await this.dispatchBatch(state, batch, meta, dequeuedAt);
         } catch (err) {
           this.logger.error({ msg: 'LINE buffer batch dispatch failed', error: (err as Error).message });
         }
@@ -463,16 +583,81 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  private async dispatchBatch(state: ChatState, batchItems: LineBufferItem[]): Promise<void> {
+  private async dispatchBatch(
+    state: ChatState,
+    batchItems: LineBufferItem[],
+    meta: ChatState['pendingMeta'] = null,
+    dequeuedAtMs: number = Date.now(),
+  ): Promise<void> {
     const items = sortBatchItems(batchItems);
     const groups = segmentBatch(items);
+    // The whole batch shares the first bubble's durable-acceptance instant as the wait-status anchor.
+    const firstAcceptedAt = meta?.firstAcceptedAt ?? items[0]?.acceptedAt ?? dequeuedAtMs;
+    // Consume THIS batch's own accept-loading exactly once, before ANY of its groups run — so the
+    // request (and its loading_accepted) is ordered strictly before every final this batch delivers,
+    // and a later batch's loading can never be consumed here.
+    const loading = meta?.loading ?? null;
+    const acceptLoadingShown = loading ? await this.consumeBatchLoading(loading) : false;
+    // Skip the duplicate processing-start loading for the first content turn ONLY when the accept
+    // request was shown AND its spinner is still up. If it was fired while a prior batch was
+    // processing, that batch's final reply has since dismissed the spinner, so re-show it instead.
+    let suppressContentLoading = acceptLoadingShown && !loading?.firedDuringProcessing;
     for (const group of groups) {
+      const suppressLoading = suppressContentLoading && group.kind !== 'command';
+      if (group.kind !== 'command') suppressContentLoading = false;
       try {
-        await this.dispatchGroup(state, group);
+        await this.dispatchGroup(state, group, firstAcceptedAt, suppressLoading);
       } catch (err) {
         this.logger.error({ msg: 'LINE buffer group dispatch failed', error: (err as Error).message });
         await this.deliverDispatchFailure(state, group);
       }
+      this.emitApiTrace(state, group, meta, dequeuedAtMs);
+    }
+  }
+
+  /** Await a batch's accept-loading before its first final, once, and emit loading_accepted on success.
+   *  Returns whether LINE accepted it (so the first content turn can decide to retry processing-start
+   *  loading if it did not). */
+  private async consumeBatchLoading(loading: BatchLoading): Promise<boolean> {
+    if (loading.consumed) return false;
+    loading.consumed = true;
+    const accepted = await loading.promise;
+    if (accepted) this.emitLoadingEvent('loading_accepted', loading.webhookEventId);
+    return accepted;
+  }
+
+  /** Emit the API-owned ingress/buffer/queue trace leg for one dispatched turn (spec §12). Telemetry
+   *  only: guarded so it can never affect the turn, correlated by webhookEventId without any raw
+   *  message text or LINE user id. Downstream stage durations are the separate `line.ai.stage` events. */
+  private emitApiTrace(
+    state: ChatState,
+    group: LineBatchGroup,
+    meta: ChatState['pendingMeta'],
+    dequeuedAtMs: number,
+  ): void {
+    try {
+      const oneToOne = state.chatId === state.lineUserId;
+      const primary = group.kind === 'command'
+        ? group.item
+        : group.kind === 'text'
+          ? group.textItems.at(-1)
+          : (group.mediaItems.at(-1) ?? group.textItems.at(-1));
+      if (!primary) return;
+      const trace = buildLineAiApiTrace({
+        webhookEventId: primary.webhookEventId,
+        oneToOne,
+        segment: group.kind,
+        firstAcceptedAtMs: meta?.firstAcceptedAt ?? null,
+        flushedAtMs: meta?.flushedAt ?? dequeuedAtMs,
+        dequeuedAtMs,
+        // Per-SEGMENT truth: this batch's actual bound accept-loading request (not a config guess), and
+        // never for a command segment — a command never requests loading even inside a batch that did.
+        // `meta.loading` survives consumption (only `consumed` flips), so it stays accurate.
+        loadingRequested: group.kind !== 'command' && meta?.loading != null,
+      });
+      this.logger.log({ msg: 'line.ai.api_trace', surface: 'employee_oa', ...trace });
+    } catch {
+      // Telemetry cannot change the outcome it observes.
     }
   }
 
@@ -543,14 +728,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  private async dispatchGroup(state: ChatState, group: LineBatchGroup): Promise<void> {
+  /** `suppressLoading` is true only for the batch's first content turn when the batch's accept-loading
+   *  was already shown — it then skips the duplicate processing-start loading. */
+  private async dispatchGroup(state: ChatState, group: LineBatchGroup, firstAcceptedAt: number, suppressLoading: boolean): Promise<void> {
     if (group.kind === 'command') {
       await this.processWebhook.execute(this.toTextEvent(state, [group.item]));
       return;
     }
 
     if (group.kind === 'text') {
-      await this.dispatchTextTurn(state, group.textItems);
+      await this.dispatchTextTurn(state, group.textItems, firstAcceptedAt, suppressLoading);
       return;
     }
 
@@ -569,23 +756,28 @@ export class LineMessageBufferService implements OnModuleDestroy {
           { ...this.toMediaEvent(state, media), beforeReply },
           deferText ? '' : caption,
         ),
+        firstAcceptedAt,
+        // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
+        suppressLoading && index === 0,
       );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
     if (deferText && group.textItems.length > 0) {
-      await this.dispatchTextTurn(state, group.textItems);
+      await this.dispatchTextTurn(state, group.textItems, firstAcceptedAt, false);
     } else {
       await this.markBatched(group.textItems.map((item) => item.webhookEventId));
     }
   }
 
-  private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[]): Promise<void> {
+  private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[], firstAcceptedAt: number, suppressLoading: boolean): Promise<void> {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
     await this.withWaitFeedback(
       state,
       lineWaitStatusText(messageText),
       (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
+      firstAcceptedAt,
+      suppressLoading,
     );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
   }
@@ -643,13 +835,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
   }
 
   /** Loading is immediate. A single contextual text is pushed only when the
-   * turn is still running after 2 s, and final delivery waits for that push. */
+   * turn is still running after 2 s (measured from durable acceptance), and final delivery waits for
+   * that push. */
   private async withWaitFeedback<T>(
     state: ChatState,
     statusText: string,
     turn: (beforeReply: () => Promise<void>) => Promise<T>,
+    firstAcceptedAt: number,
+    suppressLoading: boolean,
   ): Promise<T> {
-    const finish = await this.startWaitFeedback(state, statusText);
+    const finish = await this.startWaitFeedback(state, statusText, firstAcceptedAt, suppressLoading);
     try {
       return await turn(finish);
     } finally {
@@ -657,19 +852,32 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  private async startWaitFeedback(state: ChatState, statusText: string): Promise<() => Promise<void>> {
-    if (!this.config.lineAiLoadingAnimationEnabled || state.chatId !== state.lineUserId) {
-      return async () => {};
-    }
+  private async startWaitFeedback(state: ChatState, statusText: string, firstAcceptedAt: number, suppressLoading: boolean): Promise<() => Promise<void>> {
+    // Loading and wait-status are 1:1 only; a group chat never shows either.
+    if (state.chatId !== state.lineUserId) return async () => {};
+    if (!this.config.lineAiLoadingAnimationEnabled) return async () => {};
 
-    await this.startLoading(state);
+    // `suppressLoading` means this batch's accept-loading was actually SHOWN (LINE accepted it) and awaited
+    // (in dispatchBatch) for this first content turn, and its spinner is still up — so skip the duplicate
+    // processing-start request. Otherwise (flag off, LINE rejected the accept request, a prior batch
+    // dismissed the spinner, or a later content turn) show the processing-start spinner now.
+    if (!suppressLoading) await this.startLoading(state);
     let finished = false;
     let statusDelivery: Promise<void> | null = null;
+    // Anchor the long-wait timer to WHEN THE SPINNER ACTUALLY STARTED, not to the flag. Only when the
+    // accept-loading was genuinely shown (suppressLoading) has the spinner been up since durable
+    // acceptance, so the 2 s window counts from firstAcceptedAt. In every other case the spinner (if any)
+    // was just shown at processing start, so use the exact legacy default — a fixed 2 s from now — so a
+    // large debounce (e.g. 2,500 ms) or a REJECTED accept request never collapses the wait status to
+    // immediate.
+    const statusDelay = suppressLoading
+      ? Math.max(0, firstAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now())
+      : LINE_WAIT_STATUS_DELAY_MS;
     let timer: NodeJS.Timeout | null = setTimeout(() => {
       timer = null;
       if (finished) return;
       statusDelivery = this.sendWaitStatus(state, statusText);
-    }, LINE_WAIT_STATUS_DELAY_MS);
+    }, statusDelay);
 
     const settle = async () => {
       if (!finished) {

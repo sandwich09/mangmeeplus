@@ -13,7 +13,7 @@ import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { TyphoonOcrClient } from '../../infrastructure/typhoon-ocr.client';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
-import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -116,6 +116,11 @@ export class LineAiInternalController {
     if (!body?.requestId || !body.companyId || !body.userId || typeof body.messageText !== 'string' || !Array.isArray(body.permissions)) {
       throw new BadRequestException('Invalid intake route payload.');
     }
+    // Bound the TRUSTED capability flags at the HTTP receiver — @Body() is only a compile-time shape, so a
+    // malformed body (a truthy non-boolean, an unknown/nested key) would otherwise reach routeIntake as-is.
+    // Only a literal `true` per known key survives; everything else is discarded here AND re-checked in
+    // routeIntake (defense in depth). No caller can flip on the fused/substitute sections without one.
+    body.capabilities = asIntakeRouterCapabilities(body.capabilities);
 
     const router = new IntentRouterAgent(createProvider(this.config));
     const plan = await router.routeIntake(body);

@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import type { ExpensePaymentMethod, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
+import type { ExpensePaymentMethod, LineIntakeSubstituteContext, LineSubstituteReceiptPrefill, RequestContext, SubstituteReceiptReasonCode } from '@watchdog-bms/contracts';
 import { extractValueCandidates, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
 import type { ExpenseRecordWithRelations } from '../../domain/models/expense.model';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -21,6 +21,8 @@ const STATE_KEY = 'lineSubstituteReceiptContinuation';
 export const SCAN_NOT_LINKABLE = 'substitute_wet_signed_scan_not_linkable';
 const ACTIVE_STATUSES = new Set(['OPEN', 'PAUSED']);
 const MAX_VALUE_LENGTH = 500;
+/** Hard-ineligible blocker codes: an expense carrying any of these can never advance OR be mutated. */
+const INELIGIBLE_CODES = new Set(['expense_status_ineligible', 'source_type_ineligible', 'valid_receipt_normal_path', 'classification_ineligible', 'document_kind_ineligible', 'currency_not_supported', 'active_substitute_evidence_exists']);
 
 export type LineSubstituteReceiptValues = {
   reasonCode?: SubstituteReceiptReasonCode;
@@ -88,6 +90,11 @@ export type LineSubstituteReceiptContinuationResult = {
    *  resume capsule. Absent means the continuation owns the turn. */
   decisionUnread?: boolean;
   resumeCapsule?: string;
+  /** The exact expense id(s) this reply is asking the user to pick from or confirm — a target-selection
+   *  carries the offered shortlist, a start-confirm carries the ONE selected id. The webhook pins these on
+   *  the clarification so the next ordinal/affirmative binds to the SAME id, never the shifting recency
+   *  window. Wording snapshot only, never authorization (execute always re-checks the id). */
+  candidateExpenseIds?: string[];
 };
 
 // NFC, never NFKC: NFKC decomposes ำ (U+0E33 → U+0E4D U+0E32), which both mangles echoed user text
@@ -95,7 +102,8 @@ export type LineSubstituteReceiptContinuationResult = {
 //
 // Entry vocabulary. Deliberately a small deterministic list, not an attempt at every phrasing: the
 // intake router's semantic read is the primary way an intent is understood, and this is the fallback
-// that must still work when the router is unreachable. Two boundaries hold it in place —
+// (the off/legacy webhook path) that must still work when the router is unreachable. Two boundaries
+// hold it in place —
 //  * “ใบสำคัญรับเงิน” is a DIFFERENT, stronger document and must never enter here (R15 explains it);
 //  * a bare “ไม่มีใบเสร็จ” beside an amount is an ordinary expense capture (and a reason code), so
 //    the no-receipt phrasings are admitted only when the sender also asks what to do about it.
@@ -115,6 +123,8 @@ const SUBSTITUTE_VOCABULARY = new RegExp([
   'ไม่มี(?:ใบเสร็จ|บิล|ใบกำกับภาษี|หลักฐาน)[^]{0,12}(?:ทำยังไง|ทำไง|ทำอย่างไร|ต้องทำอะไร|ต้องทำยังไง|ทำอะไรดี)',
 ].join('|'), 'u');
 
+/** BROAD legacy matcher (canonical names + loose forms). The off/legacy webhook path uses this when the
+ *  semantic intake router is unreachable; the router's semantic read is the primary way an intent is read. */
 export function isSubstituteReceiptConversationText(text: string): boolean {
   return SUBSTITUTE_VOCABULARY.test(text.normalize('NFC').toLocaleLowerCase('th-TH'));
 }
@@ -154,6 +164,52 @@ export function substituteRequestExpenseText(text: string): string | undefined {
   const description = normalizedText(after.length >= before.length ? after : before)
     .replace(LEADING_PREPOSITION, '');
   return description.replace(/[\d,.\s]|บาท|thb|baht|฿/giu, '').length >= 4 ? description : undefined;
+}
+
+/**
+ * ANCHORED canonical explicit-start predicate: the message must be an explicit request to MAKE/ISSUE the
+ * named substitute document (an action verb + the canonical name) or be the bare canonical name — never a
+ * paraphrase, a passing mention, a definition question, or a negation. This is what proves a "start" is a
+ * safe explicit command; a semantic paraphrase must be CONFIRMED (input.confirmedStart) instead.
+ */
+export function isCanonicalSubstituteStart(text: string): boolean {
+  // NFC (not NFKC): NFKC decomposes precomposed Thai vowels like ทำ (SARA AM) into ท + ํ + า, which the
+  // precomposed regex literals below would never match. NFC keeps them composed; we still fold whitespace.
+  const t = text.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+  if (/(อะไร|คือ|ยังไง|ไหม|มั้ย|ไม่ทำ|ไม่เอา|ยังไม่|ไม่อยาก)/u.test(t)) return false;
+  const canonicalName = 'ใบรับรองแทนใบเสร็จ(?:รับเงิน)?';
+  return new RegExp(`(ทำ|ขอ|ออก|สร้าง|เริ่ม|จัดทำ)\\s*${canonicalName}`, 'u').test(t)
+    || new RegExp(`^${canonicalName}$`, 'u').test(t);
+}
+
+// The substitute document name, shared by the anchored control predicates below.
+const SUBSTITUTE_DOC_NAME = 'ใบรับรองแทนใบเสร็จ(?:รับเงิน)?';
+
+/**
+ * ANCHORED pause/cancel controls (NFC-safe, same reasoning as isCanonicalSubstituteStart). These fire only
+ * when a message ALREADY routed into a substitute workflow is an explicit pause/cancel of that work: a bare
+ * control word, OR the control verb applied to the named substitute document (Thai natural phrasing or
+ * English). A question ("…ได้ไหม"), a field answer, or a passing mention NEVER triggers a control, so no
+ * turn can silently mutate workflow state. Kept as predicates so the protected corpus phrases and the
+ * safety negatives are unit-tested against the exact runtime controls.
+ */
+export function isSubstitutePauseControl(text: string): boolean {
+  const t = text.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+  if (/(อะไร|คือ|ยังไง|ไหม|มั้ย|\?|？)/u.test(t)) return false;
+  // Short forms + the plain refusals develop's SUBSTITUTE_PAUSE admits (R15 offers “ไม่ทำต่อ” as the way
+  // out), then our natural “พัก + ใบรับรองแทนใบเสร็จ …” phrasings and the English opt-out. Anchored, so
+  // “ยังไม่ทำ”/“ไม่เอาแล้ว” (a non-committal answer) stay OUT and route as a zero-write no-op instead.
+  return /^(ไว้ทำทีหลัง|ไม่ทำต่อ|ไม่ต่อ|ไม่ทำ|ไม่เอา|ไม่ต้องทำ)$/u.test(t)
+    || new RegExp(`^พัก(?:${SUBSTITUTE_DOC_NAME})?(?:ไว้)?(?:ก่อน)?$`, 'u').test(t)
+    || /^pause(?: the)?(?: substitute receipt)?(?: for now)?$/u.test(t);
+}
+
+export function isSubstituteCancelControl(text: string): boolean {
+  const t = text.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+  if (/(อะไร|คือ|ยังไง|ไหม|มั้ย|\?|？)/u.test(t)) return false;
+  return /^ไม่ทำแล้ว$/u.test(t)
+    || new RegExp(`^ยกเลิก(?:${SUBSTITUTE_DOC_NAME})?(?:อันนี้|งานนี้|นี้)?$`, 'u').test(t)
+    || /^cancel(?: this)?(?: substitute receipt)?$/u.test(t);
 }
 
 function normalizedText(value: string): string {
@@ -1226,11 +1282,41 @@ export class LineSubstituteReceiptContinuationUseCase {
     };
   }
 
+  /**
+   * Bounded READ-ONLY substitute context for the semantic router (substitute-semantic-routing spec §4).
+   * Derived from the authoritative continuation rows; it performs NO write and grants NO authority —
+   * `execute` re-reads the same rows authoritatively before any action. DATA only.
+   */
+  async substituteContext(ctx: RequestContext, input: { chatKeyHash: string; recentCandidateCount: number }): Promise<LineIntakeSubstituteContext> {
+    const rows = await this.repo.listLineSubstituteContinuationRows({
+      companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: input.chatKeyHash, scopes: ctx.scopes ?? {}, take: 5,
+    });
+    const active = rows
+      .map((row) => stateFromMetadata(row.sourceChannelMetadataJson))
+      .filter((state): state is LineSubstituteReceiptContinuation => !!state && ACTIVE_STATUSES.has(state.status));
+    const workflowState: LineIntakeSubstituteContext['workflowState'] =
+      active.length === 0 ? 'none' : active.length > 1 ? 'multiple' : active[0].status === 'PAUSED' ? 'paused' : 'open';
+    return {
+      workflowState,
+      hasPendingQuestion: active.some((state) => !!state.pendingQuestion),
+      preparedState: active.length === 0 ? 'none' : 'in_progress',
+      recentCandidateCount: Math.max(0, Math.min(input.recentCandidateCount, 5)),
+    };
+  }
+
   async execute(ctx: RequestContext, input: {
     messageText: string;
     chatKeyHash: string;
     recentCandidates: Array<{ id: string; label: string }>;
     webBaseUrl?: string;
+    /** The PRIMARY semantic dispatcher sets this so a FRESH start driven by the model's route ALONE (a
+     *  paraphrase matching none of the deterministic entry phrases) asks ONE bounded confirmation before it
+     *  creates anything. Deterministic entries (canonical / vocabulary) and the OFF/legacy path leave it
+     *  unset and open directly — preserving develop's start-on-entry behavior. */
+    requireStartConfirmation?: boolean;
+    /** The webhook sets this when the user AFFIRMATIVELY confirmed a pending substitute-start
+     *  clarification, so a paraphrase-started workflow may now be created without the canonical phrase. */
+    confirmedStart?: boolean;
   }): Promise<LineSubstituteReceiptContinuationResult> {
     // R3: the permission a link needs is checked before any target is discovered, so no link is offered.
     if (!ctx.permissions.includes('expense.review')) {
@@ -1253,12 +1339,17 @@ export class LineSubstituteReceiptContinuationUseCase {
         !!item.state && ACTIVE_STATUSES.has(item.state.status));
     const selection = ordinalSelection(input.messageText, Math.max(states.length, input.recentCandidates.length));
     let selected = states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
+    // A brand-new OPEN workflow (none → OPEN) is a real state transition that may persist even without an
+    // accepted field value; an EXISTING workflow writes ONLY on an actual accepted change (below).
+    let startedNew = false;
 
     if (!selected && states.length > 1) {
       // The question is pending so the dispatcher keeps the clarification open and routes “1” back here.
+      // candidateExpenseIds pins the offered shortlist so the ordinal binds to the SAME id next turn.
       const question = 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)';
       return {
         handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [], pendingQuestion: question,
+        candidateExpenseIds: states.map((item) => item.state.expenseId),
         replyText: formatStandalone({
           headline: 'มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ ยังไม่ทราบว่าจะทำงานไหนต่อค่ะ',
           choices: states.map((item) => item.state.expenseId),
@@ -1296,6 +1387,7 @@ export class LineSubstituteReceiptContinuationUseCase {
           // next unrelated message must not be captured as an answer.
           ...(hasChoices ? { pendingQuestion: question } : {}),
           acceptedFields: [], blockers: [],
+          ...(input.recentCandidates.length > 0 ? { candidateExpenseIds: input.recentCandidates.map((item) => item.id) } : {}),
         };
       }
       const expenseId = input.recentCandidates[candidateIndex].id;
@@ -1307,6 +1399,13 @@ export class LineSubstituteReceiptContinuationUseCase {
       const live = expense.substituteReceiptEvidence;
       if (live && live.status !== 'SUPERSEDED') return this.existingEvidenceCard(ctx, input, expense, live);
       const now = new Date().toISOString();
+      // A brand-new OPEN workflow (none → OPEN). The save gate below persists it whenever the start is
+      // CONFIRMED (see startConfirmed): the deterministic OFF/legacy path opens DIRECTLY on selection — an
+      // explicit canonical/vocabulary command, a webhook-confirmed affirmative, or any caller that is not
+      // the PRIMARY model-only dispatcher (requireStartConfirmation !== true), exactly as parent develop
+      // did. ONLY a PRIMARY model-only route that matches no deterministic entry must confirm first and
+      // writes nothing until it does — never opening from the model's route confidence alone.
+      startedNew = true;
       // M1: “ยกเลิก” ends the conversation step, not the answers — and the reply says so. The
       // cancelled state still holds them, so a fresh start on the same expense in the same chat picks
       // them back up instead of asking a shop owner eight questions they already answered.
@@ -1330,17 +1429,50 @@ export class LineSubstituteReceiptContinuationUseCase {
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, selected.state.expenseId, undefined, ctx.scopes ?? {});
     if (!expense) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการของงานนี้ไม่อยู่ในสิทธิ์หรือสาขาปัจจุบันของคุณแล้วค่ะ');
     const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, selected.state.workflowId);
-    const lowered = normalizedText(input.messageText).toLocaleLowerCase('th-TH');
-    // R15's question offers “ไม่ทำต่อ” as the way out, so the plain refusals join the pause set. They
-    // stay whole-message anchored, which is what keeps “ไม่มี” (the evidence answer) and “ไม่มีใบเสร็จ”
-    // (a reason code) out of it.
-    const pause = SUBSTITUTE_PAUSE.test(lowered);
-    const cancel = SUBSTITUTE_CANCEL.test(lowered);
+    // A brand-new workflow (none → OPEN) may be CREATED only by an EXPLICIT start: a canonical command, a
+    // DETERMINISTIC entry phrase develop's vocabulary already recognises (isSubstituteReceiptConversationText
+    // — the “understand it as people phrase it” fix), OR a webhook-confirmed affirmative to a prior
+    // substitute-start clarification. What it must NEVER open from is the SEMANTIC route's confidence alone:
+    // a model-only paraphrase that matches none of those asks ONE bounded confirmation and writes NOTHING
+    // (the webhook persists only an intake-ledger clarification). Permission is already gated at the top of
+    // execute; an existing workflow needs no re-confirmation to continue.
+    const explicitStart = isCanonicalSubstituteStart(input.messageText)
+      || isSubstituteReceiptConversationText(input.messageText)
+      || input.confirmedStart === true;
+    // A fresh start is CONFIRMED (safe to open AND to save) when it is explicit, OR when the caller is not
+    // the PRIMARY model-only dispatcher (requireStartConfirmation !== true) — the OFF/legacy path and every
+    // deterministic caller open on selection, exactly as parent develop did. ONLY the PRIMARY model-only
+    // route (requireStartConfirmation === true) that is not otherwise explicit must confirm first. This is
+    // the single source of truth for both the confirm-gate below and the save gate: an ordinal “1” selecting
+    // a legacy candidate is a real start and must persist, not be re-asked forever.
+    const startConfirmed = explicitStart || input.requireStartConfirmation !== true;
+    if (startedNew && !startConfirmed) {
+      const confirmQuestion = 'จะเริ่มทำใบรับรองแทนใบเสร็จรับเงินสำหรับรายการนี้ใช่ไหมคะ พิมพ์ “ใช่” เพื่อเริ่ม หรือ “ไม่” เพื่อยกเลิกค่ะ';
+      return {
+        handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
+        replyText: confirmQuestion, pendingQuestion: confirmQuestion,
+        expenseId: expense.id, candidateExpenseIds: [expense.id],
+      };
+    }
+    // Anchored NFC-safe controls: our natural “พัก … ใบรับรองแทนใบเสร็จ …”/English forms PLUS develop's
+    // short forms and plain refusals (R15's “ไม่ทำต่อ” way out) — “ยังไม่ทำ”/“ไม่เอาแล้ว” stay out (no-op).
+    const pause = isSubstitutePauseControl(input.messageText);
+    const cancel = isSubstituteCancelControl(input.messageText);
     if (pause || cancel) {
-      // Clear the decision: otherwise a paused “ready” workflow keeps pendingDecision, the taught
-      // resume phrase falls into answerIssueDecision's non-answer branch, and a later “1” prepares
-      // straight out of a PAUSED workflow. Resuming re-derives it cleanly. (DECLINE and EDIT keep it
-      // on purpose — those stay inside the decision; pause and cancel leave it.)
+      // Authoritative ELIGIBILITY ahead of the control save too (permission already gated above): a
+      // hard-ineligible expense cannot have its substitute workflow mutated from LINE. This reuses the
+      // same authoritative eligibility source the accept/save path uses, so no control bypasses it.
+      const controlIssues = collectSubstituteReceiptEligibilityIssues(expense, selected.state.acceptedValues.reasonCode);
+      if (controlIssues.some((issue) => INELIGIBLE_CODES.has(issue.code))) {
+        return {
+          handled: true, status: 'INELIGIBLE', expenseId: expense.id, workflowId: selected.state.workflowId,
+          acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath,
+          replyText: formatResult({ status: 'INELIGIBLE', expense, state: selected.state, acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath }),
+        };
+      }
+      // Clear the decision: otherwise a paused “ready” workflow keeps pendingDecision, the taught resume
+      // phrase falls into answerIssueDecision's non-answer branch, and a later “1” prepares straight out
+      // of a PAUSED workflow. Resuming re-derives it cleanly. (DECLINE and EDIT keep it on purpose.)
       const nextState = {
         ...selected.state,
         status: pause ? 'PAUSED' as const : 'CANCELLED' as const,
@@ -1430,18 +1562,32 @@ export class LineSubstituteReceiptContinuationUseCase {
       targetRevision: expense.updatedAt.toISOString(),
       lastActivityAt: acceptedAt,
     };
-    const saved = await this.repo.saveLineSubstituteContinuation({
-      companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
-      expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {}, continuation: nextState as unknown as Record<string, unknown>,
-      // B1: the category is an EXPENSE field, not a conversation field — the preflight, the web
-      // wizard and `validateEligibility` all read it off the row. Written in the same CAS write that
-      // stores the state (never advancing the revision twice), on the one turn it is answered, and
-      // only ever an ACTIVE category of this company because `resolveCategoryId` matched it there.
-      ...(acceptedNow.expenseCategoryId ? { expenseCategoryId: acceptedNow.expenseCategoryId } : {}),
-    });
-    const state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
-    const ineligible = blockers.some((item) => ['expense_status_ineligible', 'source_type_ineligible', 'valid_receipt_normal_path', 'classification_ineligible', 'document_kind_ineligible', 'currency_not_supported', 'active_substitute_evidence_exists'].includes(item.code));
+    const ineligible = blockers.some((item) => INELIGIBLE_CODES.has(item.code));
     const forbidden = blockers.some((item) => item.code === 'expense_review_forbidden');
+    const hasAcceptedChange = Object.keys(acceptedNow).length > 0;
+    // Permission/feature/eligibility/preflight rejection happens BEFORE any save: a FORBIDDEN or
+    // INELIGIBLE turn writes nothing. A fresh OPEN is created whenever the start is CONFIRMED (see
+    // startConfirmed — canonical/vocabulary/affirmative, or any non-PRIMARY-model-only caller such as the
+    // OFF/legacy ordinal “1”); a PRIMARY model-only paraphrase already returned to confirm above and never
+    // reaches here. An existing active workflow writes on an actual accepted change, a real STATUS
+    // transition (a taught-phrase RESUME reopens PAUSED → OPEN — develop's F6), OR a pendingDecision
+    // transition (the issue decision comes on/off the table). A pure question/negation/no-op on an
+    // already-OPEN workflow changes none of these, so it leaves state untouched (zero save, zero revision).
+    const statusChanged = selected.state.status !== nextState.status;
+    const decisionChanged = selected.state.pendingDecision !== nextState.pendingDecision;
+    let state = nextState;
+    if (!forbidden && !ineligible && ((startedNew && startConfirmed) || hasAcceptedChange || statusChanged || decisionChanged)) {
+      const saved = await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {}, continuation: nextState as unknown as Record<string, unknown>,
+        // B1: the category is an EXPENSE field, not a conversation field — the preflight, the web wizard
+        // and `validateEligibility` all read it off the row. Written in the SAME CAS write that stores the
+        // state (never advancing the revision twice), on the one turn it is answered, and only ever an
+        // ACTIVE category of this company because `resolveCategoryId` matched it there.
+        ...(acceptedNow.expenseCategoryId ? { expenseCategoryId: acceptedNow.expenseCategoryId } : {}),
+      });
+      state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+    }
     const status = forbidden ? 'FORBIDDEN' as const : ineligible ? 'INELIGIBLE' as const : blockers.length ? 'BLOCKED' as const : 'READY_FOR_WEB' as const;
     const targetPath = forbidden
       ? undefined
