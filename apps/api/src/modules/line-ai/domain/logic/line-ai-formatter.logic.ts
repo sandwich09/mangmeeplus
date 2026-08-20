@@ -1,10 +1,10 @@
 /**
  * Pure domain logic for LINE AI answer formatting.
- * Thai-first, concise, with source labels and safe web links.
+ * Thai-first and concise. Refusal copy and answer templates only — source labels and web links
+ * are composed by the AI Gateway and rendered by `formatLineReply`.
  * No NestJS, Prisma, HTTP, LINE SDK, AI provider, or storage imports.
  */
-import type { LineAiRefusalReason, LineAiWebLink } from '@watchdog-bms/contracts';
-import type { SourceRef } from '@watchdog-bms/contracts';
+import type { LineAiRefusalReason } from '@watchdog-bms/contracts';
 // One base-URL resolution for the whole app. The previous local const fell back to the production
 // host, so any environment without WEB_BASE_URL/PUBLIC_BASE_URL sent its users to production.
 import { webLink } from '../../../../common/http/web-link';
@@ -51,15 +51,10 @@ export function formatRefusal(reason: LineAiRefusalReason, webPath?: string): st
   return base;
 }
 
-// ---- Source ref formatting ----
-
-export function buildSourceLabels(sourceRefs: SourceRef[]): string[] {
-  return sourceRefs.map((ref) => ref.label);
-}
-
-export function buildWebLinks(sourceRefs: SourceRef[]): LineAiWebLink[] {
-  return sourceRefs.flatMap((ref) => (ref.webPath ? [{ label: ref.label, path: webLink(ref.webPath) }] : []));
-}
+// Source labels and web links are NOT built here. The AI Gateway owns both — it derives them from
+// the same sourceRefs (`response-composer.agent.ts` filters `webPath`; `orchestrator.agent.ts` maps
+// labels) — and the API only renders what it is handed, in `formatLineReply`. The duplicate pair
+// that used to sit here had no caller in this repo's history and read as if the feature were unwired.
 
 // ---- Thai answer templates ----
 
