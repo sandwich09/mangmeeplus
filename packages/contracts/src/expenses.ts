@@ -224,6 +224,77 @@ export function vatModeRequiresRate(vatMode: ExpenseVatMode): boolean {
   return vatMode === 'VAT_INCLUDED' || vatMode === 'VAT_EXCLUDED';
 }
 
+export const EXPENSE_VAT_SOURCE_INPUT_TYPES = ['RATE', 'AMOUNT', 'BOTH', 'NONE'] as const;
+export type ExpenseVatSourceInputType = (typeof EXPENSE_VAT_SOURCE_INPUT_TYPES)[number];
+export type ExpenseVatSourceOrigin = 'OCR' | 'REVIEWER' | 'IMPORT';
+export type ExpenseVatReconciliationStatus =
+  | 'NOT_APPLICABLE'
+  | 'MATCHED'
+  | 'CALCULATED_ONLY'
+  | 'SOURCE_ONLY'
+  | 'MISMATCH'
+  | 'NEEDS_REVIEW'
+  | 'LEGACY_UNAVAILABLE';
+
+export type ExpenseVatSourceLineInput = {
+  lineNumber: number;
+  inputType: ExpenseVatSourceInputType;
+  vatRatePercent?: string;
+  vatAmount?: string;
+};
+
+/** Source intent only. Calculated/accepted values are server-owned. */
+export type ExpenseVatSourceInput = {
+  inputType: ExpenseVatSourceInputType;
+  vatRatePercent?: string;
+  vatAmount?: string;
+  lines?: ExpenseVatSourceLineInput[];
+};
+
+export type ExpenseVatCaptureSnapshotV1 = {
+  version: 1;
+  source: {
+    inputType: ExpenseVatSourceInputType;
+    origin: ExpenseVatSourceOrigin;
+    vatRatePercent: string | null;
+    vatAmount: string | null;
+    taxableAmount: string | null;
+    grossAmount: string | null;
+    capturedAt: string;
+    evidenceRefs?: string[];
+    lineSources?: Array<ExpenseVatSourceLineInput & {
+      origin: ExpenseVatSourceOrigin;
+      evidenceRefs?: string[];
+    }>;
+  };
+  calculation: {
+    formula: 'INCLUDED' | 'EXCLUDED' | 'ZERO' | 'NOT_APPLICABLE' | 'MIXED';
+    vatRatePercent: string | null;
+    preVatAmount: string;
+    vatBaseAmount: string;
+    vatAmount: string;
+    grossAmount: string;
+    lineResults: Array<{
+      lineNumber: number;
+      vatRatePercent: string | null;
+      calculatedTaxableAmount: string;
+      acceptedTaxableAmount: string;
+      calculatedVatAmount: string;
+      acceptedVatAmount: string;
+      residualAdjustment: string;
+    }>;
+    roundingMode: 'HALF_UP';
+    decimalPlaces: 2;
+    calculationVersion: 'expense-vat-v1';
+  };
+  reconciliation: {
+    status: ExpenseVatReconciliationStatus;
+    acceptedSource: 'SOURCE_AMOUNT' | 'CALCULATED' | null;
+    differenceAmount: string | null;
+    toleranceAmount: '0.05';
+  };
+};
+
 /**
  * Spec §19g decision 3: the rate shown beside the mode is derived from the lines, never assumed.
  * A blank/absent rate is unknown — distinct from an explicit `0` (§19f decision 3), which is a
@@ -395,6 +466,7 @@ export type ExpenseDetail = ExpenseSummary & {
   missingReceiptReason: string | null;
   aiVerifiedFieldsJson: Record<string, unknown> | null;
   aiVerificationSummaryJson: Record<string, unknown> | null;
+  vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;
   aiVerificationConfidence: number | null;
   aiVerifiedAt: string | null;
   note: string | null;
@@ -435,6 +507,7 @@ export type CreateExpenseDraftInput = {
   accountHintKey?: string;
   note?: string;
   missingReceiptReason?: string;
+  vatSource?: ExpenseVatSourceInput;
   lines: Array<{
     lineNumber: number;
     description: string;

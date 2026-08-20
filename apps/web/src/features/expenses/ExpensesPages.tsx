@@ -32,9 +32,9 @@ import {
   lateDocumentDays,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, expensePercentToRate, expenseRateToPercent,
-  vatRateFromPrintedAmount, effectiveVatRateLabel, vatModeRequiresRate,
+  effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion,
-  formatTaxId, taxIdDigits,
+  formatTaxId, taxIdDigits, expenseVatSourceFromSnapshot, expenseVatSourceValidationMessage,
 } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
@@ -966,6 +966,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
     expenseDate: detail.expenseDate.slice(0, 10),
     vatMode: detail.vatMode,
+    vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
     lines: detail.lines.map((line) => ({
       description: line.description,
       quantity: line.quantity,
@@ -999,9 +1000,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   // Keyed by line index. `custom` is needed because "custom, nothing typed yet" and "unset" are the
-  // same stored value (''), so the preset cannot be derived from the rate alone. `printed` holds the
-  // typed baht figure — only the derived rate is saved, but the input must stay editable.
-  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean; printed?: string }>>({});
+  // same stored value (''), so the preset cannot be derived from the rate alone.
+  const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
+  const [vatSourceDirty, setVatSourceDirty] = useState(false);
   // The stored date, not the edited one: a reviewer mid-edit must not have the tax fields vanish
   // under their cursor. `hasRecordedTax` then keeps them visible for a document that already
   // carries VAT, whatever the workspace mode says (spec §7.5).
@@ -1010,7 +1011,6 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const aiGrandTotal = aiGrandTotalValue(detail.aiVerifiedFieldsJson);
   const aiSuggestion = useMemo(() => expenseAiSuggestion(detail.aiVerificationSummaryJson), [detail.aiVerificationSummaryJson]);
   const issues = useMemo(() => validateExpenseReview(values, { today: todayCivilDate(), aiGrandTotal, whtAmount: detail.whtAmount }), [values, aiGrandTotal, detail.whtAmount]);
-  const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length;
   const vendorNameIssue = fieldIssue(issues, 'vendorNameSnapshot');
   const vendorTaxIdIssue = fieldIssue(issues, 'vendorTaxIdSnapshot');
   const documentNumberIssue = fieldIssue(issues, 'vendorDocumentNumber');
@@ -1022,14 +1022,135 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
   const documentWhtPercent = expenseRatePercent(documentWhtRate ?? '');
   const withholdsTax = Number(detail.whtAmount) > 0 || values.lines.some((line) => Number(line.whtRate) > 0);
+  const vatSource = values.vatSource ?? { inputType: 'NONE' as const };
+  const vatSourceMode = vatSource.lines?.length ? 'LINES' : vatSource.inputType;
+  const vatSourceError = expenseVatSourceValidationMessage(vatSource, values.vatMode);
+  const blockingIssueCount = issues.filter((issue) => issue.severity === 'error').length + (vatSourceError ? 1 : 0);
+  const showsVatCard = showsTax || vatModeRequiresRate(values.vatMode) || vatSource.inputType !== 'NONE' || Boolean(vatSource.lines?.length) || withholdsTax;
+  const vatSnapshot = detail.vatCaptureSnapshotJson;
+  const snapshotSourceAmount = vatSnapshot?.source.vatAmount ?? (() => {
+    const amounts = vatSnapshot?.source.lineSources
+      ?.filter((line) => line.inputType === 'AMOUNT' || line.inputType === 'BOTH')
+      .map((line) => Number(line.vatAmount));
+    return amounts?.length && amounts.every(Number.isFinite)
+      ? amounts.reduce((sum, amount) => sum + amount, 0).toFixed(4)
+      : null;
+  })();
+  const vatBaseGroups = [...(vatSnapshot?.calculation.lineResults.reduce((groups, line) => {
+    const rate = Number(line.vatRatePercent);
+    if (!Number.isFinite(rate) || rate <= 0) return groups;
+    groups.set(line.vatRatePercent!, (groups.get(line.vatRatePercent!) ?? 0) + Number(line.acceptedTaxableAmount));
+    return groups;
+  }, new Map<string, number>()) ?? new Map<string, number>())]
+    .sort(([left], [right]) => Number(left) - Number(right));
+  const acceptedVatBase = vatBaseGroups.reduce((sum, [, amount]) => sum + amount, 0);
+  const collapsesVatBase = vatBaseGroups.length === 1
+    && Math.abs(acceptedVatBase - Number(detail.taxableAmount)) < 0.005;
+  const vatStatusLabel = vatSnapshot?.reconciliation.status === 'MATCHED' ? 'ตรงกับระบบ'
+    : vatSnapshot?.reconciliation.status === 'MISMATCH' ? 'ยอดไม่ตรง'
+      : vatSnapshot?.reconciliation.status === 'NEEDS_REVIEW' || vatSnapshot?.reconciliation.status === 'SOURCE_ONLY' ? 'รอตรวจ'
+        : vatSnapshot?.reconciliation.status === 'CALCULATED_ONLY' ? 'ระบบคำนวณ'
+          : 'ไม่ใช้ VAT';
 
-  useEffect(() => { setValues(reviewValues(detail)); setVatEditors({}); }, [detail.id, detail.updatedAt]);
+  useEffect(() => { setValues(reviewValues(detail)); setVatEditors({}); setVatSourceDirty(false); }, [detail.id, detail.updatedAt]);
   useEffect(() => { onValidationChange?.(blockingIssueCount); }, [blockingIssueCount, onValidationChange]);
 
   const updateLine = (index: number, field: EditableReviewLineField, value: string) => {
+    if (field !== 'description') setVatSourceDirty(true);
     setValues((current) => ({
       ...current,
       lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, [field]: value } : line),
+    }));
+  };
+
+  const setVatSourceType = (inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES') => {
+    setVatSourceDirty(true);
+    setValues((state) => ({
+      ...state,
+      vatSource: inputType === 'LINES'
+        ? {
+            inputType: 'NONE',
+            lines: state.lines.map((line, index) => {
+              const existing = state.vatSource?.lines?.find((sourceLine) => sourceLine.lineNumber === index + 1);
+              if (existing) return { ...existing, lineNumber: index + 1 };
+              const vatRatePercent = expenseRateToPercent(line.vatRate);
+              return vatRatePercent === null
+                ? { lineNumber: index + 1, inputType: 'NONE' as const }
+                : { lineNumber: index + 1, inputType: 'RATE' as const, vatRatePercent };
+            }),
+          }
+        : {
+            inputType,
+            ...((inputType === 'RATE' || inputType === 'BOTH') && {
+              vatRatePercent: state.vatSource?.lines
+                ? expenseRateToPercent(state.lines.find((line) => Number(line.vatRate) > 0)?.vatRate
+                  ?? state.lines.find((line) => line.vatRate.trim() !== '')?.vatRate ?? '')
+                : state.vatSource?.vatRatePercent ?? '',
+            }),
+            ...((inputType === 'AMOUNT' || inputType === 'BOTH') && { vatAmount: state.vatSource?.lines ? '' : state.vatSource?.vatAmount ?? '' }),
+          },
+    }));
+  };
+
+  const setVatLineSourceType = (index: number, inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE') => {
+    setVatSourceDirty(true);
+    setValues((state) => {
+      const existing = state.vatSource?.lines?.find((line) => line.lineNumber === index + 1);
+      const vatRatePercent = existing?.vatRatePercent ?? expenseRateToPercent(state.lines[index]?.vatRate ?? '') ?? '';
+      return {
+        ...state,
+        vatSource: {
+          inputType: 'NONE',
+          lines: state.lines.map((_, lineIndex) => {
+            const current = state.vatSource?.lines?.find((line) => line.lineNumber === lineIndex + 1);
+            if (lineIndex !== index) return current ?? { lineNumber: lineIndex + 1, inputType: 'NONE' as const };
+            return {
+              lineNumber: index + 1,
+              inputType,
+              ...((inputType === 'RATE' || inputType === 'BOTH') && { vatRatePercent }),
+              ...((inputType === 'AMOUNT' || inputType === 'BOTH') && { vatAmount: existing?.vatAmount ?? '' }),
+            };
+          }),
+        },
+      };
+    });
+  };
+
+  const setVatLineSourceValue = (index: number, field: 'vatRatePercent' | 'vatAmount', value: string) => {
+    setVatSourceDirty(true);
+    setValues((state) => ({
+      ...state,
+      vatSource: {
+        inputType: 'NONE',
+        lines: state.lines.map((_, lineIndex) => {
+          const current = state.vatSource?.lines?.find((line) => line.lineNumber === lineIndex + 1)
+            ?? { lineNumber: lineIndex + 1, inputType: 'NONE' as const };
+          return lineIndex === index ? { ...current, [field]: value } : current;
+        }),
+      },
+    }));
+  };
+
+  const setDocumentVatPercent = (vatRatePercent: string) => {
+    const vatRate = expensePercentToRate(vatRatePercent);
+    setVatSourceDirty(true);
+    setValues((state) => ({
+      ...state,
+      vatSource: { ...(state.vatSource ?? { inputType: 'RATE' as const }), vatRatePercent },
+      lines: state.lines.map((line) => ({
+        ...line,
+        // A document rate applies to its taxable portion. Preserve an explicit 0%-VAT line such
+        // as a tip; unknown and positive-rate lines follow the reviewed document rate.
+        vatRate: line.vatRate.trim() !== '' && Number(line.vatRate) === 0 ? line.vatRate : vatRate,
+      })),
+    }));
+  };
+
+  const setDocumentVatAmount = (vatAmount: string) => {
+    setVatSourceDirty(true);
+    setValues((state) => ({
+      ...state,
+      vatSource: { ...(state.vatSource ?? { inputType: 'AMOUNT' as const }), vatAmount },
     }));
   };
 
@@ -1132,10 +1253,140 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <span className="font-semibold text-gray-500">· {effectiveVatRateLabel(values.lines)}</span>
             )}
           </span>
-          <ThemedSelect id={`expense-vat-mode-${detail.id}`} className={inputClass} value={values.vatMode} onChange={(e) => setValues((v) => ({ ...v, vatMode: e.target.value as ExpenseDraftReviewValues['vatMode'] }))} disabled={!isMutable || busy}>
+          <ThemedSelect id={`expense-vat-mode-${detail.id}`} className={inputClass} value={values.vatMode} onChange={(e) => { setVatSourceDirty(true); setValues((v) => ({ ...v, vatMode: e.target.value as ExpenseDraftReviewValues['vatMode'] })); }} disabled={!isMutable || busy}>
             {Object.entries(EXPENSE_VAT_MODE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </ThemedSelect>
         </div>
+        {showsVatCard && (
+          <div className="space-y-3 rounded-xl border border-brand-100 bg-brand-25 p-3 sm:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold text-gray-800">ภาษีมูลค่าเพิ่ม (VAT)</p>
+                <p className="text-xs text-gray-500">เลือกหน่วยตามที่เอกสารพิมพ์ ระบบจะเก็บค่าต้นฉบับแยกจากค่าที่คำนวณ</p>
+              </div>
+              {!vatSourceDirty && vatSnapshot && (
+                <MangmeeBadge tone={vatSnapshot.reconciliation.status === 'MATCHED' ? 'brand' : ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(vatSnapshot.reconciliation.status) ? 'danger' : 'slate'}>
+                  {vatStatusLabel}
+                </MangmeeBadge>
+              )}
+            </div>
+            {capture.mode === 'SIMPLE' && (
+              <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">VAT นี้เป็นส่วนหนึ่งของต้นทุนและขอคืนไม่ได้ ระบบเก็บเพื่อให้ยอดเอกสารและฐานหัก ณ ที่จ่ายถูกต้อง</p>
+            )}
+            <label>
+              <span className="mb-1 block text-xs font-medium text-gray-600">เอกสารระบุ VAT เป็นหน่วยใด</span>
+              <ThemedSelect
+                className={inputClass}
+                value={vatSourceMode}
+                onChange={(event) => setVatSourceType(event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES')}
+                disabled={!isMutable || busy}
+              >
+                <option value="NONE">ไม่ได้ระบุ</option>
+                <option value="RATE">เปอร์เซ็นต์ (%)</option>
+                <option value="AMOUNT">จำนวนเงิน (บาท)</option>
+                <option value="BOTH">ระบุทั้งเปอร์เซ็นต์และจำนวนเงิน</option>
+                <option value="LINES">แยกหน่วยตามรายการ</option>
+              </ThemedSelect>
+            </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {(vatSource.inputType === 'RATE' || vatSource.inputType === 'BOTH') && (
+                <label>
+                  <span className="mb-1 block text-xs font-medium text-gray-600">อัตรา VAT จากเอกสาร (%)</span>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="99.9999"
+                      step="0.0001"
+                      className={cx(inputClass, 'pr-10')}
+                      value={vatSource.vatRatePercent ?? ''}
+                      onChange={(event) => setDocumentVatPercent(event.target.value)}
+                      disabled={!isMutable || busy}
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
+                  </div>
+                </label>
+              )}
+              {(vatSource.inputType === 'AMOUNT' || vatSource.inputType === 'BOTH') && (
+                <label>
+                  <span className="mb-1 block text-xs font-medium text-gray-600">VAT จากเอกสาร (บาท)</span>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className={cx(inputClass, 'pr-14')}
+                      value={vatSource.vatAmount ?? ''}
+                      onChange={(event) => setDocumentVatAmount(event.target.value)}
+                      disabled={!isMutable || busy}
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
+                  </div>
+                </label>
+              )}
+            </div>
+            {vatSourceMode === 'LINES' && (
+              <div className="space-y-2">
+                <p className="text-xs text-gray-500">ใช้เมื่อบิลมีหลายอัตราหรือบางรายการไม่เสีย VAT โดยกรอกตามแต่ละบรรทัดในเอกสาร</p>
+                {values.lines.map((_, index) => {
+                  const sourceLine = vatSource.lines?.find((line) => line.lineNumber === index + 1)
+                    ?? { lineNumber: index + 1, inputType: 'NONE' as const };
+                  return (
+                    <div key={index} className="rounded-lg border border-brand-100 bg-white p-2">
+                      <p className="mb-2 text-xs font-semibold text-gray-700">รายการ {index + 1}</p>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <ThemedSelect
+                          className={inputClass}
+                          value={sourceLine.inputType}
+                          onChange={(event) => setVatLineSourceType(index, event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE')}
+                          disabled={!isMutable || busy}
+                        >
+                          <option value="NONE">ไม่ได้ระบุ</option>
+                          <option value="RATE">เปอร์เซ็นต์ (%)</option>
+                          <option value="AMOUNT">จำนวนเงิน (บาท)</option>
+                          <option value="BOTH">ทั้งสองค่า</option>
+                        </ThemedSelect>
+                        {(sourceLine.inputType === 'RATE' || sourceLine.inputType === 'BOTH') && (
+                          <label className="relative">
+                            <span className="sr-only">อัตรา VAT จากเอกสาร รายการ {index + 1}</span>
+                            <input type="number" min="0" max="99.9999" step="0.0001" className={cx(inputClass, 'pr-10')} value={sourceLine.vatRatePercent ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatRatePercent', event.target.value)} disabled={!isMutable || busy} />
+                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
+                          </label>
+                        )}
+                        {(sourceLine.inputType === 'AMOUNT' || sourceLine.inputType === 'BOTH') && (
+                          <label className="relative">
+                            <span className="sr-only">VAT จากเอกสาร รายการ {index + 1}</span>
+                            <input type="number" min="0" step="0.01" className={cx(inputClass, 'pr-14')} value={sourceLine.vatAmount ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatAmount', event.target.value)} disabled={!isMutable || busy} />
+                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {vatSourceError && <p className="text-xs font-medium text-error-600">{vatSourceError}</p>}
+            {vatSourceDirty
+              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">บันทึกการตรวจเพื่อให้ระบบคำนวณและเปรียบเทียบยอดล่าสุด</p>
+              : vatSnapshot && (
+                <div className="rounded-lg bg-white px-3 py-2">
+                  <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
+                  <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
+                  {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
+                  <MoneyRow
+                    label={collapsesVatBase ? 'ฐาน VAT (ยอดก่อน VAT ที่ใช้)' : 'ยอดก่อน VAT ที่ใช้'}
+                    value={detail.taxableAmount}
+                  />
+                  {!collapsesVatBase && vatBaseGroups.map(([rate, amount]) => (
+                    <MoneyRow key={rate} label={`ฐาน VAT ${Number(rate)}% (ใช้จริง)`} value={amount.toFixed(4)} />
+                  ))}
+                  <MoneyRow label="ยอดรวม (รวม VAT)" value={detail.grandTotalAmount} />
+                  <p className="mt-1 text-xs text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
+                </div>
+              )}
+          </div>
+        )}
         {/* RA-18: the payee's taxpayer class decides ภ.ง.ด.3 vs ภ.ง.ด.53, so it is only asked for when
             this document actually withholds tax, and confirmation blocks until it is picked — never
             guessed. The blank choice disappears once a class is stored because the update contract has
@@ -1157,10 +1408,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
         <h4 className="font-semibold text-gray-800">{t('expenses.line_items', locale)}</h4>
         {isMutable && (
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => setValues((v) => ({
+          <button type="button" className={ghostClass} disabled={busy} onClick={() => { setVatSourceDirty(true); setValues((v) => ({
             ...v,
             lines: [...v.lines, { description: '', quantity: '1', unitPrice: '0', discountAmount: '0', vatRate: '', whtRate: expenseDocumentWhtRate(v.lines) || null, expenseCategoryId: null, accountHintKey: null, taxCategory: null, taxCodeDefinitionId: null, externalTaxCode: null, transactionContext: 'DOMESTIC_PURCHASE' }],
-          }))}>{t('expenses.add_line', locale)}</button>
+            ...(v.vatSource?.lines?.length && { vatSource: { ...v.vatSource, lines: [...v.vatSource.lines, { lineNumber: v.lines.length + 1, inputType: 'NONE' as const }] } }),
+          })); }}>{t('expenses.add_line', locale)}</button>
         )}
       </div>
 
@@ -1183,9 +1435,18 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <span className="text-xs font-semibold text-gray-600">{t('expenses.line_number', locale)} {index + 1}</span>
-            {/* The printed-VAT drafts are keyed by line index, so removing a line would otherwise
-                show the deleted line's typed amount under its successor. */}
-            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => { setVatEditors({}); setValues((v) => ({ ...v, lines: v.lines.filter((_, lineIndex) => lineIndex !== index) })); }} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
+            {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => { setVatSourceDirty(true); setVatEditors({}); setValues((v) => ({
+              ...v,
+              lines: v.lines.filter((_, lineIndex) => lineIndex !== index),
+              ...(v.vatSource?.lines?.length && {
+                vatSource: {
+                  ...v.vatSource,
+                  lines: v.vatSource.lines
+                    .filter((sourceLine) => sourceLine.lineNumber !== index + 1)
+                    .map((sourceLine) => ({ ...sourceLine, lineNumber: sourceLine.lineNumber > index + 1 ? sourceLine.lineNumber - 1 : sourceLine.lineNumber })),
+                },
+              }),
+            })); }} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* A textarea, not an input: on a phone the single line clipped the description at the
@@ -1219,7 +1480,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 convert "11.78 VAT TTL" into 0.07 in their heads.
                 The block takes the full row: as a half-width cell its printed-VAT sub-fields wrapped
                 their labels onto two lines and left a column-tall hole beside ส่วนลด. */}
-            {showsTax && <div className="sm:col-span-2">
+            {showsVatCard && <div className="sm:col-span-2">
               <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
                 <label htmlFor={`expense-vat-rate-${detail.id}-${index}`}>{t('expenses.line_vat_rate', locale)}</label>
                 <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_rate', locale)} />
@@ -1243,32 +1504,13 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               </ThemedSelect>
               <FieldIssueNote issue={vatRateIssue} />
               {showCustomRate && (
-                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <label>
-                    <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
-                    <input type="number" min="0" max="99.99" step="0.01" className={inputClass}
-                      value={expenseRateToPercent(line.vatRate)}
-                      onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
-                      disabled={!isMutable || busy} />
-                  </label>
-                  <label>
-                    <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_amount', locale)}</span>
-                    <input type="number" min="0" step="0.01" className={inputClass}
-                      value={vatEditors[index]?.printed ?? ''}
-                      onChange={(e) => {
-                        const printed = e.target.value;
-                        setVatEditors((current) => ({ ...current, [index]: { ...current[index], printed } }));
-                        const derived = vatRateFromPrintedAmount({
-                          afterDiscountAmount: Number(line.quantity || '0') * Number(line.unitPrice || '0') - Number(line.discountAmount || '0'),
-                          printedVatAmount: printed,
-                          vatMode: values.vatMode,
-                        });
-                        if (derived) updateLine(index, 'vatRate', derived);
-                      }}
-                      disabled={!isMutable || busy} />
-                    <p className="mt-1 text-xs text-gray-500">{t('expenses.line_vat_amount_hint', locale)}</p>
-                  </label>
-                </div>
+                <label className="mt-2 block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_vat_percent', locale)}</span>
+                  <input type="number" min="0" max="99.9999" step="0.0001" className={inputClass}
+                    value={expenseRateToPercent(line.vatRate)}
+                    onChange={(e) => updateLine(index, 'vatRate', expensePercentToRate(e.target.value))}
+                    disabled={!isMutable || busy} />
+                </label>
               )}
               {vatPercent !== null && <p className="mt-1 text-xs text-gray-500">{t('expenses.rate_percent_echo', locale).replace('{percent}', vatPercent)}</p>}
             </div>}
@@ -1534,7 +1776,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
 
       {/* full-width list; row click opens the detail popup */}
       <MangmeeCard className="p-4">
-          <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
+          <div className="flex flex-wrap items-center gap-2">
             {chips.map((c) => (
               <button key={c.key} onClick={() => setChip(c.key)}
                 className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
@@ -1543,9 +1785,8 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                 <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>
               </button>
             ))}
-            <div className="hidden flex-1 shrink-0 whitespace-nowrap sm:block" />
-            <div className="relative w-full max-w-[19.2rem] shrink-0 whitespace-nowrap">
-              <input className={cx(inputClass, 'w-full pr-10')} type="search"
+            <div className="relative order-first w-full sm:order-none sm:ml-auto sm:max-w-[19.2rem]">
+              <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                 placeholder={t('expenses.search_placeholder', locale)}
                 value={query} onChange={(e) => setQuery(e.target.value)} />
               <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">

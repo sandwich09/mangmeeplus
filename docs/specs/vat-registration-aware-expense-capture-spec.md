@@ -267,3 +267,15 @@ All three answered by the owner on 2026-08-05. No open questions block implement
 ## 17. Open Questions
 
 None.
+
+## 18. Follow-up: document VAT arithmetic in SIMPLE capture
+
+[[specs/expense-vat-source-reconciliation-spec|Expense VAT Source Capture and Reconciliation]]
+supersedes only §7.3, §7.7, and the affected §11/AC1 hiding behavior when a document has
+VAT evidence, stored VAT, a WHT base dependency, or the reviewer explicitly opens
+ใบนี้ระบุ VAT.
+
+SIMPLE still hides Tax Code, claimability, tax configuration, and tax-evidence workflow.
+A new no-VAT draft stays simple. The conditional document VAT card records source arithmetic
+as non-claimable cost and must not open a VAT claim path. This exception is required because
+source VAT is now OCR audit evidence and can determine the WHT base.

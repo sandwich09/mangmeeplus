@@ -44,6 +44,8 @@ import {
   isExpensePending,
   summarizeExpenseKpis,
   lateDocumentDays,
+  expenseVatSourceFromSnapshot,
+  expenseVatSourceValidationMessage,
   type ExpenseDraftReviewValues,
 } from './expenses.model';
 
@@ -274,6 +276,50 @@ describe('expenses.model', () => {
     });
     assert.equal('grandTotalAmount' in payload, false);
     assert.equal('subtotalAmount' in payload, false);
+  });
+
+  it('persists the selected VAT source unit instead of only a derived rate', () => {
+    const payload = buildExpenseDraftReviewPayload({
+      vendorNameSnapshot: 'ร้านทดสอบ',
+      vendorTaxIdSnapshot: '',
+      vendorDocumentNumber: 'INV-1',
+      expenseDate: '2026-08-20',
+      vatMode: 'VAT_INCLUDED',
+      vatSource: { inputType: 'AMOUNT', vatAmount: '27.08' },
+      lines: [{
+        description: 'กาแฟ', quantity: '1', unitPrice: '414', discountAmount: '0', vatRate: '0.07',
+        whtRate: null, expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+      }],
+    });
+    assert.deepEqual(payload.vatSource, { inputType: 'AMOUNT', vatAmount: '27.08' });
+    assert.equal(expenseVatSourceValidationMessage(payload.vatSource!), null);
+  });
+
+  it('hydrates normalized source VAT and validates missing unit values', () => {
+    const source = expenseVatSourceFromSnapshot({
+      version: 1,
+      source: {
+        inputType: 'BOTH', origin: 'OCR', vatRatePercent: '7.0000', vatAmount: '27.0800',
+        taxableAmount: '386.92', grossAmount: '414', capturedAt: '2026-08-20T00:00:00.000Z',
+      },
+      calculation: {
+        formula: 'INCLUDED', vatRatePercent: '7.0000', preVatAmount: '386.9200',
+        vatBaseAmount: '386.9200', vatAmount: '27.0800', grossAmount: '414.0000',
+        lineResults: [], roundingMode: 'HALF_UP', decimalPlaces: 2, calculationVersion: 'expense-vat-v1',
+      },
+      reconciliation: {
+        status: 'MATCHED', acceptedSource: 'SOURCE_AMOUNT', differenceAmount: '0.0000', toleranceAmount: '0.05',
+      },
+    });
+    assert.deepEqual(source, { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '27.08' });
+    assert.match(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: '' }) ?? '', /บาท/);
+    assert.match(expenseVatSourceValidationMessage({
+      inputType: 'NONE',
+      lines: [{ lineNumber: 2, inputType: 'BOTH', vatRatePercent: '7', vatAmount: '' }],
+    }) ?? '', /รายการ 2/);
+    assert.match(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: '1.001' }) ?? '', /2 ตำแหน่ง/);
+    assert.match(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: '1.00' }, 'NO_VAT') ?? '', /ไม่มี VAT/);
+    assert.match(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: '7' }, 'EXEMPT') ?? '', /ไม่มี VAT/);
   });
 
   it('formats a taxpayer ID for display and stores it as digits only', () => {

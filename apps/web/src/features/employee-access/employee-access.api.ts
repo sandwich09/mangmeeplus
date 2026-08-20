@@ -1,4 +1,5 @@
 import type {
+  AssignableRoleSummary,
   CapabilityPackCatalog,
   CompanyAccessMatrix,
   EffectiveAccessView,
@@ -15,6 +16,8 @@ import type {
   PoApprovalPolicy,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
+import { ApiError } from '@/common/models/api-error.model';
+import { isAssignableRoleCatalog } from './role-picker.logic';
 
 const base = (companyId: string) => `/companies/${companyId}/settings`;
 
@@ -43,7 +46,17 @@ export const revokeEmployeeLineLinkToken = (c: string, id: string) =>
   apiFetch<void>(`${base(c)}/employees/${id}/line-link-token/revoke`, { method: 'POST' });
 
 // ---- Roles and permissions ----
-export const listRoles = (c: string) => apiFetch<RoleSummary[]>(`${base(c)}/roles`);
+export const listRoles = async (c: string): Promise<AssignableRoleSummary[]> => {
+  const roles = await apiFetch<RoleSummary[]>(`${base(c)}/roles`, { cache: 'no-store' });
+  if (!isAssignableRoleCatalog(roles)) {
+    throw new ApiError({
+      kind: 'server_error',
+      code: 'invalid_response',
+      message: 'Role catalog is missing its assignment permission context.',
+    });
+  }
+  return roles;
+};
 export const createRole = (c: string, body: Record<string, unknown>) =>
   apiFetch<any>(`${base(c)}/roles`, { method: 'POST', body: JSON.stringify(body) });
 export const updateRole = (c: string, id: string, body: Record<string, unknown>) =>

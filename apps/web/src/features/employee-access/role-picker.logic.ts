@@ -1,4 +1,13 @@
-import type { RoleSummary } from '@watchdog-bms/contracts';
+import type { AssignableRoleSummary, RoleSummary } from '@watchdog-bms/contracts';
+
+/** Prevent an older cached API shape from silently becoming an empty role picker. */
+export function isAssignableRoleCatalog(value: unknown): value is AssignableRoleSummary[] {
+  return Array.isArray(value) && value.every((role) => (
+    typeof role === 'object'
+    && role !== null
+    && typeof (role as { assignableByCurrentUser?: unknown }).assignableByCurrentUser === 'boolean'
+  ));
+}
 
 /**
  * Roles the viewer may actually assign. `assignableByCurrentUser` is the server's own grant

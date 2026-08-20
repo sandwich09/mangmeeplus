@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   authErrorMessage,
   buildQrCells,
+  companyAccessDescription,
   isValidThaiMobile,
   readTokenParam,
   signInAgainPath,
@@ -65,5 +66,10 @@ describe('auth.logic', () => {
       '/login?next=%2Fcompanies%2Fc1%2Fexpenses%2Fe1%3Ftab%3Dsignatures',
     );
     assert.equal(signInAgainPath('/companies/c1/dashboard'), '/login?next=%2Fcompanies%2Fc1%2Fdashboard');
+  });
+
+  it('names the blocked company without duplicating the Thai company prefix', () => {
+    assert.match(companyAccessDescription('th', 'ปากวาริน ฟิว', 'ป๋อจ้าน Company'), /ซึ่งไม่มีสิทธิ์ในบริษัท ป๋อจ้าน Company/);
+    assert.match(companyAccessDescription('th', 'ผู้ใช้', 'บริษัท ทดสอบ จำกัด'), /ในบริษัท ทดสอบ จำกัด/);
   });
 });

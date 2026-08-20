@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RoleSummary } from '@watchdog-bms/contracts';
-import { assignableRoleOptions, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isAssignableRoleCatalog, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };
@@ -10,6 +10,18 @@ function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
 // The owner gets a `true` flag on every assignable role; a manager gets it on their subset only.
 const OWNER_VIEW = [role('sales', true), role('manager', true), role('finance', true)];
 const MANAGER_VIEW = [role('sales', true), role('manager', false), role('finance', false)];
+
+describe('isAssignableRoleCatalog', () => {
+  it('accepts both allowed and denied roles when the server supplies a boolean decision', () => {
+    assert.equal(isAssignableRoleCatalog(MANAGER_VIEW), true);
+    assert.equal(isAssignableRoleCatalog([]), true);
+  });
+
+  it('rejects the older cached contract instead of turning it into an empty picker', () => {
+    assert.equal(isAssignableRoleCatalog([role('sales')]), false);
+    assert.equal(isAssignableRoleCatalog({ roles: MANAGER_VIEW }), false);
+  });
+});
 
 describe('assignableRoleOptions', () => {
   it('offers the owner every role the server flagged', () => {

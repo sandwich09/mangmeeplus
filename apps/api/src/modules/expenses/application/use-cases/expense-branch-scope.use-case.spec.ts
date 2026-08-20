@@ -95,6 +95,19 @@ describe('CreateExpenseDraftUseCase branch tagging', () => {
     const { repo, created } = makeRepo();
     await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(undefined), input);
     assert.equal(created[0].branchId, undefined);
+    assert.equal(created[0].vatCaptureSnapshotJson, undefined, 'a pre-OCR draft must not invent reviewer source precedence');
+  });
+
+  it('stores a snapshot when the creator explicitly supplies the document VAT source', async () => {
+    const { repo, created } = makeRepo();
+    await new CreateExpenseDraftUseCase(repo, audit, transactionTax).execute(ctx(undefined), {
+      ...input,
+      vatMode: 'VAT_INCLUDED',
+      vatSource: { inputType: 'AMOUNT', vatAmount: '7.00' },
+      lines: [{ lineNumber: 1, description: 'service', quantity: '1', unitPrice: '107', discountAmount: '0' }],
+    });
+    assert.equal(created[0].vatCaptureSnapshotJson.source.origin, 'REVIEWER');
+    assert.equal(created[0].vatCaptureSnapshotJson.source.vatAmount, '7.0000');
   });
 
   it('rejects an explicit branch outside the scope', async () => {
@@ -225,6 +238,20 @@ describe('expense Tax Code confirmation guard', () => {
       taxComponents: [{}],
     }],
   };
+
+  it('blocks confirmation while VAT source reconciliation needs review', async () => {
+    const repo = {
+      findByIdWithRelations: async () => ({
+        ...readyRecord,
+        vatCaptureSnapshotJson: { version: 1, reconciliation: { status: 'MISMATCH' } },
+      }),
+    } as any;
+
+    await assert.rejects(
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_RECONCILIATION_REQUIRED',
+    );
+  });
 
   it('rejects confirmation when a receipt still has a Tax Code snapshot', async () => {
     const repo = {

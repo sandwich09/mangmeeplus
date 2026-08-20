@@ -16,6 +16,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
 import { GenerateSnapshotUseCase } from './generate-snapshot.use-case';
+import { webLink } from '../../../../common/http/web-link';
 
 /** The delivery sweep is `dashboard_notifications` work; the delivery's own company owns it. */
 const NOTIFICATION_FEATURE_KEY = 'dashboard_notifications';
@@ -723,9 +724,10 @@ function buildLineMessage(params: {
     insight: 'ข้อมูล',
     info: 'แจ้งเตือน',
   };
-  const baseUrl = process.env['WEB_BASE_URL'] ?? process.env['PUBLIC_BASE_URL'] ?? 'https://app.watchdog.local';
+  // Shared resolver: the previous fallback host (`app.watchdog.local`) does not resolve anywhere,
+  // so a worker without WEB_BASE_URL/PUBLIC_BASE_URL pushed an unreachable link instead of a path.
   const href = params.deepLinkHref ?? `/companies/${params.companyId}/dashboard`;
-  return [`[มั่งมีพลัส] ${severityLabel[params.severity] ?? 'แจ้งเตือน'}`, params.title, params.body, `${baseUrl}${href}`].join('\n');
+  return [`[มั่งมีพลัส] ${severityLabel[params.severity] ?? 'แจ้งเตือน'}`, params.title, params.body, webLink(href)].join('\n');
 }
 
 function notificationLineRetryKey(deliveryId: string): string {

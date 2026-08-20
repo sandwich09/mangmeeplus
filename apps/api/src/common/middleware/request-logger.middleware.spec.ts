@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import type { NextFunction, Request, Response } from 'express';
 import type { AppConfigService } from '../config/app-config.service';
 import type { AppLogger } from '../logger/logger.service';
+import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 
 function run(requestLogEnabled: boolean, path = '/v1/companies') {
@@ -66,5 +67,33 @@ describe('RequestLoggerMiddleware', () => {
       (() => {}) as NextFunction,
     );
     assert.deepEqual(listeners, []);
+  });
+});
+
+describe('ApiCacheControlMiddleware', () => {
+  function runCacheControl(initial?: string) {
+    const headers = new Map<string, string>();
+    if (initial) headers.set('cache-control', initial);
+    const response = {
+      hasHeader: (name: string) => headers.has(name.toLowerCase()),
+      setHeader: (name: string, value: string) => void headers.set(name.toLowerCase(), value),
+    } as unknown as Response;
+    let nextCalls = 0;
+
+    apiCacheControl(
+      {} as Request,
+      response,
+      (() => { nextCalls += 1; }) as NextFunction,
+    );
+
+    return { cacheControl: headers.get('cache-control'), nextCalls };
+  }
+
+  it('makes API responses private and non-storable by default', () => {
+    assert.deepEqual(runCacheControl(), { cacheControl: PRIVATE_NO_STORE, nextCalls: 1 });
+  });
+
+  it('preserves an explicit route cache policy', () => {
+    assert.deepEqual(runCacheControl('public, max-age=60'), { cacheControl: 'public, max-age=60', nextCalls: 1 });
   });
 });

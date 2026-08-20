@@ -1,6 +1,6 @@
 # Agent Memory: line-deeplink-company-access-mismatch
 
-Status: Diagnosed on UAT and UX gap fixed; PR to develop.
+Status: Diagnosed on UAT; UX now names both the signed-in account and blocked company. Not deployed in this task.
 
 Owner: thawatchai
 
@@ -20,6 +20,9 @@ Decisions:
 - ปุ่ม "ไปยังบริษัทที่ใช้งานได้" ใช้ได้ เพราะพา `bombamse5` กลับบริษัทของตัวเอง — เป็นสัญญาณยืนยันว่าคนละบัญชี
 - UX gap ที่แก้: จอเดิมไม่บอกว่ากำลัง login ด้วยบัญชีไหน (อ่านแล้วเหมือน "สิทธิ์ถูกถอน") และปุ่ม
   "ออกจากระบบ" ทิ้งปลายทางของลิงก์
+- Follow-up 2026-08-19: scoped `GET /auth/me` denials now return only the requested company's
+  display name, so the screen says `บริษัท [ชื่อบริษัท]` instead of `บริษัทนี้`; other forbidden
+  responses keep their existing shape. The available-company link centers its label on mobile.
 
 Open questions: none.
 
@@ -29,11 +32,19 @@ Artifacts:
 - `apps/web/src/features/auth/CompanyAccessUnavailable.tsx` — โชว์ชื่อบัญชีปัจจุบัน และ sign out
   ด้วย `signInAgainPath()` เพื่อคง `next=` ของลิงก์เดิม
 - `apps/web/src/features/auth/auth.logic.ts` — `signInAgainPath(pathname, search)`
+- `apps/api/src/modules/auth/presentation/auth.guard.ts` — adds `companyName` only to a scoped
+  `/auth/me` company-access denial
+- `apps/web/src/common/auth/server-session.ts` + company layout — carry that label to the screen
+- `apps/web/src/features/auth/auth.logic.ts` — formats the named Thai/English access description
 - LINE deep link สร้างจาก `BASE_WEB_URL + webPath` (`line-ai-formatter.logic.ts`) — เป็น URL เปล่า
   ไม่มี session handoff จึงพึ่ง cookie ของเบราว์เซอร์ที่เปิดล้วน ๆ
 
 Verification:
 - `pnpm --filter @watchdog-bms/web test` → 951 pass / 0 fail (รวมเคสใหม่ `signInAgainPath`)
+- `pnpm --filter @watchdog-bms/web typecheck` → ผ่าน
+- `pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/auth.guard.spec.ts` → 29 pass / 0 fail
+- `pnpm --filter @watchdog-bms/web exec tsx --test src/features/auth/auth.logic.spec.ts` → 11 pass / 0 fail
+- `pnpm --filter @watchdog-bms/api typecheck` → ผ่าน
 - `pnpm --filter @watchdog-bms/web typecheck` → ผ่าน
 
 Next:

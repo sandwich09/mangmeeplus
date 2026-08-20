@@ -67,6 +67,7 @@ import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4 } from '../../../expe
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
+import { absoluteWebLink } from '../../../../common/http/web-link';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
@@ -346,13 +347,6 @@ type LineCompanyMembership = {
   company?: { name: string; brandName?: string | null } | null;
   roles?: Array<{ role?: { key: string } | null }>;
 };
-
-function absoluteWebLink(baseUrl: string | undefined, path: string): string {
-  if (/^https?:\/\//i.test(path)) return path;
-  const base = (baseUrl ?? '').replace(/\/$/, '');
-  const suffix = path.startsWith('/') ? path : `/${path}`;
-  return base ? `${base}${suffix}` : suffix;
-}
 
 export async function putLineMediaUpload(
   intent: { uploadUrl: string; uploadMethod: string; uploadHeaders?: Record<string, string> },

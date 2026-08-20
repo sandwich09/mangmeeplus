@@ -3,7 +3,11 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { isBranchInScope, resolveCreateBranchId } from '../../../data-model-core/domain/logic/branch.logic';
-import { calcLineTotals, calcDocumentTotals } from '../../domain/logic/expense-totals.logic';
+import {
+  reconcileExpenseVat,
+  validateExpenseVatSourceInput,
+  vatSourceFromSnapshot,
+} from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts } from '../../domain/logic/expense-draft-amount-validation.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import {
@@ -68,8 +72,15 @@ export class CreateExpenseDraftUseCase {
     const lines = input.lines ?? [];
     const amountError = validateExpenseDraftAmounts({ vatMode: input.vatMode, lines });
     if (amountError) throw new BadRequestException(amountError);
-    const computedLines = lines.map((l) => calcLineTotals({ ...l, discountAmount: l.discountAmount, vatMode: input.vatMode }));
-    const totals = calcDocumentTotals({ lines: computedLines });
+    const vatSourceError = validateExpenseVatSourceInput(input.vatSource, input.vatMode, lines.map((line) => line.lineNumber));
+    if (vatSourceError) throw new BadRequestException(vatSourceError);
+    const vat = reconcileExpenseVat({
+      vatMode: input.vatMode,
+      lines,
+      source: input.vatSource,
+      sourceOrigin: 'REVIEWER',
+    });
+    const totals = vat.totals;
 
     const record = await this.repo.createExpense({
       companyId: ctx.companyId,
@@ -85,18 +96,22 @@ export class CreateExpenseDraftUseCase {
       missingReceiptReason: input.missingReceiptReason,
       createdByUserId: ctx.userId,
       vendorCounterpartyId: input.vendorCounterpartyId,
+      // An upload draft is created before OCR. Persisting a REVIEWER/NONE source here would make
+      // the later OCR result incorrectly lose to a reviewer decision that never happened.
+      ...(input.vatSource !== undefined && { vatCaptureSnapshotJson: vat.snapshot }),
       ...totals,
       outstandingAmount: totals.netPayableAmount,
     });
 
     if (lines.length > 0) {
       const prepared = lines.map((l, i) => {
-        const t = computedLines[i]!;
+        const reconciled = vat.lines[i]!;
+        const t = reconciled.totals;
         return {
           expenseId: record.id, companyId: ctx.companyId, lineNumber: l.lineNumber,
           description: l.description, quantity: l.quantity, unitPrice: l.unitPrice,
           discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
-          vatRate: storedRate(l.vatRate), vatAmount: t.vatAmount,
+          vatRate: reconciled.vatRate, vatAmount: t.vatAmount,
           whtRate: storedRate(l.whtRate), whtAmount: t.whtAmount,
           lineSubtotalAmount: t.lineSubtotalAmount, lineTotalAmount: t.lineTotalAmount,
           expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
@@ -253,20 +268,35 @@ export class UpdateExpenseDraftUseCase {
     if (disallowsTaxCode && lines?.some((line) => hasSelectedTaxCode(taxSelection(line)))) {
       throw new BadRequestException('A receipt, substitute receipt, or supporting-only document cannot retain a Tax Code.');
     }
-    let totals: ReturnType<typeof calcDocumentTotals> | undefined;
+    let totals: ReturnType<typeof reconcileExpenseVat>['totals'] | undefined;
+    let vatCaptureSnapshotJson: ReturnType<typeof reconcileExpenseVat>['snapshot'] | undefined;
     if (lines) {
       // Spec §19c: VAT mode describes the document arithmetic; claimability is the separate axis below.
       const vatMode = input.vatMode ?? r.vatMode;
       const amountError = validateExpenseDraftAmounts({ vatMode, lines });
       if (amountError) throw new BadRequestException(amountError);
-      const computed = lines.map((l) => calcLineTotals({ ...l, discountAmount: l.discountAmount, vatMode }));
-      totals = calcDocumentTotals({ lines: computed });
+      const source = input.vatSource ?? vatSourceFromSnapshot(r.vatCaptureSnapshotJson);
+      const vatSourceError = validateExpenseVatSourceInput(source, vatMode, lines.map((line) => line.lineNumber));
+      if (vatSourceError) throw new BadRequestException(vatSourceError);
+      const vat = reconcileExpenseVat({
+        vatMode,
+        lines,
+        source,
+        sourceOrigin: input.vatSource ? 'REVIEWER' : r.vatCaptureSnapshotJson?.source.origin ?? 'REVIEWER',
+        sourceTaxableAmount: input.vatSource ? null : r.vatCaptureSnapshotJson?.source.taxableAmount,
+        sourceGrossAmount: input.vatSource ? null : r.vatCaptureSnapshotJson?.source.grossAmount,
+        sourceEvidenceRefs: input.vatSource ? undefined : r.vatCaptureSnapshotJson?.source.evidenceRefs,
+        capturedAt: input.vatSource ? undefined : r.vatCaptureSnapshotJson?.source.capturedAt,
+      });
+      totals = vat.totals;
+      vatCaptureSnapshotJson = vat.snapshot;
       const prepared = lines.map((l, i) => {
-        const t = computed[i]!;
+        const reconciled = vat.lines[i]!;
+        const t = reconciled.totals;
         return {
           expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
           quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
-          taxableAmount: t.taxableAmount, vatRate: storedRate(l.vatRate), vatAmount: t.vatAmount,
+          taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatAmount: t.vatAmount,
           whtRate: storedRate(l.whtRate), whtAmount: t.whtAmount, lineSubtotalAmount: t.lineSubtotalAmount,
           lineTotalAmount: t.lineTotalAmount, expenseCategoryId: l.expenseCategoryId ?? null,
           accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
@@ -277,6 +307,8 @@ export class UpdateExpenseDraftUseCase {
         expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
         expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
       }, prepared, 'DRAFT', options.db);
+    } else if (input.vatSource !== undefined) {
+      throw new BadRequestException('lines are required when updating vatSource.');
     }
 
     const reviewedAt = canReview ? new Date() : undefined;
@@ -425,6 +457,7 @@ export class UpdateExpenseDraftUseCase {
       ...(input.taxEvidenceStatus !== undefined && { taxEvidenceStatus: input.taxEvidenceStatus, ...(input.taxEvidenceReasonCode === undefined && canReview ? { taxEvidenceReasonCode: 'MANUAL_OVERRIDE' } : {}) }),
       ...(input.taxEvidenceReasonCode !== undefined && { taxEvidenceReasonCode: input.taxEvidenceReasonCode }),
       ...(nextSummaryJson && { aiVerificationSummaryJson: nextSummaryJson }),
+      ...(vatCaptureSnapshotJson && { vatCaptureSnapshotJson }),
       ...(options.lineDraftCollection && {
         sourceChannelMetadataJson: options.lineDraftCollection.sourceChannelMetadataJson,
         aiVerificationSummaryJson: options.lineDraftCollection.aiVerificationSummaryJson,
@@ -449,13 +482,35 @@ export class UpdateExpenseDraftUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: classificationOverride ? 'HIGH' : 'MEDIUM',
-      ...(classificationOverride && {
+      ...((classificationOverride || input.vatSource) && {
         metadataJson: {
-          classificationOverride: {
-            detectedDocumentKind,
-            sourceDocumentType: overrideSourceDocumentType,
-            reason: classificationOverrideReason,
-          },
+          ...(input.vatSource && {
+            vatSource: {
+              before: r.vatCaptureSnapshotJson ? {
+                origin: r.vatCaptureSnapshotJson.source.origin,
+                inputType: r.vatCaptureSnapshotJson.source.inputType,
+                vatRatePercent: r.vatCaptureSnapshotJson.source.vatRatePercent,
+                vatAmount: r.vatCaptureSnapshotJson.source.vatAmount,
+                lineSourceCount: r.vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
+                reconciliationStatus: r.vatCaptureSnapshotJson.reconciliation.status,
+              } : null,
+              after: vatCaptureSnapshotJson ? {
+                origin: vatCaptureSnapshotJson.source.origin,
+                inputType: vatCaptureSnapshotJson.source.inputType,
+                vatRatePercent: vatCaptureSnapshotJson.source.vatRatePercent,
+                vatAmount: vatCaptureSnapshotJson.source.vatAmount,
+                lineSourceCount: vatCaptureSnapshotJson.source.lineSources?.length ?? 0,
+                reconciliationStatus: vatCaptureSnapshotJson.reconciliation.status,
+              } : null,
+            },
+          }),
+          ...(classificationOverride && {
+            classificationOverride: {
+              detectedDocumentKind,
+              sourceDocumentType: overrideSourceDocumentType,
+              reason: classificationOverrideReason,
+            },
+          }),
         },
       }),
     });
@@ -527,6 +582,13 @@ export class ConfirmExpenseUseCase {
     }
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
       throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
+    }
+    if (r.vatCaptureSnapshotJson
+      && ['MISMATCH', 'NEEDS_REVIEW', 'SOURCE_ONLY'].includes(r.vatCaptureSnapshotJson.reconciliation.status)) {
+      throw new BadRequestException({
+        code: 'EXPENSE_VAT_RECONCILIATION_REQUIRED',
+        message: 'VAT from the document does not reconcile with the system calculation. Review the VAT source before confirmation.',
+      });
     }
     const reliesOnSubstitute = Boolean(r.missingReceiptReason || r.substituteReceiptGeneratedAt || r.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
     // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument

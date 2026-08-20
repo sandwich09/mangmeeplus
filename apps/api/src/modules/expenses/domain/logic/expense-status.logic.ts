@@ -31,6 +31,7 @@ export function expenseTaxSourceChecksum(expense: ExpenseRecordWithRelations): s
     sourceDocumentType: expense.sourceDocumentType,
     taxEvidenceStatus: expense.taxEvidenceStatus,
     inputVatClaimStatus: expense.inputVatClaimStatus,
+    vatCaptureSnapshot: expense.vatCaptureSnapshotJson ?? null,
     primaryAttachmentId: expense.primaryAttachmentId ?? null,
     attachments: [...(expense.attachments ?? [])]
       .sort((left, right) => left.id.localeCompare(right.id) || left.purpose.localeCompare(right.purpose))

@@ -2177,6 +2177,7 @@ model ExpenseRecord {
   aiVerificationStatus               AiVerificationStatus               @default(NOT_VERIFIED)
   aiVerifiedFieldsJson               Json?
   aiVerificationSummaryJson          Json?
+  vatCaptureSnapshotJson             Json?
   aiVerificationConfidence           Float?
   aiVerifiedAt                       DateTime?
   lineMessageId                      String?
