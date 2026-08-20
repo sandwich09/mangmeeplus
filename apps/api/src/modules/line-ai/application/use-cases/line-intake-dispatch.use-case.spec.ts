@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { ConflictException } from '@nestjs/common';
+import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
-import { LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
+import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
 // Router-driven webhook dispatch tests (item 10B LINE Intake Router front stage).
 
@@ -52,6 +53,8 @@ function makePrisma() {
       }),
       lineWebhookEventLog: {
         findUnique: async () => null,
+        // A bare number is only a company pick when the PREVIOUS turn was the picker; here it never was.
+        findFirst: async () => null,
         create: async (args: unknown) => args,
         updateMany: async (args: any) => { updates.push(args); return { count: 1 }; },
       },
@@ -65,6 +68,8 @@ function makePrisma() {
       companyFeatureEntitlement: { findMany: async () => [] },
       expenseRecord: { update: async (args: any) => { recordUpdates.push(args); return args; } },
       attachmentLink: { findFirst: async () => null },
+      // §11: the checksum the wet-signed scan is recorded with comes off the stored attachment.
+      attachmentObject: { findFirst: async () => ({ checksumSha256: 'scan-checksum' }) },
       aiConversation: { upsert: async (args: any) => ({ id: args.where.id }) },
       aiTurn: { create: async (args: any) => { turnCreates.push(args); return { id: 'turn-1' }; }, findMany: async () => [], update: async (args: any) => args },
       aiToolInvocation: { createMany: async (args: unknown) => args },
@@ -111,7 +116,12 @@ type Harness = {
   linkAttachmentCalls: any[];
   updateExpenseCalls: any[];
   substituteCalls: any[];
+  mediaContextCalls: any[];
+  attachMediaCalls: any[];
+  linkScanCalls: any[];
   receiptContinuationCalls: any[];
+  /** Inputs the REAL capture use case handed to CreateExpenseDraftUseCase (realCapture only). */
+  draftsCreated: any[];
 };
 
 function makeHarness(opts: {
@@ -131,6 +141,16 @@ function makeHarness(opts: {
   captureLedger?: any[];
   captureError?: Error;
   substituteResult?: any;
+  /** §11: what `loadOpenMediaContext` reports for this chat — undefined means no open substitute work. */
+  substituteMediaContext?: any;
+  /** R11: what the link gate refuses with, so the reply for an uncomposable scan can be asserted. */
+  linkScanError?: Error;
+  /** Rows behind `hasActiveSubstituteContinuation`: a chat already mid-workflow must not fork a draft. */
+  substituteContinuationRows?: any[];
+  /** Runs the REAL CaptureLineExpenseNoteUseCase (deterministic eligibility gate included) instead
+   *  of the reply stub, so a capture path is proven against production logic, not a double. */
+  realCapture?: boolean;
+  substituteThrows?: Error;
   expenseDetail?: any;
   lineReplyResult?: 'ok' | 'failed_token' | 'failed_other';
   conversationTurns?: any[];
@@ -153,9 +173,60 @@ function makeHarness(opts: {
   const linkAttachmentCalls: any[] = [];
   const updateExpenseCalls: any[] = [];
   const substituteCalls: any[] = [];
+  const mediaContextCalls: any[] = [];
+  const attachMediaCalls: any[] = [];
+  const linkScanCalls: any[] = [];
   const receiptContinuationCalls: any[] = [];
+  const draftsCreated: any[] = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
+
+  // expenseRepo doubles as the repository the REAL capture use case reads and writes through.
+  const expenseRepo = {
+    listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
+    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
+    listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
+    recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
+    findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
+    runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
+      const matched = await detectWithinTx({ marker: 'tx' });
+      return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
+    },
+    createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
+    linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
+    updateExpense: async (input: any) => {
+      updateExpenseCalls.push(input);
+      return { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', ...input };
+    },
+    findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
+      id: expenseId,
+      primaryAttachmentId: 'pending-att-1',
+      attachments: [{
+        id: 'pending-att-1',
+        purpose: 'expense.receipt.primary',
+        checksumSha256: 'hash',
+        perceptualHash: '8f00aa55cc33f00f',
+      }],
+      vendorDocumentNumber: null,
+      vendorTaxIdSnapshot: null,
+      expenseDate: new Date('2026-07-29T00:00:00.000Z'),
+      grandTotalAmount: '0',
+      vendorCounterpartyId: null,
+      createdByUserId: 'user-1',
+    }),
+    findNearDuplicates: async () => [],
+    findExpenseIdsByAttachmentChecksum: async () => [],
+    createDuplicateCandidate: async () => undefined,
+  } as any;
+
+  // Only repositories, audit and outbox are doubled: the eligibility gate, hint validation and
+  // draft-line construction are the production ones.
+  const realCaptureExpenseNote = new CaptureLineExpenseNoteUseCase(
+    expenseRepo,
+    { execute: async (_ctx: any, input: any) => { draftsCreated.push(input); return { id: 'expense-note-real-1', updatedAt: new Date() }; } } as any,
+    { log: async () => undefined } as any,
+    { append: async () => undefined } as any,
+  );
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
@@ -198,9 +269,10 @@ function makeHarness(opts: {
     { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,
     // captureExpenseNote
     {
-      execute: async (_ctx: any, cmd: any) => {
+      execute: async (ctx: any, cmd: any) => {
         if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
+        if (opts.realCapture) return realCaptureExpenseNote.execute(ctx, cmd);
         return {
           expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
           warnings: [],
@@ -219,42 +291,11 @@ function makeHarness(opts: {
     {
       execute: async (_ctx: any, cmd: any) => {
         signatureCreated.push(cmd);
-        return { id: 'sig-1', status: 'PENDING_OWNER_APPROVAL', submittedFromChannel: 'LINE' };
+        return { id: 'sig-1', status: 'ACTIVE', submittedFromChannel: 'LINE' };
       },
     } as any,
     // expenseRepo (categories catalog for the router + RECEIPT-05 draft-from-attachment)
-    {
-      listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
-      listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
-      recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
-      findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
-      runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
-        const matched = await detectWithinTx({ marker: 'tx' });
-        return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
-      },
-      createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
-      linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
-      updateExpense: async (input: any) => { updateExpenseCalls.push(input); return { id: input.id }; },
-      findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
-        id: expenseId,
-        primaryAttachmentId: 'pending-att-1',
-        attachments: [{
-          id: 'pending-att-1',
-          purpose: 'expense.receipt.primary',
-          checksumSha256: 'hash',
-          perceptualHash: '8f00aa55cc33f00f',
-        }],
-        vendorDocumentNumber: null,
-        vendorTaxIdSnapshot: null,
-        expenseDate: new Date('2026-07-29T00:00:00.000Z'),
-        grandTotalAmount: '0',
-        vendorCounterpartyId: null,
-        createdByUserId: 'user-1',
-      }),
-      findNearDuplicates: async () => [],
-      findExpenseIdsByAttachmentChecksum: async () => [],
-      createDuplicateCandidate: async () => undefined,
-    } as any,
+    expenseRepo,
     // ledger: only the open-clarification read matters for the correction evidence tests
     (opts.openWaiting || opts.captureLedger
       ? {
@@ -277,7 +318,29 @@ function makeHarness(opts: {
         return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
       },
     } as any,
-    (opts.substituteResult ? { execute: async (_ctx: any, input: any) => { substituteCalls.push(input); return opts.substituteResult; } } : undefined) as any,
+    (opts.substituteResult || opts.substituteThrows || opts.substituteMediaContext
+      ? {
+        execute: async (_ctx: any, input: any) => {
+          substituteCalls.push(input);
+          if (opts.substituteThrows) throw opts.substituteThrows;
+          return opts.substituteResult;
+        },
+        loadOpenMediaContext: async (_ctx: any, chatKeyHash: string) => {
+          mediaContextCalls.push(chatKeyHash);
+          return opts.substituteMediaContext;
+        },
+        hasPendingIssueDecision: async () => false,
+        attachMedia: async (_ctx: any, input: any) => {
+          attachMediaCalls.push(input);
+          return { replyText: `📎 แนบแล้ว ${input.purpose}` };
+        },
+        linkWetSignedScan: async (_ctx: any, input: any) => {
+          if (opts.linkScanError) throw opts.linkScanError;
+          linkScanCalls.push(input);
+          return { replyText: '🔵 รอยืนยัน — SUB-202608-00007' };
+        },
+      }
+      : undefined) as any,
     opts.expenseDraftConversation,
   );
   const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -289,7 +352,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, receiptContinuationCalls };
+  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated };
 }
 
 const TEXT_EVENT = {
@@ -956,6 +1019,177 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
   });
 
+  // R1: the UAT screenshot message — one turn is both a capture and a substitute request.
+  const COMBINED_MESSAGE = 'สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์ไปพบลูกค้า 50 บาท';
+  const blockedSubstituteResult = {
+    handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-note-1',
+    replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• ระบุเหตุผลที่ไม่มีใบเสร็จ',
+    acceptedFields: ['amount'], blockers: [{ code: 'reason_code_required' }],
+    pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+  };
+
+  it('creates the draft first and opens the continuation on it in one reply, never the dead end', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      captureLedger,
+      substituteResult: blockedSubstituteResult,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+
+    assert.equal(h.captured.length, 1, 'the expense fact in the message is captured, not discarded');
+    assert.equal(h.captured[0].draftConversationEnabled, false,
+      'the substitute continuation owns the next question; a second draft thread would ask another');
+    assert.equal(h.substituteCalls.length, 1);
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-note-1'],
+      'the continuation opens on the draft this turn created');
+    assert.equal(h.replies.length, 1, 'both outcomes arrive in one reply');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ผลคำขอเพิ่มเติม:/);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+    assert.equal(h.routeRequests.length, 0, 'the deterministic workflow boundary still skips the model router');
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+  });
+
+  it('passes the REAL capture eligibility gate and opens the continuation on the draft it created', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      captureLedger,
+      substituteResult: { ...blockedSubstituteResult, expenseId: 'expense-note-real-1' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+
+    // The gate (isLineTextExpenseCaptureEligible) needs an amount present in the source text AND a
+    // description copied verbatim from it; no model runs here, so the dispatcher synthesizes both.
+    assert.deepEqual(
+      { amount: h.captured[0]?.captureHints?.amount, description: h.captured[0]?.captureHints?.description },
+      { amount: '50', description: 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท' },
+    );
+    assert.equal(h.draftsCreated.length, 1, 'the real use case reached CreateExpenseDraftUseCase — the gate passed');
+    assert.deepEqual(h.draftsCreated[0].lines, [{
+      lineNumber: 1, description: 'ค่าวินมอไซต์ไปพบลูกค้า 50 บาท', quantity: '1', unitPrice: '50.0000', expenseCategoryId: undefined,
+    }], 'the validated amount became the draft line, so nothing was silently dropped');
+    assert.equal(h.updateExpenseCalls[0]?.status, 'NEEDS_REVIEW', 'a reviewable draft, never a confirmed expense');
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-note-real-1']);
+    assert.equal(h.replies.length, 1);
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ผลคำขอเพิ่มเติม:/);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+  });
+
+  it('keeps a real draft and degrades only the substitute half when the continuation fails', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      substituteThrows: new Error('continuation store unavailable'),
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(h.draftsCreated.length, 1, 'the committed draft is not rolled back by a reply-side failure');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ยังตรวจสอบไม่ได้ชั่วคราว/);
+  });
+
+  it('does not capture through the real gate when the message carries an amount but no purpose', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      substituteResult: blockedSubstituteResult,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ทำใบทดแทนใบเสร็จ 50 บาท' });
+    assert.equal(h.draftsCreated.length, 0, 'R1 wants amount PLUS purpose/category; an amount alone is not an expense');
+    assert.equal(h.substituteCalls.length, 1, 'the turn still answers through the continuation');
+    assert.equal(h.replies[0]?.includes('บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว'), false);
+  });
+
+  it('falls through to target selection without a capture when the turn cannot or must not create a draft', async () => {
+    const recentCaptures = [{
+      id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '200.00',
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT' as const, createdAt: new Date(),
+    }];
+    const noAmount = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      recentCaptures,
+      substituteResult: blockedSubstituteResult,
+    });
+    await noAmount.useCase.execute({ ...TEXT_EVENT, messageText: 'สร้างใบทดแทนใบเสร็จให้หน่อย' });
+    assert.equal(noAmount.captured.length, 0, 'no amount, nothing to capture');
+    assert.deepEqual(noAmount.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-1']);
+    assert.equal(noAmount.replies[0]?.includes('บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว'), false);
+
+    // The dead-end R1 removes is "no candidate at all". With one to target, capturing would create a
+    // duplicate AND hide the existing draft, which auto-targeted before Phase 2.
+    const hasCandidate = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      recentCaptures,
+      substituteResult: blockedSubstituteResult,
+    });
+    await hasCandidate.useCase.execute({ ...TEXT_EVENT, messageText: 'ทำใบรับรองแทนใบเสร็จรับเงินให้รายการ 50 บาท' });
+    assert.equal(hasCandidate.draftsCreated.length, 0, 'an existing candidate is targeted, never duplicated');
+    assert.deepEqual(hasCandidate.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-1'],
+      'the existing draft stays pickable');
+
+    // An open capture clarification owns this message's expense facts and its own ledger entry.
+    const captureClarificationOpen = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      realCapture: true,
+      openWaiting: [{
+        id: 'capture-clarify-1', question: 'ยอดเท่าไรคะ?', text: 'ค่าวินมอไซต์', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        entry: { id: 'capture-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      substituteResult: blockedSubstituteResult,
+    });
+    await captureClarificationOpen.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(captureClarificationOpen.draftsCreated.length, 0,
+      'capture-first neither consumes nor inherits an open capture clarification, so it stands down');
+
+    const incomplete = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+      substituteResult: blockedSubstituteResult,
+    });
+    await incomplete.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(incomplete.substituteCalls.length, 1, 'an incomplete capture degrades to target selection');
+    assert.deepEqual(incomplete.substituteCalls[0].recentCandidates, []);
+    assert.match(incomplete.replies[0] ?? '', /ใบรับรองแทนใบเสร็จรับเงิน/);
+
+    const alreadyOpen = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      substituteContinuationRows: [{
+        id: 'expense-open', updatedAt: new Date(),
+        sourceChannelMetadataJson: {
+          lineSubstituteReceiptContinuation: {
+            workflowId: 'wf-open', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+            expenseId: 'expense-open', chatKeyHash: 'chat-hash', status: 'PAUSED', acceptedValues: {},
+            provenance: {}, targetRevision: new Date().toISOString(),
+          },
+        },
+      }],
+      substituteResult: blockedSubstituteResult,
+    });
+    await alreadyOpen.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(alreadyOpen.captured.length, 0,
+      'an OPEN/PAUSED workflow already owns this chat; a new draft would be orphaned by state-first resolution');
+  });
+
+  it('dispatches the continuation unchanged for a user who may not capture expenses', async () => {
+    const h = makeHarness({
+      permissions: ['expense.review', 'line.ai.query'],
+      substituteResult: blockedSubstituteResult,
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: COMBINED_MESSAGE });
+    assert.equal(h.captured.length, 0, 'no capture permission, no draft');
+    assert.equal(h.substituteCalls.length, 1);
+    assert.deepEqual(h.substituteCalls[0].recentCandidates, []);
+    assert.equal(h.replies[0]?.includes('ผลคำขอเพิ่มเติม:'), false, 'nothing to merge, so no merged reply');
+  });
+
   it('answers an arbitrary intervening question normally, then resumes the same substitute workflow', async () => {
     const captureLedger: any[] = [];
     const h = makeHarness({
@@ -983,6 +1217,30 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /turn-answer/);
     assert.match(h.replies[0] ?? '', /งานใบรับรองแทนใบเสร็จรับเงิน.*ยังอยู่/);
     assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
+  });
+
+  it('delivers a forbidden substitute outcome instead of silently dropping it as a side-question interruption', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'sub-clarify-1', question: 'เหตุผลคืออะไร?', text: 'ทำใบรับรองต่อ', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      substituteResult: {
+        handled: true, status: 'FORBIDDEN', acceptedFields: [],
+        blockers: [{ code: 'expense_review_forbidden' }],
+        // No resumeCapsule and no sideQuestionAnswered: the old routing lost this reply entirely.
+        replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nต้องมีสิทธิ์ตรวจทานค่าใช้จ่าย (expense.review) ซึ่งบัญชีนี้ยังไม่มีค่ะ',
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายเดือนนี้เท่าไหร่?' });
+
+    assert.equal(h.substituteCalls.length, 1);
+    assert.match(h.replies[0] ?? '', /expense\.review/, 'the forbidden reason reaches the user');
+    assert.equal(h.routeRequests.length, 0, 'a forbidden outcome is answered deterministically, not routed to the model');
   });
 
   it('answers a business question beside pending media, then deterministically resumes the stored picture choice', async () => {
@@ -1104,7 +1362,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(Buffer.from(captured.init?.body as Uint8Array), Buffer.from('receipt'));
   });
 
-  it('signature-like image creates a pending signature ticket, not an expense draft', async () => {
+  it('signature-like image is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
       permissions: ['expense.signature.manage', 'expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
@@ -1114,19 +1372,23 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.signatureCreated.length, 1);
     assert.equal(h.signatureCreated[0].submittedFromChannel, 'LINE');
     assert.equal(h.signatureCreated[0].lineMessageId, 'msg-media-1');
-    assert.match(h.replies[0] ?? '', /รอเจ้าของกิจการอนุมัติ/);
-    assert.match(h.replies[0] ?? '', /tab=signatures/);
+    // Owner decision 2026-08-20: the photo IS the signature the moment it lands. A reply that
+    // promises an approval step would describe a queue that no longer exists.
+    assert.match(h.replies[0] ?? '', /ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ/);
+    // A2: `?tab=signatures` was a no-op query on a route that redirected away. The link now names
+    // the un-parked screen and the row inside it.
+    assert.match(h.replies[0] ?? '', /expenses\/signatures\?signatureId=/);
     assert.ok(!/บันทึกข้อมูลค่าใช้จ่าย/.test(h.replies[0] ?? ''));
   });
 
-  it('signature route without signature permission is refused', async () => {
+  it('signature route without any signing or housekeeping permission is refused', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
     assert.equal(h.signatureCreated.length, 0);
-    assert.match(h.replies[0] ?? '', /ไม่มีสิทธิ์ส่งลายเซ็น/);
+    assert.match(h.replies[0] ?? '', /ไม่มีสิทธิ์เก็บลายเซ็นประจำตัว/);
   });
 
   it('receipt image routes to expense capture with document type + tax evidence from hints', async () => {
@@ -1968,5 +2230,377 @@ describe('classifyPendingMediaReply (RECEIPT-05 follow-up resolver)', () => {
   it('keeps refusing a negation that also names the document', () => {
     assert.notEqual(classifyPendingMediaReply('ไม่ใช่ใบกำกับภาษี'), 'receipt');
     assert.notEqual(classifyPendingMediaReply('ไม่ต้องบันทึกใบเสร็จ'), 'receipt');
+  });
+});
+
+// Spec §11 (R14) / R10: media that arrives while this chat has open substitute work.
+describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
+  const SCAN = {
+    expenseId: 'expense-1', evidenceId: 'evidence-1', documentNumber: 'SUB-202608-00007',
+    amountLabel: '50.0000 THB', preparedAt: '2026-08-20T09:00:00.000Z',
+  };
+  const AWAITING = { expenseId: 'expense-1', awaitingScans: [SCAN] };
+  const OPEN_ONLY = { expenseId: 'expense-1', awaitingScans: [] };
+  const SUBSTITUTE_PERMISSIONS = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'];
+  /** MANAGER: holds expense.review, does not hold expense.receipt.upload (§14 keeps that the gate). */
+  const MANAGER_PERMISSIONS = ['expense.receipt.line_upload', 'expense.review'];
+  const CAPTURE_PLAN = { status: 'ROUTED' as const, intent: 'EXPENSE_DOCUMENT_CAPTURE' as const, language: 'th', confidence: 0.95 };
+  const CHAT_KEY_HASH = chatKeyHashOf(MEDIA_EVENT);
+
+  /** The question the arrival turn recorded, as the answer turn will read it back. */
+  const askedClass = (choices: string[], chatKeyHash = CHAT_KEY_HASH) =>
+    ({ kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices });
+  const askedScan = (evidenceId = 'evidence-1', chatKeyHash = CHAT_KEY_HASH) =>
+    ({ kind: 'SUBSTITUTE_SCAN_CONFIRM', chatKeyHash, evidenceId });
+
+  it('asks the D9 question naming the document number and amount, and keeps the bytes pending', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    const result = await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal(result.outcome, 'done');
+    assert.match(h.replies[0] ?? '', /SUB-202608-00007/);
+    assert.match(h.replies[0] ?? '', /50\.0000 THB/);
+    assert.match(h.replies[0] ?? '', /1\) ใช่/);
+    assert.equal(pendingMediaRows.length, 1, 'the bytes wait for the answer');
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    // FIX-1: the row remembers WHICH question it was asked, and in which chat.
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson, askedScan());
+    assert.equal(h.initCalls.length, 0, 'no expense draft is created from an unclassified photo');
+    assert.equal(h.linkScanCalls.length, 0, '§16: a photo alone links nothing');
+  });
+
+  it('asks one numbered question without the signed-form choice when nothing awaits a scan', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+
+    assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
+    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.match(h.replies[0] ?? '', /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);
+    assert.deepEqual(
+      pendingMediaRows[0].askedQuestionJson,
+      askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']),
+    );
+  });
+
+  it('attaches straight to the open work when the caption already says what the file is', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'สลิปโอนค่ะ');
+
+    assert.deepEqual(h.attachMediaCalls, [{
+      expenseId: 'expense-1', attachmentId: 'pending-att-1',
+      purpose: 'expense.payment.evidence', webBaseUrl: 'https://app.example.com',
+    }]);
+    assert.equal(h.initCalls.length, 0, 'no second expense is created for a slip of the open one');
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+
+    const supporting = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: makePrisma().prisma,
+      substituteMediaContext: OPEN_ONLY, routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await supporting.useCase.executeReceiptUpload(MEDIA_EVENT, 'หลักฐานค่าที่จอดรถค่ะ');
+    assert.equal(supporting.attachMediaCalls[0].purpose, 'expense.receipt.supporting');
+  });
+
+  it('never takes a photo that a different intent already answered', async () => {
+    // The signature ticket owns its own route, and a DEGRADED router must not let a signature
+    // caption reach the D9 confirm either — one ใช่ there would crop a signature into a certificate.
+    for (const routePlan of [
+      { status: 'ROUTED' as const, intent: 'SIGNATURE_UPLOAD_TICKET' as const, language: 'th', confidence: 0.92 },
+      { status: 'DEGRADED' as const, reason: 'router_unavailable' as const },
+    ]) {
+      const h = makeHarness({
+        permissions: [...SUBSTITUTE_PERMISSIONS, 'expense.signature.manage'],
+        substituteMediaContext: AWAITING, routePlan: routePlan as any,
+        prisma: makePrisma().prisma, receiptOcrResult: validReceiptOcr(),
+      });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ลายเซ็นค่ะ');
+      assert.equal(h.linkScanCalls.length, 0, 'a signature caption never reaches D9');
+      assert.equal(h.attachMediaCalls.length, 0);
+      assert.equal((h.replies[0] ?? '').includes('SUB-202608-00007'), false);
+    }
+
+    // The four routes that already have an answer keep it, context or no context.
+    const routes: Array<[string, any, RegExp]> = [
+      ['CLARIFY', { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.5, clarifyQuestion: 'ถามกลับ' }, /ถามกลับ/],
+      ['MUTATION_REQUEST_REFUSAL', { status: 'ROUTED', intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.9 }, /ไม่สามารถทำรายการ/],
+      ['BUSINESS_READ_QUESTION', { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
+      ['UNSUPPORTED', { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }, /รูปนี้เป็นอะไรคะ/],
+    ];
+    for (const [name, routePlan, expected] of routes) {
+      const h = makeHarness({
+        permissions: SUBSTITUTE_PERMISSIONS, prisma: makePrisma().prisma,
+        substituteMediaContext: AWAITING, routePlan, receiptOcrResult: validReceiptOcr(),
+      });
+      await h.useCase.executeReceiptUpload(MEDIA_EVENT, 'ยอดขายเดือนนี้เท่าไหร่');
+      assert.match(h.replies[0] ?? '', expected, name);
+      assert.equal(h.attachMediaCalls.length, 0, `${name}: the substitute branch stays out of it`);
+      assert.equal((h.replies[0] ?? '').includes('SUB-202608-00007'), false, `${name}: no D9`);
+    }
+  });
+
+  it('leaves every no-context turn exactly as it was, and never doubles an already-captured photo', async () => {
+    const { prisma, recordUpdates } = makePrisma();
+    const noContext = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: undefined,
+      substituteResult: { handled: true, status: 'BLOCKED', acceptedFields: [], blockers: [], replyText: 'x' },
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await noContext.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(noContext.initCalls.length, 1, 'without open substitute work the photo is a new expense');
+    assert.equal(noContext.attachMediaCalls.length, 0);
+    assert.ok(recordUpdates.length > 0);
+
+    // MANAGER: expense.review but no expense.receipt.upload. §14 keeps the attach gate, so the
+    // branch never claims the arrival — their photo keeps the behaviour it has today.
+    const manager = makePrisma();
+    const managerTurn = makeHarness({
+      permissions: MANAGER_PERMISSIONS, prisma: manager.prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+    });
+    await managerTurn.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.equal(managerTurn.mediaContextCalls.length, 0);
+    assert.equal(managerTurn.initCalls.length, 1, 'existing capture behaviour, unchanged');
+
+    // The same photo redelivered after the substitute work opened: it is already an expense.
+    const redelivered = makePrisma();
+    const again = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: redelivered.prisma, substituteMediaContext: AWAITING,
+      routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
+      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT' }),
+    });
+    await again.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-redelivered' });
+    assert.equal(redelivered.pendingMediaRows.length, 0, 'no second copy of an already-captured photo');
+    assert.equal(again.attachMediaCalls.length, 0);
+    assert.match(again.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่าย/);
+  });
+
+  it('resolves a numbered answer against the question that was asked, never against today’s list', async () => {
+    // The inversion this guards: an old receipt-clarify “2” means "just an illustration, do NOT
+    // record". Read off the substitute list it would mean "supporting evidence" and file the photo.
+    const legacy = makePrisma();
+    seedPendingRow(legacy.pendingMediaRows, { caption: 'ยอดขายเดือนนี้เท่าไหร่', askedQuestionJson: { kind: 'RECEIPT_CLARIFY', chatKeyHash: CHAT_KEY_HASH } });
+    const legacyTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: legacy.prisma, substituteMediaContext: OPEN_ONLY,
+    });
+    await legacyTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-legacy-2', messageText: '2' });
+    assert.equal(legacyTurn.attachMediaCalls.length, 0, 'an illustration answer never attaches evidence');
+    assert.equal(legacyTurn.createExpenseCalls.length, 0);
+    assert.equal(legacy.pendingMediaRows[0].status, 'RESOLVED_ILLUSTRATION', 'the receipt clarify resolved it, as before');
+
+    // A row with no recorded question at all (written before this existed) is likewise not ours.
+    const unrecorded = makePrisma();
+    seedPendingRow(unrecorded.pendingMediaRows, { caption: '' });
+    const unrecordedTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: unrecorded.prisma, substituteMediaContext: AWAITING,
+    });
+    await unrecordedTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrecorded', messageText: '1' });
+    assert.equal(unrecordedTurn.linkScanCalls.length, 0, 'a D9-shaped “1” cannot link a row that was never asked D9');
+    assert.equal(unrecordedTurn.attachMediaCalls.length, 0);
+
+    // A row questioned in a DIFFERENT chat is not this chat's to resolve either.
+    const otherChat = makePrisma();
+    seedPendingRow(otherChat.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(['PAYMENT_EVIDENCE'], 'another-chat') });
+    const otherChatTurn = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma: otherChat.prisma, substituteMediaContext: OPEN_ONLY,
+    });
+    await otherChatTurn.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-other-chat', messageText: '1' });
+    assert.equal(otherChatTurn.attachMediaCalls.length, 0);
+  });
+
+  it('links the scan on ใช่, is idempotent on redelivery, and issues nothing by itself', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-confirm-1', messageText: 'ใช่' });
+
+    assert.deepEqual(h.linkScanCalls, [{
+      expenseId: 'expense-1', evidenceId: 'evidence-1', attachmentId: 'pending-att-1',
+      checksumSha256: 'scan-checksum', webBaseUrl: 'https://app.example.com',
+    }]);
+    assert.match(h.replies[0] ?? '', /รอยืนยัน/);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.equal(h.createExpenseCalls.length, 0, 'a confirmed form is not a new expense');
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-confirm-2', messageText: 'ใช่' });
+    assert.equal(h.linkScanCalls.length, 1, 'the resolved row is no longer pending');
+  });
+
+  it('lists the other forms on ไม่ใช่, and links the one that is picked (§15)', async () => {
+    const second = {
+      expenseId: 'expense-2', evidenceId: 'evidence-2', documentNumber: 'SUB-202608-00009',
+      amountLabel: '99.0000 THB', preparedAt: '2026-08-20T08:00:00.000Z',
+    };
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma,
+      substituteMediaContext: { expenseId: 'expense-1', awaitingScans: [SCAN, second] },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-not-this-one', messageText: 'ไม่ใช่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.match(h.replies[0] ?? '', /1\) SUB-202608-00009 ยอด 99\.0000 THB/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'the bytes are still waiting');
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
+      { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash: CHAT_KEY_HASH, evidenceIds: ['evidence-2'] });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-pick-1', messageText: '1' });
+    assert.deepEqual(h.linkScanCalls.map((call: any) => call.evidenceId), ['evidence-2']);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+  });
+
+  it('falls back to the plain numbered question on ไม่ใช่ when no other form awaits a scan (§15)', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-none-left', messageText: 'ไม่ใช่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.equal((h.replies[0] ?? '').includes('ฟอร์มที่เซ็นแล้ว'), false);
+    assert.match(h.replies[0] ?? '', /1\) สลิป\/หลักฐานการจ่ายของรายการนี้/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+    assert.deepEqual(pendingMediaRows[0].askedQuestionJson,
+      askedClass(['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']));
+  });
+
+  it('routes the recorded choices to attach, to the capture path, and to the do-not-record escape', async () => {
+    const choices = ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'];
+    const attach = makePrisma();
+    seedPendingRow(attach.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const attaching = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: attach.prisma, substituteMediaContext: OPEN_ONLY });
+    await attaching.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-2', messageText: '2' });
+    assert.equal(attaching.attachMediaCalls[0].purpose, 'expense.receipt.supporting');
+    assert.equal(attach.pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+
+    const capture = makePrisma();
+    seedPendingRow(capture.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const newExpense = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: capture.prisma, substituteMediaContext: OPEN_ONLY });
+    await newExpense.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-3', messageText: '3' });
+    assert.equal(newExpense.attachMediaCalls.length, 0);
+    assert.equal(newExpense.createExpenseCalls.length, 1, 'choice “ค่าใช้จ่ายใหม่” is the existing capture path');
+
+    // The escape RECEIPT-05 has always had: a picture that answers a question and records nothing.
+    const escape = makePrisma();
+    seedPendingRow(escape.pendingMediaRows, { caption: '', askedQuestionJson: askedClass(choices) });
+    const notRecorded = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: escape.prisma, substituteMediaContext: OPEN_ONLY });
+    await notRecorded.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-answer-4', messageText: '4' });
+    assert.equal(notRecorded.attachMediaCalls.length, 0);
+    assert.equal(notRecorded.createExpenseCalls.length, 0, 'nothing is recorded');
+    assert.equal(escape.pendingMediaRows[0].status, 'RESOLVED_ILLUSTRATION');
+    assert.match(notRecorded.replies[0] ?? '', /ไม่ได้บันทึกเป็นหลักฐาน/);
+  });
+
+  it('re-states its own question instead of letting another classifier act on the bytes', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: [...SUBSTITUTE_PERMISSIONS, 'line.ai.query'], prisma, substituteMediaContext: AWAITING,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-unrelated', messageText: 'ยอดขายเดือนนี้เท่าไหร่' });
+
+    assert.equal(h.linkScanCalls.length, 0);
+    assert.equal(h.attachMediaCalls.length, 0);
+    assert.equal(h.createExpenseCalls.length, 0, 'an unrelated question never resolves the pending bytes');
+    assert.equal(pendingMediaRows[0].status, 'PENDING');
+  });
+
+  it('tells a MANAGER the truth instead of failing, and never lets this path throw into the turn', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedClass(['PAYMENT_EVIDENCE', 'NO_RECORD']) });
+    const manager = makeHarness({ permissions: MANAGER_PERMISSIONS, prisma, substituteMediaContext: OPEN_ONLY });
+
+    await manager.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-manager-answer', messageText: '1' });
+
+    assert.equal(manager.attachMediaCalls.length, 0, 'nothing is attached without the permission');
+    assert.match(manager.replies[0] ?? '', /ไม่มีสิทธิ์|ยังไม่ได้เปิดใช้งาน/, 'the reply names the reason');
+    assert.equal((manager.replies[0] ?? '').includes('ขออภัยค่ะ เกิดข้อผิดพลาด'), false, 'not the generic infra failure');
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'their file is still there to retry');
+
+    // A failure inside the substitute path is contained: it never reaches the dispatcher's
+    // generic error reply carrying the customer's lost answer with it.
+    const failing = makePrisma();
+    seedPendingRow(failing.pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const thrower = makeHarness({ permissions: SUBSTITUTE_PERMISSIONS, prisma: failing.prisma, substituteMediaContext: AWAITING });
+    (thrower.useCase as any).substituteReceiptContinuation.loadOpenMediaContext = async () => { throw new Error('continuation store unavailable'); };
+    await thrower.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-throws', messageText: 'ใช่' });
+    assert.equal(thrower.linkScanCalls.length, 0);
+    assert.equal(failing.pendingMediaRows[0].status, 'PENDING');
+  });
+
+  it('refuses a scan the artifact could never contain, in words the sender can act on', async () => {
+    const { prisma, pendingMediaRows } = makePrisma();
+    seedPendingRow(pendingMediaRows, { caption: '', askedQuestionJson: askedScan() });
+    const h = makeHarness({
+      permissions: SUBSTITUTE_PERMISSIONS, prisma, substituteMediaContext: AWAITING,
+      linkScanError: new ConflictException({
+        code: 'substitute_wet_signed_scan_not_linkable',
+        message: 'The scanned form cannot be read as a printable document.',
+      }),
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-bad-scan', messageText: 'ใช่' });
+
+    assert.match(h.replies[0] ?? '', /SUB-202608-00007/);
+    assert.match(h.replies[0] ?? '', /cannot be read as a printable document/);
+    assert.equal(pendingMediaRows[0].status, 'PENDING', 'a refused scan keeps the bytes for a retry');
+  });
+});
+
+describe('spec §12.8/§13 — chat kind and state badge reach the continuation and the card', () => {
+  const permissions = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'];
+  const issuedResult = {
+    handled: true, status: 'READY_FOR_WEB', workflowId: 'wf-1', expenseId: 'expense-note-1',
+    badge: '✅ ออกเอกสารแล้ว', acceptedFields: [], blockers: [],
+    replyText: '✅ ออกเอกสารแล้ว — เลขที่ SUB-202608-00007',
+  };
+
+  it('tells the continuation this is a 1:1 chat, and hands the badge to the delivered card', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-badge-dm', messageText: 'ขอลิงก์ใหม่' });
+
+    assert.equal(h.substituteCalls[0].groupChat, false);
+    assert.match(h.replies[0] ?? '', /✅ ออกเอกสารแล้ว/);
+  });
+
+  it('marks a group or room turn so no per-recipient link is ever posted into it', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT, webhookEventId: 'evt-badge-group', messageText: 'ขอลิงก์ใหม่',
+      pushTargetId: 'group-secret-1',
+    });
+
+    assert.equal(h.substituteCalls[0].groupChat, true);
+  });
+
+  it('treats a 1:1 push target that equals the sender as the 1:1 chat it is', async () => {
+    const h = makeHarness({ permissions, substituteResult: issuedResult });
+
+    await h.useCase.execute({
+      ...TEXT_EVENT, webhookEventId: 'evt-badge-self', messageText: 'ขอลิงก์ใหม่',
+      pushTargetId: TEXT_EVENT.lineUserId,
+    });
+
+    assert.equal(h.substituteCalls[0].groupChat, false);
   });
 });

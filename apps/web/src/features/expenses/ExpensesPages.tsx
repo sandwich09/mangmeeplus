@@ -38,7 +38,7 @@ import {
 } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
-import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
+import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -66,7 +66,7 @@ import { generateSourceJournal } from '../ledger/ledger.api';
 import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
-import { mayApproveSubstituteReceipt } from './substitute-receipt-wizard.model';
+import { mayApproveSubstituteReceipt, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -658,12 +658,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     assertAllowed(signerPosition);
     if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
     if (!previewChecksum) throw new Error('กรุณาสร้างและตรวจตัวอย่างก่อนลงนาม');
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     await certifySubstituteReceipt(companyId, detail.id, evidence.id, {
       payerPosition: signerPosition,
       certificationAcknowledged: true,
       previewChecksumSha256: previewChecksum,
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: evidence.version,
       expectedEvidenceUpdatedAt: evidence.updatedAt,
     });
@@ -672,12 +672,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const approveSubstitute = async () => {
     assertAllowed(signerPosition);
     if (!evidence) throw new Error('ไม่พบเอกสารที่รออนุมัติ');
-    const signatureAttachmentId = await uploadPersonalSignature();
+    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
     await approveSubstituteReceipt(companyId, detail.id, evidence.id, {
       approverPosition: signerPosition,
       approvalAcknowledged: true,
       certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256 ?? '',
-      signatureAttachmentId,
+      ...signature,
       expectedVersion: evidence.version,
       expectedEvidenceUpdatedAt: evidence.updatedAt,
     });
@@ -726,6 +726,14 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   };
   const requiresPaymentEvidence = subPaymentMethod !== 'CASH'
     || substitutePolicy?.cashEvidencePolicy === 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+  // R9: a saved ACTIVE signature signs this certificate too; a freshly prepared file still wins.
+  const signatureSource = resolveWizardSignatureSource({
+    hasReusableSignature: substitutePolicy?.hasReusableSignature ?? false,
+    chosenFile: Boolean(signatureFile),
+    preparedFile: Boolean(cleanedSignatureFile),
+  });
+  // R11: the paper route's signatures are on the linked scan, so this panel asks for none either.
+  const paperSignature = evidence?.signatureMode === 'PAPER';
   const canApproveEvidence = evidence ? mayApproveSubstituteReceipt({
     userId,
     payerUserId: evidence.payerUserId,
@@ -881,8 +889,15 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </div>
               )}
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
+              {signatureSource === 'signature_library' && (
+                <div className="space-y-2">
+                  <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>
+                  {/* A8: the signer was certifying a legal document with an image they had never seen. */}
+                  {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
+                </div>
+              )}
               <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
-              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || !cleanedSignatureFile} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
+              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || (!paperSignature && signatureSource === 'none')} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
             </div>
           )}
           {evidence.status === 'PAYER_CERTIFIED' && !canApproveEvidence && <p>ผู้จ่ายลงนามแล้ว รอผู้มีสิทธิอนุมัติ</p>}
@@ -901,7 +916,14 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </div>
               )}
               <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
-              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || !cleanedSignatureFile} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
+              {signatureSource === 'signature_library' && (
+                <div className="space-y-2">
+                  <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>
+                  {/* A8: the signer was certifying a legal document with an image they had never seen. */}
+                  {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
+                </div>
+              )}
+              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || (!paperSignature && signatureSource === 'none')} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
             </div>
           )}
           {evidence.status === 'ISSUED' && (
@@ -2099,6 +2121,12 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const caps = expenseCapabilities(permissions);
+  // A2: the LINE ticket names one signature. The `?tab=` redirect below already carries every other
+  // query param through to the real route, so this only has to read it once it lands.
+  const [focusSignatureId, setFocusSignatureId] = useState('');
+  useEffect(() => {
+    setFocusSignatureId(new URLSearchParams(window.location.search).get('signatureId') ?? '');
+  }, [tab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2140,7 +2168,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
           {tab === 'upload' && <UploadPanel companyId={companyId} {...(branchId ? { branchId } : {})} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
           {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} onSuccess={openListExpense} />}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
-          {tab === 'signatures' && <SignaturePanel companyId={companyId} canApprove={caps.canApproveSignatures} />}
+          {tab === 'signatures' && <SignaturePanel companyId={companyId} userId={userId} canManageOthers={caps.canManageSignatures} {...(focusSignatureId ? { focusSignatureId } : {})} />}
           {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}
         </>
       )}

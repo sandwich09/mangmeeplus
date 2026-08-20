@@ -117,10 +117,14 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
       // sub-feature off, in the nav and on GET /companies/:companyId/substitute-receipts alike.
       {
         key: 'expenses.signatures',
-        labelTh: 'ลายเซ็นบริษัท',
-        descriptionTh: 'จัดการลายเซ็นและตราประทับที่ใช้ในเอกสารของบริษัท',
+        labelTh: 'ลายเซ็นของฉัน',
+        descriptionTh: 'เก็บลายเซ็นประจำตัวไว้ใช้ลงนามเอกสารของบริษัท',
         route: '/expenses/signatures',
-        permissionKeys: ['expense.signature.manage', 'expense.signature.approve'],
+        // Only the housekeeping key is owned here. The screen is also reachable on the two signing
+        // permissions, which sit in packs keyed to the parent `expenses` feature — same shape as
+        // ใบรับรองแทนใบเสร็จ above, and for the same reason: a personal signature rides along with
+        // the act of signing rather than being sold beside it.
+        permissionKeys: ['expense.signature.manage'],
       },
     ],
   },

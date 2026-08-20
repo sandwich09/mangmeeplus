@@ -10,7 +10,7 @@ import type { AppLogger } from '../logger/logger.service';
 import { apiCacheControl, PRIVATE_NO_STORE } from './api-cache-control.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 
-function run(requestLogEnabled: boolean) {
+function run(requestLogEnabled: boolean, path = '/v1/companies') {
   const lines: Array<Record<string, unknown>> = [];
   const logger = {
     info: (obj: Record<string, unknown>) => void lines.push(obj),
@@ -20,7 +20,7 @@ function run(requestLogEnabled: boolean) {
   const middleware = new RequestLoggerMiddleware(logger, { requestLogEnabled } as AppConfigService);
 
   let finish: (() => void) | undefined;
-  const req = { method: 'GET', path: '/v1/companies', headers: { 'x-request-id': 'req-1' } } as unknown as Request;
+  const req = { method: 'GET', path, headers: { 'x-request-id': 'req-1' } } as unknown as Request;
   const res = { statusCode: 200, on: (event: string, cb: () => void) => { if (event === 'finish') finish = cb; } } as unknown as Response;
 
   let nextCalls = 0;
@@ -42,6 +42,19 @@ describe('RequestLoggerMiddleware', () => {
     const { lines, nextCalls } = run(false);
     assert.equal(nextCalls, 1, 'disabling request logging must never drop the request');
     assert.equal(lines.length, 0);
+  });
+
+  // FIX-1: `/document-delivery/{token}` carries a bearer credential in the URL, and the shared
+  // redactor only ever inspects KEY names — a plain-text path log hands every log reader the document.
+  it('masks a delivery token out of the logged path and leaves every other path alone', () => {
+    const masked = run(true, `/v1/document-delivery/${'A'.repeat(43)}`);
+    assert.equal(masked.lines[0]?.['path'], '/v1/document-delivery/:token');
+
+    assert.equal(run(true).lines[0]?.['path'], '/v1/companies');
+    assert.equal(
+      run(true, '/v1/companies/c1/expenses/e1').lines[0]?.['path'],
+      '/v1/companies/c1/expenses/e1',
+    );
   });
 
   it('does not even register a finish listener when disabled', () => {

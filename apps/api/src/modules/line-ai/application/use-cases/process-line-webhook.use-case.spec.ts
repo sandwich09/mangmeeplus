@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 
@@ -186,6 +186,12 @@ function makeUseCase(
       malwareScanFn?: (bytes: Buffer) => Promise<void>;
       initReceiptUpload?: any;
       completeReceiptUpload?: any;
+      initSignatureUpload?: any;
+      createSignatureAsset?: any;
+      receiptOcrFn?: (req?: any) => any;
+      substituteReceiptContinuation?: any;
+      createUploadIntent?: any;
+      completeAttachmentUpload?: any;
       legalAcceptanceRequired?: boolean;
       approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
 	  } = {},
@@ -222,6 +228,10 @@ function makeUseCase(
 	        if (intakeRouteFn) return intakeRouteFn(req);
 	        throw new Error('LINE intake router not expected');
 	      },
+	      requestReceiptOcr: async (req: any) => {
+	        if (opts.receiptOcrFn) return opts.receiptOcrFn(req);
+	        throw new Error('receipt OCR not expected');
+	      },
 	    } as any,
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
@@ -246,8 +256,19 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
-    // captureExpenseNote → expenseDraftConversation stay unwired for these cases.
-    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    // captureExpenseNote
+    undefined,
+    opts.initSignatureUpload,
+    opts.createSignatureAsset,
+    // expenseRepo, ledger
+    undefined, undefined,
+    opts.createUploadIntent,
+    opts.completeAttachmentUpload,
+    // correctExpense
+    undefined,
+    opts.substituteReceiptContinuation,
+    // expenseDraftConversation stays unwired for these cases.
+    undefined,
     opts.approvalQueues?.reimbursement,
     opts.approvalQueues?.purchaseRequests,
     opts.approvalQueues?.purchaseOrders,
@@ -1310,6 +1331,210 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(intakeRequests.length, 0);
     assert.equal(uploadIntents, 0);
     assert.equal(auditEvents[0]?.metadataJson.reason, 'MALWARE_DETECTED');
+  });
+
+  // A4: the SIGNATURE_UPLOAD_TICKET route depends on an AI call that can come back UNAVAILABLE or
+  // low-confidence. Every degraded turn used to send a signature photo down expense capture instead.
+  it('creates the signature asset from an explicit caption even when the intake router is unavailable', async () => {
+    const { prisma } = makePrisma();
+    const created: any[] = [];
+    const delivered: string[] = [];
+    let receiptIntents = 0;
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.signature.manage'],
+      intakeRouteFn: () => ({ status: 'UNAVAILABLE' }),
+      // The ticket reply is delivered as several bubbles; the link is not in the first one.
+      sendReplyFn: async (_token: string, messages: any[]) => { delivered.push(JSON.stringify(messages)); return 'ok'; },
+      initReceiptUpload: { execute: async () => { receiptIntents += 1; return { expenseId: 'exp-1', attachmentId: 'att-1' }; } },
+      completeReceiptUpload: { execute: async () => undefined },
+      initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
+      createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { created.push(cmd); return { id: 'sig-9', status: 'ACTIVE' }; } },
+    });
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-sig-caption',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-sig-caption',
+      lineMessageId: 'line-msg-sig',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    }, 'ลายเซ็นของผมครับ');
+
+    assert.equal(created.length, 1);
+    assert.equal(created[0].submittedFromChannel, 'LINE');
+    assert.equal(created[0].lineMessageId, 'line-msg-sig');
+    assert.equal(receiptIntents, 0, 'a signature must never be captured as an expense');
+    // A2: the ticket link points at the un-parked screen, not the parked ?tab= query.
+    assert.match(delivered.join('\n'), /expenses\/signatures\?signatureId=sig-9/);
+  });
+
+  // F8: the “ตอบ 1” steer used to fire only on the numbered pending-media route. A captioned photo
+  // took the deterministic route and stranded a sender who was mid-issue-decision with no steer.
+  it('steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)', async () => {
+    const runCaption = async (pendingIssueDecision: boolean) => {
+      const { prisma } = makePrisma();
+      const delivered: string[] = [];
+      const { useCase } = makeUseCase(prisma, {
+        permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.signature.manage'],
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE' }),
+        sendReplyFn: async (_t: string, messages: any[]) => { delivered.push(JSON.stringify(messages)); return 'ok'; },
+        initReceiptUpload: { execute: async () => ({ expenseId: 'exp-1', attachmentId: 'att-1' }) },
+        completeReceiptUpload: { execute: async () => undefined },
+        initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
+        createSignatureAsset: { execute: async () => ({ id: 'sig-9', status: 'ACTIVE' }) },
+        substituteReceiptContinuation: { hasPendingIssueDecision: async () => pendingIssueDecision },
+      });
+      (useCase as any).downloadLineMedia = async () => ({
+        fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+      });
+      (useCase as any).uploadLineMedia = async () => undefined;
+      await useCase.executeReceiptUpload({
+        webhookEventId: `evt-sig-${pendingIssueDecision}`, lineUserId: 'line-user-secret',
+        replyToken: 'reply-sig', lineMessageId: 'line-msg-sig', messageType: 'image', messagingChannelId: 'msg-channel-1',
+      }, 'ลายเซ็นของผมครับ');
+      return delivered.join('\n');
+    };
+
+    assert.match(await runCaption(true), /ตอบ 1 เพื่อออกเอกสาร/, 'steers when a decision is pending');
+    assert.doesNotMatch(await runCaption(false), /ตอบ 1 เพื่อออกเอกสาร/, 'no steer when nothing is pending');
+  });
+
+  // F1: `ลายเซ็น` is a substring test, and plenty of real receipts mention it ("ค่าทำป้ายลายเซ็น").
+  // Reading that as intent filed the receipt as the newest reusable signature for legal documents —
+  // ACTIVE and signable on the spot — and lost the expense entirely. A router that saw both the
+  // caption and the picture outranks a regex; the deterministic route is for when it said nothing.
+  it('leaves a ROUTED expense capture alone even when its caption mentions ลายเซ็น', async () => {
+    const { prisma } = makePrisma();
+    const signatureCreated: any[] = [];
+    let receiptIntents = 0;
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.signature.manage', 'expense.create'],
+      intakeRouteFn: () => ROUTED_EXPENSE_DOCUMENT,
+      receiptOcrFn: () => ({ status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } }),
+      initReceiptUpload: { execute: async () => { receiptIntents += 1; return { expenseId: 'exp-1', attachmentId: 'att-1' }; } },
+      completeReceiptUpload: { execute: async () => ({ id: 'exp-1', duplicateStatus: 'NONE' }) },
+      initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
+      createSignatureAsset: { execute: async (_ctx: any, cmd: any) => { signatureCreated.push(cmd); return { id: 'sig-9', status: 'ACTIVE' }; } },
+    });
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-sig-incidental',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-sig-incidental',
+      lineMessageId: 'line-msg-incidental',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    }, 'ค่าทำป้ายลายเซ็น 500 บาท');
+
+    assert.deepEqual(signatureCreated, [], 'a routed receipt must never become a signature asset');
+    assert.equal(receiptIntents, 1, 'the expense capture the router asked for must still happen');
+  });
+
+  // A3 answer half + F9. Certification resolves signatures through a PNG/JPEG-only lookup, so a PDF
+  // answered as "my signature" would become an ACTIVE asset that can never sign anything — a dead
+  // end from the first turn, since nothing is held for review any more.
+  it('turns the numbered signature answer into a usable asset that steers back to the decision, and refuses a PDF outright', async () => {
+    const answerEvent = {
+      webhookEventId: 'evt-sig-answer', lineUserId: 'line-user-secret', replyToken: 'reply-sig-answer',
+      messageText: '1', messagingChannelId: 'msg-channel-1',
+    } as any;
+    const chatKeyHash = chatKeyHashOf(answerEvent);
+    const asked = { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: ['SIGNATURE', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'] };
+    const access = { membershipId: 'mem-1', roles: ['STAFF'], permissions: [], scopes: {} } as any;
+
+    const run = async (mimeType: string) => {
+      const { prisma } = makePrisma();
+      (prisma.client as any).lineIntakePendingMedia = { updateMany: async (args: any) => { resolved.push(args); return { count: 1 }; } };
+      const resolved: any[] = [];
+      const created: any[] = [];
+      const { useCase, replies } = makeUseCase(prisma, {
+        permissions: ['expense.receipt.upload', 'expense.signature.manage', 'attachment.create'],
+        initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig' }) },
+        createSignatureAsset: { execute: async (_c: any, cmd: any) => { created.push(cmd); return { id: 'sig-7', status: 'ACTIVE' }; } },
+        substituteReceiptContinuation: {
+          loadOpenMediaContext: async () => ({ expenseId: 'exp-1', awaitingScans: [], signatureRequested: true }),
+          // F8: this chat is parked at the issue decision, so the signature answer steers to “ตอบ 1”.
+          hasPendingIssueDecision: async () => true,
+        },
+      });
+      const ctxForAnswer = {
+        requestId: 'req-1', authSubject: 'u1', userId: 'u1', companyId: 'company-1', membershipId: 'mem-1',
+        roles: [], permissions: ['expense.receipt.upload', 'expense.signature.manage'], scopes: {}, authProvider: 'line',
+      } as any;
+      const outcome = await (useCase as any).resolveSubstituteMediaAnswer(
+        answerEvent, ctxForAnswer, access,
+        { id: 'pending-1', attachmentId: 'att-parked', lineMessageId: 'line-msg-photo', mimeType, askedQuestionJson: asked },
+        '1',
+      );
+      return { outcome, created, resolved, replies };
+    };
+
+    const image = await run('image/jpeg');
+    assert.equal(image.outcome.outcome, 'handled');
+    assert.equal(image.created.length, 1);
+    // The IMAGE's id, so a redelivery of the photo collides with this asset rather than twinning it.
+    assert.equal(image.created[0].lineMessageId, 'line-msg-photo');
+    assert.equal(image.created[0].attachmentAlreadyActive, true);
+    // F13: closed as a signature, not mislabelled as a receipt.
+    assert.equal(image.resolved[0].data.status, 'RESOLVED_SIGNATURE');
+    // Journey A: usable at once, and the sender is put back on the decision they were answering
+    // rather than left at "saved!" one keystroke from the document.
+    assert.match(image.replies.join('\n'), /ใช้ลงนามเอกสารได้ทันที ไม่ต้องรออนุมัติ/);
+    assert.match(image.replies.join('\n'), /ตอบ 1 เพื่อออกเอกสารต่อได้เลยค่ะ/);
+
+    const pdf = await run('application/pdf');
+    assert.equal(pdf.created.length, 0, 'a PDF must never become a signature asset');
+    assert.match(pdf.replies.join('\n'), /รูปลายเซ็น/);
+  });
+
+  // A4: the router asked a question about a photo and dropped the photo, so whatever the customer
+  // answered had nothing left to act on.
+  it('parks the bytes when the intake router routes a media turn to CLARIFY', async () => {
+    const { prisma } = makePrisma();
+    const pendingRows: any[] = [];
+    (prisma.client as any).lineIntakePendingMedia = {
+      findFirst: async () => null,
+      findUnique: async () => pendingRows.at(-1) ?? null,
+      create: async ({ data }: any) => { pendingRows.push({ id: 'pending-1', ...data }); return pendingRows.at(-1); },
+      update: async (args: unknown) => args,
+    };
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'CLARIFY', clarifyQuestion: 'รูปนี้คืออะไรคะ', confidence: 0.9 }),
+      initReceiptUpload: { execute: async () => ({ expenseId: 'exp-1', attachmentId: 'att-1' }) },
+      completeReceiptUpload: { execute: async () => undefined },
+      createUploadIntent: { execute: async () => ({ attachmentId: 'att-parked' }) },
+      completeAttachmentUpload: { execute: async () => undefined },
+    });
+    (useCase as any).downloadLineMedia = async () => ({
+      fileName: 'photo.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+      checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+    });
+    (useCase as any).uploadLineMedia = async () => undefined;
+
+    await useCase.executeReceiptUpload({
+      webhookEventId: 'evt-clarify-media',
+      lineUserId: 'line-user-secret',
+      replyToken: 'reply-clarify-media',
+      lineMessageId: 'line-msg-clarify',
+      messageType: 'image',
+      messagingChannelId: 'msg-channel-1',
+    }, 'อันนี้คืออะไร');
+
+    assert.equal(pendingRows.length, 1, 'the clarify question must not throw the photo away');
+    assert.equal(pendingRows[0].attachmentId, 'att-parked');
+    assert.match(replies[0] ?? '', /รูปนี้คืออะไรคะ/);
   });
 
   it('receipt upload errors reply and mark webhook instead of hanging received', async () => {

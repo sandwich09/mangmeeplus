@@ -77,3 +77,17 @@ export class SetSignatureDerivedAssetDto {
   @IsString() @IsOptional() @MaxLength(128) checksumSha256?: string;
   @Type(() => Number) @IsInt() @Min(0) @IsOptional() byteSize?: number;
 }
+
+/**
+ * Web signature-create body. The use case ALSO honours internal-only fields (`attachmentAlreadyActive`,
+ * `lineMessageId`, `submittedFromChannel`) that only the LINE path may set: `attachmentAlreadyActive`
+ * skips the PENDING_UPLOAD/ownership gate, so a caller-supplied one turns any ACTIVE attachment into a
+ * signature asset pointing at it. This whitelist is what makes `forbidNonWhitelisted` reject those keys
+ * at the edge; the controller also constructs the command from these fields alone.
+ */
+export class CreateSignatureAssetDto {
+  @IsString() @IsNotEmpty() @MaxLength(64) attachmentId!: string;
+  @IsString() @IsOptional() @MaxLength(255) label?: string;
+  @IsString() @IsOptional() @MaxLength(128) checksumSha256?: string;
+  @Type(() => Number) @IsInt() @Min(0) @IsOptional() byteSize?: number;
+}

@@ -65,6 +65,27 @@ describe('L-14 auth.rate_limit.exceeded (global per-IP limiter)', () => {
     }
   });
 
+  // FIX-1: probing a public token endpoint is exactly what trips this limiter, so the 429 event is
+  // the most likely place for a live `/d/{token}` credential to land in the log stream.
+  it('masks a delivery token out of the throttled path', async () => {
+    const { lines, restore } = captureWarnings();
+    try {
+      const guard = new ApiRateLimitGuard(
+        { rateLimitEnabled: true, rateLimitWindowSeconds: 60, rateLimitMaxRequests: 1 } as never,
+      );
+      const token = 'A'.repeat(43);
+      const context = httpContext(`/v1/document-delivery/${token}`, '198.51.100.9');
+      assert.equal(await guard.canActivate(context), true);
+      await assert.rejects(guard.canActivate(context), () => true);
+
+      const event = lines.find((line) => line['msg'] === 'auth.rate_limit.exceeded');
+      assert.equal(event?.['path'], '/v1/document-delivery/:token');
+      assert.equal(JSON.stringify(lines).includes(token), false, 'no fragment of the token survives');
+    } finally {
+      restore();
+    }
+  });
+
   it('does not emit while the client is inside its quota', async () => {
     const { lines, restore } = captureWarnings();
     try {

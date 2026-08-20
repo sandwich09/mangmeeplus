@@ -27,6 +27,7 @@ const makeAttachment = (status: AttachmentRecord['status'] = 'ACTIVE'): Attachme
 const makeRepo = (record: AttachmentRecord | null = makeAttachment()) => ({
   findById: mock.fn(async () => record),
   isSubstituteRawSignature: mock.fn(async () => false),
+  findSignatureAssetOwner: mock.fn(async (): Promise<{ ownerUserId: string | null } | null> => null),
   createPending: mock.fn(async () => { throw new Error('not used'); }),
   markActive: mock.fn(async () => { throw new Error('not used'); }),
   markDeleted: mock.fn(async () => { throw new Error('not used'); }),
@@ -85,6 +86,46 @@ describe('CreateDownloadUrlUseCase', () => {
     const signatureUc = new CreateDownloadUrlUseCase(signatureRepo as any, makeStorage() as any, makeAudit() as any);
     await assert.rejects(
       () => signatureUc.execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' }),
+      ForbiddenException,
+    );
+  });
+
+  /**
+   * The two-call attack the personal-signature model has to close: a housekeeping holder lists
+   * signatures, lifts an attachment id off somebody else's row, and asks the generic download
+   * endpoint for it. `isSubstituteRawSignature` above only matches images a certificate already
+   * RECORDED, so a library asset used to sail straight through — HTTP 200, valid PNG — for every
+   * stock role that holds `expense.signature.manage`, all of which also hold `attachment.read`.
+   */
+  it('refuses another person’s signature image and still serves the owner their own', async () => {
+    const theirs = makeRepo();
+    theirs.findSignatureAssetOwner = mock.fn(async () => ({ ownerUserId: 'someone-else' }));
+    const audit = makeAudit();
+    const storage = makeStorage();
+    const attacker = new CreateDownloadUrlUseCase(theirs as any, storage as any, audit as any);
+    await assert.rejects(
+      // `attachment.read` plus housekeeping is the DEFAULT owner/admin/finance persona, not a
+      // contrived one — which is exactly why the id must not be reachable.
+      () => attacker.execute(makeCtx(['attachment.read', 'expense.signature.manage']), { attachmentId: 'att-1' }),
+      ForbiddenException,
+    );
+    assert.equal(storage.createDownloadUrl.mock.calls.length, 0, 'no URL is ever minted');
+    const denied = (audit.log.mock.calls as any[]).map((call) => call.arguments[0]).find((entry) => entry.result === 'DENIED');
+    assert.equal(denied?.metadataJson?.reason, 'personal_signature_not_owned');
+
+    // The person whose signature it is keeps every legitimate self-download.
+    const mine = makeRepo();
+    mine.findSignatureAssetOwner = mock.fn(async () => ({ ownerUserId: 'user-1' }));
+    const owner = new CreateDownloadUrlUseCase(mine as any, makeStorage() as any, makeAudit() as any);
+    const result = await owner.execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' });
+    assert.ok(result.downloadUrl.startsWith('/local-storage/download/'));
+
+    // A link that outlived its asset row resolves to nobody, which must fail closed, not open.
+    const orphaned = makeRepo();
+    orphaned.findSignatureAssetOwner = mock.fn(async () => ({ ownerUserId: null }));
+    const orphanUc = new CreateDownloadUrlUseCase(orphaned as any, makeStorage() as any, makeAudit() as any);
+    await assert.rejects(
+      () => orphanUc.execute(makeCtx(['attachment.read']), { attachmentId: 'att-1' }),
       ForbiddenException,
     );
   });

@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Writable } from 'node:stream';
 import { createLogger } from './logger.service';
+import { maskLoggedPath } from './log-path';
 
 function capture(redactionEnabled = true) {
   const lines: string[] = [];
@@ -163,5 +164,44 @@ describe('L-09 deep log redaction (real pino instance)', () => {
     cyclic['self'] = cyclic;
     assert.doesNotThrow(() => logger.info(cyclic));
     assert.equal(last()['token'], '[REDACTED]');
+  });
+});
+
+// FIX-1: the redactor above is key-name based and never inspects string VALUES, so a secret that
+// lives in a request PATH passes through untouched. Spec §12 puts a bearer token exactly there.
+describe('maskLoggedPath', () => {
+  const token = 'A'.repeat(43);
+
+  it('replaces the delivery token segment, with or without the /v1 prefix', () => {
+    assert.equal(maskLoggedPath(`/v1/document-delivery/${token}`), '/v1/document-delivery/:token');
+    assert.equal(maskLoggedPath(`/document-delivery/${token}`), '/document-delivery/:token');
+  });
+
+  it('masks whatever sits in that position, so a format change can never fail it open', () => {
+    for (const segment of ['short', 'A'.repeat(200), '..%2f..%2fetc', `${token}extra`]) {
+      assert.equal(maskLoggedPath(`/v1/document-delivery/${segment}`), '/v1/document-delivery/:token');
+    }
+  });
+
+  it('leaves every other path, and a missing path, exactly as it found them', () => {
+    for (const path of [
+      '/v1/companies/c1/expenses/e1',
+      '/v1/health',
+      '/',
+      '/v1/document-delivery',
+      '/v1/document-deliveryX/abc',
+    ]) {
+      assert.equal(maskLoggedPath(path), path);
+    }
+    assert.equal(maskLoggedPath(undefined), undefined);
+  });
+
+  it('stops at the segment boundary and masks every occurrence', () => {
+    assert.equal(maskLoggedPath(`/v1/document-delivery/${token}/extra`), '/v1/document-delivery/:token/extra');
+    assert.equal(maskLoggedPath(`/document-delivery/${token}?a=1`), '/document-delivery/:token?a=1');
+    assert.equal(
+      maskLoggedPath(`/document-delivery/${token}/x/document-delivery/${token}`),
+      '/document-delivery/:token/x/document-delivery/:token',
+    );
   });
 });

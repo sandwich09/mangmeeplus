@@ -45,7 +45,7 @@ export type DetailsReadinessIssue =
   | 'payer'
   | 'paymentDate';
 
-export type EvidenceReadinessIssue = 'policy' | 'supportingEvidence' | 'paymentEvidence' | 'renderability';
+export type EvidenceReadinessIssue = 'policy' | 'paymentEvidence' | 'renderability';
 export type SubstituteReceiptRenderabilityIssue = 'too_many_lines' | 'line_description_too_long';
 export type SubstituteReceiptEvidenceRenderabilityIssue = 'too_many_evidence' | 'evidence_filename_too_long';
 export type SigningReadinessIssue = 'position' | 'preview' | 'signature' | 'acknowledgement';
@@ -262,19 +262,35 @@ export function evaluateDetailsReadiness(input: {
   return readiness(missing);
 }
 
+/** R5: a substitute receipt is valid with no attachment at all, so supporting files are asked for
+ *  but never gate prepare. Payment evidence still follows the payment method and company policy. */
 export function evaluateEvidenceReadiness(input: {
   policyReady: boolean;
-  supportingCount: number;
   paymentCount: number;
   requiresPaymentEvidence: boolean;
   renderabilityIssue?: SubstituteReceiptEvidenceRenderabilityIssue | null;
 }): WizardReadiness<EvidenceReadinessIssue> {
   const missing: EvidenceReadinessIssue[] = [];
   if (!input.policyReady) missing.push('policy');
-  if (input.supportingCount <= 0) missing.push('supportingEvidence');
   if (input.requiresPaymentEvidence && input.paymentCount <= 0) missing.push('paymentEvidence');
   if (input.renderabilityIssue) missing.push('renderability');
   return readiness(missing);
+}
+
+/** R9: a saved ACTIVE personal signature signs any certificate, and a freshly drawn or uploaded
+ *  one still wins for the certificate being signed. */
+export function resolveWizardSignatureSource(input: {
+  hasReusableSignature: boolean;
+  /** A file is chosen or drawn but its transparent version has not been produced yet. */
+  chosenFile: boolean;
+  /** The reviewed transparent file that would be uploaded for this certificate. */
+  preparedFile: boolean;
+}): 'evidence_upload' | 'signature_library' | 'none' {
+  if (input.preparedFile) return 'evidence_upload';
+  // Blocks exactly as it did before the library existed: someone who picked a file meant to sign
+  // with THAT file, and must never have the saved image substituted behind their back.
+  if (input.chosenFile) return 'none';
+  return input.hasReusableSignature ? 'signature_library' : 'none';
 }
 
 export function evaluateSigningReadiness(input: {

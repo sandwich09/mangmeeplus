@@ -17,6 +17,7 @@ import { ErrorBanner } from './ExpensesUi';
 import { validApproverSelection, validateSubstituteReceiptPolicy } from './substitute-receipt-policy.model';
 
 const STRICT = 'REQUIRE_SEPARATE_PAYMENT_EVIDENCE';
+const ALLOW = 'ALLOW_SUPPORTING_EVIDENCE_ONLY';
 
 function message(error: unknown): string {
   return apiErrorMessage(error);
@@ -27,7 +28,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
   const [settings, setSettings] = useState<SubstituteReceiptPolicySettings | null>(null);
   const [approvalMode, setApprovalMode] = useState<SubstituteReceiptApprovalMode>('OWNER_SELF');
   const [approverUserIds, setApproverUserIds] = useState<string[]>([]);
-  const [cashEvidencePolicy, setCashEvidencePolicy] = useState<SubstituteReceiptCashEvidencePolicy>(STRICT);
+  const [cashEvidencePolicy, setCashEvidencePolicy] = useState<SubstituteReceiptCashEvidencePolicy>(ALLOW);
   const [cashEvidenceInstructions, setCashEvidenceInstructions] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -160,14 +161,14 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                 <label className="flex cursor-pointer gap-3 rounded-xl border border-brand-200 bg-brand-25 p-4">
                   <input type="radio" name="cash-policy" checked={cashEvidencePolicy === STRICT} onChange={() => { setCashEvidencePolicy(STRICT); setSaved(false); }} className="mt-1 accent-brand-700" />
                   <span>
-                    <span className="font-bold text-gray-900">บังคับหลักฐานการจ่ายเงินแยกอย่างน้อย 1 ไฟล์ (แนะนำ)</span>
+                    <span className="font-bold text-gray-900">บังคับหลักฐานการจ่ายเงินแยกอย่างน้อย 1 ไฟล์</span>
                     <span className="mt-1 block text-sm leading-6 text-gray-500">ต้องมีภาพ/PDF ในช่องหลักฐานการจ่าย นอกเหนือจากเอกสารประกอบรายการ</span>
                   </span>
                 </label>
                 <label className="flex cursor-pointer gap-3 rounded-xl border border-gray-200 p-4">
-                  <input type="radio" name="cash-policy" checked={cashEvidencePolicy === 'ALLOW_SUPPORTING_EVIDENCE_ONLY'} onChange={() => { setCashEvidencePolicy('ALLOW_SUPPORTING_EVIDENCE_ONLY'); setSaved(false); }} className="mt-1 accent-brand-700" />
+                  <input type="radio" name="cash-policy" checked={cashEvidencePolicy === ALLOW} onChange={() => { setCashEvidencePolicy(ALLOW); setSaved(false); }} className="mt-1 accent-brand-700" />
                   <span>
-                    <span className="font-bold text-gray-900">อนุญาตให้ใช้เอกสารประกอบรายการเพียงอย่างเดียว</span>
+                    <span className="font-bold text-gray-900">อนุญาตให้ใช้เอกสารประกอบรายการเพียงอย่างเดียว (ค่าเริ่มต้น)</span>
                     <span className="mt-1 block text-sm leading-6 text-gray-500">ควรใช้เมื่อผู้ทำบัญชีของบริษัทรับรองนโยบายนี้แล้ว ระบบยังคงบังคับให้ผู้จ่ายรับรองและผู้มีสิทธิอนุมัติลงลายมือชื่อตามรูปแบบที่กำหนด</span>
                   </span>
                 </label>

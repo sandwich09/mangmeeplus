@@ -26,6 +26,7 @@ function preparedInput() {
     payeeAddress: null,
     payeeTaxId: null,
     preparedByUserId: 'preparer-1',
+    preparedFromChannel: 'WEB' as const,
     idempotencyKey: 'prepare-1',
   };
 }

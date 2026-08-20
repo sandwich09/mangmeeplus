@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
   ReceiptUploadCompletionDto,
@@ -42,6 +43,7 @@ import {
   CertifySubstituteReceiptUseCase,
   CompleteSubstituteSignatureUploadUseCase,
   DownloadPaymentVoucherPdfUseCase,
+  DownloadSubstituteReceiptFormPdfUseCase,
   DownloadSubstituteReceiptPdfUseCase,
   InitSubstituteSignatureUploadUseCase,
   ListCompanySubstituteReceiptsUseCase,
@@ -58,12 +60,11 @@ import {
 import {
   InitSignatureUploadUseCase,
   CreateSignatureAssetUseCase,
-  ApproveSignatureAssetUseCase,
-  RejectSignatureAssetUseCase,
   ArchiveSignatureAssetUseCase,
   SetSignatureDerivedAssetUseCase,
   FillSignatureUseCase,
   ListSignatureAssetsUseCase,
+  SIGNATURE_OWNER_PERMISSIONS,
 } from '../../application/use-cases/signature-asset.use-case';
 import {
   GetSharedEvidenceViewUseCase,
@@ -75,7 +76,7 @@ import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense
 import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-cases/line-substitute-receipt-continuation.use-case';
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
-  CreateExpenseCategoryInput, UpdateExpenseCategoryInput, CreateSignatureAssetInput,
+  CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
   SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
@@ -116,6 +117,7 @@ export class ExpenseController {
     private readonly completeSubstituteSignatureUpload: CompleteSubstituteSignatureUploadUseCase,
     private readonly downloadPaymentVoucherPdf: DownloadPaymentVoucherPdfUseCase,
     private readonly downloadSubstituteReceiptPdf: DownloadSubstituteReceiptPdfUseCase,
+    private readonly downloadSubstituteReceiptFormPdf: DownloadSubstituteReceiptFormPdfUseCase,
     private readonly signatureFill: FillSignatureUseCase,
     private readonly sharedEvidence: GetSharedEvidenceViewUseCase,
     private readonly accountantPackage: CreateAccountantPackageUseCase,
@@ -289,6 +291,24 @@ export class ExpenseController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     const { data, fileName } = await this.downloadSubstituteReceiptPdf.execute(ctx, expenseId, evidenceId);
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return new StreamableFile(data, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${fileName}"`,
+    });
+  }
+
+  // R8: derived on demand from the PREPARED snapshot, never stored, never "issued". `expense.review`
+  // matches the permission that prepared it — the use case enforces the same gate.
+  @Get(':expenseId/substitute-receipt/:evidenceId/form.pdf')
+  @RequirePermissions('expense.review')
+  async downloadSubstituteFormPdf(
+    @ReqCtx() ctx: RequestContext,
+    @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { data, fileName } = await this.downloadSubstituteReceiptFormPdf.execute(ctx, expenseId, evidenceId);
     response.setHeader('Cache-Control', 'private, no-store, max-age=0');
     return new StreamableFile(data, {
       type: 'application/pdf',
@@ -575,51 +595,53 @@ export class ExpenseSignatureController {
     private readonly listAssets: ListSignatureAssetsUseCase,
     private readonly initUpload: InitSignatureUploadUseCase,
     private readonly createAsset: CreateSignatureAssetUseCase,
-    private readonly approve: ApproveSignatureAssetUseCase,
-    private readonly rejectAsset: RejectSignatureAssetUseCase,
     private readonly archive: ArchiveSignatureAssetUseCase,
     private readonly setDerived: SetSignatureDerivedAssetUseCase,
   ) {}
 
+  /**
+   * `RequirePermissions` is ALL-of, and a personal signature has three equivalent authorities — the
+   * two signing acts plus housekeeping — so every route here uses the any-of decorator. Own-vs-any
+   * scope is the use case's to decide: it is about WHOSE row this is, which a decorator cannot see.
+   */
   @Get()
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   list(@ReqCtx() ctx: RequestContext, @Query('status') status?: string) {
     return this.listAssets.execute(ctx, status);
   }
 
   @Post('uploads')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   initSignatureUpload(@ReqCtx() ctx: RequestContext, @Body() body: UploadIntentDto) {
     return this.initUpload.execute(ctx, body);
   }
 
   @Post()
-  @RequirePermissions('expense.signature.manage')
-  createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetInput & { checksumSha256?: string; byteSize?: number }) {
-    return this.createAsset.execute(ctx, { ...body, submittedFromChannel: 'WEB' });
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
+  createSignature(@ReqCtx() ctx: RequestContext, @Body() body: CreateSignatureAssetDto) {
+    // Built field-by-field, never spread: `attachmentAlreadyActive`/`lineMessageId` are LINE-only
+    // internals the use case honours, and spreading a caller's body would let a web request skip the
+    // PENDING_UPLOAD/ownership gate and point a signature asset at any ACTIVE attachment. Channel is
+    // set server-side; the LINE path calls the use case directly, so it keeps those fields.
+    return this.createAsset.execute(ctx, {
+      attachmentId: body.attachmentId,
+      label: body.label,
+      checksumSha256: body.checksumSha256,
+      byteSize: body.byteSize,
+      submittedFromChannel: 'WEB',
+    });
   }
 
-  @Post(':signatureId/approve')
-  @RequirePermissions('expense.signature.approve')
-  approveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
-    return this.approve.execute(ctx, signatureId);
-  }
-
-  @Post(':signatureId/reject')
-  @RequirePermissions('expense.signature.approve')
-  rejectSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: ReasonRequiredDto) {
-    return this.rejectAsset.execute(ctx, signatureId, body?.reason ?? '');
-  }
-
+  /** Own signature, or — for an `expense.signature.manage` holder — anyone's. */
   @Post(':signatureId/archive')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   archiveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {
     return this.archive.execute(ctx, signatureId);
   }
 
-  /** Records the web-canvas background-removed derived PNG. Original is kept. */
+  /** Records the web-canvas background-removed derived PNG. Original is kept. Submitter only. */
   @Post(':signatureId/derived')
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   setDerivedAsset(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string, @Body() body: SetSignatureDerivedAssetDto) {
     return this.setDerived.execute(ctx, signatureId, body);
   }

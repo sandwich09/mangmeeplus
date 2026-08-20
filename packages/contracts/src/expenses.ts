@@ -147,6 +147,14 @@ export const SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS = Object.freeze({
   maxEvidenceFileNameLength: 255,
 });
 
+/**
+ * Spec §12 delivery links. 32 random bytes as unpadded base64url — exactly 43 characters of the
+ * base64url alphabet. One definition, because three places must agree on it: the API mints and
+ * resolves it, `safeTenantLink` allows exactly this shape into a LINE card, and the web's public
+ * `/d/[token]` page is the only route it ever names.
+ */
+export const DOCUMENT_DELIVERY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
 export const EXPENSE_SEQUENCE_KEY = 'expense.record';
 
 export const EXPENSE_STATUS_LABELS: Record<ExpenseStatus, string> = {
@@ -327,6 +335,9 @@ export const TAX_EVIDENCE_STATUS_LABELS: Record<TaxEvidenceStatus, string> = {
   NEEDS_REVIEW: 'รอตรวจหลักฐานภาษี',
 };
 
+/** PENDING_OWNER_APPROVAL and REJECTED are history only since the personal-signature decision
+ *  (2026-08-20): nothing creates them any more, and the 2026-08-20 data migration activated every
+ *  row that was still pending. The labels stay so an old REJECTED row still reads as one. */
 export const SIGNATURE_ASSET_STATUS_LABELS: Record<SignatureAssetStatus, string> = {
   PENDING_OWNER_APPROVAL: 'รอเจ้าของกิจการอนุมัติ',
   ACTIVE: 'ใช้งานได้',
@@ -639,8 +650,11 @@ export type SignatureAssetSummary = {
   companyId: string;
   label: string | null;
   status: SignatureAssetStatus;
-  originalAttachmentId: string;
-  derivedAttachmentId: string | null;
+  /** Present only on the caller's OWN rows. A housekeeping row names no attachment, because an id is
+   *  a route to the image through the generic download endpoint — and housekeeping authorises
+   *  deleting someone's signature, never seeing it. */
+  originalAttachmentId?: string;
+  derivedAttachmentId?: string | null;
   submittedByUserId: string;
   submittedFromChannel: SignatureSubmitChannel;
   approvedByUserId: string | null;
@@ -650,6 +664,12 @@ export type SignatureAssetSummary = {
   rejectReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /** A7: short-lived inline URL for the derived (or original) image. Minted ONLY for the caller's
+   *  own signature — a personal asset is nobody else's to look at, housekeeping holders included. */
+  previewUrl?: string | null;
+  /** Housekeeping rows only (other people's signatures, for an `expense.signature.manage` holder):
+   *  who it belongs to. Null on the caller's own rows, which need no attribution. */
+  submittedByDisplayName?: string | null;
 };
 
 export type CreateSignatureAssetInput = {
@@ -748,8 +768,14 @@ export type SubstituteReceiptEvidenceSummary = {
   checksumSha256: string | null;
   issuedAt: string | null;
   supersedeReason: string | null;
+  /** R10/R11: `PAPER` means the ink lives on `wetSignedScanAttachmentId`, not in a rendered SVG,
+   *  so certification and approval ask for an acknowledgement instead of a signature image. */
+  signatureMode: SubstituteReceiptSignatureMode;
+  wetSignedScanAttachmentId: string | null;
   updatedAt: string;
 };
+
+export type SubstituteReceiptSignatureMode = 'DIGITAL' | 'PAPER';
 
 export type SupersedeSubstituteReceiptInput = {
   reason: string;
@@ -770,6 +796,9 @@ export type GenerateSubstituteReceiptInput = {
   paymentMethod?: ExpensePaymentMethod;
   idempotencyKey: string;
   expectedExpenseUpdatedAt: string;
+  /** R10: this prepare answers `ขอฟอร์มไปเซ็นเอง`, so the chat is now waiting for a photo of the
+   *  signed sheet. Recorded on the continuation state the prepare consumes; ignored without one. */
+  formRequested?: boolean;
   /** Opaque LINE handoff id; accepted values are reloaded server-side after authentication. */
   continuationId?: string;
   note?: string;
@@ -791,6 +820,8 @@ export type LineSubstituteReceiptPrefill = {
     itemDescription?: string;
     amount?: string;
     expenseCategoryId?: string;
+    /** The sender stated there is no file to attach; the wizard still offers upload. */
+    evidenceNone?: boolean;
   };
 };
 
@@ -807,7 +838,8 @@ export type CertifySubstituteReceiptInput = {
   payerPosition: string;
   certificationAcknowledged: true;
   previewChecksumSha256: string;
-  signatureAttachmentId: string;
+  /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
+  signatureAttachmentId?: string;
   checksumSha256?: string;
   byteSize?: number;
   expectedVersion: number;
@@ -818,7 +850,8 @@ export type ApproveSubstituteReceiptInput = {
   approverPosition: string;
   approvalAcknowledged: true;
   certifiedArtifactChecksumSha256: string;
-  signatureAttachmentId: string;
+  /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
+  signatureAttachmentId?: string;
   checksumSha256?: string;
   byteSize?: number;
   expectedVersion: number;
@@ -846,7 +879,13 @@ export type SubstituteReceiptPolicySettings = {
 export type SubstituteReceiptRuntimePolicy = Pick<
   SubstituteReceiptPolicySettings,
   'configured' | 'ready' | 'approvalMode' | 'cashEvidencePolicy' | 'cashEvidenceInstructions'
->;
+> & {
+  /** R9: the caller already has an ACTIVE personal signature, so signing needs no upload. */
+  hasReusableSignature: boolean;
+  /** A8: the same image the certificate will carry, so nobody signs blind. Short-lived signed URL,
+   *  minted only for the caller's OWN reusable signature. Absent when there is none. */
+  reusableSignaturePreviewUrl?: string | null;
+};
 
 export type UpdateSubstituteReceiptPolicyInput = {
   approvalMode: SubstituteReceiptApprovalMode;

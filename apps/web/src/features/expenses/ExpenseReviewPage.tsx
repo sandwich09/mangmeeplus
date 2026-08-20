@@ -22,7 +22,7 @@ import {
   requestExpenseExtraction, runDuplicateCheck, uploadExpenseEvidenceFile, voidExpense,
 } from './expenses.api';
 import {
-  AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS,
+  AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities,
@@ -878,7 +878,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                   <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-white px-4 py-2.5">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-gray-800">{activeAttachment?.originalFileName}</div>
-                      <div className="text-xs text-gray-500">{expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
+                      <div className="text-xs text-gray-500">{activeAttachment && isWetSignedScanAttachment(activeAttachment.id, detail.substituteReceiptEvidence)
+                        ? t('expenses.attachment.wet_signed_scan', locale)
+                        : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
                     </div>
                     <div className="flex flex-shrink-0 items-center gap-1.5">
                       {attachments.length > 1 && (
@@ -930,7 +932,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                       <span className="flex h-10 w-10 items-center justify-center rounded-[9px]" style={{ background: '#E0F2FE', color: '#0BA5EC' }}>{ICON.file}</span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-gray-800">{attachment.originalFileName}</div>
-                        <div className="text-xs text-gray-500">{expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseValueLabel(MIME_TYPE_LABELS, attachment.mimeType, 'ไฟล์เอกสาร')}</div>
+                        <div className="text-xs text-gray-500">{isWetSignedScanAttachment(attachment.id, detail.substituteReceiptEvidence)
+                          ? t('expenses.attachment.wet_signed_scan', locale)
+                          : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseValueLabel(MIME_TYPE_LABELS, attachment.mimeType, 'ไฟล์เอกสาร')}</div>
                       </div>
                       <span className="flex-shrink-0 text-xs font-semibold text-brand-600">{previewLoading ? t('expenses.opening', locale) : t('expenses.view_file', locale)}</span>
                     </button>

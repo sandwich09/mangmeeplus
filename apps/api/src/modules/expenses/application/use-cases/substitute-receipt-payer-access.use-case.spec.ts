@@ -22,7 +22,9 @@ import {
   REQUIRED_ANY_PERMISSIONS_KEY,
   REQUIRED_PERMISSIONS_KEY,
 } from '../../../../common/security/permissions.decorator';
-import { ExpenseController } from '../../presentation/http/expense.controller';
+import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
+import { ExpenseController, ExpenseSignatureController } from '../../presentation/http/expense.controller';
+import { ListSignatureAssetsUseCase } from './signature-asset.use-case';
 import { GetExpenseUseCase } from './expense-draft.use-case';
 import { ListSubstituteReceiptHistoryUseCase } from './substitute-receipt.use-case';
 
@@ -166,4 +168,70 @@ describe('substitute-receipt payer access (audit H-4)', () => {
       ForbiddenException,
     );
   });
+});
+
+/**
+ * F2, same failure shape one screen over: `RequirePermissions` is ALL-of, so a signature endpoint
+ * demanded every listed key at once. Since the personal-signature decision (2026-08-20) there are
+ * three EQUIVALENT authorities — the two signing acts plus housekeeping — so every route on this
+ * controller must use the any-of decorator, and every route must accept the same three. Own-vs-any
+ * scope is the use case's call: a decorator cannot see whose row is being asked for.
+ */
+describe('signature endpoint access (F2)', () => {
+  const REVIEW_ONLY = {
+    requestId: 'req-1', authSubject: 'payer-1', userId: 'payer-1', companyId: 'co-1',
+    membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.review'],
+    scopes: {}, authProvider: 'watchdog',
+  } as any;
+
+  function acceptedByController(handler: keyof ExpenseSignatureController): { all: string[]; any: string[] } {
+    const method = (ExpenseSignatureController.prototype as unknown as Record<string, object>)[handler]!;
+    return {
+      all: (Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, method) ?? []) as string[],
+      any: (Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, method) ?? []) as string[],
+    };
+  }
+
+  it('gates every signature route on the same three authorities, and lets a payer through', async () => {
+    const handlers: Array<keyof ExpenseSignatureController> = [
+      'list', 'initSignatureUpload', 'createSignature', 'archiveSignature', 'setDerivedAsset',
+    ];
+    for (const handler of handlers) {
+      const gate = acceptedByController(handler);
+      assert.deepEqual(gate.all, [], `${handler}: must not use the ALL-of decorator`);
+      assert.deepEqual(
+        [...gate.any].sort(),
+        ['expense.confirm', 'expense.review', 'expense.signature.manage'],
+        `${handler}: the three equivalent authorities`,
+      );
+      assert.ok(new DenyByDefaultGuard(reflectorFor(gate)).canActivate(guardContext(REVIEW_ONLY)), handler);
+    }
+    // The approval lifecycle is gone: no route may still be reachable on its permission.
+    assert.equal(
+      handlers.some((handler) => acceptedByController(handler).any.includes('expense.signature.approve')),
+      false,
+    );
+
+    const repo = { listSignatureAssets: async () => [] } as any;
+    const storage = { createDownloadUrl: async () => ({ url: 'u', expiresAt: new Date() }) } as any;
+    assert.deepEqual(
+      await new ListSignatureAssetsUseCase(repo, storage, { log: async () => undefined } as any).execute(REVIEW_ONLY),
+      [],
+    );
+  });
+
+  /** The real guard, fed the real decorator metadata — not a restatement of its rules. */
+  function reflectorFor(gate: { all: string[]; any: string[] }) {
+    return {
+      getAllAndOverride: (key: string) => (key === REQUIRED_PERMISSIONS_KEY ? gate.all : key === REQUIRED_ANY_PERMISSIONS_KEY ? gate.any : undefined),
+    } as any;
+  }
+
+  function guardContext(ctx: unknown) {
+    return {
+      getHandler: () => ({}),
+      getClass: () => ({}),
+      switchToHttp: () => ({ getRequest: () => ({ context: ctx }) }),
+    } as any;
+  }
 });
