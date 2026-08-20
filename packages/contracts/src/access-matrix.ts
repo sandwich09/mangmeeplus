@@ -205,7 +205,7 @@ export function getVisibleMenus(permissions: string[], registry: MenuDefinition[
  */
 export const PRIVILEGED_GRANT_KEYS = [
   'access.employee.create', 'access.employee.update', 'access.employee.disable',
-  'access.employee.credential.issue', 'access.role.manage',
+  'access.employee.credential.issue', 'access.role.manage', 'access.role.operational.assign',
   'admin.user.manage', 'admin.role.manage',
 ];
 

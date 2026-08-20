@@ -32,7 +32,7 @@ export class SetEmployeeStatusUseCase {
     });
     // Last-owner lockout protection: the owner account is never suspended/disabled from here.
     if (targetRoles.some((mr) => NON_ASSIGNABLE_ROLE_KEYS.includes(mr.role.key))) {
-      throw new ForbiddenException('Owner access cannot be suspended or disabled from employee management.');
+      throw new ForbiddenException('Owner and platform access cannot be suspended or disabled from employee management.');
     }
     // Escalation guard: without access.role.manage, holders of people-manager roles
     // (Admin, fellow Managers) cannot be suspended/disabled.

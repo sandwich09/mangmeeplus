@@ -14,13 +14,15 @@ import { listBranches as listCompanyBranches, type Branch } from '../branch-sett
 import { completeEmployee, createEmployee, getEmployee, issueEmployeeLineLinkToken, listRoles, listThaiAddresses, updateEmployee, type CreateEmployeeResult } from './employee-access.api';
 import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
-import { assignableRoleOptions, isSelfEmployee } from './role-picker.logic';
+import { isEmployeeEmail } from './employee-email.logic';
+import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee } from './role-picker.logic';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 
 type TitleOption = 'นาย' | 'นาง' | 'นางสาว';
 type AddStep = 1 | 2 | 3 | 4;
+type ValidationIssue = { message: string; fieldId: string };
 
 // Field-specific 409 messages. Codes must match create-employee.use-case.ts (identity/phone/email).
 const EMPLOYEE_CONFLICT_KEYS = {
@@ -31,10 +33,18 @@ const EMPLOYEE_CONFLICT_KEYS = {
   employee_username_conflict: 'employee.error.username_conflict',
 } as const;
 
+const EMPLOYEE_CONFLICT_FIELDS: Partial<Record<keyof typeof EMPLOYEE_CONFLICT_KEYS, { step: AddStep; fieldId: string }>> = {
+  employee_identity_conflict: { step: 1, fieldId: 'employee-identity' },
+  employee_phone_conflict: { step: 2, fieldId: 'employee-phone' },
+  employee_email_conflict: { step: 2, fieldId: 'employee-email' },
+  employee_email_must_differ: { step: 2, fieldId: 'employee-email' },
+  employee_username_conflict: { step: 1, fieldId: 'employee-username' },
+};
+
 const STEP_DEFS: Array<{ n: AddStep; label: string }> = [
   { n: 1, label: 'ข้อมูลส่วนตัว' },
   { n: 2, label: 'ช่องทางติดต่อ' },
-  { n: 3, label: 'ตำแหน่งและสาขา' },
+  { n: 3, label: 'ตำแหน่งงานและสิทธิ์' },
   { n: 4, label: 'เข้าใช้งาน' },
 ];
 
@@ -73,6 +83,7 @@ function TextField({
   label,
   required = false,
   optional,
+  error,
   className,
   inputClassName,
   ...props
@@ -80,8 +91,10 @@ function TextField({
   label: string;
   required?: boolean;
   optional?: string;
+  error?: string;
   inputClassName?: string;
 }) {
+  const errorId = error && props.id ? `${props.id}-error` : undefined;
   return (
     <label className={cx('block', className)}>
       <span className="mb-1.5 block text-[15px] font-semibold text-gray-700">
@@ -91,11 +104,15 @@ function TextField({
       </span>
       <input
         {...props}
+        aria-describedby={errorId ?? props['aria-describedby']}
+        aria-invalid={Boolean(error)}
         className={cx(
-          'h-11 w-full rounded-lg border border-gray-300 bg-white px-3.5 text-base text-gray-800 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50 disabled:text-gray-400',
+          'h-11 w-full rounded-lg border bg-white px-3.5 text-base text-gray-800 outline-none transition disabled:bg-gray-50 disabled:text-gray-400',
+          error ? 'border-error-400 focus:border-error-500 focus:ring-2 focus:ring-error-100' : 'border-gray-300 focus:border-brand-500 focus:ring-2 focus:ring-brand-100',
           inputClassName,
         )}
       />
+      {error && <span id={errorId} role="alert" className="mt-1.5 block text-sm font-semibold text-error-600">{error}</span>}
     </label>
   );
 }
@@ -232,7 +249,7 @@ function LineOaCard({ lineLink, enabled }: { lineLink?: EmployeeLineLinkPackage 
 }
 
 const ROLE_COLOR_BY_KEY: Record<string, string> = {
-  OWNER: '#16A34A', ADMIN: '#0BA5EC', MANAGER: '#2E90FA', SALES: '#F79009',
+  OWNER: '#16A34A', ADMIN: '#0BA5EC', MANAGER: '#2E90FA', HR: '#875BF7', SALES: '#F79009',
   INVENTORY: '#7A5AF8', FINANCE: '#DD2590', ACCOUNTANT: '#12B76A', MARKETING: '#F63D68', STAFF: '#667085',
   AUDITOR_READONLY: '#06AED4',
 };
@@ -241,7 +258,7 @@ function colorForRole(role?: RoleSummary): string {
   return ROLE_COLOR_BY_KEY[role.key] ?? '#7A5AF8';
 }
 
-export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId }: { companyId: string; editEmployeeId?: string; viewerUserId?: string }) {
+export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUserId, viewerPermissions = [] }: { companyId: string; editEmployeeId?: string; viewerUserId?: string; viewerPermissions?: string[] }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
   const toast = useToast();
@@ -268,6 +285,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [addressOptions, setAddressOptions] = useState<ThaiAddressOption[]>([]);
   const [addressLoading, setAddressLoading] = useState(false);
   const [addressLookupMessage, setAddressLookupMessage] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
   const [roleId, setRoleId] = useState('');
   const [branchIds, setBranchIds] = useState<string[]>([]);
   const [defaultBranchId, setDefaultBranchId] = useState('');
@@ -277,9 +295,15 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const [confirmExistingUser, setConfirmExistingUser] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<EmployeeSummary | null>(null);
   const [draftActivated, setDraftActivated] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setErrorState] = useState('');
+  const [errorFieldId, setErrorFieldId] = useState('');
   const isEditing = Boolean(editEmployeeId);
   const employeeActive = draftActivated || editingEmployee?.status === 'ACTIVE';
+
+  function setError(message: string, fieldId = '') {
+    setErrorState(message);
+    setErrorFieldId(fieldId);
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -310,6 +334,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setFirstName(employee.firstName ?? fallbackName[0] ?? '');
         setLastName(employee.lastName ?? fallbackName.slice(1).join(' '));
         setNickname(employee.nickname ?? '');
+        setJobTitle(employee.jobTitle ?? '');
         setDob(isoToDob(employee.dateOfBirth));
         setEmail(employee.email ?? '');
         setPhone(employee.phoneNumber);
@@ -386,6 +411,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   // The API always rejects a self role change, so editing yourself shows the role read-only and the
   // unchanged roleIds save as a no-op (spec R4).
   const editingSelf = isSelfEmployee(editingEmployee, viewerUserId);
+  const editingProtectedRole = isOperationalRoleTargetReadOnly(viewerPermissions, selectedRole);
   // R8: an oversight role (ADMIN, FINANCE, ACCOUNTANT, ...) must hold every branch, and the server
   // rejects anything narrower — so the picker must not offer the choice.
   const branchPickerLocked = Boolean(selectedRole && ALL_BRANCH_ROLE_KEYS.includes(selectedRole.key));
@@ -418,8 +444,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const summaryRows = [
     { label: 'อีเมล', value: email.trim() },
     { label: 'เบอร์โทร', value: phone.trim() },
+    { label: 'ตำแหน่งงาน', value: jobTitle.trim() },
     { label: 'สาขาหลัก', value: defaultBranchName },
-    { label: 'ตำแหน่ง', value: selectedRole?.name ?? '' },
   ];
 
   function setPostal(value: string) {
@@ -430,25 +456,33 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     setTambon('');
   }
 
-  function validate(targetStep: AddStep) {
+  function validate(targetStep: AddStep): ValidationIssue | undefined {
     if (targetStep === 1) {
-      if (!firstName.trim()) return 'กรุณากรอกชื่อ';
-      if (!lastName.trim()) return 'กรุณากรอกนามสกุล';
-      if (!editingEmployee && !dob) return 'กรุณากรอกวันเดือนปีเกิด';
-      if (dob && !employeeDateToIso(dob)) return 'กรุณากรอกวันเกิดจริง รูปแบบ DD/MM/YYYY และใช้ปี ค.ศ.';
-      if (!editingEmployee && !/^[a-zA-Z0-9._-]+$/.test(username.trim())) return 'Username ใช้ได้เฉพาะ a-z, A-Z, 0-9, จุด, ขีดกลาง และขีดล่าง';
-      if ((!editingEmployee || idCard) && !/^[0-9]{13}$/.test(idCard)) return 'เลขบัตรประชาชนต้องมี 13 หลัก';
+      if (!firstName.trim()) return { message: 'กรุณากรอกชื่อ', fieldId: 'employee-first-name' };
+      if (!lastName.trim()) return { message: 'กรุณากรอกนามสกุล', fieldId: 'employee-last-name' };
+      if (!editingEmployee && !dob) return { message: 'กรุณากรอกวันเดือนปีเกิด', fieldId: 'employee-date-of-birth' };
+      if (dob && !employeeDateToIso(dob)) return { message: 'วันเดือนปีเกิดไม่ถูกต้อง กรุณาใช้รูปแบบ DD/MM/YYYY และปี ค.ศ.', fieldId: 'employee-date-of-birth' };
+      if (!editingEmployee && !username.trim()) return { message: 'กรุณากรอก Username', fieldId: 'employee-username' };
+      if (!editingEmployee && !/^[a-zA-Z0-9._-]+$/.test(username.trim())) return { message: 'Username ใช้ได้เฉพาะ a-z, A-Z, 0-9, จุด, ขีดกลาง และขีดล่าง', fieldId: 'employee-username' };
+      if ((!editingEmployee || idCard) && !/^[0-9]{13}$/.test(idCard)) return { message: 'เลขบัตรประชาชนต้องมี 13 หลัก', fieldId: 'employee-identity' };
     }
     if (targetStep === 2) {
-      if (!/^[^@\s]+@[^@\s]+$/.test(email.trim())) return 'อีเมลไม่ถูกต้อง';
-      if (!/^0[0-9]{9}$/.test(phone)) return 'เบอร์โทรศัพท์ต้องเป็นตัวเลข 10 หลัก (ขึ้นต้นด้วย 0)';
+      if (!email.trim()) return { message: 'กรุณากรอกอีเมล', fieldId: 'employee-email' };
+      if (!isEmployeeEmail(email)) return { message: 'อีเมลไม่ถูกต้อง กรุณาใช้รูปแบบ เช่น name@company.com', fieldId: 'employee-email' };
+      if (!phone) return { message: 'กรุณากรอกเบอร์โทรศัพท์', fieldId: 'employee-phone' };
+      if (!/^0[0-9]{9}$/.test(phone)) return { message: 'เบอร์โทรศัพท์ต้องเป็นตัวเลข 10 หลักและขึ้นต้นด้วย 0', fieldId: 'employee-phone' };
     }
     if (targetStep === 3) {
-      if (!roleId) return 'เลือกตำแหน่ง';
-      if (branchIds.length === 0) return 'เลือกอย่างน้อย 1 สาขา';
-      if (!defaultBranchId || !branchIds.includes(defaultBranchId)) return 'เลือกสาขาหลัก';
+      if (!jobTitle.trim()) return { message: 'กรุณากรอกตำแหน่งงาน เช่น พนักงานขาย หรือเจ้าหน้าที่บุคคล', fieldId: 'employee-job-title' };
+      if (!roleId) return { message: 'กรุณาเลือกบทบาทและสิทธิ์ระบบ', fieldId: 'employee-role' };
+      if (branchIds.length === 0) return { message: 'กรุณาเลือกอย่างน้อย 1 สาขา', fieldId: 'employee-branches' };
+      if (!defaultBranchId || !branchIds.includes(defaultBranchId)) return { message: 'กรุณาเลือกสาขาหลัก', fieldId: 'employee-default-branch' };
     }
-    return '';
+  }
+
+  function showValidationIssue(issue: ValidationIssue) {
+    setError(issue.message, issue.fieldId);
+    window.requestAnimationFrame(() => document.getElementById(issue.fieldId)?.focus());
   }
 
   async function goToStep(target: AddStep) {
@@ -460,7 +494,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     for (let candidate = step; candidate < target; candidate += 1) {
       const validationError = validate(candidate as AddStep);
       if (validationError) {
-        setError(validationError);
+        showValidationIssue(validationError);
         return;
       }
     }
@@ -481,6 +515,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         // has to guess it back out of a concatenated string.
         displayName: fullName || previewName,
         titlePrefix: title,
+        jobTitle: jobTitle.trim(),
         phoneNumber: phone,
         email: email.trim(),
         firstName: firstName.trim(),
@@ -531,7 +566,15 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setError('');
         return false;
       }
-      setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed', conflictCodes: EMPLOYEE_CONFLICT_KEYS }));
+      const message = localizedErrorMessage(e, locale, { fallback: 'error.save_failed', conflictCodes: EMPLOYEE_CONFLICT_KEYS });
+      const code = (e as { code?: keyof typeof EMPLOYEE_CONFLICT_KEYS })?.code;
+      const target = code ? EMPLOYEE_CONFLICT_FIELDS[code] : undefined;
+      if (target) {
+        setStep(target.step);
+        showValidationIssue({ message, fieldId: target.fieldId });
+      } else {
+        setError(message);
+      }
       return false;
     } finally {
       setSaving(false);
@@ -549,7 +592,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   function nextStep() {
     const validationError = validate(step);
     if (validationError) {
-      setError(validationError);
+      showValidationIssue(validationError);
       return;
     }
     if (step < 3) {
@@ -608,7 +651,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
   const nextLabel = step < 3
     ? 'ถัดไป ›'
     : step === 3
-      ? (saving ? 'กำลังบันทึก...' : editingEmployee?.status === 'ACTIVE' ? 'บันทึกการแก้ไข' : 'บันทึกแบบร่าง')
+      ? (saving ? 'กำลังบันทึก...' : 'ถัดไป ›')
       : (saving ? 'กำลังเปิดใช้งาน...' : employeeActive ? 'ไปหน้าภาพรวมสิทธิ์' : 'เสร็จสิ้น');
 
   return (
@@ -620,7 +663,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
           </nav>
           <h1 className="mt-8 text-[30px] font-extrabold leading-tight text-gray-900">{isEditing ? 'แก้ไขพนักงาน' : 'เพิ่มพนักงาน'}</h1>
           <p className="mt-3 text-base font-semibold text-gray-500">
-            {isEditing ? 'แก้ไขข้อมูลพนักงาน ตำแหน่ง และสาขาที่สังกัดทีละขั้น' : 'สร้างบัญชีพนักงานใหม่ กำหนดตำแหน่งและสาขาที่สังกัด · เจ้าของร้านสร้างได้เท่านั้น'}
+            {isEditing ? 'แก้ไขข้อมูลพนักงาน ตำแหน่งงาน บทบาท และสาขาที่สังกัดทีละขั้น' : 'สร้างบัญชีพนักงานใหม่ พร้อมกำหนดตำแหน่งงาน บทบาท และสาขาที่สังกัด'}
           </p>
         </div>
         <MangmeeBranchChip label={t('branch.scope.company_wide', locale)} />
@@ -638,7 +681,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               <div className="truncate text-lg font-extrabold text-gray-900">{previewName}</div>
               {selectedRole && (
                 <span className="mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-extrabold" style={{ backgroundColor: `${colorForRole(selectedRole)}1F`, color: colorForRole(selectedRole) }}>
-                  {selectedRole.name}
+                  บทบาท: {selectedRole.name}
                 </span>
               )}
             </div>
@@ -681,17 +724,19 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                     ))}
                   </div>
                 </div>
-                <TextField label="ชื่อ" required value={firstName} onChange={(event) => { setFirstName(event.target.value); setError(''); }} placeholder="เช่น มีนา" />
-                <TextField label="นามสกุล" required value={lastName} onChange={(event) => { setLastName(event.target.value); setError(''); }} placeholder="เช่น ใจงาม" />
+                <TextField id="employee-first-name" label="ชื่อ" required error={errorFieldId === 'employee-first-name' ? error : undefined} value={firstName} onChange={(event) => { setFirstName(event.target.value); setError(''); }} placeholder="เช่น มีนา" />
+                <TextField id="employee-last-name" label="นามสกุล" required error={errorFieldId === 'employee-last-name' ? error : undefined} value={lastName} onChange={(event) => { setLastName(event.target.value); setError(''); }} placeholder="เช่น ใจงาม" />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <TextField label="ชื่อเล่น" optional="(ใช้แสดงในหน้าจองคิวและสิทธิ์รายบุคคล)" value={nickname} onChange={(event) => { setNickname(event.target.value); setError(''); }} placeholder="เช่น มีน" />
-                {!editingEmployee && <TextField label="Username" required value={username} onChange={(event) => { setUsername(event.target.value); setError(''); setConfirmExistingUser(false); }} placeholder="เช่น somchai.j" />}
-                <TextField label="วันเดือนปีเกิด (ค.ศ.)" required={!editingEmployee} optional={editingEmployee ? '(ถ้ามี)' : undefined} value={dob} onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); setError(''); }} inputMode="numeric" placeholder="DD/MM/YYYY เช่น 28/09/1998" maxLength={10} />
+                {!editingEmployee && <TextField id="employee-username" label="Username" required error={errorFieldId === 'employee-username' ? error : undefined} value={username} onChange={(event) => { setUsername(event.target.value); setError(''); setConfirmExistingUser(false); }} placeholder="เช่น somchai.j" />}
+                <TextField id="employee-date-of-birth" label="วันเดือนปีเกิด (ค.ศ.)" required={!editingEmployee} optional={editingEmployee ? '(ถ้ามี)' : undefined} error={errorFieldId === 'employee-date-of-birth' ? error : undefined} value={dob} onChange={(event) => { setDob(formatEmployeeDateInput(event.target.value)); setError(''); }} inputMode="numeric" placeholder="DD/MM/YYYY เช่น 28/09/1998" maxLength={10} />
                 <TextField
+                  id="employee-identity"
                   label="เลขบัตรประชาชน"
                   required={!editingEmployee}
                   optional={editingEmployee ? `(เดิม ${editingEmployee.identityMasked} · กรอกเมื่อต้องการเปลี่ยน)` : undefined}
+                  error={errorFieldId === 'employee-identity' ? error : undefined}
                   value={idCard}
                   onChange={(event) => { setIdCard(digits(event.target.value, 13)); setError(''); }}
                   inputMode="numeric"
@@ -706,8 +751,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
             <div>
               <div className="mb-3 text-[13px] font-extrabold tracking-[.04em] text-brand-600">1 · ช่องทางติดต่อ</div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <TextField label="อีเมล (ใช้เข้าสู่ระบบ)" required value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@room45.co" />
-                <TextField label="เบอร์โทรศัพท์" required value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); setError(''); }} inputMode="tel" maxLength={10} placeholder="08xxxxxxxx (10 หลัก)" inputClassName="tracking-[.04em]" />
+                <TextField id="employee-email" type="email" inputMode="email" autoComplete="email" maxLength={254} label="อีเมล (ใช้เข้าสู่ระบบ)" required error={errorFieldId === 'employee-email' ? error : undefined} value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@room45.co" />
+                <TextField id="employee-phone" type="tel" label="เบอร์โทรศัพท์" required error={errorFieldId === 'employee-phone' ? error : undefined} value={phone} onChange={(event) => { setPhone(digits(event.target.value, 10)); setError(''); }} inputMode="tel" maxLength={10} placeholder="08xxxxxxxx (10 หลัก)" inputClassName="tracking-[.04em]" />
               </div>
 
               <div className="mb-3 mt-6 border-t border-gray-100 pt-5 text-[13px] font-extrabold tracking-[.04em] text-brand-600">2 · ที่อยู่ <span className="font-normal normal-case text-gray-400">(ถ้ามี)</span></div>
@@ -740,13 +785,28 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
 
           {step === 3 && (
             <div>
-              <div className="mb-2 text-[15px] font-semibold text-gray-700">ตำแหน่ง (1 คน มีได้ 1 ตำแหน่ง)</div>
-              {editingSelf ? (
+              <TextField
+                id="employee-job-title"
+                label="ตำแหน่งงาน"
+                required
+                maxLength={120}
+                error={errorFieldId === 'employee-job-title' ? error : undefined}
+                value={jobTitle}
+                onChange={(event) => { setJobTitle(event.target.value); setError(''); }}
+                placeholder="เช่น เจ้าหน้าที่บุคคล พนักงานขาย หรือหัวหน้าคลัง"
+                className="mb-[18px] max-w-xl"
+              />
+              <div className="-mt-3 mb-[18px] text-sm font-medium text-gray-400">ใช้แสดงชื่อหน้าที่ในบริษัท และไม่กระทบสิทธิ์การใช้งานระบบ</div>
+
+              <div id="employee-role" tabIndex={-1} className="mb-2 text-[15px] font-semibold text-gray-700 outline-none">บทบาทและสิทธิ์ระบบ <span className="text-error-500">*</span></div>
+              {editingSelf || editingProtectedRole ? (
                 <>
                   <span className="inline-flex rounded-[9px] border border-gray-200 bg-gray-50 px-3.5 py-2 text-[14.5px] font-extrabold text-gray-500">
                     {selectedRole?.name ?? '—'}
                   </span>
-                  <div className="mt-2 text-sm font-medium text-gray-400">ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</div>
+                  <div className="mt-2 text-sm font-medium text-gray-400">
+                    {editingSelf ? 'บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้' : 'บทบาทระดับนี้ต้องให้เจ้าของหรือผู้ดูแลสิทธิ์เป็นผู้เปลี่ยน'}
+                  </div>
                 </>
               ) : (
                 <div className="flex flex-wrap gap-2.5">
@@ -758,8 +818,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                   {roles.length === 0 && <span className="text-sm text-gray-400">ยังไม่มีบทบาทให้เลือก</span>}
                 </div>
               )}
+              {errorFieldId === 'employee-role' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
+              <div className="mt-2 text-sm font-medium text-gray-400">บทบาทกำหนดเมนูและข้อมูลที่พนักงานเข้าถึงได้ โดยไม่จำเป็นต้องตรงกับชื่อตำแหน่งงาน</div>
 
-              <div className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700">
+              <div id="employee-branches" tabIndex={-1} className="mb-2 mt-[18px] text-[15px] font-semibold text-gray-700 outline-none">
                 สาขาที่สังกัด <span className="font-normal text-gray-400">(เลือกได้มากกว่า 1 สาขา)</span>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -778,9 +840,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                   );
                 })}
               </div>
+              {errorFieldId === 'employee-branches' && <div role="alert" className="mt-2 text-sm font-semibold text-error-600">{error}</div>}
               {branchPickerLocked && (
                 <div className="mt-2 text-sm font-medium text-gray-400">
-                  ตำแหน่ง{selectedRole?.name ?? ''} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
+                  บทบาท {selectedRole?.name ?? ''} ดูแลภาพรวมทั้งบริษัท จึงต้องเห็นข้อมูลทุกสาขา — จำกัดสาขาไม่ได้
                 </div>
               )}
               <label className="mt-4 block max-w-md">
@@ -788,6 +851,8 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                   สาขาหลัก (Default Branch) <span className="text-error-500">*</span>
                 </span>
                 <ThemedSelect
+                  id="employee-default-branch"
+                  aria-invalid={errorFieldId === 'employee-default-branch'}
                   value={defaultBranchId}
                   onChange={(event) => { setDefaultBranchId(event.target.value); setError(''); }}
                   className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3.5 text-base text-gray-800 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
@@ -796,6 +861,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
                     <option key={branch.id} value={branch.id}>{branch.name}</option>
                   ))}
                 </ThemedSelect>
+                {errorFieldId === 'employee-default-branch' && <span role="alert" className="mt-1.5 block text-sm font-semibold text-error-600">{error}</span>}
                 <span className="mt-1.5 block text-sm font-medium text-gray-400">
                   ระบบใช้สาขานี้เป็นค่าเริ่มต้นสำหรับการจองและรายการใหม่ของพนักงาน
                 </span>
@@ -868,7 +934,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
             </div>
           )}
 
-          {error && (
+          {error && !errorFieldId && (
             <div className="mt-4 rounded-[9px] border border-[#FECDCA] bg-error-50 px-3.5 py-2.5 text-sm font-semibold text-error-700">
               ⚠ {error}
             </div>

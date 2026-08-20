@@ -78,6 +78,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   SYSTEM_ADMIN: 'role.SYSTEM_ADMIN',
   ADMIN: 'role.ADMIN',
   MANAGER: 'role.MANAGER',
+  HR: 'role.HR',
   SALES: 'role.SALES',
   INVENTORY: 'role.INVENTORY',
   FINANCE: 'role.FINANCE',

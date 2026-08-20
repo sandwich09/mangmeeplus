@@ -39,7 +39,7 @@ import {
   updateEmployee,
 } from './employee-access.api';
 import { accountAccessNotice, MENU_GROUP_LABEL_TH, projectGrantedMenus } from './access-overview.model';
-import { assignableRoleOptions, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
 import { localizedErrorMessage, statusOf } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 
@@ -95,7 +95,7 @@ const MENU_ICON: Record<string, React.ReactNode> = {
 };
 
 const ROLE_COLOR_BY_KEY: Record<string, string> = {
-  OWNER: '#16A34A', SYSTEM_ADMIN: '#475467', ADMIN: '#0BA5EC', MANAGER: '#2E90FA', SALES: '#F79009',
+  OWNER: '#16A34A', SYSTEM_ADMIN: '#475467', ADMIN: '#0BA5EC', MANAGER: '#2E90FA', HR: '#875BF7', SALES: '#F79009',
   INVENTORY: '#7A5AF8', FINANCE: '#DD2590', ACCOUNTANT: '#12B76A', MARKETING: '#F63D68', STAFF: '#667085',
   AUDITOR_READONLY: '#06AED4',
 };
@@ -168,7 +168,7 @@ function EmployeeRow({ employee, role, selected, onSelect }: { employee: Employe
           <span className="truncate text-[14px] font-extrabold text-gray-900">{employeeShortName(employee)}</span>
           {employee.status === 'DRAFT' ? <DraftBadge /> : <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-brand-500' : 'bg-gray-300')} />}
         </span>
-        <span className="mt-1 block truncate text-[12px] font-semibold text-gray-400">{employee.phoneNumber}</span>
+        <span className="mt-1 block truncate text-[12px] font-semibold text-gray-500">{employee.jobTitle || 'ยังไม่ระบุตำแหน่งงาน'}</span>
         <span className="mt-1 block truncate text-[11px] font-semibold text-gray-400">
           {employee.branchScopeMode === 'ALL_BRANCHES' ? 'ทุกสาขา' : `${employee.branchScopeBranchIds.length} สาขา`}
         </span>
@@ -284,7 +284,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   }, [savedAt]);
 
   const roleById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
-  const filters = useMemo(() => [{ id: 'all', name: 'ทุกตำแหน่ง' } as const, ...roles], [roles]);
+  const filters = useMemo(() => [{ id: 'all', name: 'ทุกบทบาท' } as const, ...roles], [roles]);
 
   const filteredEmployees = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -293,6 +293,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
       const queryMatches = !normalizedQuery
         || employee.displayName.toLowerCase().includes(normalizedQuery)
         || (employee.nickname ?? '').toLowerCase().includes(normalizedQuery)
+        || (employee.jobTitle ?? '').toLowerCase().includes(normalizedQuery)
         || employee.phoneNumber.toLowerCase().includes(normalizedQuery);
       const statusMatches = statusFilter === 'all'
         || employee.status === statusFilter
@@ -319,7 +320,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
     isOwnerTarget: selectedIsOwner,
     isSelfTarget: isSelfEmployee(selectedEmployee, viewerUserId),
     optionCount: roleOptions.length,
-  });
+  }) || isOperationalRoleTargetReadOnly(viewerPermissions, selectedRole);
 
   const selectedRoleNames = selectedEmployee?.roles.map((role) => role.name).join(', ') ?? '';
   const accessProjection = useMemo(
@@ -444,7 +445,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
   return (
     <MangmeePage
       title="สิทธิ์รายบุคคล"
-      description="ดูและจัดการตำแหน่ง สาขา และสถานะบัญชีของพนักงานเป็นรายคน — สิทธิ์เมนูเป็นไปตามตำแหน่ง"
+      description="ดูตำแหน่งงาน และจัดการบทบาท สิทธิ์ สาขา และสถานะบัญชีของพนักงานเป็นรายคน"
       actions={viewerPermissions.includes('access.employee.create') && (
         <Link href={`/companies/${companyId}/settings/employees`} className="mangmee-btn mangmee-btn-primary">
           <PlusIcon className="h-4 w-4" /> เพิ่มพนักงาน
@@ -494,7 +495,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
               <input
                 type="search" value={query} onChange={(event) => setQuery(event.target.value)}
                 className="mangmee-input h-10 rounded-lg pr-10 text-sm" style={{ paddingRight: '2.5rem' }}
-                placeholder="ค้นหาชื่อหรือเบอร์โทร..."
+                placeholder="ค้นหาชื่อ ตำแหน่งงาน หรือเบอร์โทร..."
                 aria-label="ค้นหาพนักงาน"
               />
             </label>
@@ -503,7 +504,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
               <ThemedSelect
                 value={roleFilter}
                 onChange={(event) => setRoleFilter(event.target.value)}
-                aria-label="เลือกตำแหน่ง"
+                aria-label="เลือกบทบาท"
                 className="h-10 rounded-lg text-sm font-extrabold"
               >
                 {filters.map((filter) => <option key={filter.id} value={filter.id}>{filter.name}</option>)}
@@ -539,7 +540,8 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                       <h2 className="truncate text-xl font-extrabold text-gray-900">{employeeShortName(selectedEmployee)}</h2>
                       {selectedIsDraft && <DraftBadge />}
                     </div>
-                    <p className="mt-1 truncate text-sm font-semibold text-gray-500">{selectedEmployee.phoneNumber}</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-gray-600">ตำแหน่งงาน: {selectedEmployee.jobTitle || 'ยังไม่ระบุ'}</p>
+                    <p className="mt-0.5 truncate text-xs font-semibold text-gray-400">{selectedEmployee.phoneNumber}</p>
                   </div>
                 </div>
 
@@ -547,7 +549,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   {selectedRole && (
                     <div className="min-w-0">
                       <div className="flex min-h-5 items-center gap-2">
-                        <span className="text-xs font-bold text-gray-400">ตำแหน่ง</span>
+                        <span className="text-xs font-bold text-gray-400">บทบาทและสิทธิ์ระบบ</span>
                         <span
                           aria-live="polite"
                           className={cx('text-xs font-bold', savedAt === 'role' ? 'text-brand-600' : 'text-gray-400')}
@@ -587,8 +589,8 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         )}
                       </div>
                       {selectedIsOwner
-                        ? <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งเจ้าของกิจการเปลี่ยนไม่ได้</p>
-                        : isSelfEmployee(selectedEmployee, viewerUserId) && <p className="mt-1 text-xs font-semibold text-gray-400">ตำแหน่งของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>}
+                        ? <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทเจ้าของกิจการเปลี่ยนไม่ได้</p>
+                        : isSelfEmployee(selectedEmployee, viewerUserId) && <p className="mt-1 text-xs font-semibold text-gray-400">บทบาทของตัวเองต้องให้ผู้ดูแลคนอื่นเปลี่ยนให้</p>}
                     </div>
                   )}
 
@@ -640,19 +642,19 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์การใช้งานของ {employeeShortName(selectedEmployee)}</h2>
                   {selectedIsOwner ? (
                     <p className="mt-2 max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                      สิทธิ์มาจากตำแหน่งเจ้าของกิจการ — ปรับสิทธิ์ไม่ได้
+                      สิทธิ์มาจากบทบาทเจ้าของกิจการ — ปรับสิทธิ์ไม่ได้
                     </p>
                   ) : (
                     <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                       <p className="max-w-4xl text-sm font-semibold leading-6 text-gray-500">
-                        สิทธิ์มาจากตำแหน่ง {selectedRoleNames || '—'}
+                        สิทธิ์มาจากบทบาท {selectedRoleNames || '—'}
                         {selectedEmployee.roles.length > 1
-                          ? ' — ระบบรวมสิทธิ์จากทุกตำแหน่ง'
-                          : ' — พนักงานทุกคนที่อยู่ตำแหน่งนี้ได้สิทธิ์ชุดเดียวกัน'}
+                          ? ' — ระบบรวมสิทธิ์จากทุกบทบาท'
+                          : ' — พนักงานทุกคนที่ใช้บทบาทนี้ได้สิทธิ์ชุดเดียวกัน'}
                       </p>
                       {canManageRoles && (
                         <Link href={`/companies/${companyId}/settings/permissions`} className="text-sm font-extrabold text-brand-700 hover:underline">
-                          แก้สิทธิ์ของตำแหน่ง →
+                          แก้สิทธิ์ของบทบาท →
                         </Link>
                       )}
                     </div>
@@ -679,18 +681,18 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                   </div>
                 ) : selectedEmployee.roles.length === 0 ? (
                   <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
-                    ยังไม่ได้กำหนดตำแหน่ง จึงยังไม่มีข้อมูลสิทธิ์
+                    ยังไม่ได้กำหนดบทบาท จึงยังไม่มีข้อมูลสิทธิ์
                   </p>
                 ) : !accessProjection.complete ? (
                   <div role="alert" data-testid="access-permission-error" className="rounded-xl border border-error-200 bg-error-50 p-4">
-                    <p className="text-sm font-extrabold text-error-700">ข้อมูลตำแหน่งกับสิทธิ์ไม่ตรงกัน กรุณาลองโหลดใหม่</p>
+                    <p className="text-sm font-extrabold text-error-700">ข้อมูลบทบาทกับสิทธิ์ไม่ตรงกัน กรุณาลองโหลดใหม่</p>
                     <button type="button" onClick={() => void reload()} className="mt-3 text-sm font-extrabold text-error-700 hover:underline">
                       ลองโหลดใหม่
                     </button>
                   </div>
                 ) : accessProjection.groups.length === 0 ? (
                   <p className="rounded-xl bg-gray-50 p-4 text-sm font-semibold text-gray-500">
-                    ยังไม่มีเมนูที่ใช้งานได้จากตำแหน่งที่กำหนด
+                    ยังไม่มีเมนูที่ใช้งานได้จากบทบาทที่กำหนด
                   </p>
                 ) : accessProjection.groups.map(({ group, menus: groupMenus }) => (
                   <div key={group} className="grid gap-1">

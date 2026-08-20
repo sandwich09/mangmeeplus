@@ -98,7 +98,8 @@ Rules:
 - Protected system roles cannot be deleted, renamed by key, or weakened through customer UI.
 - Last active `OWNER` membership cannot be disabled, demoted, or stripped of owner-level access.
 - A user cannot remove their own last role-management permission unless another active owner remains.
-- Employee create/update may grant only roles whose permission set is a subset of the granter's current effective permissions; `OWNER` and `SYSTEM_ADMIN` remain outside the employee-provisioning allowlist.
+- Employee create/update may grant only roles whose permission set is a subset of the granter's current effective permissions; `OWNER`, `SYSTEM_ADMIN`, and `COMPANY_VIEW` remain outside the employee-provisioning allowlist.
+- The `HR` system role is the bounded exception: `access.role.operational.assign` may grant only `MANAGER`, `SALES`, `INVENTORY`, `MARKETING`, and `STAFF`, as specified in [[specs/employee-job-title-and-hr-role-delegation-spec|Employee Job Title and HR Role Delegation]].
 - A user cannot mutate their own employee role assignment. `FINANCE` and `ACCOUNTANT` assignment additionally requires `access.role.financial.assign`, which is granted to `OWNER` only as the current step-up approval boundary.
 - Role grants must be limited to permission keys enabled by the company's feature entitlement.
 - Every role/permission change is audited with granter, grantee, and added/removed role IDs.
@@ -137,7 +138,7 @@ Employees list:
 
 Create employee:
 
-- Name, Thai national ID or passport, phone, and role.
+- Name, Thai national ID or passport, phone, descriptive job title, and system role. Job title never grants permission.
 - Moving into the credential-handoff step creates `User`, membership, employee access profile, role assignment, temporary password, and optional QR/account-link package as `DRAFT`; a draft membership is not authorized for web, LINE, or AI access.
 - Pressing **Finish** atomically changes both profile and membership to `ACTIVE` while keeping the credential-handoff screen visible; only then does the screen expose the LINE QR for scanning.
 - Re-entering the same Thai ID/passport while its company record is still `DRAFT` resumes and refreshes that draft instead of returning a duplicate conflict. The same identifier on any non-draft employee remains a blocking conflict.
@@ -191,6 +192,7 @@ access.employee.line_link.issue
 access.employee.line_link.revoke
 access.role.read
 access.role.manage
+access.role.operational.assign
 access.role.financial.assign
 access.permission.read
 ```

@@ -31,6 +31,7 @@ export class CreateEmployeeDto implements CreateEmployeeInput {
   @IsString() @IsNotEmpty() @MaxLength(160) displayName!: string;
   // Bounded to the catalogue rather than free text, so nothing but a real คำนำหน้า can be stored.
   @IsIn(EMPLOYEE_TITLE_PREFIXES) @IsOptional() titlePrefix?: EmployeeTitlePrefix;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(120) jobTitle?: string;
   @IsString() @IsOptional() @MaxLength(160) legalName?: string;
   @IsEmail() @IsOptional() @MaxLength(254) email?: string;
   @IsString() @IsOptional() @MaxLength(80) firstName?: string;
@@ -52,6 +53,7 @@ export class CreateEmployeeDto implements CreateEmployeeInput {
 export class UpdateEmployeeDto implements UpdateEmployeeInput {
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(160) displayName?: string;
   @IsIn(EMPLOYEE_TITLE_PREFIXES) @IsOptional() titlePrefix?: EmployeeTitlePrefix;
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(120) jobTitle?: string | null;
   @IsString() @IsOptional() @MaxLength(160) legalName?: string;
   @IsEmail() @IsOptional() @MaxLength(254) email?: string;
   @IsString() @IsOptional() @MaxLength(80) firstName?: string;

@@ -199,7 +199,7 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
         <MangmeeCard className="p-5 sm:p-6">
           <h2 className="text-xl font-extrabold text-gray-900">ขั้นการอนุมัติตามวงเงิน</h2>
           <p className="mt-2 text-sm font-medium text-gray-500">
-            กดปุ่มเลือกผู้อนุมัติ — เลือกได้หลายตำแหน่ง คนใดคนหนึ่งอนุมัติก็ผ่าน · ไม่เลือก = Auto approve
+            กดปุ่มเลือกผู้อนุมัติ — เลือกได้หลายบทบาท คนใดคนหนึ่งอนุมัติก็ผ่าน · ไม่เลือก = Auto approve
           </p>
 
           <div className="mt-3">
