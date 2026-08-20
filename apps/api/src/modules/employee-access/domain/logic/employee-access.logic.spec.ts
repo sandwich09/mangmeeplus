@@ -114,12 +114,26 @@ describe('employee-access.logic', () => {
   });
 
   it('rejects grants above the granter and requires owner approval for finance roles', () => {
-    assert.match(roleGrantViolation([{ key: 'SALES', permissionKeys: ['crm.customer.read'] }], []) ?? '', /does not hold/);
-    assert.match(roleGrantViolation([{ key: 'FINANCE', permissionKeys: [] }], []) ?? '', /owner approval/);
-    assert.equal(roleGrantViolation([{ key: 'SALES', permissionKeys: ['crm.customer.read'] }], [], true), undefined);
+    assert.match(roleGrantViolation([{ key: 'SALES', permissionKeys: ['crm.customer.read'] }], [], undefined) ?? '', /does not hold/);
+    assert.match(roleGrantViolation([{ key: 'FINANCE', permissionKeys: [] }], [], undefined) ?? '', /owner approval/);
+    assert.equal(roleGrantViolation([{ key: 'SALES', permissionKeys: ['crm.customer.read'] }], [], undefined, true), undefined);
     assert.equal(roleGrantViolation(
       [{ key: 'FINANCE', permissionKeys: ['accounting.payment.create'] }],
       ['accounting.payment.create', 'access.role.financial.assign'],
+      undefined,
     ), undefined);
+  });
+
+  it('restores only raw permissions the resolver proves were removed by entitlements', () => {
+    assert.equal(roleGrantViolation(
+      [{ key: 'ADMIN', permissionKeys: ['access.role.manage', 'crm.customer.read'] }],
+      ['access.role.manage'],
+      { 'crm.customer.read': 'crm' },
+    ), undefined);
+    assert.match(roleGrantViolation(
+      [{ key: 'ADMIN', permissionKeys: ['access.role.manage', 'crm.customer.manage'] }],
+      ['access.role.manage'],
+      { 'crm.customer.read': 'crm' },
+    ) ?? '', /does not hold/);
   });
 });

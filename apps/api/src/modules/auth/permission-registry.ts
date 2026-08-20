@@ -169,7 +169,8 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'expense.ocr.request',                 description: 'Request OCR extraction',               riskLevel: 'MEDIUM' },
   { key: 'expense.ai.verify',                   description: 'Run AI verification on receipts',       riskLevel: 'MEDIUM' },
   { key: 'expense.category.manage',             description: 'Manage expense categories',             riskLevel: 'MEDIUM' },
-  { key: 'expense.signature.manage',            description: 'Upload/manage company signature assets', riskLevel: 'HIGH' },
+  { key: 'expense.signature.self_manage',       description: 'Manage and use own personal signatures', riskLevel: 'MEDIUM' },
+  { key: 'expense.signature.manage',            description: 'Legacy access to manage own personal signatures', riskLevel: 'HIGH' },
   { key: 'expense.export',                      description: 'Export expense data',                   riskLevel: 'MEDIUM' },
   // Item 11 tax permissions
   { key: 'tax.profile.read',            description: 'Read company tax profile',              riskLevel: 'LOW' },
@@ -554,7 +555,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'expense.read', 'expense.evidence.read', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve',
-    'expense.category.manage', 'expense.signature.manage', 'expense.export',
+    'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
     // Item 13 banking – Admin can read and manage accounts only
     'bank.account.read', 'bank.account.manage',
     'bank.statement.read', 'bank.match.read',
@@ -566,7 +567,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.approval_policy.read',
     // Item 14 reimbursement – Admin reads, owns policy, and approves (team decision
     // 2026-07-28: reimbursement approvers are OWNER / ADMIN / MANAGER; paying stays FINANCE-only)
-    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject',
+    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
+    'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.approve', 'reimbursement.reject',
     'reimbursement.policy.read', 'reimbursement.policy.manage', 'reimbursement.export',
     // Item 15 CRM – Admin manages all CRM records and settings
     'crm.customer.read', 'crm.customer.create', 'crm.customer.update', 'crm.customer.archive', 'crm.customer.assign', 'crm.customer.merge', 'crm.customer.export', 'crm.customer.erase',
@@ -609,7 +611,9 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.approve', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.review', 'expense.duplicate.resolve',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.create',
+    'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
+    'expense.review', 'expense.duplicate.resolve',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
@@ -624,7 +628,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.supplier.read', 'procurement.purchase_request.read', 'procurement.purchase_request.approve',
     'procurement.purchase_order.read', 'procurement.purchase_order.approve',
     // Item 14 reimbursement – Manager approves/rejects team requests
-    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.approve', 'reimbursement.reject',
+    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
+    'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.approve', 'reimbursement.reject',
     // Item 15 CRM – Manager manages team pipeline (scope enforced server-side)
     'crm.customer.read', 'crm.customer.assign',
     'crm.contact.read',
@@ -663,7 +668,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.counterparty.read', 'accounting.document.read_related', 'accounting.quotation.read', 'accounting.quotation.create',
     'accounting.quotation.update', 'accounting.quotation.submit_approval', 'accounting.quotation.issue',
     'accounting.invoice.read', 'accounting.billing_note.read', 'accounting.payment.read',
-    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
@@ -699,7 +704,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'inventory.movement.create', 'inventory.movement.adjust', 'inventory.stock_count.create',
     'inventory.report.read', 'inventory.label.manage',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
@@ -748,7 +753,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
     'expense.update', 'expense.review', 'expense.confirm', 'expense.reject', 'expense.void', 'expense.delete',
     'expense.payment.record', 'expense.duplicate.resolve', 'expense.ocr.request', 'expense.ai.verify',
-    'expense.category.manage', 'expense.signature.manage', 'expense.export',
+    'expense.category.manage', 'expense.signature.self_manage', 'expense.signature.manage', 'expense.export',
     // Item 10 – Finance can read ledger and create draft manual journals
     'ledger.account.read', 'ledger.journal.read', 'journal.entry.create',
     'ledger.posting-rule.read', 'ledger.report.read', 'ledger.period.read', 'ledger.export',
@@ -802,7 +807,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.quotation.read', 'accounting.invoice.read', 'accounting.billing_note.read',
     'accounting.receipt.read', 'accounting.tax_invoice.read', 'accounting.credit_note.read',
     'accounting.debit_note.read', 'accounting.payment.read',
-    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.receipt.line_upload', 'expense.export',
+    'expense.read', 'expense.read_related', 'expense.evidence.read', 'expense.read_own', 'expense.create',
+    'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage', 'expense.export',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
@@ -838,7 +844,8 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'procurement.supplier.read', 'procurement.purchase_order.read', 'procurement.goods_receipt.read',
     'procurement.vendor_bill.read', 'procurement.supplier_payment.read', 'procurement.ap.report',
     // Item 14 reimbursement – Accountant reviews and exports
-    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.finance_review', 'reimbursement.export',
+    'reimbursement.read', 'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
+    'reimbursement.submit', 'reimbursement.cancel_own', 'reimbursement.finance_review', 'reimbursement.export',
     // Item 15 CRM – Accountant reads CRM-to-accounting source context
     'crm.customer.read', 'crm.contact.read', 'crm.opportunity.read', 'crm.activity.read', 'crm.report.read',
     // Item 16 Workflow Automation – Accountant reads runs/audit relevant to its own permissions, works own tasks
@@ -855,10 +862,12 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'company.branch.read', 'attachment.read', 'attachment.create',
     'inventory.product.read',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_related', 'expense.read_own', 'expense.receipt.line_upload',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload',
+    'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
+    'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
     // Item 15 CRM – Marketing reads permitted customer/segment context
     'crm.customer.read', 'crm.report.read', 'crm.ai.read',
     // Item 16 Workflow Automation – Marketing works own workflow tasks
@@ -873,7 +882,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'accounting.document.read_related',
     'company.branch.read', 'attachment.read', 'attachment.create',
     'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update',
+    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
     'reimbursement.read_related',
     'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
     'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',

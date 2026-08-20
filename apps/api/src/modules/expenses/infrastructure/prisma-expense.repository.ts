@@ -1198,7 +1198,7 @@ export class PrismaExpenseRepository {
   }
 
   /**
-   * R9: an ACTIVE signature asset submitted by this user (owner-approved) signs any evidence in the
+   * R9: an ACTIVE signature asset submitted by this user signs any evidence in the
    * company, so a second substitute receipt needs no upload.
    *
    * Pass `attachmentId` to resolve what an evidence row already recorded. That branch deliberately
@@ -2830,18 +2830,6 @@ export class PrismaExpenseRepository {
     return attachment.id;
   }
 
-  /** Whose signature a housekeeping row is. The manage holder may delete anyone's signature and may
-   *  never see the image, so the name is the only thing that tells the rows apart. */
-  async listUserDisplayNames(userIds: string[]): Promise<Map<string, string>> {
-    const ids = [...new Set(userIds)];
-    if (ids.length === 0) return new Map();
-    const users = await this.prisma.client.user.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, displayName: true },
-    });
-    return new Map(users.map((user) => [user.id, user.displayName]));
-  }
-
   async findSignatureAssetById(companyId: string, id: string): Promise<SignatureAssetRecord | null> {
     const s = await this.prisma.client.companySignatureAsset.findFirst({ where: { id, companyId } });
     return s ? mapSignatureAsset(s) : null;
@@ -2852,14 +2840,13 @@ export class PrismaExpenseRepository {
     return s ? mapSignatureAsset(s) : null;
   }
 
-  /** `submittedByUserId` is what "ลายเซ็นของฉัน" reads with: without it a caller with no
-   *  housekeeping authority would page through a company-wide list to find their own row. */
-  async listSignatureAssets(companyId: string, status?: string, submittedByUserId?: string): Promise<SignatureAssetRecord[]> {
+  /** `submittedByUserId` is mandatory for the owner-only "ลายเซ็นของฉัน" use case. */
+  async listSignatureAssets(companyId: string, submittedByUserId: string, status?: string): Promise<SignatureAssetRecord[]> {
     const rows = await this.prisma.client.companySignatureAsset.findMany({
       where: {
         companyId,
         ...(status ? { status: status as any } : {}),
-        ...(submittedByUserId ? { submittedByUserId } : {}),
+        submittedByUserId,
       },
       orderBy: { createdAt: 'desc' },
       take: 100,

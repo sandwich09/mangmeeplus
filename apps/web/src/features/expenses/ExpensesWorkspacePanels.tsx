@@ -295,14 +295,9 @@ export function SignatureThumb({ url, alt, className }: { url: string; alt: stri
  * saved. There is no queue, no badge and no approve/reject — those all belonged to a model where a
  * second person had to look at the picture, and nobody can verify handwriting anyway.
  *
- * `canManageOthers` adds the one thing the personal model still needs from a second party:
- * housekeeping over OTHER people's signatures (departed staff, abuse) — names and dates, never the
- * image, because deleting a signature does not require looking at one.
  */
-export function SignaturePanel({ companyId, userId, canManageOthers, focusSignatureId }: {
+export function SignaturePanel({ companyId, focusSignatureId }: {
   companyId: string;
-  userId: string;
-  canManageOthers: boolean;
   focusSignatureId?: string;
 }) {
   const toast = useToast();
@@ -323,8 +318,7 @@ export function SignaturePanel({ companyId, userId, canManageOthers, focusSignat
   const [method, setMethod] = useState<'upload' | 'draw'>('upload');
   const [saving, setSaving] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
-  // F11: the deep link names one row; it may be the caller's own or, for a housekeeping holder, one
-  // in the other-people table. A row the caller cannot see is simply not highlighted.
+  // F11: a row the caller does not own is absent from the API and therefore never highlighted.
   const focusRef = useRef<HTMLElement>(null);
 
   // `keepVisible` as in CategoryManagePanel above: a refresh after a write must not swap the table
@@ -418,17 +412,14 @@ export function SignaturePanel({ companyId, userId, canManageOthers, focusSignat
     finally { setBusyId(null); }
   };
 
-  // The API already decides what the caller may see; `userId` is what tells the two groups apart.
-  // Newest-first is the order certification resolves in, so the first live own row IS the signature
+  // The API returns only the caller's rows. Newest-first is the order certification resolves in, so the first live row IS the signature
   // that signs — replacing simply means saving a newer one.
   //
-  // At most one own row is ACTIVE (D14, enforced by a partial unique index and by the retire-on-create
+  // At most one row is ACTIVE (D14, enforced by a partial unique index and by the retire-on-create
   // transaction), so this `find` cannot silently promote a second signature into the card the way it
   // did while several ACTIVE rows could pile up: deleting the current one now empties the card.
-  const mine = assets.filter((a) => a.submittedByUserId === userId);
-  const current = mine.find((a) => a.status === 'ACTIVE');
-  const previous = mine.filter((a) => a.id !== current?.id);
-  const housekeeping = assets.filter((a) => a.submittedByUserId !== userId);
+  const current = assets.find((a) => a.status === 'ACTIVE');
+  const previous = assets.filter((a) => a.id !== current?.id);
   const focusRefFor = (id: string) => (id === focusSignatureId ? (focusRef as React.RefObject<never>) : undefined);
   const openUpload = () => { setActionError(null); resetDraft(); setMethod('upload'); setShowUpload(true); };
 
@@ -509,35 +500,6 @@ export function SignaturePanel({ companyId, userId, canManageOthers, focusSignat
               </div>
             )}
           </MangmeeCard>
-
-          {/* Housekeeping only: names, channel and dates. No image column — the permission authorises
-              deleting someone's signature, never looking at it. */}
-          {canManageOthers && !loading && housekeeping.length > 0 && (
-            <MangmeeCard className="overflow-hidden">
-              <div className="mangmee-card-header text-sm font-bold text-gray-800">ลายเซ็นของคนอื่นในบริษัท (จัดการเท่านั้น ไม่แสดงรูป)</div>
-              <div className="overflow-x-auto">
-                <table className="mangmee-table">
-                  <thead><tr>{['เจ้าของ', 'ชื่อ/ป้ายกำกับ', 'สถานะ', 'ช่องทาง', 'บันทึกเมื่อ', ''].map((h) => <th key={h} className={cx('!text-[13px]', 'whitespace-nowrap', h === '' && 'w-px text-right')}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {housekeeping.map((a) => (
-                      <tr
-                        key={a.id}
-                        ref={focusRefFor(a.id)}
-                        className={cx(a.status === 'ARCHIVED' && 'opacity-60', a.id === focusSignatureId && 'bg-brand-25 ring-2 ring-inset ring-brand-200')}
-                      >
-                        <td className="font-semibold text-gray-800">{a.submittedByDisplayName ?? 'ผู้ใช้ที่ถูกลบแล้ว'}</td>
-                        <td className="text-gray-700">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</td>
-                        <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
-                        <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
-                        <td className="whitespace-nowrap text-xs text-gray-500">{dateShort(a.createdAt)}</td>
-                        <td className="w-px whitespace-nowrap text-right">{a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </MangmeeCard>
-          )}
 
           <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!saving) setShowUpload(false); }}>
             {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}

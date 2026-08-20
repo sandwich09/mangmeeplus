@@ -1641,7 +1641,7 @@ describe('LINE intake dispatch – media path', () => {
 
   it('signature-like image is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
-      permissions: ['expense.signature.manage', 'expense.receipt.line_upload'],
+      permissions: ['expense.signature.self_manage', 'expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -1658,7 +1658,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.ok(!/บันทึกข้อมูลค่าใช้จ่าย/.test(h.replies[0] ?? ''));
   });
 
-  it('signature route without any signing or housekeeping permission is refused', async () => {
+  it('signature route without any personal-signature or signing permission is refused', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },

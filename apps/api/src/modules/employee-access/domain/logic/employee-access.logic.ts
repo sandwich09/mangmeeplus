@@ -33,8 +33,19 @@ export function ownerGatedGrantViolation(
 
 export type GrantCandidateRole = { key: string; permissionKeys: string[] };
 
-export function roleGrantViolation(roles: GrantCandidateRole[], requesterPermissions: readonly string[], requesterIsOwner = false): string | undefined {
-  const granted = new Set(requesterPermissions);
+export function roleGrantViolation(
+  roles: GrantCandidateRole[],
+  requesterPermissions: readonly string[],
+  requesterEntitlementDeniedPermissions: Readonly<Record<string, string>> | undefined,
+  requesterIsOwner = false,
+): string | undefined {
+  // RequestContext permissions are effective (feature-filtered). Restore only permissions the
+  // resolver proves this requester owns but the company's current entitlements suppress, so the
+  // subset comparison stays raw-to-raw without allowing dormant privileges they never held.
+  const granted = new Set([
+    ...requesterPermissions,
+    ...Object.keys(requesterEntitlementDeniedPermissions ?? {}),
+  ]);
   if (roles.some((role) => NON_ASSIGNABLE_ROLE_KEYS.includes(role.key))) {
     return 'OWNER and SYSTEM_ADMIN access cannot be granted through employee provisioning.';
   }

@@ -413,7 +413,6 @@ describe('signature asset lifecycle', () => {
           : null,
         createGeneratedSignatureAttachment: async (input: any) => { generated.push(input); return 'att-derived'; },
         listSignatureAssets: async (...args: any[]) => { listed.push(args); return []; },
-        listUserDisplayNames: async () => new Map(),
       } as any,
       storage: {
         getObject: async () => ({ bytes: options.sourceBytes ?? Buffer.alloc(0) }),
@@ -443,8 +442,8 @@ describe('signature asset lifecycle', () => {
 
   // Owner decision 2026-08-20: the acts of signing are what authorise keeping a signature. A payer
   // holding only `expense.review` used to be refused outright, which is the F8 dead end at its root.
-  it('accepts either signing act, or housekeeping, and refuses anyone else', async () => {
-    for (const permission of ['expense.review', 'expense.confirm', 'expense.signature.manage']) {
+  it('accepts personal self-service, either signing act, or the legacy manage grant, and refuses anyone else', async () => {
+    for (const permission of ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage']) {
       const { repo, storage } = makeSigRepo();
       const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage)
         .execute(ctx([permission]), { attachmentId: 'att-1' });
@@ -569,32 +568,28 @@ describe('signature asset lifecycle', () => {
     }
   });
 
-  // Housekeeping is the one thing a second party still does to a personal signature: retire it.
-  // Own-vs-any is the whole rule — a signer archives their own, `expense.signature.manage` archives
-  // anyone's, and the audit row says which of the two happened.
-  it('lets a signer archive their own signature and only a manage holder archive someone else’s', async () => {
+  it('lets only the signature owner archive it, regardless of elevated role permissions', async () => {
     const own = makeSigRepo('ACTIVE', { submittedByUserId: 'user-1' });
     const ownAudits: any[] = [];
     await new ArchiveSignatureAssetUseCase(own.repo, { log: async (entry: any) => { ownAudits.push(entry); } } as any)
       .execute(ctx(['expense.review']), 'sig-1');
     assert.equal(own.updates.at(-1).status, 'ARCHIVED');
     assert.ok(own.updates.at(-1).archivedAt instanceof Date);
-    assert.equal(ownAudits[0].metadataJson.housekeeping, false);
+    assert.equal(ownAudits[0].metadataJson.submittedByUserId, 'user-1');
 
     const other = makeSigRepo('ACTIVE', { submittedByUserId: 'uploader-1' });
     await assert.rejects(
       () => new ArchiveSignatureAssetUseCase(other.repo, audit).execute(ctx(['expense.review', 'expense.confirm']), 'sig-1'),
-      /expense.signature.manage/,
+      /only archive your own signature/,
     );
     assert.deepEqual(other.updates, [], 'a refused archive writes nothing');
 
     const keeper = makeSigRepo('ACTIVE', { submittedByUserId: 'uploader-1' });
-    const keeperAudits: any[] = [];
-    await new ArchiveSignatureAssetUseCase(keeper.repo, { log: async (entry: any) => { keeperAudits.push(entry); } } as any)
-      .execute(ctx(['expense.signature.manage']), 'sig-1');
-    assert.equal(keeper.updates.at(-1).status, 'ARCHIVED');
-    assert.equal(keeperAudits[0].metadataJson.housekeeping, true);
-    assert.equal(keeperAudits[0].metadataJson.submittedByUserId, 'uploader-1');
+    await assert.rejects(
+      () => new ArchiveSignatureAssetUseCase(keeper.repo, audit).execute(ctx(['expense.signature.manage']), 'sig-1'),
+      /only archive your own signature/,
+    );
+    assert.deepEqual(keeper.updates, []);
 
     const stranger = makeSigRepo('ACTIVE');
     await assert.rejects(
@@ -603,18 +598,17 @@ describe('signature asset lifecycle', () => {
     );
   });
 
-  // A7 + the personal-signature decision: the image belongs to exactly one person. A housekeeping
-  // holder gets other people's ROWS so they can retire them, and never their pictures.
-  it('previews only the caller’s own signature, and hands housekeeping rows names instead of images', async () => {
+  it('queries and returns only the caller’s own signatures even for a manage holder', async () => {
     const { repo } = makeSigRepo();
     const audits: any[] = [];
     const listArgs: any[] = [];
     const auditing = { log: async (entry: any) => { audits.push(entry); } } as any;
-    repo.listSignatureAssets = async (...args: any[]) => { listArgs.push(args); return [
-      { id: 'sig-mine', status: 'ACTIVE', submittedByUserId: 'user-1', originalAttachmentId: 'att-1', derivedAttachmentId: 'att-derived' },
-      { id: 'sig-theirs', status: 'ACTIVE', submittedByUserId: 'uploader-1', originalAttachmentId: 'att-2', derivedAttachmentId: null },
-    ]; };
-    repo.listUserDisplayNames = async () => new Map([['uploader-1', 'สมหญิง พนักงาน']]);
+    repo.listSignatureAssets = async (...args: any[]) => {
+      listArgs.push(args);
+      return args[1] === 'user-1'
+        ? [{ id: 'sig-mine', status: 'ACTIVE', submittedByUserId: 'user-1', originalAttachmentId: 'att-1', derivedAttachmentId: 'att-derived' }]
+        : [{ id: 'sig-theirs', status: 'ACTIVE', submittedByUserId: 'uploader-1', originalAttachmentId: 'att-2', derivedAttachmentId: null }];
+    };
     repo.findActiveAttachmentObject = async (_c: string, id: string) => ({ bucket: 'b', objectKey: id, mimeType: 'image/png', checksumSha256: null, byteSize: 10, originalFileName: 'x.png' });
     const useCase = new ListSignatureAssetsUseCase(repo, auditing);
 
@@ -622,16 +616,9 @@ describe('signature asset lifecycle', () => {
     // Same-origin through this API, not a raw presigned storage URL: Chrome's ORB blocks the latter
     // in <img src>, which is why the saved signature never rendered and the signer certified blind.
     assert.equal(keeper[0]!.previewUrl, '/api/v1/companies/company-1/expense-signatures/images/att-derived', 'own row keeps its picture');
-    assert.equal(keeper[0]!.submittedByDisplayName, null);
     assert.equal(keeper[0]!.originalAttachmentId, 'att-1', 'own row still names its own bytes');
     assert.equal(keeper[0]!.derivedAttachmentId, 'att-derived');
-    assert.equal(keeper[1]!.previewUrl, null, 'housekeeping never mints another person’s signature');
-    assert.equal(keeper[1]!.submittedByDisplayName, 'สมหญิง พนักงาน', 'and has to say whose it is');
-    // Withholding the URL was not enough on its own: an attachment id is a route to the same image
-    // through GET /attachments/:id/download-url, which every housekeeping role can call. The row a
-    // manage holder may retire must not name the bytes behind it at all.
-    assert.equal('originalAttachmentId' in keeper[1]!, false, 'no id to hand the generic download endpoint');
-    assert.equal('derivedAttachmentId' in keeper[1]!, false);
+    assert.equal(keeper.some((asset) => asset.id === 'sig-theirs'), false);
     // F6: this path skips the audited generic download gate, so it writes its own row — naming the
     // asset and the attachment, never the URL or its token.
     assert.equal(audits.length, 1);
@@ -639,14 +626,13 @@ describe('signature asset lifecycle', () => {
     assert.equal(audits[0].targetId, 'sig-mine');
     assert.equal(audits[0].metadataJson.attachmentId, 'att-derived');
     assert.equal(JSON.stringify(audits[0]).includes('signed.example'), false);
-    assert.equal(listArgs[0][2], undefined, 'housekeeping reads the whole company');
+    assert.equal(listArgs[0][1], 'user-1');
 
-    // Without housekeeping the query itself is narrowed to the caller: other people's rows are not
-    // filtered out of a response, they are never read.
+    // Every accepted grant narrows the query itself to the caller: other people's rows are not
+    // filtered out of a response; they are never read.
     const signer = await useCase.execute(ctx(['expense.review']));
-    assert.equal(listArgs[1][2], 'user-1');
-    assert.equal(signer.find((asset) => asset.id === 'sig-theirs')!.previewUrl, null);
-    assert.equal(signer.find((asset) => asset.id === 'sig-theirs')!.submittedByDisplayName, null, 'no name lookup without housekeeping');
+    assert.equal(listArgs[1][1], 'user-1');
+    assert.equal(signer.some((asset) => asset.id === 'sig-theirs'), false);
 
     await assert.rejects(() => useCase.execute(ctx(['expense.read', 'expense.signature.approve'])), /expense.signature.manage/);
   });

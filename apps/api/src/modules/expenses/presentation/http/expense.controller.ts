@@ -628,9 +628,8 @@ export class ExpenseSignatureController {
   }
 
   /**
-   * `RequirePermissions` is ALL-of, and a personal signature has three equivalent authorities — the
-   * two signing acts plus housekeeping — so every route here uses the any-of decorator. Own-vs-any
-   * scope is the use case's to decide: it is about WHOSE row this is, which a decorator cannot see.
+   * `RequirePermissions` is ALL-of, while personal-signature self service accepts any one of the
+   * compatible grants below. The use cases then enforce owner-only scope on every row and image.
    */
   @Get()
   @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
@@ -660,7 +659,7 @@ export class ExpenseSignatureController {
     });
   }
 
-  /** Own signature, or — for an `expense.signature.manage` holder — anyone's. */
+  /** Owner-only, including when the caller holds the legacy manage grant. */
   @Post(':signatureId/archive')
   @RequireAnyPermission(...SIGNATURE_OWNER_PERMISSIONS)
   archiveSignature(@ReqCtx() ctx: RequestContext, @Param('signatureId') signatureId: string) {

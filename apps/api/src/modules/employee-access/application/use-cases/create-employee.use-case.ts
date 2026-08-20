@@ -40,6 +40,7 @@ export type CreateEmployeeCommand = {
   linkExistingUser?: boolean;
   requestingUserId: string;
   requesterPermissions: string[];
+  requesterEntitlementDeniedPermissions?: Record<string, string>;
   requesterRoles?: string[];
   requestId: string;
   apiBaseUrl: string;
@@ -85,6 +86,7 @@ export class CreateEmployeeUseCase {
     const violation = roleGrantViolation(
       roles.map((role) => ({ key: role.key, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
       cmd.requesterPermissions,
+      cmd.requesterEntitlementDeniedPermissions,
       cmd.requesterRoles?.includes('OWNER'),
     );
     if (violation) {
