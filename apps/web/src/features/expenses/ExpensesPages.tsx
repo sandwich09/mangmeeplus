@@ -1754,7 +1754,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
 
       {/* full-width list; row click opens the detail popup */}
       <MangmeeCard className="p-4">
-          <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
+          <div className="flex flex-wrap items-center gap-2">
             {chips.map((c) => (
               <button key={c.key} onClick={() => setChip(c.key)}
                 className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
@@ -1763,9 +1763,8 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                 <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', chip === c.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{chipCounts[c.key]}</span>
               </button>
             ))}
-            <div className="hidden flex-1 shrink-0 whitespace-nowrap sm:block" />
-            <div className="relative w-full max-w-[19.2rem] shrink-0 whitespace-nowrap">
-              <input className={cx(inputClass, 'w-full pr-10')} type="search"
+            <div className="relative order-first w-full sm:order-none sm:ml-auto sm:max-w-[19.2rem]">
+              <input className={cx(inputClass, 'mangmee-input-icon-end w-full truncate')} type="search"
                 placeholder={t('expenses.search_placeholder', locale)}
                 value={query} onChange={(e) => setQuery(e.target.value)} />
               <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-400 [&>svg]:h-4 [&>svg]:w-4">
