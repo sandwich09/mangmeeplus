@@ -13,6 +13,33 @@ export function isDeliveredCapabilityFollowUp(
     || lastReply.startsWith('Nong Mangmee can find and summarize work data');
 }
 
+/** “What do I do next?”, in the phrasings people actually send.
+ *
+ *  A WHOLE message only, with question marks, spaces, polite particles and a trailing ดี stripped
+ *  first — a sentence that merely CONTAINS one of these is doing something else. The list is
+ *  deliberately small and literal: the AI owns this intent whenever the gateway is reachable, and
+ *  this only has to catch the dead end left behind when a tool comes back unavailable and the
+ *  composer answers “ส่วนนี้ยังไม่พร้อมใช้งานผ่าน LINE” about work the sender is in the middle of.
+ *
+ *  NFC for the same reason as the substitute vocabulary: NFKC decomposes ำ and no ทำ… literal here
+ *  would ever match again. */
+const NEXT_STEP_QUESTIONS = new Set([
+  'ต้องทำยังไงต่อ', 'ต้องทำอย่างไรต่อ', 'ต้องทำไงต่อ',
+  'ทำยังไงต่อ', 'ทำอย่างไรต่อ', 'ทำไงต่อ',
+  'ยังไงต่อ', 'ไงต่อ',
+  'ต่อไปทำอะไร', 'ต่อไปต้องทำอะไร',
+  'ขั้นตอนต่อไป', 'ขั้นตอนต่อไปคืออะไร', 'ขั้นตอนต่อไปทำอะไร',
+  'ต้องทำอะไร', 'ต้องทำอะไรต่อ', 'ทำอะไรต่อ',
+]);
+
+export function isNextStepQuestionText(text: string): boolean {
+  const stripped = normalizeLineText(text).normalize('NFC').toLocaleLowerCase('th-TH')
+    .replace(/[?？\s]/gu, '')
+    .replace(/(?:ครับผม|ครับ|ค่ะ|คะ|นะคะ|นะครับ|จ๊ะ|จ้า|ดี)+$/u, '')
+    .replace(/^(?:แล้ว|และ|ตอนนี้|ทีนี้|งั้น)+/u, '');
+  return NEXT_STEP_QUESTIONS.has(stripped);
+}
+
 /** The caller's own access. Undefined = legacy fail-open: answer as before entitlement awareness. */
 export type CapabilityFollowUpAccess = {
   permissions?: readonly string[];
