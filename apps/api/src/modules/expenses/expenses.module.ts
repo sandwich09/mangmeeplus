@@ -54,18 +54,13 @@ import {
   SetSignatureDerivedAssetUseCase,
   FillSignatureUseCase,
   ListSignatureAssetsUseCase,
+  GetSignatureImageUseCase,
 } from './application/use-cases/signature-asset.use-case';
 import {
   GetSharedEvidenceViewUseCase,
   CreateAccountantPackageUseCase,
 } from './application/use-cases/expense-evidence.use-case';
 import { CompanySubstituteReceiptController, ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController } from './presentation/http/expense.controller';
-import { DocumentDeliveryLinkController, PublicDocumentDeliveryController } from './presentation/http/document-delivery.controller';
-import {
-  CreateDocumentDeliveryLinkUseCase,
-  ResolveDocumentDeliveryLinkUseCase,
-  RevokeDocumentDeliveryLinkUseCase,
-} from './application/use-cases/document-delivery-link.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 import { GetExpenseCapturePolicyUseCase } from './application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from './application/use-cases/expense-extraction.use-case';
@@ -79,7 +74,7 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
 
 @Module({
   imports: [AuditModule, DashboardNotificationsModule, DataModelCoreModule, TaxModule],
-  controllers: [ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController, PublicDocumentDeliveryController, DocumentDeliveryLinkController],
+  controllers: [ExpenseController, ExpenseCategoryController, ExpenseSignatureController, ExpenseSettingsController, CompanySubstituteReceiptController],
   providers: [
     PrismaExpenseRepository,
     ReceiptOcrClient,
@@ -119,9 +114,6 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
     DownloadPaymentVoucherPdfUseCase,
     DownloadSubstituteReceiptPdfUseCase,
     DownloadSubstituteReceiptFormPdfUseCase,
-    CreateDocumentDeliveryLinkUseCase,
-    ResolveDocumentDeliveryLinkUseCase,
-    RevokeDocumentDeliveryLinkUseCase,
     SupersedeSubstituteReceiptUseCase,
     GetSubstituteReceiptPolicyUseCase,
     UpdateSubstituteReceiptPolicyUseCase,
@@ -134,6 +126,7 @@ import { LineExpenseDraftConversationUseCase } from './application/use-cases/lin
     SetSignatureDerivedAssetUseCase,
     FillSignatureUseCase,
     ListSignatureAssetsUseCase,
+    GetSignatureImageUseCase,
     GetSharedEvidenceViewUseCase,
     CreateAccountantPackageUseCase,
   ],

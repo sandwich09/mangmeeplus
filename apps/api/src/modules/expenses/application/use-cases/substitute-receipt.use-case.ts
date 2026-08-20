@@ -146,51 +146,55 @@ function assertSubstituteReceiptSnapshotRenderable(snapshot: SubstituteReceiptSn
 
 export type SubstituteReceiptEligibilityIssue = { code: string; message: string };
 
-/** All target-level eligibility failures knowable from one current expense snapshot. */
+/** All target-level eligibility failures knowable from one current expense snapshot.
+ *
+ *  Every `message` is Thai because it is shown verbatim: LINE prints it on the blocker card and the
+ *  web prints it whenever `validateEligibility` throws (that throw carries no code for the web's own
+ *  code→Thai map to resolve). The `code` is the machine handle and never changes. */
 export function collectSubstituteReceiptEligibilityIssues(
   expense: ExpenseRecordWithRelations,
   reasonCode?: string,
 ): SubstituteReceiptEligibilityIssue[] {
   const issues: SubstituteReceiptEligibilityIssue[] = [];
   if (!['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
-    issues.push({ code: 'expense_status_ineligible', message: `Cannot prepare substitute evidence in status ${expense.status}.` });
+    issues.push({ code: 'expense_status_ineligible', message: `จัดทำใบรับรองแทนใบเสร็จรับเงินได้เฉพาะรายการที่ยังเป็นร่าง อยู่ระหว่างตรวจ หรือพร้อมยืนยัน (สถานะตอนนี้: ${expense.status})` });
   }
   if (ALWAYS_INELIGIBLE_SOURCE_TYPES.has(expense.sourceDocumentType)) {
-    issues.push({ code: 'source_type_ineligible', message: 'Legacy substitute markers and unreviewed source types are not eligible.' });
+    issues.push({ code: 'source_type_ineligible', message: 'ประเภทเอกสารต้นทางยังไม่ผ่านการตรวจ หรือไม่รองรับใบรับรองแทนใบเสร็จรับเงิน ตรวจและเลือกประเภทเอกสารในเว็บก่อนค่ะ' });
   }
   if (['RECEIPT', 'TAX_INVOICE'].includes(expense.sourceDocumentType)
     && !['RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE'].includes(reasonCode ?? '')) {
-    issues.push({ code: 'valid_receipt_normal_path', message: 'A receipt or tax invoice is eligible only when it is unavailable or materially incomplete; a valid document must use the normal path.' });
+    issues.push({ code: 'valid_receipt_normal_path', message: 'รายการนี้มีใบเสร็จหรือใบกำกับภาษีที่ใช้ได้อยู่แล้ว ให้ทำตามขั้นตอนปกติ ใบรับรองแทนใบเสร็จรับเงินใช้ได้เมื่อต้นฉบับหายหรือข้อมูลสำคัญไม่ครบเท่านั้น' });
   }
   if (hasBlockingNonExpenseClassification(expense.aiVerificationSummaryJson)) {
-    issues.push({ code: 'classification_ineligible', message: 'Quotation, order-only, appointment, booking, reservation, non-business, unreadable, or ambiguous images are not eligible.' });
+    issues.push({ code: 'classification_ineligible', message: 'ใบเสนอราคา ใบสั่งซื้อ ใบนัดหมาย ใบจอง รูปที่ไม่ใช่ค่าใช้จ่าย หรือรูปที่อ่านไม่ออก ใช้จัดทำใบรับรองแทนใบเสร็จรับเงินไม่ได้ค่ะ' });
   }
   const classification = expense.aiVerificationSummaryJson?.['classification'];
   const rawDocumentKind = classification && typeof classification === 'object'
     ? (classification as Record<string, unknown>)['documentKind']
     : null;
   if (typeof rawDocumentKind === 'string' && INELIGIBLE_CLASSIFICATION_KINDS.has(rawDocumentKind)) {
-    issues.push({ code: 'document_kind_ineligible', message: 'A finance override does not make a quotation, order, appointment, booking, reservation, or non-expense image eligible for substitute evidence.' });
+    issues.push({ code: 'document_kind_ineligible', message: 'แม้ฝ่ายบัญชีจะปรับสถานะให้แล้ว ใบเสนอราคา ใบสั่งซื้อ ใบนัดหมาย ใบจอง หรือรูปที่ไม่ใช่ค่าใช้จ่าย ก็ยังใช้จัดทำใบรับรองแทนใบเสร็จรับเงินไม่ได้ค่ะ' });
   }
-  if (expense.currency !== 'THB') issues.push({ code: 'currency_not_supported', message: 'ใบรับรองแทนใบเสร็จรับเงิน currently supports THB expenses only.' });
-  if (!(Number(expense.grandTotalAmount) > 0)) issues.push({ code: 'reviewed_total_required', message: 'A positive reviewed total is required.' });
+  if (expense.currency !== 'THB') issues.push({ code: 'currency_not_supported', message: 'ตอนนี้ใบรับรองแทนใบเสร็จรับเงินรองรับเฉพาะรายการสกุลเงินบาท (THB)' });
+  if (!(Number(expense.grandTotalAmount) > 0)) issues.push({ code: 'reviewed_total_required', message: 'ยอดรวมที่ตรวจแล้วต้องมากกว่า 0 บาท' });
   if (!expense.lines.length || expense.lines.some((line) => !line.description.trim())) {
-    issues.push({ code: 'reviewed_items_required', message: 'Reviewed expense item details are required.' });
+    issues.push({ code: 'reviewed_items_required', message: 'ต้องมีรายละเอียดรายการค่าใช้จ่ายที่ตรวจแล้วให้ครบก่อนค่ะ' });
   }
   if (expense.lines.length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines) {
-    issues.push({ code: 'substitute_receipt_too_many_lines', message: `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} expense lines.` });
+    issues.push({ code: 'substitute_receipt_too_many_lines', message: `ใบรับรองแทนใบเสร็จรับเงิน 1 ใบรองรับได้สูงสุด ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxExpenseLines} รายการ` });
   }
   if (expense.lines.some((line) => line.description.trim().length > SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength)) {
-    issues.push({ code: 'substitute_receipt_line_description_too_long', message: `Each substitute-receipt expense description must be at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} characters.` });
+    issues.push({ code: 'substitute_receipt_line_description_too_long', message: `รายละเอียดค่าใช้จ่ายแต่ละรายการต้องไม่เกิน ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxLineDescriptionLength} ตัวอักษร` });
   }
   if (!expense.expenseCategoryId && !expense.accountHintKey && expense.lines.some((line) => !line.expenseCategoryId && !line.accountHintKey)) {
-    issues.push({ code: 'reviewed_category_required', message: 'A reviewed expense category or account hint is required.' });
+    issues.push({ code: 'reviewed_category_required', message: 'ระบุหมวดค่าใช้จ่ายของรายการนี้' });
   }
   if (expense.taxEvidenceStatus === 'NEEDS_REVIEW') {
-    issues.push({ code: 'tax_evidence_review_required', message: 'Tax evidence status must be reviewed first.' });
+    issues.push({ code: 'tax_evidence_review_required', message: 'ต้องตรวจสถานะหลักฐานภาษีของรายการนี้ให้เสร็จก่อน (ทำในเว็บ)' });
   }
   if (expense.taxEvidenceStatus === 'USABLE_FOR_TAX') {
-    issues.push({ code: 'tax_evidence_nonclaimable', message: 'Internal substitute evidence cannot preserve input VAT. Set it to supporting/non-claimable or request an issuer-created replacement tax invoice.' });
+    issues.push({ code: 'tax_evidence_nonclaimable', message: 'ใบรับรองแทนใบเสร็จรับเงินใช้ขอคืนภาษีซื้อไม่ได้ ให้เปลี่ยนสถานะเป็นเอกสารประกอบที่ไม่ขอคืนภาษี หรือขอใบกำกับภาษีฉบับทดแทนจากผู้ขาย' });
   }
   return issues;
 }

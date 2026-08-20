@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../../generated/prisma/client';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -19,6 +19,7 @@ import {
 } from '@watchdog-bms/contracts';
 import { pdpaLineIdentifierLookupCandidates, pseudonymizePdpaLineIdentifier } from '../domain/logic/crm-inbox.logic';
 import { redactPersonalData } from '../domain/logic/pdpa-audit-redaction.logic';
+import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { AuditAction } from '../../audit/domain/models/audit-action';
 import { AUTONOMY_JOB_MAX_ATTEMPTS } from '../domain/crm-inbox.constants';
 
@@ -1659,6 +1660,14 @@ export class PrismaCrmInboxRepository {
           })
         : null;
       if (!candidate || !attachment) throw new Error('payment_proof_candidate_changed');
+      const conflict = await findAttachmentLinkConflict(tx, {
+        companyId: input.companyId, attachmentId: input.attachmentId, targetType: input.targetType,
+      });
+      // The guard returns the sentence the caller is meant to read. A bare Error carries no status,
+      // and this use case's catch only maps its own sentinel codes, so the block used to surface as
+      // a 500 — the explanation written here never reached anyone. Every other call site of this
+      // guard throws an HttpException; this one now does too.
+      if (conflict) throw new BadRequestException(conflict);
       const existing = await tx.attachmentLink.findFirst({
         where: { companyId: input.companyId, attachmentId: input.attachmentId, targetType: input.targetType, targetId: input.conversationId, purpose: input.purpose },
         select: { id: true },

@@ -274,3 +274,195 @@ test('clamps the page back into range when a search shrinks the list', async () 
   assert.equal(result.rows.length, 1);
   assert.equal(sortAndPageCandidates([], 'date_desc', 1).totalPages, 1);
 });
+
+const preparableExpense = {
+  grandTotalAmount: '350.00',
+  expenseCategoryId: null,
+  accountHintKey: null,
+  lines: [{ description: 'ค่าแท็กซี่', expenseCategoryId: 'category-1', accountHintKey: null }],
+};
+
+test('names the expense-level prepare blockers before anything is typed', async () => {
+  const { evaluateExpensePrerequisites } = await import('./substitute-receipt-wizard.model');
+  assert.deepEqual(evaluateExpensePrerequisites(preparableExpense), { ready: true, missing: [], missingCount: 0 });
+  // A ฿0 draft and a category-less draft are exactly what the prepare endpoint refuses, one per click.
+  assert.deepEqual(
+    evaluateExpensePrerequisites({ ...preparableExpense, grandTotalAmount: '0.0000' }).missing,
+    ['reviewedAmount'],
+  );
+  assert.deepEqual(
+    evaluateExpensePrerequisites({
+      ...preparableExpense,
+      lines: [{ description: 'ค่าแท็กซี่', expenseCategoryId: null, accountHintKey: null }],
+    }).missing,
+    ['reviewedCategory'],
+  );
+  // A header category or an account hint on every line answers the same rule.
+  assert.equal(evaluateExpensePrerequisites({
+    ...preparableExpense,
+    expenseCategoryId: 'category-1',
+    lines: [{ description: 'ค่าแท็กซี่', expenseCategoryId: null, accountHintKey: null }],
+  }).ready, true);
+  assert.equal(evaluateExpensePrerequisites({
+    ...preparableExpense,
+    lines: [{ description: 'ค่าแท็กซี่', expenseCategoryId: null, accountHintKey: 'expense.travel' }],
+  }).ready, true);
+  // Both at once are reported together, not one per failed attempt.
+  assert.deepEqual(
+    evaluateExpensePrerequisites({
+      ...preparableExpense,
+      grandTotalAmount: '0',
+      lines: [{ description: 'ค่าแท็กซี่', expenseCategoryId: null, accountHintKey: null }],
+    }).missing,
+    ['reviewedAmount', 'reviewedCategory'],
+  );
+  assert.deepEqual(evaluateExpensePrerequisites({ ...preparableExpense, lines: [] }).missing, ['reviewedCategory']);
+});
+
+test('separates "not ready yet" from "not your turn" for each signing stage', async () => {
+  const { resolveSubstituteTurn } = await import('./substitute-receipt-wizard.model');
+  const base = { payerUserId: 'payer-1', userId: 'payer-1', mayApprove: false };
+  assert.deepEqual(resolveSubstituteTurn({ ...base, status: 'PREPARED' }), {
+    stage: 'certify', mine: true, waitingFor: null,
+  });
+  assert.deepEqual(resolveSubstituteTurn({ ...base, status: 'PREPARED', userId: 'someone-else' }), {
+    stage: 'certify', mine: false, waitingFor: 'payer',
+  });
+  assert.deepEqual(resolveSubstituteTurn({ ...base, status: 'PAYER_CERTIFIED' }), {
+    stage: 'approve', mine: false, waitingFor: 'approver',
+  });
+  assert.deepEqual(resolveSubstituteTurn({ ...base, status: 'PAYER_CERTIFIED', mayApprove: true }), {
+    stage: 'approve', mine: true, waitingFor: null,
+  });
+  assert.equal(resolveSubstituteTurn({ ...base, status: 'ISSUED' }).stage, 'done');
+  assert.equal(resolveSubstituteTurn({ ...base, status: 'SUPERSEDED' }).stage, 'done');
+});
+
+function fakeStorage() {
+  const store = new Map<string, string>();
+  return {
+    store,
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => { store.set(key, value); },
+    removeItem: (key: string) => { store.delete(key); },
+  };
+}
+
+const draft = {
+  step: 'details' as const,
+  consent: true,
+  reasonCode: 'RECEIPT_UNAVAILABLE' as const,
+  missingReason: 'คนขับไม่ออกใบเสร็จ',
+  businessPurpose: 'ไปพบลูกค้า',
+  payeeName: 'วินมอเตอร์ไซค์',
+  payeeAddress: 'ปากซอย',
+  payeeTaxId: '1234567890123',
+  payerId: 'payer-1',
+  paymentMethod: 'CASH' as const,
+  paymentDate: '2026-08-19',
+  supportingIds: ['attachment-1'],
+  paymentIds: [],
+};
+
+test('restores the pre-prepare draft only for the expense it was typed on', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  const storage = fakeStorage();
+  model.writeSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a', draft);
+  assert.deepEqual(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a'), draft);
+  // A different expense, or a different company, must never inherit these answers.
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-2', 'user-a'), null);
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-2', 'expense-1', 'user-a'), null);
+  // Even if the payload is moved under another expense's key, the stored scope still decides.
+  storage.setItem(
+    model.substituteWizardDraftKey('company-1', 'expense-2', 'user-a'),
+    storage.getItem(model.substituteWizardDraftKey('company-1', 'expense-1', 'user-a'))!,
+  );
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-2', 'user-a'), null);
+  model.clearSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a');
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a'), null);
+});
+
+/**
+ * sessionStorage is per TAB, and signing out is a same-tab navigation. Without the signer in the
+ * scope, user B signing in on the tab user A just left opened the same expense's wizard onto A's
+ * unsent reason, business purpose and payee identity — and could certify a statutory tax document
+ * carrying A's wording. Key AND envelope, so neither a shared key nor a copied payload is enough.
+ */
+test('never hands one person the draft another person typed', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  const storage = fakeStorage();
+  model.writeSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a', draft);
+
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-b'), null);
+  assert.notEqual(
+    model.substituteWizardDraftKey('company-1', 'expense-1', 'user-a'),
+    model.substituteWizardDraftKey('company-1', 'expense-1', 'user-b'),
+  );
+  // And moving the payload under B's key still fails: the author is stored, not assumed.
+  storage.setItem(
+    model.substituteWizardDraftKey('company-1', 'expense-1', 'user-b'),
+    storage.getItem(model.substituteWizardDraftKey('company-1', 'expense-1', 'user-a'))!,
+  );
+  assert.equal(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-b'), null);
+  assert.deepEqual(model.readSubstituteWizardDraft(storage, 'company-1', 'expense-1', 'user-a'), draft);
+});
+
+test('ignores an unreadable, outdated or post-prepare stored draft', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  const scope = { companyId: 'company-1', expenseId: 'expense-1', userId: 'user-a' };
+  assert.equal(model.parseSubstituteWizardDraft(null, scope), null);
+  assert.equal(model.parseSubstituteWizardDraft('{not json', scope), null);
+  assert.equal(model.parseSubstituteWizardDraft(JSON.stringify({ v: 99, ...scope, draft }), scope), null);
+  // certify/approve/done are server-resolved: a stored copy must never re-seed a prepared document.
+  assert.equal(model.parseSubstituteWizardDraft(
+    JSON.stringify({ v: model.SUBSTITUTE_WIZARD_DRAFT_VERSION, ...scope, draft: { ...draft, step: 'certify' } }),
+    scope,
+  ), null);
+  // Unknown enum values fall back instead of poisoning the form with an unsubmittable value.
+  const coerced = model.parseSubstituteWizardDraft(
+    JSON.stringify({
+      v: model.SUBSTITUTE_WIZARD_DRAFT_VERSION,
+      ...scope,
+      draft: { ...draft, reasonCode: 'NONSENSE', paymentMethod: 'BITCOIN', supportingIds: ['ok', 7] },
+    }),
+    scope,
+  );
+  assert.equal(coerced?.reasonCode, 'PAYEE_CANNOT_ISSUE');
+  assert.equal(coerced?.paymentMethod, 'CASH');
+  assert.deepEqual(coerced?.supportingIds, ['ok']);
+});
+
+test('survives a storage that refuses to read or write', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  const blocked = {
+    getItem: () => { throw new Error('SecurityError'); },
+    setItem: () => { throw new Error('QuotaExceededError'); },
+    removeItem: () => { throw new Error('SecurityError'); },
+  };
+  assert.equal(model.readSubstituteWizardDraft(blocked, 'company-1', 'expense-1', 'user-a'), null);
+  assert.doesNotThrow(() => model.writeSubstituteWizardDraft(blocked, 'company-1', 'expense-1', 'user-a', draft));
+  assert.doesNotThrow(() => model.clearSubstituteWizardDraft(blocked, 'company-1', 'expense-1', 'user-a'));
+  assert.equal(model.readSubstituteWizardDraft(null, 'company-1', 'expense-1', 'user-a'), null);
+});
+
+/**
+ * B2: the LINE text-note capture stamps `missingReceiptReason` with a marker so the evidence-gap
+ * rules read "no file, reason recorded". The certificate prints that field VERBATIM, so seeding the
+ * form with it produces a statutory document whose stated reason is a system note nobody wrote.
+ */
+test('never seeds the certificate reason with the LINE capture marker', async () => {
+  const model = await import('./substitute-receipt-wizard.model');
+  for (const marker of [
+    'บันทึกค่าใช้จ่ายจากข้อความใน LINE ยังไม่ได้แนบไฟล์หลักฐาน',
+    'LINE text-only expense note; evidence file not attached',
+    '  บันทึกค่าใช้จ่ายจากข้อความใน LINE ยังไม่ได้แนบไฟล์หลักฐาน  ',
+  ]) {
+    assert.equal(model.isAutoMissingReceiptReason(marker), true, marker);
+    assert.equal(model.payerWrittenMissingReason(marker), '', 'the payer has to write a real reason');
+  }
+  // A reason a person actually typed is theirs and survives untouched.
+  assert.equal(model.isAutoMissingReceiptReason('ผู้ขายรายย่อยไม่ออกใบเสร็จ'), false);
+  assert.equal(model.payerWrittenMissingReason('ผู้ขายรายย่อยไม่ออกใบเสร็จ'), 'ผู้ขายรายย่อยไม่ออกใบเสร็จ');
+  assert.equal(model.payerWrittenMissingReason(null), '');
+  assert.equal(model.payerWrittenMissingReason(undefined), '');
+});

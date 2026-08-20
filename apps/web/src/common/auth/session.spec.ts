@@ -92,4 +92,33 @@ describe('web auth session helpers', () => {
       else (globalThis as Record<string, unknown>).window = originalWindow;
     }
   });
+
+  /**
+   * sessionStorage is per TAB and sign-out is a same-tab navigation, so unsent work in progress —
+   * the substitute-receipt wizard's typed reason, business purpose and payee identity, which the
+   * certificate prints verbatim — was still sitting there for the next person to sign in.
+   */
+  it('drops unsent drafts from the tab on sign-out', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWindow = (globalThis as Record<string, unknown>).window;
+    const local = new MemoryStorage();
+    const session = new MemoryStorage();
+    session.setItem('watchdog.substitute-wizard.draft.company-1\0expense-1\0user-a', '{"draft":"…"}');
+    session.setItem('expenses.extractionNotice.expense-1', '{"notice":"…"}');
+    globalThis.fetch = async () => new Response(null, { status: 204 });
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: local,
+      sessionStorage: session,
+      location: { assign: () => undefined },
+    };
+
+    try {
+      assert.equal(await logoutCurrentSession(), true);
+      assert.equal(session.length, 0, 'nothing user-scoped may outlive the session on this tab');
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window;
+      else (globalThis as Record<string, unknown>).window = originalWindow;
+    }
+  });
 });

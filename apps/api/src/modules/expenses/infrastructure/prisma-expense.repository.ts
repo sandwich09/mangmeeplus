@@ -3,6 +3,7 @@ import Decimal from 'decimal.js';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope } from '../../data-model-core/domain/logic/branch.logic';
+import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
@@ -1130,6 +1131,10 @@ export class PrismaExpenseRepository {
         where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE' },
       });
       if (active !== 1) throw new ConflictException('The scanned form attachment is not ACTIVE.');
+      const conflict = await findAttachmentLinkConflict(tx, {
+        companyId: input.companyId, attachmentId: input.attachmentId, targetType: 'expense.record',
+      });
+      if (conflict) throw new BadRequestException(conflict);
       try {
         await tx.attachmentLink.create({ data: {
           companyId: input.companyId, attachmentId: input.attachmentId, targetType: 'expense.record',
@@ -2438,32 +2443,30 @@ export class PrismaExpenseRepository {
     chatKeyHash: string;
     scopes: { branchIds?: string[] };
     take?: number;
-    /** F7: the delivery-link reissue widens this past the editable correction-candidate window so an
-     *  issued/prepared document can still be re-minted after a web confirm moves the expense to
-     *  CONFIRMED. Defaulted (not widened) for the shared correction-candidate callers. */
-    statuses?: readonly string[];
   }): Promise<Array<{ id: string; updatedAt: Date; sourceChannelMetadataJson: Record<string, unknown> | null }>> {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
-        status: { in: (input.statuses ?? ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']) as any },
-        sourceChannelMetadataJson: {
-          path: ['lineSubstituteReceiptContinuation', 'userId'],
-          equals: input.userId,
-        },
+        status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any },
+        // Both JSON path filters run in SQL so `take` bounds the RIGHT set. Filtering the chat in JS
+        // afterwards silently dropped older chats out of the window for anyone holding more than
+        // `take` substitute drafts company-wide — and the caller reads "no workflow here" as "start a
+        // fresh one", minting an empty state over the collected answers.
+        AND: [
+          { sourceChannelMetadataJson: { path: ['lineSubstituteReceiptContinuation', 'userId'], equals: input.userId } },
+          { sourceChannelMetadataJson: { path: ['lineSubstituteReceiptContinuation', 'chatKeyHash'], equals: input.chatKeyHash } },
+        ],
         ...branchScopeWhere(input.scopes),
       },
       select: { id: true, updatedAt: true, sourceChannelMetadataJson: true },
       orderBy: { updatedAt: 'desc' },
       take: Math.min(10, Math.max(1, input.take ?? 5)),
     });
-    return rows
-      .filter((row: any) => row.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation?.chatKeyHash === input.chatKeyHash)
-      .map((row: any) => ({
-        id: row.id,
-        updatedAt: row.updatedAt,
-        sourceChannelMetadataJson: row.sourceChannelMetadataJson as Record<string, unknown> | null,
-      }));
+    return rows.map((row: any) => ({
+      id: row.id,
+      updatedAt: row.updatedAt,
+      sourceChannelMetadataJson: row.sourceChannelMetadataJson as Record<string, unknown> | null,
+    }));
   }
 
   /** Durable expense-draft conversations are independent of the bounded AI turn window. */
@@ -2531,6 +2534,11 @@ export class PrismaExpenseRepository {
     expectedUpdatedAt: Date;
     scopes: { branchIds?: string[] };
     continuation: Record<string, unknown>;
+    /** The one expense field the LINE conversation collects. It lives on the row (the preflight, the
+     *  web wizard and substitute eligibility all read it there), so it rides the same CAS write as
+     *  the state instead of advancing the revision a second time. Callers pass only an id they have
+     *  already resolved against this company's ACTIVE categories. */
+    expenseCategoryId?: string;
   }): Promise<{ updatedAt: Date; continuation: Record<string, unknown> }> {
     return (this.prisma.client as any).$transaction(async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:line-substitute-continuation`}))`;
@@ -2555,7 +2563,12 @@ export class PrismaExpenseRepository {
       metadata.lineSubstituteReceiptContinuation = continuation;
       const changed = await tx.expenseRecord.updateMany({
         where: { id: input.expenseId, companyId: input.companyId, updatedAt: input.expectedUpdatedAt },
-        data: { sourceChannelMetadataJson: metadata, updatedByUserId: input.actorUserId, updatedAt: now },
+        data: {
+          sourceChannelMetadataJson: metadata,
+          ...(input.expenseCategoryId ? { expenseCategoryId: input.expenseCategoryId } : {}),
+          updatedByUserId: input.actorUserId,
+          updatedAt: now,
+        },
       });
       if (changed.count !== 1) throw new ConflictException({
         code: 'LINE_SUBSTITUTE_CONTINUATION_STALE',
@@ -2714,10 +2727,12 @@ export class PrismaExpenseRepository {
   }
 
   async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
-    await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType: 'expense.record', targetId: expenseId, purpose, companyId, linkedByUserId: actorUserId } });
+    await this.linkAttachmentToTarget(attachmentId, 'expense.record', expenseId, purpose, companyId, actorUserId);
   }
 
   async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
+    const conflict = await findAttachmentLinkConflict(this.prisma.client, { companyId, attachmentId, targetType });
+    if (conflict) throw new BadRequestException(conflict);
     await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId } });
   }
 

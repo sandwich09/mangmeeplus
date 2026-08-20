@@ -201,7 +201,9 @@ describe('PrismaProcurementRepository AP transaction integrity', () => {
       },
       vendorBillLine: { updateMany: async () => ({ count: 1 }) },
       attachmentObject: { findFirst: async () => ({ id: 'attachment-1' }) },
-      attachmentLink: { createMany: async () => ({ count: 1 }) },
+      // findFirst: the signature library and document attachments may never share bytes, so the
+      // link write first asks whether these already belong to the other world.
+      attachmentLink: { findFirst: async () => null, createMany: async () => ({ count: 1 }) },
       tradeTaxEvidence: {
         upsert: async (args: any) => { upsert = args; return { id: 'trade-evidence-1' }; },
         updateMany: async () => ({ count: 0 }),

@@ -11,7 +11,7 @@ import type {
   LinkAttachmentInput,
   FindAttachmentInput,
 } from '../../domain/models/attachment.model';
-import { isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
+import { findAttachmentLinkConflict, isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
 
 @Injectable()
 export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
@@ -228,6 +228,8 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
       if (!isAllowedAttachmentTarget(input.targetType, input.purpose)) {
         throw new BadRequestException('Unsupported attachment target or purpose.');
       }
+      const conflict = await findAttachmentLinkConflict(tx, input);
+      if (conflict) throw new BadRequestException(conflict);
       const target = await tx.expenseRecord.findFirst({
         where: {
           id: input.targetId,

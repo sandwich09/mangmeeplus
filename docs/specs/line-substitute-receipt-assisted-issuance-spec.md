@@ -53,6 +53,7 @@ Additional owner decisions, 2026-08-20 (recorded during implementation):
 | D12 | **ISSUED delivery is next-turn / on-request, not push.** The system stores only a one-way chat-key hash (no durable raw LINE chat id), so a true push on approve→ISSUED would require a new PDPA-relevant store. The ✅ card with the delivery link arrives on the user's next message in the chat, and `ขอลิงก์ใหม่` summons it on demand. Revisit only if the owner decides to store a durable chat id. |
 | D13 | **Group-chat link withholding (§12.8) is defense-in-depth, not an active behavior**: the owner confirms current deployments are 1:1 chats only. The guard stays because the webhook layer accepts group sources and the OA-level "allow join groups" switch lives outside this codebase. |
 | D14 | **Signatures are personal assets with no approval step — supersedes D10 and D11** (owner, 2026-08-20, later the same day). A signature is visible only to its owner, self-managed (upload/replace/delete), and usable for signing the moment it is saved. Document authenticity comes from the authenticated signing act and its audit rows, not from anyone vetting the image — an approver cannot verify handwriting anyway. The ownership binding (`submittedByUserId`) stays: it is what prevents cross-user forgery. Housekeeping: `expense.signature.manage` may delete anyone's signature (departed staff, abuse) but never sees the image. The approval queue, approve/reject lifecycle, and approval notifications are removed; D10's un-parked page becomes "ลายเซ็นของฉัน" (self-service), and D11's auto-approve generalizes to everyone. |
+| D15 | **No document is pushed back into LINE — the user downloads from the web instead. Removes the `/d/{token}` delivery-link feature entirely (retires §12, D3's link half, D7, D12; makes D13 moot).** (owner, 2026-08-20.) Rationale, code-verified: certify and approve are web-only (`assertWeb`) and require the payer/approver, so **everyone who can finish the flow already reaches the authenticated web**, where the web pages already expose both downloads — the unsigned form (`form.pdf`, on the PREPARED→certify wizard step, `expense.review`, which the LINE driver always holds) and the issued artifact (`artifact.pdf`, on the ISSUED→done step, payer read scope). The bearer link was therefore redundant for its stated purpose while carrying the spec's largest liabilities: a public session-less endpoint, PII-bearing temp PDF copies under an S3 prefix (with the noncurrent-version/`ListBucket`/lifecycle ops burden of runbook §8), token-in-log and enumeration surface, and group-chat leakage. LINE keeps: capture + AI ask/answer, signature submission, PREPARE (R7) reserving the number, the R13 issue ask, and the status badges — every reply now points at the web page (the web-pointer and its fallback wording already shipped). The one accepted cost is that a not-logged-in user taps the web link and meets the password wall before the deep link resolves — identical to the friction the certify/approve web links already impose. **Ops win: runbook §8 (S3 lifecycle) is no longer needed.** |
 
 ## 5. Source Facts
 
@@ -223,10 +224,10 @@ See §12. A link is per-recipient, time-boxed, revocable and audited.
 7. Card: badge `รอยืนยัน`, button `ยืนยันและออกเอกสาร` → one web page, prefilled, with two sequential
    steps: the payer certifies, then the approver approves (D8 — two acknowledgements even when
    `OWNER_SELF` makes them one person).
-8. On `ISSUED` the system delivers a card into LINE: badge `ออกเอกสารแล้ว`, document number, amount, and
-   button `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)`. Delivery is next-turn / on-request per D12 — the
-   card arrives on the user's next message in the chat, and `ขอลิงก์ใหม่` summons it (with a fresh
-   link) at any time; a proactive push awaits an owner decision to store a durable chat id.
+8. On `ISSUED` the system's next-turn card shows badge `ออกเอกสารแล้ว`, document number, and points the
+   user at the web page to download the finished document. **(Amended by D15: no download link is
+   pushed to LINE — the earlier `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)` button and `ขอลิงก์ใหม่` are
+   gone; the user downloads the issued artifact from the web, where they already are to approve.)**
 
 ### Journey B — fallback: paper signature
 
@@ -318,7 +319,14 @@ at all. A QR code may be added later purely as an optimisation; nothing in the f
 The caption is authoritative over the picture when the two disagree, because the caption is the
 user's stated intent.
 
-## 12. Delivery Link Design (D3, R16)
+## 12. Delivery Link Design (D3, R16) — RETIRED by D15 (2026-08-20)
+
+> **This entire section is retired.** The owner removed the `/d/{token}` delivery-link feature: no
+> document is pushed back into LINE. The user opens the authenticated web app and downloads the form
+> (`form.pdf`) or issued artifact (`artifact.pdf`) there — surfaces they already reach to certify and
+> approve. The design below is kept only as the record of what was built and removed; the
+> `DocumentDeliveryLink` table, the public `/d/{token}` route, the token lifecycle, the temp S3
+> copies, and the group-chat withholding (D13) all no longer exist. See D15 in §4.
 
 1. On issuance (or on form request), the API **copies** the rendered PDF to a delivery prefix.
    The source artifact is never moved, renamed or deleted.
@@ -375,9 +383,7 @@ At most two buttons; the primary is always the single action that moves the work
 | Store reusable signature | `expense.signature.manage` | existing `expense.signature.create` | HIGH |
 | Prepare from LINE (R7) | `expense.review` | `expense.substitute_receipt.prepare` + `preparedFromChannel: LINE` | HIGH |
 | Certify / approve | `expense.review` / `expense.confirm`, web only | existing | HIGH / CRITICAL |
-| Create delivery link | issued evidence readable by the recipient | new `document.delivery.link.create` | MEDIUM |
-| Open delivery link | token only | new `document.delivery.link.open` with token id + IP | MEDIUM |
-| Revoke delivery link | `expense.review` | new `document.delivery.link.revoke` | LOW |
+| ~~Create / Open / Revoke delivery link~~ | — | ~~`document.delivery.link.*`~~ | **RETIRED by D15** — the delivery-link feature and its three audit actions are removed; the document is downloaded from the authenticated web instead. |
 
 ## 15. Edge Cases
 
@@ -400,13 +406,11 @@ At most two buttons; the primary is always the single action that moves the work
 - [ ] The `แบบฟอร์มรอลงนาม` PDF is watermarked, prints the document number large, and is never described as issued.
 - [ ] A photo of that signed form sent back in chat triggers the D9 confirming question, links only after `ใช่`, and cannot issue the document by itself.
 - [ ] The paper-route download is the scan followed by the system attestation page, with both checksums present.
-- [ ] An expired delivery link shows no document data and offers `ขอลิงก์ใหม่`, which produces a new token and a new opaque key.
 - [ ] A slip sent mid-conversation attaches to the open expense instead of creating a new one.
 - [ ] A user stating the payee signed receives the `ใบสำคัญรับเงิน` explanation and a choice.
-- [ ] The delivery link resolves once for the recipient, is audited, expires at 3 days, dies on revoke, and its object key leaks nothing.
+- [ ] The LINE reply for a prepared/issued document points at the web page; **no `/d/{token}` link is emitted** and `safeTenantLink` rejects any `/d/` path (D15).
 - [ ] Certify, approve and the artifact/form download endpoints still refuse `authProvider: 'line'`.
-      (The delivery-link mint runs with a LINE ctx by design — D3 — and hands out a copy of an
-      already-issued artifact; it grants no signing or issuing capability.)
+- [ ] ~~expired delivery link / delivery link resolves-once~~ — **removed by D15** (no delivery links).
 
 ## 17. Test Cases
 

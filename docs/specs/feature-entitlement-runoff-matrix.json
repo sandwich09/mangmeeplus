@@ -6,8 +6,8 @@
  "repoHead": "42be72995bf21afbaa4bd5397b305b585c9b629d",
  "method": "assembled from f0 lane JSONs by deterministic join + conservative §6.3 overlay",
  "counts": {
-  "total": 744,
-  "api": 544,
+  "total": 742,
+  "api": 542,
   "async": 63,
   "aiTool": 59,
   "aiOrchestratorRouter": 25,
@@ -7248,11 +7248,13 @@
    "surfaceId": "GET /v1/companies/:companyId/expense-signatures",
    "mutationClass": "READ",
    "permissionKeys": [
+    "expense.review",
+    "expense.confirm",
     "expense.signature.manage"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:477",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:607",
    "runoffPolicy": "VISIBLE_SNAPSHOT_ONLY",
    "friendlyFallback": "ดูข้อมูลเดิมได้ แต่เพิ่มรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",
@@ -7273,11 +7275,13 @@
    "surfaceId": "POST /v1/companies/:companyId/expense-signatures/uploads",
    "mutationClass": "ROOT_MUTATION",
    "permissionKeys": [
+    "expense.review",
+    "expense.confirm",
     "expense.signature.manage"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:483",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:613",
    "runoffPolicy": "BLOCK_NEW_ROOT",
    "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้ สร้างรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",
@@ -7298,11 +7302,13 @@
    "surfaceId": "POST /v1/companies/:companyId/expense-signatures",
    "mutationClass": "ROOT_MUTATION",
    "permissionKeys": [
+    "expense.review",
+    "expense.confirm",
     "expense.signature.manage"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:489",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:619",
    "runoffPolicy": "BLOCK_NEW_ROOT",
    "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้ สร้างรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",
@@ -7320,64 +7326,16 @@
    ],
    "surfaceKind": "API",
    "surfaceSubKind": "expenses",
-   "surfaceId": "POST /v1/companies/:companyId/expense-signatures/:signatureId/approve",
-   "mutationClass": "FINAL_MUTATION",
-   "permissionKeys": [
-    "expense.signature.approve"
-   ],
-   "currentEnforcement": "PERMISSION_STRIP",
-   "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:495",
-   "runoffPolicy": "PRE_CUTOFF_RUNOFF_ONLY",
-   "friendlyFallback": "ทำต่อได้เฉพาะรายการเดิมที่ค้างอยู่",
-   "compensationOwner": "FIN",
-   "resumePath": "RESUME",
-   "status": "RESOLVED",
-   "evidenceOwner": null,
-   "policyBasis": "spec:318 (allowed pre-cutoff child/compensation)"
-  },
-  {
-   "featureKey": "expenses",
-   "featureKeyRaw": "expenses+expenses.substitute_receipt",
-   "requiredFeatures": [
-    "expenses",
-    "expenses.substitute_receipt"
-   ],
-   "surfaceKind": "API",
-   "surfaceSubKind": "expenses",
-   "surfaceId": "POST /v1/companies/:companyId/expense-signatures/:signatureId/reject",
-   "mutationClass": "FINAL_MUTATION",
-   "permissionKeys": [
-    "expense.signature.approve"
-   ],
-   "currentEnforcement": "PERMISSION_STRIP",
-   "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:501",
-   "runoffPolicy": "PRE_CUTOFF_RUNOFF_ONLY",
-   "friendlyFallback": "ทำต่อได้เฉพาะรายการเดิมที่ค้างอยู่",
-   "compensationOwner": "FIN",
-   "resumePath": "RESUME",
-   "status": "RESOLVED",
-   "evidenceOwner": null,
-   "policyBasis": "spec:318 (allowed pre-cutoff child/compensation)"
-  },
-  {
-   "featureKey": "expenses",
-   "featureKeyRaw": "expenses+expenses.substitute_receipt",
-   "requiredFeatures": [
-    "expenses",
-    "expenses.substitute_receipt"
-   ],
-   "surfaceKind": "API",
-   "surfaceSubKind": "expenses",
    "surfaceId": "POST /v1/companies/:companyId/expense-signatures/:signatureId/archive",
    "mutationClass": "ROOT_MUTATION",
    "permissionKeys": [
+    "expense.review",
+    "expense.confirm",
     "expense.signature.manage"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:507",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:636",
    "runoffPolicy": "BLOCK_NEW_ROOT",
    "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้ สร้างรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",
@@ -7398,11 +7356,13 @@
    "surfaceId": "POST /v1/companies/:companyId/expense-signatures/:signatureId/derived",
    "mutationClass": "ROOT_MUTATION",
    "permissionKeys": [
+    "expense.review",
+    "expense.confirm",
     "expense.signature.manage"
    ],
    "currentEnforcement": "PERMISSION_STRIP",
    "twoStep": false,
-   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:514",
+   "evidence": "apps/api/src/modules/expenses/presentation/http/expense.controller.ts:643",
    "runoffPolicy": "BLOCK_NEW_ROOT",
    "friendlyFallback": "ยังไม่ได้เปิดฟีเจอร์นี้ สร้างรายการใหม่ไม่ได้",
    "compensationOwner": "FIN",

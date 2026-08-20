@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { CreateDownloadUrlUseCase } from '../../../data-model-core/application/use-cases/create-download-url.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -6,7 +6,7 @@ import { buildAccountantIndexRow, buildAccountantIndexCsv, buildAccountantIndexX
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type {
   RequestContext, SharedEvidenceFilter, SharedEvidenceView, AccountantPackageRequest, AccountantPackageResult,
-  ExpenseAttachmentRef, EvidenceManifestEntry,
+  ExpenseAttachmentRef, EvidenceManifestEntry, SkippedEvidenceEntry,
 } from '@watchdog-bms/contracts';
 
 function hasPerm(ctx: RequestContext, perm: string): boolean {
@@ -92,6 +92,8 @@ export class GetSharedEvidenceViewUseCase {
  */
 @Injectable()
 export class CreateAccountantPackageUseCase {
+  private readonly logger = new Logger(CreateAccountantPackageUseCase.name);
+
   constructor(
     private readonly repo: PrismaExpenseRepository,
     private readonly downloadUrl: CreateDownloadUrlUseCase,
@@ -186,6 +188,7 @@ export class CreateAccountantPackageUseCase {
 
     // Per-file signed links re-check the caller's attachment permission and expire.
     const evidenceManifest: EvidenceManifestEntry[] = [];
+    const skippedEvidence: SkippedEvidenceEntry[] = [];
     for (const r of page.rows) {
       for (const attachment of r.attachments) {
         if (attachment.status !== 'ACTIVE' && attachment.status !== 'active') continue;
@@ -202,8 +205,19 @@ export class CreateAccountantPackageUseCase {
             downloadUrlExpiresAt: signed.expiresAt.toISOString(),
             webUrl: `/companies/${ctx.companyId}/expenses/${r.id}`,
           }));
-        } catch {
-          // Attachment the caller cannot read stays out of the manifest; row remains in the index.
+        } catch (error) {
+          // Attachment the caller cannot read stays out of the manifest; row remains in the index —
+          // but never silently. Swallowing this handed accountants a package that was short a file
+          // with nothing anywhere saying so, which is worse than a package that says what is missing.
+          const reason = error instanceof Error ? error.message : 'Download link could not be issued.';
+          skippedEvidence.push({
+            expense_id: r.id,
+            expense_number: r.expenseNumber ?? '',
+            attachment_id: attachment.id,
+            file_name: attachment.originalFileName,
+            reason,
+          });
+          this.logger.warn(`accountant package skipped attachment ${attachment.id} on expense ${r.expenseNumber}: ${reason}`);
         }
       }
     }
@@ -224,7 +238,7 @@ export class CreateAccountantPackageUseCase {
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.accountant_package.create', targetType: 'expense_export', targetId: ctx.requestId,
       requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: { rowCount: indexRows.length, totalMatched: page.total, truncated: indexRows.length < page.total, evidenceCount: evidenceManifest.length, filterSummary },
+      metadataJson: { rowCount: indexRows.length, totalMatched: page.total, truncated: indexRows.length < page.total, evidenceCount: evidenceManifest.length, skippedEvidenceCount: skippedEvidence.length, filterSummary },
     });
 
     return {
@@ -238,6 +252,7 @@ export class CreateAccountantPackageUseCase {
       indexXlsxBase64: buildAccountantIndexXlsx(indexRows, columnSet).toString('base64'),
       columnSet,
       evidenceManifest,
+      skippedEvidence,
     };
   }
 }

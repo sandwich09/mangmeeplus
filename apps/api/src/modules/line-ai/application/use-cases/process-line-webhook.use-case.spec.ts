@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 
@@ -2400,5 +2400,92 @@ describe('web link resolution', () => {
     } finally {
       restore();
     }
+  });
+});
+
+/** B4: an open "รูปนี้เป็นอะไรคะ" used to swallow a substitute-receipt request, because every name of
+ *  that document contains ‘ใบเสร็จ’ and the keyword scan read it as "yes, it's a receipt". A draft was
+ *  then built from the PHOTO, the amount the sender had just typed was dropped, and the substitute
+ *  request produced nothing at all. */
+describe('B4 — the pending-media classifier never claims a substitute-receipt request', () => {
+  const SUBSTITUTE_REQUESTS = [
+    'ทำใบรับรองแทนใบเสร็จรับเงิน ค่าวินมอไซต์ไปพบลูกค้า 50 บาท',
+    'ขอใบรับรองแทนใบเสร็จ',
+    'ทำใบทดแทนใบเสร็จ ค่าแท็กซี่ 120 บาท',
+    'ทำใบรับรองต่อ',
+    'ขอใบแทนใบเสร็จหน่อยค่ะ',
+  ];
+  for (const text of SUBSTITUTE_REQUESTS) {
+    it(`leaves the bytes pending for “${text.slice(0, 28)}”`, () => {
+      assert.equal(classifyPendingMediaReply(text), 'ambiguous');
+    });
+  }
+
+  const REAL_ANSWERS: Array<[string, string]> = [
+    ['1', 'receipt'], ['ใบเสร็จ', 'receipt'], ['ใบเสร็จค่ะ', 'receipt'], ['บันทึกเลย', 'receipt'],
+    ['ใบกำกับภาษี', 'receipt'], ['สลิป', 'receipt'],
+    ['2', 'illustration'], ['ภาพประกอบ', 'illustration'], ['ไม่ต้องบันทึก', 'illustration'],
+    ['3', 'multiple'], ['สรุปหลายรายการ', 'multiple'],
+  ];
+  for (const [text, expected] of REAL_ANSWERS) {
+    it(`still answers the question it was asked with “${text}” → ${expected}`, () => {
+      assert.equal(classifyPendingMediaReply(text), expected);
+    });
+  }
+});
+
+/** W1: the signature link is irreversible and the LINE delivery between it and the resolve can throw.
+ *  With the resolve last, that throw left the pending row PENDING holding an attachment id that is
+ *  ALREADY a company signature asset — and the next answer could file the same id as this expense's
+ *  receipt or substitute evidence, producing an artifact that is both. */
+describe('W1 — a failed delivery can never leave signed-away bytes reusable', () => {
+  const answerEvent = {
+    webhookEventId: 'evt-sig-throw', lineUserId: 'line-user-secret', replyToken: 'reply-sig-throw',
+    messageText: '1', messagingChannelId: 'msg-channel-1',
+  } as any;
+
+  function run(deliver: () => Promise<void>) {
+    const order: string[] = [];
+    const { prisma } = makePrisma();
+    (prisma.client as any).lineIntakePendingMedia = {
+      updateMany: async (args: any) => { order.push(`resolve:${args.data.status}`); return { count: 1 }; },
+    };
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['expense.receipt.upload', 'expense.signature.manage', 'attachment.create'],
+      initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig' }) },
+      createSignatureAsset: { execute: async () => { order.push('link'); return { id: 'sig-7', status: 'ACTIVE' }; } },
+      substituteReceiptContinuation: {
+        loadOpenMediaContext: async () => ({ expenseId: 'exp-1', awaitingScans: [], signatureRequested: true }),
+        hasPendingIssueDecision: async () => false,
+      },
+    });
+    (useCase as any).deliverCompletedReply = async () => { order.push('deliver'); await deliver(); };
+    const chatKeyHash = chatKeyHashOf(answerEvent);
+    const asked = { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: ['SIGNATURE', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'] };
+    const answerCtx = {
+      requestId: 'req-1', authSubject: 'u1', userId: 'u1', companyId: 'company-1', membershipId: 'mem-1',
+      roles: [], permissions: ['expense.receipt.upload', 'expense.signature.manage'], scopes: {}, authProvider: 'line',
+    } as any;
+    const call = (useCase as any).resolveSubstituteMediaAnswer(
+      answerEvent, answerCtx, { membershipId: 'mem-1', roles: ['STAFF'], permissions: [], scopes: {} },
+      { id: 'pending-1', attachmentId: 'att-parked', lineMessageId: 'line-msg-photo', mimeType: 'image/jpeg', askedQuestionJson: asked },
+      '1',
+    );
+    return { call, order };
+  }
+
+  it('consumes the pending row before the attachment becomes a signature asset', async () => {
+    const { call, order } = run(async () => undefined);
+    await call;
+    assert.deepEqual(order, ['resolve:RESOLVED_SIGNATURE', 'link', 'deliver']);
+  });
+
+  it('leaves the row consumed when the LINE delivery throws', async () => {
+    const { call, order } = run(async () => { throw new Error('LINE reply failed'); });
+    await assert.rejects(call, /LINE reply failed/);
+    assert.deepEqual(
+      order.filter((step) => step.startsWith('resolve')), ['resolve:RESOLVED_SIGNATURE'],
+      'the same attachment id can never be answered again as expense evidence',
+    );
   });
 });

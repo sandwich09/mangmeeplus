@@ -1219,6 +1219,47 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(captureLedger.length, 1, 'the current pending question is re-appended after the side answer is delivered');
   });
 
+  // S1: a decline leaves the decision listening, which leaves this chat's clarification open, which
+  // re-enters the continuation on every later message. The question case above was already handed
+  // back; a DECLARATIVE sentence was not, so “ค่าแท็กซี่ 200 บาท” got the substitute re-ask and
+  // returned before the intake router saw it — the sender could not record another expense until
+  // they finished this document. `decisionUnread` is the continuation saying it read nothing here.
+  it('routes a declarative capture the open substitute decision could not read, instead of re-asking over it', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'sub-clarify-1', question: 'ให้ออกเอกสารเลยไหมคะ', text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      captureLedger,
+      substituteResult: {
+        handled: true, status: 'READY_FOR_WEB', workflowId: 'wf-1', expenseId: 'expense-1',
+        replyText: 'ยังไม่แน่ใจว่าจะให้ทำอะไรต่อค่ะ เลือกจาก 3 ข้อนี้ ตอบเลขข้อได้เลย',
+        acceptedFields: [], blockers: [], pendingQuestion: 'ให้ออกเอกสารเลยไหมคะ',
+        decisionUnread: true,
+        resumeCapsule: '↩️ งานใบรับรองแทนใบเสร็จรับเงินของรายการ EXP-001 ยังอยู่\nทำต่อ: ให้ออกเอกสารเลยไหมคะ',
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ค่าแท็กซี่ 200 บาท' });
+
+    assert.equal(h.routeRequests.length, 1, 'the new expense reaches the intake router');
+    assert.equal(h.routeRequests[0].messageText, 'ค่าแท็กซี่ 200 บาท');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/, 'and is actually recorded');
+    assert.equal(
+      h.replies[0]?.includes('เลือกจาก 3 ข้อนี้'),
+      false,
+      'the substitute re-ask does not answer a message that was never about it',
+    );
+    // The substitute clarification is withheld from the router (it is filtered out of
+    // `openClarifications` on this route), so nothing this turn can resolve or consume it: the
+    // decision is still waiting when the sender types “ออกเอกสารเลย”.
+    assert.equal(h.routeRequests[0].openClarifications, undefined);
+  });
+
   it('delivers a forbidden substitute outcome instead of silently dropping it as a side-question interruption', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],
@@ -2565,7 +2606,7 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
   });
 });
 
-describe('spec §12.8/§13 — chat kind and state badge reach the continuation and the card', () => {
+describe('spec §13 — the state badge reaches the delivered card', () => {
   const permissions = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'];
   const issuedResult = {
     handled: true, status: 'READY_FOR_WEB', workflowId: 'wf-1', expenseId: 'expense-note-1',
@@ -2573,34 +2614,12 @@ describe('spec §12.8/§13 — chat kind and state badge reach the continuation 
     replyText: '✅ ออกเอกสารแล้ว — เลขที่ SUB-202608-00007',
   };
 
-  it('tells the continuation this is a 1:1 chat, and hands the badge to the delivered card', async () => {
+  it('hands the continuation badge through to the card the sender sees', async () => {
     const h = makeHarness({ permissions, substituteResult: issuedResult });
 
-    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-badge-dm', messageText: 'ขอลิงก์ใหม่' });
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-badge-dm', messageText: 'ทำใบรับรองต่อ' });
 
-    assert.equal(h.substituteCalls[0].groupChat, false);
+    assert.equal(h.substituteCalls.length, 1, 'the substitute phrase routes to the continuation');
     assert.match(h.replies[0] ?? '', /✅ ออกเอกสารแล้ว/);
-  });
-
-  it('marks a group or room turn so no per-recipient link is ever posted into it', async () => {
-    const h = makeHarness({ permissions, substituteResult: issuedResult });
-
-    await h.useCase.execute({
-      ...TEXT_EVENT, webhookEventId: 'evt-badge-group', messageText: 'ขอลิงก์ใหม่',
-      pushTargetId: 'group-secret-1',
-    });
-
-    assert.equal(h.substituteCalls[0].groupChat, true);
-  });
-
-  it('treats a 1:1 push target that equals the sender as the 1:1 chat it is', async () => {
-    const h = makeHarness({ permissions, substituteResult: issuedResult });
-
-    await h.useCase.execute({
-      ...TEXT_EVENT, webhookEventId: 'evt-badge-self', messageText: 'ขอลิงก์ใหม่',
-      pushTargetId: TEXT_EVENT.lineUserId,
-    });
-
-    assert.equal(h.substituteCalls[0].groupChat, false);
   });
 });

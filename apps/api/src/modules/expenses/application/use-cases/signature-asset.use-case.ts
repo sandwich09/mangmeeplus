@@ -41,46 +41,64 @@ function assertSignatureOwner(ctx: RequestContext): void {
 }
 
 /**
- * A7/A8: a short-lived inline URL for a signature image, so nobody signs with an image they cannot
- * see.
+ * A7/A8: the URL for a signature image, so nobody signs with an image they cannot see.
+ *
+ * Same-origin through our own API on purpose. This used to hand the browser a raw presigned storage
+ * URL, and a cross-origin storage response bound straight into `<img src>` is exactly what Chrome's
+ * ORB refuses — the signer saw a broken-image icon and certified blind, while `fetch()` of the same
+ * URL returned a perfectly good PNG. `/api/v1/*` is the web's rewrite to this API (next.config.ts),
+ * so the browser treats the preview as first-party, sends the session cookie, and no storage-host
+ * CORS or response-header drift can reach it. `GetSignatureImageUseCase` below serves the bytes and
+ * repeats the owner-only authorization; a URL on its own grants nothing.
  *
  * Deliberately not routed through `CreateDownloadUrlUseCase`: that gate refuses any attachment
  * already recorded as a certificate's payer/approver signature, which is precisely the attachment
- * its owner has to look at. The permission decision therefore belongs to each caller and is stated
- * at each call site.
+ * its owner has to look at.
  */
-export async function signatureInlineUrl(
-  storage: AttachmentStoragePort,
+export function signatureInlineUrl(
   audit: AuditService,
   ctx: RequestContext,
-  attachment: { id?: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; originalFileName?: string },
+  attachment: { id: string },
   /** The asset the preview belongs to, so the audit row names the thing, not just the blob. */
   signatureAssetId?: string,
-): Promise<string | null> {
-  try {
-    const signed = await storage.createDownloadUrl({
+): string {
+  void audit.log({
+    companyId: ctx.companyId, actorUserId: ctx.userId,
+    action: 'expense.signature.preview_url.create', targetType: 'company_signature_asset',
+    targetId: signatureAssetId ?? attachment.id,
+    requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+    metadataJson: { signatureAssetId: signatureAssetId ?? null, attachmentId: attachment.id },
+  });
+  return `/api/v1/companies/${ctx.companyId}/expense-signatures/images/${attachment.id}`;
+}
+
+/**
+ * Serves the bytes behind `signatureInlineUrl`, with the same owner-only rule the rest of D14
+ * enforces: `findReusableSignatureAsset` pinned to one attachment answers only when that attachment
+ * belongs to a signature asset THIS caller submitted, and only while it is a live PNG/JPEG — so the
+ * response can always carry a real image content type, which is what makes it safe in `<img src>`.
+ */
+@Injectable()
+export class GetSignatureImageUseCase {
+  constructor(
+    private readonly repo: PrismaExpenseRepository,
+    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+  ) {}
+
+  async execute(ctx: RequestContext, attachmentId: string): Promise<{ bytes: Buffer; mimeType: 'image/png' | 'image/jpeg'; fileName: string }> {
+    assertSignatureOwner(ctx);
+    const attachment = await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId, attachmentId);
+    if (!attachment) throw new NotFoundException('Signature image not found');
+    const object = await this.storage.getObject({
       bucket: attachment.bucket,
       objectKey: attachment.objectKey,
       ...(attachment.objectVersionId ? { objectVersionId: attachment.objectVersionId } : {}),
-      mimeType: attachment.mimeType,
-      // F14: without a name the browser saves the preview as "download".
-      ...(attachment.originalFileName ? { fileName: attachment.originalFileName } : {}),
-      disposition: 'inline',
     });
-    // This path deliberately does not run through CreateDownloadUrlUseCase, so it would otherwise
-    // hand out a readable URL for a signature with no record that anyone asked. Never the URL or
-    // its token — those are the credential.
-    void audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId,
-      action: 'expense.signature.preview_url.create', targetType: 'company_signature_asset',
-      targetId: signatureAssetId ?? attachment.id ?? attachment.objectKey,
-      requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
-      metadataJson: { signatureAssetId: signatureAssetId ?? null, attachmentId: attachment.id ?? null },
-    });
-    return signed.url;
-  } catch {
-    // ponytail: a preview is an aid, never the gate. A storage hiccup must not blank the signature row.
-    return null;
+    return {
+      bytes: object.bytes,
+      mimeType: attachment.mimeType === 'image/jpeg' ? 'image/jpeg' : 'image/png',
+      fileName: attachment.originalFileName,
+    };
   }
 }
 
@@ -93,6 +111,13 @@ export class InitSignatureUploadUseCase {
     assertSignatureOwner(ctx);
     if (cmd.mimeType !== 'image/png' && cmd.mimeType !== 'image/jpeg') {
       throw new BadRequestException('Signature images must be PNG or JPEG');
+    }
+    // The web canvas keeps its own bytes (it posts the background-removed PNG itself), so nothing
+    // downscales this channel the way `deriveUsableImage` downscales LINE. Without this the library
+    // happily stores a 3 MB photo that certification then refuses at the 2 MB cap — a signature that
+    // can never sign, discovered only at the moment of signing.
+    if (cmd.byteSize > SIGNATURE_MAX_BYTES) {
+      throw new BadRequestException(`ไฟล์ลายเซ็นต้องมีขนาดไม่เกิน 2 MB (ไฟล์นี้ ${(cmd.byteSize / 1_000_000).toFixed(1)} MB)`);
     }
     return this.createIntent.execute(ctx, cmd);
   }
@@ -363,6 +388,10 @@ export class FillSignatureUseCase {
 
     const asset = await this.repo.findSignatureAssetById(ctx.companyId, input.signatureAssetId);
     if (!asset) throw new NotFoundException('Signature asset not found');
+    // The ownership binding this module's header claims "every lookup still enforces" — this one did
+    // not, so any `expense.review` holder could apply somebody else's signature to a document, and
+    // with approval removed a signature is fillable the instant it is saved.
+    if (asset.submittedByUserId !== ctx.userId) throw new ForbiddenException('You can only apply your own signature');
     if (asset.status !== 'ACTIVE') throw new BadRequestException('Only ACTIVE signatures can be filled into documents');
 
     if (input.renderedAttachmentId) {
@@ -405,7 +434,6 @@ export type SignatureAssetListItem =
 export class ListSignatureAssetsUseCase {
   constructor(
     private readonly repo: PrismaExpenseRepository,
-    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
   ) {}
 
@@ -443,7 +471,7 @@ export class ListSignatureAssetsUseCase {
     for (const attachmentId of [asset.derivedAttachmentId, asset.originalAttachmentId]) {
       if (!attachmentId) continue;
       const attachment = await this.repo.findActiveAttachmentObject(ctx.companyId, attachmentId);
-      if (attachment) return signatureInlineUrl(this.storage, this.audit, ctx, { id: attachmentId, ...attachment }, asset.id);
+      if (attachment) return signatureInlineUrl(this.audit, ctx, { id: attachmentId }, asset.id);
     }
     return null;
   }
