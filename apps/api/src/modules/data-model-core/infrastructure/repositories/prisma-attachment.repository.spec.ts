@@ -119,6 +119,19 @@ describe('PrismaAttachmentRepository substitute-evidence retention', () => {
 
     assert.equal(await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-unrelated' }), null);
   });
+
+  it('holds a signature image whose asset was retired by a replacement', async () => {
+    // D14 retires the previous signature whenever a new one is saved, so most held signature images
+    // belong to an ARCHIVED asset. The hold is computed from the EVIDENCE that recorded the bytes and
+    // never reads CompanySignatureAsset — the fake client below has no such table, so a lookup that
+    // started consulting the asset's status would fail this test rather than start allowing deletion.
+    const { repo } = makeRepo({ directEvidence: { id: 'evidence-1' } });
+
+    assert.equal(
+      await repo.findSubstituteEvidenceRetentionHold({ companyId: 'co-1', id: 'att-retired-signature' }),
+      'SUBSTITUTE_ARTIFACT',
+    );
+  });
 });
 
 describe('PrismaAttachmentRepository.markDeleted', () => {
