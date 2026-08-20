@@ -111,6 +111,7 @@ function mapExpense(r: any): ExpenseRecord {
     vendorSnapshotJson: r.vendorSnapshotJson ?? null,
     aiVerifiedFieldsJson: r.aiVerifiedFieldsJson ?? null,
     aiVerificationSummaryJson: r.aiVerificationSummaryJson ?? null,
+    vatCaptureSnapshotJson: r.vatCaptureSnapshotJson ?? null,
   };
 }
 
@@ -396,6 +397,7 @@ export class PrismaExpenseRepository {
         taxEvidenceReasonCode: input.taxEvidenceReasonCode,
         sourceChannelMetadataJson: input.sourceChannelMetadataJson as any,
         vendorNameSnapshot: input.vendorNameSnapshot,
+        vatCaptureSnapshotJson: input.vatCaptureSnapshotJson as any,
         subtotalAmount: input.subtotalAmount,
         discountAmount: input.discountAmount,
         taxableAmount: input.taxableAmount,
@@ -756,7 +758,7 @@ export class PrismaExpenseRepository {
       throw new UnprocessableEntityException('Use voidExpenseTrueReversal for voids');
     }
     const data: any = {};
-    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
+    const fields: Array<keyof typeof rest> = ['branchId', 'status', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorEntityKindSnapshot', 'vendorDocumentNumber', 'expenseDate', 'receivedAt', 'dueDate', 'currency', 'vatMode', 'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'duplicateStatus', 'duplicateOfExpenseId', 'duplicateOverrideReason', 'primaryAttachmentId', 'extractionId', 'aiVerificationStatus', 'aiVerifiedFieldsJson', 'aiVerificationSummaryJson', 'vatCaptureSnapshotJson', 'aiVerificationConfidence', 'aiVerifiedAt', 'lineMessageId', 'lineEventId', 'missingReceiptReason', 'postingStatus', 'postingError', 'note', 'internalMemo', 'updatedByUserId', 'updatedAt', 'reviewedByUserId', 'reviewedAt', 'confirmedByUserId', 'confirmedAt', 'rejectedByUserId', 'rejectedAt', 'rejectReason', 'voidedByUserId', 'voidedAt', 'voidReason', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount', 'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount', 'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'expenseNumber', 'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode', 'substituteReceiptGeneratedAt', 'substituteReceiptGeneratedByUserId', 'sourceChannelMetadataJson'];
     for (const f of fields) {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
@@ -772,6 +774,7 @@ export class PrismaExpenseRepository {
         'branchId', 'vendorCounterpartyId', 'vendorSnapshotJson', 'vendorNameSnapshot', 'vendorTaxIdSnapshot',
         'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate', 'currency', 'vatMode',
         'inputVatClaimStatus', 'expenseCategoryId', 'accountHintKey', 'taxCategory', 'primaryAttachmentId',
+        'vatCaptureSnapshotJson',
         'missingReceiptReason', 'note', 'subtotalAmount', 'discountAmount', 'taxableAmount', 'vatAmount',
         'whtAmount', 'grandTotalAmount', 'netPayableAmount', 'paidAmount', 'outstandingAmount',
         'paymentStatus', 'paymentMethod', 'paidAt', 'bankAccountRef', 'sourceDocumentType',

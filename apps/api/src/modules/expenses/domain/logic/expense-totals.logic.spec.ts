@@ -1,6 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { calcLineTotals, calcDocumentTotals, calcPaymentAmounts, derivePaymentStatus } from './expense-totals.logic';
+import { reconcileExpenseVat, validateExpenseVatSourceInput, vatSourceFromSnapshot } from './expense-vat-reconciliation.logic';
+
+const vatSourceLine = (unitPrice: string, vatRate: string | null = null, whtRate: string | null = null) => ({
+  lineNumber: 1,
+  quantity: '1',
+  unitPrice,
+  discountAmount: '0',
+  vatRate,
+  whtRate,
+});
 
 describe('calcLineTotals', () => {
   it('NO_VAT line', () => {
@@ -183,5 +193,210 @@ describe('derivePaymentStatus', () => {
   });
   it('does not collapse a one-satang shortfall at the Decimal(18,4) upper boundary', () => {
     assert.equal(derivePaymentStatus('99999999999999.99', '99999999999999.98'), 'PARTIALLY_PAID');
+  });
+});
+
+describe('reconcileExpenseVat', () => {
+  it('derives an amount-only included rate and preserves printed VAT exactly', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_INCLUDED',
+      lines: [vatSourceLine('414')],
+      source: { inputType: 'AMOUNT', vatAmount: '27.08' },
+      capturedAt: '2026-08-20T00:00:00.000Z',
+    });
+    assert.equal(result.lines[0]?.vatRate, '0.0700');
+    assert.equal(result.totals.taxableAmount, '386.9200');
+    assert.equal(result.totals.vatAmount, '27.0800');
+    assert.equal(result.totals.grandTotalAmount, '414.0000');
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(result.snapshot.source.vatAmount, '27.0800');
+    assert.deepEqual(result.snapshot.calculation.lineResults[0], {
+      lineNumber: 1,
+      vatRatePercent: '7.0000',
+      calculatedTaxableAmount: '386.9200',
+      acceptedTaxableAmount: '386.9200',
+      calculatedVatAmount: '27.0800',
+      acceptedVatAmount: '27.0800',
+      residualAdjustment: '0.0000',
+    });
+  });
+
+  it('keeps an explicit zero rate distinct from an unknown rate', () => {
+    const zero = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [vatSourceLine('100', '0')],
+      source: { inputType: 'RATE', vatRatePercent: '0' },
+    });
+    const unknown = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines: [vatSourceLine('100')] });
+    assert.equal(zero.snapshot.calculation.formula, 'ZERO');
+    assert.equal(zero.snapshot.calculation.vatRatePercent, '0.0000');
+    assert.equal(unknown.snapshot.calculation.formula, 'EXCLUDED');
+    assert.equal(unknown.snapshot.calculation.vatRatePercent, null);
+  });
+
+  it('recomputes the taxable base and WHT when an included residual is accepted', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_INCLUDED',
+      lines: [vatSourceLine('107', '0.0700', '0.0300')],
+      source: { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '6.99' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(result.totals.vatAmount, '6.9900');
+    assert.equal(result.totals.taxableAmount, '100.0100');
+    assert.equal(result.totals.whtAmount, '3.0000');
+    assert.equal(result.totals.netPayableAmount, '104.0000');
+  });
+
+  it('keeps the calculated amount and reports an outside-tolerance mismatch', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [vatSourceLine('100', '0.0700')],
+      source: { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '8.00' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MISMATCH');
+    assert.equal(result.snapshot.reconciliation.acceptedSource, 'CALCULATED');
+    assert.equal(result.totals.vatAmount, '7.0000');
+  });
+
+  it('uses an inclusive five-satang tolerance boundary in both directions', () => {
+    for (const [vatAmount, status] of [
+      ['7.05', 'MATCHED'],
+      ['6.95', 'MATCHED'],
+      ['7.06', 'MISMATCH'],
+      ['6.94', 'MISMATCH'],
+    ] as const) {
+      const result = reconcileExpenseVat({
+        vatMode: 'VAT_EXCLUDED',
+        lines: [vatSourceLine('100', '0.0700')],
+        source: { inputType: 'AMOUNT', vatAmount },
+      });
+      assert.equal(result.snapshot.reconciliation.status, status, vatAmount);
+    }
+  });
+
+  it('allocates a residual to the largest taxable line with a stable line-number tie-break', () => {
+    const largest = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('200', '0.0700'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '21.01' },
+    });
+    assert.deepEqual(largest.snapshot.calculation.lineResults.map((line) => line.residualAdjustment), ['0.0000', '0.0100']);
+
+    const tied = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('100', '0.0700'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '14.01' },
+    });
+    assert.deepEqual(tied.snapshot.calculation.lineResults.map((line) => line.residualAdjustment), ['0.0100', '0.0000']);
+  });
+
+  it('blocks a printed rate that contradicts an otherwise matching amount', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [vatSourceLine('100', '0.0680')],
+      source: { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '6.80' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MISMATCH');
+    assert.equal(result.totals.grandTotalAmount, '106.8000');
+  });
+
+  it('accepts an exact mixed-document VAT total without inventing an allocation', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('50', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '7.00' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.ok(result.snapshot.calculation.lineResults.every((lineResult) => lineResult.residualAdjustment === '0.0000'));
+  });
+
+  it('requires review when a mixed-document residual has no line evidence', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('50', '0.0000'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '7.01' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'NEEDS_REVIEW');
+  });
+
+  it('compares line source differences only within the sourced line group', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100', '0.0700'),
+        { ...vatSourceLine('50', '0.0700'), lineNumber: 2 },
+      ],
+      source: {
+        inputType: 'NONE',
+        lines: [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '7.00' }],
+      },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MATCHED');
+    assert.equal(result.snapshot.reconciliation.differenceAmount, '0.0000');
+    assert.equal(result.totals.vatAmount, '10.5000');
+    assert.equal(result.snapshot.source.vatAmount, null);
+    const restored = vatSourceFromSnapshot(result.snapshot)!;
+    assert.equal(validateExpenseVatSourceInput(restored, 'VAT_EXCLUDED', [1, 2]), null);
+    assert.deepEqual(restored.lines, [{ lineNumber: 1, inputType: 'AMOUNT', vatAmount: '7.00' }]);
+  });
+
+  it('preserves explicit line treatments when an amount-only document needs allocation', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [
+        vatSourceLine('100'),
+        { ...vatSourceLine('50', '0'), lineNumber: 2 },
+      ],
+      source: { inputType: 'AMOUNT', vatAmount: '7.00' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'NEEDS_REVIEW');
+    assert.equal(result.lines[0]?.vatRate, null);
+    assert.equal(result.lines[1]?.vatRate, '0');
+  });
+
+  it('does not accept positive source VAT against an explicit zero rate', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [vatSourceLine('100', '0')],
+      source: { inputType: 'AMOUNT', vatAmount: '0.01' },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'MISMATCH');
+    assert.equal(result.totals.vatAmount, '0.0000');
+  });
+
+  it('keeps stale line evidence for review without partially applying it', () => {
+    const result = reconcileExpenseVat({
+      vatMode: 'VAT_EXCLUDED',
+      lines: [vatSourceLine('100', '0.0700')],
+      source: {
+        inputType: 'NONE',
+        lines: [
+          { lineNumber: 1, inputType: 'AMOUNT', vatAmount: '7.01' },
+          { lineNumber: 2, inputType: 'AMOUNT', vatAmount: '3.50' },
+        ],
+      },
+    });
+    assert.equal(result.snapshot.reconciliation.status, 'NEEDS_REVIEW');
+    assert.equal(result.snapshot.reconciliation.acceptedSource, 'CALCULATED');
+    assert.equal(result.totals.vatAmount, '7.0000');
+  });
+
+  it('rejects derived source fields and unit/type mismatches at runtime', () => {
+    assert.match(validateExpenseVatSourceInput({ inputType: 'AMOUNT', vatAmount: '27.08', calculation: {} }, 'VAT_INCLUDED', [1]) ?? '', /server-owned/);
+    assert.match(validateExpenseVatSourceInput({ inputType: 'RATE', vatRatePercent: '0.00001' }, 'VAT_INCLUDED', [1]) ?? '', /matching/);
+    assert.equal(validateExpenseVatSourceInput({ inputType: 'RATE', vatRatePercent: '7' }, 'VAT_INCLUDED', [1]), null);
+    assert.match(validateExpenseVatSourceInput({ inputType: 'RATE', vatRatePercent: '7' }, 'NO_VAT', [1]) ?? '', /cannot contain/);
   });
 });

@@ -1590,6 +1590,17 @@ to the same day, while `23/08/26` remains ambiguous. `21.79 VAT TTL`, `VAT AMT 2
 `VAT 7.00%` alone yields no amount; two distinct labeled tax amounts yield no automatic
 recovery. Existing numeric, full-year, Thai-digit, and tax-block behavior remains green.
 
+### 19l. VAT source amount, rate, and reconciliation follow-up
+
+The durable design for receipts that print a VAT rate, VAT amount, both, or only a
+VAT-inclusive total is defined in
+[[specs/expense-vat-source-reconciliation-spec|Expense VAT Source Capture and Reconciliation]].
+It supersedes only the earlier assumption that percent/baht are temporary input affordances:
+source VAT is persisted separately from versioned system calculation and the single
+accepted accounting amount. Existing ExpenseRecord and ExpenseLine totals remain authoritative
+for tax, ledger, and reporting integrations. It also defines the narrow conditional
+document-arithmetic exception to SIMPLE capture; Tax Code and claimability remain hidden.
+
 ## 20. Backlog After MVP
 
 - Typhoon OCR provider implementation for receipt/tax-invoice AI capture. See [[specs/typhoon-receipt-ocr-spec|Typhoon Receipt OCR Spec]].

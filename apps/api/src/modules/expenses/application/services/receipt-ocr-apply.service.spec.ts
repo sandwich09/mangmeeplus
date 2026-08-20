@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService, verifyDiscountAmount } from './receipt-ocr-apply.service';
+import { completeVatFields, isStaleOcrApply, ocrLineVatRateUnknown, ocrVatSource, ReceiptOcrApplyService, verifyDiscountAmount } from './receipt-ocr-apply.service';
 import { calcLineTotals } from '../../domain/logic/expense-totals.logic';
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
@@ -189,12 +189,26 @@ describe('verifyDiscountAmount (spec §19i decision 2)', () => {
   });
 });
 
-async function applyFields(fields: any) {
+describe('ocrVatSource', () => {
+  it('keeps rate and amount independent and does not turn missing text into zero', () => {
+    assert.deepEqual(ocrVatSource({}), { inputType: 'NONE' });
+    assert.deepEqual(ocrVatSource({ vatAmount: '27.08' }), { inputType: 'AMOUNT', vatAmount: '27.08' });
+    assert.deepEqual(ocrVatSource({ vatRate: '0.07' }), { inputType: 'RATE', vatRatePercent: '7.0000' });
+    assert.deepEqual(ocrVatSource({ vatRate: '0.07', vatAmount: '27.08' }), {
+      inputType: 'BOTH', vatRatePercent: '7.0000', vatAmount: '27.08',
+    });
+    assert.deepEqual(ocrVatSource({ vatRate: '0', vatAmount: '0' }), {
+      inputType: 'BOTH', vatRatePercent: '0.0000', vatAmount: '0.00',
+    });
+  });
+});
+
+async function applyFields(fields: any, vatCaptureSnapshotJson: any = null) {
   const updates: any[] = [];
   const lines: any[] = [];
   const tx = {
     expenseRecord: {
-      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
+      findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null, vatCaptureSnapshotJson }),
       update: async (args: any) => { updates.push(args); },
     },
     expenseCategory: { findFirst: async () => null },
@@ -253,6 +267,42 @@ describe('ReceiptOcrApplyService.apply staleness guard', () => {
 });
 
 describe('ReceiptOcrApplyService.apply', () => {
+  it('does not overwrite reviewer VAT source when re-extracted arithmetic disagrees', async () => {
+    const prior = {
+      version: 1,
+      source: {
+        inputType: 'AMOUNT', origin: 'REVIEWER', vatRatePercent: null, vatAmount: '27.0800',
+        taxableAmount: null, grossAmount: '414.00', capturedAt: '2026-08-20T00:00:00.000Z',
+      },
+      calculation: {},
+      reconciliation: {},
+    };
+    const { record } = await applyFields({ vatMode: 'VAT_INCLUDED', vatAmount: '20.00', grandTotalAmount: '414.00' }, prior);
+    assert.equal(record.vatCaptureSnapshotJson.source.origin, 'REVIEWER');
+    assert.equal(record.vatCaptureSnapshotJson.source.vatAmount, '27.0800');
+    assert.equal(record.vatCaptureSnapshotJson.reconciliation.status, 'MISMATCH');
+    assert.equal(record.vatCaptureSnapshotJson.reconciliation.acceptedSource, 'CALCULATED');
+    assert.equal(record.vatAmount, record.vatCaptureSnapshotJson.calculation.vatAmount);
+  });
+
+  it('keeps reviewer line evidence reviewable when re-extraction changes the line layout', async () => {
+    const prior = {
+      version: 1,
+      source: {
+        inputType: 'NONE', origin: 'REVIEWER', vatRatePercent: null, vatAmount: null,
+        taxableAmount: null, grossAmount: '107.00', capturedAt: '2026-08-20T00:00:00.000Z',
+        lineSources: [{ lineNumber: 2, inputType: 'AMOUNT', vatAmount: '3.5000', origin: 'REVIEWER' }],
+      },
+      calculation: {},
+      reconciliation: {},
+    };
+    const { record } = await applyFields({ vatMode: 'VAT_INCLUDED', vatRate: '0.07', grandTotalAmount: '107.00' }, prior);
+    assert.equal(record.vatCaptureSnapshotJson.reconciliation.status, 'NEEDS_REVIEW');
+    assert.equal(record.vatCaptureSnapshotJson.reconciliation.acceptedSource, 'CALCULATED');
+    assert.equal(record.vatCaptureSnapshotJson.source.lineSources[0].lineNumber, 2);
+    assert.equal(record.vatAmount, '7.0000');
+  });
+
   it('writes the paid total, the derived line rate, and keeps the raw AI fields for provenance', async () => {
     const updates: any[] = [];
     const lines: any[] = [];
