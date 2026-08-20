@@ -182,6 +182,76 @@ describe('ListRolesUseCase', () => {
   });
 });
 
+describe('ListRolesUseCase assignableByCurrentUser', () => {
+  // MANAGER carries access.role.manage, so the subset rule alone keeps it away from an admin
+  // without that key; ADMIN needs ledger.account.manage; FINANCE is owner-gated by role key.
+  const GRANT_FIXTURE_ROLES = [
+    { key: 'OWNER', permissionKeys: [] },
+    { key: 'SYSTEM_ADMIN', permissionKeys: [] },
+    { key: 'ADMIN', permissionKeys: ['crm.customer.read', 'ledger.account.manage'] },
+    { key: 'MANAGER', permissionKeys: ['crm.customer.read', 'access.role.manage'] },
+    { key: 'FINANCE', permissionKeys: ['crm.customer.read'] },
+    { key: 'SALES', permissionKeys: ['crm.customer.read'] },
+    { key: 'ARCHIVED', permissionKeys: [], status: 'DISABLED' },
+  ];
+
+  function grantFixturePrisma() {
+    return {
+      client: {
+        role: {
+          findMany: async () => GRANT_FIXTURE_ROLES.map((role, index) => ({
+            id: `role-${index}`,
+            scopeKey: 'system',
+            name: role.key,
+            description: null,
+            isSystem: true,
+            status: role.status ?? 'ACTIVE',
+            ...role,
+            permissions: role.permissionKeys.map((key) => ({ permission: { key } })),
+          })),
+        },
+        companyFeatureEntitlement: { findMany: async () => [] },
+      },
+    } as any;
+  }
+
+  async function flagsFor(requester?: { permissions: string[]; isOwner: boolean }) {
+    const result = await new ListRolesUseCase(grantFixturePrisma()).execute(COMPANY_ID, requester);
+    return Object.fromEntries(result.map((role) => [role.key, role.assignableByCurrentUser]));
+  }
+
+  it('offers the owner every assignable role except OWNER/SYSTEM_ADMIN and disabled ones', async () => {
+    assert.deepEqual(await flagsFor({ permissions: [], isOwner: true }), {
+      OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: true, FINANCE: true, SALES: true, ARCHIVED: false,
+    });
+  });
+
+  it('hides financial and people-manager roles from a default admin', async () => {
+    assert.deepEqual(
+      await flagsFor({ permissions: ['crm.customer.read', 'ledger.account.manage', 'access.employee.update'], isOwner: false }),
+      { OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false },
+    );
+  });
+
+  it('adds people-manager roles once the admin holds access.role.manage, financial still owner-gated', async () => {
+    assert.deepEqual(
+      await flagsFor({ permissions: ['crm.customer.read', 'ledger.account.manage', 'access.role.manage'], isOwner: false }),
+      { OWNER: false, SYSTEM_ADMIN: false, ADMIN: true, MANAGER: true, FINANCE: false, SALES: true, ARCHIVED: false },
+    );
+  });
+
+  it('drops roles whose permissions exceed a manager’s own', async () => {
+    assert.deepEqual(await flagsFor({ permissions: ['crm.customer.read'], isOwner: false }), {
+      OWNER: false, SYSTEM_ADMIN: false, ADMIN: false, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false,
+    });
+  });
+
+  it('omits the flag entirely without requester context (access matrix read)', async () => {
+    const result = await new ListRolesUseCase(grantFixturePrisma()).execute(COMPANY_ID);
+    assert.ok(result.every((role) => !('assignableByCurrentUser' in role)));
+  });
+});
+
 describe('CreateRoleUseCase', () => {
   it('creates a company-scoped custom role with valid permission keys', async () => {
     const { prisma, state } = makePrisma();

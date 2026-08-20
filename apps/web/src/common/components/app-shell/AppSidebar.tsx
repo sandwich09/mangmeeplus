@@ -30,8 +30,8 @@ type Props = {
   activeKey?: string;
   locale: SupportedLocale;
   userName?: string;
-  /** primary role key from the session (e.g. OWNER) — shown in the sidebar footer per the มั่งมี design */
-  userRole?: string;
+  /** every role key the session holds (e.g. OWNER) — all of them show in the sidebar footer per the มั่งมี design */
+  userRoles?: string[];
   showAccountSecurity?: boolean;
 };
 
@@ -88,7 +88,7 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
 
-const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRole, showAccountSecurity }) => {
+const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, showAccountSecurity }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
     useSidebar();
   const pathname = usePathname();
@@ -121,10 +121,17 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   const navScrollRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const initializedSubmenuRef = useRef(false);
+  const manuallyToggledSubmenuRef = useRef(false);
+  const manuallyOpenedSubmenuRef = useRef<string | null>(null);
   /** Last pathname the route-sync effect acted on, so it runs once per navigation. */
   const syncedPathRef = useRef<string | null>(null);
   const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const roleLabel = userRole ? t(roleLabelKey[userRole] ?? 'shell.user_menu', locale) : null;
+  // A member holding several roles sees all of them, so the shell answers "ฉันเป็นตำแหน่งอะไร" (spec R9).
+  // Deduped after translation: two custom role keys both fall back to the same generic label, and
+  // "เมนูผู้ใช้ · เมนูผู้ใช้" reads as a bug. First appearance keeps its position.
+  const roleLabel = userRoles?.length
+    ? [...new Set(userRoles.map((role) => t(roleLabelKey[role] ?? 'shell.user_menu', locale)))].join(' · ')
+    : null;
   const displayUserName = userName === 'นภา' ? 'คุณนภา วงศ์ทอง' : userName;
   const footerLabel = displayUserName ?? roleLabel;
   const footerInitials = userName === 'นภา' ? 'นภ' : getInitials(footerLabel);
@@ -207,6 +214,10 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
   }, [openSubmenu]);
 
   useEffect(() => {
+    if (manuallyToggledSubmenuRef.current) {
+      manuallyToggledSubmenuRef.current = false;
+      return undefined;
+    }
     const activeItem = activeItemRef.current;
     const scrollRoot = navScrollRef.current;
     if (!activeItem || !scrollRoot || !sidebarVisible) return undefined;
@@ -226,7 +237,30 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
       window.cancelAnimationFrame(secondFrame);
       window.clearTimeout(delayedScroll);
     };
-  }, [activeKey, openSubmenu, pathname, sidebarVisible, subMenuHeight]);
+  }, [activeKey, openSubmenu, pathname, sidebarVisible]);
+
+  useEffect(() => {
+    const submenuKey = manuallyOpenedSubmenuRef.current;
+    if (!submenuKey || submenuKey !== openSubmenu || !sidebarVisible) return undefined;
+    const revealSubmenu = () => {
+      const scrollRoot = navScrollRef.current;
+      const submenu = subMenuRefs.current[submenuKey];
+      const trigger = submenu?.previousElementSibling;
+      if (!scrollRoot || !submenu || !(trigger instanceof HTMLElement)) return;
+      const rootBox = scrollRoot.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      const overflow = submenu.getBoundingClientRect().bottom - rootBox.bottom;
+      if (overflow > 0) {
+        scrollRoot.scrollBy({
+          top: Math.min(overflow, Math.max(0, triggerBox.top - rootBox.top)),
+          behavior: 'smooth',
+        });
+      }
+      manuallyOpenedSubmenuRef.current = null;
+    };
+    const delayedScroll = window.setTimeout(revealSubmenu, 360);
+    return () => window.clearTimeout(delayedScroll);
+  }, [openSubmenu, sidebarVisible, subMenuHeight]);
 
   return (
     <aside
@@ -299,7 +333,11 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                             // Parents with children only expand/collapse. Navigating here too would
                             // yank the user off their current page on every collapse, and would bounce
                             // anyone whose permissions cover a child but not the parent's own href.
-                            onClick={() => toggleSubmenu(nav.key)}
+                            onClick={() => {
+                              manuallyToggledSubmenuRef.current = true;
+                              manuallyOpenedSubmenuRef.current = openSubmenu === nav.key ? null : nav.key;
+                              toggleSubmenu(nav.key);
+                            }}
                             ref={highlighted ? setActiveButtonRef : undefined}
                             disabled={nav.disabled}
                             aria-expanded={openSubmenu === nav.key}

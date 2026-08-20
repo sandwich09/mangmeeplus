@@ -32,6 +32,20 @@ describe('expenseTaxSourceChecksum', () => {
       }),
     );
   });
+
+  it('changes when VAT source reconciliation changes', () => {
+    const expense = {
+      id: 'expense-1', companyId: 'co-1', branchId: null, status: 'READY_FOR_CONFIRMATION', duplicateStatus: 'NO_MATCH',
+      expenseDate: new Date('2026-07-18T00:00:00.000Z'), currency: 'THB', sourceDocumentType: 'RECEIPT',
+      taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', primaryAttachmentId: null,
+      missingReceiptReason: 'cash bill', vendorTaxIdSnapshot: null, vendorDocumentNumber: null, lines: [],
+      attachments: [], substituteReceiptEvidence: null, vatCaptureSnapshotJson: null,
+    } as any;
+    assert.notEqual(
+      expenseTaxSourceChecksum(expense),
+      expenseTaxSourceChecksum({ ...expense, vatCaptureSnapshotJson: { version: 1, reconciliation: { status: 'MATCHED' } } }),
+    );
+  });
 });
 
 describe('validateDomesticInputVatEvidence', () => {

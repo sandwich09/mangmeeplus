@@ -5,11 +5,11 @@ import type { ReactNode } from 'react';
 import { cx } from '@/common/components/mangmee';
 
 // Themed horizontal step indicator — one design for every wizard in the app.
-// Node language: done = brand square with a check, current = brand square with an
-// inner white square + halo ring, upcoming = outlined square with a gray square,
-// attention = warning outline (a step that needs the user to come back).
-// The connector into a node is brand once the previous step is done; the connector
-// out of the current step fades brand→gray to read as "in progress".
+// สรรพากร-style numbered circles that track position, not completion memory:
+// every step at or before the current one is brand green with its number, every
+// step after it is gray — stepping back grays the steps ahead again. The current
+// node carries a halo ring + aria-current; attention = warning outline (a step
+// that needs the user to come back). Connectors are brand only behind a passed step.
 
 export type ThemedStepState = 'done' | 'current' | 'upcoming' | 'attention';
 
@@ -25,33 +25,27 @@ export type ThemedStep = {
   disabled?: boolean;
 };
 
-function StepNode({ state }: { state: ThemedStepState }) {
+function StepNode({ state, number }: { state: ThemedStepState; number: number }) {
   if (state === 'attention') {
     return (
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[1.5px] border-warning-500 bg-warning-50 text-base text-warning-700">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-[1.5px] border-warning-500 bg-warning-50 text-base text-warning-700">
         ⚠
       </span>
     );
   }
   if (state === 'upcoming') {
     return (
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border-[1.5px] border-gray-200 bg-white">
-        <span className="h-3 w-3 rounded-[4px] bg-gray-300" />
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-[1.5px] border-gray-200 bg-white text-base font-bold text-gray-400">
+        {number}
       </span>
     );
   }
   return (
     <span className={cx(
-      'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-500 text-white',
+      'flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500 text-base font-bold text-white',
       state === 'current' && 'ring-4 ring-brand-100',
     )}>
-      {state === 'done' ? (
-        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-5 w-5">
-          <path d="m5 10.5 3.5 3.5L15 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ) : (
-        <span className="h-3 w-3 rounded-[4px] bg-white" />
-      )}
+      {number}
     </span>
   );
 }
@@ -63,12 +57,9 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
 }) {
   // Connector halves live per column so labels stay centered under their node; the
   // half AFTER a node keys off that node's state, the half BEFORE keys off the
-  // previous node — together they draw one continuous segment.
-  const lineAfter = (state: ThemedStepState) =>
-    state === 'done' ? 'bg-brand-500'
-      : state === 'current' ? 'bg-linear-to-r from-brand-500 to-gray-200'
-        : 'bg-gray-200';
-  const lineBefore = (state: ThemedStepState) => (state === 'done' ? 'bg-brand-500' : 'bg-gray-200');
+  // previous node — together they draw one continuous segment, brand only when the
+  // node behind it is passed (the current node's outbound segment stays gray).
+  const segment = (state: ThemedStepState) => (state === 'done' ? 'bg-brand-500' : 'bg-gray-200');
 
   return (
     <nav aria-label={ariaLabel} className={cx('w-full', className)}>
@@ -76,7 +67,7 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
         {steps.map((step, index) => {
           const body = (
             <>
-              <StepNode state={step.state} />
+              <StepNode state={step.state} number={index + 1} />
               <span className="flex flex-col items-center gap-0.5 px-1 text-center">
                 <span className={cx(
                   'text-[11px] font-bold leading-tight sm:text-xs',
@@ -95,10 +86,10 @@ export function ThemedSteps({ steps, className, 'aria-label': ariaLabel }: {
           return (
             <li key={step.key} className="relative flex min-w-0 flex-1 flex-col items-center">
               {index > 0 && (
-                <span aria-hidden="true" className={cx('absolute left-0 top-5 h-0.5 w-[calc(50%-1.625rem)] -translate-y-1/2 rounded-full', lineBefore(steps[index - 1]!.state))} />
+                <span aria-hidden="true" className={cx('absolute left-0 top-5 h-0.5 w-[calc(50%-1.625rem)] -translate-y-1/2 rounded-full', segment(steps[index - 1]!.state))} />
               )}
               {index < steps.length - 1 && (
-                <span aria-hidden="true" className={cx('absolute right-0 top-5 h-0.5 w-[calc(50%-1.625rem)] -translate-y-1/2 rounded-full', lineAfter(step.state))} />
+                <span aria-hidden="true" className={cx('absolute right-0 top-5 h-0.5 w-[calc(50%-1.625rem)] -translate-y-1/2 rounded-full', segment(step.state))} />
               )}
               {step.href ? (
                 <Link href={step.href} aria-current={ariaCurrent} className={interactiveClass}>{body}</Link>

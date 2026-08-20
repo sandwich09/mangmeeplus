@@ -1,11 +1,15 @@
 import { test, expect } from './harness/fixtures';
 import { gotoCompany, json, unique } from './harness/e2e-utils';
 
-type Role = { id: string; key: string; status: string; isSystem?: boolean };
+type Role = { id: string; key: string; name: string; status: string; isSystem?: boolean };
 type Employee = { id: string; displayName: string; roles?: Role[] };
 type CreateEmployeeResult = { employeeId: string; username: string };
 type Branch = { id: string; code: string; name: string };
 type BranchPage = { items: Branch[] };
+type AccessMatrix = {
+  menus: Array<{ id: string }>;
+  rows: Array<{ roleId: string; menus: Record<string, { view?: boolean }> }>;
+};
 
 test.describe('SET — settings', () => {
   test('SET-01 @smoke settings hub renders sections', async ({ authedPage, companyId }) => {
@@ -123,6 +127,105 @@ test.describe('SET — settings', () => {
     await expect(authedPage.getByRole('heading', { name: /สิทธิ์รายบุคคล|Individual/i })).toBeVisible();
     await expect(authedPage.getByText(/มายด์|ไนซ์|แพรว|เตย/).first()).toBeVisible();
     await expect(authedPage.getByText(/เมนูที่|สาขาที่เข้าถึงได้|สิทธิ์เฉพาะบุคคล/i).first()).toBeVisible();
+
+    const summary = authedPage.getByTestId('access-permission-summary');
+    const rows = summary.getByTestId('access-permission-row');
+    await expect(rows.first()).toBeVisible();
+    await expect(summary.getByText('ไม่เห็นเมนูนี้')).toHaveCount(0);
+
+    const countText = await summary.getByText(/^ใช้งานได้ \d+ เมนู$/).innerText();
+    expect(Number.parseInt(countText.replace(/\D/g, ''), 10)).toBe(await rows.count());
+
+    const actions = summary.getByTestId('access-permission-actions');
+    await expect(actions.first()).toBeVisible();
+    await expect(actions.locator('button, a, [role="button"], [tabindex]')).toHaveCount(0);
+
+    const clippedLabels = await summary.getByTestId('access-permission-menu-label').evaluateAll((labels) => labels.flatMap((label) => {
+      const style = window.getComputedStyle(label);
+      return style.whiteSpace === 'nowrap' || style.textOverflow === 'ellipsis' ? [label.textContent] : [];
+    }));
+    expect(clippedLabels, 'permission menu labels must wrap instead of ellipsizing').toEqual([]);
+
+    const dashboardActions = summary.locator('[data-menu-id="dashboard"]').getByTestId('access-permission-actions');
+    await expect(dashboardActions.locator(':scope > span')).toHaveCount(1);
+    await expect(dashboardActions).toHaveText('ดู');
+
+    await authedPage.getByRole('button', { name: /^OW OWNER/ }).click();
+    const ownerExpenseActions = summary.locator('[data-menu-id="expenses"]').getByTestId('access-permission-actions');
+    await expect(ownerExpenseActions.locator(':scope > span')).toHaveText(['ดู', 'เพิ่ม', 'แก้ไข', 'ลบ', 'อนุมัติ']);
+  });
+
+  test('SET-08A @p1 matrix failure is explicit and never looks like zero access', async ({ authedPage, companyId }) => {
+    await authedPage.route(`**/api/v1/companies/${companyId}/settings/access/matrix`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Temporary matrix outage' }),
+      });
+    });
+
+    await gotoCompany(authedPage, companyId, '/settings/access-overview');
+    const summary = authedPage.getByTestId('access-permission-summary');
+    await expect(summary.getByTestId('access-permission-error')).toContainText('โหลดข้อมูลสิทธิ์ไม่สำเร็จ');
+    await expect(summary.getByRole('button', { name: 'ลองโหลดใหม่' })).toBeVisible();
+    await expect(summary.getByText(/ใช้งานได้ \d+ เมนู/)).toHaveCount(0);
+    await expect(summary.getByTestId('access-permission-row')).toHaveCount(0);
+  });
+
+  test('SET-08B @p1 multi-role summary unions every assigned role without mutating seed data', async ({ authedPage, api, companyId }) => {
+    const [roles, employees, matrix] = await Promise.all([
+      json<Role[]>(await api.get(`companies/${companyId}/settings/roles`)),
+      json<Employee[]>(await api.get(`companies/${companyId}/settings/employees`)),
+      json<AccessMatrix>(await api.get(`companies/${companyId}/settings/access/matrix`)),
+    ]);
+    const assignedRoles = ['SALES', 'ACCOUNTANT'].map((key) => roles.find((role) => role.key === key)!);
+    expect(assignedRoles.every(Boolean), 'seed must include SALES and ACCOUNTANT roles').toBe(true);
+    const assignedRows = assignedRoles.map((role) => matrix.rows.find((row) => row.roleId === role.id)!);
+    expect(assignedRows.every(Boolean), 'matrix must include both assigned role rows').toBe(true);
+
+    const supportedMenuIds = new Set(['dashboard', 'inbox', 'customers', 'booking', 'crmreport', 'expenses', 'salesdoc']);
+    const expectedMenuIds = matrix.menus
+      .filter((menu) => supportedMenuIds.has(menu.id) && assignedRows.some((row) => row.menus[menu.id]?.view === true))
+      .map((menu) => menu.id);
+    const complementaryMenuId = expectedMenuIds.find((menuId) =>
+      assignedRows.some((row) => row.menus[menuId]?.view === true)
+      && assignedRows.some((row) => row.menus[menuId]?.view !== true));
+    expect(complementaryMenuId, 'fixture must prove a grant that comes from only one assigned role').toBeTruthy();
+
+    const target = employees[0]!;
+    await authedPage.route(`**/api/v1/companies/${companyId}/settings/employees`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { ...target, roles: assignedRoles.map(({ id, key, name }) => ({ id, key, name })) },
+          ...employees.slice(1),
+        ]),
+      });
+    });
+
+    await gotoCompany(authedPage, companyId, '/settings/access-overview');
+    const summary = authedPage.getByTestId('access-permission-summary');
+    await expect(summary).toContainText(`สิทธิ์มาจากตำแหน่ง ${assignedRoles.map((role) => role.name).join(', ')}`);
+    await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกตำแหน่ง');
+    await expect(summary.getByText(`ใช้งานได้ ${expectedMenuIds.length} เมนู`)).toBeVisible();
+    await expect(summary.locator(`[data-menu-id="${complementaryMenuId}"]`)).toBeVisible();
+  });
+
+  test('SET-08C @p1 branch failure stays scoped and does not hide a valid permission summary', async ({ authedPage, companyId }) => {
+    await authedPage.route(`**/api/v1/companies/${companyId}/branches?pageSize=100`, async (route) => {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ message: 'Temporary branch outage' }),
+      });
+    });
+
+    await gotoCompany(authedPage, companyId, '/settings/access-overview');
+    const summary = authedPage.getByTestId('access-permission-summary');
+    await expect(summary.getByTestId('access-permission-row').first()).toBeVisible();
+    await expect(summary.getByTestId('access-permission-error')).toHaveCount(0);
+    await expect(authedPage.getByTestId('branch-access-error')).toContainText('โหลดข้อมูลสาขาไม่สำเร็จ');
   });
 
   // Regression guard for BUG-2: the roles screen never received the viewer's permissions and

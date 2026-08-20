@@ -10,7 +10,7 @@ import type { WebSession } from '../models/web-session.model';
 export type ServerSessionResult =
   | { status: 'signed_in'; session: WebSession }
   | { status: 'signed_out' }
-  | { status: 'forbidden' }
+  | { status: 'forbidden'; companyName?: string }
   | { status: 'platform_closed' }
   | { status: 'unavailable' };
 
@@ -33,11 +33,15 @@ export async function fetchServerSessionResult(companyId?: string): Promise<Serv
     return { status: 'unavailable' };
   }
 
-  const errorCode = res.status === 503
-    ? ((await res.json().catch(() => ({}))) as { code?: unknown }).code
-    : undefined;
-  const outcome = mapAuthMeStatus(res.status, typeof errorCode === 'string' ? errorCode : undefined);
-  if (outcome !== 'signed_in') return { status: outcome };
+  const errorBody = res.status === 403 || res.status === 503
+    ? (await res.json().catch(() => ({}))) as { code?: unknown; companyName?: unknown }
+    : {};
+  const outcome = mapAuthMeStatus(res.status, typeof errorBody.code === 'string' ? errorBody.code : undefined);
+  if (outcome !== 'signed_in') {
+    return outcome === 'forbidden' && typeof errorBody.companyName === 'string'
+      ? { status: outcome, companyName: errorBody.companyName }
+      : { status: outcome };
+  }
 
   try {
     return { status: 'signed_in', session: (await res.json()) as WebSession };

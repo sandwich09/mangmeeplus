@@ -99,3 +99,23 @@ export function authErrorMessage(error: unknown, fallback: string): string {
 export function signInAgainPath(pathname: string, search = ''): string {
   return `/login?next=${encodeURIComponent(`${pathname}${search}`)}`;
 }
+
+export function companyAccessDescription(
+  locale: 'th' | 'en',
+  displayName?: string | null,
+  companyName?: string | null,
+): string {
+  if (!displayName) {
+    return locale === 'th'
+      ? 'บริษัทอาจถูกปิดใช้งาน หรือสิทธิ์ของคุณถูกยกเลิก กรุณาติดต่อผู้ดูแลบริษัท หากต้องการเปลี่ยนบัญชีให้ออกจากระบบแล้วเข้าสู่ระบบใหม่'
+      : 'The company may be inactive or your access may have been removed. Contact your company administrator, or sign out to use another account.';
+  }
+
+  const name = companyName?.trim();
+  if (locale === 'th') {
+    const company = name ? (name.startsWith('บริษัท') ? name : `บริษัท ${name}`) : 'บริษัทนี้';
+    return `คุณกำลังเข้าสู่ระบบเป็น "${displayName}" ซึ่งไม่มีสิทธิ์ใน${company} หากลิงก์นี้มาจากอีกบัญชีหนึ่ง ให้ออกจากระบบแล้วเข้าสู่ระบบใหม่ด้วยบัญชีนั้น หรือติดต่อผู้ดูแลบริษัท`;
+  }
+
+  return `You are signed in as "${displayName}", which has no access to ${name ? `"${name}"` : 'this company'}. If this link belongs to another account, sign out and sign in with that account, or contact your company administrator.`;
+}

@@ -1,0 +1,407 @@
+import Decimal from 'decimal.js';
+import {
+  EXPENSE_VAT_SOURCE_INPUT_TYPES,
+  type ExpenseVatCaptureSnapshotV1,
+  type ExpenseVatMode,
+  type ExpenseVatSourceInput,
+  type ExpenseVatSourceOrigin,
+} from '@watchdog-bms/contracts';
+import { calcDocumentTotals, calcLineTotals, type LineTotalsResult } from './expense-totals.logic';
+
+const TOLERANCE = new Decimal('0.05');
+const MONEY = /^(?:0|[1-9]\d{0,15})(?:\.\d{1,2})?$/;
+const PERCENT = /^(?:0|[1-9]\d?)(?:\.\d{1,4})?$/;
+
+export type ExpenseVatReconciliationLineInput = {
+  lineNumber: number;
+  quantity: string;
+  unitPrice: string;
+  discountAmount?: string;
+  vatRate?: string | null;
+  whtRate?: string | null;
+};
+
+export type ExpenseVatReconciliationResult = {
+  lines: Array<{
+    lineNumber: number;
+    vatRate: string | null;
+    totals: LineTotalsResult;
+  }>;
+  totals: ReturnType<typeof calcDocumentTotals>;
+  snapshot: ExpenseVatCaptureSnapshotV1;
+};
+
+function decimal(value: string | null | undefined): Decimal {
+  try {
+    const result = new Decimal(value ?? 0);
+    return result.isFinite() ? result : new Decimal(0);
+  } catch {
+    return new Decimal(0);
+  }
+}
+
+function money4(value: Decimal): string {
+  return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(4);
+}
+
+function rate4(value: Decimal): string {
+  return value.toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
+}
+
+function percent4(value: Decimal): string {
+  return value.toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
+}
+
+function sourceHasRate(input: { inputType: string }): boolean {
+  return input.inputType === 'RATE' || input.inputType === 'BOTH';
+}
+
+function sourceHasAmount(input: { inputType: string }): boolean {
+  return input.inputType === 'AMOUNT' || input.inputType === 'BOTH';
+}
+
+function allowedKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+/** Runtime boundary guard: controller bodies use contract types, so ERP Core validates again. */
+export function validateExpenseVatSourceInput(
+  value: unknown,
+  vatMode: ExpenseVatMode,
+  lineNumbers: number[],
+): string | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'vatSource must be an object.';
+  const source = value as Record<string, unknown>;
+  if (!allowedKeys(source, ['inputType', 'vatRatePercent', 'vatAmount', 'lines'])) {
+    return 'vatSource contains server-owned or unsupported fields.';
+  }
+  if (!EXPENSE_VAT_SOURCE_INPUT_TYPES.includes(source['inputType'] as any)) {
+    return 'vatSource.inputType is invalid.';
+  }
+  const inputType = source['inputType'] as ExpenseVatSourceInput['inputType'];
+  const rate = source['vatRatePercent'];
+  const amount = source['vatAmount'];
+  if (sourceHasRate({ inputType }) !== (typeof rate === 'string' && PERCENT.test(rate))) {
+    return inputType + ' requires exactly the matching vatRatePercent field.';
+  }
+  if (sourceHasAmount({ inputType }) !== (typeof amount === 'string' && MONEY.test(amount))) {
+    return inputType + ' requires exactly the matching vatAmount field.';
+  }
+  const lines = source['lines'];
+  if (lines !== undefined) {
+    if (!Array.isArray(lines) || lines.length === 0 || lines.length > 40) {
+      return 'vatSource.lines must contain 1 to 40 entries.';
+    }
+    if (inputType !== 'NONE' || rate !== undefined || amount !== undefined) {
+      return 'Use either document VAT source or line VAT sources, not both.';
+    }
+    const known = new Set(lineNumbers);
+    const seen = new Set<number>();
+    for (const raw of lines) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Each VAT line source must be an object.';
+      const line = raw as Record<string, unknown>;
+      if (!allowedKeys(line, ['lineNumber', 'inputType', 'vatRatePercent', 'vatAmount'])) {
+        return 'VAT line source contains server-owned or unsupported fields.';
+      }
+      const lineNumber = line['lineNumber'];
+      if (!Number.isInteger(lineNumber) || !known.has(lineNumber as number) || seen.has(lineNumber as number)) {
+        return 'VAT line source must reference one unique line in this expense.';
+      }
+      seen.add(lineNumber as number);
+      const error = validateExpenseVatSourceInput(
+        { inputType: line['inputType'], vatRatePercent: line['vatRatePercent'], vatAmount: line['vatAmount'] },
+        vatMode,
+        [],
+      );
+      if (error) return error;
+    }
+  }
+  const positiveSource = (typeof rate === 'string' && decimal(rate).gt(0))
+    || (typeof amount === 'string' && decimal(amount).gt(0))
+    || (Array.isArray(lines) && lines.some((line) => line && typeof line === 'object'
+      && ((typeof (line as Record<string, unknown>)['vatRatePercent'] === 'string'
+        && decimal((line as Record<string, string>)['vatRatePercent']).gt(0))
+        || (typeof (line as Record<string, unknown>)['vatAmount'] === 'string'
+          && decimal((line as Record<string, string>)['vatAmount']).gt(0)))));
+  if ((vatMode === 'NO_VAT' || vatMode === 'EXEMPT') && positiveSource) {
+    return 'NO_VAT and EXEMPT expenses cannot contain a positive VAT source rate or amount.';
+  }
+  return null;
+}
+
+export function vatSourceFromSnapshot(
+  snapshot: ExpenseVatCaptureSnapshotV1 | null | undefined,
+): ExpenseVatSourceInput | undefined {
+  if (!snapshot || snapshot.version !== 1) return undefined;
+  const lines = snapshot.source.lineSources?.map((line) => ({
+    lineNumber: line.lineNumber,
+    inputType: line.inputType,
+    ...(line.vatRatePercent !== undefined && { vatRatePercent: line.vatRatePercent }),
+    ...(line.vatAmount !== undefined && { vatAmount: decimal(line.vatAmount).toDecimalPlaces(2).toFixed(2) }),
+  }));
+  return {
+    inputType: snapshot.source.inputType,
+    ...(snapshot.source.vatRatePercent !== null && { vatRatePercent: snapshot.source.vatRatePercent }),
+    ...(snapshot.source.vatAmount !== null && { vatAmount: decimal(snapshot.source.vatAmount).toDecimalPlaces(2).toFixed(2) }),
+    ...(lines?.length && { lines }),
+  };
+}
+
+function fractionFromPercent(value: string): string {
+  return rate4(decimal(value).div(100));
+}
+
+function rawAfterDiscount(line: ExpenseVatReconciliationLineInput): Decimal {
+  const subtotal = decimal(line.quantity).mul(decimal(line.unitPrice)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const discount = Decimal.min(decimal(line.discountAmount), subtotal).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return subtotal.minus(discount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+}
+
+function derivedFraction(vatMode: ExpenseVatMode, grossOrBase: Decimal, vat: Decimal): string | null {
+  if (vat.eq(0)) return '0.0000';
+  const base = vatMode === 'VAT_INCLUDED' ? grossOrBase.minus(vat) : grossOrBase;
+  if (base.lte(0)) return null;
+  const rate = vat.div(base);
+  return rate.gte(0) && rate.lt(1) ? rate4(rate) : null;
+}
+
+function recomputeAcceptedTotals(
+  totals: LineTotalsResult,
+  vatMode: ExpenseVatMode,
+  whtRate: string | null | undefined,
+  acceptedVat: Decimal,
+): LineTotalsResult {
+  const calculatedTaxable = decimal(totals.taxableAmount);
+  const calculatedGross = decimal(totals.lineTotalAmount);
+  const taxable = vatMode === 'VAT_INCLUDED'
+    ? calculatedGross.minus(acceptedVat)
+    : calculatedTaxable;
+  const wht = taxable.mul(decimal(whtRate)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  return {
+    ...totals,
+    taxableAmount: money4(taxable),
+    vatAmount: money4(acceptedVat),
+    whtAmount: money4(wht),
+    lineTotalAmount: money4(taxable.plus(acceptedVat)),
+  };
+}
+
+export function reconcileExpenseVat(input: {
+  vatMode: ExpenseVatMode;
+  lines: ExpenseVatReconciliationLineInput[];
+  source?: ExpenseVatSourceInput;
+  sourceOrigin?: ExpenseVatSourceOrigin;
+  sourceTaxableAmount?: string | null;
+  sourceGrossAmount?: string | null;
+  sourceEvidenceRefs?: string[];
+  capturedAt?: string;
+}): ExpenseVatReconciliationResult {
+  const source = input.source ?? { inputType: 'NONE' };
+  const rates = new Map(input.lines.map((line) => [line.lineNumber, line.vatRate?.trim() || null]));
+  const lineSources = new Map((source.lines ?? []).map((line) => [line.lineNumber, line]));
+  let documentAmountNeedsAllocation = false;
+
+  for (const line of input.lines) {
+    const lineSource = lineSources.get(line.lineNumber);
+    if (lineSource && sourceHasRate(lineSource)) {
+      rates.set(line.lineNumber, fractionFromPercent(lineSource.vatRatePercent!));
+    }
+  }
+
+  if (!source.lines?.length && sourceHasRate(source)) {
+    const rate = fractionFromPercent(source.vatRatePercent!);
+    // A document rate describes the taxable portion. Preserve explicit per-line treatments
+    // (for example a 0%-VAT tip); web review already updates every line when the reviewer means
+    // to replace the whole document rate.
+    for (const line of input.lines) {
+      if (rates.get(line.lineNumber) === null) rates.set(line.lineNumber, rate);
+    }
+  } else if (!source.lines?.length && source.inputType === 'AMOUNT'
+    && (input.vatMode === 'VAT_INCLUDED' || input.vatMode === 'VAT_EXCLUDED')) {
+    const rateValues = [...rates.values()];
+    const knownRateCount = rateValues.filter((rate) => rate !== null).length;
+    if (knownRateCount === 0) {
+      const beforeVat = input.lines.reduce((sum, line) => sum.plus(rawAfterDiscount(line)), new Decimal(0));
+      const derived = derivedFraction(input.vatMode, beforeVat, decimal(source.vatAmount));
+      if (derived !== null) for (const line of input.lines) rates.set(line.lineNumber, derived);
+    } else if (knownRateCount < rateValues.length) {
+      // An amount alone cannot tell us how to allocate VAT between a known 0%/taxable line and
+      // an unknown line. Keep the explicit treatment intact and ask for line-level evidence.
+      documentAmountNeedsAllocation = true;
+    }
+  }
+
+  for (const line of input.lines) {
+    const lineSource = lineSources.get(line.lineNumber);
+    if (!lineSource || lineSource.inputType !== 'AMOUNT' || rates.get(line.lineNumber) !== null) continue;
+    const derived = derivedFraction(input.vatMode, rawAfterDiscount(line), decimal(lineSource.vatAmount));
+    if (derived !== null) rates.set(line.lineNumber, derived);
+  }
+
+  const calculated = input.lines.map((line) => ({
+    lineNumber: line.lineNumber,
+    vatRate: rates.get(line.lineNumber) ?? null,
+    whtRate: line.whtRate,
+    totals: calcLineTotals({ ...line, vatRate: rates.get(line.lineNumber), vatMode: input.vatMode }),
+  }));
+  const calculatedTotals = calcDocumentTotals({ lines: calculated.map((line) => line.totals) });
+  const accepted = calculated.map((line) => ({ ...line, totals: { ...line.totals } }));
+  const residuals = new Map(calculated.map((line) => [line.lineNumber, new Decimal(0)]));
+  const knownLineNumbers = new Set(input.lines.map((line) => line.lineNumber));
+  const hasUnmappedLineSource = Boolean(source.lines?.some((line) => !knownLineNumbers.has(line.lineNumber)));
+  let status: ExpenseVatCaptureSnapshotV1['reconciliation']['status'] =
+    input.vatMode === 'NO_VAT' || input.vatMode === 'EXEMPT' ? 'NOT_APPLICABLE' : 'CALCULATED_ONLY';
+  let acceptedSource: ExpenseVatCaptureSnapshotV1['reconciliation']['acceptedSource'] =
+    status === 'NOT_APPLICABLE' ? null : 'CALCULATED';
+  let difference: Decimal | null = null;
+  const documentSourceRate = !source.lines?.length && sourceHasRate(source)
+    ? decimal(source.vatRatePercent).div(100)
+    : null;
+  const positiveCalculatedRates = new Set(calculated
+    .map((line) => line.vatRate)
+    .filter((rate): rate is string => rate !== null && decimal(rate).gt(0)));
+  const comparableCalculatedRates = positiveCalculatedRates.size > 0
+    ? positiveCalculatedRates
+    : new Set(calculated.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
+  const rateMismatch = documentSourceRate !== null && comparableCalculatedRates.size > 0
+    && [...comparableCalculatedRates].some((rate) => decimal(rate).minus(documentSourceRate).abs().gt('0.00005'));
+
+  if (source.lines?.length) {
+    let mismatch = false;
+    let matchedAmount = false;
+    for (const lineSource of source.lines) {
+      if (!sourceHasAmount(lineSource)) continue;
+      const target = accepted.find((line) => line.lineNumber === lineSource.lineNumber);
+      if (!target) continue;
+      const diff = decimal(lineSource.vatAmount).minus(target.totals.vatAmount);
+      if ((decimal(lineSource.vatAmount).gt(0) && target.vatRate !== null && decimal(target.vatRate).eq(0))
+        || diff.abs().gt(TOLERANCE)) {
+        mismatch = true;
+        continue;
+      }
+      matchedAmount = true;
+      if (!hasUnmappedLineSource) {
+        residuals.set(target.lineNumber, diff);
+        target.totals = recomputeAcceptedTotals(target.totals, input.vatMode, target.whtRate, decimal(lineSource.vatAmount));
+      }
+    }
+    status = mismatch ? 'MISMATCH' : hasUnmappedLineSource ? 'NEEDS_REVIEW' : matchedAmount ? 'MATCHED' : 'CALCULATED_ONLY';
+    acceptedSource = mismatch || hasUnmappedLineSource || !matchedAmount ? 'CALCULATED' : 'SOURCE_AMOUNT';
+    const sourceAmount = source.lines
+      .filter(sourceHasAmount)
+      .reduce((sum, line) => sum.plus(decimal(line.vatAmount)), new Decimal(0));
+    const calculatedSourceAmount = source.lines
+      .filter(sourceHasAmount)
+      .reduce((sum, lineSource) => sum.plus(
+        calculated.find((line) => line.lineNumber === lineSource.lineNumber)?.totals.vatAmount ?? 0,
+      ), new Decimal(0));
+    difference = source.lines.some(sourceHasAmount)
+      ? sourceAmount.minus(calculatedSourceAmount)
+      : null;
+  } else if (sourceHasAmount(source)) {
+    difference = decimal(source.vatAmount).minus(calculatedTotals.vatAmount);
+    const distinctRates = new Set(calculated.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
+    const onlyExplicitZeroRates = calculated.length > 0
+      && calculated.every((line) => line.vatRate !== null && decimal(line.vatRate).eq(0));
+    if (rateMismatch || (decimal(source.vatAmount).gt(0) && onlyExplicitZeroRates)) {
+      status = 'MISMATCH';
+    } else if (documentAmountNeedsAllocation) {
+      status = 'NEEDS_REVIEW';
+    } else if (distinctRates.size > 1 && !difference.eq(0)) {
+      status = 'NEEDS_REVIEW';
+    } else if (difference.abs().gt(TOLERANCE)) {
+      status = 'MISMATCH';
+    } else {
+      status = 'MATCHED';
+      acceptedSource = 'SOURCE_AMOUNT';
+      const target = [...accepted]
+        .filter((line) => line.vatRate !== null)
+        .sort((left, right) => decimal(right.totals.taxableAmount).cmp(left.totals.taxableAmount)
+          || left.lineNumber - right.lineNumber)[0];
+      if (target) {
+        residuals.set(target.lineNumber, difference);
+        target.totals = recomputeAcceptedTotals(
+          target.totals,
+          input.vatMode,
+          target.whtRate,
+          decimal(target.totals.vatAmount).plus(difference),
+        );
+      } else if (!decimal(source.vatAmount).eq(0)) {
+        status = 'SOURCE_ONLY';
+        acceptedSource = 'CALCULATED';
+      }
+    }
+  } else if (rateMismatch) {
+    status = 'MISMATCH';
+  }
+
+  const totals = calcDocumentTotals({ lines: accepted.map((line) => line.totals) });
+  const knownRates = new Set(accepted.map((line) => line.vatRate).filter((rate): rate is string => rate !== null));
+  const allKnownRatesAreZero = knownRates.size > 0 && [...knownRates].every((rate) => decimal(rate).eq(0));
+  const effectiveRate = knownRates.size === 1 ? decimal([...knownRates][0]).mul(100) : null;
+  const vatBase = calculated
+    .filter((line) => decimal(line.vatRate).gt(0))
+    .reduce((sum, line) => sum.plus(line.totals.taxableAmount), new Decimal(0));
+  const normalizedSourceAmount = sourceHasAmount(source)
+    ? money4(decimal(source.vatAmount))
+    : null;
+  const normalizedSourceRate = sourceHasRate(source) ? percent4(decimal(source.vatRatePercent)) : null;
+  const sourceOrigin = input.sourceOrigin ?? 'REVIEWER';
+
+  return {
+    lines: accepted.map(({ lineNumber, vatRate, totals: lineTotals }) => ({ lineNumber, vatRate, totals: lineTotals })),
+    totals,
+    snapshot: {
+      version: 1,
+      source: {
+        inputType: source.inputType,
+        origin: sourceOrigin,
+        vatRatePercent: normalizedSourceRate,
+        vatAmount: normalizedSourceAmount,
+        taxableAmount: input.sourceTaxableAmount ?? null,
+        grossAmount: input.sourceGrossAmount ?? null,
+        capturedAt: input.capturedAt ?? new Date().toISOString(),
+        ...(input.sourceEvidenceRefs?.length && { evidenceRefs: input.sourceEvidenceRefs.slice(0, 20) }),
+        ...(source.lines?.length && {
+          lineSources: source.lines.map((line) => ({
+            ...line,
+            ...(sourceHasRate(line) && { vatRatePercent: percent4(decimal(line.vatRatePercent)) }),
+            ...(sourceHasAmount(line) && { vatAmount: money4(decimal(line.vatAmount)) }),
+            origin: sourceOrigin,
+          })),
+        }),
+      },
+      calculation: {
+        formula: (input.vatMode === 'VAT_INCLUDED' || input.vatMode === 'VAT_EXCLUDED') && allKnownRatesAreZero ? 'ZERO'
+          : input.vatMode === 'VAT_INCLUDED' ? knownRates.size > 1 ? 'MIXED' : 'INCLUDED'
+            : input.vatMode === 'VAT_EXCLUDED' ? knownRates.size > 1 ? 'MIXED' : 'EXCLUDED'
+            : input.vatMode === 'NO_VAT' || input.vatMode === 'EXEMPT' ? 'NOT_APPLICABLE'
+              : 'MIXED',
+        vatRatePercent: effectiveRate === null ? null : percent4(effectiveRate),
+        preVatAmount: calculatedTotals.taxableAmount,
+        vatBaseAmount: money4(vatBase),
+        vatAmount: calculatedTotals.vatAmount,
+        grossAmount: calculatedTotals.grandTotalAmount,
+        lineResults: calculated.map((line) => ({
+          lineNumber: line.lineNumber,
+          vatRatePercent: line.vatRate === null ? null : percent4(decimal(line.vatRate).mul(100)),
+          calculatedTaxableAmount: line.totals.taxableAmount,
+          acceptedTaxableAmount: accepted.find((item) => item.lineNumber === line.lineNumber)!.totals.taxableAmount,
+          calculatedVatAmount: line.totals.vatAmount,
+          acceptedVatAmount: accepted.find((item) => item.lineNumber === line.lineNumber)!.totals.vatAmount,
+          residualAdjustment: money4(residuals.get(line.lineNumber) ?? new Decimal(0)),
+        })),
+        roundingMode: 'HALF_UP',
+        decimalPlaces: 2,
+        calculationVersion: 'expense-vat-v1',
+      },
+      reconciliation: {
+        status,
+        acceptedSource,
+        differenceAmount: difference === null ? null : money4(difference),
+        toleranceAmount: '0.05',
+      },
+    },
+  };
+}

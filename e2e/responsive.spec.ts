@@ -222,6 +222,25 @@ test.describe('Mobile responsive invariants', () => {
     });
   }
 
+  test('/settings/access-overview — permission summary keeps names and status readable', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/settings/access-overview');
+
+    const summary = authedPage.getByTestId('access-permission-summary');
+    await expect(summary.getByTestId('access-permission-row').first()).toBeVisible();
+    const dimensions = await summary.evaluate((element) => ({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+    }));
+    expect(dimensions.scrollWidth, 'permission summary must not require horizontal scrolling').toBeLessThanOrEqual(dimensions.clientWidth + 1);
+
+    const clippedLabels = await summary.getByTestId('access-permission-menu-label').evaluateAll((labels) => labels.flatMap((label) => {
+      const style = window.getComputedStyle(label);
+      return style.whiteSpace === 'nowrap' || style.textOverflow === 'ellipsis' ? [label.textContent] : [];
+    }));
+    expect(clippedLabels, 'permission menu labels must wrap instead of ellipsizing').toEqual([]);
+    await expect(summary.getByTestId('access-permission-actions').locator('button, a, [role="button"], [tabindex]')).toHaveCount(0);
+  });
+
   test('INV-3 drawer works', async ({ authedPage, companyId }) => {
     await gotoAndSettle(authedPage, companyId, '/dashboard');
 
@@ -250,6 +269,29 @@ test.describe('Mobile responsive invariants', () => {
       await drawer.getAttribute('class'),
       'INV-3 /dashboard: Escape must close the drawer',
     ).toContain('-translate-x-full');
+  });
+
+  test('INV-3 expanded bottom accordion stays in the drawer viewport', async ({ authedPage, companyId }) => {
+    await gotoAndSettle(authedPage, companyId, '/dashboard');
+
+    const drawer = authedPage.locator('aside').first();
+    await authedPage.locator('header button[class*="lg:hidden"]').tap();
+    const guide = drawer.getByRole('button', { name: 'คู่มือการใช้งานระบบ' });
+    await guide.tap();
+    await expect(guide).toHaveAttribute('aria-expanded', 'true');
+
+    const scrollRoot = drawer.locator('nav').locator('..');
+    const lastGuide = drawer.getByRole('link', { name: 'การเบิกจ่ายและอนุมัติ' });
+    await expect.poll(async () => {
+      const [rootBox, triggerBox, lastGuideBox] = await Promise.all([
+        scrollRoot.boundingBox(),
+        guide.boundingBox(),
+        lastGuide.boundingBox(),
+      ]);
+      return Boolean(rootBox && triggerBox && lastGuideBox
+        && triggerBox.y >= rootBox.y - 1
+        && lastGuideBox.y + lastGuideBox.height <= rootBox.y + rootBox.height + 1);
+    }, { message: 'expanded guide and its last item must remain visible inside the sidebar scroller' }).toBe(true);
   });
 
   test('INV-5 login fields do not trigger iOS zoom', async ({ page }) => {
