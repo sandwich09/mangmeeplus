@@ -14,6 +14,7 @@ import { TrimStringsPipe } from './common/pipes/trim-strings.pipe';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from './common/pipes/validation-pipe.options';
 import { ApiRateLimitGuard } from './common/security/api-rate-limit.guard';
 import { RedisRateLimitService } from './common/security/redis-rate-limit.service';
+import { apiCacheControl } from './common/middleware/api-cache-control.middleware';
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
@@ -53,13 +54,20 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { abortOnError: false, bodyParser: false, logger: new NestPinoLoggerBridge(logger) });
   // L-13: explicit, not inherited from helmet's default — a future helmet option change must not
   // silently start advertising the framework again.
-  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.disable('x-powered-by');
+  // Contextual API JSON must never turn an old representation into a browser-side 304. Static
+  // Next assets are served by the separate web process and keep their immutable cache policy.
+  expressApp.disable('etag');
   const allowedOrigins = getAllowedOrigins(config);
   const bodyLimit = config.bodyLimit;
   const saveRawBody = (req: RawBodyRequest, _res: unknown, buf: Buffer) => {
     if (buf.length > 0) req.rawBody = Buffer.from(buf);
   };
 
+  // Express-level boundary covers controller responses, parser failures, 404s, and Swagger when
+  // enabled. A controller may still replace the header for an intentionally public asset.
+  app.use(apiCacheControl);
   app.use(
     helmet({
       contentSecurityPolicy: isProduction ? undefined : false,

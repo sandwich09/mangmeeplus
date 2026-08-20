@@ -173,6 +173,9 @@ export type RoleSummary = {
   assignableByCurrentUser?: boolean;
 };
 
+/** Request-context role catalog returned to browser assignment/view surfaces. */
+export type AssignableRoleSummary = RoleSummary & { assignableByCurrentUser: boolean };
+
 export type RoleDetail = RoleSummary;
 
 /**
