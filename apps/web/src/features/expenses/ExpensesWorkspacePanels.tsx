@@ -40,6 +40,10 @@ import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
+/** Mirrors `@MaxLength(255)` on the signature-asset label the API accepts. */
+const SIGNATURE_LABEL_MAX_LENGTH = 255;
+const SIGNATURE_LABEL_TOO_LONG = `ชื่อ/ป้ายกำกับลายเซ็นยาวได้ไม่เกิน ${SIGNATURE_LABEL_MAX_LENGTH} ตัวอักษร กรุณาย่อให้สั้นลง`;
+
 // A category is a label and an id. Nothing on it is inherited by an expense — the
 // accountHintKey/taxCategory the ledger reads live on the expense record and line,
 // not here — so the panel deliberately shows no per-category tax attribute.
@@ -377,6 +381,9 @@ export function SignaturePanel({ companyId, userId, canManageOthers, focusSignat
     if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
     const forbidden = findForbiddenChars(label);
     if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
+    // Checked BEFORE the upload starts: the API rejects an over-long label at the last call, which
+    // used to leave the PNG already written to storage with nothing pointing at it.
+    if (label.trim().length > SIGNATURE_LABEL_MAX_LENGTH) { setActionError(SIGNATURE_LABEL_TOO_LONG); return; }
     setSaving(true); setActionError(null);
     try {
       const intent = await initSignatureUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size });
@@ -530,7 +537,11 @@ export function SignaturePanel({ companyId, userId, canManageOthers, focusSignat
                 <button key={key} className={cx(method === key ? btnClass : ghostClass, 'h-9 px-3 text-xs')} disabled={saving} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
               ))}
             </div>
-            <input className={cx(inputClass, 'mb-3')} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
+            {/* maxLength mirrors the API's own limit. Without it a pasted long label passed the
+                whole upload, then failed at the final POST with a generic system error — leaving an
+                orphaned PNG in storage and no way to retry successfully. */}
+            <input className={cx(inputClass, label.length >= SIGNATURE_LABEL_MAX_LENGTH ? 'mb-1' : 'mb-3')} maxLength={SIGNATURE_LABEL_MAX_LENGTH} placeholder="ชื่อ/ป้ายกำกับ เช่น ลายเซ็นกรรมการ (ไม่บังคับ)" value={label} onChange={(e) => setLabel(stripDisallowed(e.target.value))} />
+            {label.length >= SIGNATURE_LABEL_MAX_LENGTH && <p className="mb-3 text-xs font-semibold text-warning-700">{SIGNATURE_LABEL_TOO_LONG}</p>}
             {method === 'draw' ? (
               // The pad exports an already-cropped transparent PNG, so it needs no derived pass.
               <SignaturePad
@@ -1007,6 +1018,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             <MangmeeCard className="border-brand-100 bg-brand-25 p-4 text-sm">
               <p className="font-semibold text-brand-700">✓ สร้างชุดเอกสารแล้ว: {packageResult.rowCount} รายการ, ไฟล์หลักฐาน {packageResult.evidenceManifest.length} ไฟล์</p>
               {packageResult.truncated && <p className="mt-1 font-semibold text-warning-700">⚠ ส่งออก {packageResult.rowCount} จากทั้งหมด {packageResult.totalMatched} รายการ กรุณาแบ่งช่วงเดือนหรือปรับตัวกรองแล้วส่งออกอีกครั้ง</p>}
+              {packageResult.skippedEvidence.length > 0 && <p className="mt-1 font-semibold text-warning-700">⚠ ข้ามไฟล์แนบ {packageResult.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด ชุดเอกสารนี้จึงยังไม่ครบ</p>}
               <p className="mt-1 text-xs text-gray-500">ดาวน์โหลดไฟล์รายการ Excel แล้ว · ไฟล์รายการหลักฐานมีลิงก์ดาวน์โหลดที่ตรวจสิทธิ์รายไฟล์และมีวันหมดอายุ ({formatThaiDateTime(packageResult.generatedAt)})</p>
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs text-gray-500">รายการหลักฐาน (JSON) — ลิงก์ดาวน์โหลดไฟล์แนบทุกไฟล์ มีวันหมดอายุ</span>

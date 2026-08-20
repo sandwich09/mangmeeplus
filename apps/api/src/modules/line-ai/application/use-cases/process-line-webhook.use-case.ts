@@ -372,12 +372,6 @@ export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
 
-/** Spec §12.8 — `pushTargetId` is the group or room id when the message did not arrive in a 1:1
- *  chat. A per-recipient delivery link is never posted where the other members can read it. */
-export function isGroupChatEvent(event: { lineUserId: string; pushTargetId?: string }): boolean {
-  return !!event.pushTargetId && event.pushTargetId !== event.lineUserId;
-}
-
 export function formatLineReply(response: LineAiTurnResponse, webBaseUrl: string | undefined): string {
   const lines = [response.replyText];
   if (response.sourceLabels.length > 0) {
@@ -421,6 +415,12 @@ export function classifyPendingMediaReply(text: string): 'receipt' | 'illustrati
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:แรก|หนึ่ง)$/.test(t)) return 'receipt';
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สอง|ที่สอง)$/.test(t)) return 'illustration';
   if (/^(?:อัน|ข้อ|ตัว)?(?:ที่\s*)?(?:สาม|ที่สาม)$/.test(t)) return 'multiple';
+  // A substitute-receipt request is a NEW request, never an answer to this question — and every name
+  // of that document contains ‘ใบเสร็จ’, which the keyword scan below reads as “yes, it's a receipt”.
+  // Claimed, it builds a draft from the PHOTO, drops the amount the sender just typed, and leaves the
+  // substitute request with no outcome. Checked after the numbered/ordinal answers so a genuine short
+  // reply — ‘1’, ‘ใบเสร็จ’ — still decides the question it was asked.
+  if (isSubstituteReceiptConversationText(t)) return 'ambiguous';
   // Detect a refusal FIRST: receipt keywords like 'บันทึก' are substrings of refusals such as
   // 'ไม่ต้องบันทึก' ("no need to save"), so a plain keyword scan would build a draft from an
   // explicit "no". Thai negation is 'ไม่' (NOT the yes/no question particle 'ไหม'); English
@@ -1562,9 +1562,6 @@ export class ProcessLineWebhookUseCase {
             ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
             : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
           webBaseUrl: this.config.webBaseUrl,
-          // §12.8: a group/room chat pushes to the group id, not the sender's, so a delivery link
-          // posted here would be readable by everyone in it. The continuation withholds it.
-          groupChat: isGroupChatEvent(event),
         });
       } catch (error) {
         // The draft is already committed; a continuation failure degrades, it never sinks the capture.
@@ -1581,9 +1578,18 @@ export class ProcessLineWebhookUseCase {
       }
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
+      //
+      // S1: an open substitute clarification re-enters this branch on EVERY message in the chat, so
+      // whatever it cannot read as an answer it must hand back rather than reply to. A question
+      // already did that. A declarative sentence did not — so after a decline (which deliberately
+      // leaves the decision listening) “ค่าแท็กซี่ 200 บาท” was answered by the substitute re-ask and
+      // returned before the intake router ever saw it: the sender could not record another expense
+      // until they finished this document. `decisionUnread` is the continuation saying the same
+      // thing about a non-question, and the resume capsule still travels with the router's reply, so
+      // the pending decision stays visible and “ออกเอกสารเลย” still lands on it next turn.
       const routeSideQuestion = hasSubstituteClarification
         && !isSubstituteReceiptConversationText(normalizedText)
-        && isInterveningQuestionText(normalizedText)
+        && (isInterveningQuestionText(normalizedText) || result.decisionUnread === true)
         && !result.sideQuestionAnswered
         && result.status !== 'FORBIDDEN';
       if (routeSideQuestion) {
@@ -3203,6 +3209,13 @@ export class ProcessLineWebhookUseCase {
       if (pending.mimeType !== 'image/png' && pending.mimeType !== 'image/jpeg') {
         return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_NEED_IMAGE_REPLY);
       }
+      // W1: consume the row BEFORE the bytes are claimed as a signature asset. The link is
+      // irreversible and the LINE delivery between them can throw; with the resolve last, that throw
+      // left the row PENDING holding an attachment id that is already a company signature asset —
+      // and the very next answer could file the same id as this expense's receipt or substitute
+      // evidence, producing an artifact that is both. A failure after this point costs the sender one
+      // re-send; the alternative costs a reviewer a document that cannot be trusted.
+      await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');
       const replyText = await this.createLineSignatureAsset({
         ctx,
         // The IMAGE's message id, not this answer's: that is what a redelivery of the photo would
@@ -3215,7 +3228,6 @@ export class ProcessLineWebhookUseCase {
         steerToPendingDecision: await this.substituteReceiptContinuation.hasPendingIssueDecision(ctx, chatKeyHash),
       });
       await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
-      await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');
       await this.persistIntakeTurn({
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
         userMessagePreview: text, replyText, intent: 'SIGNATURE_REQUEST',
@@ -3332,8 +3344,12 @@ export class ProcessLineWebhookUseCase {
     replyText: string,
     badge?: string,
   ): Promise<{ outcome: 'handled' }> {
-    await this.deliverCompletedReply(event, replyText, ctx.companyId, access, badge);
+    // W1, same rule as the signature branch: every caller reaches here with the attachment ALREADY
+    // linked (payment/supporting evidence, or a wet-signed original). A throw in the delivery below
+    // must not leave the row PENDING, or the same bytes can be answered a second time and end up
+    // linked to a second, incompatible target.
     await this.resolvePendingRow(pending.id, 'RESOLVED_RECEIPT');
+    await this.deliverCompletedReply(event, replyText, ctx.companyId, access, badge);
     await this.persistIntakeTurn({
       userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: text, replyText, intent: 'EVIDENCE_CAPTURE',
@@ -3441,7 +3457,6 @@ export class ProcessLineWebhookUseCase {
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
-          groupChat: isGroupChatEvent(event),
         });
         reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${continuation.replyText}`;
         pendingQuestion = continuation.pendingQuestion;

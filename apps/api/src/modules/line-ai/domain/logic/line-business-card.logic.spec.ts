@@ -100,8 +100,6 @@ describe('LINE business answer card renderer', () => {
   });
 });
 
-const token = 'A'.repeat(43);
-
 describe('spec §13 — the state badge row', () => {
   it('renders the badge as its own row above the body, and nothing at all without one', () => {
     const withBadge = buildLineAssistantTextCardMessage('ยอด 50.00 THB', 'https://app.example.com', 'c1', '✅ ออกเอกสารแล้ว');
@@ -120,54 +118,9 @@ describe('spec §13 — the state badge row', () => {
   });
 });
 
-describe('spec §12.5 — the one /d/{token} allowance in safeTenantLink', () => {
-  it('promotes an exact-shape delivery link on the configured origin, outside the tenant path', () => {
-    const message = buildLineAssistantTextCardMessage(
-      `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน): https://app.example.com/d/${token}`,
-      'https://app.example.com',
-      'c1',
-    );
-    assert.deepEqual((message as any).contents.footer.contents[0].action, {
-      type: 'uri', label: 'ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)', uri: `https://app.example.com/d/${token}`,
-    });
-  });
-
-  it('still rejects everything that is not exactly that shape', () => {
-    const rejected = [
-      `https://evil.example/d/${token}`,                     // another origin
-      `https://app.example.com/d/${'A'.repeat(42)}`,         // one char short
-      `https://app.example.com/d/${'A'.repeat(44)}`,         // one char long
-      `https://app.example.com/d/${'A'.repeat(42)}$`,        // outside the base64url alphabet
-      `https://app.example.com/d/${token}/extra`,            // a deeper path
-      `https://app.example.com/d/${token}?next=/companies`,  // a query
-      `https://app.example.com/d/${token}#f`,                // a fragment
-      'https://app.example.com/d/',                          // no token
-      'https://app.example.com/d',                           // the bare segment
-      `https://app.example.com/dd/${token}`,                 // a sibling segment
-      `https://app.example.com/x/d/${token}`,                // nested under something else
-      `https://app.example.com/D/${token}`,                  // a different case
-    ];
-    for (const url of rejected) {
-      const message = buildLineAssistantTextCardMessage(`ตรวจสอบ ${url}`, 'https://app.example.com', 'c1');
-      assert.equal((message as any).contents.footer, undefined, url);
-      assert.match((message as any).contents.body.contents[0].text, /https?:\/\//, url);
-    }
-  });
-
-  it('keeps the delivery allowance out of the gateway card path unless the path is exact', () => {
-    for (const path of [`/d/${token}`, `/d/${'A'.repeat(42)}`, `/companies/c2/expenses`]) {
-      const message = buildLineBusinessAnswerMessage(response([{
-        text: 'ข้อมูล', webLink: { label: 'เปิด', path },
-      }]), 'fallback', 'https://app.example.com', 'c1');
-      const promoted = JSON.stringify(message).includes('"type":"button"');
-      assert.equal(promoted, path === `/d/${token}`, path);
-    }
-  });
-});
-
 describe('FIX-5 — a link label becomes its button, never a dangling colon line', () => {
   const web = 'https://app.example.com/companies/c1/expenses/substitute-receipts/e1';
-  const delivery = `https://app.example.com/d/${token}`;
+  const web2 = 'https://app.example.com/companies/c1/expenses/e2';
 
   function card(text: string) {
     const message = buildLineAssistantTextCardMessage(text, 'https://app.example.com', 'c1');
@@ -194,25 +147,40 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
 
   it('labels two links independently instead of numbering them เปิดลิงก์ 1/2', () => {
     const { body, buttons } = card([
-      '✅ ออกเอกสารแล้ว — เลขที่ SUB-202608-00007',
-      `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน): ${delivery}`,
+      '🔵 รอยืนยัน — เลขที่ SUB-202608-00007',
+      `ดูเอกสาร: ${web2}`,
       `เปิดในเว็บ: ${web}`,
     ].join('\n'));
 
     assert.deepEqual(buttons, [
-      { label: 'ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)', uri: delivery },
+      { label: 'ดูเอกสาร', uri: web2 },
       { label: 'เปิดในเว็บ', uri: web },
     ]);
-    assert.equal(body, '✅ ออกเอกสารแล้ว — เลขที่ SUB-202608-00007');
+    assert.equal(body, '🔵 รอยืนยัน — เลขที่ SUB-202608-00007');
     assert.doesNotMatch(body, /:\s*$/m, 'no colon line is left behind');
   });
 
   it('numbers only the link that has no label of its own', () => {
-    const { buttons } = card(`ดูรายละเอียด ${web} ก่อน\nดาวน์โหลดเอกสาร: ${delivery}`);
+    const { buttons } = card(`ดูรายละเอียด ${web} ก่อน\nดูเอกสาร: ${web2}`);
     assert.deepEqual(buttons, [
       { label: 'เปิดลิงก์ 1', uri: web },
-      { label: 'ดาวน์โหลดเอกสาร', uri: delivery },
+      { label: 'ดูเอกสาร', uri: web2 },
     ]);
+  });
+
+  it('M7: marks a truncated alt text instead of cutting it mid-word', () => {
+    const long = 'ใบรับรองแทนใบเสร็จรับเงินของรายการนี้ '.repeat(40);
+    const message = buildLineAssistantTextCardMessage(long, undefined, 'c1');
+    assert.equal(message.type, 'flex');
+    const alt = Array.from(message.type === 'flex' ? message.altText : '');
+
+    assert.equal(alt.length, 400, 'the ellipsis is counted inside the limit');
+    assert.equal(alt[alt.length - 1], '\u2026', 'a chat-list preview that stops mid-syllable reads as a broken message');
+  });
+
+  it('M7: leaves a short alt text exactly as written', () => {
+    const message = buildLineAssistantTextCardMessage('สรุปยอดวันนี้ 200.00 บาท', undefined, 'c1');
+    assert.equal(message.type === 'flex' && message.altText, 'สรุปยอดวันนี้ 200.00 บาท');
   });
 
   it('never mistakes a long sentence ending in a colon for a button label', () => {
@@ -223,7 +191,7 @@ describe('FIX-5 — a link label becomes its button, never a dangling colon line
   });
 
   it('leaves two links on one line to the generic numbering', () => {
-    const { buttons } = card(`ลิงก์: ${web} ${delivery}`);
+    const { buttons } = card(`ลิงก์: ${web} ${web2}`);
     assert.deepEqual(buttons.map((button: any) => button.label), ['เปิดลิงก์ 1', 'เปิดลิงก์ 2']);
   });
 

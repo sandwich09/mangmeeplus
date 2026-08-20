@@ -1,4 +1,4 @@
-import { DOCUMENT_DELIVERY_TOKEN_PATTERN, type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
+import { type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 
 const THEME = {
@@ -12,20 +12,15 @@ const THEME = {
 
 const bounded = (value: string, max: number) => Array.from(value.trim()).slice(0, max).join('');
 
-type SafeButton = { label: string; uri: string };
+/** altText is what the chat list and the push notification show. Cutting it at the limit with no mark
+ *  ends the preview mid-syllable and reads as a broken message, so a truncated one says it is
+ *  truncated. Grapheme-safe like `bounded`; the ellipsis is counted inside the limit. */
+const preview = (value: string, max: number) => {
+  const characters = Array.from(value.trim());
+  return characters.length > max ? `${characters.slice(0, max - 1).join('')}…` : characters.join('');
+};
 
-/**
- * Spec §12.5 — the ONE allowance beyond the tenant path: a `/d/{token}` delivery link, matched
- * exactly. The token shape is fixed (43 base64url characters), and the path must carry no query and
- * no fragment, so nothing that merely starts with `/d/` slips through. It is deliberately outside
- * `/companies/...`: the page it opens must stay unauthenticated, and living in the tenant path is
- * how such a page drifts into the authenticated shell.
- */
-function isDeliveryLinkPath(url: URL): boolean {
-  if (url.search || url.hash) return false;
-  const token = url.pathname.startsWith('/d/') ? url.pathname.slice(3) : undefined;
-  return !!token && DOCUMENT_DELIVERY_TOKEN_PATTERN.test(token);
-}
+type SafeButton = { label: string; uri: string };
 
 function safeTenantLink(webBaseUrl: string | undefined, companyId: string, path: string): string | undefined {
   if (!webBaseUrl || !path.startsWith('/') || path.startsWith('//') || /%2f|%5c/i.test(path)) return undefined;
@@ -33,7 +28,7 @@ function safeTenantLink(webBaseUrl: string | undefined, companyId: string, path:
     const relative = new URL(path, 'https://relative.invalid');
     const tenantRoot = `/companies/${encodeURIComponent(companyId)}`;
     if (relative.origin !== 'https://relative.invalid'
-      || (relative.pathname !== tenantRoot && !relative.pathname.startsWith(`${tenantRoot}/`) && !isDeliveryLinkPath(relative))) return undefined;
+      || (relative.pathname !== tenantRoot && !relative.pathname.startsWith(`${tenantRoot}/`))) return undefined;
     const base = new URL(webBaseUrl);
     if (base.protocol !== 'https:' && base.protocol !== 'http:') return undefined;
     return new URL(`${relative.pathname}${relative.search}${relative.hash}`, `${base.origin}/`).toString();
@@ -166,7 +161,7 @@ export function buildLineAssistantTextCardMessage(
   const cardText = body || 'เปิดดูรายละเอียดในเว็บแอป';
   return {
     type: 'flex',
-    altText: bounded(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
+    altText: preview(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
     contents: bubble(
       { title: 'ข้อมูลจากน้องมั่งมี', text: cardText, ...(badge ? { badge } : {}) },
       webBaseUrl, companyId, buttons,
@@ -189,7 +184,7 @@ export function buildLineBusinessAnswerMessage(
   const bubbles = cards.map((card) => bubble(card, webBaseUrl, companyId));
   return {
     type: 'flex',
-    altText: bounded(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
+    altText: preview(fallbackText, 400) || 'ข้อมูลจากน้องมั่งมี',
     contents: bubbles.length === 1 ? bubbles[0]! : { type: 'carousel', contents: bubbles },
   };
 }

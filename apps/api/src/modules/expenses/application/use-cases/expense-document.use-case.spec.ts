@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
 import sharp from 'sharp';
-import { CreateSignatureAssetUseCase, ArchiveSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase } from './signature-asset.use-case';
+import { CreateSignatureAssetUseCase, ArchiveSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase, GetSignatureImageUseCase, InitSignatureUploadUseCase } from './signature-asset.use-case';
 import { normalizeSignatureImage, SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import { CreateAccountantPackageUseCase, GetSharedEvidenceViewUseCase } from './expense-evidence.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -606,22 +606,22 @@ describe('signature asset lifecycle', () => {
   // A7 + the personal-signature decision: the image belongs to exactly one person. A housekeeping
   // holder gets other people's ROWS so they can retire them, and never their pictures.
   it('previews only the caller’s own signature, and hands housekeeping rows names instead of images', async () => {
-    const { repo, storage } = makeSigRepo();
-    const mints: any[] = [];
+    const { repo } = makeSigRepo();
     const audits: any[] = [];
     const listArgs: any[] = [];
     const auditing = { log: async (entry: any) => { audits.push(entry); } } as any;
-    storage.createDownloadUrl = async (input: any) => { mints.push(input); return { url: 'https://signed.example/sig.png', expiresAt: new Date() }; };
     repo.listSignatureAssets = async (...args: any[]) => { listArgs.push(args); return [
       { id: 'sig-mine', status: 'ACTIVE', submittedByUserId: 'user-1', originalAttachmentId: 'att-1', derivedAttachmentId: 'att-derived' },
       { id: 'sig-theirs', status: 'ACTIVE', submittedByUserId: 'uploader-1', originalAttachmentId: 'att-2', derivedAttachmentId: null },
     ]; };
     repo.listUserDisplayNames = async () => new Map([['uploader-1', 'สมหญิง พนักงาน']]);
     repo.findActiveAttachmentObject = async (_c: string, id: string) => ({ bucket: 'b', objectKey: id, mimeType: 'image/png', checksumSha256: null, byteSize: 10, originalFileName: 'x.png' });
-    const useCase = new ListSignatureAssetsUseCase(repo, storage, auditing);
+    const useCase = new ListSignatureAssetsUseCase(repo, auditing);
 
     const keeper = await useCase.execute(ctx(['expense.signature.manage']));
-    assert.equal(keeper[0]!.previewUrl, 'https://signed.example/sig.png', 'own row keeps its picture');
+    // Same-origin through this API, not a raw presigned storage URL: Chrome's ORB blocks the latter
+    // in <img src>, which is why the saved signature never rendered and the signer certified blind.
+    assert.equal(keeper[0]!.previewUrl, '/api/v1/companies/company-1/expense-signatures/images/att-derived', 'own row keeps its picture');
     assert.equal(keeper[0]!.submittedByDisplayName, null);
     assert.equal(keeper[0]!.originalAttachmentId, 'att-1', 'own row still names its own bytes');
     assert.equal(keeper[0]!.derivedAttachmentId, 'att-derived');
@@ -639,9 +639,6 @@ describe('signature asset lifecycle', () => {
     assert.equal(audits[0].targetId, 'sig-mine');
     assert.equal(audits[0].metadataJson.attachmentId, 'att-derived');
     assert.equal(JSON.stringify(audits[0]).includes('signed.example'), false);
-    // F14: a preview with no filename saves as "download".
-    assert.equal(mints[0].fileName, 'x.png');
-    assert.equal(mints[0].disposition, 'inline');
     assert.equal(listArgs[0][2], undefined, 'housekeeping reads the whole company');
 
     // Without housekeeping the query itself is narrowed to the caller: other people's rows are not
@@ -654,15 +651,69 @@ describe('signature asset lifecycle', () => {
     await assert.rejects(() => useCase.execute(ctx(['expense.read', 'expense.signature.approve'])), /expense.signature.manage/);
   });
 
-  it('fill requires web channel, review permission, and an ACTIVE signature', async () => {
-    const archived = makeSigRepo('ARCHIVED');
+  it('serves the preview bytes itself, owner-only, with a real image type', async () => {
+    // W1: the panel used to bind a raw presigned storage URL into <img src>, which Chrome's ORB
+    // refuses cross-origin — a broken-image icon on every surface, so the signer certified blind.
+    const pinned: any[] = [];
+    const repo = {
+      findReusableSignatureAsset: async (companyId: string, userId: string, attachmentId?: string) => {
+        pinned.push([companyId, userId, attachmentId]);
+        return userId === 'user-1'
+          ? { id: attachmentId, bucket: 'b', objectKey: 'k', mimeType: 'image/png', originalFileName: 'sig.png' }
+          : null;
+      },
+    } as any;
+    const storage = { getObject: async () => ({ bytes: Buffer.from('png-bytes') }) } as any;
+    const useCase = new GetSignatureImageUseCase(repo, storage);
+
+    const served = await useCase.execute(ctx(['expense.review']), 'att-1');
+    assert.equal(served.mimeType, 'image/png', 'an image content type is what keeps it usable in <img src>');
+    assert.equal(served.fileName, 'sig.png');
+    assert.equal(served.bytes.toString(), 'png-bytes');
+    // The lookup IS the authorization: pinned to one attachment AND to this caller's own assets.
+    assert.deepEqual(pinned[0], ['company-1', 'user-1', 'att-1']);
+
+    // Somebody else's signature bytes are simply not there for this caller.
+    await assert.rejects(
+      () => useCase.execute({ ...ctx(['expense.review']), userId: 'other-user' }, 'att-1'),
+      /not found/i,
+    );
+    await assert.rejects(() => useCase.execute(ctx(['expense.read']), 'att-1'), /Missing permission/);
+  });
+
+  it('refuses a web signature upload the certify gate could never accept', async () => {
+    // W2: only LINE gets downscaled, so a 3 MB web upload landed in the library and then failed at
+    // the 2 MB certify cap — at the moment of signing, which is the worst possible moment.
+    const intents: any[] = [];
+    const useCase = new InitSignatureUploadUseCase({ execute: async (_c: any, cmd: any) => { intents.push(cmd); return { attachmentId: 'att-1' }; } } as any);
+    await assert.rejects(
+      () => useCase.execute(ctx(['expense.review']), { originalFileName: 'big.png', mimeType: 'image/png', byteSize: 3_000_000 }),
+      /2 MB/,
+    );
+    assert.equal(intents.length, 0, 'nothing is reserved for a file that can never sign');
+    await useCase.execute(ctx(['expense.review']), { originalFileName: 'ok.png', mimeType: 'image/png', byteSize: SIGNATURE_MAX_BYTES });
+    assert.equal(intents.length, 1, 'exactly at the cap is still fine');
+  });
+
+  it('fill requires web channel, review permission, ownership, and an ACTIVE signature', async () => {
+    const archived = makeSigRepo('ARCHIVED', { submittedByUserId: 'user-1' });
     const fillArchived = new FillSignatureUseCase(archived.repo, completeUpload, audit);
     await assert.rejects(
       () => fillArchived.execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
       /ACTIVE signatures/,
     );
 
-    const active = makeSigRepo('ACTIVE');
+    // The binding the module header claims every lookup enforces. Without it any `expense.review`
+    // holder could sign a document with somebody else's ink, and with approval removed a signature
+    // is fillable the instant it is saved.
+    const theirs = makeSigRepo('ACTIVE', { submittedByUserId: 'other-user' });
+    await assert.rejects(
+      () => new FillSignatureUseCase(theirs.repo, completeUpload, audit)
+        .execute(ctx(['expense.review']), 'exp-1', { signatureAssetId: 'sig-1' }),
+      /only apply your own signature/,
+    );
+
+    const active = makeSigRepo('ACTIVE', { submittedByUserId: 'user-1' });
     const fill = new FillSignatureUseCase(active.repo, completeUpload, audit);
     await assert.rejects(
       () => fill.execute(ctx(['expense.review'], 'line'), 'exp-1', { signatureAssetId: 'sig-1' }),
@@ -731,7 +782,23 @@ describe('CreateAccountantPackageUseCase', () => {
     assert.ok(result.indexCsv.includes('TAX_INVOICE'));
     assert.equal(result.evidenceManifest.length, 1);
     assert.equal(result.evidenceManifest[0]?.download_url, '/local-storage/download/tok');
+    assert.deepEqual(result.skippedEvidence, []);
     assert.ok(!JSON.stringify(result).includes('objectKey'));
+
+    // A denied file used to vanish from the manifest with nothing anywhere saying so, so the
+    // accountant received a package that was short a document and looked complete.
+    const denied = new CreateAccountantPackageUseCase(
+      repo,
+      { execute: async () => { throw new Error('A personal signature image is only available to the person it belongs to.'); } } as any,
+      audit,
+      prisma,
+    );
+    const short = await denied.execute(ctx(['expense.export', 'expense.read', 'attachment.read']), {});
+    assert.equal(short.evidenceManifest.length, 0);
+    assert.equal(short.skippedEvidence.length, 1);
+    assert.equal(short.skippedEvidence[0]?.attachment_id, 'att-1');
+    assert.equal(short.skippedEvidence[0]?.expense_number, 'EXP-1');
+    assert.match(short.skippedEvidence[0]!.reason, /personal signature/);
   });
 
   it('requires expense.export', async () => {

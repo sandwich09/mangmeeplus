@@ -18,9 +18,6 @@ describe('middleware.logic', () => {
     assert.equal(isProtectedPagePath('/'), false);
     assert.equal(isProtectedPagePath('/systematic'), false);
     assert.equal(isProtectedPagePath('/legal-acceptance-preview'), false);
-    // Spec §12.4/§12.5: the delivery page resolves a bearer token and must never bounce to /login.
-    // It sits outside /companies precisely so it cannot drift into the authenticated shell.
-    assert.equal(isProtectedPagePath(`/d/${'A'.repeat(43)}`), false);
   });
 
   it('accepts same-origin Origin headers and rejects cross-origin ones', () => {

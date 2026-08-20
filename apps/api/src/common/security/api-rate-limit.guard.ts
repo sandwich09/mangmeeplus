@@ -2,7 +2,6 @@ import { CanActivate, ExecutionContext, HttpException, HttpStatus, Logger, Servi
 import type { Request, Response } from 'express';
 import type { AppConfigService } from '../config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../logger/security-event';
-import { maskLoggedPath } from '../logger/log-path';
 import { trustedClientIp } from './trusted-client-ip';
 import { RedisRateLimitService } from './redis-rate-limit.service';
 
@@ -61,9 +60,7 @@ export class ApiRateLimitGuard implements CanActivate {
         bucket: 'api-ip',
         clientIp: key,
         method: request.method,
-        // Probing a public token endpoint is exactly what trips this, so the 429 event is the most
-        // likely place for a live credential to land in the log stream.
-        path: maskLoggedPath(path),
+        path,
         requestId: request.headers['x-request-id'],
         retryAfterSeconds: decision.retryAfterSeconds,
       });

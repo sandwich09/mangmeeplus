@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type {
   RequestContext,
   SubstituteReceiptPolicySettings,
@@ -6,7 +6,6 @@ import type {
   UpdateSubstituteReceiptPolicyInput,
 } from '@watchdog-bms/contracts';
 import { AuditService } from '../../../audit/application/audit.service';
-import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-model-core/domain/ports/attachment-storage.port';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { signatureInlineUrl } from './signature-asset.use-case';
 
@@ -25,7 +24,6 @@ function parseInstructions(value: unknown): string | null {
 export class GetSubstituteReceiptPolicyUseCase {
   constructor(
     private readonly repo: PrismaExpenseRepository,
-    @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
     private readonly audit: AuditService,
   ) {}
 
@@ -69,7 +67,7 @@ export class GetSubstituteReceiptPolicyUseCase {
       // had never seen. This is that image — resolved for THIS caller only, by the same
       // derived-first lookup that will certify with it, so no permission question arises.
       reusableSignaturePreviewUrl: reusableSignature
-        ? await signatureInlineUrl(this.storage, this.audit, ctx, reusableSignature)
+        ? signatureInlineUrl(this.audit, ctx, reusableSignature)
         : null,
     };
   }

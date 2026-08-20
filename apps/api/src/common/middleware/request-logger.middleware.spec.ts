@@ -44,12 +44,7 @@ describe('RequestLoggerMiddleware', () => {
     assert.equal(lines.length, 0);
   });
 
-  // FIX-1: `/document-delivery/{token}` carries a bearer credential in the URL, and the shared
-  // redactor only ever inspects KEY names — a plain-text path log hands every log reader the document.
-  it('masks a delivery token out of the logged path and leaves every other path alone', () => {
-    const masked = run(true, `/v1/document-delivery/${'A'.repeat(43)}`);
-    assert.equal(masked.lines[0]?.['path'], '/v1/document-delivery/:token');
-
+  it('logs the request path verbatim', () => {
     assert.equal(run(true).lines[0]?.['path'], '/v1/companies');
     assert.equal(
       run(true, '/v1/companies/c1/expenses/e1').lines[0]?.['path'],

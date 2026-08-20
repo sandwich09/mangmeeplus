@@ -17,6 +17,7 @@ import { round2, SETTLE_EPSILON, vendorBillTaxSourceChecksum } from '../domain/l
 import { deriveWhtIncomeBase } from '../../tax/domain/logic/wht-report.logic';
 import { civilDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay } from '@watchdog-bms/contracts';
 import { branchScopeWhere, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 
 export type ProcurementDocumentKind = 'PURCHASE_REQUEST' | 'PURCHASE_ORDER' | 'GOODS_RECEIPT' | 'VENDOR_BILL' | 'SUPPLIER_PAYMENT';
 
@@ -1142,6 +1143,10 @@ export class PrismaProcurementRepository {
         });
       }
       if (data.attachmentId) {
+        const conflict = await findAttachmentLinkConflict(tx, {
+          companyId, attachmentId: data.attachmentId, targetType: 'procurement.vendor_bill',
+        });
+        if (conflict) throw new UnprocessableEntityException(conflict);
         await tx.attachmentLink.createMany({
           data: [{ companyId, attachmentId: data.attachmentId, targetType: 'procurement.vendor_bill', targetId: id, purpose: 'tax_invoice', linkedByUserId: data.updatedByUserId }],
           skipDuplicates: true,

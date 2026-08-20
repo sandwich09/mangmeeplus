@@ -66,7 +66,7 @@ import { generateSourceJournal } from '../ledger/ledger.api';
 import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
-import { mayApproveSubstituteReceipt, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
+import { evaluateExpensePrerequisites, mayApproveSubstituteReceipt, payerWrittenMissingReason, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
 import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
@@ -403,7 +403,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const [taxStatus, setTaxStatus] = useState(detail.taxEvidenceStatus);
   const [categoryId, setCategoryId] = useState<string>(detail.expenseCategoryId ?? '');
   const [categories, setCategories] = useState<ExpenseCategorySummary[]>([]);
-  const [subReason, setSubReason] = useState(detail.missingReceiptReason ?? '');
+  const [subReason, setSubReason] = useState(payerWrittenMissingReason(detail.missingReceiptReason));
   const [subPurpose, setSubPurpose] = useState(detail.note ?? '');
   const [subReasonCode, setSubReasonCode] = useState<'PAYEE_CANNOT_ISSUE' | 'RECEIPT_UNAVAILABLE' | 'RECEIPT_MATERIALLY_INCOMPLETE' | 'OTHER'>('PAYEE_CANNOT_ISSUE');
   const [payerId, setPayerId] = useState(userId);
@@ -450,7 +450,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   }, [detail.sourceDocumentType, detail.taxEvidenceStatus, detail.expenseCategoryId]);
   // Same server-truth sync: the substitute draft below is saved on blur, and this card is rendered
   // twice (evidence step + review step), so both instances must follow the stored values.
-  useEffect(() => { setSubReason(detail.missingReceiptReason ?? ''); }, [detail.missingReceiptReason]);
+  useEffect(() => { setSubReason(payerWrittenMissingReason(detail.missingReceiptReason)); }, [detail.missingReceiptReason]);
   useEffect(() => { setSubPurpose(detail.note ?? ''); }, [detail.note]);
   useEffect(() => {
     void listExpenseCategories(companyId).then(setCategories).catch(() => setCategories([]));
@@ -538,6 +538,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   // The certificate is filled across visits (the payer signs later, often on another day), so the two
   // free-text fields save to the expense columns they already map to instead of dying with the page.
   // `run` reloads `detail`, which also keeps `expectedExpenseUpdatedAt` fresh for `prepareSubstitute`.
+  // `stored` is the value the FIELD was seeded with, not the raw column: the LINE capture marker
+  // seeds an empty box, and blurring an untouched empty box must not erase the marker off the row —
+  // the evidence-gap rules still read it.
   const saveSubstituteDraft = (field: 'missingReceiptReason' | 'note', value: string, stored: string | null) => {
     const next = value.trim();
     if (next === (stored ?? '')) return;
@@ -741,6 +744,35 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     canSelfApprove,
     approvalMode: substitutePolicy?.approvalMode,
   }) : false;
+  // Owner directive: never enable an action the server will reject, and never disable one silently.
+  // The same expense-level blockers the wizard names are enforced here, and every remaining
+  // condition is spelled out under its button instead of leaving it dead.
+  const substitutePrerequisites = evaluateExpensePrerequisites(detail);
+  const prepareBlockers = [
+    ...(substitutePrerequisites.missing.includes('reviewedAmount') ? ['ยอดรวมที่ตรวจแล้วต้องมากกว่า ฿0'] : []),
+    ...(substitutePrerequisites.missing.includes('reviewedCategory') ? ['เลือกหมวดค่าใช้จ่ายให้ครบทุกบรรทัด'] : []),
+    ...(payerState !== 'loaded' ? ['รายชื่อผู้จ่ายเงินยังโหลดไม่เสร็จ'] : []),
+    ...(substitutePolicyState !== 'loaded' || !substitutePolicy?.ready ? ['นโยบายผู้อนุมัติของบริษัท'] : []),
+    ...(!subReason.trim() ? ['เหตุผลที่ไม่มีใบเสร็จ'] : []),
+    ...(!subPurpose.trim() ? ['วัตถุประสงค์ทางธุรกิจ'] : []),
+    ...(!payerId ? ['ผู้จ่ายเงินจริง'] : []),
+    ...(!subPaymentDate ? ['วันที่จ่ายเงิน'] : []),
+    ...(selectedSupportingIds.length === 0 ? ['หลักฐานประกอบอย่างน้อย 1 ไฟล์'] : []),
+    ...(requiresPaymentEvidence && selectedPaymentIds.length === 0 ? ['หลักฐานการชำระเงิน'] : []),
+  ];
+  const certifyBlockers = [
+    ...(!signerPosition.trim() ? ['ตำแหน่งของผู้จ่ายเงิน'] : []),
+    ...(!previewChecksum ? ['กดสร้างและตรวจตัวอย่างก่อนลงนาม'] : []),
+    ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
+  ];
+  const approveBlockers = [
+    ...(!certifiedPreviewed ? ['เปิดตรวจฉบับที่ผู้จ่ายลงนาม'] : []),
+    ...(!signerPosition.trim() ? ['ตำแหน่งของผู้อนุมัติ'] : []),
+    ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
+  ];
+  const blockedNote = (labels: string[]) => labels.length === 0 ? null : (
+    <p className="text-xs leading-5 text-gray-600"><span className="font-bold text-warning-700">ยังกดไม่ได้ · ต้องทำให้ครบก่อน:</span> {labels.join(' · ')}</p>
+  );
 
   return (
     <MangmeeCard className="space-y-3 p-4 text-sm">
@@ -813,7 +845,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             <option value="RECEIPT_MATERIALLY_INCOMPLETE">หลักฐานไม่สมบูรณ์</option>
             <option value="OTHER">อื่น ๆ</option>
           </ThemedSelect>
-          <textarea className={inputClass} maxLength={500} rows={2} placeholder={t('expenses.substitute_reason_placeholder', locale)} value={subReason} onChange={(e) => setSubReason(stripDisallowed(e.target.value))} onBlur={() => saveSubstituteDraft('missingReceiptReason', subReason, detail.missingReceiptReason)} />
+          <textarea className={inputClass} maxLength={500} rows={2} placeholder={t('expenses.substitute_reason_placeholder', locale)} value={subReason} onChange={(e) => setSubReason(stripDisallowed(e.target.value))} onBlur={() => saveSubstituteDraft('missingReceiptReason', subReason, payerWrittenMissingReason(detail.missingReceiptReason))} />
           <textarea className={inputClass} maxLength={500} rows={2} placeholder="วัตถุประสงค์ทางธุรกิจ (จำเป็น)" value={subPurpose} onChange={(e) => setSubPurpose(stripDisallowed(e.target.value))} onBlur={() => saveSubstituteDraft('note', subPurpose, detail.note)} />
           <ThemedSelect className={inputClass} value={payerId} onChange={(event) => setPayerId(event.target.value)}>
             <option value="">เลือกพนักงานผู้จ่ายเงินจริง</option>
@@ -858,7 +890,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 <button className={ghostClass} disabled={busy || !paymentUploadFile} onClick={() => run(() => uploadEvidence('expense.payment.evidence'), 'เพิ่มหลักฐานการจ่ายเรียบร้อยแล้ว')}>เพิ่มหลักฐานการจ่าย</button>
               </div>
             </div>
-          <button className={btnClass} disabled={busy || payerState !== 'loaded' || substitutePolicyState !== 'loaded' || !substitutePolicy?.ready || !subReason.trim() || !subPurpose.trim() || !payerId || !subPaymentDate || selectedSupportingIds.length === 0 || (requiresPaymentEvidence && selectedPaymentIds.length === 0)} onClick={() => run(prepareSubstitute, evidence ? 'บันทึกใบรับรองฉบับแก้ไขเรียบร้อยแล้ว' : 'จัดทำใบรับรองเรียบร้อยแล้ว')}>{evidence ? 'บันทึกเป็น version แก้ไข' : t('expenses.substitute_confirm', locale)}</button>
+          <button className={btnClass} disabled={busy || prepareBlockers.length > 0} onClick={() => run(prepareSubstitute, evidence ? 'บันทึกใบรับรองฉบับแก้ไขเรียบร้อยแล้ว' : 'จัดทำใบรับรองเรียบร้อยแล้ว')}>{evidence ? 'บันทึกเป็น version แก้ไข' : t('expenses.substitute_confirm', locale)}</button>
+          {blockedNote(prepareBlockers)}
         </div>
       )}
       {evidence && (
@@ -897,7 +930,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 </div>
               )}
               <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
-              <button className={btnClass} disabled={busy || !signerPosition.trim() || !previewChecksum || (!paperSignature && signatureSource === 'none')} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
+              <button className={btnClass} disabled={busy || certifyBlockers.length > 0} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
+              {blockedNote(certifyBlockers)}
+              <p className="text-gray-500">ขั้นถัดไป: ผู้มีอำนาจอนุมัติและออกเอกสาร</p>
             </div>
           )}
           {evidence.status === 'PAYER_CERTIFIED' && !canApproveEvidence && <p>ผู้จ่ายลงนามแล้ว รอผู้มีสิทธิอนุมัติ</p>}
@@ -923,9 +958,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                   {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
                 </div>
               )}
-              <button className={btnClass} disabled={busy || !certifiedPreviewed || !signerPosition.trim() || (!paperSignature && signatureSource === 'none')} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
+              <button className={btnClass} disabled={busy || approveBlockers.length > 0} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
+              {blockedNote(approveBlockers)}
             </div>
           )}
+          {evidence.status === 'PREPARED' && <p>ดาวน์โหลดใบรับรองฉบับสมบูรณ์ได้หลังผู้จ่ายรับรองและผู้มีอำนาจอนุมัติแล้ว</p>}
+          {evidence.status === 'PAYER_CERTIFIED' && <p>ดาวน์โหลดใบรับรองฉบับสมบูรณ์ได้หลังผู้มีอำนาจอนุมัติแล้ว</p>}
           {evidence.status === 'ISSUED' && (
             <div className="flex flex-wrap gap-2">
               <button className={btnClass} disabled={busy || !evidence.artifactAttachmentId} onClick={() => run(() => downloadSubstituteReceiptPdf(companyId, detail.id, evidence.id, evidence.documentNumber), t('expenses.downloaded', locale), false, true)}>
@@ -1717,6 +1755,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       // export; say which rows it would have contained instead.
       if (result.rowCount === 0) { toast.warning(t('expenses.export_empty', locale)); return; }
       if (result.truncated) setExportNotice(`ส่งออก ${result.rowCount} จากทั้งหมด ${result.totalMatched} รายการ — แบ่งช่วงวันที่ให้สั้นลงเพื่อส่งออกให้ครบ`);
+      // An incomplete package must never look complete: files the caller may not open are dropped
+      // from the manifest, so say how many instead of handing over a quietly short set.
+      if (result.skippedEvidence.length > 0) {
+        setExportNotice((prev) => [prev, `ข้ามไฟล์แนบ ${result.skippedEvidence.length} ไฟล์ที่คุณไม่มีสิทธิ์เปิด`].filter(Boolean).join(' · '));
+      }
       downloadIndexXlsx(result, `expense-index-${gran === 'month' ? month : day}.xlsx`);
       setExported(true); setTimeout(() => setExported(false), 3000);
     } catch (e) {
@@ -1956,6 +1999,7 @@ function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: str
     try {
       const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
       if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
+      if (!(totals.grandTotal > 0)) throw new Error(t('expenses.manual_total_required', locale));
       const result = await createExpenseDraft(companyId, {
         captureSource: 'WEB_MANUAL', expenseDate, branchId, vatMode,
         inputVatClaimStatus: taxCodeDefinitionId ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE',
@@ -1984,6 +2028,7 @@ function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: str
     const lineTotals = calculateManualExpenseTotals({ quantity: '1', unitPrice: afterDiscount[index]!, vatRate: line.vatRate, vatMode });
     return { subtotal: sum.subtotal + lineTotals.subtotal, vat: sum.vat + lineTotals.vat, grandTotal: sum.grandTotal + lineTotals.grandTotal };
   }, { subtotal: 0, vat: 0, grandTotal: 0 });
+  const amountReady = totals.grandTotal > 0;
   const sectionTitle = (icon: ReactNode, title: DictionaryKey, helper: DictionaryKey) => (
     <div className="flex items-start gap-3">
       <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px] bg-brand-50 text-brand-700">{icon}</span>
@@ -2088,7 +2133,12 @@ function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: str
           <MangmeeBadge tone={taxCodeDefinitionId ? 'purple' : 'slate'}>{taxCodeName || t('expenses.manual_no_tax_code', locale)}</MangmeeBadge>
           {savedExpenseId
             ? <button type="button" className={cx(btnClass, 'w-full')} onClick={() => onSuccess(savedExpenseId)}>{t('expenses.manual_open_saved', locale)}</button>
-            : <button disabled={busy || preparingReceipt || !expenseDate || !items.every((item) => item.description.trim() && item.unitPrice)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>}
+            : <>
+              {/* `item.unitPrice` is truthy for "0", so a ฿0 draft used to save happily here and was
+                  only refused much later, by จัดทำใบรับรองแทนใบเสร็จ. The rule belongs to this form. */}
+              <button disabled={busy || preparingReceipt || !expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
+              {!amountReady && <p className="text-xs font-semibold leading-5 text-warning-700">{t('expenses.manual_total_required', locale)}</p>}
+            </>}
           <p className="text-xs leading-relaxed text-gray-500">{t('expenses.manual_intro', locale)}</p>
         </MangmeeCard>
       </div>

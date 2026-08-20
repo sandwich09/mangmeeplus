@@ -5,6 +5,7 @@ import type { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
+import { findAttachmentLinkConflict } from '../../data-model-core/domain/logic/attachment.logic';
 import { expenseRelatedToUserWhere } from '../../expenses/infrastructure/prisma-expense.repository';
 import { buildReversalLines } from '../../ledger/domain/logic/journal-balance.logic';
 import type {
@@ -1139,6 +1140,10 @@ export class PrismaReimbursementRepository {
           },
         });
         if (item.attachmentId) {
+          const conflict = await findAttachmentLinkConflict(tx, {
+            companyId: data.companyId, attachmentId: item.attachmentId, targetType: 'expense.record',
+          });
+          if (conflict) throw new UnprocessableEntityException(conflict);
           await tx.attachmentLink.createMany({
             data: [{
               companyId: data.companyId,
@@ -2274,6 +2279,10 @@ export class PrismaReimbursementRepository {
 
   /** Link write mirroring LinkAttachmentUseCase semantics; the caller asserts the attachment is ACTIVE and audits. */
   async linkSignedClaimFormCopy(companyId: string, requestId: string, attachmentId: string, linkedByUserId: string): Promise<void> {
+    const conflict = await findAttachmentLinkConflict(this.prisma.client, {
+      companyId, attachmentId, targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+    });
+    if (conflict) throw new UnprocessableEntityException(conflict);
     await this.prisma.client.attachmentLink.upsert({
       where: {
         attachmentId_targetType_targetId_purpose: {

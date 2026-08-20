@@ -4,7 +4,10 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { AuditService } from '../../../audit/application/audit.service';
 import { OutboxAppendService } from '../../../data-model-core/application/services/outbox-append.service';
 import { CreateExpenseDraftUseCase } from './expense-draft.use-case';
-import { validateCaptureHints, deriveTaxEvidence, isLineTextExpenseCaptureEligible, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
+import {
+  validateCaptureHints, deriveTaxEvidence, isLineTextExpenseCaptureEligible, toSourceDocumentType,
+  LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER,
+} from '../../domain/logic/expense-document.logic';
 import { consumptionWithinTx, type ClarificationConsumption } from '../../../line-ai/application/line-ai-consumption-marker';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import type {
@@ -162,7 +165,7 @@ export class CaptureLineExpenseNoteUseCase {
       vatMode: validated.vatMode,
       inputVatClaimStatus: 'NEEDS_REVIEW',
       ...(!initialState && validated.expenseCategoryId ? { expenseCategoryId: validated.expenseCategoryId } : {}),
-      missingReceiptReason: 'LINE text-only expense note; evidence file not attached',
+      missingReceiptReason: LINE_TEXT_NOTE_MISSING_RECEIPT_MARKER,
       note: initialState?.header.businessPurpose ?? description,
       lines: draftLines,
     });

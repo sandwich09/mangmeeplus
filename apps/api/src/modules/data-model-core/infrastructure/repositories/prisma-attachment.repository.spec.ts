@@ -165,10 +165,11 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
 });
 
 describe('PrismaAttachmentRepository.linkToTarget', () => {
-  function setup(input: { attachment?: object | null; target?: object | null } = {}) {
+  function setup(input: { attachment?: object | null; target?: object | null; conflictingLink?: object | null } = {}) {
     const attachmentObject = { findFirst: mock.fn(async () => input.attachment === undefined ? { id: 'att-1' } : input.attachment) };
     const expenseRecord = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'expense-1' } : input.target) };
     const attachmentLink = {
+      findFirst: mock.fn(async () => input.conflictingLink ?? null),
       create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
     };
     const tx = { attachmentObject, expenseRecord, attachmentLink };
@@ -219,6 +220,25 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
       purpose: 'crm.profile.photo',
       linkedByUserId: 'user-1',
     }), /target or purpose/i);
+    assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
+    assert.equal(attachmentLink.create.mock.callCount(), 0);
+  });
+
+  it('refuses to hang a signature-library image off an expense', async () => {
+    // QA's repro: POST /attachments/:id/links with a signature attachment and an ordinary receipt
+    // purpose returned 201, and from then on every reviewer of that expense got the owner-only 403
+    // from the shared download path — a blank document viewer, not just a failed click. Loosening
+    // that gate would instead let any `expense.review` holder read a colleague's signature, so the
+    // state is refused where it is created.
+    const { repo, expenseRecord, attachmentLink } = setup({ conflictingLink: { targetType: 'company.signature_asset' } });
+    await assert.rejects(() => repo.linkToTarget({
+      companyId: 'co-1',
+      attachmentId: 'att-signature',
+      targetType: 'expense.record',
+      targetId: 'expense-1',
+      purpose: 'expense.receipt.primary',
+      linkedByUserId: 'user-1',
+    }), /personal signature image cannot be attached/);
     assert.equal(expenseRecord.findFirst.mock.callCount(), 0);
     assert.equal(attachmentLink.create.mock.callCount(), 0);
   });
