@@ -22,7 +22,9 @@ import {
   REQUIRED_ANY_PERMISSIONS_KEY,
   REQUIRED_PERMISSIONS_KEY,
 } from '../../../../common/security/permissions.decorator';
-import { ExpenseController } from '../../presentation/http/expense.controller';
+import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
+import { ExpenseController, ExpenseSignatureController } from '../../presentation/http/expense.controller';
+import { ListSignatureAssetsUseCase } from './signature-asset.use-case';
 import { GetExpenseUseCase } from './expense-draft.use-case';
 import { ListSubstituteReceiptHistoryUseCase } from './substitute-receipt.use-case';
 
@@ -166,4 +168,60 @@ describe('substitute-receipt payer access (audit H-4)', () => {
       ForbiddenException,
     );
   });
+});
+
+/**
+ * F2, same failure shape one screen over. `RequirePermissions` is ALL-of, so the signature-queue
+ * endpoint demanded `expense.signature.manage` from everyone — including the owner whose only
+ * signature key is `approve`, whose queue it is, and whom the un-parked screen (2026-08-20) sends
+ * there by nav entry and by LINE deep link. The use case, the capability model, the nav gate and
+ * the route gate all say manage-or-approve; only the decorator disagreed, so the screen loaded and
+ * its one API call 403'd.
+ */
+describe('signature queue access (F2)', () => {
+  const APPROVE_ONLY = {
+    requestId: 'req-1', authSubject: 'owner-1', userId: 'owner-1', companyId: 'co-1',
+    membershipId: 'mem-1', roles: ['OWNER'], permissions: ['expense.signature.approve'],
+    scopes: {}, authProvider: 'watchdog',
+  } as any;
+
+  function acceptedByController(handler: keyof ExpenseSignatureController): { all: string[]; any: string[] } {
+    const method = (ExpenseSignatureController.prototype as unknown as Record<string, object>)[handler]!;
+    return {
+      all: (Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, method) ?? []) as string[],
+      any: (Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, method) ?? []) as string[],
+    };
+  }
+
+  it('lets an approve-only owner through the guard and the use case alike', async () => {
+    const gate = acceptedByController('list');
+    // ALL-of would make every listed key mandatory; this endpoint has three equivalent authorities.
+    assert.deepEqual(gate.all, [], 'the queue must not use the ALL-of decorator');
+    assert.ok(gate.any.includes('expense.signature.approve'), 'the approver owns this queue');
+    assert.ok(gate.any.includes('expense.signature.manage'));
+    assert.ok(gate.any.includes('expense.review'), 'reviewers still get the ACTIVE fill picker');
+    assert.ok(new DenyByDefaultGuard(reflectorFor(gate)).canActivate(guardContext(APPROVE_ONLY)));
+
+    const repo = { listSignatureAssets: async () => [] } as any;
+    const storage = { createDownloadUrl: async () => ({ url: 'u', expiresAt: new Date() }) } as any;
+    assert.deepEqual(
+      await new ListSignatureAssetsUseCase(repo, storage, { log: async () => undefined } as any).execute(APPROVE_ONLY),
+      [],
+    );
+  });
+
+  /** The real guard, fed the real decorator metadata — not a restatement of its rules. */
+  function reflectorFor(gate: { all: string[]; any: string[] }) {
+    return {
+      getAllAndOverride: (key: string) => (key === REQUIRED_PERMISSIONS_KEY ? gate.all : key === REQUIRED_ANY_PERMISSIONS_KEY ? gate.any : undefined),
+    } as any;
+  }
+
+  function guardContext(ctx: unknown) {
+    return {
+      getHandler: () => ({}),
+      getClass: () => ({}),
+      switchToHttp: () => ({ getRequest: () => ({ context: ctx }) }),
+    } as any;
+  }
 });

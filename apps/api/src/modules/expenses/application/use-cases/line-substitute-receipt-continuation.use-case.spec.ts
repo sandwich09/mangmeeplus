@@ -22,13 +22,18 @@ import { PDFDocument } from 'pdf-lib';
 
 const WEB_BASE = 'https://app.example.com';
 
-function ctx(): RequestContext {
+function ctx(permissions = ['expense.review', 'expense.confirm']): RequestContext {
   return {
     requestId: 'req-1', authSubject: 'user-1', userId: 'user-1', companyId: 'company-1',
-    membershipId: 'mem-1', roles: ['OWNER'], permissions: ['expense.review', 'expense.confirm'],
+    membershipId: 'mem-1', roles: ['OWNER'], permissions,
     scopes: { branchIds: ['branch-1'] }, authProvider: 'line',
   };
 }
+
+/** F8: submitting a signature needs `expense.signature.manage`. Whoever holds it gets the
+ *  send-me-a-photo script; whoever does not gets the paper route, because for them the photo
+ *  script ends in a refusal. */
+const SIGNER = ['expense.review', 'expense.confirm', 'expense.signature.manage'];
 
 function expense(overrides: Record<string, unknown> = {}) {
   return {
@@ -816,10 +821,10 @@ describe('R13 — the assistant asks before producing the document', () => {
     });
   }
 
-  it('choice 1 without any signature asks for the photo and keeps the decision pending', async () => {
+  it('choice 1 without any signature asks a signer for the photo and keeps the decision pending', async () => {
     const h = await readyHarness();
 
-    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.equal(h.prepares.length, 0, 'no signature means nothing is prepared');
     assert.match(answered.replyText, /เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น/);
@@ -837,7 +842,7 @@ describe('R13 — the assistant asks before producing the document', () => {
     // lookup cannot see. Without the status read this reply repeats forever.
     const h = await readyHarness({ latestSignature: { status: 'PENDING_OWNER_APPROVAL', rejectReason: null } });
 
-    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.match(answered.replyText, /ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บ/);
     assert.equal(answered.replyText.includes('เซ็นบนกระดาษขาว'), false, 'it must not ask for the same photo again');
@@ -849,15 +854,47 @@ describe('R13 — the assistant asks before producing the document', () => {
     );
 
     // …and the offered way out works on the very next turn.
-    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const form = await h.useCase.execute(ctx(SIGNER), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(h.prepares.length, 1, 'the loop progresses instead of repeating');
     assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+  });
+
+  // F8: the script asked staff for a photo they have no permission to submit — they sent it, the
+  // answer was refused, and they were back where they started. The paper route is their real path.
+  it('steers a member who cannot submit signatures straight to the paper form', async () => {
+    const h = await readyHarness();
+
+    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    assert.equal(answered.replyText.includes('เซ็นบนกระดาษขาว'), false, 'never ask for a photo they cannot submit');
+    assert.equal(answered.replyText.includes('ส่งรูปลายเซ็นเข้ามา'), false);
+    assert.match(answered.replyText, /ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบ/);
+    assert.match(answered.replyText, /ขอฟอร์มไปเซ็นด้วยมือ/);
+    assert.equal(answered.blockers[0]?.code, 'reusable_signature_not_submittable');
+    // The one offered way out has to work on the next turn.
+    const form = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(h.prepares.length, 1);
+    assert.match(form.replyText, /แบบฟอร์มรอลงนาม/);
+  });
+
+  // …and the numbered media question must not offer a choice that ends in the same refusal.
+  it('omits the signature choice from the media question for a member who cannot submit one', async () => {
+    const h = await readyHarness();
+    await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+
+    const signer = await h.useCase.loadOpenMediaContext(ctx(SIGNER), 'chat-hash');
+    assert.equal(signer?.signatureRequested, true);
+    assert.ok(substituteMediaChoices(signer!).includes('SIGNATURE'));
+
+    const staff = await h.useCase.loadOpenMediaContext(ctx(), 'chat-hash');
+    assert.equal(staff?.signatureRequested, false, 'the flag was written, the permission is what decides');
+    assert.equal(substituteMediaChoices(staff!).includes('SIGNATURE'), false);
   });
 
   it('says a rejected signature was rejected, with its reason, instead of asking again blindly', async () => {
     const h = await readyHarness({ latestSignature: { status: 'REJECTED', rejectReason: 'ลายเซ็นไม่ชัด' } });
 
-    const answered = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    const answered = await h.useCase.execute(ctx(SIGNER), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
 
     assert.match(answered.replyText, /ไม่ผ่านการอนุมัติ/);
     assert.match(answered.replyText, /ลายเซ็นไม่ชัด/);
@@ -1204,12 +1241,21 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
   });
 
   it('offers the signed-form choice only while a form awaits, always keeps the do-not-record escape', () => {
-    const awaiting = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [SCAN] });
+    const awaiting = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [SCAN], signatureRequested: false });
     assert.deepEqual(awaiting, ['WET_SIGNED_SCAN', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
     assert.equal(substituteMediaAnswer('1', awaiting), 'WET_SIGNED_SCAN');
     assert.equal(substituteMediaAnswer('5', awaiting), 'NO_RECORD');
 
-    const plain = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [] });
+    // A3: a photo sent right after “ส่งรูปลายเซ็นเข้ามาได้เลย” had no answer on this list that could
+    // become a signature, so the only honest choices were “new expense” or “do not record”.
+    const blocked = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [], signatureRequested: true });
+    assert.deepEqual(blocked, ['SIGNATURE', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
+    assert.equal(substituteMediaAnswer('1', blocked), 'SIGNATURE');
+    assert.match(substituteMediaQuestion(blocked), /1\) ลายเซ็นของฉัน/);
+    // Offered only while the work is blocked on one.
+    assert.equal(substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [SCAN], signatureRequested: false }).includes('SIGNATURE'), false);
+
+    const plain = substituteMediaChoices({ expenseId: 'expense-1', awaitingScans: [], signatureRequested: false });
     assert.deepEqual(plain, ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD']);
     assert.equal(substituteMediaQuestion(plain).includes('ฟอร์มที่เซ็นแล้ว'), false);
     assert.match(substituteMediaQuestion(plain), /4\) ภาพประกอบคำถาม ไม่ต้องบันทึก/);

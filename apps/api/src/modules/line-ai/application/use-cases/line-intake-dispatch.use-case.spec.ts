@@ -1372,7 +1372,9 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.signatureCreated[0].submittedFromChannel, 'LINE');
     assert.equal(h.signatureCreated[0].lineMessageId, 'msg-media-1');
     assert.match(h.replies[0] ?? '', /รอเจ้าของกิจการอนุมัติ/);
-    assert.match(h.replies[0] ?? '', /tab=signatures/);
+    // A2: `?tab=signatures` was a no-op query on a route that redirected away. The link now names
+    // the un-parked screen and the row inside it.
+    assert.match(h.replies[0] ?? '', /expenses\/signatures\?signatureId=/);
     assert.ok(!/บันทึกข้อมูลค่าใช้จ่าย/.test(h.replies[0] ?? ''));
   });
 

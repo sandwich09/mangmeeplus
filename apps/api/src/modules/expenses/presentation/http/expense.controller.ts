@@ -601,8 +601,14 @@ export class ExpenseSignatureController {
     private readonly setDerived: SetSignatureDerivedAssetUseCase,
   ) {}
 
+  /**
+   * `RequirePermissions` is ALL-of, so this endpoint demanded `expense.signature.manage` from
+   * everyone — including the owner whose only signature key is `approve`, whose queue this is, and
+   * whom the un-parked screen (2026-08-20) sends here by nav entry and by LINE deep link. The use
+   * case has always resolved all three authorities itself, and narrows the rows for a reviewer.
+   */
   @Get()
-  @RequirePermissions('expense.signature.manage')
+  @RequireAnyPermission('expense.signature.manage', 'expense.signature.approve', 'expense.review')
   list(@ReqCtx() ctx: RequestContext, @Query('status') status?: string) {
     return this.listAssets.execute(ctx, status);
   }

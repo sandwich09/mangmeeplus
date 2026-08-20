@@ -455,6 +455,8 @@ describe('buildNavItems', () => {
       'expenses.upload',
       'expenses.manual',
       'expenses.categories',
+      // Un-parked 2026-08-20 (owner decision): substitute receipts certify with these assets.
+      'expenses.signatures',
       'expenses.substitute_receipt',
       'expenses.substitute_receipt_policy',
       'expenses.evidence',
@@ -464,10 +466,21 @@ describe('buildNavItems', () => {
       '/companies/owner-company/expenses/upload',
       '/companies/owner-company/expenses/manual',
       '/companies/owner-company/expenses/categories',
+      '/companies/owner-company/expenses/signatures',
       '/companies/owner-company/expenses/substitute-receipts',
       '/companies/owner-company/settings/substitute-receipt',
       '/companies/owner-company/expenses/evidence',
     ]);
+  });
+
+  // The queue is the approver's to clear, so the approval permission alone has to reach it — an
+  // owner who never uploads a signature holds only that one.
+  it('gives a signature approver the queue entry without any other expense permission', () => {
+    const permissions = ['expense.read_own', 'expense.signature.approve'];
+    const modules = filterModulesByPermissions(WORKSPACE_MODULES, permissions);
+    const expenses = buildNavItems(modules, 'owner-company', 'th', {}, permissions).find((nav) => nav.key === 'expenses');
+    const signatures = expenses?.subItems?.find((sub) => sub.key === 'expenses.signatures');
+    assert.equal(signatures?.href, '/companies/owner-company/expenses/signatures');
   });
 
   it('shows only the list submenu to a read-only expense user', () => {

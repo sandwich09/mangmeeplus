@@ -475,6 +475,14 @@ describe('expenseCapabilities', () => {
     assert.equal(canAccessExpenseTab('evidence', expenseCapabilities(['expense.evidence.read'])), true);
   });
 
+  // Un-parked 2026-08-20 (owner decision). It was hard-false, so the route redirected away and the
+  // LINE assistant's approval link went nowhere.
+  it('opens the signature tab for managers and approvers, and nobody else', () => {
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.manage'])), true);
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.approve'])), true);
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.review'])), false);
+  });
+
   it('keeps related-view authority read-only', () => {
     const caps = expenseCapabilities(['expense.read_related']);
     assert.equal(caps.canViewList, true);

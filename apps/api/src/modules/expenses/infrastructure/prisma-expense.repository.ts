@@ -1069,10 +1069,14 @@ export class PrismaExpenseRepository {
    *  candidate scan before deciding whether it may become part of a legal document. */
   async findActiveAttachmentObject(companyId: string, attachmentId: string): Promise<{
     bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; checksumSha256: string | null;
+    byteSize: number; originalFileName: string;
   } | null> {
     const row = await this.prisma.client.attachmentObject.findFirst({
       where: { id: attachmentId, companyId, status: 'ACTIVE' },
-      select: { bucket: true, objectKey: true, objectVersionId: true, mimeType: true, checksumSha256: true },
+      select: {
+        bucket: true, objectKey: true, objectVersionId: true, mimeType: true, checksumSha256: true,
+        byteSize: true, originalFileName: true,
+      },
     });
     return row ? {
       bucket: row.bucket,
@@ -1080,6 +1084,8 @@ export class PrismaExpenseRepository {
       ...(row.objectVersionId ? { objectVersionId: row.objectVersionId } : {}),
       mimeType: row.mimeType,
       checksumSha256: row.checksumSha256,
+      byteSize: row.byteSize,
+      originalFileName: row.originalFileName,
     } : null;
   }
 
@@ -1197,7 +1203,7 @@ export class PrismaExpenseRepository {
     companyId: string,
     userId: string,
     attachmentId?: string,
-  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256: string | null } | null> {
+  ): Promise<{ id: string; bucket: string; objectKey: string; objectVersionId?: string; mimeType: string; byteSize: number; checksumSha256: string | null; originalFileName: string } | null> {
     const assets = await this.prisma.client.companySignatureAsset.findMany({
       where: {
         companyId,
@@ -1233,6 +1239,7 @@ export class PrismaExpenseRepository {
           id: row.id, bucket: row.bucket, objectKey: row.objectKey,
           objectVersionId: row.objectVersionId ?? undefined,
           mimeType: row.mimeType, byteSize: row.byteSize, checksumSha256: row.checksumSha256,
+          originalFileName: row.originalFileName,
         };
       }
     }
@@ -2733,6 +2740,10 @@ export class PrismaExpenseRepository {
     submittedByUserId: string;
     submittedFromChannel: SignatureSubmitChannel;
     lineMessageId?: string;
+    /** A10 auto-approve: a submitter who already holds the approval permission lands ACTIVE. */
+    status?: string;
+    approvedByUserId?: string;
+    approvedAt?: Date;
   }): Promise<SignatureAssetRecord> {
     const s = await this.prisma.client.companySignatureAsset.create({
       data: {
@@ -2742,9 +2753,70 @@ export class PrismaExpenseRepository {
         submittedByUserId: input.submittedByUserId,
         submittedFromChannel: input.submittedFromChannel as any,
         lineMessageId: input.lineMessageId,
+        ...(input.status !== undefined && { status: input.status as any }),
+        ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
+        ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
       },
     });
     return mapSignatureAsset(s);
+  }
+
+  /**
+   * Registers server-generated signature bytes (the downscaled / background-removed render) as an
+   * ACTIVE attachment. Same shape the certified-artifact writes use: the object is already in
+   * storage, so there is no upload intent to complete and no second copy to verify.
+   */
+  async createGeneratedSignatureAttachment(input: {
+    companyId: string;
+    uploadedByUserId: string;
+    originalFileName: string;
+    mimeType: string;
+    byteSize: number;
+    checksumSha256: string;
+    storageProvider: string;
+    bucket: string;
+    objectKey: string;
+    objectVersionId: string;
+    metadataJson: Record<string, unknown>;
+  }): Promise<string> {
+    const attachment = await this.prisma.client.attachmentObject.create({
+      data: {
+        companyId: input.companyId,
+        // Company-central, exactly like the upload-intent path leaves a signature: a signature
+        // belongs to a person, not a branch, and branch scoping must never hide it from its owner.
+        branchId: null,
+        storageProvider: input.storageProvider,
+        bucket: input.bucket,
+        objectKey: input.objectKey,
+        objectVersionId: input.objectVersionId,
+        originalFileName: input.originalFileName,
+        mimeType: input.mimeType,
+        byteSize: input.byteSize,
+        checksumSha256: input.checksumSha256,
+        visibility: 'INTERNAL',
+        status: 'ACTIVE',
+        uploadedByUserId: input.uploadedByUserId,
+        uploadedAt: new Date(),
+        metadataJson: input.metadataJson as any,
+      },
+      select: { id: true },
+    });
+    return attachment.id;
+  }
+
+  /** Who may act on a company-level thing, by permission key. Same role join the approver lookup
+   *  above uses; branch scope is irrelevant because signature assets are company-central. */
+  async listUserIdsWithPermission(companyId: string, permissionKey: string): Promise<string[]> {
+    const memberships = await this.prisma.client.companyMembership.findMany({
+      where: {
+        companyId,
+        status: 'ACTIVE',
+        user: { status: 'ACTIVE' },
+        roles: { some: { role: { status: 'ACTIVE', permissions: { some: { permission: { key: permissionKey } } } } } },
+      },
+      select: { userId: true },
+    });
+    return [...new Set(memberships.map((membership) => membership.userId))];
   }
 
   async findSignatureAssetById(companyId: string, id: string): Promise<SignatureAssetRecord | null> {

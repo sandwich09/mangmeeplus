@@ -33,6 +33,7 @@ import {
   LineSubstituteReceiptContinuationUseCase,
   numberedSelection,
   parseSubstituteMediaQuestion,
+  isSignatureCaptionText,
   substituteMediaAnswer,
   substituteMediaChoices,
   substituteMediaQuestion,
@@ -40,7 +41,6 @@ import {
   substituteScanConfirmAnswer,
   substituteScanConfirmQuestion,
   substituteScanPickQuestion,
-  type LineSubstituteMediaChoice,
   type LineSubstituteMediaContext,
   type LineSubstituteMediaQuestion,
   type LineSubstituteMediaScan,
@@ -159,8 +159,6 @@ const MEDIA_CLARIFY_REPLY = [
 /** §11 escape: the picture answered a question and is not evidence of anything. Same outcome the
  *  receipt clarify's choice 2 has always had — the bytes stay stored, nothing is recorded. */
 const MEDIA_NOT_RECORDED_REPLY = '🖼️ รับทราบค่ะ เก็บรูปไว้เฉยๆ ไม่ได้บันทึกเป็นหลักฐานของรายการไหน';
-/** The class question with the signed-form choice removed (§15: nothing is awaiting a scan). */
-const WITHOUT_SCAN_CHOICES: LineSubstituteMediaChoice[] = ['PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD'];
 const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรายการนะคะ กรุณาระบุยอดเงินและวัตถุประสงค์หรือหมวดค่าใช้จ่ายให้ครบ เช่น “ค่าเดินทาง 200 บาท”';
 /** One turn that both captured an expense and ran the substitute continuation reports both outcomes
  *  under this separator; the capture stands on its own when the continuation cannot be evaluated. */
@@ -321,14 +319,28 @@ function formatBusinessDocumentReply(
   }
 }
 
-function formatSignatureTicketReply(webBaseUrl: string | undefined, companyId: string, signatureId: string): string {
-  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses?tab=signatures&signatureId=${signatureId}`);
-  return [
-    '✍️ รับรูปลายเซ็นแล้ว และสร้างคำขออนุมัติในเว็บให้แล้ว',
-    'สถานะ: รอเจ้าของกิจการอนุมัติ (ยังใช้งานลายเซ็นไม่ได้)',
-    '',
-    `เปิดดูคำขออนุมัติ:\n${link}`,
-  ].join('\n');
+function formatSignatureTicketReply(
+  webBaseUrl: string | undefined,
+  companyId: string,
+  signatureId: string,
+  /** A10: an owner who may approve signatures had theirs approved at creation, so the "you cannot
+   *  use it yet" line would be a plain lie to the person most likely to try. */
+  status: string,
+): string {
+  const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/signatures?signatureId=${signatureId}`);
+  return status === 'ACTIVE'
+    ? [
+      '✍️ รับรูปลายเซ็นแล้ว และบันทึกเป็นลายเซ็นประจำตัวให้แล้ว',
+      'สถานะ: อนุมัติแล้ว ใช้ลงนามเอกสารได้ทันที',
+      '',
+      `เปิดดูลายเซ็น:\n${link}`,
+    ].join('\n')
+    : [
+      '✍️ รับรูปลายเซ็นแล้ว และสร้างคำขออนุมัติในเว็บให้แล้ว',
+      'สถานะ: รอเจ้าของกิจการอนุมัติ (ยังใช้งานลายเซ็นไม่ได้)',
+      '',
+      `เปิดดูคำขออนุมัติ:\n${link}`,
+    ].join('\n');
 }
 
 type LineCompanyMembership = {
@@ -2455,20 +2467,28 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const uploadIntent = await this.initSignatureUpload.execute(ctx, {
-        originalFileName: media.fileName,
-        mimeType: media.mimeType,
-        byteSize: media.byteSize,
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media });
+      await this.deliverCompletedReply(event, ticketReply, companyId, access);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: `[ผู้ใช้ส่งรูปลายเซ็น]${captionSuffix}`, replyText: ticketReply, intent: 'SIGNATURE_REQUEST',
       });
-      await this.uploadLineMedia(uploadIntent, media);
-      const asset = await this.createSignatureAsset.execute(ctx, {
-        attachmentId: uploadIntent.attachmentId,
-        checksumSha256: media.checksumSha256,
-        byteSize: media.byteSize,
-        submittedFromChannel: 'LINE',
-        lineMessageId: event.lineMessageId,
-      });
-      const ticketReply = formatSignatureTicketReply(this.config.webBaseUrl, companyId, asset.id);
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
+
+    // A4: a signature photo must still reach the library when the router cannot answer. It is one
+    // AI call away from UNAVAILABLE, and a degraded turn used to send the crop down expense capture
+    // (or, with substitute work open, one “ใช่” away from being a certificate's wet-signed original).
+    //
+    // ONLY when nothing was routed, the same guard the substitute branch below uses. `ลายเซ็น` is a
+    // substring test, and a real routed receipt says things like “ค่าทำป้ายลายเซ็น 500 บาท”: reading
+    // that as intent would file the receipt as the newest signature for legal documents AND lose the
+    // expense. A reachable router that looked at both the caption and the picture outranks a regex.
+    if (routePlan.status !== 'ROUTED'
+      && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
+      && this.initSignatureUpload && this.createSignatureAsset) {
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -2480,11 +2500,32 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY') {
       const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
+      // A4: this branch asked a question about a photo and then threw the photo away. Whatever the
+      // customer answered — “ใบเสร็จ”, “ลายเซ็น”, “หลักฐานการจ่าย” — there were no bytes left to act
+      // on. Park them on the same pending row every other clarify uses; the reply is unchanged, and
+      // a failure to park must not swallow the question the customer is waiting for.
+      let parked: Awaited<ReturnType<ProcessLineWebhookUseCase['ensurePendingMedia']>> | undefined;
+      if (canCaptureExpense) {
+        try {
+          parked = await this.ensurePendingMedia(
+            ctx, event, companyId, identity.userId, caption, media, receiptClarifyQuestion(event),
+          );
+        } catch (error) {
+          this.logger.warn({ msg: 'line_clarify_pending_media_failed', requestId, error: (error as Error).message });
+        }
+      }
       await this.deliverReply(event, clarifyReply);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: `[ผู้ใช้ส่งรูป/ไฟล์]${captionSuffix}`, replyText: clarifyReply, intent: 'CLARIFY',
+        userMessagePreview: `${parked?.pending ? mediaPreviewLabel(parked.pending) : '[ผู้ใช้ส่งรูป/ไฟล์]'}${captionSuffix}`,
+        replyText: clarifyReply, intent: 'CLARIFY',
       });
+      if (parked?.created && parked.pending) {
+        await this.appendMediaClarification({
+          companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
+          userId: identity.userId, caption, question: clarifyReply, pending: parked.pending,
+        });
+      }
       await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
       return;
     }
@@ -2934,6 +2975,43 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
+  /**
+   * A3/A4: the one way a LINE photo becomes a signature asset, shared by every route that can
+   * decide it is one — the router's ticket, an explicit ลายเซ็น caption while the router is
+   * degraded, and the numbered answer to the substitute media question. `attachmentId` names bytes
+   * that are already stored and completed (the pending-media row); without it the media is uploaded
+   * here. Everything downstream — de-duplication on `lineMessageId`, the auto-approve, the
+   * background removal and the size fix — lives in `CreateSignatureAssetUseCase`, once.
+   */
+  private async createLineSignatureAsset(input: {
+    ctx: RequestContext;
+    event: Pick<LineReceiptUploadEvent, 'lineMessageId'>;
+    companyId: string;
+    /** Omitted only when `attachmentId` names bytes that are already stored. */
+    media?: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer };
+    attachmentId?: string;
+  }): Promise<string> {
+    let attachmentId = input.attachmentId;
+    if (!attachmentId) {
+      const uploadIntent = await this.initSignatureUpload!.execute(input.ctx, {
+        originalFileName: input.media!.fileName,
+        mimeType: input.media!.mimeType,
+        byteSize: input.media!.byteSize,
+      });
+      await this.uploadLineMedia(uploadIntent, input.media!);
+      attachmentId = uploadIntent.attachmentId;
+    }
+    const asset = await this.createSignatureAsset!.execute(input.ctx, {
+      attachmentId,
+      checksumSha256: input.media?.checksumSha256,
+      byteSize: input.media?.byteSize,
+      submittedFromChannel: 'LINE',
+      lineMessageId: input.event.lineMessageId,
+      ...(input.attachmentId ? { attachmentAlreadyActive: true } : {}),
+    });
+    return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, asset.status);
+  }
+
   /** §11 arrival half. The bytes are held by the SAME pending-media row the receipt clarify uses,
    *  which is what makes this idempotent on redelivery and what keeps a second photo from opening a
    *  second question — and the question they are waiting on is recorded WITH them, so the answer can
@@ -2955,9 +3033,11 @@ export class ProcessLineWebhookUseCase {
     const { event, ctx, companyId, context } = input;
     const chatKeyHash = chatKeyHashOf(event);
     const classified = classifySubstituteMedia(input.caption, context.awaitingScans.length > 0);
-    // A signature belongs to the signature library, not inside a certificate. The router normally
-    // routes it, but a DEGRADED router must not be able to put a signature crop one “ใช่” away from
-    // becoming the wet-signed original of a legal document.
+    // A signature belongs to the signature library, not inside a certificate. The router's ticket
+    // and the A4 caption route above claim the turns they can; what still reaches here with a
+    // signature caption is a sender without `expense.signature.manage`, or a routed capture whose
+    // caption merely mentions ลายเซ็น. Either way it must not become the D9 confirm, where one
+    // “ใช่” would file it as a legal document's wet-signed original.
     if (classified === 'SIGNATURE') return undefined;
     // These bytes already became an expense on an earlier delivery — the substitute context opened
     // afterwards. Redelivery reuses that one record below; it must not also store a second copy here.
@@ -3030,7 +3110,7 @@ export class ProcessLineWebhookUseCase {
     return { outcome: 'done' };
   }
 
-  private async resolvePendingRow(id: string, status: 'RESOLVED_RECEIPT' | 'RESOLVED_ILLUSTRATION'): Promise<void> {
+  private async resolvePendingRow(id: string, status: 'RESOLVED_RECEIPT' | 'RESOLVED_ILLUSTRATION' | 'RESOLVED_SIGNATURE'): Promise<void> {
     await this.prisma.client.lineIntakePendingMedia.updateMany({ where: { id, status: 'PENDING' }, data: { status } });
   }
 
@@ -3062,6 +3142,10 @@ export class ProcessLineWebhookUseCase {
       return this.refuseSubstituteMediaAnswer(event, ctx, access, text,
         '📄 งานใบรับรองแทนใบเสร็จรับเงินในแชทนี้ไม่ได้เปิดค้างไว้แล้วค่ะ ไฟล์ที่ส่งมายังเก็บไว้ ยังไม่ได้บันทึกเป็นหลักฐานของรายการใด');
     }
+    // The list to fall back on once no form is awaiting a scan. Derived from the live context
+    // rather than a fixed const, so A3's signature choice survives every re-ask: this chat can be
+    // blocked on a signature while a scan question is open, and a hardcoded list dropped it.
+    const withoutScanChoices = substituteMediaChoices({ ...context, awaitingScans: [] });
     if (asked.kind === 'SUBSTITUTE_SCAN_CONFIRM') {
       const scan = context.awaitingScans.find((item) => item.evidenceId === asked.evidenceId);
       const confirmed = scan ? substituteScanConfirmAnswer(text) : undefined;
@@ -3074,14 +3158,14 @@ export class ProcessLineWebhookUseCase {
           ? this.askSubstituteMediaQuestion(event, ctx, access, pending, text, substituteScanPickQuestion(others),
             { kind: 'SUBSTITUTE_SCAN_PICK', chatKeyHash, evidenceIds: others.map((item) => item.evidenceId) })
           : this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-            substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
-            { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+            substituteMediaQuestion(withoutScanChoices),
+            { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
       // The form stopped awaiting a scan while the question was open: never link, ask again.
       if (!scan) {
         return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-          substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
-          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+          substituteMediaQuestion(withoutScanChoices),
+          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
       return { outcome: 'not_answered', question: substituteScanConfirmQuestion(scan) };
     }
@@ -3106,12 +3190,41 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
       return { outcome: 'handled' };
     }
+    if (answer === 'SIGNATURE') {
+      // A3: the photo the assistant asked for, finally reaching the library. §14's rule stands —
+      // the answer is checked against the permission the action needs, not the one that parked it.
+      if (!ctx.permissions.includes('expense.signature.manage') || !this.initSignatureUpload || !this.createSignatureAsset) {
+        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_FORBIDDEN_REPLY);
+      }
+      // F9: certification resolves signatures through a PNG/JPEG-only lookup, so a PDF answered as
+      // "my signature" would become an ACTIVE asset that can never sign anything — and for an owner
+      // it would auto-approve into exactly that dead end. Refuse it while the sender is still here.
+      if (pending.mimeType !== 'image/png' && pending.mimeType !== 'image/jpeg') {
+        return this.refuseSubstituteMediaAnswer(event, ctx, access, text, SIGNATURE_NEED_IMAGE_REPLY);
+      }
+      const replyText = await this.createLineSignatureAsset({
+        ctx,
+        // The IMAGE's message id, not this answer's: that is what a redelivery of the photo would
+        // collide with, and what the router-routed ticket would have de-duplicated on.
+        event: { lineMessageId: pending.lineMessageId },
+        companyId: ctx.companyId,
+        attachmentId: pending.attachmentId,
+      });
+      await this.deliverCompletedReply(event, replyText, ctx.companyId, access);
+      await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');
+      await this.persistIntakeTurn({
+        userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: text, replyText, intent: 'SIGNATURE_REQUEST',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
+      return { outcome: 'handled' };
+    }
     if (answer === 'WET_SIGNED_SCAN') {
       const scan = context.awaitingScans[0];
       if (!scan) {
         return this.askSubstituteMediaQuestion(event, ctx, access, pending, text,
-          substituteMediaQuestion(WITHOUT_SCAN_CHOICES),
-          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: WITHOUT_SCAN_CHOICES });
+          substituteMediaQuestion(withoutScanChoices),
+          { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash, choices: withoutScanChoices });
       }
       return this.linkSubstituteScan(event, ctx, access, pending, text, scan);
     }

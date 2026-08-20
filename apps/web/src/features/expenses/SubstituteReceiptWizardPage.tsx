@@ -103,6 +103,7 @@ import {
   type WizardStep,
 } from './substitute-receipt-wizard.model';
 import { SignaturePad } from './SignaturePad';
+import { SignatureThumb } from './ExpensesWorkspacePanels';
 
 const PAGE_SIZE = 200;
 /** Hard ceiling on per-expense detail requests fired by one candidate scan. */
@@ -345,6 +346,7 @@ function SignatureFields({
   busy,
   savedSignatureAvailable,
   savedSignatureUsed,
+  savedSignaturePreviewUrl,
   onSelect,
   onDrawChange,
   onClean,
@@ -358,6 +360,8 @@ function SignatureFields({
   savedSignatureAvailable: boolean;
   /** R9: no file prepared yet, so the saved signature is what this certificate will carry. */
   savedSignatureUsed: boolean;
+  /** A8: the image that saved signature actually is. Nobody should certify one they cannot see. */
+  savedSignaturePreviewUrl?: string | null;
   onSelect: (file: File | null) => void;
   /** Unconfirmed pad strokes block submit the same way a chosen-but-unprocessed file does. */
   onDrawChange: (hasStrokes: boolean) => void;
@@ -435,6 +439,10 @@ function SignatureFields({
           <p className="rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700">
             {t('expenses.substitute_wizard.saved_signature_used', locale)}
           </p>
+          {/* A8: the signer was asked to certify with an image the screen never showed them. */}
+          {savedSignaturePreviewUrl && (
+            <SignatureThumb url={savedSignaturePreviewUrl} alt={t('expenses.substitute_wizard.saved_signature_used', locale)} />
+          )}
           <p className="text-xs text-gray-500">{t('expenses.substitute_wizard.saved_signature_help', locale)}</p>
         </>
       )}
@@ -2130,7 +2138,7 @@ export function SubstituteReceiptWizardPage({
                 <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
                 {paperSignature
                   ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
-                  : <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
+                  : <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
               </div>
               <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
                 <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
@@ -2207,7 +2215,7 @@ export function SubstituteReceiptWizardPage({
               <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
               {paperSignature
                 ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
-                : <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
+                : <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
             </div>
             <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
               <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)} />

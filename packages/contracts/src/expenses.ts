@@ -585,6 +585,9 @@ export type SignatureAssetSummary = {
   rejectReason: string | null;
   createdAt: string;
   updatedAt: string;
+  /** A7: short-lived inline URL for the derived (or original) image, so an approver can see what
+   *  they are approving. Null for a viewer who is neither an approver/manager nor the submitter. */
+  previewUrl?: string | null;
 };
 
 export type CreateSignatureAssetInput = {
@@ -797,6 +800,9 @@ export type SubstituteReceiptRuntimePolicy = Pick<
 > & {
   /** R9: the caller already has an ACTIVE personal signature, so signing needs no upload. */
   hasReusableSignature: boolean;
+  /** A8: the same image the certificate will carry, so nobody signs blind. Short-lived signed URL,
+   *  minted only for the caller's OWN reusable signature. Absent when there is none. */
+  reusableSignaturePreviewUrl?: string | null;
 };
 
 export type UpdateSubstituteReceiptPolicyInput = {

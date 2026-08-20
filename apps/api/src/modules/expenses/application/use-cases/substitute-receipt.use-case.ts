@@ -25,6 +25,7 @@ import {
 import { hasBlockingNonExpenseClassification } from '../../domain/logic/expense-status.logic';
 import { renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
+import { SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import type { ExpenseRecordWithRelations, SubstituteReceiptEvidenceRecord } from '../../domain/models/expense.model';
 import { GetExpenseUseCase } from './expense-draft.use-case';
 import { SELF_APPROVAL_EXEMPT_ROLES } from '../../../procurement/domain/logic/procurement.logic';
@@ -1156,7 +1157,8 @@ async function loadOwnedSignature(
   // signature must still resolve after the signer adds a newer one.
   const attachment = uploaded ?? await repo.findReusableSignatureAsset(companyId, userId, attachmentId);
   if (!attachment) throw new BadRequestException(`Signature must be an ACTIVE PNG/JPEG uploaded by the ${role}.`);
-  if (attachment.byteSize > 2_000_000) throw new BadRequestException('Signature image must be at most 2 MB.');
+  // One number, shared with the creation-path downscale that exists to stay under it.
+  if (attachment.byteSize > SIGNATURE_MAX_BYTES) throw new BadRequestException('Signature image must be at most 2 MB.');
   const object = await storage.getObject({
     bucket: attachment.bucket,
     objectKey: attachment.objectKey,

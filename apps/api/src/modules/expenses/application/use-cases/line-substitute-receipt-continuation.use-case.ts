@@ -53,6 +53,10 @@ export type LineSubstituteReceiptContinuation = {
    *  Written by the prepare that consumes this state and never cleared — `awaitingScan` below reads
    *  the evidence itself for the part that can still change. Additive, like `pendingDecision`. */
   formRequested?: boolean;
+  /** A3: the issue decision reached “yes, issue it” and stopped because this signer has no reusable
+   *  signature. A photo arriving now may be that signature, so the media question must offer it as
+   *  a choice. Additive exactly like `formRequested`, and read back the same way. */
+  signatureRequested?: boolean;
   targetRevision: string;
   lastActivityAt: string;
 };
@@ -463,10 +467,13 @@ export type LineSubstituteMediaContext = {
   /** R10/§15: every form printed from this chat that is still waiting for its signed photo,
    *  newest first. D9 names the newest; “ไม่ใช่” lists the rest instead of dead-ending. */
   awaitingScans: LineSubstituteMediaScan[];
+  /** A3: this chat's open work stopped at “send me your signature”, so an untitled photo is very
+   *  plausibly it and the numbered question has to say so. */
+  signatureRequested: boolean;
 };
 
 export type LineSubstituteMediaChoice =
-  | 'WET_SIGNED_SCAN' | 'PAYMENT_EVIDENCE' | 'SUPPORTING_EVIDENCE' | 'NEW_EXPENSE' | 'NO_RECORD';
+  | 'WET_SIGNED_SCAN' | 'SIGNATURE' | 'PAYMENT_EVIDENCE' | 'SUPPORTING_EVIDENCE' | 'NEW_EXPENSE' | 'NO_RECORD';
 
 /** The question a set of pending bytes is waiting on, recorded WITH them. A numbered answer is
  *  resolved against this record, never against what the current state would ask now: the two lists
@@ -477,7 +484,7 @@ export type LineSubstituteMediaQuestion =
   | { kind: 'SUBSTITUTE_MEDIA_CLASS'; chatKeyHash: string; choices: LineSubstituteMediaChoice[] };
 
 const MEDIA_CHOICES = new Set<LineSubstituteMediaChoice>([
-  'WET_SIGNED_SCAN', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD',
+  'WET_SIGNED_SCAN', 'SIGNATURE', 'PAYMENT_EVIDENCE', 'SUPPORTING_EVIDENCE', 'NEW_EXPENSE', 'NO_RECORD',
 ]);
 
 /** Reads back a recorded question, and only ours: an unrecognised shape, a row written before this
@@ -509,6 +516,12 @@ export function parseSubstituteMediaQuestion(value: unknown, chatKeyHash: string
 const SIGNATURE_CAPTION = /(ลายเซ็น|ลายมือชื่อ|signature)/iu;
 const PAYMENT_CAPTION = /(สลิป|โอน|จ่ายแล้ว|หลักฐานการจ่าย)/u;
 const PROOF_CAPTION = /(หลักฐาน|ใบเสร็จ|รูปประกอบ)/u;
+
+/** A4: the same deterministic read, for the intake route that must not depend on the AI router
+ *  being reachable. The caption is the sender's stated intent; the picture is never inspected. */
+export function isSignatureCaptionText(caption: string): boolean {
+  return SIGNATURE_CAPTION.test(normalizedText(caption));
+}
 
 /** §11: the caption is authoritative over the picture, because it is the sender's stated intent —
  *  so every caption class is read BEFORE the awaiting-scan state. Only a caption-silent photo can
@@ -552,6 +565,7 @@ export function substituteScanPickQuestion(scans: LineSubstituteMediaScan[]): st
 
 const MEDIA_CHOICE_LABELS: Record<LineSubstituteMediaChoice, string> = {
   WET_SIGNED_SCAN: 'ฟอร์มที่เซ็นแล้ว',
+  SIGNATURE: 'ลายเซ็นของฉัน (เก็บเป็นลายเซ็นประจำตัว)',
   PAYMENT_EVIDENCE: 'สลิป/หลักฐานการจ่ายของรายการนี้',
   SUPPORTING_EVIDENCE: 'หลักฐานประกอบของรายการนี้',
   NEW_EXPENSE: 'ค่าใช้จ่ายใหม่ (เส้นทางเดิม)',
@@ -565,6 +579,9 @@ const MEDIA_CHOICE_LABELS: Record<LineSubstituteMediaChoice, string> = {
 export function substituteMediaChoices(context: LineSubstituteMediaContext): LineSubstituteMediaChoice[] {
   return [
     ...(context.awaitingScans.length ? ['WET_SIGNED_SCAN' as const] : []),
+    // A3: offered only while the work is actually blocked on a signature. Before this, a photo sent
+    // straight after “ส่งรูปลายเซ็นเข้ามาได้เลย” had no answer on the list that could become one.
+    ...(context.signatureRequested ? ['SIGNATURE' as const] : []),
     'PAYMENT_EVIDENCE' as const,
     'SUPPORTING_EVIDENCE' as const,
     'NEW_EXPENSE' as const,
@@ -893,7 +910,16 @@ export class LineSubstituteReceiptContinuationUseCase {
     awaitingScans.sort((left, right) => right.preparedAt.localeCompare(left.preparedAt));
     const expenseId = states.find((state) => ACTIVE_STATUSES.has(state.status))?.expenseId ?? awaitingScans[0]?.expenseId;
     if (!expenseId) return undefined;
-    return { expenseId, awaitingScans };
+    // A3: the flag records that the ask happened; the live lookup decides whether it is still true.
+    // Reading both means no write is needed to clear it — and no write is what keeps
+    // `expectedExpenseUpdatedAt` valid for the prepare that follows the very next answer.
+    // F8: and only for someone who may actually submit one — offering the choice to anyone else
+    // ends in a refusal reply after they have already picked it. The permission can also be lost
+    // between the ask and the photo, so it is re-read here rather than trusted from the flag.
+    const asked = ctx.permissions.includes('expense.signature.manage')
+      && states.some((state) => ACTIVE_STATUSES.has(state.status) && state.signatureRequested === true);
+    const signatureRequested = asked && !await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
+    return { expenseId, awaitingScans, signatureRequested };
   }
 
   /** §11/§14: a file the sender offered as evidence for the open work, attached under the purpose
@@ -1397,17 +1423,41 @@ export class LineSubstituteReceiptContinuationUseCase {
     state: LineSubstituteReceiptContinuation,
   ): Promise<LineSubstituteReceiptContinuationResult> {
     const latest = await this.repo.findLatestSignatureAssetStatus(ctx.companyId, ctx.userId);
+    // F8: `expense.signature.manage` is the permission that submitting a signature needs. Without
+    // it the whole "send me a photo" script is a dead end — the photo arrives, the answer is
+    // refused, and the sender is back where they started. The paper route is the real path, so it
+    // is the only one offered.
+    const maySubmit = ctx.permissions.includes('expense.signature.manage');
+    // A3: written once, so the photo that arrives next has a numbered choice that can become a
+    // signature. Best-effort by design — a stale-revision refusal here must not swallow the ask
+    // itself, and `loadOpenMediaContext` re-checks the live signature anyway. Skipped entirely for
+    // someone who cannot submit: nothing they send can become a signature.
+    if (maySubmit && state.signatureRequested !== true) {
+      try {
+        await this.repo.saveLineSubstituteContinuation({
+          companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+          expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
+          continuation: { ...state, signatureRequested: true } as unknown as Record<string, unknown>,
+        });
+      } catch {
+        // Left unrecorded: the sender still gets the ask, and the caption route still works.
+      }
+    }
     const sendPhoto = 'ส่งรูปลายเซ็นเข้ามาในแชทนี้ได้เลยค่ะ';
     const howTo = [
       'เซ็นบนกระดาษขาว ถ่ายให้เห็นเต็มลายเซ็น แล้วส่งรูปเข้ามาในแชทนี้',
       'ระบบจะเก็บเป็นลายเซ็นประจำตัว (รอเจ้าของกิจการอนุมัติก่อนใช้งาน) แล้วใช้ซ้ำได้ทุกใบ ไม่ต้องส่งอีก',
     ];
-    const waiting = latest?.status === 'PENDING_OWNER_APPROVAL';
-    const rejected = latest?.status === 'REJECTED';
-    const question = waiting ? 'ระหว่างรออนุมัติ จะขอฟอร์มไปเซ็นเองก่อนไหมคะ (ตอบ 2)' : sendPhoto;
+    const waiting = maySubmit && latest?.status === 'PENDING_OWNER_APPROVAL';
+    const rejected = maySubmit && latest?.status === 'REJECTED';
+    const askForForm = 'ขอฟอร์มไปเซ็นด้วยมือก่อนไหมคะ (ตอบ 2)';
+    const question = !maySubmit ? askForForm
+      : waiting ? 'ระหว่างรออนุมัติ จะขอฟอร์มไปเซ็นเองก่อนไหมคะ (ตอบ 2)'
+        : sendPhoto;
     const signatureBlocker = blocker(
-      waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
-      waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
+      !maySubmit ? 'reusable_signature_not_submittable'
+        : waiting ? 'reusable_signature_pending_approval' : 'reusable_signature_required',
+      !maySubmit ? 'ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบ' : waiting ? 'ลายเซ็นรอเจ้าของกิจการอนุมัติ' : 'ยังไม่มีลายเซ็นที่บันทึกไว้',
       true,
     );
     return {
@@ -1419,19 +1469,24 @@ export class LineSubstituteReceiptContinuationUseCase {
       pendingQuestion: question,
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId),
       replyText: formatStandalone({
-        headline: (waiting
+        headline: (!maySubmit
           ? [
-            'ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บค่ะ',
-            'พออนุมัติแล้วจะใช้ลงนามได้ทันที ไม่ต้องส่งรูปใหม่',
-            'ถ้าไม่อยากรอ ขอฟอร์มไปเซ็นด้วยมือก่อนได้',
+            'ยังไม่มีลายเซ็นที่บันทึกไว้ และบัญชีนี้ไม่มีสิทธิ์ส่งลายเซ็นเข้าระบบค่ะ',
+            'ทางที่ทำได้เลยคือขอฟอร์มไปเซ็นด้วยมือ แล้วถ่ายรูปฟอร์มที่เซ็นแล้วส่งกลับเข้ามา',
           ]
-          : rejected
+          : waiting
             ? [
-              `ลายเซ็นที่ส่งมาก่อนหน้านี้ไม่ผ่านการอนุมัติค่ะ${latest?.rejectReason ? ` (เหตุผล: ${latest.rejectReason})` : ''}`,
-              ...howTo,
+              'ลายเซ็นของคุณส่งแล้ว รอเจ้าของบริษัทอนุมัติในเว็บค่ะ',
+              'พออนุมัติแล้วจะใช้ลงนามได้ทันที ไม่ต้องส่งรูปใหม่',
+              'ถ้าไม่อยากรอ ขอฟอร์มไปเซ็นด้วยมือก่อนได้',
             ]
-            : ['ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ', ...howTo]).join('\n'),
-        ...(waiting ? { choices: ISSUE_DECISION_CHOICES } : {}),
+            : rejected
+              ? [
+                `ลายเซ็นที่ส่งมาก่อนหน้านี้ไม่ผ่านการอนุมัติค่ะ${latest?.rejectReason ? ` (เหตุผล: ${latest.rejectReason})` : ''}`,
+                ...howTo,
+              ]
+              : ['ยังไม่มีลายเซ็นที่บันทึกไว้ในระบบค่ะ', ...howTo]).join('\n'),
+        ...(waiting || !maySubmit ? { choices: ISSUE_DECISION_CHOICES } : {}),
         question,
       }),
     };

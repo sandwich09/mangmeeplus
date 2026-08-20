@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
-import { CreateSignatureAssetUseCase, ApproveSignatureAssetUseCase, RejectSignatureAssetUseCase, FillSignatureUseCase } from './signature-asset.use-case';
+import sharp from 'sharp';
+import { CreateSignatureAssetUseCase, ApproveSignatureAssetUseCase, RejectSignatureAssetUseCase, FillSignatureUseCase, ListSignatureAssetsUseCase } from './signature-asset.use-case';
+import { normalizeSignatureImage, SIGNATURE_MAX_BYTES } from '../../domain/logic/signature-image.logic';
 import { CreateAccountantPackageUseCase, GetSharedEvidenceViewUseCase } from './expense-evidence.use-case';
 import type { RequestContext } from '@watchdog-bms/contracts';
 
@@ -327,26 +329,110 @@ describe('expense category management', () => {
 describe('signature asset lifecycle', () => {
   const completeUpload = { execute: async () => undefined } as any;
 
-  function makeSigRepo(status = 'PENDING_OWNER_APPROVAL') {
+  /** Bytes big enough to bust the certify budget: uniform colour compresses to nothing, so the
+   *  source has to be noise. Built once — three cases share it, and each build is a 6 MB raw
+   *  buffer plus sharp's own working set. */
+  let noisyFixture: Promise<Buffer> | undefined;
+  function noisyJpeg(): Promise<Buffer> {
+    noisyFixture ??= (async () => {
+      const width = 1700;
+      const height = 1300;
+      const raw = Buffer.allocUnsafe(width * height * 3);
+      for (let i = 0; i < raw.length; i += 1) raw[i] = (i * 2654435761) % 256;
+      return sharp(raw, { raw: { width, height, channels: 3 } }).jpeg({ quality: 100 }).toBuffer();
+    })();
+    return noisyFixture;
+  }
+
+  /**
+   * A signature-shaped photo: paper with dark ink through the middle.
+   *
+   * `paper` defaults to the WARM cast a real phone shot has under indoor light — a blue-channel
+   * deficit. That is the case a per-channel rule gets wrong: normalising the colour image applies
+   * one shared scale, the blue channel stays low, and an all-three-channels test lets blue alone
+   * decide, erasing next to nothing. Noise is on by default for the same reason: a perfectly flat
+   * fixture passes rules that real photos defeat.
+   */
+  async function inkOnPaper(paper: [number, number, number] = [246, 247, 236], noise = 6): Promise<Buffer> {
+    const width = 400;
+    const height = 200;
+    const raw = Buffer.allocUnsafe(width * height * 3);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const ink = y > 90 && y < 110;
+        const jitter = noise ? ((((x * 7919) + (y * 104729)) % (noise * 2)) - noise) : 0;
+        const offset = ((y * width) + x) * 3;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const base = ink ? 22 : paper[channel]!;
+          raw[offset + channel] = Math.max(0, Math.min(255, base + jitter));
+        }
+      }
+    }
+    return sharp(raw, { raw: { width, height, channels: 3 } }).jpeg({ quality: 95 }).toBuffer();
+  }
+
+  /** Share of fully transparent pixels, and whether the ink band survived. */
+  async function alphaProfile(png: Buffer) {
+    const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let clear = 0;
+    for (let pixel = 0; pixel < info.width * info.height; pixel += 1) {
+      if (data[(pixel * info.channels) + 3] === 0) clear += 1;
+    }
+    const alphaAt = (x: number, y: number) => data[(((y * info.width) + x) * info.channels) + 3]!;
+    return { transparentShare: clear / (info.width * info.height), alphaAt, info };
+  }
+
+  function makeSigRepo(status = 'PENDING_OWNER_APPROVAL', options: { sourceBytes?: Buffer } = {}) {
     const updates: any[] = [];
+    const created: any[] = [];
+    const generated: any[] = [];
+    const links: any[] = [];
+    let row: any = { id: 'sig-1', status, submittedByUserId: 'uploader-1' };
     return {
       updates,
+      created,
+      generated,
+      links,
       repo: {
         findSignatureAssetByLineMessageId: async () => null,
-        createSignatureAsset: async (input: any) => ({ id: 'sig-1', status: 'PENDING_OWNER_APPROVAL', ...input }),
-        linkAttachmentToTarget: async () => undefined,
-        findSignatureAssetById: async () => ({ id: 'sig-1', status, submittedByUserId: 'uploader-1' }),
-        updateSignatureAsset: async (_c: string, id: string, data: any) => { updates.push(data); return { id, ...data }; },
+        createSignatureAsset: async (input: any) => { created.push(input); row = { id: 'sig-1', status: 'PENDING_OWNER_APPROVAL', ...input }; return row; },
+        linkAttachmentToTarget: async (...args: any[]) => { links.push(args); },
+        findSignatureAssetById: async () => row,
+        // Returns the row as it stands after the write, exactly like the real update.
+        updateSignatureAsset: async (_c: string, id: string, data: any) => { updates.push(data); row = { ...row, id, ...data }; return row; },
         createSignatureFill: async (input: any) => ({ id: 'fill-1', appliedAt: new Date(), ...input }),
         findById: async () => ({ id: 'exp-1', status: 'NEEDS_REVIEW' }),
         linkAttachment: async () => undefined,
+        findActiveMemberIdentity: async () => ({ userId: 'user-1', displayName: 'สมชาย ใจดี' }),
+        listUserIdsWithPermission: async () => ['owner-9'],
+        // Absent bytes means "not an image the transform can read": the derive is skipped, which is
+        // the shape most of these lifecycle assertions want.
+        findActiveAttachmentObject: async () => options.sourceBytes
+          ? { bucket: 'b', objectKey: 'k', mimeType: 'image/jpeg', checksumSha256: null, byteSize: options.sourceBytes.byteLength, originalFileName: 'sig.jpg' }
+          : null,
+        createGeneratedSignatureAttachment: async (input: any) => { generated.push(input); return 'att-derived'; },
+        listSignatureAssets: async () => [],
+      } as any,
+      storage: {
+        getObject: async () => ({ bytes: options.sourceBytes ?? Buffer.alloc(0) }),
+        putObject: async (input: any) => ({
+          bucket: 'b', objectKey: input.objectKey, storageProvider: 'local',
+          byteSize: input.bytes.byteLength, checksumSha256: 'sum', objectVersionId: 'v1',
+        }),
+        createDownloadUrl: async () => ({ url: 'https://signed.example/sig.png', expiresAt: new Date() }),
       } as any,
     };
   }
 
+  function makeNotify() {
+    const sent: any[] = [];
+    return { sent, notify: { execute: async (input: any) => { sent.push(input); } } as any };
+  }
+
   it('creates pending assets and is idempotent by LINE message id', async () => {
-    const { repo } = makeSigRepo();
-    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit);
+    const { repo, storage } = makeSigRepo();
+    const { notify } = makeNotify();
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, notify);
     const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
@@ -359,22 +445,191 @@ describe('signature asset lifecycle', () => {
     assert.equal(again.id, 'sig-existing');
   });
 
+  // A13: the read above loses the race under redelivery, so the unique index has to be the one that
+  // decides — and losing it must return the winner rather than surface a Prisma error in LINE.
+  it('returns the winning asset when the unique index rejects a raced LINE redelivery', async () => {
+    const { repo, storage } = makeSigRepo();
+    const { notify } = makeNotify();
+    repo.createSignatureAsset = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
+    let lookups = 0;
+    repo.findSignatureAssetByLineMessageId = async () => (lookups++ === 0 ? null : { id: 'sig-winner', status: 'PENDING_OWNER_APPROVAL' });
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, notify);
+    const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
+      attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
+    });
+    assert.equal(asset.id, 'sig-winner');
+
+    // A web asset carries no lineMessageId, so a P2002 there is a real fault and must still throw.
+    repo.createSignatureAsset = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
+    await assert.rejects(() => useCase.execute(ctx(['expense.signature.manage']), { attachmentId: 'att-2' }), /unique/);
+  });
+
+  // A10 (owner decision 2026-08-20) + A14.
+  it('auto-approves for an approval holder, labels by submitter and date, and notifies otherwise', async () => {
+    const owner = makeSigRepo();
+    const ownerNotify = makeNotify();
+    const ownerAudits: any[] = [];
+    const ownerAsset = await new CreateSignatureAssetUseCase(
+      owner.repo, completeUpload, { log: async (entry: any) => { ownerAudits.push(entry); } } as any, owner.storage, ownerNotify.notify,
+    ).execute(ctx(['expense.signature.manage', 'expense.signature.approve'], 'line'), { attachmentId: 'att-1', submittedFromChannel: 'LINE' });
+    assert.equal(ownerAsset.status, 'ACTIVE');
+    // F7: the approval really happened, so an auditor querying approvals has to see it. `create`
+    // with autoApproved metadata is invisible to that query.
+    const approvals = ownerAudits.filter((entry) => entry.action === 'expense.signature.approve');
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].metadataJson.autoApproved, true);
+    assert.equal(approvals[0].targetId, ownerAsset.id);
+    assert.equal(ownerAudits.filter((entry) => entry.action === 'expense.signature.create').length, 1);
+    assert.equal(owner.created[0].approvedByUserId, 'user-1');
+    assert.ok(owner.created[0].approvedAt instanceof Date);
+    // A14: a LINE asset used to arrive with no label at all.
+    assert.match(owner.created[0].label, /^สมชาย ใจดี \d{4}-\d{2}-\d{2}$/);
+    // Nobody to tell: the submitter is the approver.
+    assert.deepEqual(ownerNotify.sent, []);
+
+    const staff = makeSigRepo();
+    const staffNotify = makeNotify();
+    const staffAsset = await new CreateSignatureAssetUseCase(staff.repo, completeUpload, audit, staff.storage, staffNotify.notify)
+      .execute(ctx(['expense.signature.manage'], 'line'), { attachmentId: 'att-1', label: 'ลายเซ็นพนักงาน', submittedFromChannel: 'LINE' });
+    assert.equal(staffAsset.status, 'PENDING_OWNER_APPROVAL');
+    assert.equal(staff.created[0].label, 'ลายเซ็นพนักงาน');
+    assert.equal(staffNotify.sent.length, 1);
+    assert.equal(staffNotify.sent[0].triggerKey, 'expense.signature_approval_pending');
+    assert.deepEqual(staffNotify.sent[0].recipientUserIds, ['owner-9']);
+    // A2: the notice lands on the un-parked screen, at the named row.
+    assert.equal(staffNotify.sent[0].deepLinkHref, `/companies/company-1/expenses/signatures?signatureId=${staffAsset.id}`);
+  });
+
+  // A5 + A9: one server-side pass fixes both the alpha channel LINE JPEG never had and the size
+  // certification refuses, and it lands as the derived half of the same two-attachment shape the
+  // web canvas produces — without demoting the asset it was just created with.
+  it('derives a transparent, under-budget image at creation without demoting the new asset', async () => {
+    const oversized = await noisyJpeg();
+    assert.ok(oversized.byteLength > SIGNATURE_MAX_BYTES, 'fixture must exceed the certify budget');
+    const { repo, storage, updates, generated } = makeSigRepo('PENDING_OWNER_APPROVAL', { sourceBytes: oversized });
+    const { notify } = makeNotify();
+    const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, notify)
+      .execute(ctx(['expense.signature.manage', 'expense.signature.approve'], 'line'), { attachmentId: 'att-raw', submittedFromChannel: 'LINE' });
+
+    assert.equal(generated.length, 1);
+    assert.ok(generated[0].byteSize <= SIGNATURE_MAX_BYTES, `derived render is ${generated[0].byteSize} bytes`);
+    assert.ok(['image/png', 'image/jpeg'].includes(generated[0].mimeType));
+    assert.equal(updates.at(-1).derivedAttachmentId, 'att-derived');
+    // The demote lives in SetSignatureDerivedAssetUseCase and is for RE-pointing an approved asset.
+    assert.equal(updates.at(-1).status, undefined);
+    assert.equal(asset.status, 'ACTIVE');
+  });
+
+  // F3: the case a per-channel rule silently fails. A warm phone photo keeps its blue deficit
+  // through a shared-scale normalise, so an all-three-channels test erased ~0.1% of the paper and
+  // the certificate still got an opaque white rectangle.
+  it('clears warm-cast paper and keeps the ink, and does the same for neutral paper', async () => {
+    for (const [label, paper] of [
+      ['warm cast (blue-deficient), noisy', [246, 247, 236]],
+      ['neutral, noisy', [244, 244, 244]],
+    ] as Array<[string, [number, number, number]]>) {
+      const cleaned = await normalizeSignatureImage(await inkOnPaper(paper), 'image/jpeg', { removeBackground: true });
+      assert.equal(cleaned?.mimeType, 'image/png', label);
+      const { transparentShare, alphaAt, info } = await alphaProfile(cleaned!.bytes);
+      assert.ok(transparentShare >= 0.8, `${label}: only ${(transparentShare * 100).toFixed(1)}% transparent`);
+      assert.equal(alphaAt(2, 2), 0, `${label}: paper must become transparent`);
+      assert.equal(alphaAt(Math.floor(info.width / 2), Math.floor(info.height / 2)), 255, `${label}: ink must survive`);
+    }
+
+    const opaque = await normalizeSignatureImage(await inkOnPaper(), 'image/jpeg', { removeBackground: false });
+    assert.equal(opaque?.mimeType, 'image/jpeg');
+    assert.equal(await normalizeSignatureImage(Buffer.from('not an image'), 'image/jpeg', { removeBackground: true }), undefined);
+  });
+
+  // F4: an alpha PNG of a noisy photo can exceed the certify budget at every edge. Storing it would
+  // point the reusable-signature lookup at an image certification refuses outright, in preference
+  // to the original it would have accepted.
+  it('never returns a render the certify gate would refuse, and falls back to the opaque encode', async () => {
+    const noisy = await noisyJpeg();
+    const transparent = await normalizeSignatureImage(noisy, 'image/jpeg', { removeBackground: true });
+    assert.equal(transparent, undefined, 'an over-budget alpha PNG must not be returned');
+    const fallback = await normalizeSignatureImage(noisy, 'image/jpeg', { removeBackground: false });
+    assert.ok(fallback && fallback.bytes.byteLength <= SIGNATURE_MAX_BYTES, 'the opaque encode is the way under budget');
+    assert.equal(fallback!.mimeType, 'image/jpeg');
+  });
+
+  // F5: the web canvas shows the user both renditions and posts its own derived PNG. Deriving here
+  // too burns a second sharp pass on an attachment the client overwrites — and overrides a user who
+  // looked at the preview and chose to keep the background.
+  it('derives only for LINE; the web client owns that decision on its own channel', async () => {
+    const photo = await inkOnPaper();
+    for (const [channel, expected] of [['WEB', 0], ['LINE', 1]] as Array<['WEB' | 'LINE', number]>) {
+      const harness = makeSigRepo('PENDING_OWNER_APPROVAL', { sourceBytes: photo });
+      const { notify } = makeNotify();
+      await new CreateSignatureAssetUseCase(harness.repo, completeUpload, audit, harness.storage, notify)
+        .execute(ctx(['expense.signature.manage']), { attachmentId: 'att-raw', submittedFromChannel: channel });
+      assert.equal(harness.generated.length, expected, `${channel} derive count`);
+    }
+  });
+
   it('only expense.signature.approve can activate, and only from pending', async () => {
     const { repo, updates } = makeSigRepo();
-    const approve = new ApproveSignatureAssetUseCase(repo, audit);
+    const { notify, sent } = makeNotify();
+    const approve = new ApproveSignatureAssetUseCase(repo, audit, notify);
     await assert.rejects(() => approve.execute(ctx(['expense.signature.manage']), 'sig-1'), /expense.signature.approve/);
     await approve.execute(ctx(['expense.signature.approve']), 'sig-1');
     assert.equal(updates.at(-1).status, 'ACTIVE');
+    // A6(b): the submitter's next LINE turn will find the signature usable; nothing else says so.
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].triggerKey, 'expense.signature_approved');
+    assert.deepEqual(sent[0].recipientUserIds, ['uploader-1']);
+    assert.match(sent[0].body, /LINE/);
 
     const activeRepo = makeSigRepo('ACTIVE').repo;
-    const approveActive = new ApproveSignatureAssetUseCase(activeRepo, audit);
+    const approveActive = new ApproveSignatureAssetUseCase(activeRepo, audit, notify);
     await assert.rejects(() => approveActive.execute(ctx(['expense.signature.approve']), 'sig-1'), /Cannot approve/);
   });
 
-  it('reject requires a reason', async () => {
+  it('reject requires a reason, and tells the submitter what it was', async () => {
     const { repo } = makeSigRepo();
-    const reject = new RejectSignatureAssetUseCase(repo, audit);
+    const { notify, sent } = makeNotify();
+    const reject = new RejectSignatureAssetUseCase(repo, audit, notify);
     await assert.rejects(() => reject.execute(ctx(['expense.signature.approve']), 'sig-1', ' '), /reason/i);
+    await reject.execute(ctx(['expense.signature.approve']), 'sig-1', 'รูปเบลอเกินไป');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].triggerKey, 'expense.signature_rejected');
+    assert.deepEqual(sent[0].recipientUserIds, ['uploader-1']);
+    assert.match(sent[0].body, /รูปเบลอเกินไป/);
+  });
+
+  // A7: the queue used to show a filename and a date, and an owner approved an image sight unseen.
+  it('shows the preview to approvers and to the submitter, and to nobody else', async () => {
+    const { repo, storage } = makeSigRepo();
+    const mints: any[] = [];
+    const audits: any[] = [];
+    const auditing = { log: async (entry: any) => { audits.push(entry); } } as any;
+    storage.createDownloadUrl = async (input: any) => { mints.push(input); return { url: 'https://signed.example/sig.png', expiresAt: new Date() }; };
+    repo.listSignatureAssets = async () => [
+      { id: 'sig-1', status: 'ACTIVE', submittedByUserId: 'uploader-1', originalAttachmentId: 'att-1', derivedAttachmentId: 'att-derived' },
+    ];
+    repo.findActiveAttachmentObject = async (_c: string, id: string) => ({ bucket: 'b', objectKey: id, mimeType: 'image/png', checksumSha256: null, byteSize: 10, originalFileName: 'x.png' });
+    const useCase = new ListSignatureAssetsUseCase(repo, storage, auditing);
+
+    const approver = await useCase.execute(ctx(['expense.signature.approve']));
+    assert.equal(approver[0]!.previewUrl, 'https://signed.example/sig.png');
+    // F6: this path skips the audited generic download gate, so it writes its own row — naming the
+    // asset and the attachment, never the URL or its token.
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].action, 'expense.signature.preview_url.create');
+    assert.equal(audits[0].targetId, 'sig-1');
+    assert.equal(audits[0].metadataJson.attachmentId, 'att-derived');
+    assert.equal(JSON.stringify(audits[0]).includes('signed.example'), false);
+    // F14: a preview with no filename saves as "download".
+    assert.equal(mints[0].fileName, 'x.png');
+    assert.equal(mints[0].disposition, 'inline');
+
+    const submitter = await useCase.execute({ ...ctx(['expense.review']), userId: 'uploader-1' });
+    assert.equal(submitter[0]!.previewUrl, 'https://signed.example/sig.png');
+
+    const bystander = await useCase.execute(ctx(['expense.review']));
+    assert.equal(bystander[0]!.previewUrl, null);
+    // No preview, no mint, no row.
+    assert.equal(audits.length, 2);
   });
 
   it('fill requires web channel, review permission, and an ACTIVE signature', async () => {

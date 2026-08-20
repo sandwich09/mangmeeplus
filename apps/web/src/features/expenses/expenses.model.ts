@@ -1047,7 +1047,10 @@ export function canAccessExpenseTab(tab: ExpensesTab, caps: ExpenseCapabilities)
     upload: caps.canUploadReceipts,
     manual: caps.canCreate,
     categories: caps.canManageCategories,
-    signatures: false, // feature-disabled: no consumer for approved signatures yet (owner decision 2026-08-05)
+    // Un-parked 2026-08-20 (owner decision). The 2026-08-05 park said approved signatures had no
+    // consumer; substitute receipts certify with them now, so the approval queue is on the critical
+    // path. Approvers get in as well as managers: the queue exists for them.
+    signatures: caps.canManageSignatures || caps.canApproveSignatures,
     evidence: caps.canViewSharedEvidence,
   };
   return allowed[tab];

@@ -782,6 +782,8 @@ describe('reusable personal signature lookup (R9)', () => {
       id: 'att-original', companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/png',
       bucket: 'bucket', objectKey: 'signatures/original.png', objectVersionId: null,
       byteSize: 1024, checksumSha256: 'checksum-original',
+      // F14: carried through so a preview saves under its own name instead of "download".
+      originalFileName: 'signature.png',
       ...overrides,
     } as any;
   }
@@ -823,6 +825,8 @@ describe('reusable personal signature lookup (R9)', () => {
     assert.deepEqual(await repo.findReusableSignatureAsset('co-1', 'payer-1'), {
       id: 'att-derived', bucket: 'bucket', objectKey: 'signatures/derived.png', objectVersionId: 'v2',
       mimeType: 'image/png', byteSize: 1024, checksumSha256: 'checksum-derived',
+      // A8 mints an inline preview straight from this row, and F14 names the download.
+      originalFileName: 'signature.png',
     });
   });
 
@@ -896,16 +900,18 @@ describe('re-pointing a signature derivative (R9 hardening)', () => {
       originalAttachmentId: 'att-original', derivedAttachmentId: null, ...assetOverrides,
     };
     const entries: any[] = [];
+    const notices: any[] = [];
     let updated: any;
     const repo = {
       findSignatureAssetById: async () => asset,
       linkAttachmentToTarget: async () => undefined,
       updateSignatureAsset: async (_company: string, _id: string, data: any) => { updated = data; return { ...asset, ...data }; },
+      listUserIdsWithPermission: async () => ['owner-1'],
     } as any;
     const useCase = new SetSignatureDerivedAssetUseCase(repo, { execute: async () => ({}) } as any, {
       log: async (entry: any) => { entries.push(entry); },
-    } as any);
-    return { useCase, entries, updated: () => updated };
+    } as any, { execute: async (input: any) => { notices.push(input); } } as any);
+    return { useCase, entries, notices, updated: () => updated };
   }
 
   const manage = (userId: string) => ctx(userId, ['expense.signature.manage']);
@@ -923,13 +929,34 @@ describe('re-pointing a signature derivative (R9 hardening)', () => {
   });
 
   it('sends an ACTIVE asset back for owner approval when its derivative is replaced', async () => {
-    const { useCase, entries, updated } = harness();
+    const { useCase, entries, notices, updated } = harness();
     const result = await useCase.execute(manage('payer-1'), 'sig-1', { attachmentId: 'att-swapped' });
     // The lookup prefers the derivative, so a swapped image must not keep the owner's approval.
     assert.equal(updated().status, 'PENDING_OWNER_APPROVAL');
     assert.equal(updated().derivedAttachmentId, 'att-swapped');
     assert.equal(result.status, 'PENDING_OWNER_APPROVAL');
     assert.equal(entries[0].metadataJson.demotedFromActive, true);
+    // A6(d): a signature that silently stops working is exactly the state nobody was told about.
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].triggerKey, 'expense.signature_needs_reapproval');
+    assert.deepEqual(notices[0].recipientUserIds, ['owner-1']);
+  });
+
+  // A9/A10 interplay: with the owner decision of 2026-08-20 the submitter can be the approver, and
+  // the web canvas posts its background-removed PNG moments after creation. Demoting there would
+  // undo the auto-approve on every single web upload.
+  it('keeps an approval holder’s own asset ACTIVE when they re-point it', async () => {
+    const { useCase, entries, notices, updated } = harness();
+    const result = await useCase.execute(
+      ctx('payer-1', ['expense.signature.manage', 'expense.signature.approve']),
+      'sig-1',
+      { attachmentId: 'att-derived' },
+    );
+    assert.equal('status' in updated(), false);
+    assert.equal(result.status, 'ACTIVE');
+    assert.equal(entries[0].metadataJson.demotedFromActive, false);
+    assert.equal(entries[0].metadataJson.selfApproved, true);
+    assert.deepEqual(notices, []);
   });
 
   it('leaves the normal upload flow alone: a pending asset stays pending', async () => {

@@ -178,6 +178,9 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
       'expense.confirm',
       'expense.category.manage',
       'expense.signature.manage',
+      // Same shape as expense.confirm above: the un-parked signature queue (2026-08-20) is the
+      // approver's screen, and an owner who never uploads a signature holds only this key.
+      'expense.signature.approve',
       'expense.evidence.read',
     ],
     status: 'ready',

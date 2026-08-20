@@ -2444,8 +2444,8 @@ model CompanySignatureAsset {
   company              Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
   fills                SignatureFillRecord[]
 
+  @@unique([companyId, lineMessageId])
   @@index([companyId, status])
-  @@index([companyId, lineMessageId])
 }
 
 // Audit-backed record of an active signature filled into substitute receipt /
@@ -7244,6 +7244,7 @@ enum LineIntakePendingMediaStatus {
   RESOLVED_RECEIPT
   RESOLVED_ILLUSTRATION
   RESOLVED_MULTI_ENTRY_REVIEW
+  RESOLVED_SIGNATURE
   EXPIRED
 }
 

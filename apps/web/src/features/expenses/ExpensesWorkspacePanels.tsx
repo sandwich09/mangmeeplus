@@ -270,7 +270,21 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
 // No asset id can collide with this, so a whole-panel action stays distinguishable from a row's.
 const ALL_ROWS_BUSY = '*';
 
-export function SignaturePanel({ companyId, canApprove }: { companyId: string; canApprove: boolean }) {
+/** A7/A8: the picture, at a size an approver can judge. Checkerboard behind it so a transparent
+ *  background reads as transparent rather than as white paper. */
+export function SignatureThumb({ url, alt, className }: { url: string; alt: string; className?: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      className={cx('max-h-20 max-w-[180px] rounded-lg border border-gray-200 object-contain', className)}
+      style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '12px 12px' }}
+    />
+  );
+}
+
+export function SignaturePanel({ companyId, canApprove, focusSignatureId }: { companyId: string; canApprove: boolean; focusSignatureId?: string }) {
   const toast = useToast();
   const [assets, setAssets] = useState<SignatureAssetSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -290,6 +304,9 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
   const [showUpload, setShowUpload] = useState(false);
   const [rejectId, setRejectId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  // F11: the deep-linked asset lives in the pending list OR the table, never both — and since
+  // auto-approve (2026-08-20) the table is the common case, which had no ref at all.
+  const focusRef = useRef<HTMLElement>(null);
 
   // `keepVisible` as in CategoryManagePanel above: a refresh after a write must not swap the table
   // for the spinner, or approving one signature unmounts and remounts every row.
@@ -301,6 +318,10 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
     finally { if (!keepVisible) setLoading(false); }
   }, [companyId]);
   useEffect(() => { void load(); }, [load]);
+  // A2: after the rows exist, bring the named one into view. Runs once per id per load.
+  useEffect(() => {
+    if (focusSignatureId && !loading) focusRef.current?.scrollIntoView({ block: 'center' });
+  }, [focusSignatureId, loading, assets]);
 
   const buildPreview = async () => {
     const file = fileRef.current?.files?.[0];
@@ -386,10 +407,23 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                 <div className="text-sm font-bold text-warning-700">รอเจ้าของกิจการอนุมัติ ({pending.length})</div>
                 <div className="mt-3 space-y-2">
                   {pending.map((a) => (
-                    <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-warning-100 bg-white px-4 py-3 text-sm">
-                      <div>
-                        <span className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</span>
-                        <span className="ml-2 text-xs text-gray-500">ส่งจาก {a.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(a.createdAt)}</span>
+                    <div
+                      key={a.id}
+                      ref={a.id === focusSignatureId ? (focusRef as React.RefObject<HTMLDivElement>) : undefined}
+                      className={cx(
+                        'flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-4 py-3 text-sm',
+                        // A2: the LINE ticket links to one specific row; without this the owner lands
+                        // on a queue and has to guess which line the message was about.
+                        a.id === focusSignatureId ? 'border-brand-400 ring-2 ring-brand-200' : 'border-warning-100',
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        {/* A7: an owner cannot approve what they cannot see. */}
+                        {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็นรออนุมัติ'} />}
+                        <div>
+                          <span className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}</span>
+                          <span className="ml-2 text-xs text-gray-500">ส่งจาก {a.submittedFromChannel === 'LINE' ? 'LINE' : 'เว็บ'} · {dateShort(a.createdAt)}</span>
+                        </div>
                       </div>
                       {canApprove && (
                         <div className="flex gap-2">
@@ -425,8 +459,17 @@ export function SignaturePanel({ companyId, canApprove }: { companyId: string; c
                     <tbody>
                       {others.length === 0 && <tr><td colSpan={5} className="py-8 text-center text-gray-500">ยังไม่มีลายเซ็น</td></tr>}
                       {others.map((a) => (
-                        <tr key={a.id} className={a.status === 'ARCHIVED' ? 'opacity-60' : ''}>
-                          <td className="font-semibold text-gray-800">{a.label ?? 'ลายเซ็นไม่มีชื่อ'}{a.derivedAttachmentId && <span className="ml-2 text-xs font-normal text-brand-600">(พื้นหลังโปร่งใส)</span>}</td>
+                        <tr
+                          key={a.id}
+                          ref={a.id === focusSignatureId ? (focusRef as React.RefObject<HTMLTableRowElement>) : undefined}
+                          className={cx(a.status === 'ARCHIVED' && 'opacity-60', a.id === focusSignatureId && 'bg-brand-25 ring-2 ring-inset ring-brand-200')}
+                        >
+                          <td className="font-semibold text-gray-800">
+                            <span className="flex items-center gap-3">
+                              {a.previewUrl && <SignatureThumb url={a.previewUrl} alt={a.label ?? 'ลายเซ็น'} className="max-h-12" />}
+                              <span>{a.label ?? 'ลายเซ็นไม่มีชื่อ'}{a.derivedAttachmentId && <span className="ml-2 text-xs font-normal text-brand-600">(พื้นหลังโปร่งใส)</span>}</span>
+                            </span>
+                          </td>
                           <td className="whitespace-nowrap"><MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge></td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.submittedFromChannel}</td>
                           <td className="whitespace-nowrap text-xs text-gray-500">{a.approvedAt ? dateShort(a.approvedAt) : '-'}</td>
