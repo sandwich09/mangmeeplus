@@ -2,11 +2,13 @@
 
 ## 1. Status
 
-v0.3, 2026-08-19. **Owner-decided, plan written, not implemented.** All open questions from v0.1 were answered 2026-08-18 and folded into §4 (D1-D9). Every §5.A code fact was re-verified against the tree on 2026-08-19 while writing the plan — all still hold (line numbers have drifted; the plan carries the current anchors, e.g. the vocabulary guard now sits at `process-line-webhook.use-case.ts:1439-1440` and the dead-end copy at `line-substitute-receipt-continuation.use-case.ts:406`).
+v0.4, 2026-08-20. **Implemented** on branch `codex/line-substitute-receipt-assisted-issuance`: plan phases 1-5 (= §18 steps 1-5) plus phase 6 ("signature flow reality", from an end-to-end audit that found the digital-signature journey severed by pre-existing gaps) and phase 7 ("personal signatures", implementing D14 which supersedes D10/D11: no approval step at all — a signature is a personal, owner-visible, self-managed asset usable the moment it is saved). Owner decisions D10-D14 (2026-08-20, §4) record the day's product calls, including next-turn ISSUED delivery and the group-chat guard's defense-in-depth status. Every phase passed an adversarial review round before commit; deviations from this spec are marked in place (§8.8, §12.3, §16, §19) and in the plan's implementation log.
+
+History: v0.3, 2026-08-19 — owner-decided, plan written, §5.A code facts re-verified against the tree (all held; anchors drifted). v0.2, 2026-08-18 — all open questions from v0.1 answered and folded into §4 (D1-D9).
 
 Owner: thawatchai. Trigger: UAT screenshot 2026-08-18 — the user typed `สร้างใบทดแทนใบเสร็จ ค่าวินมอไซต์จากที่ทำงานไปพบลูกค้า 50 บาท` and received a dead-end reply with a non-clickable relative link. A second UAT screenshot 2026-08-19 (`สร้างใบแทนใบเสร็จได้ไหม`) reproduced the same dead-end.
 
-Linked plan: [[plans/line-substitute-receipt-assisted-issuance-plan|LINE Substitute-Receipt Assisted Issuance Implementation Plan]] (phases 1-5 = §18 steps 1-5).
+Linked plan: [[plans/line-substitute-receipt-assisted-issuance-plan|LINE Substitute-Receipt Assisted Issuance Implementation Plan]] (phases 1-5 = §18 steps 1-5; phase 6 = signature-flow reality fixes, see the plan's implementation log).
 
 Memory: [[agent-memory/line-substitute-receipt-assisted-issuance|task memory]]
 
@@ -41,6 +43,16 @@ External practice references read on 2026-08-18 (see §5.B).
 | D7 | The delivery link expires after a **fixed 3 days**, not configurable. An expired link is not extended; the user asks for a new one. |
 | D8 | Certification and approval stay **two explicit steps**, even when `OWNER_SELF` makes them the same person. One page, two acknowledgements — not one combined click. |
 | D9 | A returned signed form is matched by **chat context plus one confirming question**, not by OCR or QR. The document number is printed large on the form so the user can verify it by eye. |
+
+Additional owner decisions, 2026-08-20 (recorded during implementation):
+
+| ID | Decision |
+| --- | --- |
+| D10 | **Un-park the signature approval screen**, superseding the 2026-08-05 parking decision. The park's rationale ("approved signatures have no consumer") became stale the moment substitute receipts made the signature library load-bearing (R9). Nav entry, route, and capability flag are restored; `expense.signature.approve` now also opens the expenses module. |
+| D11 | **Auto-approve a signature submitted by a holder of `expense.signature.approve`** (the solo-owner case): the asset lands `ACTIVE` at creation with `approvedByUserId`/`approvedAt` set and `autoApproved` audited. Backend self-approval was already permitted; this removes the pointless extra web visit and preserves the one-web-visit promise. Staff submissions stay `PENDING_OWNER_APPROVAL`. |
+| D12 | **ISSUED delivery is next-turn / on-request, not push.** The system stores only a one-way chat-key hash (no durable raw LINE chat id), so a true push on approve→ISSUED would require a new PDPA-relevant store. The ✅ card with the delivery link arrives on the user's next message in the chat, and `ขอลิงก์ใหม่` summons it on demand. Revisit only if the owner decides to store a durable chat id. |
+| D13 | **Group-chat link withholding (§12.8) is defense-in-depth, not an active behavior**: the owner confirms current deployments are 1:1 chats only. The guard stays because the webhook layer accepts group sources and the OA-level "allow join groups" switch lives outside this codebase. |
+| D14 | **Signatures are personal assets with no approval step — supersedes D10 and D11** (owner, 2026-08-20, later the same day). A signature is visible only to its owner, self-managed (upload/replace/delete), and usable for signing the moment it is saved. Document authenticity comes from the authenticated signing act and its audit rows, not from anyone vetting the image — an approver cannot verify handwriting anyway. The ownership binding (`submittedByUserId`) stays: it is what prevents cross-user forgery. Housekeeping: `expense.signature.manage` may delete anyone's signature (departed staff, abuse) but never sees the image. The approval queue, approve/reject lifecycle, and approval notifications are removed; D10's un-parked page becomes "ลายเซ็นของฉัน" (self-service), and D11's auto-approve generalizes to everyone. |
 
 ## 5. Source Facts
 
@@ -211,8 +223,10 @@ See §12. A link is per-recipient, time-boxed, revocable and audited.
 7. Card: badge `รอยืนยัน`, button `ยืนยันและออกเอกสาร` → one web page, prefilled, with two sequential
    steps: the payer certifies, then the approver approves (D8 — two acknowledgements even when
    `OWNER_SELF` makes them one person).
-8. On `ISSUED` the system pushes a card into LINE: badge `ออกเอกสารแล้ว`, document number, amount, and
-   button `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)`.
+8. On `ISSUED` the system delivers a card into LINE: badge `ออกเอกสารแล้ว`, document number, amount, and
+   button `ดาวน์โหลดเอกสาร (ลิงก์หมดอายุใน 3 วัน)`. Delivery is next-turn / on-request per D12 — the
+   card arrives on the user's next message in the chat, and `ขอลิงก์ใหม่` summons it (with a fresh
+   link) at any time; a proactive push awaits an owner decision to store a durable chat id.
 
 ### Journey B — fallback: paper signature
 
@@ -312,8 +326,12 @@ user's stated intent.
    document number, user id or date appears in the key**, so knowing one key reveals nothing about
    another.
 3. That prefix carries its own 3-day lifecycle expiration, and the download role must not hold
-   `s3:ListBucket` on it. A separate bucket is preferred over a separate prefix where operationally
-   cheap.
+   `s3:ListBucket` on it. **Resolved at implementation (2026-08-20): a separate prefix
+   (`line-delivery/`) on the existing attachments bucket** — the storage port writes to one
+   configured bucket, so a separate bucket was not "operationally cheap" (port signature + both
+   adapters + env + IAM + terraform). The bucket is versioned: the lifecycle rule must also expire
+   noncurrent versions and abort incomplete multipart uploads, or revoked copies survive as
+   noncurrent versions. See `docs/runbooks/cloud-environment-operations.md`.
 4. The chat receives `{webBaseUrl}/d/{token}` — a public, session-less page that resolves the token
    hash, checks `expiresAt`/`revokedAt`, increments `openCount`, writes an audit row, and 302s to a
    short-lived presigned URL.
@@ -386,7 +404,9 @@ At most two buttons; the primary is always the single action that moves the work
 - [ ] A slip sent mid-conversation attaches to the open expense instead of creating a new one.
 - [ ] A user stating the payee signed receives the `ใบสำคัญรับเงิน` explanation and a choice.
 - [ ] The delivery link resolves once for the recipient, is audited, expires at 3 days, dies on revoke, and its object key leaks nothing.
-- [ ] Certify, approve and artifact download still refuse `authProvider: 'line'`.
+- [ ] Certify, approve and the artifact/form download endpoints still refuse `authProvider: 'line'`.
+      (The delivery-link mint runs with a LINE ctx by design — D3 — and hands out a copy of an
+      already-issued artifact; it grants no signing or issuing capability.)
 
 ## 17. Test Cases
 
@@ -412,9 +432,8 @@ All four questions raised in v0.1 were answered by the owner on 2026-08-18 and a
 D7, D8 and D9. No blocking questions remain; the plan is written
 ([[plans/line-substitute-receipt-assisted-issuance-plan|implementation plan]], 2026-08-19).
 
-Deliberately left for implementation to settle:
+Settled at implementation (2026-08-20):
 
-- Whether the delivery temp copy lives in a separate bucket or a separate prefix — an operational
-  call, with a separate bucket preferred (§12.3).
-- The exact wording of the R15 `ใบสำคัญรับเงิน` explanation, to be reviewed with the owner against a
-  real conversation rather than in the abstract.
+- Delivery temp copy: **separate prefix on the existing bucket** (§12.3, updated in place).
+- R15 `ใบสำคัญรับเงิน` wording: drafted and shipped, marked OWNER-REVIEW-PENDING in a code comment —
+  review it against a real conversation before calling it final.
