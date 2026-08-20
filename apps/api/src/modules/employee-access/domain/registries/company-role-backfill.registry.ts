@@ -81,6 +81,13 @@ export const COMPANY_ROLE_BACKFILLS: readonly CompanyRoleBackfill[] = [
       + 'is always written in the same transaction).',
   },
   {
+    key: 'expense.signature.self_manage',
+    anchor: 'expense.create',
+    why: 'Personal signatures joined pack.expense.self. Existing custom roles that can create their '
+      + 'own expense drafts receive only owner-scoped signature access; read-only and reviewer-only '
+      + 'roles are not widened.',
+  },
+  {
     key: 'report.snapshot.read',
     anchor: 'report.query.run',
     why: 'Reports safe-OFF separates exact retained run/view/export reads from new computation. '

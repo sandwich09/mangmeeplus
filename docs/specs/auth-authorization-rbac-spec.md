@@ -306,6 +306,13 @@ Rules:
 - Company-specific custom roles can be added later.
 - OWNER must still pass audit; owner role is not an audit bypass.
 - Role changes are sensitive and always audited.
+- The internal employee roles (`OWNER`, `ADMIN`, `MANAGER`, `SALES`, `INVENTORY`, `FINANCE`,
+  `ACCOUNTANT`, `MARKETING`, `STAFF`) receive the feature-gated employee self-service baseline:
+  own expense capture/evidence/draft maintenance, own reimbursement request lifecycle, and own
+  personal signature. This does not grant review, approval, payment, role administration, or access
+  to another employee's rows.
+- `AUDITOR_READONLY`, platform/view roles, and company custom roles are not inferred to be internal
+  employees. Custom roles opt in through the existing self-service capability packs.
 
 ### 8.1 Owner-delegated granting (team decision 2026-07-28)
 

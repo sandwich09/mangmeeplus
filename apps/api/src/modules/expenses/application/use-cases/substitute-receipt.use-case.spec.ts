@@ -1181,3 +1181,137 @@ describe('substitute receipt paper route (R11/R12)', () => {
     );
   });
 });
+
+/**
+ * D14: one CURRENT personal signature per person. Saving a new one retires the previous one in the
+ * same transaction, so the panel's "current signature" is never ambiguous — which is what made
+ * pressing ลบลายเซ็น look like a no-op: it archived one row and the next ACTIVE one took its place.
+ *
+ * The store is shared with the pinned lookup on purpose. Retiring must not cost a document that was
+ * already signed, and the only way to prove that is to certify-resolve the retired row afterwards.
+ */
+describe('one current personal signature per owner (D14)', () => {
+  const OLDER = new Date('2026-08-01T00:00:00.000Z');
+
+  function store(rows: any[], attachments: any[] = []) {
+    const locks: string[] = [];
+    const client: any = {
+      // Same connection, so the lock and both writes land in one transaction the way Prisma runs it.
+      $transaction: (work: (tx: any) => Promise<unknown>) => work(client),
+      $executeRaw: async (_sql: TemplateStringsArray, key: string) => { locks.push(key); return 1; },
+      companySignatureAsset: {
+        updateMany: async ({ where, data }: any) => {
+          const hit = rows.filter((row) => row.companyId === where.companyId
+            && row.submittedByUserId === where.submittedByUserId
+            && row.status === where.status);
+          for (const row of hit) Object.assign(row, data);
+          return { count: hit.length };
+        },
+        create: async ({ data }: any) => {
+          const row = {
+            id: `sig-${rows.length + 1}`, label: null, derivedAttachmentId: null, lineMessageId: null,
+            approvedByUserId: null, approvedAt: null, archivedAt: null,
+            createdAt: new Date('2026-08-10T00:00:00.000Z'), updatedAt: new Date('2026-08-10T00:00:00.000Z'),
+            ...data, status: data.status ?? 'ACTIVE',
+          };
+          // The partial unique index migration 20260821000000 adds. A path that forgets to retire the
+          // previous row must fail here rather than quietly create a second current signature.
+          if (row.status === 'ACTIVE' && rows.some((other) => other.companyId === row.companyId
+            && other.submittedByUserId === row.submittedByUserId && other.status === 'ACTIVE')) {
+            throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+          }
+          rows.push(row);
+          return row;
+        },
+        findMany: async ({ where }: any) => rows
+          .filter((row) => row.companyId === where.companyId
+            && row.submittedByUserId === where.submittedByUserId
+            && (where.status === undefined || row.status === where.status)
+            && (!where.OR || where.OR.some((clause: Record<string, unknown>) => Object.entries(clause)
+              .every(([field, value]) => (row[field] ?? null) === value))))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+      },
+      attachmentObject: {
+        findMany: async ({ where }: any) => attachments.filter((row) => where.id.in.includes(row.id)
+          && row.companyId === where.companyId && row.status === where.status
+          && where.mimeType.in.includes(row.mimeType)),
+      },
+    };
+    return { repo: new PrismaExpenseRepository({ client } as any), rows, locks };
+  }
+
+  function newSignature(overrides: Record<string, unknown> = {}) {
+    return {
+      companyId: 'co-1', submittedByUserId: 'payer-1', originalAttachmentId: 'att-new',
+      submittedFromChannel: 'WEB' as const, status: 'ACTIVE', approvedByUserId: 'payer-1',
+      approvedAt: new Date('2026-08-10T00:00:00.000Z'),
+      ...overrides,
+    };
+  }
+
+  function existing(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'sig-old', companyId: 'co-1', submittedByUserId: 'payer-1', status: 'ACTIVE',
+      originalAttachmentId: 'att-old', derivedAttachmentId: null, archivedAt: null,
+      submittedFromChannel: 'WEB', createdAt: OLDER, updatedAt: OLDER,
+      ...overrides,
+    };
+  }
+
+  it('retires the submitter previous ACTIVE signature, and only theirs', async () => {
+    const { repo, rows, locks } = store([
+      existing(),
+      existing({ id: 'sig-other-user', submittedByUserId: 'approver-1' }),
+      existing({ id: 'sig-other-company', companyId: 'co-2' }),
+      existing({ id: 'sig-already-archived', status: 'ARCHIVED', archivedAt: OLDER }),
+    ]);
+
+    const created = await repo.createSignatureAsset(newSignature());
+
+    assert.equal(created.status, 'ACTIVE');
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    assert.equal(byId.get('sig-old')!.status, 'ARCHIVED');
+    assert.ok(byId.get('sig-old')!.archivedAt instanceof Date, 'the retirement is dated on the row');
+    // A signature is personal: nobody else's, and no other tenant's, moves.
+    assert.equal(byId.get('sig-other-user')!.status, 'ACTIVE');
+    assert.equal(byId.get('sig-other-company')!.status, 'ACTIVE');
+    // An already-archived row keeps its original date rather than being re-stamped.
+    assert.equal(byId.get('sig-already-archived')!.archivedAt, OLDER);
+    // Exactly one ACTIVE row for this owner — the invariant the whole change exists for.
+    assert.equal(rows.filter((row) => row.companyId === 'co-1' && row.submittedByUserId === 'payer-1'
+      && row.status === 'ACTIVE').length, 1);
+    // Serialised per owner, so two uploads racing cannot both read "no current signature".
+    assert.deepEqual(locks, ['co-1:payer-1:signature-asset']);
+  });
+
+  it('leaves the retired row able to sign what it already signed', async () => {
+    const attachments = [
+      { id: 'att-old', companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/png', bucket: 'bucket',
+        objectKey: 'signatures/old.png', objectVersionId: null, byteSize: 1024,
+        checksumSha256: 'checksum-old', originalFileName: 'signature.png' },
+      { id: 'att-new', companyId: 'co-1', status: 'ACTIVE', mimeType: 'image/png', bucket: 'bucket',
+        objectKey: 'signatures/new.png', objectVersionId: null, byteSize: 1024,
+        checksumSha256: 'checksum-new', originalFileName: 'signature.png' },
+    ];
+    const { repo, rows } = store([existing()], attachments);
+
+    await repo.createSignatureAsset(newSignature());
+
+    // Pinned: a certificate recorded `att-old`, and approve must still resolve it after the
+    // signature that produced it was retired by a replacement. This is why the pinned branch drops
+    // the ACTIVE gate — retiring must never strand an already-certified document.
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1', 'att-old'))?.id, 'att-old');
+    // Nothing about the attachment moved, so the substitute-evidence retention hold — which reads
+    // AttachmentObject, never the asset status — still protects those bytes from deletion.
+    assert.equal(rows.find((row) => row.id === 'sig-old')!.originalAttachmentId, 'att-old');
+    assert.deepEqual(attachments.map((row) => row.status), ['ACTIVE', 'ACTIVE']);
+    // Unpinned, the retired row may no longer sign anything new: the replacement answers instead.
+    assert.equal((await repo.findReusableSignatureAsset('co-1', 'payer-1'))?.id, 'att-new');
+  });
+
+  it('does not retire anything when the new row is not ACTIVE', async () => {
+    const { repo, rows } = store([existing()]);
+    await repo.createSignatureAsset(newSignature({ status: 'REJECTED' }));
+    assert.equal(rows.find((row) => row.id === 'sig-old')!.status, 'ACTIVE');
+  });
+});

@@ -238,6 +238,7 @@ expense.duplicate.resolve
 expense.ocr.request
 expense.ai.verify
 expense.category.manage
+expense.signature.self_manage
 expense.signature.manage
 expense.signature.approve
 expense.export
@@ -246,21 +247,23 @@ expense.export
 Default grants:
 
 ```text
+INTERNAL EMPLOYEE BASELINE (OWNER, ADMIN, MANAGER, SALES, INVENTORY, FINANCE, ACCOUNTANT, MARKETING, STAFF): expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts, expense.signature.self_manage
 OWNER: all expense permissions
-ADMIN: expense.read, expense.read_own, expense.evidence.read, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update, expense.review, expense.confirm, expense.reject, expense.void, expense.delete, expense.payment.record, expense.duplicate.resolve, expense.category.manage, expense.signature.manage, expense.export
-MANAGER: expense.read and expense.evidence.read where ABAC allows team/summary, expense.read_own, expense.receipt.line_upload, expense.review where ABAC allows team, expense.duplicate.resolve where ABAC allows team
+ADMIN: employee baseline plus expense.read, expense.evidence.read, expense.review, expense.confirm, expense.reject, expense.void, expense.delete, expense.payment.record, expense.duplicate.resolve, expense.category.manage, expense.signature.manage, expense.export
+MANAGER: employee baseline plus expense.read and expense.evidence.read where ABAC allows team/summary, expense.review where ABAC allows team, expense.duplicate.resolve where ABAC allows team
 FINANCE: all expense permissions except expense.signature.approve by default
-ACCOUNTANT: expense.read, expense.read_own, expense.evidence.read, expense.receipt.line_upload, expense.export
+ACCOUNTANT: employee baseline plus expense.read, expense.evidence.read, expense.export
 AUDITOR_READONLY: expense.read, expense.evidence.read, expense.export
-STAFF: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts
-SALES: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts when company policy grants operational expense capture
-INVENTORY: expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update own drafts when company policy grants operational expense capture
-MARKETING: expense.read_own, expense.receipt.line_upload
+SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
 
 `ADMIN` works the expense module owner-equal (owner decision 2026-07-26): intake, review, confirm, reject, void, payment recording, duplicate resolution, and substitute-receipt preparation/approval. `expense.signature.approve` stays owner-level; `expense.ocr.request` and `expense.ai.verify` stay service-lane (`expense.review` already covers reviewer-triggered extraction).
 
 `expense.delete` hard-deletes DRAFT expenses only. OWNER, ADMIN, and FINANCE hold it by default and may delete any company draft; otherwise, a draft's creator holding `expense.update` may delete their own draft.
+
+`expense.signature.self_manage` is the personal-signature boundary: list, preview, upload, invoke/use, replace, derive and archive are restricted to `submittedByUserId = current user` in the API. Even OWNER, ADMIN, or a holder of `expense.signature.manage` can see and invoke only their own signature. `expense.signature.manage` remains a legacy/high-risk grant but no longer widens signature visibility, invocation, or ownership. Existing signed documents keep their pinned attachment references for audit/history after a personal signature is replaced or archived.
+
+The baseline is code-synced only to the protected internal employee roles above. `AUDITOR_READONLY`, `COMPANY_VIEW`, `SYSTEM_ADMIN`, and arbitrary company custom roles do not receive it automatically. A custom role opts in through `pack.expense.self`; existing custom roles already holding `expense.create` receive only the new owner-scoped `expense.signature.self_manage` backfill.
 
 `expense.evidence.read` is the dedicated read boundary for the หลักฐานทางบัญชี screen and `GET /expenses/shared-evidence`. It is granted to every protected role bundle that already has `expense.read`, so introducing the narrower guard does not remove existing access. Disabling the `expenses.evidence` child entitlement strips `expense.evidence.read` and `expense.export` while leaving the other expense sub-menus intact.
 
@@ -509,17 +512,17 @@ Default grants:
 
 ```text
 ALL company roles: reimbursement.read_related; view-only and reimbursement-entitlement-gated
+INTERNAL EMPLOYEE BASELINE (OWNER, ADMIN, MANAGER, SALES, INVENTORY, FINANCE, ACCOUNTANT, MARKETING, STAFF): reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own
 OWNER: all reimbursement permissions
-ADMIN: reimbursement.read, reimbursement.read_own, reimbursement.approve, reimbursement.reject, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (team decision 2026-07-28: approvers are OWNER/ADMIN/MANAGER; paying stays FINANCE-only)
-MANAGER: reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
-FINANCE: reimbursement.read, reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own, reimbursement.finance_review, reimbursement.payment.record, reimbursement.payment.void, reimbursement.duplicate.resolve, reimbursement.policy.read, reimbursement.export
-ACCOUNTANT: reimbursement.read, reimbursement.finance_review where accounting policy grants, reimbursement.export
+ADMIN: employee baseline plus reimbursement.read, reimbursement.approve, reimbursement.reject, reimbursement.policy.read, reimbursement.policy.manage, reimbursement.export (team decision 2026-07-28: approvers are OWNER/ADMIN/MANAGER; paying stays FINANCE-only)
+MANAGER: employee baseline plus reimbursement.read where ABAC allows team/summary, reimbursement.approve where assigned/team policy allows, reimbursement.reject where assigned/team policy allows
+FINANCE: employee baseline plus reimbursement.read, reimbursement.finance_review, reimbursement.payment.record, reimbursement.payment.void, reimbursement.duplicate.resolve, reimbursement.policy.read, reimbursement.export
+ACCOUNTANT: employee baseline plus reimbursement.read, reimbursement.finance_review where accounting policy grants, reimbursement.export
 AUDITOR_READONLY: reimbursement.read, reimbursement.export
-STAFF: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own
-SALES: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own when company policy grants employee reimbursement
-INVENTORY: reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own when company policy grants employee reimbursement
-MARKETING: no reimbursement permissions by default unless company policy grants employee reimbursement
+SALES, INVENTORY, MARKETING, STAFF: employee baseline
 ```
+
+The employee baseline is active only while the `reimbursement` entitlement is ON. Safe-OFF continues to strip create, draft update, submit and cancel while retaining the existing runoff permissions for claims already in flight. Company custom roles opt in through `pack.reimbursement.self`; they are never widened solely because the feature is enabled.
 
 `reimbursement.read_related` returns only records in the caller's tenant and branch scope where the caller is persisted as
 requester/creator/updater/submitter/current approver, approval-step assignee or decider, finance reviewer, cancellation actor,

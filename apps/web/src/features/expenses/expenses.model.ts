@@ -957,7 +957,7 @@ export type ExpenseCapabilities = {
   canRecordPayment: boolean;
   canResolveDuplicates: boolean;
   canManageCategories: boolean;
-  canManageSignatures: boolean;
+  canUsePersonalSignatures: boolean;
   canViewSharedEvidence: boolean;
   canExportPackage: boolean;
   canReadLedger: boolean;
@@ -974,13 +974,13 @@ export function expenseCapabilities(permissions: string[]): ExpenseCapabilities 
     canUpdate: has('expense.update'),
     canDelete: has('expense.delete'),
     canUploadReceipts: has('expense.receipt.upload'),
-    canRequestOcr: has('expense.ocr.request') || has('expense.review'),
+    canRequestOcr: has('expense.ocr.request') || has('expense.review') || has('expense.receipt.upload'),
     canReject: has('expense.reject'),
     canVoid: has('expense.void'),
     canRecordPayment: has('expense.payment.record'),
     canResolveDuplicates: has('expense.duplicate.resolve'),
     canManageCategories: has('expense.category.manage'),
-    canManageSignatures: has('expense.signature.manage'),
+    canUsePersonalSignatures: has('expense.signature.self_manage') || has('expense.review') || has('expense.confirm') || has('expense.signature.manage'),
     canViewSharedEvidence: has('expense.evidence.read'),
     // POST /accountant-package requires both expense.export AND expense.read.
     canExportPackage: has('expense.export') && has('expense.read'),
@@ -1102,9 +1102,8 @@ export function canAccessExpenseTab(tab: ExpensesTab, caps: ExpenseCapabilities)
     manual: caps.canCreate,
     categories: caps.canManageCategories,
     // "ลายเซ็นของฉัน" (owner decision 2026-08-20): a signature is personal, so the screen belongs
-    // to whoever performs either signing act — plus the housekeeping holder, who also sees other
-    // people's rows there.
-    signatures: caps.canReview || caps.canConfirm || caps.canManageSignatures,
+    // to whoever performs either signing act. Every accepted grant remains owner-only in the API.
+    signatures: caps.canUsePersonalSignatures,
     evidence: caps.canViewSharedEvidence,
   };
   return allowed[tab];

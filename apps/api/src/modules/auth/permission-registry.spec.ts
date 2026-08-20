@@ -51,14 +51,26 @@ describe('permission-registry', () => {
     }
   });
 
-  it('every employee role can report own expenses through LINE', () => {
+  it('every internal employee role has the complete self-service baseline', () => {
     const employeeRoles = ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'];
+    const baseline = [
+      'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
+      'expense.update', 'expense.signature.self_manage',
+      'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft',
+      'reimbursement.submit', 'reimbursement.cancel_own',
+    ];
     for (const role of employeeRoles) {
       const grants = ROLE_GRANTS[role] ?? [];
       assert.ok(grants.includes('attachment.create'), `${role} cannot store LINE receipt evidence`);
-      assert.ok(grants.includes('expense.read_own'), `${role} cannot read its own reported expense`);
       assert.ok(grants.includes('expense.read_related'), `${role} cannot read an expense they participated in`);
-      assert.ok(grants.includes('expense.receipt.line_upload'), `${role} cannot report expenses through LINE`);
+      for (const permission of baseline) {
+        assert.ok(grants.includes(permission), `${role} missing employee baseline ${permission}`);
+      }
+    }
+    for (const role of ['SYSTEM_ADMIN', 'COMPANY_VIEW', 'AUDITOR_READONLY']) {
+      for (const permission of baseline.filter((key) => !key.endsWith('.read_own'))) {
+        assert.equal(ROLE_GRANTS[role]?.includes(permission), false, `${role} must not receive ${permission}`);
+      }
     }
   });
 

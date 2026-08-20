@@ -1198,7 +1198,7 @@ export class PrismaExpenseRepository {
   }
 
   /**
-   * R9: an ACTIVE signature asset submitted by this user (owner-approved) signs any evidence in the
+   * R9: an ACTIVE signature asset submitted by this user signs any evidence in the
    * company, so a second substitute receipt needs no upload.
    *
    * Pass `attachmentId` to resolve what an evidence row already recorded. That branch deliberately
@@ -2751,20 +2751,40 @@ export class PrismaExpenseRepository {
     approvedByUserId?: string;
     approvedAt?: Date;
   }): Promise<SignatureAssetRecord> {
-    const s = await this.prisma.client.companySignatureAsset.create({
-      data: {
-        companyId: input.companyId,
-        label: input.label,
-        originalAttachmentId: input.originalAttachmentId,
-        submittedByUserId: input.submittedByUserId,
-        submittedFromChannel: input.submittedFromChannel as any,
-        lineMessageId: input.lineMessageId,
-        ...(input.status !== undefined && { status: input.status as any }),
-        ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
-        ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
-      },
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      // D14: ONE current signature per person. Saving a new one retires the previous one here, in the
+      // same transaction, under the per-owner advisory lock — so two uploads racing serialise instead
+      // of landing two ACTIVE rows, and a rollback (the LINE redelivery that loses at the
+      // lineMessageId unique index) takes the retirement back with it. Migration
+      // 20260821000000 adds the partial unique index that is the referee if a future write path
+      // forgets this. Without the rule, the panel's "current" signature was whichever ACTIVE row came
+      // first, so deleting it silently promoted the next one and delete looked like a no-op.
+      //
+      // Only `status`/`archivedAt` move: the retired row keeps its attachment ids, so the pinned
+      // re-resolution at approve still resolves what certify recorded, and the substitute-evidence
+      // retention hold still protects those bytes.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.submittedByUserId}:signature-asset`}))`;
+      if ((input.status ?? 'ACTIVE') === 'ACTIVE') {
+        await tx.companySignatureAsset.updateMany({
+          where: { companyId: input.companyId, submittedByUserId: input.submittedByUserId, status: 'ACTIVE' },
+          data: { status: 'ARCHIVED', archivedAt: new Date() },
+        });
+      }
+      const s = await tx.companySignatureAsset.create({
+        data: {
+          companyId: input.companyId,
+          label: input.label,
+          originalAttachmentId: input.originalAttachmentId,
+          submittedByUserId: input.submittedByUserId,
+          submittedFromChannel: input.submittedFromChannel as any,
+          lineMessageId: input.lineMessageId,
+          ...(input.status !== undefined && { status: input.status as any }),
+          ...(input.approvedByUserId !== undefined && { approvedByUserId: input.approvedByUserId }),
+          ...(input.approvedAt !== undefined && { approvedAt: input.approvedAt }),
+        },
+      });
+      return mapSignatureAsset(s);
     });
-    return mapSignatureAsset(s);
   }
 
   /**
@@ -2810,18 +2830,6 @@ export class PrismaExpenseRepository {
     return attachment.id;
   }
 
-  /** Whose signature a housekeeping row is. The manage holder may delete anyone's signature and may
-   *  never see the image, so the name is the only thing that tells the rows apart. */
-  async listUserDisplayNames(userIds: string[]): Promise<Map<string, string>> {
-    const ids = [...new Set(userIds)];
-    if (ids.length === 0) return new Map();
-    const users = await this.prisma.client.user.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, displayName: true },
-    });
-    return new Map(users.map((user) => [user.id, user.displayName]));
-  }
-
   async findSignatureAssetById(companyId: string, id: string): Promise<SignatureAssetRecord | null> {
     const s = await this.prisma.client.companySignatureAsset.findFirst({ where: { id, companyId } });
     return s ? mapSignatureAsset(s) : null;
@@ -2832,14 +2840,13 @@ export class PrismaExpenseRepository {
     return s ? mapSignatureAsset(s) : null;
   }
 
-  /** `submittedByUserId` is what "ลายเซ็นของฉัน" reads with: without it a caller with no
-   *  housekeeping authority would page through a company-wide list to find their own row. */
-  async listSignatureAssets(companyId: string, status?: string, submittedByUserId?: string): Promise<SignatureAssetRecord[]> {
+  /** `submittedByUserId` is mandatory for the owner-only "ลายเซ็นของฉัน" use case. */
+  async listSignatureAssets(companyId: string, submittedByUserId: string, status?: string): Promise<SignatureAssetRecord[]> {
     const rows = await this.prisma.client.companySignatureAsset.findMany({
       where: {
         companyId,
         ...(status ? { status: status as any } : {}),
-        ...(submittedByUserId ? { submittedByUserId } : {}),
+        submittedByUserId,
       },
       orderBy: { createdAt: 'desc' },
       take: 100,

@@ -506,7 +506,8 @@ describe('expenseCapabilities', () => {
     assert.equal(expenseCapabilities(['expense.payment.record']).canRecordPayment, true);
     assert.equal(expenseCapabilities(['expense.duplicate.resolve']).canResolveDuplicates, true);
     assert.equal(expenseCapabilities(['expense.category.manage']).canManageCategories, true);
-    assert.equal(expenseCapabilities(['expense.signature.manage']).canManageSignatures, true);
+    assert.equal(expenseCapabilities(['expense.signature.self_manage']).canUsePersonalSignatures, true);
+    assert.equal(expenseCapabilities(['expense.signature.manage']).canUsePersonalSignatures, true);
     // Evidence moved off expense.read onto its own key, so expense.read alone no longer grants it.
     assert.equal(expenseCapabilities(['expense.evidence.read']).canViewSharedEvidence, true);
     assert.equal(expenseCapabilities(['expense.read']).canViewSharedEvidence, false);
@@ -523,7 +524,8 @@ describe('expenseCapabilities', () => {
   // "ลายเซ็นของฉัน" (owner decision 2026-08-20): the screen is where you keep your OWN signature, so
   // it belongs to whoever performs either signing act. `expense.signature.approve` no longer opens
   // anything — a reviewer, who could not get in before, is exactly who needs it.
-  it('opens the signature tab for either signing act and for housekeeping, and nobody else', () => {
+  it('opens the signature tab for self-service, either signing act and the legacy manage grant, and nobody else', () => {
+    assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.self_manage'])), true);
     assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.review'])), true);
     assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.confirm'])), true);
     assert.equal(canAccessExpenseTab('signatures', expenseCapabilities(['expense.signature.manage'])), true);
@@ -540,10 +542,10 @@ describe('expenseCapabilities', () => {
     assert.equal(caps.canVoid, false);
   });
 
-  it('allows OCR request via expense.ocr.request or expense.review', () => {
+  it('allows OCR request through every permission accepted by the backend', () => {
     assert.equal(expenseCapabilities(['expense.ocr.request']).canRequestOcr, true);
     assert.equal(expenseCapabilities(['expense.review']).canRequestOcr, true);
-    assert.equal(expenseCapabilities(['expense.receipt.upload']).canRequestOcr, false);
+    assert.equal(expenseCapabilities(['expense.receipt.upload']).canRequestOcr, true);
   });
 
   it('requires both expense.export and expense.read for the accountant package', () => {

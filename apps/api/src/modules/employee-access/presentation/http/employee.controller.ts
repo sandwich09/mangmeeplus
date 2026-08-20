@@ -51,6 +51,7 @@ export class EmployeeController {
       companyId: ctx.companyId,
       requestingUserId: ctx.userId,
       requesterPermissions: ctx.permissions,
+      requesterEntitlementDeniedPermissions: ctx.entitlementDeniedPermissions,
       requesterRoles: ctx.roles,
       requestId: ctx.requestId,
       apiBaseUrl: trustedPublicApiBase(req),
@@ -81,6 +82,7 @@ export class EmployeeController {
       requestId: ctx.requestId,
       ...body,
       requesterPermissions: ctx.permissions,
+      requesterEntitlementDeniedPermissions: ctx.entitlementDeniedPermissions,
       requesterRoles: ctx.roles,
     });
   }

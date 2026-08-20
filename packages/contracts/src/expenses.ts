@@ -334,7 +334,10 @@ export const SIGNATURE_ASSET_STATUS_LABELS: Record<SignatureAssetStatus, string>
   PENDING_OWNER_APPROVAL: 'รอเจ้าของกิจการอนุมัติ',
   ACTIVE: 'ใช้งานได้',
   REJECTED: 'ปฏิเสธ',
-  ARCHIVED: 'เก็บถาวร',
+  // The button that produces this state says ลบลายเซ็น, so the badge says the same thing back.
+  // "เก็บถาวร" read as filing something away — next to a still-visible preview it looked like the
+  // delete had not happened.
+  ARCHIVED: 'เลิกใช้แล้ว',
 };
 
 export type ExpenseCategorySummary = {
@@ -642,9 +645,7 @@ export type SignatureAssetSummary = {
   companyId: string;
   label: string | null;
   status: SignatureAssetStatus;
-  /** Present only on the caller's OWN rows. A housekeeping row names no attachment, because an id is
-   *  a route to the image through the generic download endpoint — and housekeeping authorises
-   *  deleting someone's signature, never seeing it. */
+  /** The API returns only the caller's own rows, so these ids never disclose another user's image. */
   originalAttachmentId?: string;
   derivedAttachmentId?: string | null;
   submittedByUserId: string;
@@ -656,12 +657,8 @@ export type SignatureAssetSummary = {
   rejectReason: string | null;
   createdAt: string;
   updatedAt: string;
-  /** A7: short-lived inline URL for the derived (or original) image. Minted ONLY for the caller's
-   *  own signature — a personal asset is nobody else's to look at, housekeeping holders included. */
+  /** A7: same-origin inline URL for the caller's derived (or original) personal signature image. */
   previewUrl?: string | null;
-  /** Housekeeping rows only (other people's signatures, for an `expense.signature.manage` holder):
-   *  who it belongs to. Null on the caller's own rows, which need no attribution. */
-  submittedByDisplayName?: string | null;
 };
 
 export type CreateSignatureAssetInput = {

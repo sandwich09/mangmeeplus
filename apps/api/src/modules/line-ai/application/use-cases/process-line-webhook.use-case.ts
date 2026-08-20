@@ -78,7 +78,7 @@ import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-led
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage } from '../../domain/logic/line-business-card.logic';
-import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
+import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
@@ -165,6 +165,12 @@ const TEXT_EXPENSE_CLARIFY_REPLY = '🧾 ยังไม่สร้างรา
  *  under this separator; the capture stands on its own when the continuation cannot be evaluated. */
 const SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL = 'ผลคำขอเพิ่มเติม:';
 const SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED = '⏳ ส่วนใบรับรองแทนใบเสร็จรับเงินยังตรวจสอบไม่ได้ชั่วคราว รายการค่าใช้จ่ายด้านบนยังบันทึกสำเร็จและตรวจสอบได้ในเว็บ';
+/** R2: the ledger marker for “this chat asked for a ใบรับรองแทนใบเสร็จรับเงิน before there was any
+ *  expense to make it for”. It is deliberately a DIFFERENT request text from the resume entry above:
+ *  that one has a target and must keep capture-first off, this one has none and is the reason
+ *  capture-first has to run on the very next message. */
+const SUBSTITUTE_TARGET_PENDING_TEXT = 'ทำใบรับรองแทนใบเสร็จรับเงิน (ยังไม่มีรายการค่าใช้จ่าย)';
+const SUBSTITUTE_TARGET_PENDING_QUESTION = 'ค่าใช้จ่ายที่จะทำใบรับรองแทนใบเสร็จรับเงินให้คือรายการไหน ยอดเท่าไรคะ? เช่น “ค่าวินมอไซค์ 50 บาท”';
 /** RECEIPT-05: how long a pending media-clarify row waits for the customer's answer. */
 const PENDING_MEDIA_TTL_MINUTES = 30;
 /** Stands in for the request when a picture arrives with no caption — the file IS the ask. */
@@ -634,6 +640,31 @@ export function formatGroundedReceiptFollowUp(
     'การนำไปเป็นค่าใช้จ่ายบริษัท: ระบุวัตถุประสงค์/หมวด ตรวจยอดและหลักฐาน แล้วให้ผู้มีสิทธิ์ยืนยันในเว็บ',
     'ข้อมูลบนใบเสร็จเพียงอย่างเดียวไม่ยืนยันนโยบายบริษัทหรือสิทธิเครดิต VAT; ใบรับรองแทนใบเสร็จภายในก็ไม่ใช่ใบกำกับภาษี',
     `เปิดตรวจสอบรายการ: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`,
+  ].join('\n');
+}
+
+/** GAP C tier 2: “ต้องทำยังไงต่อ” with no substitute document in flight, but with an expense this
+ *  chat captured. Names the three things that actually exist for THAT record — evidence, review,
+ *  ใบรับรองแทนใบเสร็จรับเงิน — instead of the model's “ส่วนนี้ยังไม่พร้อมใช้งานผ่าน LINE”. Each option
+ *  is a route the sender can take from this chat, and the substitute one prints the exact words the
+ *  deterministic vocabulary listens for. */
+export function formatNextStepGuidanceReply(
+  webBaseUrl: string | undefined,
+  companyId: string,
+  candidate: LineIntakeCorrectionCandidate,
+): string {
+  return [
+    '🧭 รายการล่าสุดที่บันทึกไว้ในแชทนี้ยังรอตรวจสอบอยู่ค่ะ',
+    '',
+    `รายการ: ${candidate.label}`,
+    '',
+    'ทำต่อได้ 3 ทางค่ะ',
+    '1) ส่งรูปใบเสร็จ/สลิปเข้าแชทนี้ หรือแนบไฟล์ในเว็บ เพื่อเก็บเป็นหลักฐาน',
+    '2) เปิดในเว็บเพื่อตรวจยอด หมวดค่าใช้จ่าย แล้วให้ผู้มีสิทธิ์ยืนยัน',
+    '3) ถ้าไม่มีใบเสร็จ พิมพ์ “ทำใบรับรองแทนใบเสร็จ” เพื่อจัดทำใบรับรองแทนใบเสร็จรับเงินให้รายการนี้',
+    '',
+    'LINE ยังไม่ได้อนุมัติ จ่ายเงิน หรือลงบัญชีขั้นสุดท้ายให้นะคะ',
+    `เปิดรายการนี้: ${absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${candidate.id}`)}`,
   ].join('\n');
 }
 
@@ -1518,9 +1549,25 @@ export class ProcessLineWebhookUseCase {
     }
 
     const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    // R2: the request phrase arrived a turn ago with nothing to point it at, so it was parked as a
+    // clarification. THIS message is the expense fact it was waiting for — the sender must not have
+    // to type “ใบทดแทน” again to get what they already asked for. Only this marker means “no target
+    // yet”: the numbered-choice and open-workflow substitute clarifications already have one, which
+    // is exactly why capture-first still stands down for those.
+    const carriedSubstituteIntent = !isSubstituteReceiptConversationText(normalizedText)
+      && openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION'
+        && item.text === SUBSTITUTE_TARGET_PENDING_TEXT);
+    const nextStepQuestion = isNextStepQuestionText(normalizedText);
+    // GAP C tier 1: a “what do I do next?” with substitute work in flight is a question ABOUT that
+    // work, so the continuation's own status card answers it. The lookup is paid for only by that
+    // message. The AI owns this intent whenever the gateway is reachable; this is the floor under it.
+    const nextStepSubstituteTarget = nextStepQuestion && !hasSubstituteClarification
+      && this.substituteReceiptContinuation && resolvedAccess.permissions.includes('expense.review')
+      ? await this.substituteWorkInFlight(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
+      : undefined;
     let substituteInterruption: LineSubstituteReceiptContinuationResult | undefined;
     if (this.substituteReceiptContinuation
-      && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification)) {
+      && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification || nextStepSubstituteTarget)) {
       const continuationCtx: RequestContext = {
         requestId, authSubject: identity.userId, userId: identity.userId, companyId,
         membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
@@ -1531,15 +1578,15 @@ export class ProcessLineWebhookUseCase {
       // existing target-selection flow can still do its job: a recent capture to point at, a
       // substitute question already pending, or a capture clarification still waiting on this chat
       // (that one owns the message's expense facts and its own ledger entry).
-      const captureFirstAmount = isSubstituteReceiptConversationText(normalizedText)
+      const captureFirstAmount = (carriedSubstituteIntent
+        || (isSubstituteReceiptConversationText(normalizedText) && !hasSubstituteClarification))
         && canCaptureExpense
         && recentCapturedExpenses.length === 0
-        && !hasSubstituteClarification
         && !openWaiting.some((item) => item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
         ? valueCandidates?.amounts[0]?.value
         : undefined;
       const captured = await this.captureBeforeSubstituteContinuation(
-        event, continuationCtx, normalizedText, captureFirstAmount,
+        event, continuationCtx, normalizedText, captureFirstAmount, carriedSubstituteIntent,
       );
       const captureReply = captured
         ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
@@ -1560,7 +1607,11 @@ export class ProcessLineWebhookUseCase {
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: captured
             ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
-            : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
+            // GAP C tier 1: the one document this chat is in the middle of, so the card reports IT
+            // instead of asking which of several recent captures the question was about.
+            : nextStepSubstituteTarget
+              ? [{ id: nextStepSubstituteTarget, label: 'งานใบรับรองแทนใบเสร็จรับเงินล่าสุดในแชทนี้' }]
+              : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
           webBaseUrl: this.config.webBaseUrl,
         });
       } catch (error) {
@@ -1587,8 +1638,13 @@ export class ProcessLineWebhookUseCase {
       // until they finished this document. `decisionUnread` is the continuation saying the same
       // thing about a non-question, and the resume capsule still travels with the router's reply, so
       // the pending decision stays visible and “ออกเอกสารเลย” still lands on it next turn.
+      //
+      // GAP C: “ต้องทำยังไงต่อ” is not a question BESIDE this work, it is a question about it, and
+      // handing it to the model is what produced the “ยังไม่พร้อมใช้งานผ่าน LINE” dead end. The card
+      // already says what is done, what is missing and what to answer next, so it is the answer.
       const routeSideQuestion = hasSubstituteClarification
         && !isSubstituteReceiptConversationText(normalizedText)
+        && !nextStepQuestion
         && (isInterveningQuestionText(normalizedText) || result.decisionUnread === true)
         && !result.sideQuestionAnswered
         && result.status !== 'FORBIDDEN';
@@ -1608,25 +1664,51 @@ export class ProcessLineWebhookUseCase {
             .filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
             .map((item) => item.id),
           'business_answer');
-        if (result.pendingQuestion) {
+        // R2: this turn asked for the document and there was nothing in the chat to make it for, so
+        // the request itself is parked for the ONE turn that supplies the expense fact. Bounded like
+        // every other clarification — same chat, same asker, the ledger's context window — and the
+        // very next turn through this branch consumes it, so an unrelated later message inherits
+        // nothing. `!captured` keeps a turn that already produced a target from re-arming.
+        const carriedIntentArmed = !result.pendingQuestion && !captured
+          && result.status === 'TARGET_REQUIRED'
+          && canCaptureExpense && recentCapturedExpenses.length === 0
+          && isSubstituteReceiptConversationText(normalizedText);
+        if (result.pendingQuestion || carriedIntentArmed) {
           await this.ledger?.appendSubRequests({
             companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId,
             items: [{
-              text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
-              clarifyQuestion: result.pendingQuestion, intent: 'CLARIFY',
+              text: carriedIntentArmed ? SUBSTITUTE_TARGET_PENDING_TEXT : 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+              state: 'waiting_user',
+              clarifyQuestion: result.pendingQuestion ?? SUBSTITUTE_TARGET_PENDING_QUESTION,
+              intent: 'CLARIFY',
               clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
             }],
           });
         }
         await this.updateEventLog(
           event.webhookEventId,
-          result.pendingQuestion ? 'clarification_required' : 'completed',
+          result.pendingQuestion || carriedIntentArmed ? 'clarification_required' : 'completed',
           undefined,
           companyId,
         );
         return;
       }
+    }
+
+    // GAP C tier 2: no substitute document in flight, but this chat did capture an expense — so
+    // “ต้องทำยังไงต่อ” has a real answer and the model's “ส่วนนี้ยังไม่พร้อมใช้งานผ่าน LINE ค่ะ” was
+    // both wrong and a dead end. With no capture to name, the question falls through untouched: the
+    // AI owns intent whenever it is reachable, and this is only the floor under it.
+    if (nextStepQuestion && !nextStepSubstituteTarget && recentCapturedExpenses.length > 0) {
+      const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0]);
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: reply, intent: 'READ_SUMMARY',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
     }
 
     const aiOpenClarifications = openClarifications?.filter((item) =>
@@ -3358,6 +3440,28 @@ export class ProcessLineWebhookUseCase {
     return { outcome: 'handled' };
   }
 
+  /** GAP C tier 1: the substitute work this chat can be told the next step for — an OPEN/PAUSED
+   *  workflow, or a document already PREPARED/PAYER_CERTIFIED/ISSUED on the newest continuation this
+   *  chat opened (that state is CONSUMED by the prepare, so only the evidence still says so).
+   *  Returns the expense to report on; the continuation's own card does the reporting. Read only for
+   *  a “what next?” message, so no other turn pays for the lookup. */
+  private async substituteWorkInFlight(
+    companyId: string,
+    userId: string,
+    chatKeyHash: string,
+    scopes: { branchIds?: string[] },
+  ): Promise<string | undefined> {
+    if (!this.expenseRepo) return undefined;
+    const rows = await this.expenseRepo.listLineSubstituteContinuationRows({ companyId, userId, chatKeyHash, scopes, take: 5 });
+    const active = rows.find((row) => hasActiveSubstituteContinuation([row]));
+    if (active) return active.id;
+    const newest = rows[0];
+    if (!newest) return undefined;
+    const status = (await this.expenseRepo.findByIdWithRelations(companyId, newest.id, undefined, scopes))
+      ?.substituteReceiptEvidence?.status;
+    return status === 'PREPARED' || status === 'PAYER_CERTIFIED' || status === 'ISSUED' ? newest.id : undefined;
+  }
+
   /** R1 capture-first: create the expense draft the substitute request describes, so the
    *  continuation opens on a real target instead of dead-ending in target selection.
    *
@@ -3375,9 +3479,14 @@ export class ProcessLineWebhookUseCase {
     ctx: RequestContext,
     normalizedText: string,
     amount: string | undefined,
+    /** R2: the request phrase was already said a turn ago, so THIS message is nothing but the expense
+     *  fact and the whole of it is the description — still verbatim source text for the gate. When the
+     *  phrase is in the message, `substituteRequestExpenseText`'s "amount PLUS purpose" floor decides
+     *  exactly as before (a carried turn never carries the phrase, so the two cannot overlap). */
+    carriedIntent = false,
   ): Promise<Awaited<ReturnType<CaptureLineExpenseNoteUseCase['execute']>> | undefined> {
     if (!amount || !this.captureExpenseNote || !this.expenseRepo) return undefined;
-    const description = substituteRequestExpenseText(normalizedText);
+    const description = substituteRequestExpenseText(normalizedText) ?? (carriedIntent ? normalizedText : undefined);
     if (!description) return undefined;
     const openRows = await this.expenseRepo.listLineSubstituteContinuationRows({
       companyId: ctx.companyId, userId: ctx.userId, chatKeyHash: chatKeyHashOf(event), scopes: ctx.scopes ?? {},

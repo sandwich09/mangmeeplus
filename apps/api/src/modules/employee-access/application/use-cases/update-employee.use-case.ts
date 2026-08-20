@@ -19,6 +19,7 @@ export type UpdateEmployeeCommand = UpdateEmployeeInput & {
   employeeId: string;
   requestingUserId: string;
   requesterPermissions: string[];
+  requesterEntitlementDeniedPermissions?: Record<string, string>;
   requesterRoles?: string[];
   requestId: string;
 };
@@ -63,6 +64,7 @@ export class UpdateEmployeeUseCase {
         const violation = roleGrantViolation(
           candidates.map((role) => ({ key: role.key, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
           cmd.requesterPermissions,
+          cmd.requesterEntitlementDeniedPermissions,
           cmd.requesterRoles?.includes('OWNER'),
         );
         if (violation) {

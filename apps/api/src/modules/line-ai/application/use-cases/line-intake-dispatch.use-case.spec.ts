@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException } from '@nestjs/common';
 import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
-import { isDeliveredCapabilityFollowUp } from '../../domain/logic/line-ai-capability-follow-up.logic';
+import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
@@ -1385,6 +1385,242 @@ describe('LINE intake dispatch – text path', () => {
   });
 });
 
+// R2 — the UAT journey in two turns. The sender asks for the document before any expense exists in
+// the chat, so the turn can only end in target selection; the fact arrives on the NEXT message and
+// used to be filed as a plain expense note, leaving the document they asked for unmade.
+describe('LINE intake dispatch – the substitute request survives the clarify turn', () => {
+  const FULL_ACCESS = ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'];
+  const REQUEST_TURN = 'ทำรายการใบทดแทนของค่าวินมอไซค์ไปพบลูกค้า';
+  const FACT_TURN = 'ค่าวินมอไซค์ 50 บาท';
+  /** What the continuation answers with when it has no target and no numbered choice to offer. */
+  const targetRequired = {
+    handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
+    replyText: [
+      '📄 ใบรับรองแทนใบเสร็จรับเงิน',
+      'ยังไม่พบรายการค่าใช้จ่ายในแชทนี้ที่จะทำใบรับรองให้ค่ะ',
+      '',
+      'ทำต่อ: พิมพ์ยอดและรายละเอียดค่าใช้จ่ายในแชทนี้ได้เลยค่ะ เช่น “ค่าวินมอไซค์ 50 บาท”',
+    ].join('\n'),
+  };
+  const openedOnDraft = {
+    handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-note-real-1',
+    replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• ระบุเหตุผลที่ไม่มีใบเสร็จ',
+    acceptedFields: ['amount'], blockers: [{ code: 'reason_code_required' }],
+    pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+  };
+  const carried = (item: any) => ({
+    id: 'sub-carry-1', question: item.clarifyQuestion, text: item.text, askedAt: new Date().toISOString(),
+    clarifyForIntent: item.clarifyForIntent,
+    entry: { id: 'sub-carry-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+  });
+
+  it('parks the request as a clarification when the chat has nothing to make the document for', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({ permissions: FULL_ACCESS, realCapture: true, captureLedger, substituteResult: targetRequired });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: REQUEST_TURN });
+
+    assert.equal(h.substituteCalls.length, 1, 'the widened vocabulary routes the UAT sentence here, not to plain capture');
+    assert.equal(h.draftsCreated.length, 0, 'no amount in this turn, so nothing to capture');
+    assert.equal(h.routeRequests.length, 0);
+    assert.match(h.replies[0] ?? '', /ใบรับรองแทนใบเสร็จรับเงิน/);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    assert.equal(captureLedger[0]?.items?.[0]?.text, 'ทำใบรับรองแทนใบเสร็จรับเงิน (ยังไม่มีรายการค่าใช้จ่าย)',
+      'the marker that says “no target yet” — the resume entry uses a different text on purpose');
+  });
+
+  it('captures the next message and opens the continuation on the draft it just made', async () => {
+    const requestTurn: any[] = [];
+    const first = makeHarness({ permissions: FULL_ACCESS, realCapture: true, captureLedger: requestTurn, substituteResult: targetRequired });
+    await first.useCase.execute({ ...TEXT_EVENT, messageText: REQUEST_TURN });
+
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: FULL_ACCESS, realCapture: true, captureLedger,
+      // Exactly what the previous turn wrote — no hand-authored fixture in between.
+      openWaiting: [carried(requestTurn[0].items[0])],
+      substituteResult: openedOnDraft,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: FACT_TURN });
+
+    assert.deepEqual(
+      { amount: h.captured[0]?.captureHints?.amount, description: h.captured[0]?.captureHints?.description },
+      { amount: '50', description: FACT_TURN },
+      'the carried turn is nothing but the expense fact, so the whole message is the description',
+    );
+    assert.equal(h.draftsCreated.length, 1, 'ONE expense, created through the real eligibility gate');
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-note-real-1'],
+      'and the document opens on it instead of asking the sender to repeat “ใบทดแทน”');
+    assert.equal(h.replies.length, 1, 'both outcomes in one reply');
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /ผลคำขอเพิ่มเติม:/);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+    assert.equal(h.routeRequests.length, 0, 'still deterministic end to end');
+    assert.equal(captureLedger[0]?.items?.[0]?.text, 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+      'the carried marker is spent; what stays open now is the workflow question');
+  });
+
+  it('re-arms nothing once a target exists, so a later unrelated expense is not swallowed', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: FULL_ACCESS, realCapture: true, captureLedger,
+      // The RESUME marker: this clarification already has a target, so capture-first stays off and
+      // the open document keeps owning the turn exactly as before.
+      openWaiting: [carried({ text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', clarifyQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION' })],
+      substituteResult: { ...openedOnDraft, expenseId: 'expense-1' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ค่าแท็กซี่ 120 บาท' });
+
+    assert.equal(h.draftsCreated.length, 0, 'a substitute clarification WITH a target never capture-firsts');
+    assert.equal(h.captured.length, 0);
+  });
+
+  it('does not park the request when the chat already has a candidate to point at', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: FULL_ACCESS, captureLedger,
+      recentCaptures: [{
+        id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '200.00',
+        sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date(),
+      }],
+      substituteResult: { ...targetRequired, pendingQuestion: 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: REQUEST_TURN });
+
+    assert.equal(captureLedger[0]?.items?.[0]?.text, 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+      'target selection is already asking a numbered question; that is not a carried intent');
+  });
+});
+
+// GAP C — “ต้องทำยังไงต่อ” reached the gateway, a tool answered unavailable, and the composer told
+// the sender that the thing they were in the middle of is not available through LINE.
+describe('LINE intake dispatch – “what do I do next?”', () => {
+  const NEXT_STEP = 'ต้องทำยังไงต่อ';
+  const activeContinuationRow = {
+    id: 'expense-open', updatedAt: new Date(),
+    sourceChannelMetadataJson: {
+      lineSubstituteReceiptContinuation: {
+        workflowId: 'wf-open', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+        expenseId: 'expense-open', chatKeyHash: 'chat-hash', status: 'OPEN', acceptedValues: {},
+        provenance: {}, targetRevision: new Date().toISOString(),
+      },
+    },
+  };
+  const statusCard = {
+    handled: true, status: 'BLOCKED', workflowId: 'wf-open', expenseId: 'expense-open',
+    replyText: '📄 ใบรับรองแทนใบเสร็จรับเงิน\nสิ่งที่ยังต้องทำทั้งหมด:\n• ระบุเหตุผลที่ไม่มีใบเสร็จ',
+    acceptedFields: ['amount'], blockers: [{ code: 'reason_code_required' }],
+    pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?',
+  };
+  const recentCapture = {
+    id: 'expense-1', expenseDate: new Date('2026-08-16T00:00:00.000Z'), grandTotalAmount: '50.00',
+    sourceDocumentType: 'EXPENSE_NOTE_TEXT' as const, createdAt: new Date(),
+  };
+
+  it('matches the phrasings people send, and only those', () => {
+    for (const text of ['ต้องทำยังไงต่อ', 'ทำยังไงต่อ', 'ทำไงต่อ', 'แล้วไงต่อ', 'ต่อไปทำอะไร', 'ขั้นตอนต่อไป',
+      'แล้วต้องทำอะไร', 'ต้องทำยังไงต่อคะ', 'ทำยังไงต่อครับ', 'ต้องทำยังไงต่อ?', 'ทำยังไงต่อดี']) {
+      assert.equal(isNextStepQuestionText(text), true, text);
+    }
+    for (const text of ['ยอดขายวันนี้เท่าไหร่', 'ค่าวินมอไซค์ 50 บาท', 'ไม่มีใบเสร็จ ต้องทำยังไง',
+      'แล้วบิลนี้ต้องทำยังไงต่อ', 'ทำต่อ', 'ทำไงดี']) {
+      assert.equal(isNextStepQuestionText(text), false, text);
+    }
+  });
+
+  it('answers from the open substitute document instead of routing the question to the model', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      substituteContinuationRows: [activeContinuationRow],
+      substituteResult: statusCard,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: NEXT_STEP });
+
+    assert.equal(h.routeRequests.length, 0, 'never reaches the AI turn, so never reaches its “ยังไม่พร้อมใช้งาน”');
+    assert.deepEqual(h.substituteCalls[0].recentCandidates.map((item: any) => item.id), ['expense-open']);
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+  });
+
+  it('answers from an already prepared document whose conversation state is spent', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      substituteContinuationRows: [{
+        ...activeContinuationRow,
+        sourceChannelMetadataJson: {
+          lineSubstituteReceiptContinuation: {
+            ...activeContinuationRow.sourceChannelMetadataJson.lineSubstituteReceiptContinuation,
+            status: 'CONSUMED',
+          },
+        },
+      }],
+      expenseDetail: { id: 'expense-open', createdByUserId: 'user-1', substituteReceiptEvidence: { id: 'ev-1', status: 'PREPARED' } },
+      substituteResult: statusCard,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: NEXT_STEP });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.equal(h.substituteCalls.length, 1);
+  });
+
+  it('is answered by the document card even while its own clarification is open', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      openWaiting: [{
+        id: 'sub-clarify-1', question: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ',
+        askedAt: new Date().toISOString(), clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+        entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+      substituteResult: statusCard,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: NEXT_STEP });
+
+    assert.equal(h.routeRequests.length, 0, 'a question ABOUT this work is not a side question beside it');
+    assert.match(h.replies[0] ?? '', /สิ่งที่ยังต้องทำทั้งหมด/);
+  });
+
+  it('names the real options for the chat’s own expense when no document is in flight', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      recentCaptures: [recentCapture],
+      substituteResult: statusCard,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: NEXT_STEP });
+
+    assert.equal(h.routeRequests.length, 0);
+    assert.equal(h.captured.length, 0, 'a question creates nothing');
+    const reply = h.replies[0] ?? '';
+    assert.match(reply, /ส่งรูปใบเสร็จ\/สลิปเข้าแชทนี้/);
+    assert.match(reply, /เปิดในเว็บเพื่อตรวจยอด/);
+    assert.match(reply, /ทำใบรับรองแทนใบเสร็จ/);
+    assert.match(reply, /https:\/\/app\.example\.com\/companies\/company-1\/expenses\/expense-1/);
+  });
+
+  it('leaves the question alone when this chat has nothing to answer it from', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
+      substituteResult: statusCard,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: NEXT_STEP });
+
+    assert.equal(h.substituteCalls.length, 0);
+    assert.equal(h.routeRequests.length, 1, 'the AI owns intent whenever it is reachable');
+    assert.match(h.replies[0] ?? '', /turn-answer/);
+  });
+});
+
 describe('LINE intake dispatch – media path', () => {
   it('PUTs the exact downloaded bytes to a storage upload intent', async () => {
     let captured: { url?: string; init?: RequestInit } = {};
@@ -1405,7 +1641,7 @@ describe('LINE intake dispatch – media path', () => {
 
   it('signature-like image is saved as a usable personal signature, not an expense draft', async () => {
     const h = makeHarness({
-      permissions: ['expense.signature.manage', 'expense.receipt.line_upload'],
+      permissions: ['expense.signature.self_manage', 'expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },
     });
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -1422,7 +1658,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.ok(!/บันทึกข้อมูลค่าใช้จ่าย/.test(h.replies[0] ?? ''));
   });
 
-  it('signature route without any signing or housekeeping permission is refused', async () => {
+  it('signature route without any personal-signature or signing permission is refused', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.92 },

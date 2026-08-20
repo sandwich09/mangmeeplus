@@ -120,11 +120,10 @@ export const FEATURE_CATALOG: FeatureDefinition[] = [
         labelTh: 'ลายเซ็นของฉัน',
         descriptionTh: 'เก็บลายเซ็นประจำตัวไว้ใช้ลงนามเอกสารของบริษัท',
         route: '/expenses/signatures',
-        // Only the housekeeping key is owned here. The screen is also reachable on the two signing
-        // permissions, which sit in packs keyed to the parent `expenses` feature — same shape as
-        // ใบรับรองแทนใบเสร็จ above, and for the same reason: a personal signature rides along with
-        // the act of signing rather than being sold beside it.
-        permissionKeys: ['expense.signature.manage'],
+        // The self-service key is owned here. Review/confirm can also reach the screen through the
+        // parent expense entitlement because those actors may need their own personal signature.
+        // The legacy manage key is retained for compatible existing roles but has owner-only scope.
+        permissionKeys: ['expense.signature.self_manage', 'expense.signature.manage'],
       },
     ],
   },

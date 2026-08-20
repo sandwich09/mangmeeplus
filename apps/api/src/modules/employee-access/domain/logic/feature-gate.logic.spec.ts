@@ -464,6 +464,7 @@ describe('loadEntitledFeatureKeys submenu inheritance', () => {
       'expense.category.manage',
       'expense.evidence.read',
       'expense.export',
+      'expense.signature.self_manage',
       'expense.signature.manage',
       'expense.signature.approve',
     ];
@@ -480,6 +481,7 @@ describe('loadEntitledFeatureKeys submenu inheritance', () => {
       'expense.read',
       'expense.category.manage',
       'expense.evidence.read',
+      'expense.signature.self_manage',
       'expense.signature.manage',
     ];
     const entitled = await loadEntitledFeatureKeys(
@@ -492,7 +494,7 @@ describe('loadEntitledFeatureKeys submenu inheritance', () => {
 
     assert.deepEqual(
       filterPermissionsByEntitlement(permissions, entitled),
-      ['expense.read', 'expense.evidence.read', 'expense.signature.manage'],
+      ['expense.read', 'expense.evidence.read', 'expense.signature.self_manage', 'expense.signature.manage'],
     );
   });
 
