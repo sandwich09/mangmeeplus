@@ -176,6 +176,35 @@ Findings from reading the surrounding code and UAT state. Each is either folded 
 | G8 | Deep links are minted for surfaces the recipient may not be able to open | `erp-*-tools.use-case.ts` set `permissionChecked: true` for the **tool result**; the target web route runs its own permission check independently | A user can be handed a link to a page that then refuses them. The handoff makes this *more* visible, because reaching the page no longer fails for the wrong reason first | **Out of scope, recorded** — pre-checking every target route's permission at send time is a separate change; the page's own forbidden state is correct behaviour |
 | G9 | CRM customer LINE channels must never receive a handoff token | `crm-inbox/infrastructure/line-messaging.adapter.ts` is used by `deliver-crm-campaign`, `scan-crm-booking-reminders`, `crm-conversation` — all customer recipients | Minting for a customer would create an ERP session for someone who is not an ERP user | **Boundary rule** — §4 and §8; enforced by the seam taking an internal `userId`, which a customer recipient does not have |
 | G10 | LINE-only users (no password credential) would have no recovery if a handoff fails | `auth.guard.ts` comment "Null credential (LINE-only users)"; but a UAT query over all 8 ACTIVE LINE identities shows **every one** has a `UserCredential` row and exactly one active membership | No user is stranded today. The fallback to `/login` is therefore a real recovery path, not a dead end — but only while this holds | **Recorded, monitored** — if LINE-only users ever exist, the expired-link fallback needs a second path |
+| G11 | Four LINE replies emit a **relative** path, so LINE renders it as plain text and nothing is tappable | `line-substitute-receipt-continuation.use-case.ts:305,328,341,406` push `/companies/…` straight into `replyText`, which `process-line-webhook.use-case.ts:1459` delivers verbatim. Every other surface goes through `absoluteWebLink()` | The substitute-receipt conversation tells the user to open the web and then gives them a string they cannot tap | **In scope, and cheaper than the rest** — these sites need a base URL anyway to be wrapped |
+| G12 | Two API-side link builders are dead — but the feature they look like is live, in the AI Gateway | `buildWebLinks()` / `buildSourceLabels()` (`line-ai-formatter.logic.ts`) have zero callers in the API, the gateway, any spec, or this repo's history. The live path is: ERP tools set `webPath` → gateway composes `webLinks` (`response-composer.agent.ts:311-313`) and `sourceLabels` (`orchestrator.agent.ts:265`, `line-ai-turn.use-case.ts:206,252,342`) → API renders them in `formatLineReply` (`process-line-webhook.use-case.ts:332-338`, live from the webhook fallback and the ledger drain) and in the flex card via `safeTenantLink` (`line-business-card.logic.ts:53`) | The 48 `webPath:` builders **do** reach users. They reach them through two renderers, not 48 sites, so the handoff still wraps cheaply — but it must cover `formatLineReply` and the flex card, not just the direct `absoluteWebLink` callers | **Dead pair removed** in the G3/G4/G11 PR. The live renderers are **in scope** for Phase 4 |
+
+### 13.1 Measured impact (2026-08-20)
+
+**How much it costs today.**
+
+| Measure | Production | UAT |
+| --- | ---: | ---: |
+| `/v1/auth/me` 403 (this defect) | **0** in 14 days (2026-08-06 → 08-20) | 7 in 3 days, 3 accounts |
+| LINE webhook events accepted | 72 in 14 days (~5/day); 83 more rejected 401 on signature | the reporter's daily testing |
+| Password logins | 47 attempts / 32 successful in 14 days, concentrated 08-15 → 08-18 | — |
+
+Read plainly: production has not hit this once, because production barely uses LINE yet. The cost today
+is tester time. It becomes a customer-visible defect at exactly the moment LINE rolls out — which is the
+thing currently being tested. This is a *before* the traffic arrives change, not a *because of* it.
+
+**How much it costs to build.** Sizes are measured, not estimated.
+
+- New code mirrors an implementation that already exists and weighs ~350 LOC: `complete-employee-line-link.use-case.ts` (216), `issue-employee-line-link-token.use-case.ts` (65), `dev-login/route.ts` (66) — plus ~237 LOC of spec in `line-linking.spec.ts` as the test comparable.
+- Call sites that actually reach a LINE message: **~25 across 5 files** — 12 `absoluteWebLink()` sites in `process-line-webhook.use-case.ts`, 5 `formatRefusal()` callers, 1 flex builder in `line-staff-menu.logic.ts`, 2 in `line-business-card.logic.ts`, 4 relative-path sites in `line-substitute-receipt-continuation.use-case.ts` (G11), 1 in `notification.use-cases.ts` (Phase 5).
+- Two more renderers must be wrapped, both fed by the 48 `webPath:` source-ref builders through the AI Gateway (G12): `formatLineReply` (`process-line-webhook.use-case.ts:336`) and the flex answer card (`line-business-card.logic.ts:53`). Wrapping those two covers all 48 builders.
+- Call sites that look affected but are not: ~33 of the 38 `webUrl`/`deepLink` builders, which live in `banking`, `reports`, `workflow`, `ai-draft`, `crm-inbox` and answer the **web** API, not LINE.
+- `safeTenantLink` (`line-business-card.logic.ts:17-30`) is the strictest existing precedent and the one the handoff should match: it drops the link entirely when no base URL is configured and refuses any path outside `/companies/<companyId>`.
+
+**Blast radius of Q1 (the `provider` decision).** Zero users today: all 8 ACTIVE LINE identities in UAT have
+a `UserCredential` with `mustChangePassword = false`. The exemption only bites a user who has a pending
+temporary password *and* taps a LINE deep link. Q1 is therefore a policy call about an owner-locked rule,
+not a live user-impact call — it can be answered without holding the rest of the work.
 
 ## 14. Edge Cases
 
