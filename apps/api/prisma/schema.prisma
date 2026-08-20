@@ -2447,6 +2447,11 @@ model CompanySignatureAsset {
   fills                SignatureFillRecord[]
 
   @@unique([companyId, lineMessageId])
+  // NOTE: migration 20260821000000 also adds a PARTIAL unique index
+  // "CompanySignatureAsset_companyId_submittedByUserId_active_key"
+  // ON (companyId, submittedByUserId) WHERE status = 'ACTIVE' — D14's "one current
+  // personal signature per person". Prisma cannot model partial indexes — do NOT let a
+  // future `prisma migrate diff` drop it.
   @@index([companyId, status])
 }
 
