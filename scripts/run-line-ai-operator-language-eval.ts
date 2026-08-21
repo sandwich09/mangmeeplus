@@ -1,8 +1,34 @@
 #!/usr/bin/env tsx
 /** Real-provider semantic-router evaluation. No API, DB, ERP, LINE, or mutation tool is used. */
+import { fileURLToPath } from 'node:url';
+import type { LineIntakeRouteRequest } from '@watchdog-bms/contracts';
 import { IntentRouterAgent } from '../apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent';
 import { createProvider } from '../apps/ai-gateway/src/modules/line-ai/infrastructure/provider/provider.factory';
 import { LINE_AI_ALL_OPERATOR_CASES, type OperatorAvailabilityCase, type OperatorLanguageCase } from './line-ai-operator-language.corpus';
+import { LINE_AI_SUBSTITUTE_ROUTING_CORPUS, type SubstituteRouteCase } from './line-ai-substitute-routing.corpus';
+
+/**
+ * The intake-route request the SUBSTITUTE provider pass replays for one corpus row. The substitute semantic
+ * route and its substituteContext exist ONLY under the trusted capability `substituteSemantic: true`: without
+ * it the gateway runs the EXACT legacy prompt (no SUBSTITUTE_RECEIPT_CONTINUATION route) AND strips
+ * substituteContext from the payload — so every scored expected-intent row would be unroutable and the
+ * agreement evidence would be FALSE. Sending the literal capability true (and the bounded server-derived
+ * context) is what makes this pass a faithful replay of the PRIMARY dispatch. Never sent by the plan-route
+ * (`router.route`) operator-language pass, which is unchanged.
+ */
+export function buildSubstituteRouteRequest(testCase: SubstituteRouteCase): LineIntakeRouteRequest {
+  return {
+    requestId: `sub-${testCase.id}`, companyId: 'eval', userId: 'eval',
+    locale: testCase.language === 'en' ? 'en-US' : 'th-TH', messageText: testCase.message,
+    permissions: ['expense.review'],
+    capabilities: { substituteSemantic: true },
+    substituteContext: {
+      workflowState: testCase.openSubstitute ? 'open' : 'none',
+      hasPendingQuestion: testCase.openSubstitute, preparedState: testCase.openSubstitute ? 'in_progress' : 'none',
+      recentCandidateCount: 1,
+    },
+  };
+}
 
 function csv(name: string): string[] | undefined {
   const value = process.env[name]?.trim();
@@ -79,7 +105,7 @@ function evaluate(testCase: EvaluationCase, plannedTools: string[], durationMs: 
   };
 }
 
-void (async () => {
+async function main() {
   if (selected.length < 100 && !process.env['LINE_AI_EVAL_LIMIT']) {
     throw new Error(`CORPUS_BELOW_REQUIRED_MINIMUM:${selected.length}`);
   }
@@ -115,6 +141,31 @@ void (async () => {
     }
   }));
 
+  // Substitute-routing pass (SAME runner/provider framework): route each provider-eligible protected
+  // substitute case through the REAL routeIntake with its bounded server-derived context. Scoring basis:
+  //  - `unavailable` rows model a provider OUTAGE (expected UNSUPPORTED). A HEALTHY provider cannot
+  //    reproduce that, so they are NOT provider-scored here — they are SKIPPED (structural/unit coverage
+  //    retains them) to avoid a spurious failure.
+  //  - protected negatives are scored ONLY by "never routed to SUBSTITUTE_RECEIPT_CONTINUATION" (any other
+  //    safe route — CLARIFY, MUTATION_REQUEST_REFUSAL, a read, a capture — is acceptable).
+  //  - every other provider-eligible row is scored against its pinned expected intent.
+  // Absent provider credentials the whole runner is unavailable, so this evidence stays pending.
+  const substituteResults = [] as Array<{ id: string; category: string; scoringBasis: 'expected_intent' | 'not_substitute'; expectedIntent: string; actualIntent: string; passed: boolean; reason?: string }>;
+  const substituteSkipped = [] as string[];
+  for (const testCase of LINE_AI_SUBSTITUTE_ROUTING_CORPUS) {
+    if (testCase.category === 'unavailable') { substituteSkipped.push(testCase.id); continue; }
+    const plan = await router.routeIntake(buildSubstituteRouteRequest(testCase));
+    const scoringBasis = testCase.protectedNegative ? 'not_substitute' as const : 'expected_intent' as const;
+    const passed = testCase.protectedNegative
+      ? plan.intent !== 'SUBSTITUTE_RECEIPT_CONTINUATION'
+      : plan.intent === testCase.expectedIntent;
+    const reason = testCase.protectedNegative
+      ? `intent=${plan.intent},mustNotBe=SUBSTITUTE_RECEIPT_CONTINUATION`
+      : `intent=${plan.intent},expected=${testCase.expectedIntent}`;
+    substituteResults.push({ id: testCase.id, category: testCase.category, scoringBasis, expectedIntent: testCase.expectedIntent, actualIntent: plan.intent, passed, ...(passed ? {} : { reason }) });
+  }
+  const substituteFailures = substituteResults.filter((result) => !result.passed);
+
   const failures = results.filter((result) => !result.passed);
   const categoryCounts = Object.fromEntries([...new Set(results.map(({ category }) => category))].map((category) => {
     const categoryResults = results.filter((result) => result.category === category);
@@ -135,10 +186,26 @@ void (async () => {
     durationMs: Date.now() - startedAt,
     categoryCounts,
     failures,
+    substitute: {
+      corpusTotal: LINE_AI_SUBSTITUTE_ROUTING_CORPUS.length,
+      scored: substituteResults.length,
+      skippedOutageOnly: substituteSkipped.length,
+      skippedIds: substituteSkipped,
+      passed: substituteResults.length - substituteFailures.length,
+      failed: substituteFailures.length,
+      scoredByExpectedIntent: substituteResults.filter((r) => r.scoringBasis === 'expected_intent').length,
+      scoredByNotSubstitute: substituteResults.filter((r) => r.scoringBasis === 'not_substitute').length,
+      failures: substituteFailures,
+    },
   }, null, 2));
-  if (failures.length > 0) process.exitCode = 1;
-})().catch((error: unknown) => {
-  const detail = error instanceof Error ? error.message : 'UNKNOWN';
-  console.error(JSON.stringify({ event: 'line_ai_operator_language_eval_failed', errorCode: detail.split(':')[0], detail }));
-  process.exitCode = 1;
-});
+  if (failures.length > 0 || substituteFailures.length > 0) process.exitCode = 1;
+}
+
+// Run only when executed directly (tsx scripts/run-…​.ts); importing the module for tests must NOT replay.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  void main().catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : 'UNKNOWN';
+    console.error(JSON.stringify({ event: 'line_ai_operator_language_eval_failed', errorCode: detail.split(':')[0], detail }));
+    process.exitCode = 1;
+  });
+}

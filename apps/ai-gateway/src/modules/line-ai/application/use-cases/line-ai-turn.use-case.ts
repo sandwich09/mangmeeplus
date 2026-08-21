@@ -5,6 +5,7 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
+import { asIntakeRouteIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
@@ -144,10 +145,19 @@ export class LineAiTurnUseCase {
     if (validationError) {
       return this.buildRefusedResponse(req, 'forbidden', '🔒 คำขอไม่ถูกต้อง', startMs);
     }
+    // Gateway ingress is a trust boundary: re-parse and re-bound the optional prepared plan AND
+    // re-validate the trusted outer intake provenance here (explicit membership, no unsafe cast), so
+    // every downstream path (agentcore, local orchestrator, deterministic) sees a validated plan/intent
+    // or `undefined`, never raw wire JSON. An invalid/forged wrapper or provenance is discarded.
+    const bounded: LineAiTurnRequest = {
+      ...req,
+      preparedPlan: parseLineAiPreparedPlan(req.preparedPlan),
+      intakeIntent: asIntakeRouteIntent(req.intakeIntent),
+    };
     if (this.config.lineAiAgentOrchestrationEnabled) {
-      return this.runOrchestratorPath(req, startMs);
+      return this.runOrchestratorPath(bounded, startMs);
     }
-    return this.runDeterministicPath(req, startMs);
+    return this.runDeterministicPath(bounded, startMs);
   }
 
   // ── Item 10B path ──────────────────────────────────────────────────────────
@@ -160,6 +170,8 @@ export class LineAiTurnUseCase {
   }
 
   private async runAgentCorePath(req: LineAiTurnRequest, startMs: number): Promise<LineAiTurnResponse> {
+    // Already bounded at executeInner ingress; forward the validated plan (or nothing) to the artifact.
+    const preparedPlan = req.preparedPlan;
     try {
       const result = await this.agentcoreRuntime.invoke({
         turnId: req.requestId,
@@ -186,6 +198,8 @@ export class LineAiTurnUseCase {
           sha256: '',
         })),
         conversationContext: req.conversationContext,
+        ...(preparedPlan ? { preparedPlan } : {}),
+        ...(req.intakeIntent ? { intakeIntent: req.intakeIntent } : {}),
       });
       const sourceRefs = result.sourceRefs;
       // Bounded passthrough: the AgentCore artifact is deployed separately, so its payload is

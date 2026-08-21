@@ -222,6 +222,7 @@ export class AccountingSummaryAgent {
     const toolCalls: AgentToolCall[] = [];
     const facts: AgentFact[] = [];
     const toolData: Array<{ tool: string; data: unknown }> = [];
+    let asOf: string | undefined;
     let permissionDenied = false;
     let unsupportedModule = false;
     let readFailed = false;
@@ -240,6 +241,7 @@ export class AccountingSummaryAgent {
       if (result.status !== 'ok') { readFailed = true; continue; }
       if (!hasExplicitShape(result.data)) { readFailed = true; continue; }
       toolData.push({ tool: tool.name, data: result.data });
+      if (asOf === undefined) asOf = result.asOf;
 
       if (tool.name === 'notifications.get_daily_summary') {
         if (typeof result.data !== 'number') { readFailed = true; toolData.pop(); continue; }
@@ -409,6 +411,7 @@ export class AccountingSummaryAgent {
       toolCalls,
       requiresHumanReview,
       toolData,
+      ...(asOf ? { asOf } : {}),
     };
   }
 }

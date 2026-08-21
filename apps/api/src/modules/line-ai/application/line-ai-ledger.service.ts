@@ -19,7 +19,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 import type { LineAiBusinessSubject, LineAiCoverageItem, LineAiOpenClarification, LineAiValueCandidates, LineIntakeRouteIntent } from '@watchdog-bms/contracts';
-import { LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES } from '@watchdog-bms/contracts';
+import { LINE_AI_BUSINESS_SUBJECTS, LINE_AI_CONTEXT_WINDOW_MINUTES, asIntakeRouteIntent } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
@@ -130,7 +130,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(LINE_AI_BUSINESS_SUBJECTS.includes(map['subject'] as LineAiBusinessSubject) ? { subject: map['subject'] as LineAiBusinessSubject } : {}),
     ...(map['state'] === 'pending' || map['state'] === 'waiting_user' ? { state: map['state'] } : {}),
     ...(map['clarifyQuestion'] ? { clarifyQuestion: map['clarifyQuestion'] } : {}),
-    ...(map['clarifyForIntent'] ? { clarifyForIntent: map['clarifyForIntent'] as LineIntakeRouteIntent } : {}),
+    ...(asIntakeRouteIntent(map['clarifyForIntent']) ? { clarifyForIntent: asIntakeRouteIntent(map['clarifyForIntent']) } : {}),
     ...(candidateExpenseIds.length > 0 ? { candidateExpenseIds } : {}),
     ...(pendingMedia ? { pendingMedia } : {}),
     ...(valueCandidates ? { valueCandidates } : {}),

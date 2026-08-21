@@ -229,6 +229,7 @@ export * from './reports.js';
 // ---- LINE AI Read-Only Assistant (Item 07) ----
 export * from './ai-lineage.js';
 export * from './line-ai.js';
+export * from './line-ai-prepared-plan.js';
 export * from './ai-tools.js';
 // ---- LINE AI Multi-Intent Completion (Item 10F) ----
 export * from './line-ai-value-normalizer.js';

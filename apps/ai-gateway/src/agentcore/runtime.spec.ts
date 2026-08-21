@@ -114,6 +114,14 @@ describe('AgentCore Runtime – payload validation', () => {
     assert.equal(payload?.locale, 'th-TH');
   });
 
+  it('re-validates the trusted outer intakeIntent by explicit membership and carries it (forged → dropped)', () => {
+    const base = { turnId: 't', companyId: 'c', userId: 'u', messageText: 'ยอดขายวันนี้', permissions: ['crm.report.read'] };
+    assert.equal(payloadToTurnRequest(validatePayload({ ...base, intakeIntent: 'BUSINESS_READ_QUESTION' })!).intakeIntent, 'BUSINESS_READ_QUESTION');
+    assert.equal(payloadToTurnRequest(validatePayload({ ...base, intakeIntent: 'TOTALLY_FORGED' })!).intakeIntent, undefined);
+    assert.equal(payloadToTurnRequest(validatePayload({ ...base, intakeIntent: 42 })!).intakeIntent, undefined);
+    assert.equal(payloadToTurnRequest(validatePayload(base)!).intakeIntent, undefined);
+  });
+
   it('missing turnId is rejected', () => {
     assert.equal(
       validatePayload({ companyId: 'c-1', userId: 'u-1', messageText: 'hello' }),
@@ -200,6 +208,38 @@ describe('AgentCore Runtime – payload validation', () => {
     const payload = validatePayload({ turnId: 't-1', companyId: 'c-1', userId: 'u-1', messageText: 'hello' });
     assert.ok(payload);
     assert.equal(payloadToTurnRequest(payload).entitledFeatureKeys, undefined);
+  });
+
+  it('parses, bounds, and forwards an optional prepared plan (latency/autonomy §7)', () => {
+    const preparedPlan = {
+      version: 1, complexity: 'simple', confidence: 0.9,
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'sales.get_sales_summary', input: { fromDate: '2026-08-20', toDate: '2026-08-20' } }],
+      responseMode: 'simple_grounded', answerShape: 'single_metric',
+    };
+    const payload = validatePayload({ turnId: 't-pp', companyId: 'c-1', userId: 'u-1', messageText: 'hello', preparedPlan });
+    assert.ok(payload);
+    assert.equal(payload.preparedPlan?.proposedCalls[0]?.toolName, 'sales.get_sales_summary');
+    assert.deepEqual(payloadToTurnRequest(payload).preparedPlan, preparedPlan);
+  });
+
+  it('drops a forged prepared plan rather than casting wire JSON as authority', () => {
+    // Forged company scope injected into the tool input, and an unknown version — either drops it.
+    const forged = validatePayload({
+      turnId: 't-forge', companyId: 'c-1', userId: 'u-1', messageText: 'hello',
+      preparedPlan: { version: 1, complexity: 'simple', confidence: 1, intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents: [] }, proposedCalls: [{ toolName: 'sales.get_sales_summary', input: { companyId: 'other-tenant' } }], responseMode: 'simple_grounded' },
+    });
+    assert.equal(forged?.preparedPlan, undefined);
+    assert.equal(payloadToTurnRequest(forged!).preparedPlan, undefined);
+  });
+
+  it('leaves the prepared plan undefined for a legacy caller that never sends one', () => {
+    const payload = validatePayload({ turnId: 't-old-pp', companyId: 'c-1', userId: 'u-1', messageText: 'hello' });
+    assert.equal(payload?.preparedPlan, undefined);
+    assert.equal(payloadToTurnRequest(payload!).preparedPlan, undefined);
   });
 
   it('drops malformed internal availability evidence and preserves legacy null', () => {

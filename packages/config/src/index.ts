@@ -199,6 +199,28 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_AI_BUFFER_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
   LINE_AI_BUFFER_MAX_WAIT_MS: z.coerce.number().int().positive().default(8000),
   LINE_AI_LOADING_ANIMATION_ENABLED: envBoolean.default(true),
+  // LINE AI latency/autonomy Phase 1 (docs/specs/line-ai-latency-and-autonomy-lanes-spec.md §10/§15).
+  // Both default OFF so the effective 2,500 ms path and processing-start loading are unchanged.
+  // On, loading is requested once per 1:1 chat right after durable acceptance (before the debounce
+  // wait). The debounce experiment assigns a stable per-(company,chat) cohort by HMAC; the secret is
+  // required for any assignment to happen, and neither identifiers nor the HMAC bytes are logged.
+  LINE_AI_LOADING_ON_ACCEPT_ENABLED: envBoolean.default(false),
+  LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED: envBoolean.default(false),
+  LINE_AI_DEBOUNCE_EXPERIMENT_SECRET: z.string().optional(),
+  // Latency/autonomy Phase 3: default OFF. On, the API forwards the intake route's bounded prepared
+  // plan into LineAiTurnRequest for the gateway's shadow comparison (never for execution; §3 plan).
+  LINE_AI_FUSED_PLAN_SHADOW_ENABLED: envBoolean.default(false),
+  // Latency/autonomy Phase 4: default OFF. On, the API also forwards the prepared plan so the gateway
+  // may consume it for a one-call simple read; forwarding is OR-gated with the shadow flag so the two
+  // gateway lanes stay independent (the gateway alone decides whether to execute from it).
+  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(false),
+  // Substitute-receipt semantic routing mode (substitute-semantic-routing spec §7). Default 'off' keeps
+  // the EXACT legacy regex-first behavior; 'primary' makes the semantic route authoritative (narrow
+  // canonical fallback only on UNAVAILABLE). 'shadow' is a reserved NO-GO scaffold: the legacy path
+  // short-circuits before the router, so a real nonblocking compare cannot run safely in a serverless
+  // webhook lifecycle — 'shadow' therefore behaves EXACTLY like 'off' and is intentionally inert (it must
+  // never fake agreement). Offline provider replay measures agreement instead.
+  LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE: z.enum(['off', 'shadow', 'primary']).default('off'),
   // Durable multi-turn expense draft collection. Default off until recorded LINE OA UAT passes.
   LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: envBoolean.default(false),
   // Item 10F: LINE AI turn ledger on Redis Streams (ADR 0010; fail-open, default off)
@@ -336,6 +358,22 @@ export const aiGatewayConfigSchema = baseConfigSchema.extend({
   // Item 10F: native tool-use loop + coverage critic (fallback chain keeps 10B behavior when off)
   LINE_AI_TOOLUSE_LOOP_ENABLED: envBoolean.default(false),
   LINE_AI_COVERAGE_CRITIC_ENABLED: envBoolean.default(true),
+  // Latency/autonomy Phases 3–6 (docs/plans/line-ai-latency-and-autonomy-lanes-plan.md). All DEFAULT
+  // OFF / empty; off restores the current second-router + composer/critic path. Phase 3 shadow only
+  // compares (never executes); Phase 4 consumes a server-eligible prepared plan but a family must also
+  // be allow-listed by Phase 5 (empty default → no simple read is deterministic-eligible).
+  LINE_AI_FUSED_PLAN_SHADOW_ENABLED: envBoolean.default(false),
+  LINE_AI_PREPARED_SIMPLE_READ_ENABLED: envBoolean.default(false),
+  // Exact family allowlist (comma-separated; empty = none enabled). Only families with a verified
+  // deterministic formatter + fixed fixture and passed blind pairwise eval belong here.
+  LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES: z.string().default(''),
+  // Phase 6 secondary runtime experiments. RESERVED / INERT: these three flags parse and expose getters
+  // but are NOT wired to any behavior yet — toggling them changes nothing at runtime. They exist so the
+  // env contract is stable ahead of the wiring; keep them default-false and do not document them as active
+  // levers until a consumer reads the getter. Their config-parse tests assert only the default/coercion.
+  LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED: envBoolean.default(false),
+  LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED: envBoolean.default(false),
+  LINE_AI_SMALL_ROUTER_SHADOW_ENABLED: envBoolean.default(false),
   AWS_PROFILE: z.string().optional(),
   AWS_SDK_LOAD_CONFIG: envBoolean.default(false),
   // AgentCore runtime invoke config (used when LINE_AI_AGENT_RUNTIME=agentcore)

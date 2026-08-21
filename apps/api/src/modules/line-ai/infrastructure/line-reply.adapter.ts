@@ -42,10 +42,12 @@ export class LineReplyAdapter {
   }
 
   /** Best-effort typing indicator. One-on-one chats only; LINE dismisses it
-   *  automatically when the reply arrives or after loadingSeconds. */
-  async startLoadingAnimation(chatId: string): Promise<void> {
+   *  automatically when the reply arrives or after loadingSeconds. Returns whether LINE accepted
+   *  the request (its successful HTTP response) so the caller can record `loading_accepted`
+   *  server-side (latency/autonomy §12); device-visible render timing stays UAT-only. */
+  async startLoadingAnimation(chatId: string): Promise<boolean> {
     const accessToken = this.config.lineMessagingChannelAccessToken;
-    if (!accessToken) return;
+    if (!accessToken) return false;
     try {
       const response = await fetch(this.LINE_LOADING_URL, {
         method: 'POST',
@@ -60,8 +62,10 @@ export class LineReplyAdapter {
       if (!response.ok) {
         this.logger.debug?.({ msg: 'LINE loading animation rejected', status: response.status });
       }
+      return response.ok;
     } catch (err) {
       this.logger.debug?.({ msg: 'LINE loading animation failed', error: (err as Error).message });
+      return false;
     }
   }
 

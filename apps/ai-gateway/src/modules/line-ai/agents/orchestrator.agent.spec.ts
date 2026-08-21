@@ -2,7 +2,23 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAnswerPresentation, OrchestratorAgent, withoutRefusedCoverage } from './orchestrator.agent';
 import { ResponseComposerAgent } from './response-composer.agent';
-import type { LineAiTurnRequest } from '@watchdog-bms/contracts';
+import { parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import type { LineAiPreparedPlan, LineAiTurnRequest } from '@watchdog-bms/contracts';
+
+// A valid, already-bounded prepared plan for a permitted inventory read (matches makeReq permissions).
+function preparedInventoryPlan(): LineAiPreparedPlan {
+  const plan = parseLineAiPreparedPlan({
+    version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+    intakeIntent: 'BUSINESS_READ_QUESTION',
+    intentPlan: {
+      status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+      intents: [{ intent: 'read_summary', subject: 'inventory', agent: 'inventory', priority: 1, requiredTools: ['inventory.list_low_stock'], missingContext: [] }],
+    },
+    proposedCalls: [{ toolName: 'inventory.list_low_stock', input: {} }],
+  });
+  if (!plan) throw new Error('fixture did not parse');
+  return plan;
+}
 
 function makeReq(messageText: string, attachments: any[] = []): LineAiTurnRequest {
   return {
@@ -564,5 +580,35 @@ describe('OrchestratorAgent', () => {
     assert.equal(attachmentOnly.plan.status, 'UNROUTABLE');
     assert.ok(attachmentOnly.replyText.length > 0);
     assert.deepEqual(calledTools, ['inventory.list_low_stock']);
+  });
+});
+
+describe('OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3–4, default off)', () => {
+  it('Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted', async () => {
+    const logs: any[] = [];
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig());
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
+    assert.ok(!logs.some((e) => typeof e.msg === 'string' && e.msg.startsWith('line.ai.prepared_simple_read')), 'prepared lane untouched when flag off');
+    assert.ok(!logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'no shadow when flag off');
+  });
+
+  it('Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router', async () => {
+    const logs: any[] = [];
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiPreparedSimpleReadEnabled: true, lineAiDeterministicResponseFamilies: [] }));
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    const result = await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
+    const fallback = logs.find((e) => e.msg === 'line.ai.prepared_simple_read.fallback');
+    assert.ok(fallback, 'the gate ran and logged a fallback');
+    assert.equal(fallback.reason, 'formatter_family_not_allowed');
+    assert.ok(result.plan, 'the router path still produced a plan');
+  });
+
+  it('Phase 3 shadow on: logs a best-effort comparison and still executes via the router', async () => {
+    const logs: any[] = [];
+    const orchestrator = new OrchestratorAgent(makeOkErpTools(), makeConfig({ lineAiFusedPlanShadowEnabled: true }));
+    (orchestrator as any).logger = { log: (e: any) => logs.push(e), error: () => {}, warn: () => {} };
+    await orchestrator.run({ ...makeReq('ดูสต็อกสินค้าใกล้หมด'), intakeIntent: 'BUSINESS_READ_QUESTION', preparedPlan: preparedInventoryPlan() });
+    assert.ok(logs.some((e) => e.msg === 'line.ai.fused_plan.shadow'), 'shadow comparison logged');
   });
 });
