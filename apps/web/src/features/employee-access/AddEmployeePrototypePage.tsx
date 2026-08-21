@@ -480,9 +480,9 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
     }
   }
 
-  function showValidationIssue(issue: ValidationIssue) {
-    setError(issue.message, issue.fieldId);
-    window.requestAnimationFrame(() => document.getElementById(issue.fieldId)?.focus());
+  function showValidationIssue({ message: validationMessage, fieldId }: ValidationIssue) {
+    setError(validationMessage, fieldId);
+    window.requestAnimationFrame(() => document.getElementById(fieldId)?.focus());
   }
 
   async function goToStep(target: AddStep) {
