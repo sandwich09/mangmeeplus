@@ -1,17 +1,18 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import qrcode from 'qrcode-generator';
-import { FINANCIAL_ROLE_KEYS } from '@watchdog-bms/contracts';
+import { FINANCIAL_ROLE_KEYS, HR_ASSIGNABLE_ROLE_KEYS } from '@watchdog-bms/contracts';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 
 const TEMP_PASSWORD_TTL_MS = 72 * 60 * 60 * 1000;
 const LINE_LINK_TOKEN_TTL_MS = 15 * 60 * 1000;
 
-/** OWNER is the protected last-owner role; SYSTEM_ADMIN is a platform-only role. Neither is assignable to company staff. */
-export const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN'];
+/** Protected owner and platform-view roles are never assignable through employee provisioning. */
+export const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW'];
 // Role-key lists shared with the web employee form — canonical copies live in contracts, beside
 // NON_EDITABLE_ROLE_KEYS. ALL_BRANCH_ROLE_KEYS is composed from FINANCIAL_ROLE_KEYS there.
-export { FINANCIAL_ROLE_KEYS, ALL_BRANCH_ROLE_KEYS } from '@watchdog-bms/contracts';
+export { FINANCIAL_ROLE_KEYS, ALL_BRANCH_ROLE_KEYS, HR_ASSIGNABLE_ROLE_KEYS } from '@watchdog-bms/contracts';
 export const FINANCIAL_ROLE_ASSIGN_PERMISSION = 'access.role.financial.assign';
+export const OPERATIONAL_ROLE_ASSIGN_PERMISSION = 'access.role.operational.assign';
 
 /**
  * Team decision 2026-07-28: company-wide reimbursement visibility (who is still owed
@@ -19,7 +20,7 @@ export const FINANCIAL_ROLE_ASSIGN_PERMISSION = 'access.role.financial.assign';
  * the owner-only financial-assign permission, so an ADMIN — who holds these keys and
  * access.role.manage — cannot hand the visibility out through a custom role.
  */
-export const OWNER_GATED_GRANT_KEYS = ['reimbursement.read'];
+export const OWNER_GATED_GRANT_KEYS = ['reimbursement.read', OPERATIONAL_ROLE_ASSIGN_PERMISSION];
 
 /** Non-owner composing a role that grants owner-gated visibility → violation message. */
 export function ownerGatedGrantViolation(
@@ -31,7 +32,7 @@ export function ownerGatedGrantViolation(
   return gated ? `Granting ${gated} to a role requires the company owner.` : undefined;
 }
 
-export type GrantCandidateRole = { key: string; permissionKeys: string[] };
+export type GrantCandidateRole = { key: string; permissionKeys: string[]; isSystem?: boolean };
 
 export function roleGrantViolation(
   roles: GrantCandidateRole[],
@@ -47,11 +48,20 @@ export function roleGrantViolation(
     ...Object.keys(requesterEntitlementDeniedPermissions ?? {}),
   ]);
   if (roles.some((role) => NON_ASSIGNABLE_ROLE_KEYS.includes(role.key))) {
-    return 'OWNER and SYSTEM_ADMIN access cannot be granted through employee provisioning.';
+    return 'Owner and platform access cannot be granted through employee provisioning.';
   }
   // OWNER grants every company permission by definition, while its effective permissions may be
   // feature-filtered and candidate system roles still expose their raw permission rows.
   if (requesterIsOwner) return undefined;
+  // HR delegation is deliberately role-key based, not a permission-subset shortcut. HR needs to
+  // assign operational roles whose business permissions it does not itself hold, while remaining
+  // unable to assign privileged, finance, audit, HR, or company-custom roles.
+  if (granted.has(OPERATIONAL_ROLE_ASSIGN_PERMISSION) && !granted.has('access.role.manage')) {
+    const forbidden = roles.find((role) => role.isSystem !== true || !HR_ASSIGNABLE_ROLE_KEYS.some((key) => key === role.key));
+    return forbidden
+      ? `HR may assign only operational roles: ${HR_ASSIGNABLE_ROLE_KEYS.join(', ')}.`
+      : undefined;
+  }
   if (roles.some((role) => role.permissionKeys.some((permission) => !granted.has(permission)))) {
     return 'A role cannot grant permissions that the requesting user does not hold.';
   }

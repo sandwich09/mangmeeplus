@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LINE_AI_CONTEXT_MAX_TURNS } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatGroundedReceiptFollowUp, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatGroundedReceiptFollowUp, isAffirmativeText, isGroundedReceiptFollowUp, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
+import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
@@ -194,6 +195,11 @@ function makeUseCase(
       completeAttachmentUpload?: any;
       legalAcceptanceRequired?: boolean;
       approvalQueues?: { reimbursement?: any; purchaseRequests?: any; purchaseOrders?: any };
+      config?: Record<string, unknown>;
+      substituteContinuation?: any;
+      substituteLedger?: any;
+      expenseDraftConversation?: any;
+      openWaiting?: any[];
 	  } = {},
 	) {
   const replies: string[] = [];
@@ -208,7 +214,7 @@ function makeUseCase(
 
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
-    { webBaseUrl: 'https://app.example.com' } as any,
+    { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({
       membershipId: 'mem-1', roles, permissions,
       entitlementDeniedPermissions: opts.entitlementDeniedPermissions,
@@ -256,19 +262,21 @@ function makeUseCase(
     shadowProbe,
     opts.initReceiptUpload,
     opts.completeReceiptUpload,
-    // captureExpenseNote
+    // Positional @Optional deps, in constructor order: captureExpenseNote, initSignatureUpload,
+    // createSignatureAsset, expenseRepo, ledger, createUploadIntent, completeAttachmentUpload,
+    // correctExpense, substituteReceiptContinuation, expenseDraftConversation. Develop's signature/upload
+    // tests and our substitute/ledger/draft tests each set their own opts; position 11 accepts either
+    // substitute-continuation opt name.
     undefined,
     opts.initSignatureUpload,
     opts.createSignatureAsset,
-    // expenseRepo, ledger
-    undefined, undefined,
+    undefined,
+    opts.substituteLedger,
     opts.createUploadIntent,
     opts.completeAttachmentUpload,
-    // correctExpense
     undefined,
-    opts.substituteReceiptContinuation,
-    // expenseDraftConversation stays unwired for these cases.
-    undefined,
+    opts.substituteReceiptContinuation ?? opts.substituteContinuation,
+    opts.expenseDraftConversation,
     opts.approvalQueues?.reimbursement,
     opts.approvalQueues?.purchaseRequests,
     opts.approvalQueues?.purchaseOrders,
@@ -751,6 +759,116 @@ describe('ProcessLineWebhookUseCase', () => {
       ['delivery_pending'],
       'a failed delivery must never emit the delivered terminal metric',
     );
+  });
+
+  it('emits Phase-0 distinct stage durations and a correlated turn summary for a business-read turn', async () => {
+    const { prisma } = makePrisma();
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+      aiGatewayFn: () => ({
+        requestId: 'req-ai',
+        replyText: 'ยอดขายวันนี้ 1,000 บาท',
+        sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'sales', refused: false,
+        toolsInvoked: ['sales.get_sales_summary'],
+        toolCalls: [{ name: 'sales.get_sales_summary', status: 'ok', durationMs: 12 }],
+        modelCallCount: 3,
+        modelLineage: [{ provider: 'bedrock', modelId: 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0', region: 'ap-southeast-1', purpose: 'employee_line_assistant' }],
+        usage: [{ tag: 't', modelId: 'apac.anthropic.claude-3-haiku-20240307-v1:0', ok: true, inputTokens: 100, outputTokens: 40, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 5 }],
+        durationMs: 20,
+      }),
+    });
+    const logs: any[] = [];
+    (useCase as any).logger = { log: (entry: any) => logs.push(entry), warn: () => undefined, error: () => undefined };
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-trace-1', messageText: 'ยอดขายวันนี้เท่าไหร่' });
+
+    // Distinct stage durations for the seams THIS API process observes — not lumped into dispatch.
+    const stages = logs.filter((entry) => entry.msg === 'line.ai.stage');
+    for (const stage of ['intake_route', 'gateway_turn', 'persistence', 'line_delivery']) {
+      const event = stages.find((entry) => entry.stage === stage);
+      assert.ok(event, `stage ${stage} emitted`);
+      assert.equal(event.webhookEventId, 'evt-trace-1');
+      assert.ok(Number.isInteger(event.durationMs) && event.durationMs >= 0, `${stage} has a numeric duration`);
+    }
+
+    // One correlated turn summary; every field is the ACTUAL value or an explicit null (nothing invented).
+    const summary = logs.find((entry) => entry.msg === 'line.ai.turn_summary');
+    assert.ok(summary, 'turn summary emitted');
+    assert.equal(summary.webhookEventId, 'evt-trace-1');
+    assert.ok(typeof summary.requestId === 'string' && summary.requestId.length > 0);
+    assert.equal(summary.preparedPlanVersion, null, 'Phase 2: no producer, so null (not invented)');
+    assert.equal(summary.lane, null, 'lane is null because the gateway RESPONSE does not expose which internal lane served the turn (the prepared lane is live but default-off/evidence-gated) — not because lanes are unimplemented');
+    assert.equal(summary.intent, 'read_summary');
+    assert.equal(summary.refused, false);
+    assert.equal(summary.modelCallCount, 3);
+    assert.equal(summary.toolCallCount, 1);
+    assert.equal(summary.deliveryResult, 'ok');
+    assert.equal(summary.usageInputTokens, 100);
+    assert.equal(summary.usageOutputTokens, 40);
+    assert.equal(summary.costSatang, null, 'cost is metered elsewhere → null here, not invented');
+    // Actual model identity derived from lineage + usage (deduped), not invented.
+    assert.equal(summary.modelProvider, 'bedrock');
+    assert.deepEqual([...summary.modelIds].sort(), ['apac.anthropic.claude-3-5-sonnet-20241022-v2:0', 'apac.anthropic.claude-3-haiku-20240307-v1:0']);
+    // fallback is a distinct field, always null here (not observable), never conflated with refusal/error.
+    assert.equal(summary.fallbackReason, null);
+
+    // No raw message text or LINE user id in any trace event.
+    for (const event of [...stages, summary]) {
+      const keys = Object.keys(event);
+      assert.ok(!keys.includes('lineUserId') && !keys.includes('messageText') && !keys.includes('text'), 'no raw identifiers/text');
+    }
+  });
+
+  it('forwards the intake prepared plan into the turn only when a downstream lane flag is on (Phase 3/4 independent, default off)', async () => {
+    const prepared = parseLineAiPreparedPlan({
+      version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'simple_grounded', answerShape: 'single_metric',
+      intentPlan: {
+        status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [],
+        intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }],
+      },
+      proposedCalls: [{ toolName: 'sales.get_sales_summary', input: {} }],
+    });
+    assert.ok(prepared, 'prepared-plan fixture parses');
+    const route = () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, preparedPlan: prepared });
+    const turn = () => ({
+      requestId: 'req-ai', replyText: 'ยอดขายวันนี้ 1,000 บาท', sourceRefs: [], sourceLabels: [], webLinks: [],
+      intent: 'read_summary', agent: 'sales', refused: false, toolsInvoked: [], toolCalls: [],
+      modelCallCount: 1, modelLineage: [], usage: [], durationMs: 10,
+    });
+    const silent = (useCase: unknown) => { (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined }; };
+
+    // Default (both lane flags off): the prepared plan is NOT carried into the turn request.
+    {
+      const { prisma } = makePrisma();
+      const { useCase, aiGatewayRequests } = makeUseCase(prisma, { permissions: ['line.ai.query'], intakeRouteFn: route, aiGatewayFn: turn });
+      silent(useCase);
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-off', messageText: 'ยอดขายวันนี้เท่าไหร่' });
+      assert.equal(aiGatewayRequests[0]?.preparedPlan, undefined, 'default off → prepared plan not forwarded');
+      assert.equal(aiGatewayRequests[0]?.intakeIntent, undefined, 'default off → no provenance bound');
+    }
+
+    // Phase 4 alone (prepared-simple-read on, shadow OFF): forwarded — the two lanes are independent.
+    // The API binds the TRUSTED outer route intent as separate provenance (never from the wrapper).
+    {
+      const { prisma } = makePrisma();
+      const { useCase, aiGatewayRequests } = makeUseCase(prisma, { permissions: ['line.ai.query'], config: { lineAiPreparedSimpleReadEnabled: true }, intakeRouteFn: route, aiGatewayFn: turn });
+      silent(useCase);
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-p4', messageText: 'ยอดขายวันนี้เท่าไหร่' });
+      assert.ok(aiGatewayRequests[0]?.preparedPlan, 'prepared-simple-read on → forwarded even with shadow off');
+      assert.equal(aiGatewayRequests[0].preparedPlan.version, 1);
+      assert.equal(aiGatewayRequests[0].intakeIntent, 'BUSINESS_READ_QUESTION', 'trusted outer intent bound from the route');
+    }
+
+    // Phase 3 alone (shadow on, prepared-simple-read OFF): also forwarded, for the shadow comparison.
+    {
+      const { prisma } = makePrisma();
+      const { useCase, aiGatewayRequests } = makeUseCase(prisma, { permissions: ['line.ai.query'], config: { lineAiFusedPlanShadowEnabled: true }, intakeRouteFn: route, aiGatewayFn: turn });
+      silent(useCase);
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fwd-p3', messageText: 'ยอดขายวันนี้เท่าไหร่' });
+      assert.ok(aiGatewayRequests[0]?.preparedPlan, 'shadow on → forwarded for comparison');
+    }
   });
 
   it('does not mark an employee answer completed when reply token and push both fail', async () => {
@@ -1982,6 +2100,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   aiGatewayFn?: (req?: any) => any;
   intakeRouteFn?: (req?: any) => any;
   openWaiting?: any[];
+  config?: Record<string, unknown>;
   deliveryResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
 } = {}) {
   const events: string[] = [];
@@ -2003,7 +2122,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   const intakeRequests: any[] = [];
   const useCase = new ProcessLineWebhookUseCase(
     prisma,
-    { webBaseUrl: 'https://app.example.com' } as any,
+    { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions ?? ['line.ai.query'], scopes: {} }) } as any,
     { log: async () => undefined } as any,
     {
@@ -2487,5 +2606,374 @@ describe('W1 — a failed delivery can never leave signed-away bytes reusable', 
       order.filter((step) => step.startsWith('resolve')), ['resolve:RESOLVED_SIGNATURE'],
       'the same attachment id can never be answered again as expense evidence',
     );
+  });
+});
+
+// ── Substitute semantic-routing dispatcher (executable write-behavior, not helper-only) ───────────
+describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
+  const READ_ROUTE = () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 });
+  const SUB_ROUTE = (over = {}) => ({ status: 'ROUTED', intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.9, ...over });
+  const UNAVAIL_ROUTE = () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0 });
+  const aiTurn = () => ({ requestId: 'req-ai', replyText: 'ยอดขาย 1,000', sourceRefs: [], sourceLabels: [], webLinks: [], intent: 'read_summary', agent: 'sales', refused: false, toolsInvoked: [], toolCalls: [], modelCallCount: 1, modelLineage: [], usage: [], durationMs: 5 });
+
+  function makeSub(result?: any, context?: any) {
+    const executeCalls: any[] = [];
+    return {
+      executeCalls,
+      useCase: {
+        substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0, ...(context ?? {}) }),
+        execute: async (_ctx: any, input: any) => { executeCalls.push(input); return result ?? { handled: true, status: 'BLOCKED', replyText: 'ระบุผู้จ่าย', acceptedFields: [], blockers: [], pendingQuestion: 'ระบุผู้จ่าย' }; },
+      },
+    };
+  }
+  function makeLedger(openWaiting: any[] = []) {
+    const appended: any[] = [];
+    return { appended, ledger: { openWaitingUser: async () => openWaiting, appendSubRequests: async (i: any) => { appended.push(i); }, ack: async () => undefined, appendTurn: async () => undefined, coverageToSubRequests: () => [] } };
+  }
+  const P = { permissions: ['line.ai.query', 'expense.review'] };
+
+  it('PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)', async () => {
+    const { prisma } = makePrisma();
+    const sub = makeSub();
+    const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: sub.useCase, substituteLedger: makeLedger().ledger, intakeRouteFn: SUB_ROUTE, aiGatewayFn: aiTurn });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-1', messageText: 'ทำใบทดแทนของค่าวิน' });
+    assert.equal(sub.executeCalls.length, 1, 'continuation executed once');
+  });
+
+  it('PRIMARY: a non-substitute route (side question) does NOT execute the continuation; substitute stays open', async () => {
+    const { prisma } = makePrisma();
+    const sub = makeSub();
+    const led = makeLedger([{ id: 'w-1', text: 'ทำใบรับรองต่อ', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'w-1' } }]);
+    const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: sub.useCase, substituteLedger: led.ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-2', messageText: 'เดือนนี้ยอดขายเท่าไหร่' });
+    assert.equal(sub.executeCalls.length, 0, 'a side question never dispatches the substitute continuation');
+  });
+
+  it('PRIMARY: UNAVAILABLE + canonical legal name uses the narrow fallback (execute once); a paraphrase does not', async () => {
+    for (const [msg, expected] of [['ทำใบรับรองแทนใบเสร็จรับเงิน', 1], ['ทำใบทดแทนของค่าวิน', 0]] as const) {
+      const { prisma } = makePrisma();
+      const sub = makeSub();
+      const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: sub.useCase, substituteLedger: makeLedger().ledger, intakeRouteFn: UNAVAIL_ROUTE, aiGatewayFn: aiTurn });
+      (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-sub-unavail-${expected}`, messageText: msg });
+      assert.equal(sub.executeCalls.length, expected, `${msg} → ${expected} execute`);
+    }
+  });
+
+  it('PRIMARY UNAVAILABLE precedence: a canonical command with BOTH a substitute workflow and an OPEN expense draft dispatches the substitute AND interrupts the draft (P2-H)', async () => {
+    const { prisma } = makePrisma();
+    const sub = makeSub();
+    const interruptCalls: any[] = [];
+    // An OPEN expense draft is also live in this chat. The provider is UNAVAILABLE (router down).
+    const draft = {
+      routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
+      interruptOpen: async (...a: any[]) => { interruptCalls.push(a); return 'พักงานร่างค่าใช้จ่ายไว้ก่อนนะคะ'; },
+      execute: async () => { throw new Error('draft.execute must not run — the substitute path wins this turn'); },
+    };
+    const { useCase, replies } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.review', 'expense.create'],
+      config: { lineAiSubstituteSemanticRoutingMode: 'primary', lineExpenseDraftConversationEnabled: true },
+      substituteContinuation: sub.useCase, substituteLedger: makeLedger().ledger,
+      expenseDraftConversation: draft, intakeRouteFn: UNAVAIL_ROUTE, aiGatewayFn: aiTurn,
+    });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-unavail-draft', messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน' });
+    // The canonical substitute fallback wins even with the router UNAVAILABLE, and the draft is PAUSED, not lost.
+    assert.equal(sub.executeCalls.length, 1, 'the canonical substitute fallback dispatches despite the UNAVAILABLE router');
+    assert.equal(interruptCalls.length, 1, 'the OPEN expense draft is interrupted (paused), never silently dropped');
+    assert.ok(replies.some((r) => r.includes('พักงานร่างค่าใช้จ่ายไว้ก่อนนะคะ')), 'the interruption note reaches the user, appended to the substitute reply');
+  });
+
+  it('OFF (default): a legacy-positive starts DIRECTLY with confirmedStart=true (exact legacy, no confirm step)', async () => {
+    const { prisma } = makePrisma();
+    const sub = makeSub();
+    // Mode defaults to off; the legacy regex path handles it before the router.
+    const { useCase } = makeUseCase(prisma, { ...P, substituteContinuation: sub.useCase, substituteLedger: makeLedger().ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-off', messageText: 'ทำใบทดแทนใบเสร็จ' });
+    assert.equal(sub.executeCalls.length, 1, 'legacy path executes');
+    assert.equal(sub.executeCalls[0].confirmedStart, true, 'legacy-positive opens directly (no confirmation regression)');
+  });
+
+  it('SHADOW is an inert NO-GO: byte-identical to OFF — legacy path, no primary dispatch, no substitute capability/context', async () => {
+    // A canonical command in SHADOW runs the EXACT legacy path (like off) — never the primary dispatcher.
+    const { prisma } = makePrisma();
+    const sub = makeSub();
+    const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'shadow' }, substituteContinuation: sub.useCase, substituteLedger: makeLedger().ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-shadow', messageText: 'ทำใบทดแทนใบเสร็จ' });
+    assert.equal(sub.executeCalls.length, 1, 'shadow uses the legacy path exactly like off');
+    assert.equal(sub.executeCalls[0].confirmedStart, true, 'legacy-positive still opens directly in shadow');
+
+    // A non-substitute message reaches the router; shadow must NOT add substitute capability or context —
+    // the intake request is byte-identical to off (the router is never even offered the semantic route).
+    const { prisma: prisma2 } = makePrisma();
+    const sub2 = makeSub();
+    const { useCase: uc2, intakeRequests } = makeUseCase(prisma2, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'shadow' }, substituteContinuation: sub2.useCase, substituteLedger: makeLedger().ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (uc2 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await uc2.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-shadow-2', messageText: 'ยอดขายวันนี้เท่าไหร่' });
+    assert.equal(intakeRequests.length, 1, 'router was called for the non-substitute message');
+    assert.equal(intakeRequests[0].substituteContext, undefined, 'shadow sends NO substituteContext (byte-equivalent to off)');
+    assert.equal(intakeRequests[0].capabilities?.substituteSemantic, false, 'shadow grants NO substitute capability');
+    assert.equal(sub2.executeCalls.length, 0, 'no substitute dispatch on a non-substitute message in shadow');
+  });
+
+  it('PRIMARY UAT paraphrase → confirm asks once (pinned to the exact expense) and persists ONLY a ledger clarification; the affirmative inherits and starts', async () => {
+    // Turn 1: paraphrase → continuation returns a confirm pinned to expense-9 → ledger clarification appended
+    // carrying candidateExpenseIds=[expense-9] (the exact selected target, P1-2).
+    const { prisma } = makePrisma();
+    const confirm = makeSub({ handled: true, status: 'TARGET_REQUIRED', replyText: 'ยืนยันไหมคะ', acceptedFields: [], blockers: [], pendingQuestion: 'ยืนยันไหมคะ', expenseId: 'expense-9', candidateExpenseIds: ['expense-9'] });
+    const led1 = makeLedger();
+    const { useCase: uc1 } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: confirm.useCase, substituteLedger: led1.ledger, intakeRouteFn: SUB_ROUTE, aiGatewayFn: aiTurn });
+    (uc1 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await uc1.execute({ ...BASE_EVENT, webhookEventId: 'evt-uat-1', messageText: 'ทำใบทดแทนของค่าวิน' });
+    assert.equal(confirm.executeCalls.length, 1);
+    assert.equal(confirm.executeCalls[0].confirmedStart, false, 'the first paraphrase never auto-confirms a start');
+    assert.equal(led1.appended.length, 1, 'exactly one intake-ledger clarification persisted (no workflow row)');
+    assert.equal(led1.appended[0].items[0].clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    assert.deepEqual(led1.appended[0].items[0].candidateExpenseIds, ['expense-9'], 'the confirm clarification pins the exact target');
+
+    // Turn 2: affirmative "ใช่" against the pinned start-confirm clarification the model RESOLVES → the start
+    // confirms and binds to the SAME expense-9 (never re-derived from the recency window).
+    const { prisma: prisma2 } = makePrisma();
+    const start = makeSub();
+    const led2 = makeLedger([{ id: 'w-confirm', text: 'ยืนยัน', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['expense-9'], entry: { id: 'w-confirm' } }]);
+    const { useCase: uc2 } = makeUseCase(prisma2, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: start.useCase, substituteLedger: led2.ledger, intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['w-confirm'] }), aiGatewayFn: aiTurn });
+    (uc2 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await uc2.execute({ ...BASE_EVENT, webhookEventId: 'evt-uat-2', messageText: 'ใช่' });
+    assert.equal(start.executeCalls.length, 1);
+    assert.equal(start.executeCalls[0].confirmedStart, true, 'the affirmative confirms the paraphrase start');
+    assert.deepEqual(start.executeCalls[0].recentCandidates, [{ id: 'expense-9', label: 'expense-9' }], 'the confirmed start binds to the pinned expense, not the recency window');
+
+    // DETERMINISTIC RECOVERY (repetitive-confirmation guard): when the provider routes substitute but OMITS
+    // the clarification id, an affirmative to the ONE active single-candidate start-confirm clarification
+    // still confirms — otherwise the user is re-asked forever. Bound to that exact expense.
+    const { prisma: prisma3 } = makePrisma();
+    const recovered = makeSub();
+    const led3 = makeLedger([{ id: 'w-confirm', text: 'ยืนยัน', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds: ['expense-9'], entry: { id: 'w-confirm' } }]);
+    const { useCase: uc3 } = makeUseCase(prisma3, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: recovered.useCase, substituteLedger: led3.ledger, intakeRouteFn: () => SUB_ROUTE(), aiGatewayFn: aiTurn });
+    (uc3 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    await uc3.execute({ ...BASE_EVENT, webhookEventId: 'evt-uat-3', messageText: 'ใช่' });
+    assert.equal(recovered.executeCalls[0].confirmedStart, true, 'a unique single start-confirm clarification is deterministically recovered when the model omits the id');
+    assert.deepEqual(recovered.executeCalls[0].recentCandidates, [{ id: 'expense-9', label: 'expense-9' }], 'the recovered start binds to the pinned expense, not the recency window');
+  });
+
+  it('PRIMARY deterministic recovery — bind ONLY on a unique start-confirm; ambiguous (≥2) / missing (0) stay ZERO-WRITE', async () => {
+    const run = async (webhookEventId: string, openWaiting: any[], messageText = 'ใช่') => {
+      const { prisma } = makePrisma();
+      const sub = makeSub();
+      const consumed: string[][] = [];
+      const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: sub.useCase, substituteLedger: makeLedger(openWaiting).ledger, intakeRouteFn: () => SUB_ROUTE(), aiGatewayFn: aiTurn });
+      (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+      (useCase as any).consumeClarifications = async (_c: string, _k: string, _u: string, _o: any[], ids: string[] | undefined) => { consumed.push(ids ?? []); };
+      await useCase.execute({ ...BASE_EVENT, webhookEventId, messageText });
+      return { confirmedStart: sub.executeCalls[0]?.confirmedStart, consumed };
+    };
+    const clar = (id: string, candidateExpenseIds: string[]) => ({ id, text: 'ยืนยัน', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', candidateExpenseIds, entry: { id } });
+
+    // Unique single-candidate start-confirm → deterministic bind + that id is consumed (never re-asked).
+    const unique = await run('evt-det-unique', [clar('w-a', ['exp-1'])]);
+    assert.equal(unique.confirmedStart, true, 'exactly one single-candidate start-confirm → recovered');
+    assert.deepEqual(unique.consumed, [['w-a']], 'the recovered start-confirm clarification is consumed');
+
+    // Ambiguous: TWO active start-confirm clarifications → cannot pick → ZERO-write, nothing consumed.
+    const ambiguous = await run('evt-det-ambiguous', [clar('w-a', ['exp-1']), clar('w-b', ['exp-2'])]);
+    assert.equal(ambiguous.confirmedStart, false, 'two pending start-confirms are ambiguous → no auto-bind');
+    assert.deepEqual(ambiguous.consumed, [], 'ambiguous state consumes nothing');
+
+    // Missing a single-candidate start-confirm: only a MULTI-candidate target-selection is open → ZERO-write.
+    const missing = await run('evt-det-missing', [clar('w-t', ['exp-1', 'exp-2'])]);
+    assert.equal(missing.confirmedStart, false, 'a multi-candidate target-selection is not a start-confirm → no auto-bind');
+    assert.deepEqual(missing.consumed, [], 'missing state consumes nothing');
+
+    // A NON-affirmative message never triggers the recovery even with a unique start-confirm open.
+    const notAffirmative = await run('evt-det-nonaffirm', [clar('w-a', ['exp-1'])], 'ค่ากาแฟ 65 บาท');
+    assert.equal(notAffirmative.confirmedStart, false, 'a non-affirmative message never deterministically confirms');
+  });
+
+  it('PRIMARY: resolved-clarification consumption is restricted to the substitute-owned intersection', async () => {
+    const { prisma } = makePrisma();
+    const sub = makeSub({ handled: true, status: 'READY_FOR_WEB', replyText: 'พร้อม', acceptedFields: ['businessPurpose'], blockers: [] });
+    // Two open clarifications; the model resolves one substitute-owned id and one foreign id.
+    const led = makeLedger([
+      { id: 'w-sub', text: 'ทำต่อ', clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'w-sub' } },
+      { id: 'w-other', text: 'อื่น', clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION', entry: { id: 'w-other' } },
+    ]);
+    const consumed: string[][] = [];
+    const { useCase } = makeUseCase(prisma, { ...P, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: sub.useCase, substituteLedger: led.ledger, intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['w-sub', 'w-other'] }), aiGatewayFn: aiTurn });
+    (useCase as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (useCase as any).consumeClarifications = async (_c: string, _k: string, _u: string, _o: any[], ids: string[] | undefined) => { consumed.push(ids ?? []); };
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-sub-consume', messageText: 'จ่ายเอง' });
+    assert.equal(sub.executeCalls.length, 1);
+    assert.deepEqual(consumed, [['w-sub']], 'only the substitute-owned resolved id is consumed (never the foreign one)');
+  });
+
+  it('PRIMARY end-to-end (REAL use case): ≥2 candidates → target-selection → ordinal → confirm binds the EXACT id and saves EXACTLY once', async () => {
+    // Drives the REAL continuation use case through the REAL webhook across three fresh webhook events,
+    // threading the persisted ledger clarification between turns exactly as LINE delivers them. Proves the
+    // selected expense id survives an ordinal + an affirmative and even a fully drained recency window —
+    // the confirmation binds to the pinned id, never re-derived from recency (P1-2), and writes ONCE.
+    const PC = { permissions: ['line.ai.query', 'expense.review', 'expense.create'] };
+    const saves: any[] = [];
+    const store = new Map<string, any>();
+    const mkExpense = (id: string) => ({
+      id, companyId: 'company-1', branchId: 'branch-1', expenseNumber: id, status: 'NEEDS_REVIEW',
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT', currency: 'THB', grandTotalAmount: '200.0000',
+      expenseCategoryId: 'cat-travel', accountHintKey: null, taxEvidenceStatus: 'SUPPORTING_ONLY',
+      aiVerificationSummaryJson: null, missingReceiptReason: null, note: null, vendorNameSnapshot: null,
+      paymentMethod: null, paidAt: null,
+      sourceChannelMetadataJson: { channel: 'LINE', kind: 'text_note', chatKeyHash: 'chat-hash' },
+      substituteReceiptEvidence: null,
+      lines: [{ description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel', accountHintKey: null }],
+      attachments: [], updatedAt: new Date('2026-08-16T09:00:00.000Z'),
+    });
+    store.set('exp-1', mkExpense('exp-1'));
+    store.set('exp-2', mkExpense('exp-2'));
+    const repo = {
+      listLineSubstituteContinuationRows: async () => [...store.values()]
+        .filter((e) => e.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation)
+        .map((e) => ({ id: e.id, updatedAt: e.updatedAt, sourceChannelMetadataJson: e.sourceChannelMetadataJson })),
+      findByIdWithRelations: async (_c: string, id: string) => store.get(id) ?? null,
+      listCategories: async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
+      getSubstituteReceiptPolicy: async () => null,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'user-1', displayName: 'เจ้าของ' }],
+      findActiveMemberIdentity: async (_c: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
+      saveLineSubstituteContinuation: async (input: any) => {
+        const cur = store.get(input.expenseId);
+        const now = new Date(cur.updatedAt.getTime() + 1000);
+        const continuation = { ...input.continuation, targetRevision: now.toISOString(), lastActivityAt: now.toISOString() };
+        store.set(input.expenseId, { ...cur, updatedAt: now, sourceChannelMetadataJson: { ...cur.sourceChannelMetadataJson, lineSubstituteReceiptContinuation: continuation } });
+        saves.push({ ...input, continuation });
+        return { updatedAt: now, continuation };
+      },
+    } as any;
+    // Develop's constructor takes (repo, prepare, audit, storage); these paths (target-select → confirm →
+    // start-save) never reach prepare/issue, so the extra three are inert stubs.
+    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any);
+    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
+
+    // Turn A — paraphrase, TWO candidates, no open workflow → target-selection pinned to both ids, no write.
+    const ledA = makeLedger();
+    const { useCase: ucA } = makeUseCase(makePrisma().prisma, { ...PC, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: realSub, substituteLedger: ledA.ledger, intakeRouteFn: SUB_ROUTE, aiGatewayFn: aiTurn });
+    (ucA as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (ucA as any).loadCorrectionCandidates = async () => [{ id: 'exp-1', label: 'ค่าวิน · 200' }, { id: 'exp-2', label: 'ค่ากาแฟ · 65' }];
+    await ucA.execute({ ...BASE_EVENT, webhookEventId: 'evt-mc-a', messageText: 'ทำใบทดแทนของค่าใช้จ่าย' });
+    assert.equal(saves.length, 0, 'target selection writes nothing');
+    assert.deepEqual(ledA.appended[0].items[0].candidateExpenseIds, ['exp-1', 'exp-2'], 'the offered shortlist is pinned on the clarification');
+
+    // Turn B — ordinal "1" resolves the target-selection; the RECENCY window is shuffled (exp-2 first) to
+    // prove the ordinal binds against the FROZEN pinned shortlist, not recency → exp-1 → confirm, no write.
+    const ledB = makeLedger([clarFrom(ledA.appended[0].items[0], 'clar-A', '2026-08-20T00:00:00.000Z')]);
+    const { useCase: ucB } = makeUseCase(makePrisma().prisma, { ...PC, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: realSub, substituteLedger: ledB.ledger, intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['clar-A'] }), aiGatewayFn: aiTurn });
+    (ucB as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (ucB as any).loadCorrectionCandidates = async () => [{ id: 'exp-2', label: 'ค่ากาแฟ · 65' }, { id: 'exp-1', label: 'ค่าวิน · 200' }];
+    await ucB.execute({ ...BASE_EVENT, webhookEventId: 'evt-mc-b', messageText: '1' });
+    assert.equal(saves.length, 0, 'the ordinal selection still confirms first (no write)');
+    assert.deepEqual(ledB.appended[0].items[0].candidateExpenseIds, ['exp-1'], 'ordinal "1" binds to the FIRST pinned id (exp-1), never the shuffled recency head (exp-2)');
+
+    // Turn C — affirmative resolves the start-confirm; the recency window is now EMPTY, so only the pinned
+    // id can carry the target. Confirmed start → EXACTLY one workflow save, for exp-1.
+    const ledC = makeLedger([clarFrom(ledB.appended[0].items[0], 'clar-B', '2026-08-20T00:01:00.000Z')]);
+    const { useCase: ucC } = makeUseCase(makePrisma().prisma, { ...PC, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: realSub, substituteLedger: ledC.ledger, intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['clar-B'] }), aiGatewayFn: aiTurn });
+    (ucC as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (ucC as any).loadCorrectionCandidates = async () => [];
+    await ucC.execute({ ...BASE_EVENT, webhookEventId: 'evt-mc-c', messageText: 'ใช่' });
+    assert.equal(saves.length, 1, 'exactly ONE workflow save for the confirmed candidate');
+    assert.equal(saves[0].expenseId, 'exp-1', 'the save targets the EXACT confirmed expense, never exp-2');
+  });
+
+  it('OFF/legacy end-to-end (REAL use case): ≥2 candidates → reply "1" SAVES exactly once, advances the selected target, and does not re-ask the shortlist', async () => {
+    // Push-blocker regression: the OFF/legacy path opens on selection (as parent develop did). An ordinal
+    // "1" that selects a legacy candidate is a real start and MUST persist — our reject-before-save gate
+    // must not turn it into a consume-and-re-ask loop. requireStartConfirmation is NOT set here (legacy),
+    // so `startConfirmed` is true and the fresh OPEN is written once.
+    const PC = { permissions: ['line.ai.query', 'expense.review', 'expense.create'] };
+    const saves: any[] = [];
+    const store = new Map<string, any>();
+    const mkExpense = (id: string) => ({
+      id, companyId: 'company-1', branchId: 'branch-1', expenseNumber: id, status: 'NEEDS_REVIEW',
+      sourceDocumentType: 'EXPENSE_NOTE_TEXT', currency: 'THB', grandTotalAmount: '200.0000',
+      expenseCategoryId: 'cat-travel', accountHintKey: null, taxEvidenceStatus: 'SUPPORTING_ONLY',
+      aiVerificationSummaryJson: null, missingReceiptReason: null, note: null, vendorNameSnapshot: null,
+      paymentMethod: null, paidAt: null,
+      sourceChannelMetadataJson: { channel: 'LINE', kind: 'text_note', chatKeyHash: 'chat-hash' },
+      substituteReceiptEvidence: null,
+      lines: [{ description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel', accountHintKey: null }],
+      attachments: [], updatedAt: new Date('2026-08-16T09:00:00.000Z'),
+    });
+    store.set('exp-1', mkExpense('exp-1'));
+    store.set('exp-2', mkExpense('exp-2'));
+    const repo = {
+      listLineSubstituteContinuationRows: async () => [...store.values()]
+        .filter((e) => e.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation)
+        .map((e) => ({ id: e.id, updatedAt: e.updatedAt, sourceChannelMetadataJson: e.sourceChannelMetadataJson })),
+      findByIdWithRelations: async (_c: string, id: string) => store.get(id) ?? null,
+      listCategories: async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
+      getSubstituteReceiptPolicy: async () => null,
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'user-1', displayName: 'เจ้าของ' }],
+      findActiveMemberIdentity: async (_c: string, userId: string) => userId === 'user-1' ? { userId, displayName: 'เจ้าของ' } : null,
+      saveLineSubstituteContinuation: async (input: any) => {
+        const cur = store.get(input.expenseId);
+        const now = new Date(cur.updatedAt.getTime() + 1000);
+        const continuation = { ...input.continuation, targetRevision: now.toISOString(), lastActivityAt: now.toISOString() };
+        store.set(input.expenseId, { ...cur, updatedAt: now, sourceChannelMetadataJson: { ...cur.sourceChannelMetadataJson, lineSubstituteReceiptContinuation: continuation } });
+        saves.push({ ...input, continuation });
+        return { updatedAt: now, continuation };
+      },
+    } as any;
+    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any);
+    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
+    const candidates = async () => [{ id: 'exp-1', label: 'ค่าวิน · 200' }, { id: 'exp-2', label: 'ค่ากาแฟ · 65' }];
+
+    // Turn 1 — a broad-match substitute request with TWO candidates → target-selection, no write.
+    const led1 = makeLedger();
+    const { useCase: uc1 } = makeUseCase(makePrisma().prisma, { ...PC, substituteContinuation: realSub, substituteLedger: led1.ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (uc1 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (uc1 as any).loadCorrectionCandidates = candidates;
+    await uc1.execute({ ...BASE_EVENT, webhookEventId: 'evt-legacy-a', messageText: 'ทำใบทดแทนของค่าใช้จ่าย' });
+    assert.equal(saves.length, 0, 'target selection writes nothing');
+    assert.equal(led1.appended[0]?.items[0]?.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION', 'a shortlist clarification is opened');
+
+    // Turn 2 — reply "1": the OFF/legacy path opens the selected candidate and SAVES exactly once (the fix).
+    const led2 = makeLedger([clarFrom(led1.appended[0].items[0], 'clar-A', '2026-08-20T00:00:00.000Z')]);
+    const { useCase: uc2 } = makeUseCase(makePrisma().prisma, { ...PC, substituteContinuation: realSub, substituteLedger: led2.ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (uc2 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (uc2 as any).loadCorrectionCandidates = candidates;
+    await uc2.execute({ ...BASE_EVENT, webhookEventId: 'evt-legacy-b', messageText: '1' });
+    assert.equal(saves.length, 1, 'reply "1" opens the selected workflow EXACTLY once (no reject-before-save loop)');
+    assert.equal(saves[0].expenseId, 'exp-1', 'it advances the exact selected target (candidate 1 → exp-1)');
+    assert.equal(store.get('exp-1').sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'OPEN', 'the OPEN workflow is persisted');
+
+    // Turn 3 — the taught resume phrase finds the now-OPEN workflow and continues IT; it is NOT re-asked as
+    // a fresh shortlist, and exp-2 is never opened. (Continuing an existing OPEN workflow needs no new save.)
+    const led3 = makeLedger([clarFrom(led2.appended[0].items[0], 'clar-B', '2026-08-20T00:01:00.000Z')]);
+    const { useCase: uc3 } = makeUseCase(makePrisma().prisma, { ...PC, substituteContinuation: realSub, substituteLedger: led3.ledger, intakeRouteFn: READ_ROUTE, aiGatewayFn: aiTurn });
+    (uc3 as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
+    (uc3 as any).loadCorrectionCandidates = candidates;
+    await uc3.execute({ ...BASE_EVENT, webhookEventId: 'evt-legacy-c', messageText: 'ทำใบรับรองต่อ' });
+    const openWorkflows = [...store.values()].filter((e) => e.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation?.status === 'OPEN');
+    assert.equal(openWorkflows.length, 1, 'still exactly one OPEN workflow — the "1" turn was not looped back into the shortlist');
+    assert.equal(store.get('exp-2').sourceChannelMetadataJson.lineSubstituteReceiptContinuation, undefined, 'exp-2 was never opened');
+    assert.equal(saves.length, 1, 'the resume continued the OPEN workflow without a redundant write');
+  });
+});
+
+describe('isAffirmativeText – bounded confirmation forms with a negative guard first', () => {
+  it('accepts natural Thai/English affirmatives (incl. the broadened forms)', () => {
+    for (const s of ['ใช่', 'ใช่ค่ะ', 'ใช่จ้า', 'ทำเลย', 'เริ่มเลย', 'ได้เลย', 'ตกลง', 'ยืนยัน', 'โอเค', 'ok', 'yes']) {
+      assert.equal(isAffirmativeText(s), true, s);
+    }
+  });
+  it('the negative guard runs first: any negation/cancel token vetoes', () => {
+    for (const s of ['ไม่ใช่', 'ยังไม่เอา', 'ไม่ทำ', 'ไม่เอา', 'ยกเลิก', 'ไม่ใช่ค่ะ']) {
+      assert.equal(isAffirmativeText(s), false, s);
+    }
+  });
+  it('is anchored: a longer sentence merely CONTAINING an affirmative is not a bare confirmation', () => {
+    for (const s of ['ใช่แต่ขอแก้ยอด', 'ทำใบทดแทนของค่าวิน', 'เอากาแฟแก้วนึง']) {
+      assert.equal(isAffirmativeText(s), false, s);
+    }
   });
 });

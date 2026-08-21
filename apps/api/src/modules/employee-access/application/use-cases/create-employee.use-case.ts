@@ -22,6 +22,7 @@ export type CreateEmployeeCommand = {
   /** The name WITHOUT คำนำหน้า; the title travels in `titlePrefix`. */
   displayName: string;
   titlePrefix?: string;
+  jobTitle?: string;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -80,11 +81,11 @@ export class CreateEmployeeUseCase {
         status: 'ACTIVE',
         OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }],
       },
-      select: { id: true, key: true, permissions: { select: { permission: { select: { key: true } } } } },
+      select: { id: true, key: true, isSystem: true, permissions: { select: { permission: { select: { key: true } } } } },
     });
     if (roles.length !== cmd.roleIds.length) throw new ForbiddenException('One or more roles are invalid.');
     const violation = roleGrantViolation(
-      roles.map((role) => ({ key: role.key, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
+      roles.map((role) => ({ key: role.key, isSystem: role.isSystem, permissionKeys: role.permissions.map((rp) => rp.permission.key) })),
       cmd.requesterPermissions,
       cmd.requesterEntitlementDeniedPermissions,
       cmd.requesterRoles?.includes('OWNER'),
@@ -190,6 +191,7 @@ export class CreateEmployeeUseCase {
             data: {
               displayName: cmd.displayName,
               titlePrefix: cmd.titlePrefix,
+              jobTitle: cmd.jobTitle?.trim(),
               legalName: cmd.legalName,
               firstName: cmd.firstName,
               lastName: cmd.lastName,
@@ -323,6 +325,7 @@ export class CreateEmployeeUseCase {
               membershipId: membership.id,
               displayName: cmd.displayName,
               titlePrefix: cmd.titlePrefix,
+              jobTitle: cmd.jobTitle?.trim(),
               legalName: cmd.legalName,
               firstName: cmd.firstName,
               lastName: cmd.lastName,
@@ -405,7 +408,7 @@ export class CreateEmployeeUseCase {
       userId: string;
       username: string;
       companyEmail: string;
-      roles: Array<{ id: string; key: string }>;
+      roles: Array<{ id: string; key: string; isSystem: boolean }>;
       identityHash: string;
       identityLast4: string;
       identityEncryptedRef: string;
@@ -440,6 +443,7 @@ export class CreateEmployeeUseCase {
             membershipId: membership.id,
             displayName: cmd.displayName,
             titlePrefix: cmd.titlePrefix,
+            jobTitle: cmd.jobTitle?.trim(),
             legalName: cmd.legalName,
             firstName: cmd.firstName,
             lastName: cmd.lastName,

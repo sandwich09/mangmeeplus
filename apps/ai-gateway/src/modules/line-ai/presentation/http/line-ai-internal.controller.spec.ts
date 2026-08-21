@@ -558,6 +558,28 @@ describe('LineAiInternalController', () => {
     assert.equal(plan.errorCode, 'PROVIDER_DISABLED');
   });
 
+  it('the HTTP receiver BOUNDS the trusted capabilities in place — malformed/unknown input is discarded, only literal true survives', async () => {
+    const controller = new LineAiInternalController(
+      { aiGatewayInternalSecret: 'secret', modelProvider: 'disabled' } as any,
+      { execute: async () => { throw new Error('should not execute'); } } as any,
+    );
+    // A hostile body: truthy non-booleans + unknown keys. The receiver must strip them to {} before routing.
+    const hostile: any = {
+      requestId: 'req-cap', companyId: 'c', userId: 'u', locale: 'th', messageText: 'ยอดขาย', permissions: [],
+      capabilities: { fusedPlan: 1, substituteSemantic: 'true', evil: true, nested: { fusedPlan: true } },
+    };
+    await controller.lineIntakeRoute('secret', hostile);
+    assert.deepEqual(hostile.capabilities, {}, 'no coerced/unknown capability survives the receiver boundary');
+
+    // A legit literal-true body is preserved (the guard is not over-broad).
+    const legit: any = {
+      requestId: 'req-cap-2', companyId: 'c', userId: 'u', locale: 'th', messageText: 'ยอดขาย', permissions: [],
+      capabilities: { fusedPlan: true, substituteSemantic: false },
+    };
+    await controller.lineIntakeRoute('secret', legit);
+    assert.deepEqual(legit.capabilities, { fusedPlan: true }, 'literal-true survives; false is dropped');
+  });
+
   it('bank statement extract fails closed on missing typhoon key and rejects non-image mime types', async () => {
     const controller = new LineAiInternalController(
       { aiGatewayInternalSecret: 'secret', typhoonOcrApiKey: undefined, aiToolTimeoutMs: 1000 } as any,

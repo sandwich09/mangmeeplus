@@ -8,6 +8,7 @@ import {
   eligibleClaimSignatureRoles,
 } from './reimbursement-claim-signature.use-case';
 import { claimSignatureAckHash } from './reimbursement-request.use-case';
+import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 
 // Lane F. The business rule under test is WHO may sign WHICH role: eligibility is
 // the real actor of that step, never a permission a role happens to hold.
@@ -43,10 +44,18 @@ function request(overrides: Partial<any> = {}) {
   } as any;
 }
 
-function fakeRepo(row: any | null, options: { signatureAttachment?: any; uploadAttachment?: any; signedCopies?: any[] } = {}) {
+function fakeRepo(row: any | null, options: {
+  signatureAttachment?: any;
+  savedSignatureAttachmentId?: string | null;
+  uploadAttachment?: any;
+  signedCopies?: any[];
+} = {}) {
   const calls = { upserts: [] as any[], links: [] as any[], signatureLookups: [] as any[] };
   const repo = {
     findRequestById: async (_companyId: string, _id: string, _withRelations?: boolean) => row,
+    findLatestActiveSavedSignatureAttachmentId: async () => (
+      options.savedSignatureAttachmentId === undefined ? 'att-saved' : options.savedSignatureAttachmentId
+    ),
     findClaimSignatureAttachment: async (companyId: string, attachmentId: string, userId: string, requestId: string, role: string) => {
       calls.signatureLookups.push({ companyId, attachmentId, userId, requestId, role });
       return options.signatureAttachment === undefined
@@ -142,6 +151,29 @@ describe('SignClaimFormUseCase', () => {
     assert.deepEqual(calls.signatureLookups, [
       { companyId: 'co-1', attachmentId: 'att-sig', userId: 'staff-1', requestId: 'rb-1', role: 'REQUESTER' },
     ]);
+  });
+
+  it('uses the eligible actor\'s latest active saved signature when no attachment is supplied', async () => {
+    const req = request();
+    const { repo, calls } = fakeRepo(req, { savedSignatureAttachmentId: 'att-my-active-signature' });
+    await signUseCase(repo).execute(ctx(), 'rb-1', {
+      role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req),
+    });
+
+    assert.equal(calls.upserts[0].signatureAttachmentId, 'att-my-active-signature');
+    assert.equal(calls.signatureLookups[0].userId, 'staff-1');
+  });
+
+  it('returns a stable blocker when the eligible actor has no active saved signature', async () => {
+    const req = request();
+    const { repo, calls } = fakeRepo(req, { savedSignatureAttachmentId: null });
+    await assert.rejects(
+      () => signUseCase(repo).execute(ctx(), 'rb-1', {
+        role: 'REQUESTER', snapshotHash: claimSignatureAckHash(req),
+      }),
+      /claim_saved_signature_required/,
+    );
+    assert.equal(calls.upserts.length, 0);
   });
 
   it('re-signing replaces the signer\'s own row through the unique upsert', async () => {
@@ -338,5 +370,75 @@ describe('LinkSignedClaimFormCopyUseCase', () => {
       );
       assert.equal(calls.links.length, 0);
     }
+  });
+});
+
+describe('PrismaReimbursementRepository saved claim signatures', () => {
+  const attachment = {
+    id: 'att-saved', bucket: 'private', objectKey: 'signatures/att-saved', objectVersionId: null,
+    mimeType: 'image/png', byteSize: 123, checksumSha256: null,
+  };
+
+  it('resolves only the latest ACTIVE signature submitted by the signer', async () => {
+    const client = {
+      companySignatureAsset: {
+        findFirst: async (args: any) => {
+          assert.deepEqual(args.where, {
+            companyId: 'co-1', submittedByUserId: 'staff-1', status: 'ACTIVE',
+          });
+          assert.deepEqual(args.orderBy, { createdAt: 'desc' });
+          return { originalAttachmentId: 'att-original', derivedAttachmentId: 'att-derived' };
+        },
+      },
+    };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    assert.equal(await repo.findLatestActiveSavedSignatureAttachmentId('co-1', 'staff-1'), 'att-derived');
+  });
+
+  it('loads a saved attachment only when its asset belongs to the signer', async () => {
+    let attachmentLookup = 0;
+    const client = {
+      companySignatureAsset: {
+        findFirst: async ({ where }: any) => {
+          assert.equal(where.companyId, 'co-1');
+          assert.equal(where.submittedByUserId, 'staff-1');
+          assert.deepEqual(where.OR, [
+            { originalAttachmentId: 'att-saved' }, { derivedAttachmentId: 'att-saved' },
+          ]);
+          return { id: 'sig-own' };
+        },
+      },
+      attachmentObject: {
+        findFirst: async ({ where }: any) => {
+          attachmentLookup += 1;
+          if (attachmentLookup === 1) return null;
+          assert.equal(where.uploadedByUserId, 'staff-1');
+          assert.equal(where.companyId, 'co-1');
+          assert.equal(where.id, 'att-saved');
+          return attachment;
+        },
+      },
+    };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    assert.equal(
+      (await repo.findClaimSignatureAttachment('co-1', 'att-saved', 'staff-1', 'rb-1', 'REQUESTER'))?.id,
+      'att-saved',
+    );
+  });
+
+  it('does not load an attachment when the saved asset belongs to somebody else', async () => {
+    let attachmentLookup = 0;
+    const client = {
+      companySignatureAsset: { findFirst: async () => null },
+      attachmentObject: {
+        findFirst: async () => { attachmentLookup += 1; return null; },
+      },
+    };
+    const repo = new PrismaReimbursementRepository({ client } as any, {} as any);
+    assert.equal(
+      await repo.findClaimSignatureAttachment('co-1', 'att-other', 'staff-1', 'rb-1', 'REQUESTER'),
+      null,
+    );
+    assert.equal(attachmentLookup, 1, 'a foreign asset never reaches the reusable attachment lookup');
   });
 });

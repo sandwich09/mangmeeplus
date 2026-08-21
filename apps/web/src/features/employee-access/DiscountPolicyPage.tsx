@@ -258,7 +258,7 @@ export function DiscountPolicyPage({ companyId }: { companyId: string }) {
           <MangmeeCard className="p-5 sm:p-6">
             <h2 className="text-lg font-extrabold text-gray-900">ให้ส่วนลดเกินเพดานได้</h2>
             <p className="mb-3.5 mt-1 text-sm font-medium text-gray-500">
-              ตำแหน่งที่อนุมัติส่วนลดเกิน {policy.maxPct}% ได้เป็นกรณีพิเศษ
+              บทบาทที่อนุมัติส่วนลดเกิน {policy.maxPct}% ได้เป็นกรณีพิเศษ
             </p>
             {DISCOUNT_OVERRIDE_OPTIONS.map((option) => {
               const selected = policy.overrideRole === option.id;

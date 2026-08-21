@@ -1,5 +1,5 @@
 /** AgentCore Runtime invoke port – spec section 9.2. */
-import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiExpectedRuntimeIdentity, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiWebLink, SourceRef } from '@watchdog-bms/contracts';
+import type { AgentToolCall, AiModelPolicy, AiUsageEntry, LineAiAnswerPresentation, LineAiConversationContext, LineAiExpectedRuntimeIdentity, LineAiPreparedPlan, LineAiRefusalReason, LineAiRuntimeBinding, LineAiRuntimeIdentity, LineAiStageDurations, LineAiWebLink, LineIntakeRouteIntent, SourceRef } from '@watchdog-bms/contracts';
 
 export type AgentCoreInvokeInput = {
   turnId: string;
@@ -20,6 +20,11 @@ export type AgentCoreInvokeInput = {
   qualifier?: string;
   attachments?: ReadonlyArray<{ attachmentId: string; mimeType: string; kind: string; sha256: string }>;
   conversationContext?: LineAiConversationContext;
+  /** Optional additive fused plan (latency/autonomy §7). Already bounded by the caller's
+   *  `parseLineAiPreparedPlan`; the runtime re-parses it again before any consumption. */
+  preparedPlan?: LineAiPreparedPlan;
+  /** Trusted outer intake provenance; the runtime re-validates it by explicit membership. */
+  intakeIntent?: LineIntakeRouteIntent;
 };
 
 export type AgentCoreInvokeResult = {

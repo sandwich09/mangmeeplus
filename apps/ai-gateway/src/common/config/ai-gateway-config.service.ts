@@ -64,6 +64,18 @@ export class AiGatewayConfigService {
   // Item 10F native tool-use loop + coverage critic
   get lineAiTooluseLoopEnabled(): boolean { return this.config.LINE_AI_TOOLUSE_LOOP_ENABLED; }
   get lineAiCoverageCriticEnabled(): boolean { return this.config.LINE_AI_COVERAGE_CRITIC_ENABLED; }
+  // Latency/autonomy Phases 3–6 (all default off / empty).
+  get lineAiFusedPlanShadowEnabled(): boolean { return this.config.LINE_AI_FUSED_PLAN_SHADOW_ENABLED; }
+  get lineAiPreparedSimpleReadEnabled(): boolean { return this.config.LINE_AI_PREPARED_SIMPLE_READ_ENABLED; }
+  /** Exact allow-listed deterministic response families (Phase 5). Empty = none enabled. */
+  get lineAiDeterministicResponseFamilies(): string[] {
+    return this.config.LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES.split(',').map((entry) => entry.trim()).filter(Boolean);
+  }
+  // Phase 6 RESERVED / INERT flags — parsed and exposed for a stable env contract, but NOT wired to any
+  // behavior yet. These getters currently have no runtime consumer; wire one before treating them as live.
+  get lineAiProviderClientReuseEnabled(): boolean { return this.config.LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED; }
+  get lineAiAgentcoreSessionAffinityEnabled(): boolean { return this.config.LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED; }
+  get lineAiSmallRouterShadowEnabled(): boolean { return this.config.LINE_AI_SMALL_ROUTER_SHADOW_ENABLED; }
   get awsProfile(): string | undefined { return this.config.AWS_PROFILE; }
   get awsSdkLoadConfig(): boolean { return this.config.AWS_SDK_LOAD_CONFIG; }
   // AgentCore runtime invoke config

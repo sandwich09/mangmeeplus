@@ -51,12 +51,12 @@ Chat key: `(chatId, lineUserId)` where `chatId = source.groupId ?? source.roomId
 
 ## 6. Buffering Rules
 
-- **Debounce**: flush when no new item arrives for `LINE_AI_BUFFER_DEBOUNCE_MS` (default 2500 ms) after the last buffered item. `0` disables buffering (every item flushes immediately; serialization still applies).
+- **Debounce**: flush when no new item arrives for `LINE_AI_BUFFER_DEBOUNCE_MS` after the last buffered item. Normatively, a gap `<= debounce` joins the current turn and a gap `> debounce` starts the next turn; implementation must make equality deterministic rather than depend on timer callback order. `0` disables buffering (every item flushes immediately; serialization still applies). The running code remains at the historical 2500 ms default. [[plans/line-ai-latency-and-autonomy-lanes-plan|The latency/autonomy plan]] compares 1000 ms and 1500 ms candidates before selecting the smallest safe new default.
 - **Max wait**: flush at `LINE_AI_BUFFER_MAX_WAIT_MS` (default 8000 ms) after the FIRST buffered item, regardless of continued typing. Anchoring at the first item prevents starvation from continuous input.
 - **Size caps** (constants, not env): flush immediately when the buffer reaches 20 items or 4000 joined characters.
-- **Command fast path**: a `command` item arriving while the chat key is fully idle (empty buffer, no pending batch, nothing processing) flushes immediately as a single-item batch — `/company` stays as snappy as today. If anything is buffered/in flight, the command is appended and forces an immediate flush of the whole buffer, preserving send order (a command must never jump ahead of an earlier query, because `/company <n>` switches the company context that query would run under).
+- **Command fast path**: a `command` item arriving while the chat key is fully idle (empty buffer, no pending batch, nothing processing) flushes immediately as a single-item batch and does not request loading — `/company` stays as snappy as today. If anything is buffered/in flight, the command is appended and forces an immediate flush of the whole buffer, preserving send order (a command must never jump ahead of an earlier query, because `/company <n>` switches the company context that query would run under).
 - **Ordering**: at flush, items are sorted by LINE event `timestamp` (heals minor cross-POST arrival reordering), tie-broken by arrival order.
-- **Latency trade-off (accepted)**: every text/media utterance gains up to `debounce` ms before processing starts. Against a typical 5–15 s AI turn this is acceptable; the loading animation (Section 10) covers perceived wait. Completeness heuristics for Thai text are explicitly rejected as unreliable.
+- **Latency trade-off (accepted)**: every text/media utterance gains up to the selected debounce before processing starts. Loading begins after durable acceptance, before the debounce wait, only when accept-time loading is enabled (`LINE_AI_LOADING_ON_ACCEPT_ENABLED`, default OFF, subordinate to the master `LINE_AI_LOADING_ANIMATION_ENABLED`); otherwise it begins at processing start. Completeness heuristics for Thai text remain explicitly rejected as unreliable.
 
 ## 7. Serial Queue and Merge-into-Pending
 
@@ -104,8 +104,8 @@ Notes: this rule only fires when LINE actually redelivers, which it does not onc
 
 - Each segment replies with its own reply token as today. Unused member tokens are simply discarded.
 - `LineReplyAdapter.sendReply` starts reporting success/failure instead of swallowing it. On failure with an expired/used token (HTTP 400 from `/v2/bot/message/reply`), a new `sendPush(lineUserId, messages)` (`POST /v2/bot/message/push`) delivers the same messages. Rationale: with queueing, a reply can exceed the ~1-minute token life; silence after "บันทึกค่าใช้จ่าย" is the worst outcome for an accounting bot. Push consumes the OA monthly message quota (replies are free) — fallback use is logged (`line_push_fallback_used`) for quota monitoring.
-- Loading animation: when a batch starts processing, best-effort `POST /v2/bot/chat/loading/start` with `loadingSeconds: 60`. Only for 1:1 chats (`chatId === lineUserId` — the API does not support groups). It auto-dismisses when the reply arrives. Toggle: `LINE_AI_LOADING_ANIMATION_ENABLED` (default true). Failures are ignored.
-- Waiting feedback (1:1 chats only): keep the loading animation alone for the first 2 seconds of a turn. If no reply is ready after 2 seconds, push exactly one short Thai status selected deterministically from the request (document check, report, summary, comparison, calculation, analysis, search, business-system lookup, or generic thinking), restart the loading animation, and then deliver the final reply. The final-delivery path must cancel or await the status task so a waiting message can never arrive after the answer. Commands and group chats keep the existing no-status behavior.
+- Loading animation: best-effort `POST /v2/bot/chat/loading/start` with `loadingSeconds: 60` after signature/legal/durable acceptance and before debounce. Only for 1:1 chats (`chatId === lineUserId` — the API does not support groups). It auto-dismisses when the reply arrives. Master toggle: `LINE_AI_LOADING_ANIMATION_ENABLED` (default true). Failures are ignored. **Default behavior:** loading starts when a batch begins processing. Accept-time loading (the spinner right after durable acceptance, before the debounce wait) is a **NON-DEFAULT, flag-gated opt-in** behind `LINE_AI_LOADING_ON_ACCEPT_ENABLED` (**default OFF**), a SUB-feature SUBORDINATE to the master switch — both must be on; with the master off there is no spinner anywhere (accept or processing-start), and with the accept flag off (the default) loading still starts at processing start (the legacy behavior).
+- Waiting feedback (1:1 chats only): **by default the 2-second wait-status timer is anchored to PROCESSING START.** Anchoring it to durable acceptance instead is a **NON-DEFAULT, flag-gated** behavior (see the timer rule at the end of this bullet). If no reply is ready, push exactly one short Thai status selected deterministically from the request (document check, report, summary, comparison, calculation, analysis, search, business-system lookup, or generic thinking), then restart loading because a push clears it. Final delivery atomically cancels a status that has not started; an already-started bounded delivery is ordered before final but may not hold a ready answer indefinitely. A waiting message must never arrive after the answer. Commands and group chats keep the existing no-status behavior. The 2-second timer counts from durable acceptance ONLY when accept-time loading actually showed its spinner (`LINE_AI_LOADING_ON_ACCEPT_ENABLED` on AND LINE accepted the request); otherwise — accept flag off (the default), the accept request rejected, or a later content turn — it uses the legacy fixed 2 seconds from processing start, so a large debounce (e.g. 2,500 ms) never collapses the status to immediate.
 
 ## 11. Shutdown Flush
 
@@ -134,7 +134,7 @@ Prod deploys are ECS Express CANARY (5%, 3-minute bake) and application autoscal
 
 Env (via `AppConfigService`, following existing `LINE_MESSAGING_*` getter pattern):
 
-- `LINE_AI_BUFFER_DEBOUNCE_MS` — default `2500`; `0` disables buffering (serialization remains).
+- `LINE_AI_BUFFER_DEBOUNCE_MS` — implemented baseline `2500`; candidate defaults `1000` and `1500`; the smallest candidate inside the split-turn/re-ask/cost gates becomes the new default; `0` disables buffering (serialization remains).
 - `LINE_AI_BUFFER_MAX_WAIT_MS` — default `8000`.
 - `LINE_AI_LOADING_ANIMATION_ENABLED` — default `true`.
 
@@ -147,7 +147,7 @@ Constants in module code (not env): max 20 items / 4000 chars per batch, pending
 | 1 | 3 fragments in one POST | 1 joined turn, 1 reply | buffer + segmentation |
 | 2 | 3 fragments across POSTs within window | 1 joined turn | buffer keyed by chat, debounce |
 | 3 | Fragment, 10 s pause, rest | 2 turns; second answered with context | semantic layer (CLARIFY + 16-turn memory), unchanged |
-| 4 | Single complete message | 1 turn, +≤2.5 s latency | accepted trade-off, loading animation |
+| 4 | Single complete message | 1 turn, +selected debounce latency | accepted trade-off, loading animation |
 | 5 | Message while AI is processing | joins next batch, replies stay ordered | serial queue |
 | 6 | Continuous typing (never idle) | flush every ≤8 s | max-wait anchored at first item |
 | 7 | Flood (40+ msgs during one turn) | overflow items dropped + rate-limit reply + audit | pending-batch caps |
@@ -173,7 +173,7 @@ Constants in module code (not env): max 20 items / 4000 chars per batch, pending
 
 ## 15. Acceptance Criteria
 
-- Three text fragments sent ≤2.5 s apart produce exactly one `AiTurn` and one LINE reply whose answer addresses the joined utterance.
+- Three text fragments whose consecutive gaps are each below the selected debounce produce exactly one `AiTurn` and one LINE reply whose answer addresses the joined utterance.
 - Two batches from the same user never interleave: replies arrive in send order (single instance).
 - Webhook responds 200 without awaiting AI processing.
 - `/company` from an idle chat has no added latency; `/company` sent after query fragments executes after that query.
@@ -198,3 +198,4 @@ Constants in module code (not env): max 20 items / 4000 chars per batch, pending
 - [[specs/line-ai-local-agent-orchestration-spec|LINE AI Local Agent Orchestration Spec]]
 - [[adr/0008-line-ai-access-and-auth|ADR 0008 LINE AI Access and Authentication]]
 - Plan: [[plans/line-ai-message-buffering-plan|LINE AI Message Buffering Plan]]
+- Follow-up: [[specs/line-ai-latency-and-autonomy-lanes-spec|LINE AI Latency and Autonomy Lanes]]

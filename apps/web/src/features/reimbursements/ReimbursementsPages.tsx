@@ -15,9 +15,8 @@ import { LoadingState } from '@/common/components/state/LoadingState';
 import { REASON_MAX_LENGTH, sanitizeReasonInput } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
-  IMAGE_UPLOAD_ACCEPT,
-  assertAllowedUploadFile,
 } from '@/common/files/upload-file.logic';
+import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
 import {
   listReimbursements, submitReimbursement, cancelReimbursement,
   reopenReimbursement, getReimbursement,
@@ -25,18 +24,15 @@ import {
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
   getReimbursementPolicy, updateReimbursementPolicy,
-  uploadClaimSignature, signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
+  signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
 } from './reimbursements.api';
 import {
   REQUEST_STATUS_LABELS, REQUEST_STATUS_TONES, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_TONES,
   FINANCE_REVIEW_LABELS, PAYMENT_METHOD_LABELS, RECEIPT_REQUIREMENT_LABELS, DUPLICATE_STATUS_LABELS,
   APPROVAL_STEP_STATUS_LABELS,
   CLAIM_SIGNATURE_ROLES, CLAIM_SIGNATURE_ROLE_LABELS, canUploadSignedCopy, eligibleSignatureRoles,
-  reimbursementOwnActions, type ClaimSignatureRole,
+  reimbursementOwnActions, reimbursementSubmitReadiness, type ClaimSignatureRole,
 } from './reimbursements.model';
-// The background remover already ships in the expenses feature (signature assets);
-// reimbursements already reuses that feature's upload helper, so reuse it too.
-import { removeLightBackground } from '../expenses/expenses.model';
 import {
   baht0, ICON, KPI, StatCard, ErrorBanner, InfoBanner,
   inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
@@ -262,8 +258,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const previewRequestRef = useRef(0);
   const previewUrlRef = useRef<string | null>(null);
   const claimFormSaveRequestRef = useRef(0);
-  // Signing dialog for one signature block of the printed form.
-  const [signFor, setSignFor] = useState<ClaimSignatureRole | null>(null);
+  const [missingSignatureFor, setMissingSignatureFor] = useState<ClaimSignatureRole | null>(null);
   const [rejecting, setRejecting] = useState(false);
   const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
 
@@ -405,6 +400,32 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     }
   };
 
+  const signWithSavedSignature = async (role: ClaimSignatureRole) => {
+    if (!detail?.claimSignatureAckHash) {
+      setDrawerError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่');
+      return;
+    }
+    setDrawerBusy(true); setDrawerError(null);
+    try {
+      await signReimbursementClaimForm(companyId, detail.id, {
+        role,
+        snapshotHash: detail.claimSignatureAckHash,
+      });
+      setDetail(await getReimbursement(companyId, detail.id));
+      setRefreshKey(k => k + 1);
+      toast.success('ลงนามใบเบิกเรียบร้อยแล้ว');
+    } catch (e) {
+      if ((e as { code?: unknown } | null)?.code === 'claim_saved_signature_required'
+        || (e instanceof Error && e.message.includes('claim_saved_signature_required'))) {
+        setMissingSignatureFor(role);
+      } else {
+        setDrawerError(err(e));
+      }
+    } finally {
+      setDrawerBusy(false);
+    }
+  };
+
   const approveFromDrawer = async () => {
     if (!detail) return;
     setDrawerBusy(true); setDrawerError(null);
@@ -470,7 +491,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         error={drawerError}
         onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
         onPrintClaimForm={openClaimForm}
-        onSign={setSignFor}
+        onSign={role => void signWithSavedSignature(role)}
         onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}
         onOpenAttachment={openAttachment}
         onLineReceipt={(lineNo, file) => drawerAction(() => setLineReceipt(companyId, detail.id, detail.lines ?? [], lineNo, file), 'แนบใบเสร็จเรียบร้อยแล้ว')}
@@ -522,17 +543,9 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         onClose={closeDocumentPreview}
         onRetry={previewTarget?.kind === 'attachment' ? () => loadDocumentPreview(previewTarget) : undefined}
       />}
-      {/* Sibling of the drawer, like the print preview: closing the dialog keeps the claim open. */}
-      {signFor && detail && <SignatureModal
+      {missingSignatureFor && <MissingSavedSignatureModal
         companyId={companyId}
-        requestId={detail.id}
-        role={signFor}
-        ackHash={detail.claimSignatureAckHash}
-        onClose={() => setSignFor(null)}
-        onDone={async () => {
-          setSignFor(null);
-          setDetail(await getReimbursement(companyId, detail.id));
-        }}
+        onClose={() => setMissingSignatureFor(null)}
       />}
       {payFor && <PaymentModal
         companyId={companyId}
@@ -628,6 +641,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
   };
 
   const summary = useMemo(() => summariseQueue(data), [data]);
+  const blockedDraftCount = useMemo(
+    () => data.filter(row => reimbursementSubmitReadiness(row).blocked).length,
+    [data],
+  );
   const statusCounts = useMemo(() => ({
     all: data.length,
     draft: data.filter(r => r.status === 'DRAFT').length,
@@ -680,6 +697,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <>
+          {blockedDraftCount > 0 && (
+            <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard icon={ICON.doc} label="คำขอทั้งหมด" value={summary.count} sub="จำนวนใบ" {...KPI.sky} />
             <StatCard icon={ICON.edit} label="ร่างรอส่ง" value={statusCounts.draft} {...KPI.amber} />
@@ -687,10 +707,10 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
             <StatCard icon={ICON.wallet} label="ยอดรวมที่ขอเบิก" value={baht0(summary.totalAmount)} {...KPI.brand} />
           </div>
           <MangmeeCard className="p-4">
-            <div className="flex w-full items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto sm:flex-wrap sm:overflow-x-visible">
+            <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
               {statusChips.map(chip => (
                 <button key={chip.key} onClick={() => setStatusFilter(chip.key)}
-                  className={cx('inline-flex shrink-0 items-center gap-2 min-h-11 whitespace-nowrap rounded-lg border px-3.5 py-2 text-sm font-semibold transition sm:min-h-0',
+                  className={cx('inline-flex min-h-11 min-w-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold transition sm:min-h-0',
                     statusFilter === chip.key ? 'border-brand-400 bg-brand-50 text-brand-700' : 'border-gray-200 bg-white text-gray-600 hover:border-brand-200')}>
                   {chip.label}
                   <span className={cx('tabular-nums inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-extrabold', statusFilter === chip.key ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-500')}>{statusCounts[chip.key]}</span>
@@ -751,7 +771,12 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ส่งอนุมัติ</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
+                              className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
+                              title={reimbursementSubmitReadiness(r).message}
+                              onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }}
+                              disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked}
+                            >ส่งอนุมัติ</button>}
                             {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว'); }} disabled={busy === r.id}>ยกเลิก</button>}
                           </div>
                         </td>
@@ -785,7 +810,12 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                   </div>
                   {(reimbursementOwnActions(r, userId, permissions).canSubmit || reimbursementOwnActions(r, userId, permissions).canCancel) && (
                     <div className="relative z-20 mt-4 space-y-2 border-t border-gray-100 pt-3">
-                      {reimbursementOwnActions(r, userId, permissions).canSubmit && <button className={cx(btnClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')} disabled={busy === r.id}>ส่งอนุมัติ</button>}
+                      {reimbursementOwnActions(r, userId, permissions).canSubmit && <button
+                        className={cx(btnClass, 'min-h-11 w-full')}
+                        title={reimbursementSubmitReadiness(r).message}
+                        onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
+                        disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked}
+                      >ส่งอนุมัติ</button>}
                       {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => action(r.id, () => cancelReimbursement(companyId, r.id, 'ยกเลิกโดยผู้ขอ'), 'ยกเลิกคำขอเรียบร้อยแล้ว')} disabled={busy === r.id}>ยกเลิก</button>}
                     </div>
                   )}
@@ -834,12 +864,13 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
   const signedCopies: any[] = detail.signedCopies ?? [];
   const signableRoles = eligibleSignatureRoles(detail, userId);
   const canAttachSignedCopy = canUploadSignedCopy(detail, userId, permissions);
+  const submitReadiness = reimbursementSubmitReadiness(detail);
   const showActions = canSubmit || canCancel || canReopen || canApprove || canFinanceApprove || canPay;
   const footerButtons = detail.requestNo || showActions ? (
     <>
       {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
       {detail.requestNo && <button className={ghostClass} disabled={busy} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
-      {canSubmit && <button className={btnClass} disabled={busy} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
+      {canSubmit && <button className={btnClass} title={submitReadiness.message} disabled={busy || submitReadiness.blocked} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
       {canCancel && <button className={ghostClass} disabled={busy} onClick={onCancel}>ยกเลิกคำขอ</button>}
       {canReopen && <button className={btnClass} disabled={busy} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
       {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onApprove}>อนุมัติ</button>}
@@ -864,6 +895,7 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
       footer={footerButtons}
     >
       <div className="space-y-4">
+          {submitReadiness.blocked && submitReadiness.message && <ErrorBanner message={submitReadiness.message} />}
           <MangmeeCard className="p-4">
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
               <div className="min-w-0">
@@ -921,7 +953,8 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
                       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
                       {canEditDraft && (
                         <div className="mt-1 space-y-1">
-                          <ThemedFile file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
+                          <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
+                          <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
                           {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
                         </div>
                       )}
@@ -961,7 +994,7 @@ function DetailDrawer({ detail, context, userId, permissions, busy, error, onClo
                       </div>
                       {/* Only the real actor of that step is offered the button; the server re-checks. */}
                       {signableRoles.includes(role) && (
-                        <button className="mt-2 text-brand-700 hover:underline disabled:opacity-50" disabled={busy} onClick={() => onSign(role)}>
+                        <button className="mt-2 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50" disabled={busy} onClick={() => onSign(role)}>
                           {signed ? 'ลงนามใหม่' : 'ลงนาม'}
                         </button>
                       )}
@@ -1410,97 +1443,21 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, onRecordPayment }: 
   );
 }
 
-// ── Claim-form signature dialog ───────────────────────────────────────────────
-
-/** Photographed signatures come on paper: drop the light background so only the ink prints. */
-async function toTransparentSignature(file: File): Promise<{ blob: Blob; dataUrl: string }> {
-  const objectUrl = URL.createObjectURL(file);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error('อ่านรูปลายเซ็นไม่สำเร็จ'));
-      image.src = objectUrl;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error('เบราว์เซอร์ไม่รองรับ canvas');
-    context.drawImage(image, 0, 0);
-    context.putImageData(removeLightBackground(context.getImageData(0, 0, canvas.width, canvas.height)), 0, 0);
-    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('แปลงรูปลายเซ็นไม่สำเร็จ');
-    return { blob, dataUrl: canvas.toDataURL('image/png') };
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
-}
-
-function SignatureModal({ companyId, requestId, role, ackHash, onClose, onDone }: {
+function MissingSavedSignatureModal({ companyId, onClose }: {
   companyId: string;
-  requestId: string;
-  role: ClaimSignatureRole;
-  ackHash?: string;
   onClose: () => void;
-  onDone: () => void;
 }) {
-  const toast = useToast();
-  const [file, setFile] = useState<File | null>(null);
-  const [transparent, setTransparent] = useState<{ blob: Blob; dataUrl: string } | null>(null);
-  const [removeBackground, setRemoveBackground] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const pick = async (picked: File | null) => {
-    setFile(null); setTransparent(null); setError(null);
-    if (!picked) return;
-    try {
-      assertAllowedUploadFile(picked, 'image');
-      setFile(picked);
-      setTransparent(await toTransparentSignature(picked));
-    }
-    catch (e) { setError(e instanceof Error ? e.message : 'อ่านรูปลายเซ็นไม่สำเร็จ'); }
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) { setError('กรุณาเลือกรูปลายเซ็น (PNG/JPEG)'); return; }
-    if (!ackHash) { setError('ไม่พบข้อมูลคำขอล่าสุด กรุณาเปิดคำขอใหม่'); return; }
-    setBusy(true); setError(null);
-    try {
-      const upload = removeBackground && transparent
-        ? new File([transparent.blob], `signature-${role.toLowerCase()}.png`, { type: 'image/png' })
-        : file;
-      const attachmentId = await uploadClaimSignature(companyId, requestId, role, upload);
-      // The hash comes from the detail we are looking at: signing acknowledges this exact claim.
-      await signReimbursementClaimForm(companyId, requestId, { role, signatureAttachmentId: attachmentId, snapshotHash: ackHash });
-      onDone();
-      toast.success('ลงนามใบเบิกเรียบร้อยแล้ว');
-    } catch (e2) { setError(err(e2)); } finally { setBusy(false); }
-  };
-
   return (
-    <Modal open title={`ลงนาม — ${CLAIM_SIGNATURE_ROLE_LABELS[role]}`} size="sm" closeLabel="ยกเลิก" onClose={onClose}>
-      <form className="space-y-3" onSubmit={submit}>
-        <p className="text-xs text-gray-500">อัปโหลดรูปลายเซ็น (PNG/JPEG ไม่เกิน 2 MB) ระบบจะนำไปวางในช่อง{CLAIM_SIGNATURE_ROLE_LABELS[role]}ของใบเบิก</p>
-        <div className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-gray-600">รูปลายเซ็น *</span>
-          <ThemedFile file={file} accept={IMAGE_UPLOAD_ACCEPT} onChange={picked => void pick(picked)} />
-        </div>
-        <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200 px-3 py-2.5">
-          <span className="text-xs font-semibold text-gray-600">ลบพื้นหลังให้อัตโนมัติ</span>
-          <input type="checkbox" checked={removeBackground} onChange={e => setRemoveBackground(e.target.checked)} />
-        </label>
-        {transparent && removeBackground && (
-          <img src={transparent.dataUrl} alt="ตัวอย่างลายเซ็น" className="mx-auto max-h-32 rounded-xl border border-gray-200 bg-white p-2" />
-        )}
-        {error && <ErrorBanner message={error} />}
+    <Modal open title="ยังไม่มีลายเซ็นที่พร้อมใช้งาน" size="sm" closeLabel="ไว้ภายหลัง" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          กรุณาบันทึกลายเซ็นในฟีเจอร์ลายเซ็นและรอให้ลายเซ็นมีสถานะพร้อมใช้งาน แล้วกลับมาลงนามอีกครั้ง
+        </p>
         <div className="flex justify-end gap-2">
-          <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="submit" className={btnClass} disabled={busy || !file}>{busy ? 'กำลังลงนาม...' : 'ลงนาม'}</button>
+          <button type="button" className={ghostClass} onClick={onClose}>ไว้ภายหลัง</button>
+          <Link href={`/companies/${companyId}/expenses/signatures`} className={btnClass}>ไปหน้าลายเซ็น</Link>
         </div>
-      </form>
+      </div>
     </Modal>
   );
 }

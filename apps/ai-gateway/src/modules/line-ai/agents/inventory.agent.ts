@@ -47,6 +47,7 @@ export class InventoryAgent {
     const toolCalls: AgentToolCall[] = [];
     const facts: AgentFact[] = [];
     const toolData: Array<{ tool: string; data: unknown }> = [];
+    let asOf: string | undefined;
     let permissionDenied = false;
     let readFailed = false;
 
@@ -62,6 +63,7 @@ export class InventoryAgent {
       if (result.status !== 'ok') { readFailed = true; continue; }
       if (!hasExplicitShape(result.data)) { readFailed = true; continue; }
       toolData.push({ tool: tool.name, data: result.data });
+      if (asOf === undefined) asOf = result.asOf;
 
       const data = result.data as Record<string, unknown>;
       if (data['found'] === false) {

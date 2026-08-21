@@ -9,6 +9,7 @@ import {
   LINE_AI_ACTOR_DELEGATIONS_PER_TOOL,
   hasToolFeature,
   hasToolPermissions,
+  parseLineAiPreparedPlan,
   type AiUsageEntry,
   type LineAiTurnRequest,
   type LineAiTurnResponse,
@@ -97,7 +98,7 @@ export class AiGatewayClient {
   async requestLineIntakeRoute(request: LineIntakeRouteRequest): Promise<LineIntakeRoutePlan> {
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
     await this.assertRateLimit('llm', companyId);
-    return this.runBudgeted(
+    const plan = await this.runBudgeted(
       companyId,
       (monthKey) => this.postInternal<LineIntakeRoutePlan>(
         '/internal/ai/line-intake-route',
@@ -107,6 +108,11 @@ export class AiGatewayClient {
         monthKey,
       ),
     );
+    // The AI Gateway is a separate service; its optional prepared plan is untrusted wire JSON. Re-bound
+    // it here (discard an invalid plan) before the API ever forwards it into a LineAiTurnRequest.
+    return plan.preparedPlan === undefined
+      ? plan
+      : { ...plan, preparedPlan: parseLineAiPreparedPlan(plan.preparedPlan) };
   }
 
   private async assertRateLimit(kind: 'llm' | 'ocr', companyId: string | undefined): Promise<void> {

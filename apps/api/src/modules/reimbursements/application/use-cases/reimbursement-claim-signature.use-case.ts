@@ -171,7 +171,17 @@ export class SignClaimFormUseCase {
     // signature invalidates the acknowledgement.
     if (claimSignatureAckHash(req) !== input.snapshotHash) throw new ConflictException('stale_claim_snapshot');
 
-    const signature = await loadOwnedClaimSignature(this.repo, this.storage, ctx.companyId, input.signatureAttachmentId, ctx.userId, requestId, input.role);
+    const signatureAttachmentId = input.signatureAttachmentId
+      ?? await this.repo.findLatestActiveSavedSignatureAttachmentId(ctx.companyId, ctx.userId);
+    if (!signatureAttachmentId) {
+      throw new UnprocessableEntityException({
+        code: 'claim_saved_signature_required',
+        message: 'claim_saved_signature_required',
+      });
+    }
+    const signature = await loadOwnedClaimSignature(
+      this.repo, this.storage, ctx.companyId, signatureAttachmentId, ctx.userId, requestId, input.role,
+    );
     const saved = await this.repo.upsertClaimSignature({
       companyId: ctx.companyId,
       reimbursementRequestId: requestId,

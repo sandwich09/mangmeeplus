@@ -4,6 +4,10 @@
 
 Implemented and verified on 2026-07-05 (all three phases, shipped together after owner approved the 3 open questions: OA redelivery is enabled, +≤2.5 s default latency accepted, push-fallback quota accepted).
 
+Historical implementation note: the running code still defaults to 2,500 ms. The proposed follow-up
+compares 1,000 ms and 1,500 ms candidates plus loading after durable acceptance; see
+[[plans/line-ai-latency-and-autonomy-lanes-plan|LINE AI Latency and Autonomy Lanes Plan]].
+
 Implementation evidence: [[agent-memory/line-ai-message-buffering|Agent Memory: line-ai-message-buffering]].
 
 ## Linked Spec

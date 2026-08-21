@@ -350,6 +350,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'access.employee.line_link.revoke',  description: 'Revoke employee LINE account-link token', riskLevel: 'MEDIUM' },
   { key: 'access.role.read',                  description: 'Read company roles',                     riskLevel: 'LOW' },
   { key: 'access.role.manage',                description: 'Create/update/disable company roles',    riskLevel: 'HIGH' },
+  { key: 'access.role.operational.assign',    description: 'Assign HR-approved operational roles',   riskLevel: 'HIGH' },
   { key: 'access.role.financial.assign',      description: 'Approve Finance/Accountant role assignment', riskLevel: 'CRITICAL' },
   { key: 'access.permission.read',            description: 'Read permission catalog',                riskLevel: 'LOW' },
   // Item 10C+ Phase 1: Smart Roles (capability packs, job presets, effective-access)
@@ -436,6 +437,21 @@ const REPORT_BI_AUDITOR_GRANTS = [
   'report.catalog.read', 'report.dataset.read', 'report.query.run',
   'report.view.read', 'report.snapshot.read', 'report.export', 'report.export.read_own',
   'report.audit.read', 'bi.view.read',
+];
+
+const STAFF_ROLE_GRANTS = [
+  'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
+  'accounting.document.read_related',
+  'company.branch.read', 'attachment.read', 'attachment.create',
+  'dashboard.read', 'notification.read', 'notification.preference.manage',
+  'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
+  'reimbursement.read_related',
+  'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
+  'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
+  'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
+  'workflow.task.read', 'workflow.task.work',
+  'ai.suggestion.read_own', 'ai.suggestion.request', 'ai.draft.read', 'ai.draft.request',
+  ...REPORT_BI_STAFF_VIEW_GRANTS,
 ];
 
 // Role grants: maps role key -> list of granted permission keys.
@@ -660,6 +676,11 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Item 18 Reports/BI – source permissions still narrow visible datasets
     ...REPORT_BI_OWN_VIEW_GRANTS,
   ],
+  HR: [
+    ...STAFF_ROLE_GRANTS,
+    'access.employee.read', 'access.employee.create', 'access.employee.update', 'access.employee.disable',
+    'access.role.read', 'access.role.operational.assign',
+  ],
   SALES: [
     'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'attachment.create',
@@ -877,23 +898,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     // Item 18 Reports/BI – marketing-safe datasets only through source permissions
     ...REPORT_BI_OWN_VIEW_GRANTS,
   ],
-  STAFF: [
-    'account.session.read', 'account.password.change', 'ai.tool.invoke', 'line.ai.query',
-    'accounting.document.read_related',
-    'company.branch.read', 'attachment.read', 'attachment.create',
-    'dashboard.read', 'notification.read', 'notification.preference.manage',
-    'expense.read_related', 'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload', 'expense.update', 'expense.signature.self_manage',
-    'reimbursement.read_related',
-    'procurement.purchase_request.read_related', 'procurement.purchase_order.read_related',
-    'procurement.goods_receipt.read_related', 'procurement.vendor_bill.read_related', 'procurement.supplier_payment.read_related',
-    'reimbursement.read_own', 'reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.submit', 'reimbursement.cancel_own',
-    // Item 16 Workflow Automation – Staff works own workflow tasks
-    'workflow.task.read', 'workflow.task.work',
-    // Item 17 AI Draft/Suggestion – Staff requests AI help for own tasks only
-    'ai.suggestion.read_own', 'ai.suggestion.request', 'ai.draft.read', 'ai.draft.request',
-    // Item 18 Reports/BI – own scoped saved views/catalog only when source adapters allow
-    ...REPORT_BI_STAFF_VIEW_GRANTS,
-  ],
+  STAFF: STAFF_ROLE_GRANTS,
   AUDITOR_READONLY: [
     'account.session.read', 'account.password.change', 'company.setup.read', 'audit.log.read', 'ai.tool.invoke', 'line.ai.query',
     'company.branch.read', 'attachment.read', 'document.sequence.read', 'outbox.event.read',
@@ -947,6 +952,7 @@ export const SYSTEM_ROLES: Array<{ key: string; name: string; description: strin
   { key: 'COMPANY_VIEW',    name: 'Company owner',  description: 'Company owner view: reads the business end to end and opens company settings' },
   { key: 'ADMIN',           name: 'Admin',           description: 'Administrative access' },
   { key: 'MANAGER',         name: 'Manager',         description: 'Manager level access' },
+  { key: 'HR',              name: 'HR',              description: 'Employee administration with operational role assignment' },
   { key: 'SALES',           name: 'Sales',           description: 'Sales access' },
   { key: 'INVENTORY',       name: 'Inventory',       description: 'Inventory access' },
   { key: 'FINANCE',         name: 'Finance',         description: 'Finance access' },

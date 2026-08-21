@@ -7,13 +7,13 @@ const KEY = Buffer.from('a'.repeat(64), 'hex');
 const CONFIG = { credentialEncryptionKey: KEY } as any;
 const PROFILE = { id: 'emp-1', companyId: 'company-1', userId: 'user-1', membershipId: 'mem-1', phoneNumber: '0812345678', identityType: 'THAI_NATIONAL_ID' };
 
-type FakeRole = { id: string; key: string; permissions: Array<{ permission: { key: string } }> };
+type FakeRole = { id: string; key: string; isSystem?: boolean; permissions: Array<{ permission: { key: string } }> };
 
 function makePrisma(opts: {
   validBranchCount?: number;
   existingScopeRows?: number;
   candidateRoles?: FakeRole[];
-  targetRoleRows?: Array<{ roleId: string; role: { key: string } }>;
+  targetRoleRows?: Array<{ roleId: string; role: { key: string; isSystem?: boolean } }>;
   duplicateIdentity?: boolean;
   otherCompanyMemberships?: number;
   membershipScopeMode?: string;
@@ -113,7 +113,9 @@ const ENTITLEMENT_FILTERED_ROLE: FakeRole = {
     { permission: { key: 'crm.customer.read' } },
   ],
 };
+const STAFF_ROLE: FakeRole = { id: 'r-staff', key: 'STAFF', isSystem: true, permissions: [] };
 const managerCmd = { ...baseCmd, requestingUserId: 'manager-1', requesterPermissions: ['access.employee.read', 'access.employee.update', 'access.employee.disable', 'access.role.read'] };
+const hrCmd = { ...baseCmd, requestingUserId: 'hr-1', requesterPermissions: ['access.employee.update', 'access.role.operational.assign'] };
 
 describe('UpdateEmployeeUseCase role assignment guards', () => {
   it('blocks a requester from assigning a permission they do not hold', async () => {
@@ -154,7 +156,7 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     const { prisma } = makePrisma({ candidateRoles: [SALES_ROLE], targetRoleRows: [{ roleId: 'r-owner', role: { key: 'OWNER' } }] });
     await assert.rejects(
       () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...baseCmd, requesterPermissions: [...baseCmd.requesterPermissions, 'crm.customer.read'], roleIds: ['r-sales'] }),
-      /OWNER and SYSTEM_ADMIN role assignments/,
+      /Owner and platform role assignments/,
     );
   });
 
@@ -177,6 +179,46 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     });
     assert.equal(writes.profileUpdate.data.displayName, 'Updated name');
     assert.equal(writes.assignedRoleIds, undefined);
+  });
+
+  it('lets HR reassign an operational target to another operational role', async () => {
+    const { prisma, writes } = makePrisma({
+      candidateRoles: [STAFF_ROLE],
+      targetRoleRows: [{ roleId: 'r-manager', role: { key: 'MANAGER', isSystem: true } }],
+    });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...hrCmd, roleIds: ['r-staff'] });
+    assert.deepEqual(writes.assignedRoleIds, ['r-staff']);
+  });
+
+  it('blocks HR from changing an employee who currently holds a privileged role', async () => {
+    const { prisma, writes } = makePrisma({
+      candidateRoles: [STAFF_ROLE],
+      targetRoleRows: [{ roleId: 'r-admin', role: { key: 'ADMIN', isSystem: true } }],
+    });
+    await assert.rejects(
+      () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...hrCmd, roleIds: ['r-staff'] }),
+      /HR cannot change employees who currently hold/,
+    );
+    assert.equal(writes.auditArgs.data.result, 'DENIED');
+  });
+
+  it('still lets HR edit a privileged employee profile when the role is unchanged', async () => {
+    const { prisma, writes } = makePrisma({ targetRoleRows: [{ roleId: 'r-admin', role: { key: 'ADMIN', isSystem: true } }] });
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...hrCmd, roleIds: ['r-admin'], jobTitle: 'ผู้อำนวยการฝ่ายปฏิบัติการ' });
+    assert.equal(writes.profileUpdate.data.jobTitle, 'ผู้อำนวยการฝ่ายปฏิบัติการ');
+    assert.equal(writes.assignedRoleIds, undefined);
+  });
+
+  it('blocks a company-custom role even when it reuses an operational system key', async () => {
+    const customStaff = { ...STAFF_ROLE, id: 'r-custom-staff', isSystem: false };
+    const { prisma } = makePrisma({
+      candidateRoles: [customStaff],
+      targetRoleRows: [{ roleId: 'r-staff', role: { key: 'STAFF', isSystem: true } }],
+    });
+    await assert.rejects(
+      () => new UpdateEmployeeUseCase(prisma, CONFIG).execute({ ...hrCmd, roleIds: [customStaff.id] }),
+      /HR may assign only operational roles/,
+    );
   });
 
   it('requires owner approval for FINANCE update even when the requester holds its permissions', async () => {

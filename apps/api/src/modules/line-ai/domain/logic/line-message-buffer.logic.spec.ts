@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildLineAiApiTrace,
   bufferAtCapacity,
+  debounceCohortMs,
   fittingPrefixCount,
   joinGroupText,
   joinedTextLength,
@@ -9,6 +11,7 @@ import {
   nextFlushDelayMs,
   segmentBatch,
   sortBatchItems,
+  LINE_AI_DEBOUNCE_COHORTS_MS,
   LINE_BUFFER_MAX_ITEMS,
   LINE_BUFFER_MAX_TEXT_CHARS,
 } from './line-message-buffer.logic';
@@ -17,11 +20,11 @@ import type { LineBufferItem, LineBufferTextItem, LineBufferMediaItem } from './
 let seq = 0;
 function text(id: string, body: string, opts: { kind?: 'text' | 'command'; timestamp?: number } = {}): LineBufferTextItem {
   seq += 1;
-  return { kind: opts.kind ?? 'text', webhookEventId: id, replyToken: `rt-${id}`, text: body, timestamp: opts.timestamp ?? seq, seq };
+  return { kind: opts.kind ?? 'text', webhookEventId: id, replyToken: `rt-${id}`, text: body, timestamp: opts.timestamp ?? seq, acceptedAt: opts.timestamp ?? seq, seq };
 }
 function media(id: string, opts: { timestamp?: number } = {}): LineBufferMediaItem {
   seq += 1;
-  return { kind: 'media', webhookEventId: id, replyToken: `rt-${id}`, lineMessageId: `mid-${id}`, messageType: 'image', timestamp: opts.timestamp ?? seq, seq };
+  return { kind: 'media', webhookEventId: id, replyToken: `rt-${id}`, lineMessageId: `mid-${id}`, messageType: 'image', timestamp: opts.timestamp ?? seq, acceptedAt: opts.timestamp ?? seq, seq };
 }
 
 describe('segmentBatch', () => {
@@ -130,5 +133,76 @@ describe('lineWaitStatusText', () => {
     assert.match(lineWaitStatusText('ขอดูสถานะใบแจ้งหนี้'), /ตรวจสอบข้อมูลในระบบ/);
     assert.match(lineWaitStatusText('เล่าเรื่องสนุกให้ฟังหน่อย'), /ขอคิดสักครู่/);
     assert.match(lineWaitStatusText('', 'media'), /ตรวจสอบเอกสาร/);
+  });
+});
+
+describe('buildLineAiApiTrace', () => {
+  const base = {
+    webhookEventId: 'evt-1', oneToOne: true, segment: 'text' as const,
+    firstAcceptedAtMs: 1_000, flushedAtMs: 1_250, dequeuedAtMs: 1_260,
+    loadingRequested: true,
+  };
+
+  it('computes only the ingress/buffer/queue seam (no lumped dispatch) and derives the chat kind', () => {
+    assert.deepEqual(buildLineAiApiTrace(base), {
+      webhookEventId: 'evt-1', chat: 'one_to_one', segment: 'text', acceptedAtMs: 1_000,
+      bufferWaitMs: 250, queueWaitMs: 10, loadingRequested: true,
+    });
+    assert.equal(buildLineAiApiTrace({ ...base, oneToOne: false }).chat, 'group');
+  });
+
+  it('clamps negative or unknown intervals to 0 (clock skew, absent accept time)', () => {
+    assert.equal(buildLineAiApiTrace({ ...base, flushedAtMs: 500 }).bufferWaitMs, 0);
+    assert.equal(buildLineAiApiTrace({ ...base, firstAcceptedAtMs: null }).bufferWaitMs, 0);
+    assert.equal(buildLineAiApiTrace({ ...base, dequeuedAtMs: 0 }).queueWaitMs, 0);
+  });
+
+  it('carries no dispatch duration, raw message text, or LINE user id (only the correlation event id)', () => {
+    const trace = buildLineAiApiTrace(base);
+    assert.deepEqual(Object.keys(trace).sort(), [
+      'acceptedAtMs', 'bufferWaitMs', 'chat', 'loadingRequested', 'queueWaitMs', 'segment', 'webhookEventId',
+    ]);
+  });
+});
+
+describe('debounceCohortMs', () => {
+  const base = { secret: 'experiment-secret', assignmentKey: 'co-1:chat-1', configuredMs: 2_500 };
+
+  it('returns the configured debounce when the experiment is off, has no secret, or has no key', () => {
+    assert.equal(debounceCohortMs({ ...base, enabled: false }), 2_500);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, secret: undefined }), 2_500);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, assignmentKey: '' }), 2_500);
+    assert.equal(debounceCohortMs({ enabled: false, secret: undefined, assignmentKey: '', configuredMs: 0 }), 0);
+  });
+
+  it('assigns only a declared cohort value when enabled', () => {
+    const cohort = debounceCohortMs({ ...base, enabled: true });
+    assert.ok((LINE_AI_DEBOUNCE_COHORTS_MS as readonly number[]).includes(cohort), `${cohort} is a declared cohort`);
+    assert.equal(typeof cohort, 'number');
+  });
+
+  it('is stable for the same (company, chat) and independent of the configured value', () => {
+    const a = debounceCohortMs({ ...base, enabled: true });
+    const b = debounceCohortMs({ ...base, enabled: true, configuredMs: 999 });
+    assert.equal(a, b);
+  });
+
+  it('depends on the secret, so a rotated secret reshuffles assignment', () => {
+    const withA = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-a', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
+    const withB = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-b', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
+    // Both secrets exercise every cohort; the point is the mapping is keyed on the secret, not fixed.
+    assert.equal(withA.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
+    assert.equal(withB.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
+  });
+
+  it('spreads a population of keys across all three concurrent cohorts', () => {
+    const counts = new Map<number, number>();
+    for (let i = 0; i < 3_000; i += 1) {
+      const ms = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: `co-1:chat-${i}`, configuredMs: 2_500 });
+      counts.set(ms, (counts.get(ms) ?? 0) + 1);
+    }
+    for (const cohort of LINE_AI_DEBOUNCE_COHORTS_MS) {
+      assert.ok((counts.get(cohort) ?? 0) > 500, `cohort ${cohort} is represented (${counts.get(cohort) ?? 0})`);
+    }
   });
 });

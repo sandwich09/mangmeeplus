@@ -527,6 +527,30 @@ Keep docs as source of truth and close item 14 only after implementation truly p
 - Master checklist remains unchecked until implementation and verification pass.
 - Handoff notes explain any deferred backlog clearly.
 
+## UX Amendment: Receipt readiness and saved claim signatures (2026-08-21)
+
+- [x] Derive draft receipt-submit readiness from the server-owned requirement status and show policy-specific guidance
+  before submit; do not imply that a reason overrides a strict receipt policy.
+- [x] Disable submit for a draft whose effective receipt requirement remains `REQUIRED`, while keeping receipt upload
+  available in the request detail.
+- [x] Replace per-claim signature upload in the main journey with the latest `ACTIVE` saved signature owned by the
+  eligible signer; retain server-side role, snapshot, attachment, and audit validation.
+- [x] If no active saved signature exists, show a modal with `ไว้ภายหลัง` and `ไปหน้าลายเซ็น` and navigate to the
+  existing company signature page only after the user chooses the latter.
+- [x] Verify focused reimbursement web logic and claim-signature use-case tests plus scoped typechecking.
+
+## UX Amendment: Mobile receipt normalization and partial draft recovery (2026-08-21)
+
+- [x] Route reimbursement receipt uploads through the existing expense receipt preparation helper before creating an
+  attachment intent; keep the server boundary at verified PDF/PNG/JPEG.
+- [x] Offer JPG/JPEG, PNG, HEIC/HEIF, and GIF in reimbursement receipt pickers and normalize non-server formats to a
+  static JPEG.
+- [x] Preserve and link successful per-line uploads when another line fails; identify failed line numbers and direct
+  the requester to the existing draft without creating a duplicate claim.
+- [x] Use `บันทึกร่างคำขอเบิก` for the create action, progress copy that covers preparation/upload, and actionable
+  recovery/error wording.
+- [x] Verify focused upload classification/preparation tests, reimbursement web tests, scoped typecheck, and diff check.
+
 ## Risks
 
 - Earlier items may not exist yet in code, despite docs readiness. Mitigation: keep ports/adapters explicit and implement minimal local boundaries without duplicating source modules.

@@ -195,11 +195,11 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
     { key: 'ARCHIVED', permissionKeys: [], status: 'DISABLED' },
   ];
 
-  function grantFixturePrisma() {
+  function grantFixturePrisma(fixtureRoles: Array<{ key: string; permissionKeys: string[]; status?: string }> = GRANT_FIXTURE_ROLES) {
     return {
       client: {
         role: {
-          findMany: async () => GRANT_FIXTURE_ROLES.map((role, index) => ({
+          findMany: async () => fixtureRoles.map((role, index) => ({
             id: `role-${index}`,
             scopeKey: 'system',
             name: role.key,
@@ -271,6 +271,18 @@ describe('ListRolesUseCase assignableByCurrentUser', () => {
     assert.deepEqual(await flagsFor({ permissions: ['crm.customer.read'], isOwner: false }), {
       OWNER: false, SYSTEM_ADMIN: false, ADMIN: false, MANAGER: false, FINANCE: false, SALES: true, ARCHIVED: false,
     });
+  });
+
+  it('offers HR only the server-approved operational roles', async () => {
+    const fixture = ['MANAGER', 'SALES', 'INVENTORY', 'MARKETING', 'STAFF', 'ADMIN', 'HR', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY', 'CUSTOM']
+      .map((key) => ({ key, permissionKeys: [`permission.${key.toLowerCase()}`] }));
+    const result = await new ListRolesUseCase(grantFixturePrisma(fixture)).execute(COMPANY_ID, {
+      permissions: ['access.role.operational.assign'],
+      isOwner: false,
+    });
+    const assignable = result.filter((role) => role.assignableByCurrentUser).map((role) => role.key);
+
+    assert.deepEqual(assignable, ['MANAGER', 'SALES', 'INVENTORY', 'MARKETING', 'STAFF']);
   });
 
   it('omits the flag entirely without requester context (access matrix read)', async () => {

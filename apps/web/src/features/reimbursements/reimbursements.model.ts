@@ -143,9 +143,24 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
   };
 }
 
+export function reimbursementSubmitReadiness(detail: any): { blocked: boolean; message?: string } {
+  if (detail?.status !== 'DRAFT' || detail?.receiptRequirementStatus !== 'REQUIRED') {
+    return { blocked: false };
+  }
+  return detail?.allowMissingReceiptWithReason
+    ? {
+        blocked: true,
+        message: 'ยังไม่มีใบเสร็จ กรุณาแนบใบเสร็จ หรือแก้ไขคำขอเพื่อระบุเหตุผลที่ไม่มีใบเสร็จก่อนส่งอนุมัติ',
+      }
+    : {
+        blocked: true,
+        message: 'นโยบายบริษัทกำหนดให้ต้องแนบใบเสร็จ เหตุผลที่ไม่มีใบเสร็จไม่สามารถใช้แทนได้',
+      };
+}
+
 /** Stable API error codes → Thai. Unknown codes are shown as-is (see `errorMessage`). */
 export const ERROR_CODE_LABELS: Record<string, string> = {
-  missing_receipt: 'ต้องแนบใบเสร็จให้ครบทุกรายการ หรือระบุเหตุผลที่ไม่มีใบเสร็จ',
+  missing_receipt: 'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required: 'มีรายการที่ไม่ได้แนบใบเสร็จ ต้องระบุ "เหตุผลที่ไม่มีใบเสร็จ" ในคำขอก่อนส่งอนุมัติ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
@@ -167,6 +182,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   reimbursement_payment_already_recorded: 'คำขอนี้บันทึกการจ่ายเงินไปแล้ว',
   stale_claim_snapshot: 'คำขอถูกแก้ไขหลังเปิดดูใบเบิก กรุณาเปิดใบเบิกใหม่ก่อนลงนาม',
   claim_signature_role_not_eligible: 'คุณไม่ใช่ผู้มีสิทธิ์ลงนามในช่องนี้',
+  claim_saved_signature_required: 'ยังไม่มีลายเซ็นที่พร้อมใช้งาน กรุณาบันทึกและรออนุมัติลายเซ็นก่อน',
   claim_signature_must_be_png_or_jpeg_max_2mb: 'ไฟล์ลายเซ็นต้องเป็น PNG/JPEG ขนาดไม่เกิน 2 MB',
   claim_signature_attachment_invalid: 'ไม่พบไฟล์ลายเซ็นของคุณสำหรับการลงนามครั้งนี้',
   claim_signature_bytes_mismatch: 'ไฟล์ลายเซ็นไม่ใช่รูปภาพตามชนิดที่ระบุ',

@@ -15,6 +15,6 @@ export default async function SettingsEmployeesPage({
   const forbidden = requireRoutePermission(session, '/settings/employees');
   if (forbidden) return forbidden;
   return (
-    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} />
+    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} viewerPermissions={session?.permissions ?? []} />
   );
 }

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import {
   classifySubstituteMedia,
+  isCanonicalSubstituteStart,
+  isSubstituteCancelControl,
+  isSubstitutePauseControl,
   isSubstituteReceiptConversationText,
   LineSubstituteReceiptContinuationUseCase,
   parseSubstituteMediaQuestion,
@@ -232,8 +235,9 @@ async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
 describe('LineSubstituteReceiptContinuationUseCase', () => {
   it('returns every knowable blocker together and keeps absent policy as ready OWNER_SELF semantics', async () => {
     const h = harness();
+    // Canonical explicit start (a paraphrase like "ทำใบทดแทน" would instead ask to confirm first).
     const result = await h.useCase.execute(ctx(), {
-      messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+      messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
 
@@ -804,7 +808,6 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     );
   });
 });
-
 
 describe('R13 — the assistant asks before producing the document', () => {
   it('asks one question with three numbered choices once the preflight is clean', async () => {
@@ -2073,4 +2076,179 @@ describe('entry vocabulary — the words a customer uses to ask for this documen
       assert.equal(isSubstituteReceiptConversationText(text), false);
     });
   }
+});
+
+describe('persistence seam: exact save & revision counts (real zero-write proof)', () => {
+  // Opens a real OPEN workflow through a canonical explicit start (exactly one save), then positions the
+  // harness on it so control/question/negation turns can be measured against a live workflow.
+  async function opened() {
+    const h = harness();
+    const start = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }] });
+    assert.equal(h.saves.length, 1, 'canonical start writes exactly once');
+    assert.equal(start.status, 'BLOCKED');
+    return h;
+  }
+
+  it('a canonical explicit start writes exactly once and advances the revision', async () => {
+    const h = harness();
+    const rev0 = h.getExpense().updatedAt.toISOString();
+    await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }] });
+    assert.equal(h.saves.length, 1);
+    assert.notEqual(h.getExpense().updatedAt.toISOString(), rev0, 'the none→OPEN transition advances the revision');
+  });
+
+  it('a MODEL-ONLY start (requireStartConfirmation, no deterministic entry) asks to confirm and writes NOTHING', async () => {
+    const h = harness();
+    const rev0 = h.getExpense().updatedAt.toISOString();
+    // A message the PRIMARY router mapped to substitute but that matches NO deterministic entry phrase
+    // (not canonical, not develop's vocabulary): it must confirm before writing. A canonical/vocabulary
+    // phrase would open directly — develop's start-on-entry behavior, tested throughout the suite above.
+    const r = await h.useCase.execute(ctx(), { messageText: 'เรื่องค่าวินเมื่อกี้', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }], requireStartConfirmation: true });
+    assert.ok(r.pendingQuestion, 'a model-only paraphrase asks to confirm first');
+    assert.deepEqual(r.candidateExpenseIds, ['expense-1'], 'the confirm is pinned to the exact expense id');
+    assert.equal(h.saves.length, 0, 'no workflow write before confirmation');
+    assert.equal(h.getExpense().updatedAt.toISOString(), rev0, 'revision unchanged');
+  });
+
+  it('a confirmedStart overrides requireStartConfirmation and writes exactly once', async () => {
+    const h = harness();
+    await h.useCase.execute(ctx(), { messageText: 'เรื่องค่าวินเมื่อกี้', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }], requireStartConfirmation: true, confirmedStart: true });
+    assert.equal(h.saves.length, 1, 'the confirmed start opens the workflow exactly once even under requireStartConfirmation');
+  });
+
+  it('forbidden (missing expense.review) writes NOTHING', async () => {
+    const h = harness();
+    const r = await h.useCase.execute({ ...ctx(), permissions: ['expense.receipt.line_upload'] }, { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'โน้ต · 200' }] });
+    assert.equal(r.status, 'FORBIDDEN');
+    assert.equal(h.saves.length, 0);
+  });
+
+  it('an ineligible expense (valid receipt → normal path) writes NOTHING on a start attempt', async () => {
+    const h = harness({ expense: expense({ sourceDocumentType: 'RECEIPT', vendorNameSnapshot: 'ร้าน' }) });
+    const r = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'ใบเสร็จ' }] });
+    assert.equal(r.status, 'INELIGIBLE');
+    assert.equal(h.saves.length, 0);
+  });
+
+  it('an ineligible expense cannot be paused/cancelled from LINE — the control writes NOTHING', async () => {
+    // Seed a live OPEN workflow directly on a valid-receipt (ineligible) expense, then a pause control must
+    // reject at the authoritative eligibility gate BEFORE any save (a stateful control cannot bypass it).
+    const h = harness({ expense: expense({ sourceDocumentType: 'RECEIPT', vendorNameSnapshot: 'ร้าน' }) });
+    const current = h.getExpense();
+    (h.useCase as any).repo.listLineSubstituteContinuationRows = async () => [{
+      id: 'expense-1', updatedAt: current.updatedAt,
+      sourceChannelMetadataJson: { lineSubstituteReceiptContinuation: {
+        workflowId: 'wf-x', kind: 'SUBSTITUTE_RECEIPT', companyId: 'company-1', userId: 'user-1',
+        expenseId: 'expense-1', chatKeyHash: 'chat-hash', status: 'OPEN', acceptedValues: {}, provenance: {},
+        resolvedFields: [], missingFields: [], attachmentRefs: [], pendingQuestion: null,
+        targetRevision: current.updatedAt.toISOString(), lastActivityAt: current.updatedAt.toISOString(),
+      } },
+    }];
+    const r = await h.useCase.execute(ctx(), { messageText: 'ยกเลิกใบรับรองแทนใบเสร็จอันนี้', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(r.status, 'INELIGIBLE');
+    assert.equal(h.saves.length, 0, 'the control never bypasses the eligibility gate');
+  });
+
+  it('a VAT/definition question on an OPEN workflow writes NOTHING and does not move the revision', async () => {
+    const h = await opened();
+    const before = h.saves.length; const rev = h.getExpense().updatedAt.toISOString();
+    const r = await h.useCase.execute(ctx(), { messageText: 'ใบนี้เคลม VAT ได้ไหม', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.deepEqual(r.acceptedFields, []);
+    assert.equal(h.saves.length, before, 'a question writes nothing');
+    assert.equal(h.getExpense().updatedAt.toISOString(), rev, 'revision unchanged');
+  });
+
+  it('a negation on an OPEN workflow writes NOTHING (and never silently cancels)', async () => {
+    const h = await opened();
+    const before = h.saves.length;
+    for (const msg of ['ยังไม่ทำ', 'ไม่เอาแล้ว']) {
+      await h.useCase.execute(ctx(), { messageText: msg, chatKeyHash: 'chat-hash', recentCandidates: [] });
+    }
+    assert.equal(h.saves.length, before, 'a negation is neither a field nor a control — zero writes');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'OPEN', 'still OPEN (cancel is an explicit control only)');
+  });
+
+  it('a bare acknowledgement (no field, not a control) on an OPEN workflow writes NOTHING', async () => {
+    const h = await opened();
+    const before = h.saves.length; const rev = h.getExpense().updatedAt.toISOString();
+    await h.useCase.execute(ctx(), { messageText: 'รับทราบครับ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(h.saves.length, before, 'a no-op turn leaves state untouched');
+    assert.equal(h.getExpense().updatedAt.toISOString(), rev, 'revision unchanged');
+  });
+
+  it('pause writes exactly once (PAUSED) and advances the revision', async () => {
+    const h = await opened();
+    const before = h.saves.length; const rev = h.getExpense().updatedAt.toISOString();
+    const r = await h.useCase.execute(ctx(), { messageText: 'พักใบรับรองแทนใบเสร็จไว้ก่อน', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(r.status, 'PAUSED');
+    assert.equal(h.saves.length, before + 1, 'pause writes exactly once');
+    assert.notEqual(h.getExpense().updatedAt.toISOString(), rev, 'the PAUSED transition advances the revision');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'PAUSED');
+  });
+
+  it('cancel writes exactly once (CANCELLED)', async () => {
+    const h = await opened();
+    const before = h.saves.length;
+    const r = await h.useCase.execute(ctx(), { messageText: 'ยกเลิกใบรับรองแทนใบเสร็จอันนี้', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(r.status, 'CANCELLED');
+    assert.equal(h.saves.length, before + 1, 'cancel writes exactly once');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'CANCELLED');
+  });
+
+  it('a pendingDecision transition persists in EXACTLY ONE CAS write, no field / no status change (P2)', async () => {
+    const h = await readyHarness();
+    const before = h.saves.length;
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision, 'ISSUE_CONFIRM', 'setup: ready workflow, decision on the table');
+    // A persisted state whose decision is stale (cleared) though its fields are complete: the next turn
+    // must RE-DERIVE and persist ISSUE_CONFIRM even with no accepted field and no status change — the
+    // pendingDecision transition alone participates in the save gate (one CAS write, one revision).
+    h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision = undefined;
+    const rev = h.getExpense().updatedAt.toISOString();
+    await h.useCase.execute(ctx(), { messageText: 'เข้าใจแล้วครับ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(h.saves.length, before + 1, 'the decision transition is written in exactly one CAS save');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.pendingDecision, 'ISSUE_CONFIRM', 'the decision is back on the table');
+    assert.equal(h.getExpense().sourceChannelMetadataJson.lineSubstituteReceiptContinuation.status, 'OPEN', 'status unchanged by the decision-only write');
+    assert.notEqual(h.getExpense().updatedAt.toISOString(), rev, 'exactly one revision advance');
+  });
+
+  it('a no-op on a ready workflow (decision unchanged, no field, no status change) writes NOTHING (P2)', async () => {
+    const h = await readyHarness();
+    const before = h.saves.length;
+    const rev = h.getExpense().updatedAt.toISOString();
+    await h.useCase.execute(ctx(), { messageText: 'เข้าใจแล้วครับ', chatKeyHash: 'chat-hash', recentCandidates: [] });
+    assert.equal(h.saves.length, before, 'nothing changed → zero save (reject-before-save preserved)');
+    assert.equal(h.getExpense().updatedAt.toISOString(), rev, 'revision unchanged');
+  });
+});
+
+describe('anchored pause/cancel controls (NFC-safe) — protected corpus phrases + safety negatives', () => {
+  it('recognizes the four protected corpus phrases exactly as the runtime controls (Thai + English)', () => {
+    assert.equal(isSubstitutePauseControl('พักใบรับรองแทนใบเสร็จไว้ก่อน'), true);
+    assert.equal(isSubstitutePauseControl('pause the substitute receipt for now'), true);
+    assert.equal(isSubstituteCancelControl('ยกเลิกใบรับรองแทนใบเสร็จอันนี้'), true);
+    assert.equal(isSubstituteCancelControl('cancel this substitute receipt'), true);
+  });
+
+  it('keeps the exact legacy short controls (no regression)', () => {
+    for (const s of ['พัก', 'พักไว้ก่อน', 'ไว้ทำทีหลัง']) assert.equal(isSubstitutePauseControl(s), true, s);
+    for (const s of ['ยกเลิก', 'ยกเลิกงานนี้', 'ไม่ทำแล้ว']) assert.equal(isSubstituteCancelControl(s), true, s);
+  });
+
+  it('never fires a control on a question, a field answer, or a passing mention', () => {
+    for (const s of ['พักผ่อนประจำปี', 'พักงานนี้ได้ไหม', 'ค่าเดินทางไปพักโรงแรม']) assert.equal(isSubstitutePauseControl(s), false, s);
+    for (const s of ['ยกเลิกการเดินทาง', 'ยกเลิกได้ไหม', 'เหตุผล: ร้านยกเลิกออเดอร์']) assert.equal(isSubstituteCancelControl(s), false, s);
+  });
+});
+
+describe('isCanonicalSubstituteStart – anchored explicit-start predicate (NFC-safe)', () => {
+  it('accepts canonical explicit-start commands (precomposed Thai ทำ survives normalization)', () => {
+    for (const s of ['ทำใบรับรองแทนใบเสร็จ', 'ทำใบรับรองแทนใบเสร็จรับเงิน', 'ขอออกใบรับรองแทนใบเสร็จรับเงิน', 'จัดทำใบรับรองแทนใบเสร็จ', 'ใบรับรองแทนใบเสร็จ']) {
+      assert.equal(isCanonicalSubstituteStart(s), true, s);
+    }
+  });
+  it('rejects a paraphrase, a passing mention, a definition question, and a negation', () => {
+    for (const s of ['ทำใบทดแทนของค่าวิน', 'ค่าวินไม่มีบิล อยากออกใบรับรองแทน', 'ใบรับรองแทนใบเสร็จคืออะไร', 'ใบรับรองแทนใบเสร็จมี VAT ไหม', 'ยังไม่ทำใบรับรองแทน', 'ไม่เอาใบรับรองแทนใบเสร็จแล้ว']) {
+      assert.equal(isCanonicalSubstituteStart(s), false, s);
+    }
+  });
 });

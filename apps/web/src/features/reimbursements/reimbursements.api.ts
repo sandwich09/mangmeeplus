@@ -3,6 +3,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 // uploadReceiptFile helper, which resolves the URL and turns a failed PUT into a readable message.
 import { uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { prepareReceiptFile } from '../expenses/expense-upload.logic';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -33,18 +34,24 @@ export function updateReimbursementDraft(companyId: string, id: string, body: Re
 /** The 3-step upload-intent flow, returning the attachment id to put on a line. */
 export async function uploadReceiptFile(companyId: string, file: File): Promise<string> {
   return withGenericUploadError(async () => {
-    assertAllowedUploadFile(file);
+    const preparedFile = (await prepareReceiptFile(file)).file;
+    assertAllowedUploadFile(preparedFile);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `/companies/${companyId}/attachments/upload-intent`,
       {
         method: 'POST',
-        body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size, visibility: 'INTERNAL' }),
+        body: JSON.stringify({
+          originalFileName: preparedFile.name,
+          mimeType: preparedFile.type,
+          byteSize: preparedFile.size,
+          visibility: 'INTERNAL',
+        }),
       },
     );
-    await uploadFileToStorage(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+    await uploadFileToStorage(intent.uploadUrl, intent.uploadMethod, preparedFile, intent.uploadHeaders);
     await apiFetch(`/companies/${companyId}/attachments/${intent.attachmentId}/complete`, {
       method: 'POST',
-      body: JSON.stringify({ byteSize: file.size }),
+      body: JSON.stringify({ byteSize: preparedFile.size }),
     });
     return intent.attachmentId;
   });
@@ -141,7 +148,7 @@ export async function uploadClaimSignature(companyId: string, requestId: string,
 }
 
 /** `snapshotHash` is the claim's live ack hash from the detail — the server rejects a stale one. */
-export function signReimbursementClaimForm(companyId: string, requestId: string, body: { role: string; signatureAttachmentId: string; snapshotHash: string }) {
+export function signReimbursementClaimForm(companyId: string, requestId: string, body: { role: string; signatureAttachmentId?: string; snapshotHash: string }) {
   return apiFetch<any>(`${base(companyId)}/${requestId}/claim-form/signatures`, { method: 'POST', body: JSON.stringify(body) });
 }
 

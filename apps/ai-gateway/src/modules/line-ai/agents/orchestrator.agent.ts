@@ -6,8 +6,8 @@
  * all data via ErpToolClient.
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, AgentIntentPlan, AgentFact, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
-import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate } from '@watchdog-bms/contracts';
+import type { LineAiTurnRequest, LineAiAgent, LineAiIntent, LineAiConversationContext, LineAiCoverageItem, LineAiValueCandidates, LineAiAnswerPresentation, LineAiWebLink, AgentIntentPlan, AgentFact, SourceRef, SpecialistOutput, ToolMeta } from '@watchdog-bms/contracts';
+import { LINE_TOOL_REGISTRY, hasToolPermissions, isAmbiguousDateCandidate, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
 import { extractJson } from '../../../common/ai/extract-json';
 import type { AgentRunResult } from './agent-types';
 import { IntentRouterAgent, ROUTER_ENABLED_TOOLS, isSubjectCompatible, isZeroToolIntent } from './intent-router.agent';
@@ -15,6 +15,8 @@ import { AccountingSummaryAgent, ALLOWED_TOOLS as ACCOUNTING_ALLOWED_TOOLS } fro
 import { InventoryAgent, ALLOWED_TOOLS as INVENTORY_ALLOWED_TOOLS } from './inventory.agent';
 import { ResponseComposerAgent, featureDisabledReply } from './response-composer.agent';
 import { normalizePlanToolAccess, removeRuntimeBlockedTools } from './tool-availability';
+import { preparedSimpleReadEligibility, preparedFamilyKey, type PreparedSimpleReadContext } from '../domain/logic/prepared-simple-read.logic';
+import { activePreparedFamilies, formatPreparedSimpleRead, preparedTerminalReply } from './prepared-simple-read-formatter';
 import { CoverageCriticAgent } from './coverage-critic.agent';
 import { ErpToolClient, type ErpToolContext } from '../infrastructure/erp-tool.client';
 import { AiGatewayConfigService } from '../../../common/config/ai-gateway-config.service';
@@ -84,6 +86,21 @@ function allowedLoopDates(candidates: LineAiValueCandidates | undefined, todayIs
   if (!candidates || candidates.dates.length === 0) return undefined;
   const allowed = new Set<string>([todayIso]);
   for (const d of candidates.dates) {
+    if (!isAmbiguousDateCandidate(d)) allowed.add(d.isoDate);
+  }
+  return allowed;
+}
+
+// The PREPARED lane is stricter than the model-in-the-loop path: with no second planning call to catch a
+// bad date, EVERY proposed fromDate/toDate must be DETERMINISTICALLY backed — today, or an unambiguous
+// explicit-date candidate read from the text. Unlike allowedLoopDates this is NEVER undefined (it always
+// carries today), so a model-invented date with no candidate backing is dropped by the sanitizer, the
+// exact-equality check fails, and the lane falls back to the full path BEFORE any tool call (item 10F /
+// spec §6.2). A relative period (e.g. "last month") has no candidate, so it too falls back — the full
+// agentic path resolves it correctly rather than the prepared lane guessing a boundary.
+function preparedAllowedDates(candidates: LineAiValueCandidates | undefined, todayIso: string): ReadonlySet<string> {
+  const allowed = new Set<string>([todayIso]);
+  for (const d of candidates?.dates ?? []) {
     if (!isAmbiguousDateCandidate(d)) allowed.add(d.isoDate);
   }
   return allowed;
@@ -276,6 +293,22 @@ export function buildAnswerPresentation(
   };
 }
 
+/** The tool must be in the OWNING specialist's allowlist (domain isolation) — mirrors createSpecialist:
+ *  inventory → InventoryAgent, every other agent → AccountingSummaryAgent. */
+function specialistAllowsTool(agent: LineAiAgent, toolName: string): boolean {
+  return agent === 'inventory' ? INVENTORY_ALLOWED_TOOLS.has(toolName) : ACCOUNTING_ALLOWED_TOOLS.has(toolName);
+}
+
+/** Deep canonical JSON (recursively sorted keys) so a proposed tool input can be compared for EXACT
+ *  equality against its sanitized form regardless of key order — any drop/coercion shows as inequality. */
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
+  const entries = Object.keys(value as Record<string, unknown>).sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalize((value as Record<string, unknown>)[k])}`);
+  return `{${entries.join(',')}}`;
+}
+
 @Injectable()
 export class OrchestratorAgent {
   private readonly logger = new Logger(OrchestratorAgent.name);
@@ -304,9 +337,20 @@ export class OrchestratorAgent {
       actorDelegations: req.actorDelegations,
     };
 
-    // Route intents
+    // Phase 4 TRUE prepared simple-read lane (default OFF): when a server-eligible, compiled-formatter
+    // read is present, execute EXACTLY the one proposed call through the existing specialist and answer
+    // with a deterministic formatter — no router.route, native/model loop, critic, or composer. ANY
+    // pre-call failure runs ZERO prepared calls and falls through to the fresh, non-narrowed route()
+    // below; a post-call outcome is answered here (never re-executing the tool).
+    if (this.config.lineAiPreparedSimpleReadEnabled && req.preparedPlan) {
+      const laneResult = await this.executePreparedSimpleRead(ctx, req, startMs);
+      if (laneResult) return laneResult;
+    }
+
+    // Route intents. Fresh, non-narrowed delegation preserved (Phase 3 shadow may then compare).
     const router = new IntentRouterAgent(provider);
     const routedPlan = await router.route(req.messageText, false, req.conversationContext, req.openClarifications);
+    this.maybeShadowComparePreparedPlan(req, routedPlan);
     const access = normalizePlanToolAccess(routedPlan, req.messageText, req.userContext);
     let plan = access.plan;
     const featureDisabledTools = [...access.featureDisabledTools];
@@ -445,6 +489,156 @@ export class OrchestratorAgent {
       durationMs: Date.now() - startMs,
       ...(coverage ? { coverage } : {}),
     };
+  }
+
+  /**
+   * Phase 4 (LINE_AI_PREPARED_SIMPLE_READ_ENABLED, default OFF) TRUE simple-read lane. Re-parses and
+   * re-validates the bounded prepared wrapper and its trusted intake provenance, re-normalizes access,
+   * and re-checks subject / permission / entitlement / delegation / registered-read / exact-tool
+   * equality / specialist-allowlist BEFORE any ERP call. On success it executes EXACTLY the sanitized
+   * proposed input through the owning specialist (one call) and answers via the compiled deterministic
+   * formatter — no router.route, native/model loop, critic, or composer. Returns:
+   *   - an AgentRunResult when the lane handled the turn (formatted answer, OR an honest terminal for an
+   *     unavailable / failed / unverifiable post-call result — the tool is never re-executed); or
+   *   - null when a PRE-call check fails, so the caller runs a fresh full-agentic route() with its
+   *     original non-narrowed delegation (zero prepared calls having happened).
+   */
+  private async executePreparedSimpleRead(ctx: ErpToolContext, req: LineAiTurnRequest, startMs: number): Promise<AgentRunResult | null> {
+    const fallback = (reason: string): null => {
+      this.logger.log({ msg: 'line.ai.prepared_simple_read.fallback', requestId: req.requestId, reason });
+      return null;
+    };
+    // Defense in depth: re-parse the wrapper immediately before use — an invalid/forged/state-changed
+    // wrapper drops the whole lane before any call.
+    const plan = parseLineAiPreparedPlan(req.preparedPlan);
+    if (!plan) return fallback('reparse_failed');
+    const eligibility = preparedSimpleReadEligibility(plan, this.preparedEligibilityCtx(req));
+    if (!eligibility.eligible) return fallback(eligibility.reason);
+    const { call, tool, answerShape } = eligibility;
+
+    // Re-normalize access on the single-intent plan (subject / permission / entitlement at the same
+    // boundary the full path uses). If normalization drops or rewrites the one required read tool, or
+    // subject compatibility no longer holds, fall back.
+    const intent = plan.intentPlan.intents[0];
+    const singlePlan: AgentIntentPlan = {
+      status: 'ROUTABLE', language: plan.intentPlan.language, intents: [intent], refusals: [], requiresHumanReview: false,
+    };
+    const access = normalizePlanToolAccess(singlePlan, req.messageText, req.userContext);
+    const normIntent = access.plan.intents[0];
+    if (access.plan.status !== 'ROUTABLE' || access.plan.intents.length !== 1 || !normIntent
+      || normIntent.requiredTools.length !== 1 || normIntent.requiredTools[0] !== call.toolName) {
+      return fallback('access_normalization_changed');
+    }
+    if (!isSubjectCompatible(normIntent.subject, call.toolName)) return fallback('subject_incompatible');
+
+    // Run the proposed input through the existing whitelist + value/date guards, then require EXACT
+    // equality: the sanitizer must change nothing. A dropped unknown key, a rejected/unbacked date, or
+    // any coercion means the input is not trustworthy as-is — fall back BEFORE any call rather than
+    // executing a silently-altered or defaulted input.
+    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+    // Prepared lane: a proposed date MUST be deterministically backed (today or an unambiguous candidate),
+    // else the sanitizer drops it and the exact-equality check below fails → pre-call fallback, zero tools.
+    const toolInput = sanitizeToolInput(tool, call.input, preparedAllowedDates(req.valueCandidates, todayIso));
+    if (canonicalize(call.input) !== canonicalize(toolInput)) return fallback('input_sanitizer_changed');
+
+    // Pre-call delegation presence for THIS tool (missing / issued-for-another-tool → zero calls). The
+    // live ERP boundary still re-validates the delegation token for the acting actor.
+    if (!(ctx.actorDelegations?.[tool.name]?.length)) return fallback('delegation_missing');
+
+    // Specialist allowlist (domain isolation): the owning specialist must itself permit this tool.
+    const specialist = this.createSpecialist(normIntent.agent);
+    if (!specialist || !specialistAllowsTool(normIntent.agent, call.toolName)) return fallback('specialist_allowlist');
+
+    // Execute EXACTLY one call with the sanitized proposed input.
+    const output = await specialist.run(ctx, { ...normIntent, requiredTools: [call.toolName] }, 1, toolInput);
+    if (output.toolCalls.length !== 1 || output.toolCalls[0]?.name !== call.toolName) {
+      return this.buildPreparedHonestTerminal(singlePlan, output, req, startMs);
+    }
+
+    if (output.status === 'SUCCEEDED') {
+      const formatted = formatPreparedSimpleRead(preparedFamilyKey(tool.name, answerShape), output, {
+        language: singlePlan.language, locale: req.userContext.locale, proposedInput: toolInput,
+      });
+      if (formatted.kind === 'answer') {
+        this.logger.log({ msg: 'line.ai.prepared_simple_read.served', requestId: req.requestId, tool: call.toolName, answerShape });
+        return this.buildPreparedAnswerResult(singlePlan, output, formatted, startMs);
+      }
+    }
+    // Only a complete, verified success reaches the formatter; every other post-call outcome uses an
+    // existing honest terminal built deterministically from the already-fetched output.
+    this.logger.log({ msg: 'line.ai.prepared_simple_read.honest_terminal', requestId: req.requestId, tool: call.toolName, status: output.status });
+    return this.buildPreparedHonestTerminal(singlePlan, output, req, startMs);
+  }
+
+  private preparedEligibilityCtx(req: LineAiTurnRequest): PreparedSimpleReadContext {
+    const entitled = req.userContext.entitledFeatureKeys ?? req.entitledFeatureKeys;
+    return {
+      // Trusted request-level provenance, bound by the API and re-validated at gateway/runtime ingress.
+      intakeIntent: req.intakeIntent,
+      permissions: req.userContext.permissions,
+      entitledFeatures: entitled === undefined ? undefined : entitled === null ? null : new Set(entitled),
+      hasAttachment: (req.attachments?.length ?? 0) > 0,
+      hasOpenClarification: (req.openClarifications?.length ?? 0) > 0,
+      enabledFamilies: activePreparedFamilies(this.config.lineAiDeterministicResponseFamilies),
+    };
+  }
+
+  private buildPreparedAnswerResult(
+    plan: AgentIntentPlan,
+    output: SpecialistOutput,
+    formatted: { replyText: string; sourceRefs: SourceRef[]; webLinks: LineAiWebLink[] },
+    startMs: number,
+  ): AgentRunResult {
+    const sourceLabels = [...new Set(formatted.sourceRefs.map((s) => s.label))];
+    const presentation: LineAiAnswerPresentation = {
+      kind: 'answer_cards',
+      cards: [{
+        text: formatted.replyText,
+        ...(sourceLabels.length > 0 ? { sourceLabels } : {}),
+        ...(formatted.webLinks[0] ? { webLink: formatted.webLinks[0] } : {}),
+      }],
+    };
+    return {
+      plan, outputs: [output], replyText: formatted.replyText,
+      sourceRefs: formatted.sourceRefs, webLinks: formatted.webLinks,
+      presentation, durationMs: Date.now() - startMs,
+    };
+  }
+
+  private buildPreparedHonestTerminal(plan: AgentIntentPlan, output: SpecialistOutput, req: LineAiTurnRequest, startMs: number): AgentRunResult {
+    // Authoritative deterministic honest terminal — NO ResponseComposer/router/critic/model, no re-
+    // invocation, no fabricated facts/source/completion, no card. Just an honest outcome line.
+    const replyText = preparedTerminalReply(output, { language: plan.language, locale: req.userContext.locale });
+    return {
+      plan, outputs: [output], replyText,
+      sourceRefs: [], webLinks: [],
+      durationMs: Date.now() - startMs,
+    };
+  }
+
+  /**
+   * Phase 3 shadow (LINE_AI_FUSED_PLAN_SHADOW_ENABLED, default OFF): best-effort, synchronous, never
+   * awaited on the critical path and never used for execution — log whether the forwarded prepared
+   * plan's first intent/tool agrees with the router result, so the fused planner can be compared
+   * before it ever executes. No raw message text or LINE id.
+   */
+  private maybeShadowComparePreparedPlan(req: LineAiTurnRequest, routedPlan: AgentIntentPlan): void {
+    if (!this.config.lineAiFusedPlanShadowEnabled || !req.preparedPlan) return;
+    try {
+      const shadow = req.preparedPlan.intentPlan.intents[0];
+      const routed = routedPlan.intents[0];
+      this.logger.log({
+        msg: 'line.ai.fused_plan.shadow',
+        requestId: req.requestId,
+        statusMatch: req.preparedPlan.intentPlan.status === routedPlan.status,
+        intentMatch: !!shadow && !!routed && shadow.intent === routed.intent,
+        toolMatch: !!shadow && !!routed
+          && shadow.requiredTools.length === routed.requiredTools.length
+          && shadow.requiredTools.every((tool, index) => tool === routed.requiredTools[index]),
+      });
+    } catch {
+      // Shadow comparison must never affect the live turn.
+    }
   }
 
   private createSpecialist(agent: LineAiAgent): AccountingSummaryAgent | InventoryAgent | null {

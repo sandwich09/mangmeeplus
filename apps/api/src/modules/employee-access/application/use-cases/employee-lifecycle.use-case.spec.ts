@@ -105,7 +105,7 @@ describe('SetEmployeeStatusUseCase', () => {
     const { prisma } = makePrisma([{ role: { key: 'OWNER', permissions: [] } }]);
     await assert.rejects(
       () => new SetEmployeeStatusUseCase(prisma).execute({ companyId: COMPANY_ID, employeeId: PROFILE.id, status: 'DISABLED', requestingUserId: 'admin-1', requesterPermissions: ADMIN_PERMS, requestId: 'req-1' }),
-      /Owner access cannot be suspended/,
+      /Owner and platform access cannot be suspended/,
     );
   });
 

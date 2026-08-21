@@ -52,7 +52,7 @@ describe('permission-registry', () => {
   });
 
   it('every internal employee role has the complete self-service baseline', () => {
-    const employeeRoles = ['OWNER', 'ADMIN', 'MANAGER', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'];
+    const employeeRoles = ['OWNER', 'ADMIN', 'MANAGER', 'HR', 'SALES', 'INVENTORY', 'FINANCE', 'ACCOUNTANT', 'MARKETING', 'STAFF'];
     const baseline = [
       'expense.read_own', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload',
       'expense.update', 'expense.signature.self_manage',
@@ -181,6 +181,29 @@ describe('permission-registry', () => {
   it('keeps financial role assignment approval OWNER-only', () => {
     assert.ok(ROLE_GRANTS.OWNER.includes('access.role.financial.assign'));
     assert.equal(ROLE_GRANTS.ADMIN.includes('access.role.financial.assign'), false);
+    assert.equal(ROLE_GRANTS.HR.includes('access.role.financial.assign'), false);
+  });
+
+  it('gives HR only the dedicated operational employee-administration boundary', () => {
+    for (const key of [
+      'access.employee.read', 'access.employee.create', 'access.employee.update',
+      'access.employee.disable', 'access.role.read', 'access.role.operational.assign',
+    ]) {
+      assert.ok(ROLE_GRANTS.HR.includes(key), `HR missing ${key}`);
+    }
+    for (const key of [
+      'access.role.manage', 'access.role.financial.assign', 'access.permission.read',
+      'access.employee.credential.issue', 'admin.user.manage', 'admin.role.manage',
+    ]) {
+      assert.equal(ROLE_GRANTS.HR.includes(key), false, `HR must not hold ${key}`);
+    }
+    for (const role of Object.keys(ROLE_GRANTS)) {
+      assert.equal(
+        ROLE_GRANTS[role].includes('access.role.operational.assign'),
+        role === 'OWNER' || role === 'HR',
+        `${role} has an unexpected operational role-assignment grant`,
+      );
+    }
   });
 
   it('all 7 item-10A partner management permission keys are present', () => {
