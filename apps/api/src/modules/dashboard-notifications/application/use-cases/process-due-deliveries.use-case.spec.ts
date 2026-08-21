@@ -122,7 +122,11 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
             id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0,
             recipient: {
               userId: 'user-1',
-              event: { triggerKey: 'stock_low', severity: 'INFO', title: 'Low stock', body: 'SKU-1', deepLinkHref: null },
+              event: {
+                triggerKey: 'workflow.reimbursement_pending_approval', severity: 'ACTION',
+                title: 'อนุมัติเบิกจ่าย: RB-202608-00002', body: 'ยอด 40 THB · รออนุมัติจากคุณ',
+                deepLinkHref: '/companies/co-1/reimbursements?tab=approvals&focus=rb-1',
+              },
             },
           }),
         },
@@ -140,7 +144,11 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       notificationDelivery: {
         findFirst: async () => ({
           id: 'delivery-1', companyId: 'co-1', channel: 'LINE', status: 'QUEUED', attemptCount: 0,
-          recipient: { userId: 'user-1', event: { status: 'OPEN', triggerKey: 'stock_low', severity: 'INFO', title: 'Low stock', body: 'SKU-1', deepLinkHref: null } },
+          recipient: { userId: 'user-1', event: {
+            status: 'OPEN', triggerKey: 'workflow.reimbursement_pending_approval', severity: 'ACTION',
+            title: 'อนุมัติเบิกจ่าย: RB-202608-00002', body: 'ยอด 40 THB · รออนุมัติจากคุณ',
+            deepLinkHref: '/companies/co-1/reimbursements?tab=approvals&focus=rb-1',
+          } },
         }),
         updateMany: async (query: any) => { updates.push(query.data); return { count: 1 }; },
         update: async (query: any) => { updates.push(query.data); return query.data; },
@@ -154,8 +162,10 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       },
     } as any;
     const originalFetch = globalThis.fetch;
+    const originalWebBaseUrl = process.env['WEB_BASE_URL'];
     const requests: Array<{ input: any; init: any }> = [];
     try {
+      process.env['WEB_BASE_URL'] = 'https://uat.mangmeeplus.com';
       globalThis.fetch = (async (input: any, init: any) => {
         requests.push({ input, init });
         return new Response(JSON.stringify({ sentMessages: [{ id: 'line-message-1' }] }), {
@@ -175,10 +185,21 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
       assert.equal(identityQueries[0]?.where.providerChannelId, 'shared-channel');
       assert.equal(requests[0]?.init.headers.Authorization, 'Bearer shared-token');
       assert.match(requests[0]?.init.headers['X-Line-Retry-Key'], /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      const payload = JSON.parse(requests[0]?.init.body);
+      assert.equal(payload.messages[0]?.type, 'flex');
+      assert.equal(payload.messages[0]?.contents.footer.contents[0]?.action.type, 'uri');
+      assert.equal(
+        payload.messages[0]?.contents.footer.contents[0]?.action.uri,
+        'https://uat.mangmeeplus.com/companies/co-1/reimbursements?tab=approvals&focus=rb-1',
+      );
+      assert.match(payload.messages[0]?.altText, /RB-202608-00002/);
+      assert.doesNotMatch(JSON.stringify(payload.messages[0]?.contents.body), /https:\/\//, 'no naked URL or LINE link preview');
       assert.equal(updates.at(-1)?.status, 'SENT');
       assert.equal(updates.at(-1)?.providerMessageId, 'line-message-1');
     } finally {
       globalThis.fetch = originalFetch;
+      if (originalWebBaseUrl === undefined) delete process.env['WEB_BASE_URL'];
+      else process.env['WEB_BASE_URL'] = originalWebBaseUrl;
     }
   });
 

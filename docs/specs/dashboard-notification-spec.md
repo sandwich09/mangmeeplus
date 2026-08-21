@@ -589,6 +589,8 @@ Channels:
 
 - `web`: notification center and optional web toast/polling.
 - `line`: LINE push to linked users with preferences enabled.
+- LINE push renders a compact structured card with severity, title, body, and at most one primary URI button. It must not put a naked deep-link URL in message text or trigger LINE's large link preview.
+- The URI button opens the same permission-checked web deep link owned by the notification event. If no trusted absolute web origin is configured, omit the button instead of inventing a host.
 - Email is reserved for a future email-notification feature. Do not implement email delivery, provider config, or preference UI in item 06.
 
 Event status:

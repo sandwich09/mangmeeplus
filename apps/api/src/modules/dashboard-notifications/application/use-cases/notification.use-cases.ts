@@ -494,7 +494,6 @@ export class ProcessQueuedDeliveryUseCase {
       const event = current.recipient.event;
       const result = await pushLineMessage(token, lineUserId, buildLineMessage({
         companyId,
-        triggerKey: event.triggerKey,
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
@@ -595,7 +594,6 @@ export class ProcessQueuedDeliveryUseCase {
       const event = current.recipient.event;
       const result = await pushLineMessage(token, lineUserId, buildLineMessage({
         companyId,
-        triggerKey: event.triggerKey,
         title: event.title,
         body: event.body,
         severity: event.severity.toLowerCase(),
@@ -712,22 +710,55 @@ async function crmNotificationCustomerId(tx: any, companyId: string, event: any)
 
 function buildLineMessage(params: {
   companyId: string;
-  triggerKey: string;
   title: string;
   body: string;
   severity: string;
   deepLinkHref?: string;
-}): string {
+}): { type: 'flex'; altText: string; contents: Record<string, unknown> } {
   const severityLabel: Record<string, string> = {
-    critical: 'วิกฤต',
-    action: 'ต้องดำเนินการ',
-    insight: 'ข้อมูล',
-    info: 'แจ้งเตือน',
+    critical: '🔴 วิกฤต',
+    action: '🟡 ต้องดำเนินการ',
+    insight: '🔵 ข้อมูล',
+    info: '⚪ แจ้งเตือน',
   };
   // Shared resolver: the previous fallback host (`app.watchdog.local`) does not resolve anywhere,
   // so a worker without WEB_BASE_URL/PUBLIC_BASE_URL pushed an unreachable link instead of a path.
   const href = params.deepLinkHref ?? `/companies/${params.companyId}/dashboard`;
-  return [`[มั่งมีพลัส] ${severityLabel[params.severity] ?? 'แจ้งเตือน'}`, params.title, params.body, webLink(href)].join('\n');
+  const deepLink = webLink(href);
+  const label = severityLabel[params.severity] ?? '📣 แจ้งเตือน';
+  const title = Array.from(params.title.trim() || 'แจ้งเตือนจากมั่งมีพลัส').slice(0, 120).join('');
+  const body = Array.from(params.body.trim()).slice(0, 1_000).join('');
+  const altText = Array.from(`[มั่งมีพลัส] ${label} ${title} ${body}`.trim()).slice(0, 400).join('');
+  const canOpen = /^https:\/\//i.test(deepLink);
+
+  return {
+    type: 'flex',
+    altText,
+    contents: {
+      type: 'bubble',
+      size: 'kilo',
+      header: {
+        type: 'box', layout: 'vertical', backgroundColor: '#22C55E', paddingAll: '16px',
+        contents: [{ type: 'text', text: label, color: '#FFFFFF', weight: 'bold', size: 'md' }],
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
+        contents: [
+          { type: 'text', text: title, color: '#1A2E22', weight: 'bold', size: 'md', wrap: true },
+          ...(body ? [{ type: 'text', text: body, color: '#475467', size: 'sm', wrap: true }] : []),
+        ],
+      },
+      ...(canOpen ? {
+        footer: {
+          type: 'box', layout: 'vertical', paddingAll: '12px',
+          contents: [{
+            type: 'button', style: 'primary', color: '#15803D',
+            action: { type: 'uri', label: 'เปิดรายการในเว็บ', uri: deepLink },
+          }],
+        },
+      } : {}),
+    },
+  };
 }
 
 function notificationLineRetryKey(deliveryId: string): string {
@@ -738,7 +769,12 @@ function notificationLineRetryKey(deliveryId: string): string {
   return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20, 32)}`;
 }
 
-async function pushLineMessage(token: string, lineUserId: string, text: string, deliveryId: string) {
+async function pushLineMessage(
+  token: string,
+  lineUserId: string,
+  message: { type: 'flex'; altText: string; contents: Record<string, unknown> },
+  deliveryId: string,
+) {
   try {
     const res = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
@@ -747,7 +783,7 @@ async function pushLineMessage(token: string, lineUserId: string, text: string, 
         Authorization: `Bearer ${token}`,
         'X-Line-Retry-Key': notificationLineRetryKey(deliveryId),
       },
-      body: JSON.stringify({ to: lineUserId, messages: [{ type: 'text', text }] }),
+      body: JSON.stringify({ to: lineUserId, messages: [message] }),
       signal: AbortSignal.timeout(30_000),
     });
     const acceptedRequestId = res.status === 409 ? res.headers.get('x-line-accepted-request-id') : null;
