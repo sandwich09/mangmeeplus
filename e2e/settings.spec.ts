@@ -253,6 +253,10 @@ test.describe('SET — settings', () => {
     });
 
     await gotoCompany(authedPage, companyId, '/settings/access-overview');
+    const employeeRow = authedPage.locator('button').filter({ hasText: target.displayName }).first();
+    for (const role of assignedRoles) await expect(employeeRow.getByText(role.name, { exact: true })).toBeVisible();
+    const rowWidth = await employeeRow.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+    expect(rowWidth.scrollWidth, 'multi-role employee row must not overflow').toBeLessThanOrEqual(rowWidth.clientWidth + 1);
     const summary = authedPage.getByTestId('access-permission-summary');
     await expect(summary).toContainText(`สิทธิ์มาจากบทบาท ${assignedRoles.map((role) => role.name).join(', ')}`);
     await expect(summary).toContainText('ระบบรวมสิทธิ์จากทุกบทบาท');
