@@ -114,6 +114,8 @@ test.describe('SET — settings', () => {
     const roleName = unique('E2E composed role');
     await gotoCompany(authedPage, companyId, '/settings/permissions');
     await authedPage.getByRole('button', { name: 'เพิ่ม', exact: true }).click();
+    await expect(authedPage.getByText(/สิทธิ์ขั้นสูง|สิทธิ์รายคีย์|Feature ".*" is not enabled|company\.setup\.manage/)).toHaveCount(0);
+    await expect(authedPage.locator('form input[type="checkbox"]:disabled')).toHaveCount(0);
     await authedPage.locator('form input[required]').fill(roleName);
     await authedPage.getByRole('checkbox', { name: /บันทึกค่าใช้จ่ายของฉัน/ }).check();
     await authedPage.getByRole('button', { name: 'บันทึก', exact: true }).click();

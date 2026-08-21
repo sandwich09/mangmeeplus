@@ -63,7 +63,7 @@ Business outcome: **faster, safer team growth.** Lower time-to-first-login, fewe
 3. **One policy engine, not three.** Consolidate the two dead ABAC scaffolds into a single real `PolicyEvaluator` on the existing request-context path. Modules opt in per use-case; no parallel abstractions.
 4. **Reuse primitives; extend, don't fork.** Teams, invites, delegation, time-bound access attach to `CompanyMembership`/`MembershipRole`/`Role`. No second user, role, permission, session, or LINE-link system.
 5. **AI assists, never mutates access.** AI may *suggest* a role, *explain* access, and *draft* an onboarding — always web-reviewed, permission-checked, and read-only at the final-mutation boundary. The item 07 read-only tool allowlist stays intact.
-6. **Progressive disclosure.** Simple by default (pick a job), powerful on demand (open the advanced permission grid). Never force a non-technical owner through the grid.
+6. **Business language only.** Company users pick a job and the work it may perform. Raw permission/feature keys belong to internal tooling and never appear in this UI; unavailable work is omitted instead of shown as a technical lock.
 7. **Every access change is audited without secrets.** Extend the `ACCESS_*` taxonomy; never log ID numbers, passwords, tokens, or invite secrets.
 8. **PDPA-aware.** Minimize collection (self-service lets employees enter their own ID), mask by default, encrypt sensitive identifiers, and support data-subject deletion on offboarding.
 
@@ -136,10 +136,10 @@ Reuse the ten seeded roles (`OWNER`, `ADMIN`, `MANAGER`, `SALES`, `INVENTORY`, `
 - **A4.** As an **owner**, an invite auto-expires if unused in 72h and I can see who has/hasn't onboarded at a glance.
 
 ### Pillar B — Human-Friendly Roles
-- **B1.** As an **owner** with no IT background, I pick "Cashier" from a preset list and the person gets exactly the right permissions — I never see a 209-checkbox grid unless I ask.
+- **B1.** As an **owner** with no IT background, I pick "Cashier" from a preset list and the person gets exactly the right permissions — I never see the raw permission grid.
 - **B2.** As an **admin**, I build a custom role by toggling plain-language capability packs ("Can sell", "Can see money", "Can approve up to ฿X") and I see a live "This person will be able to…" preview before saving.
 - **B3.** As an **owner**, I describe a job in one sentence ("front desk, takes orders, no discounts") and AI suggests a starter role I can review and adjust in the web builder.
-- **B4.** As an **admin**, when a module I'm not subscribed to appears, its capability packs are visibly locked (feature-entitlement aware) so I don't grant access to something the plan doesn't include.
+- **B4.** As an **admin**, I see only work that this company can use and that I am allowed to grant, so unavailable modules do not create confusing locked choices.
 
 ### Pillar C — Real ABAC Governance
 - **C1.** As a **manager**, I only see and manage my own team's customers, expenses, and staff — not the whole company.
@@ -203,7 +203,7 @@ flowchart TD
     E --> G
     G --> H[Live effective-permission preview<br/>'This person will be able to...']
     H --> I{Feature entitlement OK?}
-    I -->|Locked pack| J[Show as locked, exclude keys]
+    I -->|Unavailable work| J[Omit from choices, exclude keys]
     I -->|OK| K[Compile packs to permission keys]
     K --> L[Save role, write RolePermission rows]
     L --> M[Audit access.role.create/update]
@@ -432,10 +432,10 @@ Ordered MVP-first. Phases 1–3 deliver the biggest SME usability win at lowest 
 - [ ] Backend: `list-capability-packs`, `list-role-templates`, `apply-role-template` use-cases; extend `create/update-role` to accept packs (compile → keys).
 - [ ] Backend: `get-effective-access` use-case (per employee + company matrix), permission `access.effective.read`.
 - [ ] Enforce feature-entitlement filtering on pack visibility (closes the 10C deferred item, now that a real gating pattern exists here).
-- [ ] Web: guided role builder (packs as toggles, progressive-disclosure advanced grid), live "This person will be able to…" preview, who-can-do-what matrix.
+- [ ] Web: guided role builder (plain-language work toggles only), live "This person will be able to…" preview, who-can-do-what matrix; omit locked/ungrantable options and preserve hidden legacy keys on edit.
 - [ ] Contracts + permission keys + audit actions.
 - [ ] Tests: pack→key compilation, preset apply, entitlement filtering, effective-access correctness, protected-role guards intact.
-**Exit:** owner creates a working role from a preset in under a minute; advanced grid still available; no default grant widened.
+**Exit:** owner creates a working role from a preset in under a minute without seeing internal keys or lock reasons; no default grant widened and existing hidden grants survive ordinary edits.
 
 **Deferred follow-up — individual overrides and honest menu semantics (owner clarification 2026-07-15):**
 - [ ] Implement the real membership-level override store and audited API before enabling the "สิทธิ์เฉพาะบุคคล" switches; do not persist local-only UI state.
