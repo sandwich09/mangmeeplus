@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   paymentReferenceRequired, validatePaymentForm, validateRequestForm, sumLineAmounts, summariseQueue,
   matchesSearch, formatMoney, parseHubTab, visibleHubTabs, errorMessage, errorText,
-  isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults,
+  isStaleApprovalError, diffApprovalFields, collectReceiptUploadResults, mergeDraftLineEvidence,
 } from './reimbursements.logic';
 
 const line = (overrides: Record<string, unknown> = {}) => ({
@@ -149,6 +149,20 @@ describe('collectReceiptUploadResults', () => {
     assert.deepEqual(summary.attachmentIds, [null, 'att-2', null]);
     assert.deepEqual(summary.failedLineNumbers, [1, 3]);
     assert.equal(summary.firstFailure, first);
+  });
+});
+
+describe('mergeDraftLineEvidence', () => {
+  it('retains current evidence when no replacement was uploaded', () => {
+    assert.deepEqual(mergeDraftLineEvidence({ attachmentId: 'att-old' }), { attachmentId: 'att-old', linkedExpenseId: null });
+    assert.deepEqual(mergeDraftLineEvidence({ linkedExpenseId: 'exp-1' }, null), { attachmentId: null, linkedExpenseId: 'exp-1' });
+  });
+
+  it('replaces current receipt or linked expense with the new attachment', () => {
+    assert.deepEqual(
+      mergeDraftLineEvidence({ attachmentId: 'att-old', linkedExpenseId: 'exp-1' }, 'att-new'),
+      { attachmentId: 'att-new', linkedExpenseId: null },
+    );
   });
 });
 

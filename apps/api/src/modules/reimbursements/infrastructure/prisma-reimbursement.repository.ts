@@ -991,6 +991,18 @@ export class PrismaReimbursementRepository {
       if (request.financeReviewStatus === 'APPROVED_FOR_PAYMENT') {
         throw new ConflictException('finance_approval_already_decided');
       }
+      if (data.decision === 'NEEDS_INFO') {
+        const [recordedPayments, liveProjections] = await Promise.all([
+          tx.reimbursementPayment.count({
+            where: { companyId: data.companyId, reimbursementRequestId: data.requestId, status: 'RECORDED' },
+          }),
+          tx.expenseRecord.count({
+            where: { companyId: data.companyId, sourceReimbursementRequestId: data.requestId, status: { not: 'VOIDED' } },
+          }),
+        ]);
+        if (recordedPayments) throw new ConflictException('reimbursement_correction_has_payment');
+        if (liveProjections) throw new ConflictException('reimbursement_correction_has_projection');
+      }
       const changed = await tx.reimbursementRequest.updateMany({
         where: {
           id: data.requestId,
@@ -1000,6 +1012,18 @@ export class PrismaReimbursementRepository {
           financeReviewStatus: row.financeReviewStatus,
         },
         data: {
+          ...(data.decision === 'NEEDS_INFO' ? {
+            status: 'DRAFT',
+            submittedAt: null,
+            submittedByUserId: null,
+            approvedAt: null,
+            currentApproverUserId: null,
+            currentApprovalStepId: null,
+            approvalSnapshotHash: null,
+            paymentStatus: 'NOT_PAYABLE',
+            duplicateStatus: 'NOT_CHECKED',
+            postingStatus: 'not_required',
+          } : {}),
           financeReviewStatus: data.decision,
           financeReviewedByUserId: data.actorUserId,
           financeReviewedAt: data.reviewedAt,
@@ -1009,6 +1033,21 @@ export class PrismaReimbursementRepository {
         },
       });
       if (changed.count !== 1) throw new ConflictException('stale_finance_review_snapshot');
+      if (data.decision === 'NEEDS_INFO') {
+        await Promise.all([
+          tx.reimbursementClaimSignature.deleteMany({
+            where: { companyId: data.companyId, reimbursementRequestId: data.requestId },
+          }),
+          tx.attachmentLink.deleteMany({
+            where: {
+              companyId: data.companyId,
+              targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+              targetId: data.requestId,
+              purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+            },
+          }),
+        ]);
+      }
       await data.onDecisionPersisted(tx);
       const updated = await tx.reimbursementRequest.findFirstOrThrow({
         where: { id: data.requestId, companyId: data.companyId },
@@ -1582,21 +1621,51 @@ export class PrismaReimbursementRepository {
    * reuses the same document number instead of burning a new one.
    */
   async reopenRejectedRequest(companyId: string, id: string, expectedUpdatedAt: Date, actorUserId: string): Promise<ReimbursementRequestRecord> {
-    const changed = await this.prisma.client.reimbursementRequest.updateMany({
-      where: { id, companyId, status: 'REJECTED', updatedAt: expectedUpdatedAt },
-      data: {
-        status: 'DRAFT', rejectedAt: null, rejectionReason: null,
-        approvalSnapshotHash: null, updatedByUserId: actorUserId,
-      },
+    return (this.prisma.client as any).$transaction(async (tx: any) => {
+      await this.lockRequest(tx, companyId, id);
+      const changed = await tx.reimbursementRequest.updateMany({
+        where: { id, companyId, status: 'REJECTED', updatedAt: expectedUpdatedAt },
+        data: {
+          status: 'DRAFT',
+          submittedAt: null,
+          submittedByUserId: null,
+          approvedAt: null,
+          rejectedAt: null,
+          rejectionReason: null,
+          currentApproverUserId: null,
+          currentApprovalStepId: null,
+          approvalSnapshotHash: null,
+          financeReviewStatus: 'NOT_REQUIRED',
+          financeReviewedByUserId: null,
+          financeReviewedAt: null,
+          financeReviewNote: null,
+          paymentStatus: 'NOT_PAYABLE',
+          duplicateStatus: 'NOT_CHECKED',
+          postingStatus: 'not_required',
+          updatedByUserId: actorUserId,
+          updatedAt: this.nextVersion(expectedUpdatedAt),
+        },
+      });
+      if (changed.count !== 1) {
+        throw new ConflictException({ code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' });
+      }
+      await Promise.all([
+        tx.reimbursementClaimSignature.deleteMany({ where: { companyId, reimbursementRequestId: id } }),
+        tx.attachmentLink.deleteMany({
+          where: {
+            companyId,
+            targetType: REIMBURSEMENT_ATTACHMENT_TARGET_TYPE,
+            targetId: id,
+            purpose: REIMBURSEMENT_SIGNED_COPY_PURPOSE,
+          },
+        }),
+      ]);
+      const row = await tx.reimbursementRequest.findFirstOrThrow({
+        where: { id, companyId },
+        include: { _count: { select: { lines: true } } },
+      });
+      return this.toRequest(row);
     });
-    if (changed.count !== 1) {
-      throw new ConflictException({ code: 'reimbursement_changed', message: 'Reimbursement changed. Reload and retry.' });
-    }
-    const row = await this.prisma.client.reimbursementRequest.findFirstOrThrow({
-      where: { id, companyId },
-      include: { _count: { select: { lines: true } } },
-    });
-    return this.toRequest(row);
   }
 
   /** Candidate requests for duplicate scoring: same requester, not this request, active states. */

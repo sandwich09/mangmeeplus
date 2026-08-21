@@ -103,11 +103,12 @@ export const CLAIM_SIGNATURE_ROLE_LABELS: Record<ClaimSignatureRole, string> = {
  */
 export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignatureRole[] {
   const roles: ClaimSignatureRole[] = [];
-  if (!detail?.requestNo || !userId) return roles;
+  if (!detail?.requestNo || !userId || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(detail.status)) return roles;
   if (detail.requesterUserId === userId) roles.push('REQUESTER');
 
-  const approved = [...(detail.approvalSteps ?? [])].reverse()
-    .find((step: any) => step.status === 'APPROVED' && !!step.decidedAt);
+  const approved = [...(detail.approvalSteps ?? [])]
+    .filter((step: any) => step.status === 'APPROVED' && !!step.decidedAt)
+    .sort((a: any, b: any) => String(b.decidedAt).localeCompare(String(a.decidedAt)))[0];
   if (approved?.decisionByUserId === userId) roles.push('APPROVER');
 
   if (detail.financeReviewStatus === 'APPROVED_FOR_PAYMENT' && detail.financeReviewedByUserId === userId) roles.push('FINANCE_REVIEW');
@@ -122,10 +123,14 @@ export function eligibleSignatureRoles(detail: any, userId: string): ClaimSignat
 
 /** The requester plus finance/payment holders may attach the signed scan. */
 export function canUploadSignedCopy(detail: any, userId: string, permissions: readonly string[]): boolean {
-  if (!detail?.requestNo) return false;
+  if (!detail?.requestNo || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(detail.status)) return false;
   return detail.requesterUserId === userId
     || permissions.includes('reimbursement.finance_review')
     || permissions.includes('reimbursement.payment.record');
+}
+
+export function canVoidRecordedPayment(payment: any, permissions: readonly string[]): boolean {
+  return payment?.status === 'RECORDED' && permissions.includes('reimbursement.payment.void');
 }
 
 /** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
@@ -135,8 +140,8 @@ export function reimbursementOwnActions(detail: any, userId: string, permissions
   return {
     canEditDraft: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.update_own_draft'),
     canSubmit: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
-    canCancel: isRequester
-      && permissions.includes('reimbursement.cancel_own')
+    canCancel: ((isRequester && permissions.includes('reimbursement.cancel_own'))
+      || permissions.includes('reimbursement.finance_review'))
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
     canReopen: isRequester && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
@@ -163,6 +168,8 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   missing_receipt: 'ยังส่งไม่ได้ตามนโยบายใบเสร็จของบริษัท กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ',
   missing_receipt_reason_required: 'มีรายการที่ไม่ได้แนบใบเสร็จ ต้องระบุ "เหตุผลที่ไม่มีใบเสร็จ" ในคำขอก่อนส่งอนุมัติ',
   finance_approval_already_decided: 'คำขอนี้ถูกอนุมัติจ่ายโดยผู้ตรวจการเงินคนอื่นแล้ว ให้ผู้ที่อนุมัติเป็นผู้กด "ดำเนินการต่อ"',
+  void_reason_required: 'กรุณาระบุเหตุผลที่ยกเลิกการจ่าย',
+  reimbursement_payment_changed: 'ข้อมูลการจ่ายถูกเปลี่ยนแล้ว กรุณาโหลดรายการใหม่',
   // Audit H-18: the old wording read like a fixed rule of the system, so a company that wanted
   // self-approval had no reason to look for the switch. Quotes the toggle's own label verbatim —
   // a message that paraphrases a control is a message you cannot search the settings page with.

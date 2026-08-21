@@ -107,6 +107,19 @@ export function collectReceiptUploadResults(results: readonly PromiseSettledResu
   return { attachmentIds, failedLineNumbers, firstFailure };
 }
 
+/** A new receipt replaces either evidence path; otherwise an edit keeps the current evidence ids. */
+export function mergeDraftLineEvidence(
+  current: { attachmentId?: string | null; linkedExpenseId?: string | null },
+  uploadedAttachmentId?: string | null,
+): { attachmentId: string | null; linkedExpenseId: string | null } {
+  return uploadedAttachmentId
+    ? { attachmentId: uploadedAttachmentId, linkedExpenseId: null }
+    : {
+        attachmentId: current.attachmentId ?? null,
+        linkedExpenseId: current.linkedExpenseId ?? null,
+      };
+}
+
 /** รวมเป็นเงิน of the rows being typed (display only — the server owns the real rollup). */
 export function sumLineAmounts(lines: readonly { amount: string }[]): number {
   return lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0);

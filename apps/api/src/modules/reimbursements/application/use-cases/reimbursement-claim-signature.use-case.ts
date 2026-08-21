@@ -34,12 +34,14 @@ const SIGNED_COPY_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
  */
 export function eligibleClaimSignatureRoles(req: ReimbursementRequestRecord, userId: string): ReimbursementClaimSignatureRole[] {
   const roles: ReimbursementClaimSignatureRole[] = [];
-  // No document number, no document: a draft has nothing to sign.
-  if (!req.requestNo) return roles;
+  // A corrected/reopened draft can keep its request number, but its facts are editable and therefore
+  // cannot be signed until resubmission freezes a new snapshot.
+  if (!req.requestNo || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(req.status)) return roles;
   if (req.requesterUserId === userId) roles.push('REQUESTER');
 
-  const approvedStep = [...(req.approvalSteps ?? [])].reverse()
-    .find((step) => step.status === 'APPROVED' && !!step.decidedAt);
+  const approvedStep = (req.approvalSteps ?? [])
+    .filter((step) => step.status === 'APPROVED' && !!step.decidedAt)
+    .sort((a, b) => b.decidedAt!.getTime() - a.decidedAt!.getTime())[0];
   if (approvedStep?.decisionByUserId === userId) roles.push('APPROVER');
 
   // Same gate the printed form uses: BLOCKED/NEEDS_INFO are decisions, not sign-off.
@@ -214,7 +216,9 @@ export class LinkSignedClaimFormCopyUseCase {
     if (!req) throw new NotFoundException('Reimbursement request not found');
     await assertCanReadRequest(ctx, req, this.repo);
     // Nothing to scan back before the claim has a document number.
-    if (!req.requestNo) throw new UnprocessableEntityException('claim_form_requires_submitted');
+    if (!req.requestNo || ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'].includes(req.status)) {
+      throw new UnprocessableEntityException('claim_form_requires_submitted');
+    }
     const canUpload = req.requesterUserId === ctx.userId
       || ctx.permissions.includes('reimbursement.finance_review')
       || ctx.permissions.includes('reimbursement.payment.record');
