@@ -4,6 +4,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
 import { prepareReceiptFile } from '../expenses/expense-upload.logic';
+import type { ReimbursementApproverRoleOption, ReimbursementPolicySummary } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -166,7 +167,10 @@ export { fetchAttachmentPreviewBlob, getAttachmentDownloadUrl } from '../expense
 // ---- Policy ----
 
 export function getReimbursementPolicy(companyId: string) {
-  return apiFetch<any>(`/companies/${companyId}/reimbursement-policy`);
+  return apiFetch<ReimbursementPolicySummary>(`/companies/${companyId}/reimbursement-policy`);
+}
+export function listReimbursementApproverOptions(companyId: string) {
+  return apiFetch<ReimbursementApproverRoleOption[]>(`/companies/${companyId}/reimbursement-policy/approver-options`);
 }
 export function updateReimbursementPolicy(companyId: string, body: Record<string, unknown>) {
   return apiFetch<any>(`/companies/${companyId}/reimbursement-policy`, { method: 'PUT', body: JSON.stringify(body) });

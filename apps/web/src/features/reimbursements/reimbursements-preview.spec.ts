@@ -30,3 +30,35 @@ describe('reimbursement document preview lifecycle', () => {
     assert.match(source, /if \(requestId === claimFormSaveRequestRef\.current\) setClaimFormSaving\(false\)/);
   });
 });
+
+describe('reimbursement policy role-picker contract', () => {
+  it('uses a constrained role select with human outcome copy and no holder-count helper', () => {
+    assert.match(source, /<ThemedSelect[\s\S]*?id="reimbursement-approver-role"/);
+    assert.match(source, /ส่งใบเบิกให้ใครอนุมัติ\?/);
+    assert.match(source, /ยอดต่ำกว่า \{formatMoney\(form\.approvalRequiredFromAmount\)\} บาท:/);
+    assert.doesNotMatch(source, /บทบาทผู้อนุมัติเริ่มต้น/);
+    assert.doesNotMatch(source, /บทบาทนี้มีผู้รับผิดชอบ/);
+    assert.doesNotMatch(source, /eligibleApproverCount/);
+  });
+
+  it('sends policy CAS/status and offers an explicit reload after a conflict', () => {
+    assert.match(source, /expectedUpdatedAt: form\.updatedAt/);
+    assert.match(source, /status: form\.status/);
+    assert.match(source, /reimbursement_policy_changed/);
+    assert.match(source, />โหลดค่าล่าสุด</);
+  });
+});
+
+describe('frozen approval actions', () => {
+  it('renders only server-resolved task actions instead of inferring them from the tab', () => {
+    assert.match(source, /detail\.approvalActions\?\.canApprove === true/);
+    assert.match(source, /detail\.approvalActions\?\.canReject === true/);
+    assert.doesNotMatch(source, /const canApprove = context === 'approvals'/);
+  });
+
+  it('reveals the approval tab only after an exact server assignment and binds it to the company', () => {
+    assert.match(source, /listApprovalQueue\(companyId\)/);
+    assert.match(source, /assignedApprovalCompanyId === companyId/);
+    assert.match(source, /withAssignedApprovalTab\(permissionTabs, hasAssignedApprovalTask\)/);
+  });
+});

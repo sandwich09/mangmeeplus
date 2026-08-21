@@ -97,15 +97,15 @@ describe('IngestWorkflowEventUseCase', () => {
     );
   });
 
-  // F16: an owner is an approver for every claim (matchesApproverRole), so an owner-only company
-  // used to resolve zero recipients for the alert while the review task stayed manager-assigned.
-  it('notifies managers AND owners about a pending approval, keeping the task manager-assigned', () => {
+  it('uses the submission assignment snapshot for both notification and task assignee', () => {
     const template = WORKFLOW_TEMPLATE_CATALOG.find((entry) => entry.key === 'reimbursement_pending_approval');
     const [notifyAction, taskAction] = template?.defaultActionJson ?? [];
 
-    assert.deepEqual(notifyAction?.configJson['recipientRoles'], ['MANAGER', 'OWNER']);
+    assert.deepEqual(notifyAction?.configJson['recipientPayloadKeys'], ['approverRecipientUserIds']);
+    assert.equal(notifyAction?.configJson['excludeRecipientPayloadKeys'], undefined);
     assert.equal(taskAction?.actionType, 'CREATE_APPROVAL_REVIEW_REQUEST');
-    assert.equal(taskAction?.configJson['assigneeRole'], 'MANAGER');
+    assert.equal(taskAction?.configJson['assigneeUserPayloadKey'], 'approverTaskUserId');
+    assert.equal(taskAction?.configJson['assigneeRolePayloadKey'], 'approverTaskRole');
   });
 
   // F16: every reimbursement alert used to send `body: title`, so LINE printed the same line twice.

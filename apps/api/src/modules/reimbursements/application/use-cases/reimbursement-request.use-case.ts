@@ -7,6 +7,7 @@ import type {
   ReimbursementLineInput,
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
+  ReimbursementPolicySnapshotV1,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -23,7 +24,10 @@ import type {
   ReimbursementRequestRecord,
 } from '../../domain/models/reimbursement.model';
 import { toRequestSummary, toRequestDetail, detailUserIds, toSignedCopySummaries } from '../dto/reimbursement.mapper';
-import { effectivePolicy } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
+import { approverModeForRole, ListReimbursementApproverOptionsUseCase } from './reimbursement-policy.use-case';
+import { approvalDecisionActions } from './reimbursement-approval.use-case';
+import { ReimbursementProjectionOrchestratorService } from '../services/reimbursement-projection-orchestrator.service';
 import {
   validateRequestFields,
   validateLines,
@@ -41,6 +45,39 @@ import {
 
 async function loadPolicy(repo: PrismaReimbursementRepository, companyId: string) {
   return effectivePolicy(await repo.findPolicy(companyId, null));
+}
+
+async function appendSubmitOutbox(tx: any, input: {
+  companyId: string;
+  eventType: string;
+  requestId: string;
+  actorUserId: string;
+  traceRequestId: string;
+  occurredAt: Date;
+  data: Record<string, unknown>;
+  eventKeySuffix: string;
+}): Promise<void> {
+  await tx.outboxEvent.createMany({
+    data: [{
+      companyId: input.companyId,
+      eventType: input.eventType,
+      aggregateType: 'reimbursement_request',
+      aggregateId: input.requestId,
+      eventKey: `${input.eventType}:reimbursement_request:${input.requestId}:${input.eventKeySuffix}`,
+      payloadJson: {
+        companyId: input.companyId,
+        actorUserId: input.actorUserId,
+        requestId: input.traceRequestId,
+        aggregateType: 'reimbursement_request',
+        aggregateId: input.requestId,
+        occurredAt: input.occurredAt.toISOString(),
+        data: input.data,
+      },
+      priority: 'NORMAL',
+      status: 'PENDING',
+    }],
+    skipDuplicates: true,
+  });
 }
 
 function toLineWrites(lines: ReimbursementLineInput[]): ReimbursementLineWriteData[] {
@@ -81,10 +118,11 @@ async function detailWithFileNames(
     repo.listSignedClaimFormCopies(companyId, req.id),
     loadPolicy(repo, companyId),
   ]);
+  const requestPolicy = req.status === 'DRAFT' ? policy : effectivePolicyForRequest(req, policy);
   const receiptRequirementStatus = req.status === 'DRAFT'
     ? computeReceiptRequirement({
-        requireReceipt: policy.requireReceipt,
-        allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+        requireReceipt: requestPolicy.requireReceipt,
+        allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
         lines: req.lines ?? [],
         missingReceiptReason: req.missingReceiptReason,
       }).status
@@ -94,7 +132,7 @@ async function detailWithFileNames(
   return toRequestDetail({ ...req, receiptRequirementStatus }, primaryFileName, lineFileNames, displayNames, {
     signedCopies: toSignedCopySummaries(signedCopies),
     claimSignatureAckHash: claimSignatureAckHash(req),
-    allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+    allowMissingReceiptWithReason: requestPolicy.allowMissingReceiptWithReason,
   });
 }
 
@@ -261,8 +299,20 @@ export class GetReimbursementDetailUseCase {
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
-    await assertCanReadRequest(ctx, req, this.repo);
-    return detailWithFileNames(this.repo, this.evidence, ctx.companyId, req);
+    const approvalActions = await approvalDecisionActions(ctx, req, this.repo);
+    try {
+      await assertCanReadRequest(ctx, req, this.repo);
+    } catch (error) {
+      // A frozen assignment is a capability for this exact task, not a general
+      // reimbursement read grant. It survives a later role/permission edit so
+      // the assignee can still inspect and finish the work already routed to them.
+      if (!(error instanceof ForbiddenException)
+        || (!approvalActions.canApprove && !approvalActions.canReject)) throw error;
+    }
+    return {
+      ...await detailWithFileNames(this.repo, this.evidence, ctx.companyId, req),
+      approvalActions,
+    };
   }
 }
 
@@ -321,6 +371,8 @@ export class SubmitReimbursementUseCase {
     private readonly audit: AuditService,
     private readonly outbox: OutboxAppendService,
     private readonly evidence: ReimbursementEvidenceService,
+    private readonly approverRoutes: ListReimbursementApproverOptionsUseCase,
+    private readonly projections: ReimbursementProjectionOrchestratorService,
   ) {}
 
   async execute(ctx: RequestContext, id: string): Promise<ReimbursementRequestDetail> {
@@ -334,14 +386,16 @@ export class SubmitReimbursementUseCase {
     // Same finance_review reach as the draft edit above: submitting starts the approval chain and
     // is what puts the claim in front of another branch's approvers.
     assertReimbursementBranchInScope(ctx, req.branchId);
-    if (!canTransition(req.status, 'PENDING_APPROVAL')) throw new UnprocessableEntityException(`Cannot submit from status ${req.status}`);
+    if (req.status !== 'DRAFT') throw new UnprocessableEntityException(`Cannot submit from status ${req.status}`);
 
     const lines = req.lines ?? [];
     const lineErrors = validateLines(lines);
     if (lineErrors.length > 0) throw new UnprocessableEntityException(lineErrors.join(','));
     await this.evidence.validate(ctx, req.requesterUserId, lines);
 
-    const policy = await loadPolicy(this.repo, ctx.companyId);
+    const policyRecord = await this.repo.findPolicy(ctx.companyId, null);
+    const policy = effectivePolicy(policyRecord);
+    if (policy.status !== 'ACTIVE') throw new UnprocessableEntityException('reimbursement_policy_inactive');
 
     // Receipt gate at submit: every line evidenced, or one claim-level reason.
     const receipt = computeReceiptRequirement({
@@ -370,6 +424,49 @@ export class SubmitReimbursementUseCase {
     }
 
     const now = new Date();
+    const humanApprovalRequired = requiresApproval(req.amount, policy.approvalRequiredFromAmount);
+    const roleKey = policy.defaultApproverRole ?? 'MANAGER';
+    let approverUserId: string | undefined;
+    let submissionRoute: Awaited<ReturnType<ListReimbursementApproverOptionsUseCase['resolveSubmissionRoute']>> | undefined;
+    if (humanApprovalRequired) {
+      if (policy.approverMode === 'CUSTOM_USER' && policy.defaultApproverUserId) {
+        submissionRoute = await this.approverRoutes.resolveNamedSubmissionRoute({
+          companyId: ctx.companyId,
+          userId: policy.defaultApproverUserId,
+          branchId: req.branchId,
+          requesterUserId: req.requesterUserId,
+          allowSelfApproval: policy.allowSelfApproval,
+          fallbackRole: roleKey,
+        }) ?? undefined;
+        if (submissionRoute) approverUserId = policy.defaultApproverUserId;
+      }
+      submissionRoute ??= await this.approverRoutes.resolveSubmissionRoute({
+        companyId: ctx.companyId,
+        roleKey,
+        branchId: req.branchId,
+        requesterUserId: req.requesterUserId,
+        allowSelfApproval: policy.allowSelfApproval,
+      });
+    }
+    const policySnapshot: ReimbursementPolicySnapshotV1 = {
+      schemaVersion: 1,
+      policyId: policyRecord?.id ?? 'default',
+      policyVersion: policyRecord?.updatedAt.toISOString() ?? 'default:v1',
+      approvalRequiredFromAmount: policy.approvalRequiredFromAmount,
+      requiresApproval: humanApprovalRequired,
+      route: submissionRoute ? {
+        mode: approverModeForRole(submissionRoute.responsibilityRole),
+        roleKey: submissionRoute.responsibilityRole,
+        effectiveTaskRole: submissionRoute.effectiveTaskRole,
+        ownerFallbackUsedAtSubmission: submissionRoute.ownerFallbackUsed,
+      } : null,
+      allowSelfApproval: policy.allowSelfApproval,
+      requireReceipt: policy.requireReceipt,
+      allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
+      duplicatePolicy: policy.duplicatePolicy,
+      financeReviewRequired: policy.financeReviewRequired,
+      ...(policy.slaHours !== undefined && { slaHours: policy.slaHours }),
+    };
     const snapshotHash = computeSnapshotHash({
       amount: req.amount,
       currency: req.currency,
@@ -378,19 +475,21 @@ export class SubmitReimbursementUseCase {
       reason: req.reason,
       primaryAttachmentId: req.primaryAttachmentId,
       lines,
+      approvalPolicySnapshotJson: policySnapshot,
     });
 
     const periodKey = reimbursementPeriodKey(now);
+    // A corrected request may be submitted again under the same unchanged policy and even with
+    // identical business fields. The submission timestamp is the durable epoch that keeps its
+    // outbox keys idempotent within one submit without suppressing later resubmission events.
+    const submissionEventKey = `${policySnapshot.policyVersion}:${now.toISOString()}`;
 
-    // Assign approval step (role-based; MANAGER_ROLE has no per-user assignment).
-    // Step creation and DRAFT -> PENDING_APPROVAL are one CAS transaction.
-    const approverUserId = policy.approverMode === 'CUSTOM_USER' ? policy.defaultApproverUserId : undefined;
+    const initialStatus = humanApprovalRequired
+      ? 'PENDING_APPROVAL'
+      : policy.financeReviewRequired ? 'FINANCE_REVIEW' : 'APPROVED';
+    // Optional step, policy snapshot, number, status, audit and outbox facts commit together.
     const {
-      step,
       documentNumber,
-      documentNumberReused,
-      supersededDuplicateCandidateCount,
-      supersededApprovalStepCount,
     } = await this.repo.submitDraftAtomic({
       companyId: ctx.companyId,
       requestId: id,
@@ -407,84 +506,156 @@ export class SubmitReimbursementUseCase {
         reservedByUserId: ctx.userId,
         idempotencyKey: `reimb-submit:${id}`,
       },
-      approvalStep: {
+      ...(humanApprovalRequired && { approvalStep: {
         sequenceNo: 1,
         approverUserId,
-        approverRoleSnapshot: policy.defaultApproverRole ?? 'MANAGER',
+        approverRoleSnapshot: submissionRoute!.responsibilityRole,
+        assignedApproverUserIdsJson: submissionRoute!.recipientUserIds,
         requestSnapshotHash: snapshotHash,
-      },
+      } }),
       request: {
-        status: 'PENDING_APPROVAL',
+        status: initialStatus,
         submittedAt: now,
         submittedByUserId: ctx.userId,
-        currentApproverUserId: approverUserId,
+        currentApproverUserId: humanApprovalRequired ? approverUserId : null,
         approvalSnapshotHash: snapshotHash,
+        approvalPolicySnapshotJson: policySnapshot,
         // A corrected draft may carry NEEDS_INFO while the requester works. Once it is
         // resubmitted, that decision is historical; finance starts again only after the new approval.
-        financeReviewStatus: 'NOT_REQUIRED',
+        financeReviewStatus: !humanApprovalRequired && policy.financeReviewRequired ? 'PENDING' : 'NOT_REQUIRED',
         financeReviewedByUserId: null,
         financeReviewedAt: null,
         financeReviewNote: null,
-        approvedAt: null,
+        approvedAt: humanApprovalRequired ? null : now,
         receiptRequirementStatus: receipt.status,
         duplicateStatus: dupResult.status,
         // Freeze the outstanding amount to the observed submitted amount.
         outstandingAmount: req.amount,
         updatedByUserId: ctx.userId,
       },
+      onSubmittedPersisted: async (tx, persisted) => {
+        if (!persisted.documentNumberReused) {
+          for (const action of ['document.number.reserve', 'document.number.commit'] as const) {
+            await this.audit.log({
+              companyId: ctx.companyId, actorUserId: ctx.userId, action,
+              targetType: 'document_number', targetId: persisted.documentNumber.id,
+              requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+              metadataJson: { documentType: REIMBURSEMENT_SEQUENCE_KEYS.REQUEST, ownerId: id },
+            }, tx);
+          }
+        }
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.submit',
+          targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId,
+          result: 'SUCCESS', riskLevel: 'MEDIUM',
+          metadataJson: {
+            requestNo: persisted.documentNumber.documentNumber,
+            amount: req.amount, currency: req.currency, lineCount: lines.length,
+            policyId: policySnapshot.policyId, policyVersion: policySnapshot.policyVersion,
+            requiresApproval: humanApprovalRequired,
+            selectedRole: submissionRoute?.responsibilityRole,
+            effectiveTaskRole: submissionRoute?.effectiveTaskRole,
+            approverRecipientCount: submissionRoute?.recipientUserIds.length ?? 0,
+            ownerFallbackUsed: submissionRoute?.ownerFallbackUsed ?? false,
+            branchId: req.branchId,
+            legacyRecovery: {
+              documentNumberReused: persisted.documentNumberReused,
+              supersededDuplicateCandidateCount: persisted.supersededDuplicateCandidateCount,
+              supersededApprovalStepCount: persisted.supersededApprovalStepCount,
+            },
+          },
+        }, tx);
+        if (!humanApprovalRequired) {
+          await this.audit.log({
+            companyId: ctx.companyId, actorType: 'SYSTEM', actorRefId: 'reimbursement-policy',
+            action: 'reimbursement.approval.auto_by_policy', targetType: 'reimbursement_request',
+            targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+            metadataJson: { reason: 'BELOW_APPROVAL_THRESHOLD', policyVersion: policySnapshot.policyVersion },
+          }, tx);
+        }
+        const baseData = {
+          requestId: id,
+          status: initialStatus,
+          requestNo: persisted.documentNumber.documentNumber,
+          requesterUserId: req.requesterUserId,
+          amount: req.amount,
+          currency: req.currency,
+          policySnapshotVersion: policySnapshot.schemaVersion,
+        };
+        await appendSubmitOutbox(tx, {
+          companyId: ctx.companyId, eventType: 'reimbursement.request_submitted', requestId: id,
+          actorUserId: ctx.userId, traceRequestId: ctx.requestId, occurredAt: now,
+          eventKeySuffix: submissionEventKey,
+          data: humanApprovalRequired ? {
+            ...baseData,
+            approverRole: submissionRoute!.responsibilityRole,
+            approverRecipientUserIds: submissionRoute!.recipientUserIds,
+            approverTaskUserId: submissionRoute!.recipientUserIds[0],
+            approverTaskRole: submissionRoute!.effectiveTaskRole,
+            approverFallbackToOwner: submissionRoute!.ownerFallbackUsed,
+          } : baseData,
+        });
+        if (humanApprovalRequired) {
+          await appendSubmitOutbox(tx, {
+            companyId: ctx.companyId, eventType: 'reimbursement.approval_assigned', requestId: id,
+            actorUserId: ctx.userId, traceRequestId: ctx.requestId, occurredAt: now,
+            eventKeySuffix: persisted.step!.id,
+            data: {
+              ...baseData, stepId: persisted.step!.id, approverUserId,
+              approverRole: submissionRoute!.responsibilityRole,
+              approverRecipientUserIds: submissionRoute!.recipientUserIds,
+              approverTaskUserId: submissionRoute!.recipientUserIds[0],
+              approverTaskRole: submissionRoute!.effectiveTaskRole,
+              approverFallbackToOwner: submissionRoute!.ownerFallbackUsed,
+            },
+          });
+        } else {
+          await appendSubmitOutbox(tx, {
+            companyId: ctx.companyId, eventType: 'reimbursement.approval_not_required', requestId: id,
+            actorUserId: ctx.userId, traceRequestId: ctx.requestId, occurredAt: now,
+            eventKeySuffix: submissionEventKey,
+            data: { ...baseData, decision: 'BELOW_APPROVAL_THRESHOLD' },
+          });
+          await appendSubmitOutbox(tx, {
+            companyId: ctx.companyId,
+            eventType: policy.financeReviewRequired
+              ? 'reimbursement.finance_review_requested'
+              : 'reimbursement.policy_projection_started',
+            requestId: id, actorUserId: ctx.userId, traceRequestId: ctx.requestId, occurredAt: now,
+            eventKeySuffix: submissionEventKey,
+            data: baseData,
+          });
+        }
+      },
     });
     const requestNo = documentNumber.documentNumber;
 
-    if (!documentNumberReused) {
-      for (const action of ['document.number.reserve', 'document.number.commit'] as const) {
-        void this.audit.log({
-          companyId: ctx.companyId,
-          actorUserId: ctx.userId,
-          action,
-          targetType: 'document_number',
-          targetId: documentNumber.id,
-          requestId: ctx.requestId,
-          result: 'SUCCESS',
-          riskLevel: 'LOW',
-          metadataJson: { documentType: REIMBURSEMENT_SEQUENCE_KEYS.REQUEST, ownerId: id },
-        });
-      }
-    }
-    void this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.request.submit',
-      targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
-      metadataJson: {
-        requestNo,
-        amount: req.amount,
-        currency: req.currency,
-        lineCount: lines.length,
-        requiresApproval: requiresApproval(req.amount, policy.approvalRequiredFromAmount),
-        legacyRecovery: {
-          documentNumberReused,
-          supersededDuplicateCandidateCount,
-          supersededApprovalStepCount,
+    if (!humanApprovalRequired && !policy.financeReviewRequired) {
+      const submitted = await this.repo.findRequestById(ctx.companyId, id, true);
+      await this.projections.execute(ctx, submitted!, {
+        kind: 'POLICY', actorUserId: req.requesterUserId,
+        allowMissingReceiptWithReason: policySnapshot.allowMissingReceiptWithReason,
+      });
+      const readyAt = new Date();
+      await this.repo.completePolicyProjectionAtomic({
+        companyId: ctx.companyId, requestId: id, actorUserId: req.requesterUserId,
+        scopes: ctx.scopes ?? {}, completedAt: readyAt,
+        onReadyPersisted: async (tx) => {
+          for (const eventType of ['reimbursement.approved', 'reimbursement.ready_for_payment']) {
+            await appendSubmitOutbox(tx, {
+              companyId: ctx.companyId, eventType, requestId: id, actorUserId: ctx.userId,
+              traceRequestId: ctx.requestId, occurredAt: readyAt,
+              eventKeySuffix: submissionEventKey,
+              data: {
+                requestId: id, requestNo, requesterUserId: req.requesterUserId,
+                status: 'READY_FOR_PAYMENT', decision: 'BELOW_APPROVAL_THRESHOLD',
+                amount: req.amount, currency: req.currency,
+              },
+            });
+          }
         },
-      },
-    });
-    void this.outbox.append('reimbursement.request_submitted', 'reimbursement_request', id, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'reimbursement_request', aggregateId: id, occurredAt: now.toISOString(),
-      // requestId must be present: the reimbursement_pending_approval workflow template's
-      // default condition matches on it (same fix as billId in vendor_bill.submitted).
-      // requesterUserId is here for the notification's excludeRecipientPayloadKeys (audit H-18):
-      // the person who filed the claim must not be invited to approve it while the policy forbids
-      // self-approval, which is the same rule the approval queue filters on.
-      data: {
-        requestId: id, status: 'PENDING_APPROVAL', requestNo, amount: req.amount, currency: req.currency,
-        approverRole: policy.defaultApproverRole,
-        ...(policy.allowSelfApproval ? {} : { requesterUserId: req.requesterUserId }),
-      },
-    });
-    void this.outbox.append('reimbursement.approval_assigned', 'reimbursement_request', id, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'reimbursement_request', aggregateId: id, occurredAt: now.toISOString(),
-      data: { stepId: step.id, approverRole: policy.defaultApproverRole, approverUserId },
-    });
+      });
+    }
 
     const detail = await this.repo.findRequestById(ctx.companyId, id, true);
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, detail!);

@@ -6,11 +6,12 @@ import { ReimbursementProjectionOrchestratorService } from '../services/reimburs
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ReimbursementApprovalStepRecord, ReimbursementRequestRecord } from '../../domain/models/reimbursement.model';
 import { toRequestSummary, toRequestDetail } from '../dto/reimbursement.mapper';
-import { effectivePolicy } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import {
   isSelfApproval,
   SELF_APPROVAL_EXEMPT_ROLES,
   matchesApproverRole,
+  frozenApprovalAuthority,
   validateRejectionReason,
   canTransition,
   ageHours,
@@ -35,26 +36,41 @@ function currentApprovalStep(request: ReimbursementRequestRecord): Reimbursement
  * Defaults to true so every existing caller keeps exact-match behaviour until it opts in by
  * looking the assignee up; a silent widening is not something a default should decide.
  */
-function isEligibleApprover(
+export function isEligibleApprover(
   step: ReimbursementApprovalStepRecord | undefined,
   userId: string,
   roles: string[],
-  assigneeCanAct = true,
+  activeApproverUserIds?: Set<string>,
 ): boolean {
   if (!step || step.status !== 'PENDING') return false;
-  if (step.approverUserId && assigneeCanAct) return step.approverUserId === userId;
+  const frozenAuthority = frozenApprovalAuthority(
+    step.assignedApproverUserIds,
+    activeApproverUserIds ?? new Set(step.assignedApproverUserIds ?? []),
+    userId,
+  );
+  if (frozenAuthority === 'ASSIGNED') return true;
+  if (frozenAuthority === 'DENIED') return false;
+  if (step.approverUserId && (activeApproverUserIds?.has(step.approverUserId) ?? true)) return step.approverUserId === userId;
   return matchesApproverRole(step.approverRoleSnapshot, roles);
+}
+
+export function hasFrozenAssignment(
+  step: ReimbursementApprovalStepRecord | undefined,
+  userId: string,
+  activeApproverUserIds: Set<string>,
+): boolean {
+  return frozenApprovalAuthority(step?.assignedApproverUserIds, activeApproverUserIds, userId) === 'ASSIGNED';
 }
 
 function canResumeApprovedDecision(
   step: ReimbursementApprovalStepRecord | undefined,
   userId: string,
   roles: string[],
-  assigneeStillCanAct = true,
+  activeApproverUserIds?: Set<string>,
 ): boolean {
   return Boolean(step
     && ((step.status === 'APPROVED' && step.decisionByUserId === userId)
-      || isEligibleApprover(step, userId, roles, assigneeStillCanAct)));
+      || isEligibleApprover(step, userId, roles, activeApproverUserIds)));
 }
 
 async function appendOutboxWithinTx(tx: any, input: {
@@ -79,14 +95,44 @@ async function appendOutboxWithinTx(tx: any, input: {
   });
 }
 
-/** Whether the person this step names can still act; true for a role-routed step (audit H-20). */
-async function assigneeCanAct(
+export async function activeStepApprovers(
   repo: PrismaReimbursementRepository,
   companyId: string,
   step: ReimbursementApprovalStepRecord | undefined,
-): Promise<boolean> {
-  if (!step?.approverUserId) return true;
-  return (await repo.findActiveApproverUserIds(companyId, [step.approverUserId])).has(step.approverUserId);
+  branchId?: string | null,
+): Promise<Set<string>> {
+  return repo.findActiveApproverUserIds(companyId, [
+    ...(step?.assignedApproverUserIds ?? []),
+    ...(step?.approverUserId ? [step.approverUserId] : []),
+  ], branchId);
+}
+
+export async function approvalDecisionActions(
+  ctx: RequestContext,
+  request: ReimbursementRequestRecord,
+  repo: PrismaReimbursementRepository,
+): Promise<{ canApprove: boolean; canReject: boolean }> {
+  if (request.status !== 'PENDING_APPROVAL' || !isBranchInScope(ctx.scopes ?? {}, request.branchId)) {
+    return { canApprove: false, canReject: false };
+  }
+  const step = currentApprovalStep(request);
+  const activeApprovers = await activeStepApprovers(repo, ctx.companyId, step, request.branchId);
+  const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
+  if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
+    return { canApprove: false, canReject: false };
+  }
+  const policy = effectivePolicyForRequest(
+    request,
+    effectivePolicy(await repo.findPolicy(ctx.companyId, null)),
+  );
+  if (!assignedBySnapshot
+    && isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
+    return { canApprove: false, canReject: false };
+  }
+  return {
+    canApprove: assignedBySnapshot || ctx.permissions.includes('reimbursement.approve'),
+    canReject: assignedBySnapshot || ctx.permissions.includes('reimbursement.reject'),
+  };
 }
 
 @Injectable()
@@ -94,35 +140,52 @@ export class ListApprovalQueueUseCase {
   constructor(private readonly repo: PrismaReimbursementRepository) {}
 
   async execute(ctx: RequestContext): Promise<ReimbursementApprovalQueueItem[]> {
-    if (!ctx.permissions.some((permission) => permission === 'reimbursement.approve' || permission === 'reimbursement.reject')) {
-      throw new ForbiddenException('Missing permission to decide reimbursements');
-    }
-    const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
+    const hasCurrentDecisionPermission = ctx.permissions.some((permission) => permission === 'reimbursement.approve' || permission === 'reimbursement.reject');
+    const currentPolicy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
     const rows = await this.repo.listRequests({
       companyId: ctx.companyId,
       status: 'PENDING_APPROVAL',
       scopes: ctx.scopes ?? {},
     });
-    // One lookup for the page rather than one per row: a queue of 200 claims routed to five people
-    // asks about five ids, not two hundred.
-    const activeApprovers = await this.repo.findActiveApproverUserIds(
-      ctx.companyId,
-      rows.map((request) => currentApprovalStep(request)?.approverUserId).filter((id): id is string => !!id),
-    );
+    // One lookup per branch, not per row: current branch responsibility is part of whether a
+    // frozen assignee remains actionable and whether recovery may open.
+    const assignedIdsByBranch = new Map<string, string[]>();
+    for (const request of rows) {
+      const key = request.branchId ?? '';
+      const step = currentApprovalStep(request);
+      assignedIdsByBranch.set(key, [
+        ...(assignedIdsByBranch.get(key) ?? []),
+        ...(step?.assignedApproverUserIds ?? []),
+        ...(step?.approverUserId ? [step.approverUserId] : []),
+      ]);
+    }
+    const activeApproversByBranch = new Map(await Promise.all(
+      [...assignedIdsByBranch].map(async ([key, userIds]) => [
+        key,
+        await this.repo.findActiveApproverUserIds(ctx.companyId, userIds, key || undefined),
+      ] as const),
+    ));
     const now = new Date();
     return rows.filter((request) => {
       const step = currentApprovalStep(request);
-      const assignee = step?.approverUserId;
+      const policy = effectivePolicyForRequest(request, currentPolicy);
+      const activeApprovers = activeApproversByBranch.get(request.branchId ?? '') ?? new Set<string>();
+      const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
       return isBranchInScope(ctx.scopes ?? {}, request.branchId)
-        && isEligibleApprover(step, ctx.userId, ctx.roles, !assignee || activeApprovers.has(assignee))
+        && (hasCurrentDecisionPermission || assignedBySnapshot)
+        && isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)
         // Audit H-18: the queue used to list the viewer's own claims, so the approve button was
         // offered on a request that answers `self_approval_denied` — and the pending-approval
         // notification pushed a deep link straight to it. Same predicate and same company-level
         // policy the approve gate uses, so the two can never disagree about what is offered and
         // what is allowed; when allowSelfApproval is on, isSelfApproval returns false and nothing
         // is filtered.
-        && !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles);
+        // Assignment resolution already applied the submitted self-approval rule and role
+        // exemptions. Re-evaluating it from a later role would hide a still-actionable task.
+        && (assignedBySnapshot
+          || !isSelfApproval(request.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles));
     }).map((r) => {
+      const policy = effectivePolicyForRequest(r, currentPolicy);
       const age = r.submittedAt ? ageHours(r.submittedAt, now) : 0;
       return { ...toRequestSummary(r), ageHours: age, slaRisk: isSlaRisk(age, policy.slaHours) };
     });
@@ -138,14 +201,18 @@ export class ApproveReimbursementUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string, comment?: string, expectedHash?: string): Promise<ReimbursementRequestDetail> {
-    if (!ctx.permissions.includes('reimbursement.approve')) throw new ForbiddenException('Missing permission: reimbursement.approve');
-
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot approve from status ${req.status}`);
 
-    const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
+    const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+    const step = currentApprovalStep(req);
+    const activeApprovers = await activeStepApprovers(this.repo, ctx.companyId, step, req.branchId);
+    const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
+    if (!ctx.permissions.includes('reimbursement.approve') && !assignedBySnapshot) {
+      throw new ForbiddenException('Missing permission: reimbursement.approve');
+    }
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       void this.audit.log({
         companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.approval.self_approval_denied',
         targetType: 'reimbursement_request', targetId: id, requestId: ctx.requestId, result: 'DENIED', riskLevel: 'HIGH',
@@ -153,8 +220,7 @@ export class ApproveReimbursementUseCase {
       throw new ForbiddenException('self_approval_denied');
     }
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    const step = currentApprovalStep(req);
-    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, await assigneeCanAct(this.repo, ctx.companyId, step))) {
+    if (!canResumeApprovedDecision(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
 
@@ -311,20 +377,24 @@ export class RejectReimbursementUseCase {
   ) {}
 
   async execute(ctx: RequestContext, id: string, reason: string): Promise<ReimbursementRequestDetail> {
-    if (!ctx.permissions.includes('reimbursement.reject')) throw new ForbiddenException('Missing permission: reimbursement.reject');
     if (!validateRejectionReason(reason)) throw new BadRequestException('rejection_reason_required');
 
     const req = await this.repo.findRequestById(ctx.companyId, id, true);
     if (!req) throw new NotFoundException('Reimbursement request not found');
     if (req.status !== 'PENDING_APPROVAL') throw new UnprocessableEntityException(`Cannot reject from status ${req.status}`);
 
-    const policy = effectivePolicy(await this.repo.findPolicy(ctx.companyId, null));
-    if (isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
+    const policy = effectivePolicyForRequest(req, effectivePolicy(await this.repo.findPolicy(ctx.companyId, null)));
+    const step = currentApprovalStep(req);
+    const activeApprovers = await activeStepApprovers(this.repo, ctx.companyId, step, req.branchId);
+    const assignedBySnapshot = hasFrozenAssignment(step, ctx.userId, activeApprovers);
+    if (!ctx.permissions.includes('reimbursement.reject') && !assignedBySnapshot) {
+      throw new ForbiddenException('Missing permission: reimbursement.reject');
+    }
+    if (!assignedBySnapshot && isSelfApproval(req.requesterUserId, ctx.userId, policy.allowSelfApproval, ctx.roles)) {
       throw new ForbiddenException('self_approval_denied');
     }
     if (!isBranchInScope(ctx.scopes ?? {}, req.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
-    const step = currentApprovalStep(req);
-    if (!isEligibleApprover(step, ctx.userId, ctx.roles, await assigneeCanAct(this.repo, ctx.companyId, step))) {
+    if (!isEligibleApprover(step, ctx.userId, ctx.roles, activeApprovers)) {
       throw new ForbiddenException('not_eligible_approver');
     }
     if (!canTransition(req.status, 'REJECTED')) throw new UnprocessableEntityException('invalid_status_transition');

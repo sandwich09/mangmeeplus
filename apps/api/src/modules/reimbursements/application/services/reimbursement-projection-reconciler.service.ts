@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 import { VoidExpenseUseCase } from '../../../expenses/application/use-cases/expense-draft.use-case';
-import { effectivePolicy } from '../../domain/reimbursement.constants';
+import { effectivePolicy, effectivePolicyForRequest } from '../../domain/reimbursement.constants';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
 import { ReimbursementProjectionOrchestratorService } from './reimbursement-projection-orchestrator.service';
 
@@ -56,7 +56,10 @@ export class ReimbursementProjectionReconcilerService {
         authProvider: 'system',
       };
       try {
-        const policy = effectivePolicy(await this.repo.findPolicy(intent.request.companyId, null));
+        const policy = effectivePolicyForRequest(
+          intent.request,
+          effectivePolicy(await this.repo.findPolicy(intent.request.companyId, null)),
+        );
         await this.projections.execute(ctx, intent.request, {
           kind: intent.kind,
           actorUserId: intent.actorUserId,
@@ -72,7 +75,9 @@ export class ReimbursementProjectionReconcilerService {
             actorRefId: 'reimbursement-projection-reconciler',
             action: intent.kind === 'MANAGER'
               ? 'reimbursement.approval.approve'
-              : 'reimbursement.finance_review.update',
+              : intent.kind === 'FINANCE'
+                ? 'reimbursement.finance_review.update'
+                : 'reimbursement.approval.auto_by_policy',
             targetType: 'reimbursement_request',
             targetId: intent.request.id,
             requestId,
@@ -86,9 +91,13 @@ export class ReimbursementProjectionReconcilerService {
           }, tx);
           const eventTypes = intent.kind === 'MANAGER'
             ? ['reimbursement.approved', 'reimbursement.ready_for_payment']
-            : ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment'];
+            : intent.kind === 'FINANCE'
+              ? ['reimbursement.finance_review_updated', 'reimbursement.ready_for_payment']
+              : ['reimbursement.approved', 'reimbursement.ready_for_payment'];
           for (const eventType of eventTypes) {
-            const decisionId = intent.approvalStepId ?? intent.actorUserId;
+            const decisionId = intent.approvalStepId
+              ?? intent.request.submittedAt?.toISOString()
+              ?? intent.actorUserId;
             await tx.outboxEvent.createMany({
               data: [{
                 companyId: intent.request.companyId,
@@ -132,11 +141,22 @@ export class ReimbursementProjectionReconcilerService {
             completedAt,
             onReadyPersisted,
           });
-        } else {
+        } else if (intent.kind === 'FINANCE') {
           await this.repo.completeFinanceProjectionAtomic({
             companyId: intent.request.companyId,
             requestId: intent.request.id,
             decisionActorUserId: intent.actorUserId,
+            scopes: {},
+            systemReconcile: true,
+            expectedBranchId: intent.request.branchId,
+            completedAt,
+            onReadyPersisted,
+          });
+        } else {
+          await this.repo.completePolicyProjectionAtomic({
+            companyId: intent.request.companyId,
+            requestId: intent.request.id,
+            actorUserId: intent.actorUserId,
             scopes: {},
             systemReconcile: true,
             expectedBranchId: intent.request.branchId,

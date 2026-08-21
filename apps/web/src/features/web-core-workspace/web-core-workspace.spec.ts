@@ -593,6 +593,13 @@ describe('buildNavItems', () => {
 });
 
 describe('canAccessWorkspacePath', () => {
+  it('lets a frozen reimbursement assignee reach the hub probe without adding a general nav grant', () => {
+    const permissions = ['account.session.read'];
+    assert.equal(filterModulesByPermissions(WORKSPACE_MODULES, permissions).some((module) => module.key === 'reimbursements'), false);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements'), true);
+    assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, permissions, 'abc', '/companies/abc/reimbursements/admin'), false);
+  });
+
   it('blocks a protected module URL without its read permission', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, [], 'abc', '/companies/abc/sales-documents'), false);
   });

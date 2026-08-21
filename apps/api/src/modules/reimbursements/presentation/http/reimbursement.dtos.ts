@@ -4,7 +4,7 @@
 // with a client-supplied total, or with 10k rows (whitelist + forbidNonWhitelisted).
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsOptional,
   IsString, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested,
 } from 'class-validator';
 import type {
@@ -16,6 +16,7 @@ import type {
   ReimbursementPaymentMethod,
   SignReimbursementClaimFormInput,
   UpdateReimbursementDraftInput,
+  UpdateReimbursementPolicyInput,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_MAX_LINES } from '../../domain/logic/reimbursement.logic';
 
@@ -57,6 +58,19 @@ export class UpdateReimbursementDraftDto implements UpdateReimbursementDraftInpu
   @IsArray() @IsOptional() @ArrayMinSize(1) @ArrayMaxSize(REIMBURSEMENT_MAX_LINES)
   @ValidateNested({ each: true }) @Type(() => ReimbursementLineDto)
   lines?: ReimbursementLineDto[];
+}
+
+export class UpdateReimbursementPolicyDto implements UpdateReimbursementPolicyInput {
+  @IsDateString({ strict: true }) @Matches(/T/) @IsOptional() expectedUpdatedAt?: string;
+  @Matches(MONEY) @IsOptional() approvalRequiredFromAmount?: string;
+  @IsString() @IsNotEmpty() @MaxLength(120) @IsOptional() defaultApproverRole?: string;
+  @IsBoolean() @IsOptional() allowSelfApproval?: boolean;
+  @IsBoolean() @IsOptional() requireReceipt?: boolean;
+  @IsBoolean() @IsOptional() allowMissingReceiptWithReason?: boolean;
+  @IsIn(['WARN', 'BLOCK_SUBMIT', 'BLOCK_PAYMENT']) @IsOptional() duplicatePolicy?: UpdateReimbursementPolicyInput['duplicatePolicy'];
+  @IsBoolean() @IsOptional() financeReviewRequired?: boolean;
+  @IsInt() @Min(0) @Max(8760) @unlessNullish slaHours?: number | null;
+  @IsIn(['ACTIVE', 'INACTIVE']) @IsOptional() status?: UpdateReimbursementPolicyInput['status'];
 }
 
 // ---- Claim-form signatures + signed copies (lane F) ----

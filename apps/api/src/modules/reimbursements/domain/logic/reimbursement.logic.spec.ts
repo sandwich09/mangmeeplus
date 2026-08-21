@@ -23,7 +23,9 @@ import {
   ageHours,
   isSlaRisk,
   redactPayload,
+  frozenApprovalAuthority,
 } from './reimbursement.logic';
+import { parseReimbursementPolicySnapshot } from '../reimbursement.constants';
 
 /** A minimal valid line; overrides shape each case. */
 function line(overrides: Partial<Parameters<typeof computeClaimTotal>[0][number]> & Record<string, unknown> = {}): any {
@@ -44,6 +46,39 @@ describe('reimbursement threshold', () => {
   it('is decimal-safe (0.1 + 0.2 boundary)', () => {
     assert.equal(requiresApproval('0.30', '0.30'), true);
     assert.equal(requiresApproval('0.29', '0.30'), false);
+  });
+});
+
+describe('frozen approval assignment', () => {
+  it('keeps an active submitted assignee authoritative after their role changes', () => {
+    assert.equal(frozenApprovalAuthority(['u-1', 'u-2'], new Set(['u-1', 'u-2']), 'u-1'), 'ASSIGNED');
+    assert.equal(frozenApprovalAuthority(['u-1', 'u-2'], new Set(['u-1', 'u-2']), 'u-3'), 'DENIED');
+  });
+
+  it('uses role/OWNER recovery only when all frozen assignees are inactive or the step is legacy', () => {
+    assert.equal(frozenApprovalAuthority(['u-1'], new Set(), 'owner-1'), 'FALLBACK');
+    assert.equal(frozenApprovalAuthority(undefined, new Set(), 'owner-1'), 'FALLBACK');
+  });
+});
+
+describe('reimbursement policy snapshot parser', () => {
+  const valid = {
+    schemaVersion: 1, policyId: 'policy-1', policyVersion: '2026-08-22T00:00:00.000Z',
+    approvalRequiredFromAmount: '100.0000', requiresApproval: true,
+    route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+    allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+    duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: true,
+  } as const;
+
+  it('accepts the exact V1 shape and treats null alone as legacy', () => {
+    assert.equal(parseReimbursementPolicySnapshot(null), null);
+    assert.equal(parseReimbursementPolicySnapshot(valid)?.policyId, 'policy-1');
+  });
+
+  it('fails closed on unknown fields, malformed money, or a route contradicting the threshold result', () => {
+    assert.throws(() => parseReimbursementPolicySnapshot({ ...valid, internal: true }), /invalid_reimbursement_policy_snapshot/);
+    assert.throws(() => parseReimbursementPolicySnapshot({ ...valid, approvalRequiredFromAmount: 'NaN' }), /invalid_reimbursement_policy_snapshot/);
+    assert.throws(() => parseReimbursementPolicySnapshot({ ...valid, requiresApproval: false }), /invalid_reimbursement_policy_snapshot/);
   });
 });
 

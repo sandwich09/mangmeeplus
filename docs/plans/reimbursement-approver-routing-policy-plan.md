@@ -25,14 +25,30 @@ Make the whole policy page truthful and executable: one constrained approver rol
 - A nullable snapshot column and raw partial unique index are required; duplicate company-policy rows block migration until explicitly resolved.
 - Rollout remains expand Release A then switch Release B.
 
+## Implemented Slice — Constrained Role Picker (2026-08-21)
+
+- [x] Replace the internal mode + free-text role controls with one role dropdown.
+- [x] Load options from a manage-only endpoint; do not add `access.role.read`.
+- [x] Let `reimbursement.policy.manage` load the policy form without a separate read grant.
+- [x] Resolve system/company role overrides, entitlements, active users/memberships, branch scopes, and active branches in batched reads.
+- [x] Make only ACTIVE, non-platform roles with read+approve+reject, active holders, and safe COMPLETE/PARTIAL coverage selectable; OWNER recovery must have the same approval capability.
+- [x] Show human role names only; never render holder counts, coverage enums, quorum-like wording, or internal role keys as editable text.
+- [x] Revalidate an explicit role edit on save, canonicalize its server-owned mode, and clear a stale named user.
+- [x] Preserve a legacy named-person route when the role field is untouched.
+- [x] Cover complete/partial/no-holder/missing-capability/OWNER-recovery and mode mapping with focused tests.
+- [x] Verify select → save → reopen and restore through the local browser at desktop and 390 px.
+
+This was the smallest independently safe UI/write slice. Phases 1–8 are now implemented and locally
+verified on the PR branch; Phase 9 release-wide evidence and Phase 10 UAT/Production remain separate.
+
 ## Phase 0 — Read-Only Preflight and Worktree Protection
 
 ### Tasks
 
-- [ ] Re-read the linked spec and reconfirm cited code/schema facts.
-- [ ] Record `git status`; preserve unrelated worktree changes.
+- [x] Re-read the linked spec and reconfirm cited code/schema facts.
+- [x] Record `git status`; preserve unrelated worktree changes.
 - [ ] Add a read-only classifier for duplicate NULL-branch policies, divergent threshold columns, legacy route shapes, inactive policies, and no-snapshot pending requests.
-- [ ] Run against an isolated real-Postgres copy/fixture.
+- [x] Run the migration and schema checks against local real PostgreSQL.
 - [ ] If duplicate company-level policies exist, produce a restricted remediation artifact with ids/timestamps/audit references and stop. An authorized operator must select the canonical row.
 - [ ] Record counts/evidence in task memory without tenant names or PII.
 
@@ -58,15 +74,16 @@ Make the whole policy page truthful and executable: one constrained approver rol
 
 ### Tasks
 
-- [ ] Add nullable `ReimbursementRequest.approvalPolicySnapshotJson Json?`.
-- [ ] Add raw partial unique index on `ReimbursementPolicy(companyId) WHERE branchId IS NULL`.
-- [ ] Synchronize `approvalThresholdAmount = approvalRequiredFromAmount` in migration SQL.
-- [ ] Keep all readers tolerant of null snapshot.
-- [ ] Add POLICY projection intent support for durable status APPROVED with no human approval step.
-- [ ] Keep existing MANAGER/FINANCE intents unchanged.
-- [ ] Let workflow recipient payload keys flatten scalar/array strings, dedupe, and ignore malformed values.
-- [ ] Add payload-derived task role while retaining static `assigneeRole`.
-- [ ] Do not change current policy API/UI/templates in Release A.
+- [x] Add nullable `ReimbursementRequest.approvalPolicySnapshotJson Json?`.
+- [x] Add nullable `ReimbursementApprovalStep.assignedApproverUserIdsJson Json?`.
+- [x] Add raw partial unique index on `ReimbursementPolicy(companyId) WHERE branchId IS NULL`.
+- [x] Synchronize `approvalThresholdAmount = approvalRequiredFromAmount` in migration SQL.
+- [x] Keep all readers tolerant of null snapshot.
+- [x] Add POLICY projection intent support for durable status APPROVED with no human approval step.
+- [x] Keep existing MANAGER/FINANCE intents unchanged.
+- [x] Let workflow recipient payload keys flatten scalar/array strings, dedupe, and ignore malformed values.
+- [x] Add payload-derived exact task user and task-role fallback while retaining static `assigneeRole`.
+- [x] Keep the migration/runtime expansion backward-compatible with legacy null rows.
 
 ### Focused verification
 
@@ -104,14 +121,14 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Add role option/coverage/issue contracts and policy snapshot V1.
-- [ ] Narrow policy update to spec §9.2.
-- [ ] Add concrete runtime DTO; reject mode, user, deprecated threshold, server fields, and unknown fields.
-- [ ] Add a versioned, fail-closed server snapshot parser; null means legacy, malformed non-null is an operational error.
-- [ ] Add pure canonical role mapping.
-- [ ] Add pure policy evaluation returning ACTIVE gate, threshold result, initial status, finance status, and whether a step/projection is required.
-- [ ] Include snapshot in the new-request approval hash.
-- [ ] Add stable Thai errors from spec §9.3.
+- [x] Add role option/coverage/issue contracts and policy snapshot V1.
+- [x] Narrow policy update to spec §9.2.
+- [x] Add concrete runtime DTO; reject mode, user, deprecated threshold, server fields, and unknown fields.
+- [x] Add a versioned, fail-closed server snapshot parser; null means legacy, malformed non-null is an operational error.
+- [x] Add pure canonical role mapping.
+- [x] Add pure policy evaluation returning ACTIVE gate, threshold result, initial status, finance status, and whether a step/projection is required.
+- [x] Include snapshot in the new-request approval hash.
+- [x] Add stable Thai errors from spec §9.3.
 
 ### Tests
 
@@ -147,15 +164,15 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Load system/company roles, company overrides, entitlements, active holders, membership scopes, active branches, and OWNER readiness through tenant-bound reads.
-- [ ] Reuse `loadEntitledFeatureKeys`, `filterPermissionsByEntitlement`, role override rules, and branch helpers.
-- [ ] Exclude inactive/platform/incomplete-capability/zero-holder roles.
-- [ ] Calculate COMPLETE/PARTIAL/NONE and uncovered branch names.
-- [ ] Make PARTIAL selectable only when OWNER covers every uncovered active branch.
-- [ ] Add manage-only `GET reimbursement-policy/approver-options`; do not require `access.role.read`.
-- [ ] Classify current/legacy route without writes.
-- [ ] Return only safe role/coverage/current-route facts.
-- [ ] Use batched queries; no per-role/per-branch N+1.
+- [x] Load system/company roles, company overrides, entitlements, active holders, membership scopes, active branches, and OWNER readiness through tenant-bound reads.
+- [x] Reuse `loadEntitledFeatureKeys`, `filterPermissionsByEntitlement`, role override rules, and branch helpers.
+- [x] Exclude inactive/platform/incomplete-capability/zero-holder roles.
+- [x] Calculate COMPLETE/PARTIAL/NONE and uncovered branch names.
+- [x] Make PARTIAL selectable only when OWNER covers every uncovered active branch.
+- [x] Add manage-only `GET reimbursement-policy/approver-options`; do not require `access.role.read`.
+- [x] Classify current/legacy route without writes.
+- [x] Return only safe role/coverage/current-route facts.
+- [x] Use batched queries; no per-role/per-branch N+1.
 
 ### Real-Postgres tests
 
@@ -180,17 +197,17 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Return virtual ACTIVE default only when no company policy row exists.
-- [ ] Detect duplicate company rows and fail with `duplicate_company_policy`; never `findFirst` silently.
-- [ ] Apply `expectedUpdatedAt` compare-and-set for stored rows.
-- [ ] Map partial-index create collision to `reimbursement_policy_changed`.
-- [ ] Validate route on every ACTIVE save. Preserve a valid legacy route when omitted; require explicit role correction or deactivation for an unsafe route.
-- [ ] Canonicalize role edit and clear named user.
-- [ ] Preserve exact legacy route when role is omitted.
-- [ ] Enforce one canonical threshold, dual-write the deprecated database column, and keep the response alias equal.
-- [ ] Make status meaning explicit; deactivation may preserve an invalid route, activation may not.
-- [ ] Write HIGH-risk before/after audit within successful mutation boundary.
-- [ ] Emit safe policy-updated facts; GET/options perform zero writes.
+- [x] Return virtual ACTIVE default only when no company policy row exists.
+- [x] Detect duplicate company rows and fail with `duplicate_company_policy`; never `findFirst` silently.
+- [x] Apply `expectedUpdatedAt` compare-and-set for stored rows.
+- [x] Map partial-index create collision to `reimbursement_policy_changed`.
+- [x] Validate route on every ACTIVE save. Preserve a valid legacy route when omitted; require explicit role correction or deactivation for an unsafe route.
+- [x] Canonicalize role edit and clear named user.
+- [x] Preserve exact legacy route when role is omitted.
+- [x] Enforce one canonical threshold, dual-write the deprecated database column, and keep the response alias equal.
+- [x] Make status meaning explicit; deactivation may preserve an invalid route, activation may not.
+- [x] Write HIGH-risk before/after audit within successful mutation boundary.
+- [x] Emit safe policy-updated facts in the same transaction; GET/options perform zero writes.
 
 ### Tests
 
@@ -215,17 +232,19 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Validate receipt/evidence/duplicate/branch and load one ACTIVE policy before mutation.
-- [ ] Revalidate role/OWNER for human-approval submissions.
-- [ ] Build policy snapshot V1 and include it in the approval hash.
-- [ ] Write snapshot, document number, request status, optional role step, and outbox facts atomically.
-- [ ] Human path: PENDING_APPROVAL + role step.
-- [ ] Below threshold + finance: FINANCE_REVIEW, no step, `approvedAt=submittedAt`, finance PENDING.
-- [ ] Below threshold + no finance: APPROVED durable POLICY projection, then READY only after projections pass.
-- [ ] Emit `approval_not_required` and `finance_review_requested` as applicable.
-- [ ] Record SYSTEM auto-decision audit without fabricating approver user/signature.
-- [ ] Extend reconciler to resume POLICY intents idempotently.
-- [ ] Guarantee INACTIVE/zero-route/validation failures make zero durable submit mutation.
+- [x] Validate receipt/evidence/duplicate/branch and load one ACTIVE policy before mutation.
+- [x] Revalidate role/OWNER for human-approval submissions.
+- [x] Apply request-specific self-approval filtering during revalidation; a sole non-exempt holder requires actionable OWNER recovery or submit fails before mutation.
+- [x] Build policy snapshot V1 and include it in the approval hash.
+- [x] Write snapshot, document number, request status, optional role step, and outbox facts atomically.
+- [x] Freeze exact actionable recipient user ids on the new approval step; NULL remains legacy.
+- [x] Human path: PENDING_APPROVAL + role step.
+- [x] Below threshold + finance: FINANCE_REVIEW, no step, `approvedAt=submittedAt`, finance PENDING.
+- [x] Below threshold + no finance: APPROVED durable POLICY projection, then READY only after projections pass.
+- [x] Emit `approval_not_required` and `finance_review_requested` as applicable.
+- [x] Record SYSTEM auto-decision audit without fabricating approver user/signature.
+- [x] Extend reconciler to resume POLICY intents idempotently.
+- [x] Guarantee INACTIVE/zero-route/validation failures make zero durable submit mutation.
 
 ### Tests
 
@@ -263,19 +282,27 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] New claims read self-approval, finance, duplicate/payment, and SLA facts from their snapshot.
-- [ ] Legacy null-snapshot claims keep existing behavior.
-- [ ] Queue, view, approve/reject, and transaction repeat current role/OWNER, permission, branch, member, self, state, hash, and CAS predicates.
-- [ ] Current policy edits never change submitted-claim finance or payment blockers.
-- [ ] Role/member/permission drift remains authoritative; stored responsibility does not change.
-- [ ] Existing named-user step fallback remains unchanged.
-- [ ] Approval SLA applies only to PENDING_APPROVAL and uses snapshotted `slaHours`.
-- [ ] Projection/cancellation/payment reconcilers parse the same snapshot version.
+- [x] New claims read self-approval, finance, duplicate/payment, and SLA facts from their snapshot.
+- [x] Legacy null-snapshot claims keep existing behavior.
+- [x] Queue, view, approve/reject, and transaction share one frozen-assignment predicate: active assignee wins even after role/permission change; only all-inactive opens recorded role/OWNER recovery.
+- [x] Declare `account.session.read` on dynamic task routes so the global deny-by-default HTTP guard does not block a valid frozen assignee before the use-case gate runs.
+- [x] Keep the approval tab permission-driven for ordinary users, then add it dynamically only after the
+      exact-assignment-filtered queue confirms frozen work; bind that confirmation to the current company.
+- [x] Let a task deep link reach only the hub probe with `account.session.read` after all reimbursement
+      permissions are removed; do not reveal the sidebar module or nested routes from that baseline grant.
+- [x] Current policy edits never change submitted-claim finance or payment blockers.
+- [x] Role/permission drift is prospective for active frozen assignees; user/company-membership disablement remains authoritative and opens recovery.
+- [x] Keep branch scope dynamic: an assignee moved away from the request branch no longer blocks the
+      recorded role/OWNER recovery route, and SLA recipients use the same branch-aware active set.
+- [x] Existing named-user step fallback remains unchanged.
+- [x] Approval SLA applies only to PENDING_APPROVAL and uses snapshotted `slaHours`.
+- [x] Projection/cancellation/payment reconcilers parse the same snapshot version.
 
 ### Tests
 
 - [ ] Selected holder, OWNER, unrelated role, self exemption/non-exemption.
-- [ ] Permission/member/branch drift between page and transaction.
+- [x] Assigned-user role/permission change, unrelated current permission holder denial, and all-assignees-inactive OWNER recovery.
+- [ ] Branch drift between page and transaction.
 - [ ] Two actors decide concurrently; one commits.
 - [ ] Policy edit after submit does not alter finance, duplicate/payment, self, or SLA.
 - [ ] Legacy no-snapshot paths remain behavior-compatible.
@@ -307,17 +334,18 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Type policy/options/update state and remove touched `any`.
-- [ ] Delete mode selector/free-text role; add one existing `ThemedSelect` labeled “บทบาทผู้อนุมัติ”.
-- [ ] Add “เปิดรับการส่งใบเบิกใหม่” control and truthful inactive behavior/copy.
-- [ ] Show holder count, coverage, uncovered branches, and OWNER fallback.
-- [ ] Add threshold/finance decision preview from server-compatible pure logic.
-- [ ] Render loading/retry/empty/none/partial/unavailable/legacy/inactive/conflict/busy/error/success.
-- [ ] Keep explicit `routeDirty`; omit role on unrelated save.
-- [ ] Use accurate self-approval and prospective copy.
-- [ ] Refetch policy/options after save.
-- [ ] Narrow E2E PUT helpers to writable fields; never spread GET output or normalize legacy during restore.
-- [ ] Old cached-client DTO errors instruct refresh.
+- [x] Type policy/options/update state and avoid new unsafe client-owned routing fields.
+- [x] Delete mode selector/free-text role; add one existing `ThemedSelect` labeled “ส่งใบเบิกให้ใครอนุมัติ?”.
+- [x] Add “เปิดรับใบเบิกใหม่” control and truthful inactive behavior/copy.
+- [x] Keep the picker low-tech: show selectable role names only and one human error for a stored role that is no longer ready.
+- [x] Add threshold/finance decision preview from server-compatible pure logic.
+- [x] Render loading/retry/empty/unavailable/legacy/inactive/conflict/busy/error/success without exposing internal coverage/count fields.
+- [x] Keep explicit route dirty state; omit role on unrelated save.
+- [x] Use accurate self-approval and prospective copy.
+- [x] Refetch policy/options after save.
+- [x] Narrow E2E PUT helpers to writable fields; never spread GET output or normalize legacy during restore.
+- [x] Old cached-client DTO errors instruct refresh.
+- [x] Register every new stable API code in the shared Thai error map so the launch-wide raw-code coverage gate passes.
 
 ### Verification
 
@@ -340,14 +368,15 @@ Browser-check desktop and 390 px, keyboard/focus/error association, ≥44 px con
 
 ### Tasks
 
-- [ ] Submission payload publishes exact role recipient ids, task role, fallback, requester exclusion, and snapshot version.
-- [ ] Pending template consumes selected-role payload only.
-- [ ] Fallback uses OWNER payload/task.
-- [ ] SLA escalates selected role + OWNER.
-- [ ] Below-threshold paths create no approval notification/task.
-- [ ] Add/consume `reimbursement.finance_review_requested`.
-- [ ] Version/resync only sync-owned rules; prove admin-created/edited/archived rules untouched.
-- [ ] Make zero-recipient state observable and terminal where retry cannot fix it.
+- [x] Submission payload publishes exact role recipient ids, exact helper-task user, task-role fallback, requester exclusion, and snapshot version.
+- [x] Pending template consumes the frozen recipient payload; it never re-resolves later holders for existing work.
+- [x] Fallback uses OWNER payload/task.
+- [x] SLA escalates active frozen recipients + OWNER.
+- [x] SLA uses active frozen recipients after role edits and switches to recorded role/OWNER only when all frozen assignees are inactive.
+- [x] Below-threshold paths create no approval notification/task.
+- [x] Add/consume `reimbursement.finance_review_requested`.
+- [x] Version/resync only sync-owned rules; prove admin-created/edited/archived rules untouched.
+- [x] Keep zero-recipient failures observable without aborting unrelated healthy SLA candidates.
 
 ### Verification
 
@@ -368,18 +397,27 @@ pnpm --filter @watchdog-bms/api typecheck
 
 ### Tasks
 
-- [ ] Run full contracts/API/web suites and typechecks.
+- [x] Run full contracts/API/web suites and typechecks.
 - [ ] Real-Postgres full migration + zero drift.
 - [ ] E2E role save/reload → submit → queue/notification/task → approve/reject.
 - [ ] E2E threshold below/equal/above × finance on/off.
 - [ ] E2E inactive zero-mutation and in-flight continuation.
 - [ ] E2E partial branch fallback, missing OWNER, role/member drift, and double decision.
+- [x] Local HTTP/browser-assisted flow: submit as OWNER, verify exact assignee snapshot, change assigned
+      `qa.manager` from MANAGER to STAFF, then prove approval queue 200 + exact row, detail 200 with
+      `canApprove/canReject`, and approve 200 to FINANCE_REVIEW; restore MANAGER afterward. New-route
+      prospective behavior remains covered by routing tests.
+- [x] Web regression proves an ordinary/no-permission session does not receive an unconditional approval
+      tab, while a server-confirmed frozen assignee receives it in canonical order without duplicates.
+- [x] Freeze recipient order, notify every already-validated recipient (including a valid self-approver),
+      and give each correction/resubmit a distinct durable outbox epoch.
+- [ ] E2E sole-holder self-approval denial plus OWNER recovery, including a user holding multiple roles.
 - [ ] E2E policy edit after submit proves snapshot consistency through finance/payment/SLA.
 - [ ] E2E legacy non-routing save and old pending step unchanged.
 - [ ] Browser-check all spec §5 states.
 - [ ] Verify LINE/AI still call permission-checked read use cases and gain no mutation.
-- [ ] Review diff for unrelated files, dependency/package changes, historical rewrite, unsafe backfill, and PII.
-- [ ] Update memory/checklist with exact command results.
+- [x] Review diff for unrelated files, dependency/package changes, historical rewrite, unsafe backfill, and PII.
+- [x] Update memory/checklist with exact command results.
 
 ### Commands
 
@@ -513,7 +551,8 @@ No cloud action is authorized by this planning task.
 | Risk | Control |
 |------|---------|
 | Duplicate NULL-branch policy blocks unique index. | Mandatory read-only preflight and authorized remediation; no guessing. |
-| Snapshot freezes a privilege. | Snapshot freezes business responsibility only; current permission/member/branch remains mandatory. |
+| Assignment snapshot becomes a general privilege. | It authorizes only the exact step; active membership and branch remain mandatory, unrelated queues/actions still require current permission, and transaction repeats the same predicate. |
+| Dynamic task routes are rejected before the snapshot gate. | Declare baseline `account.session.read` route metadata for the deny-by-default guard, then enforce normal permission or exact frozen assignment in the use case and again in the mutation transaction. HTTP evidence covers the changed-role session. |
 | Malformed snapshot row weakens behavior. | Versioned parser fails closed; null alone is legacy. |
 | Below-threshold projection creates a fake approver. | POLICY/SYSTEM audit path, no approval step/user/signature. |
 | Shared queue obscures personal ownership. | Actual decision actor audit; one-winner CAS; task claiming stays explicit backlog. |

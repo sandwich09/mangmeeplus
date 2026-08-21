@@ -136,6 +136,11 @@ export function canAccessWorkspacePath(
   // leave a hidden screen reachable by a typed-in URL.
   if (matchingModule && accountingUiHidden(matchingModule.key)) return false;
 
+  // A notification/task deep link must still reach the exact-assignment probe after a role edit
+  // removes every reimbursement permission. Keep this to the hub root: it does not add a sidebar
+  // row and the page/API expose no claim unless the frozen queue confirms that user.
+  if (workspacePath === '/reimbursements' && userPermissions.includes('account.session.read')) return true;
+
   if (findRoutePermissionRule(workspacePath)) return canSeeRoute(workspacePath, userPermissions);
 
   if (!matchingModule || matchingModule.requiredAnyPermissions.length === 0) return true;

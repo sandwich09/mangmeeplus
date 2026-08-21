@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import {
   assertCanReadRequest,
+  GetReimbursementDetailUseCase,
   ListReimbursementsUseCase,
 } from './reimbursement-request.use-case';
 import { GetReimbursementAiSummaryUseCase } from './reimbursement-summary.use-case';
@@ -41,13 +42,23 @@ describe('reimbursement related-view ABAC', () => {
     const prototype = ReimbursementController.prototype;
     const readAny = ['reimbursement.read', 'reimbursement.read_related', 'reimbursement.read_own'];
     for (const handler of [
-      'summary', 'list', 'get', 'previewClaimForm', 'initClaimSignature',
+      'summary', 'list', 'previewClaimForm', 'initClaimSignature',
       'completeClaimSignature', 'signClaimForm', 'linkSignedCopy',
     ] as const) {
       assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype[handler]), readAny);
     }
+    // Detail is also the inspection surface for an exact frozen approval assignment;
+    // account.session.read satisfies the global deny-by-default guard, then the use case applies
+    // both normal read ABAC and that task-scoped capability.
+    assert.equal(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.get), undefined);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.get), ['account.session.read']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.listApprovalQueue), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.update), ['reimbursement.update_own_draft']);
-    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.approveRequest), ['reimbursement.approve']);
+    // Approve/reject are gated by exact frozen assignment or current permission in the
+    // use case and repeated inside the transaction; the route-level session permission only
+    // makes the dynamic authorization path explicit to the global guard.
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.approveRequest), ['account.session.read']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.rejectRequest), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.createPayment), ['reimbursement.payment.record']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.cancelRequest), [
       'reimbursement.cancel_own', 'reimbursement.finance_review',
@@ -79,6 +90,45 @@ describe('reimbursement related-view ABAC', () => {
       /outside your assigned branch scope/,
     );
     assert.equal(relationChecked, false);
+  });
+
+  it('lets a frozen assignee inspect only their pending task after role permissions change', async () => {
+    const now = new Date('2026-08-21T00:00:00.000Z');
+    const pending = {
+      id: 'reimbursement-1', companyId: 'company-1', branchId: 'branch-1',
+      requesterUserId: 'requester-1', requesterDisplayNameSnapshot: 'Requester',
+      reason: 'ค่าเดินทาง', categoryKey: 'travel', amount: '500.0000', currency: 'THB',
+      incurredDate: now, status: 'PENDING_APPROVAL', currentApprovalStepId: 'step-1',
+      financeReviewStatus: 'NOT_REQUIRED', paymentStatus: 'UNPAID', duplicateStatus: 'NOT_CHECKED',
+      receiptRequirementStatus: 'ATTACHED', postingStatus: 'not_required',
+      paymentTotalAmount: '0.0000', outstandingAmount: '500.0000', createdByUserId: 'requester-1',
+      createdAt: now, updatedAt: now, lines: [], payments: [], duplicateCandidates: [], claimSignatures: [],
+      approvalSteps: [{
+        id: 'step-1', companyId: 'company-1', reimbursementRequestId: 'reimbursement-1', sequenceNo: 1,
+        approverRoleSnapshot: 'MANAGER', assignedApproverUserIds: ['actor-1'], status: 'PENDING',
+        assignedAt: now, createdAt: now, updatedAt: now,
+      }],
+    } as any;
+    const useCase = new GetReimbursementDetailUseCase({
+      findRequestById: async () => pending,
+      findActiveApproverUserIds: async (_companyId: string, ids: string[]) => new Set(ids),
+      findPolicy: async () => null,
+      isUserRelatedToRequest: async () => false,
+      getUserDisplayNames: async () => ({}),
+      listSignedClaimFormCopies: async () => [],
+    } as any, {
+      getAttachmentFileName: async () => undefined,
+      getAttachmentFileNames: async () => ({}),
+    } as any);
+
+    const detail = await useCase.execute(ctx({ permissions: [], roles: ['STAFF'] }), pending.id);
+    assert.deepEqual(detail.approvalActions, { canApprove: true, canReject: true });
+
+    pending.approvalSteps[0].assignedApproverUserIds = ['someone-else'];
+    await assert.rejects(
+      useCase.execute(ctx({ permissions: [], roles: ['STAFF'] }), pending.id),
+      /Cannot read this reimbursement/,
+    );
   });
 
   it('lists only related records under the caller branch scope', async () => {

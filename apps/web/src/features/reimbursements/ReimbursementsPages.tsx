@@ -24,7 +24,7 @@ import {
   listApprovalQueue, approveReimbursement, rejectReimbursement,
   listFinanceQueue, financeReviewReimbursement, recordReimbursementPayment,
   voidReimbursementPayment,
-  getReimbursementPolicy, updateReimbursementPolicy,
+  getReimbursementPolicy, listReimbursementApproverOptions, updateReimbursementPolicy,
   signReimbursementClaimForm, uploadSignedClaimFormCopy, fetchAttachmentPreviewBlob,
 } from './reimbursements.api';
 import {
@@ -40,10 +40,10 @@ import {
 } from '../expenses/ExpensesUi';
 import {
   validatePaymentForm, sumLineAmounts, summariseQueue, matchesSearch, pageBounds,
-  formatMoney, parseHubTab, visibleHubTabs, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
+  formatMoney, parseHubTab, visibleHubTabs, withAssignedApprovalTab, reimbursementListScope, errorText, isStaleApprovalError, diffApprovalFields,
   type ApprovalFieldDiff, type HubTab,
 } from './reimbursements.logic';
-import { todayCivilDate } from '@watchdog-bms/contracts';
+import { todayCivilDate, type ReimbursementApproverRoleOption } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 
 /** Every banner in this feature goes through here, so API error codes never reach the user raw. */
@@ -58,11 +58,19 @@ const HUB_TAB_DESCRIPTIONS: Record<HubTab, string> = {
   finance: 'ตรวจสอบคำขอที่อนุมัติแล้ว และบันทึกการจ่ายเงิน',
   policy: 'กำหนดเกณฑ์การอนุมัติ ใบเสร็จ และ SLA ของการเบิกจ่ายทั้งบริษัท',
 };
-const APPROVER_MODE_LABELS: Record<string, string> = {
-  MANAGER_ROLE: 'ตามบทบาทผู้จัดการ',
-  OWNER_ROLE: 'เจ้าของกิจการ',
-  CUSTOM_ROLE: 'บทบาทที่กำหนด',
-  CUSTOM_USER: 'ผู้ใช้ที่กำหนด',
+const APPROVER_ROLE_LABELS: Record<string, string> = {
+  OWNER: 'เจ้าของกิจการ', ADMIN: 'แอดมิน', MANAGER: 'ผู้จัดการ', FINANCE: 'การเงิน',
+  ACCOUNTANT: 'บัญชี', HR: 'ฝ่ายบุคคล', SALES: 'ฝ่ายขาย', INVENTORY: 'คลังสินค้า',
+  MARKETING: 'การตลาด', STAFF: 'พนักงาน', AUDITOR_READONLY: 'ผู้ตรวจสอบ',
+};
+const STANDARD_ROLE_NAMES: Record<string, string> = {
+  OWNER: 'Owner', ADMIN: 'Admin', MANAGER: 'Manager', FINANCE: 'Finance', ACCOUNTANT: 'Accountant',
+  HR: 'HR', SALES: 'Sales', INVENTORY: 'Inventory', MARKETING: 'Marketing', STAFF: 'Staff',
+  AUDITOR_READONLY: 'Auditor (Read-only)',
+};
+const approverRoleName = (option?: Pick<ReimbursementApproverRoleOption, 'key' | 'name'>) => {
+  if (!option) return '';
+  return option.name === STANDARD_ROLE_NAMES[option.key] ? (APPROVER_ROLE_LABELS[option.key] ?? option.name) : option.name;
 };
 const shortDate = (iso?: string) => (iso ? String(iso).slice(0, 10) : '—');
 const attachmentPreviewMimeType = (fileName: string): 'application/pdf' | 'image/png' | 'image/jpeg' => (
@@ -307,10 +315,20 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 }) {
   const toast = useToast();
   const searchParams = useSearchParams();
-  const tabs = useMemo(() => visibleHubTabs(permissions, roles), [permissions, roles]);
+  const permissionTabs = useMemo(() => visibleHubTabs(permissions, roles), [permissions, roles]);
+  const hasApprovalPermission = permissionTabs.includes('approvals');
+  const [assignedApprovalCompanyId, setAssignedApprovalCompanyId] = useState<string | null>(null);
+  const [probedApprovalCompanyId, setProbedApprovalCompanyId] = useState<string | null>(null);
+  const hasAssignedApprovalTask = hasApprovalPermission || assignedApprovalCompanyId === companyId;
+  const assignmentProbeDone = hasApprovalPermission || probedApprovalCompanyId === companyId;
+  const tabs = useMemo(
+    () => withAssignedApprovalTab(permissionTabs, hasAssignedApprovalTask),
+    [permissionTabs, hasAssignedApprovalTask],
+  );
+  const requestedTab = searchParams.get('tab');
   // Initial tab only: deep links (LINE approvals card, notifications) land on the right queue,
   // and later tab clicks are not fought by the URL.
-  const [tab, setTab] = useState<HubTab>(() => parseHubTab(searchParams.get('tab'), tabs));
+  const [tab, setTab] = useState<HubTab>(() => parseHubTab(requestedTab, tabs));
   // ?focus=<requestId> from a notification/LINE deep link: opens that claim's drawer.
   const focusId = searchParams.get('focus') ?? undefined;
   // The drawer lives at hub level so every queue can open the same claim detail
@@ -336,6 +354,27 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const [cancelling, setCancelling] = useState(false);
   const [voidingPayment, setVoidingPayment] = useState<any | null>(null);
   const [staleReview, setStaleReview] = useState<{ before: any; detail: any } | null>(null);
+
+  // Roles can change after submission. Permission-based navigation alone would strand the exact
+  // assignee, so ask the server whether this session still owns a frozen task. The queue endpoint
+  // returns only exact assignments. Once found, keep the tab for this page session so completing
+  // the last task does not make the success state disappear underneath the user.
+  useEffect(() => {
+    if (hasApprovalPermission) return;
+    let current = true;
+    void listApprovalQueue(companyId)
+      .then((rows) => { if (current && rows.length > 0) setAssignedApprovalCompanyId(companyId); })
+      .catch(() => { /* The normal no-access state remains; do not surface a background probe. */ })
+      .finally(() => { if (current) setProbedApprovalCompanyId(companyId); });
+    return () => { current = false; };
+  }, [companyId, hasApprovalPermission]);
+
+  useEffect(() => {
+    setTab((current) => {
+      if (requestedTab === 'approvals' && tabs.includes('approvals')) return 'approvals';
+      return tabs.includes(current) ? current : parseHubTab(requestedTab, tabs);
+    });
+  }, [companyId, requestedTab, tabs]);
 
   const releaseAttachmentPreviewUrl = useCallback(() => {
     const url = previewUrlRef.current;
@@ -514,8 +553,11 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     if (!detail) return;
     setDrawerBusy(true); setDrawerError(null);
     try {
-      await approveReimbursement(companyId, detail.id, undefined, detail.approvalSnapshotHash);
-      setDetail(await getReimbursement(companyId, detail.id));
+      const updated = await approveReimbursement(companyId, detail.id, undefined, detail.approvalSnapshotHash);
+      // Keep the mutation response: a frozen assignee may no longer have general read permission
+      // after their role changes, so a successful decision must not be reported as failed merely
+      // because the post-action GET is no longer available once the task is complete.
+      setDetail(updated);
       setRefreshKey(k => k + 1);
       toast.success('อนุมัติคำขอเรียบร้อยแล้ว');
     } catch (e) {
@@ -528,8 +570,10 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     } finally { setDrawerBusy(false); }
   };
 
-  // Reachable only if the workspace nav let a member in on `reimbursement.read`
-  // alone; every queue below would answer 403, so say so instead of rendering one.
+  if (!assignmentProbeDone && tabs.length === 0) {
+    return <LoadingState label="กำลังตรวจสอบงานอนุมัติของคุณ..." />;
+  }
+
   if (tabs.length === 0) {
     return (
       <MangmeePage eyebrow="การเบิกจ่าย" title="การเบิกจ่ายและอนุมัติ" description="จัดการคำขอเบิกค่าใช้จ่ายและการอนุมัติ">
@@ -650,7 +694,9 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         error={drawerError}
         onClose={() => setRejecting(false)}
         onConfirm={async reason => {
-          if (await drawerAction(() => rejectReimbursement(companyId, detail.id, reason), 'ปฏิเสธคำขอเรียบร้อยแล้ว')) {
+          if (await drawerAction(async () => {
+            setDetail(await rejectReimbursement(companyId, detail.id, reason));
+          }, 'ปฏิเสธคำขอเรียบร้อยแล้ว')) {
             setRejecting(false);
           }
         }}
@@ -991,8 +1037,11 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
 }) {
   const lines: any[] = detail.lines ?? [];
   const { canEditDraft, canSubmit, canCancel, canReopen } = reimbursementOwnActions(detail, userId, permissions);
-  const canApprove = context === 'approvals' && permissions.includes('reimbursement.approve') && detail.status === 'PENDING_APPROVAL';
-  const canReject = context === 'approvals' && permissions.includes('reimbursement.reject') && detail.status === 'PENDING_APPROVAL';
+  // Task authority is resolved server-side from the frozen step assignment. Never infer it from
+  // the selected tab: a forged deep link must not offer actions, while an assignee whose role was
+  // changed after submit must still be able to finish this exact task.
+  const canApprove = detail.approvalActions?.canApprove === true;
+  const canReject = detail.approvalActions?.canReject === true;
   const canFinanceReview = context === 'finance' && permissions.includes('reimbursement.finance_review') && detail.status === 'FINANCE_REVIEW';
   const duplicateResolutionBlocked = detail.duplicateStatus === 'POSSIBLE_DUPLICATE'
     && !permissions.includes('reimbursement.duplicate.resolve');
@@ -1347,8 +1396,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {permissions.includes('reimbursement.approve') && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>}
-                            {permissions.includes('reimbursement.reject') && <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>}
+                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
+                            <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
                           </div>
                         </td>
                       </tr>
@@ -1375,8 +1424,8 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount)} {r.currency}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=approvals&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    {permissions.includes('reimbursement.approve') && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>}
-                    {permissions.includes('reimbursement.reject') && <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>}
+                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>
+                    <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
                   </div>
                 </MangmeeCard>
               ))}
@@ -1653,13 +1702,22 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
 function PolicySettings({ companyId }: { companyId: string }) {
   const toast = useToast();
   const [form, setForm] = useState<any | null>(null);
+  const [approverOptions, setApproverOptions] = useState<ReimbursementApproverRoleOption[]>([]);
+  const [approverChanged, setApproverChanged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [policyChanged, setPolicyChanged] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
-    try { setForm(await getReimbursementPolicy(companyId)); }
+    setLoading(true); setError(null); setPolicyChanged(false);
+    try {
+      const [policy, options] = await Promise.all([
+        getReimbursementPolicy(companyId),
+        listReimbursementApproverOptions(companyId),
+      ]);
+      setForm(policy); setApproverOptions(options); setApproverChanged(false);
+    }
     catch (e) { setError(err(e)); } finally { setLoading(false); }
   }, [companyId]);
   useEffect(() => { load(); }, [load]);
@@ -1668,22 +1726,37 @@ function PolicySettings({ companyId }: { companyId: string }) {
     e.preventDefault(); setBusy(true); setError(null);
     try {
       await updateReimbursementPolicy(companyId, {
+        ...(form.id !== 'default' && { expectedUpdatedAt: form.updatedAt }),
         approvalRequiredFromAmount: form.approvalRequiredFromAmount,
-        approverMode: form.approverMode,
-        defaultApproverRole: form.defaultApproverRole,
+        ...(approverChanged && { defaultApproverRole: form.defaultApproverRole }),
         allowSelfApproval: form.allowSelfApproval,
         requireReceipt: form.requireReceipt,
         allowMissingReceiptWithReason: form.allowMissingReceiptWithReason,
         duplicatePolicy: form.duplicatePolicy,
         financeReviewRequired: form.financeReviewRequired,
-        slaHours: form.slaHours ? Number(form.slaHours) : null,
+        slaHours: form.slaHours === '' || form.slaHours == null ? null : Number(form.slaHours),
+        status: form.status,
       });
       toast.success('บันทึกนโยบายเบิกจ่ายแล้ว'); await load();
-    } catch (e2) { setError(err(e2)); } finally { setBusy(false); }
+    } catch (e2) {
+      setPolicyChanged((e2 as { code?: unknown })?.code === 'reimbursement_policy_changed'
+        || (e2 instanceof Error && e2.message.includes('reimbursement_policy_changed')));
+      setError(err(e2));
+    } finally { setBusy(false); }
   };
 
   if (loading) return <LoadingState label="กำลังโหลด..." />;
   if (!form) return <ErrorBanner message={error ?? 'โหลดนโยบายไม่สำเร็จ'} />;
+
+  const roleBasedRoute = ['MANAGER_ROLE', 'OWNER_ROLE', 'CUSTOM_ROLE'].includes(form.approverMode);
+  const selectedOption = approverOptions.find((option) => option.key === form.defaultApproverRole);
+  const selectableOptions = approverOptions.filter((option) => option.selectable || option.key === form.defaultApproverRole);
+  const readyOptions = approverOptions.filter((option) => option.selectable);
+  const routeReady = form.status !== 'ACTIVE' || (approverChanged
+    ? Boolean(selectedOption?.selectable)
+    : !roleBasedRoute || Boolean(selectedOption?.selectable));
+  const roleLabel = approverRoleName(selectedOption);
+  const afterApproval = form.financeReviewRequired ? 'ส่งให้ฝ่ายการเงินตรวจสอบก่อนจ่าย' : 'พร้อมบันทึกจ่าย';
 
   return (
     <form onSubmit={save} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -1692,32 +1765,61 @@ function PolicySettings({ companyId }: { companyId: string }) {
           <div className="flex items-start gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-[10px]" style={{ background: KPI.sky.bg, color: KPI.sky.color }}>{ICON.doc}</span>
             <div>
-              <h3 className="text-sm font-bold text-gray-900">เกณฑ์การอนุมัติ</h3>
-              <p className="mt-1 text-xs text-gray-500">กำหนดยอดและผู้รับผิดชอบในการอนุมัติคำขอ</p>
+              <h3 className="text-sm font-bold text-gray-900">การอนุมัติใบเบิก</h3>
+              <p className="mt-1 text-xs text-gray-500">เลือกผู้รับผิดชอบและตั้งค่าเกณฑ์การอนุมัติของบริษัท</p>
             </div>
           </div>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-gray-800">เปิดรับใบเบิกใหม่</span>
+                <span className="mt-0.5 block text-xs text-gray-500">เมื่อปิด ใบร่างจะส่งไม่ได้ แต่ใบเบิกที่ส่งแล้วจะทำงานต่อจนจบ</span>
+              </span>
+              <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={form.status === 'ACTIVE'} onChange={e => setForm((f: any) => ({ ...f, status: e.target.checked ? 'ACTIVE' : 'INACTIVE' }))} />
+            </label>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-gray-600">ต้องอนุมัติเมื่อยอดตั้งแต่ (บาท)</label>
-              <input className={inputClass} type="number" step="0.01" value={form.approvalRequiredFromAmount} onChange={e => setForm((f: any) => ({ ...f, approvalRequiredFromAmount: e.target.value }))} />
+              <input className={inputClass} type="number" min="0" step="0.01" required value={form.approvalRequiredFromAmount} onChange={e => setForm((f: any) => ({ ...f, approvalRequiredFromAmount: e.target.value }))} />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-gray-600">โหมดผู้อนุมัติ</label>
-              <ThemedSelect className={inputClass} value={form.approverMode} onChange={e => setForm((f: any) => ({ ...f, approverMode: e.target.value }))}>
-                {Object.entries(APPROVER_MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <label htmlFor="reimbursement-approver-role" className="mb-1.5 block text-xs font-semibold text-gray-600">ส่งใบเบิกให้ใครอนุมัติ?</label>
+              <ThemedSelect
+                id="reimbursement-approver-role"
+                aria-label="ส่งใบเบิกให้ใครอนุมัติ"
+                className={inputClass}
+                value={roleBasedRoute || approverChanged ? form.defaultApproverRole ?? '' : ''}
+                onChange={e => { setApproverChanged(true); setForm((f: any) => ({ ...f, defaultApproverRole: e.target.value })); }}
+                disabled={readyOptions.length === 0}
+                required={roleBasedRoute || approverChanged}
+              >
+                <option value="">เลือกบทบาทผู้อนุมัติ</option>
+                {selectableOptions.map((option) => (
+                  <option key={option.key} value={option.key} disabled={!option.selectable}>
+                    {approverRoleName(option)}{option.selectable ? '' : ' — ยังไม่พร้อมใช้งาน'}
+                  </option>
+                ))}
               </ThemedSelect>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="mb-1.5 block text-xs font-semibold text-gray-600">บทบาทผู้อนุมัติเริ่มต้น</label>
-              <input className={inputClass} value={form.defaultApproverRole ?? ''} onChange={e => setForm((f: any) => ({ ...f, defaultApproverRole: e.target.value }))} />
+              {readyOptions.length === 0 ? (
+                <p className="mt-1 text-xs text-error-600">ยังไม่มีบทบาทที่พร้อมอนุมัติ กรุณาให้ผู้ดูแลเพิ่มสิทธิ์และพนักงานในหน้าบทบาทและสิทธิ์</p>
+              ) : !selectedOption?.selectable && roleBasedRoute && form.defaultApproverRole ? (
+                <p className="mt-1 text-xs text-error-600">บทบาทที่ตั้งไว้ยังไม่มีคนพร้อมอนุมัติ กรุณาเลือกบทบาทใหม่</p>
+              ) : !selectedOption?.selectable && !roleBasedRoute && !approverChanged ? (
+                <p className="mt-1 text-xs text-warning-700">การตั้งค่าเดิมระบุผู้อนุมัติเป็นรายบุคคล หากต้องการเปลี่ยนเส้นทางให้เลือกบทบาทใหม่</p>
+              ) : !selectedOption?.selectable ? (
+                <p className="mt-1 text-xs text-gray-500">เลือกบทบาทของผู้รับผิดชอบ ไม่ต้องพิมพ์ชื่อหรือตัวแปรระบบ</p>
+              ) : null}
             </div>
             <label className="flex items-start justify-between gap-4 rounded-xl border border-gray-200 px-3 py-3 transition hover:border-brand-200 sm:col-span-2">
               <span className="min-w-0">
-                <span className="block text-sm font-semibold text-gray-800">อนุญาตให้อนุมัติคำขอตนเอง</span>
-                <span className="mt-0.5 block text-xs text-gray-500">ผู้อนุมัติกดอนุมัติคำขอที่ตัวเองสร้างได้</span>
+                <span className="block text-sm font-semibold text-gray-800">ให้ผู้อนุมัติอนุมัติใบเบิกของตัวเองได้</span>
+                <span className="mt-0.5 block text-xs text-gray-500">เมื่อเปิด ผู้อนุมัติที่ได้รับมอบหมายสามารถอนุมัติใบเบิกที่ตัวเองสร้างได้</span>
               </span>
               <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0" checked={!!form.allowSelfApproval} onChange={e => setForm((f: any) => ({ ...f, allowSelfApproval: e.target.checked }))} />
             </label>
+            <div className="rounded-xl bg-sky-50 px-3 py-3 text-xs text-sky-900 sm:col-span-2">
+              <p><span className="font-semibold">ยอดต่ำกว่า {formatMoney(form.approvalRequiredFromAmount)} บาท:</span> ไม่ต้องรอผู้อนุมัติ → {afterApproval}</p>
+              <p className="mt-1"><span className="font-semibold">ยอดตั้งแต่ {formatMoney(form.approvalRequiredFromAmount)} บาท:</span> ส่งให้ {roleLabel || 'บทบาทที่เลือก'} อนุมัติ → {afterApproval}</p>
+            </div>
           </div>
         </MangmeeCard>
 
@@ -1773,7 +1875,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
             </label>
             <div>
               <label className="mb-1.5 block text-xs font-semibold text-gray-600">SLA (ชั่วโมง)</label>
-              <input className={inputClass} type="number" value={form.slaHours ?? ''} onChange={e => setForm((f: any) => ({ ...f, slaHours: e.target.value }))} />
+              <input className={inputClass} type="number" min="0" max="8760" step="1" value={form.slaHours ?? ''} onChange={e => setForm((f: any) => ({ ...f, slaHours: e.target.value }))} />
             </div>
           </div>
         </MangmeeCard>
@@ -1784,12 +1886,16 @@ function PolicySettings({ companyId }: { companyId: string }) {
           <h3 className="text-sm font-bold text-gray-900">สรุปนโยบาย</h3>
           <dl className="mt-4 divide-y divide-gray-100">
             <div className="flex items-center justify-between gap-3 py-3 first:pt-0">
+              <dt className="text-xs text-gray-500">รับใบเบิกใหม่</dt>
+              <dd><MangmeeBadge tone={form.status === 'ACTIVE' ? 'brand' : 'slate'}>{form.status === 'ACTIVE' ? 'เปิด' : 'ปิด'}</MangmeeBadge></dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 py-3">
               <dt className="text-xs text-gray-500">ต้องอนุมัติเมื่อยอด</dt>
               <dd className="text-sm font-semibold text-gray-800">≥ {formatMoney(form.approvalRequiredFromAmount)} บาท</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
-              <dt className="text-xs text-gray-500">ผู้อนุมัติ</dt>
-              <dd className="text-right text-sm font-semibold text-gray-800">{APPROVER_MODE_LABELS[form.approverMode] ?? form.approverMode}</dd>
+              <dt className="text-xs text-gray-500">ส่งให้อนุมัติ</dt>
+              <dd className="text-right text-sm font-semibold text-gray-800">{roleLabel || (!roleBasedRoute && !approverChanged ? 'ผู้อนุมัติเดิมรายบุคคล' : 'ยังไม่ได้เลือก')}</dd>
             </div>
             <div className="flex items-center justify-between gap-3 py-3">
               <dt className="text-xs text-gray-500">ใบเสร็จ</dt>
@@ -1806,7 +1912,8 @@ function PolicySettings({ companyId }: { companyId: string }) {
           </dl>
           <div className="mt-4 space-y-3">
             {error && <ErrorBanner message={error} />}
-            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
+            {policyChanged && <button type="button" className={cx(ghostClass, 'w-full')} onClick={() => void load()}>โหลดค่าล่าสุด</button>}
+            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || !routeReady}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
           </div>
         </MangmeeCard>
       </aside>
