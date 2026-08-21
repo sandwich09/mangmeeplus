@@ -786,12 +786,15 @@ describe('ProcessLineWebhookUseCase', () => {
 
     // Distinct stage durations for the seams THIS API process observes — not lumped into dispatch.
     const stages = logs.filter((entry) => entry.msg === 'line.ai.stage');
-    for (const stage of ['intake_route', 'gateway_turn', 'persistence', 'line_delivery']) {
+    for (const stage of ['intake_route', 'gateway_turn', 'render', 'persistence', 'line_delivery']) {
       const event = stages.find((entry) => entry.stage === stage);
       assert.ok(event, `stage ${stage} emitted`);
       assert.equal(event.webhookEventId, 'evt-trace-1');
       assert.ok(Number.isInteger(event.durationMs) && event.durationMs >= 0, `${stage} has a numeric duration`);
     }
+    // A business-read turn runs no capture and this release creates no reimbursement, so neither
+    // may report a duration for work that never happened.
+    assert.equal(stages.some((entry) => entry.stage === 'capture_execute' || entry.stage === 'reimbursement_execute'), false);
 
     // One correlated turn summary; every field is the ACTUAL value or an explicit null (nothing invented).
     const summary = logs.find((entry) => entry.msg === 'line.ai.turn_summary');
@@ -2957,6 +2960,51 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     assert.equal(openWorkflows.length, 1, 'still exactly one OPEN workflow — the "1" turn was not looped back into the shortlist');
     assert.equal(store.get('exp-2').sourceChannelMetadataJson.lineSubstituteReceiptContinuation, undefined, 'exp-2 was never opened');
     assert.equal(saves.length, 1, 'the resume continued the OPEN workflow without a redundant write');
+  });
+});
+
+// ── Spec §10.1: a completed multi-part reply ends in the same Flex card as a single completed reply.
+//    Behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED — default-off is the legacy all-text shape, proven
+//    in line-intake-dispatch.use-case.spec.ts ("multi-part terminal Flex"). ──
+describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Flex card', () => {
+  async function run(replyTexts: string[]) {
+    const { prisma } = makePrisma();
+    const delivered: any[][] = [];
+    const draft = {
+      routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
+      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts, acceptedFields: [] }),
+    };
+    const { useCase } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.create'],
+      config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true },
+      expenseDraftConversation: draft,
+      sendReplyFn: async (_token: string, messages: any[]) => { delivered.push(messages); return 'ok'; },
+    });
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-draft-parts-${replyTexts.length}`, messageText: 'D-PURPOSE ค่าเดินทางไปหาลูกค้า' });
+    assert.equal(delivered.length, 1, 'one reply-token call carries every part');
+    return delivered[0]!;
+  }
+
+  it('renders a single completed part as the Flex card with the completion menu, not plain text', async () => {
+    const messages = await run(['บันทึกวัตถุประสงค์แล้วค่ะ']);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].type, 'flex');
+    assert.match(JSON.stringify(messages[0].contents), /บันทึกวัตถุประสงค์แล้วค่ะ/);
+    assert.ok(messages[0].quickReply?.items.length > 0, 'completion menu stays on the terminal card');
+  });
+
+  it('keeps earlier parts as lossless text and renders only the terminal part as the Flex card', async () => {
+    const parts = ['ส่วนที่ 1\nรายละเอียดยาว', 'ส่วนที่ 2', 'สรุปร่างค่าใช้จ่าย'];
+    const messages = await run(parts);
+    assert.equal(messages.length, parts.length, 'part count is unchanged (≤ 5)');
+    assert.deepEqual(
+      messages.slice(0, -1).map((message: any) => [message.type, message.text, message.quickReply]),
+      [['text', parts[0], undefined], ['text', parts[1], undefined]],
+    );
+    const terminal = messages[messages.length - 1];
+    assert.equal(terminal.type, 'flex');
+    assert.match(JSON.stringify(terminal.contents), /สรุปร่างค่าใช้จ่าย/);
+    assert.ok(terminal.quickReply?.items.length > 0, 'completion menu stays on the terminal card only');
   });
 });
 

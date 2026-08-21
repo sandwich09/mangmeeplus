@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException } from '@nestjs/common';
-import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply } from './process-line-webhook.use-case';
+import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
@@ -122,6 +122,10 @@ type Harness = {
   receiptContinuationCalls: any[];
   /** Inputs the REAL capture use case handed to CreateExpenseDraftUseCase (realCapture only). */
   draftsCreated: any[];
+  /** Every LINE payload as sent (one entry per reply/push call), so Flex shape and uri actions can be asserted. */
+  sentMessages: unknown[][];
+  /** Ledger entries this turn acked as consumed — what a clarification-closing test observes. */
+  ledgerAcks: Array<{ entryId: string; outcome: string }>;
 };
 
 function makeHarness(opts: {
@@ -156,6 +160,14 @@ function makeHarness(opts: {
   conversationTurns?: any[];
   expenseDraftConversation?: any;
   expenseDraftConversationEnabled?: boolean;
+  /** LINE_AI_REIMBURSEMENT_SEMANTIC_MODE as the config getter reports it; absent = 'off' (legacy). */
+  lineAiReimbursementSemanticMode?: 'off' | 'shadow' | 'clarify_only' | 'handoff';
+  /** LINE_AI_EXACT_GREETING_ENABLED; absent = false = legacy (a greeting goes through the router). */
+  lineAiExactGreetingEnabled?: boolean;
+  /** LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED; absent = false = legacy all-text multi-part reply. */
+  lineAiMultipartTerminalFlexEnabled?: boolean;
+  /** Stored CompanyFeatureEntitlement rows; absent = no rows = legacy fail-open (`null`). */
+  entitlementRows?: Array<{ featureKey: string; enabled: boolean }>;
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
@@ -178,8 +190,11 @@ function makeHarness(opts: {
   const linkScanCalls: any[] = [];
   const receiptContinuationCalls: any[] = [];
   const draftsCreated: any[] = [];
+  const sentMessages: unknown[][] = [];
+  const ledgerAcks: Array<{ entryId: string; outcome: string }> = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
+  if (opts.entitlementRows) prisma.client.companyFeatureEntitlement.findMany = async () => opts.entitlementRows;
 
   // expenseRepo doubles as the repository the REAL capture use case reads and writes through.
   const expenseRepo = {
@@ -234,6 +249,9 @@ function makeHarness(opts: {
       webBaseUrl: 'https://app.example.com',
       lineMessagingChannelAccessToken: 'line-token',
       lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
+      lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
+      lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
+      lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
     } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {} }) } as any,
     { log: async () => undefined } as any,
@@ -255,10 +273,14 @@ function makeHarness(opts: {
     {
       buildTextMessage: (text: string) => ({ type: 'text', text }),
       sendReply: async (_token: string, messages: unknown[]) => {
+        sentMessages.push(messages);
         replies.push(replyAssertionText(messages[0]));
         return opts.lineReplyResult ?? 'ok';
       },
-      sendPush: async () => opts.lineReplyResult ?? 'ok',
+      sendPush: async (_to: string, messages: unknown[]) => {
+        sentMessages.push(messages);
+        return opts.lineReplyResult ?? 'ok';
+      },
     } as any,
     { apply: async () => ({ candidatesCreated: 0 }) } as any,
     { assertClean: async () => undefined } as any,
@@ -301,7 +323,7 @@ function makeHarness(opts: {
       ? {
         enabled: true,
         openWaitingUser: async () => opts.openWaiting ?? [],
-        ack: async () => undefined,
+        ack: async (entry: any, _state: string, meta: any) => { ledgerAcks.push({ entryId: entry?.id, outcome: meta?.outcome }); },
         appendTurn: async () => null,
         appendSubRequests: async (input: any) => { opts.captureLedger?.push(input); },
         coverageToSubRequests: () => [],
@@ -352,7 +374,7 @@ function makeHarness(opts: {
     uploads.push({ intent, media });
     if (opts.uploadThrows) throw new Error('storage PUT failed');
   };
-  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated };
+  return { useCase, replies, captured, signatureCreated, routeRequests, ocrRequests, uploads, initCalls, completeCalls, createUploadIntentCalls, completeAttachmentCalls, createExpenseCalls, linkAttachmentCalls, updateExpenseCalls, candidateQueries, correctionCalls, substituteCalls, mediaContextCalls, attachMediaCalls, linkScanCalls, receiptContinuationCalls, draftsCreated, sentMessages, ledgerAcks };
 }
 
 const TEXT_EVENT = {
@@ -997,6 +1019,66 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.captured.length, 0);
     assert.match(h.replies[0] ?? '', /ยอดเงิน.*วัตถุประสงค์|ยอดเงิน.*หมวดค่าใช้จ่าย/);
     assert.equal(captureLedger[0]?.items?.[0]?.clarifyForIntent, 'EXPENSE_DOCUMENT_CAPTURE');
+  });
+
+  it('asks only for the field the typed gate reported missing and ledgers that exact question', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+        captureHints: { amount: '60' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(['amount'], ['description', 'purpose'], []),
+      captureLedger,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ค่ารถวิน 60 บาท' });
+
+    assert.equal(h.captured.length, 0);
+    assert.match(h.replies[0] ?? '', /ขอทราบรายการหรือวัตถุประสงค์/u);
+    assert.doesNotMatch(h.replies[0] ?? '', /ขอทราบยอดเงิน/u, 'the UAT defect: an accepted amount asked for a second time');
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyQuestion, h.replies[0],
+      'the ledger carries the exact question the user saw, not a generic constant');
+  });
+
+  it('asks for an explicit correction instead of silently picking one of two amounts', async () => {
+    const captureLedger: any[] = [];
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+        captureHints: { amount: '200', description: 'ค่าเดินทาง' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(['description'], [], ['amount']),
+      captureLedger,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ค่าเดินทาง 200 บาท' });
+
+    assert.equal(h.captured.length, 0);
+    assert.match(h.replies[0] ?? '', /แก้ยอดเป็น/u);
+    assert.equal(captureLedger[0]?.items?.[0]?.clarifyQuestion, h.replies[0]);
+  });
+
+  it('unlocks businessPurpose completeness only behind the semantic primary guard', async () => {
+    const routePlan: LineIntakeRoutePlan = {
+      status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+      captureHints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' },
+      semanticOutcome: 'BUSINESS_EXPENSE', fundingSource: 'COMPANY_PAID',
+    };
+    const message = { ...TEXT_EVENT, messageText: 'ค่ารถวิน 60 บาท ไปพบลูกค้า' };
+
+    const guarded = makeHarness({
+      permissions: ['expense.receipt.line_upload'], routePlan, lineAiReimbursementSemanticMode: 'clarify_only',
+    });
+    await guarded.useCase.execute(message);
+    assert.equal(guarded.captured[0]?.semanticBusinessExpenseConfirmed, true);
+
+    // Same plan, semantic mode off: the completeness expansion can never ship on its own.
+    const ungated = makeHarness({ permissions: ['expense.receipt.line_upload'], routePlan });
+    await ungated.useCase.execute(message);
+    assert.equal(ungated.captured[0]?.semanticBusinessExpenseConfirmed, false);
   });
 
   it('handles a substitute-receipt request through typed preflight before any model or final mutation', async () => {
@@ -2857,5 +2939,624 @@ describe('spec §13 — the state badge reaches the delivered card', () => {
 
     assert.equal(h.substituteCalls.length, 1, 'the substitute phrase routes to the continuation');
     assert.match(h.replies[0] ?? '', /✅ ออกเอกสารแล้ว/);
+  });
+});
+
+describe('LINE intake dispatch – reimbursement semantic intake (uat-correctness-latency §7/§9)', () => {
+  const REIMBURSEMENT_PLAN = {
+    status: 'ROUTED' as const, intent: 'REIMBURSEMENT_REQUEST_START' as const, language: 'th', confidence: 0.9,
+  };
+  const STRONG_CLAIM_PLAN: LineIntakeRoutePlan = {
+    ...REIMBURSEMENT_PLAN, semanticOutcome: 'REIMBURSEMENT_CLAIM', fundingSource: 'EMPLOYEE_PAID',
+  };
+  const STRONG_CLAIM_TEXT = 'ขอเบิกค่าแท็กซี่ 120 บาท จ่ายเองไปก่อน';
+  const HANDOFF_PERMISSIONS = ['line.ai.query', 'reimbursement.create'];
+  const HANDOFF_ENTITLEMENTS = [{ featureKey: 'ai_line_assistant', enabled: true }, { featureKey: 'reimbursement', enabled: true }];
+  const HANDOFF_URL = 'https://app.example.com/companies/company-1/reimbursements/new';
+
+  /** Every `uri` action anywhere in a sent payload: bubble footer, carousel, or quick reply. */
+  function collectUris(value: unknown, found: string[] = []): string[] {
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectUris(item, found));
+    } else if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if (record.type === 'uri' && typeof record.uri === 'string') found.push(record.uri);
+      Object.values(record).forEach((item) => collectUris(item, found));
+    }
+    return found;
+  }
+
+  /** Own prisma (event-log statuses, expenseRecord writes) and a wired ledger so sub-requests are observable. */
+  function reimbursementHarness(opts: Omit<Parameters<typeof makeHarness>[0], 'prisma' | 'captureLedger'>) {
+    const { prisma, updates, recordUpdates } = makePrisma();
+    const ledger: any[] = [];
+    return { ...makeHarness({ ...opts, prisma, captureLedger: ledger }), ledger, updates, recordUpdates };
+  }
+
+  /** LINE never writes a reimbursement or an expense from this branch. The harness wires no reimbursement
+   *  writer at all (the use case has none), so the expense/attachment/substitute collectors are the only
+   *  places a domain write could surface. */
+  function assertNoDomainWrites(h: ReturnType<typeof reimbursementHarness>): void {
+    assert.equal(h.captured.length, 0, 'no expense note capture');
+    assert.equal(h.createExpenseCalls.length, 0, 'no expense create');
+    assert.equal(h.draftsCreated.length, 0);
+    assert.equal(h.updateExpenseCalls.length, 0);
+    assert.equal(h.correctionCalls.length, 0);
+    assert.equal(h.substituteCalls.length, 0);
+    assert.equal(h.initCalls.length, 0);
+    assert.equal(h.createUploadIntentCalls.length, 0);
+    assert.equal(h.signatureCreated.length, 0);
+    assert.equal(h.recordUpdates.length, 0);
+  }
+
+  const eventLogReached = (h: ReturnType<typeof reimbursementHarness>, status: string) =>
+    h.updates.some((update) => update.data?.status === status);
+
+  it('asks who paid for mixed greeting + reimbursement text in clarify_only, ledgers the route, and captures nothing', async () => {
+    const h = reimbursementHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      lineAiReimbursementSemanticMode: 'clarify_only',
+      routePlan: { ...REIMBURSEMENT_PLAN, semanticOutcome: 'AMBIGUOUS', fundingSource: 'UNKNOWN' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดีเบิกค่าโดยสารหน่อย' });
+
+    assert.equal(h.routeRequests.length, 1, 'the greeting does not short-circuit before the router');
+    assert.equal(h.routeRequests[0].messageText, 'สวัสดีเบิกค่าโดยสารหน่อย');
+    assert.equal(h.routeRequests[0].capabilities.reimbursementSemantic, true);
+    assert.equal(h.sentMessages.length, 1);
+    const [message] = h.sentMessages[0] as any[];
+    assert.equal(h.sentMessages[0].length, 1);
+    assert.equal(message.type, 'flex');
+    assert.match(replyAssertionText(message), /ใครเป็นคนจ่าย/);
+    assert.match(replyAssertionText(message), /เบิกคืน/);
+    assert.match(replyAssertionText(message), /บริษัทจ่าย/);
+    assert.deepEqual(collectUris(h.sentMessages), [], 'the payer question links nowhere');
+    assert.equal(h.ledger.length, 1);
+    assert.equal(h.ledger[0].items.length, 1);
+    assert.equal(h.ledger[0].items[0].clarifyForIntent, 'REIMBURSEMENT_REQUEST_START');
+    assert.equal(h.ledger[0].items[0].state, 'waiting_user');
+    assert.equal(h.ledger[0].items[0].intent, 'CLARIFY');
+    assert.equal(h.ledger[0].items[0].text, 'สวัสดีเบิกค่าโดยสารหน่อย');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'clarification_required'));
+  });
+
+  it('acknowledges a strong employee-paid claim in clarify_only with a card that has no button and writes nothing', async () => {
+    const h = reimbursementHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      lineAiReimbursementSemanticMode: 'clarify_only',
+      routePlan: STRONG_CLAIM_PLAN,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: STRONG_CLAIM_TEXT });
+
+    assert.equal(h.routeRequests[0].capabilities.reimbursementSemantic, true);
+    assert.equal(h.sentMessages.length, 1);
+    const [message] = h.sentMessages[0] as any[];
+    assert.equal(h.sentMessages[0].length, 1);
+    assert.equal(message.type, 'flex');
+    assert.match(replyAssertionText(message), /ยังไม่ได้สร้างรายการเบิกคืน/);
+    assert.match(replyAssertionText(message), /ยังไม่เปิดใช้งาน/);
+    assert.deepEqual(collectUris(h.sentMessages), [], 'clarify_only offers no handoff CTA');
+    assert.equal(message.contents.footer, undefined, 'no button row at all');
+    assert.equal(h.ledger.length, 0, 'nothing is left waiting on the user');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'completed'));
+  });
+
+  it('hands a strong claim to the web form in handoff mode with exactly one bare tenant link and zero writes', async () => {
+    const h = reimbursementHarness({
+      permissions: HANDOFF_PERMISSIONS,
+      scopes: { branchIds: ['branch-1'] },
+      entitlementRows: HANDOFF_ENTITLEMENTS,
+      lineAiReimbursementSemanticMode: 'handoff',
+      routePlan: STRONG_CLAIM_PLAN,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: STRONG_CLAIM_TEXT });
+
+    assert.equal(h.routeRequests[0].capabilities.reimbursementSemantic, true);
+    assert.equal(h.sentMessages.length, 1);
+    const [message] = h.sentMessages[0] as any[];
+    assert.equal(message.type, 'flex');
+    const uris = collectUris(h.sentMessages);
+    assert.deepEqual(uris, [HANDOFF_URL], 'one link in the whole payload, and only to the new-reimbursement form');
+    const link = new URL(uris[0]!);
+    assert.equal(link.href, HANDOFF_URL);
+    assert.equal(link.search, '', 'no prefill query');
+    assert.equal(link.hash, '', 'no fragment');
+    assert.match(replyAssertionText(message), /ยังไม่ได้สร้างรายการ/);
+    assert.equal(h.ledger.length, 0);
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'completed'));
+  });
+
+  const handoffAttempt = (overrides: Partial<Parameters<typeof reimbursementHarness>[0]>) => reimbursementHarness({
+    permissions: HANDOFF_PERMISSIONS,
+    lineAiReimbursementSemanticMode: 'handoff',
+    routePlan: STRONG_CLAIM_PLAN,
+    ...overrides,
+  });
+
+  async function assertHandoffDenied(h: ReturnType<typeof reimbursementHarness>): Promise<void> {
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: STRONG_CLAIM_TEXT });
+
+    assert.match(h.replies[0] ?? '', /ยังไม่สามารถส่งต่อการเบิกคืน/);
+    assert.deepEqual(collectUris(h.sentMessages), [], 'denied links nowhere');
+    assert.equal(h.ledger.length, 0);
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'forbidden'));
+  }
+
+  it('denies the handoff without reimbursement.create', async () => {
+    await assertHandoffDenied(handoffAttempt({ permissions: ['line.ai.query'] }));
+  });
+
+  it('denies the handoff when explicit entitlements do not include reimbursement', async () => {
+    // Explicit rows switch off the legacy null fail-open. `expenses`/`procurement` must stay out of this
+    // list: LEGACY_FEATURE_INHERITANCE would grant `reimbursement` through either of them.
+    await assertHandoffDenied(handoffAttempt({
+      entitlementRows: [{ featureKey: 'ai_line_assistant', enabled: true }],
+    }));
+  });
+
+  it('denies the handoff for an explicitly empty branch scope', async () => {
+    await assertHandoffDenied(handoffAttempt({
+      entitlementRows: HANDOFF_ENTITLEMENTS,
+      scopes: { branchIds: [] },
+    }));
+  });
+
+  /** A prior payer question this user was asked, plus an unrelated capture question in the same chat. */
+  const PAYER_CLARIFICATION = {
+    id: 'reimb-clarify-1', question: 'รายการนี้ใครเป็นคนจ่ายคะ?', text: 'ขอเบิกค่าแท็กซี่ 120 บาท',
+    askedAt: new Date().toISOString(), clarifyForIntent: 'REIMBURSEMENT_REQUEST_START',
+    entry: { id: 'reimb-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-0', kind: 'sub_request', userId: 'user-1' },
+  };
+  const UNRELATED_CLARIFICATION = {
+    id: 'capture-clarify-9', question: 'ยอดเท่าไรคะ?', text: 'ค่ากระดาษ',
+    askedAt: new Date().toISOString(), clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+    entry: { id: 'capture-clarify-9', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-0', kind: 'sub_request', userId: 'user-1' },
+  };
+
+  it('an answer to the payer question closes exactly that clarification and leaves the unrelated one open', async () => {
+    const h = reimbursementHarness({
+      permissions: HANDOFF_PERMISSIONS,
+      scopes: { branchIds: ['branch-1'] },
+      entitlementRows: HANDOFF_ENTITLEMENTS,
+      lineAiReimbursementSemanticMode: 'handoff',
+      openWaiting: [PAYER_CLARIFICATION, UNRELATED_CLARIFICATION],
+      // The model reports BOTH ids as resolved. Only the reimbursement one belongs to this branch.
+      routePlan: { ...STRONG_CLAIM_PLAN, resolvedClarificationIds: ['reimb-clarify-1', 'capture-clarify-9'] },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'สำรองจ่ายเองค่ะ' });
+
+    assert.deepEqual(h.ledgerAcks, [{ entryId: 'reimb-clarify-1', outcome: 'reimbursement_handoff' }],
+      'exactly the answered reimbursement question is consumed — never a blanket close of the chat');
+    assert.equal(h.ledger.length, 0, 'a settled payer never gets asked again');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'completed'));
+  });
+
+  it('consumes nothing when the provider omits resolvedClarificationIds, and still writes nothing', async () => {
+    const h = reimbursementHarness({
+      permissions: HANDOFF_PERMISSIONS,
+      scopes: { branchIds: ['branch-1'] },
+      entitlementRows: HANDOFF_ENTITLEMENTS,
+      lineAiReimbursementSemanticMode: 'handoff',
+      openWaiting: [PAYER_CLARIFICATION, UNRELATED_CLARIFICATION],
+      // The provider returns the reimbursement route but reports no resolved id at all.
+      routePlan: STRONG_CLAIM_PLAN,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'สำรองจ่ายเองค่ะ' });
+
+    // Consumption is id-driven and nothing else: with no id, neither the payer question this answer
+    // plainly settles nor the unrelated capture question is closed. No text matching recovers the id.
+    assert.deepEqual(h.ledgerAcks, [], 'no id reported, so no clarification is consumed');
+    // The current safe outcome, stated rather than implied: the handoff card is still delivered, the
+    // payer question stays OPEN and the next turn inherits it — a stale re-ask, never a wrong write.
+    assert.deepEqual(collectUris(h.sentMessages), [HANDOFF_URL]);
+    assert.equal(h.ledger.length, 0, 'and no duplicate payer question is opened on top of the stale one');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'completed'));
+  });
+
+  it('re-asking who paid closes the question it answered before it opens the next one', async () => {
+    const h = reimbursementHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      lineAiReimbursementSemanticMode: 'clarify_only',
+      openWaiting: [PAYER_CLARIFICATION, UNRELATED_CLARIFICATION],
+      routePlan: {
+        ...REIMBURSEMENT_PLAN, semanticOutcome: 'AMBIGUOUS', fundingSource: 'UNKNOWN',
+        resolvedClarificationIds: ['reimb-clarify-1'],
+      },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยังไม่แน่ใจค่ะ' });
+
+    // Stale entry closed, ONE fresh payer question opened — in that order, so the next message inherits
+    // exactly one open reimbursement clarification instead of two.
+    assert.deepEqual(h.ledgerAcks, [{ entryId: 'reimb-clarify-1', outcome: 'reimbursement_payer_reclarify' }]);
+    assert.equal(h.ledger.length, 1);
+    assert.equal(h.ledger[0].items[0].clarifyForIntent, 'REIMBURSEMENT_REQUEST_START');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'clarification_required'));
+  });
+
+  it('refuses an ambiguous claim from a denied user immediately, without ever asking who paid', async () => {
+    const h = reimbursementHarness({
+      permissions: ['line.ai.query'], // no reimbursement.create
+      lineAiReimbursementSemanticMode: 'handoff',
+      openWaiting: [UNRELATED_CLARIFICATION],
+      routePlan: { ...REIMBURSEMENT_PLAN, semanticOutcome: 'AMBIGUOUS', fundingSource: 'UNKNOWN' },
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ขอเบิกค่าแท็กซี่ 120 บาท' });
+
+    assert.match(h.replies[0] ?? '', /ยังไม่สามารถส่งต่อการเบิกคืน/);
+    assert.doesNotMatch(h.replies[0] ?? '', /ใครเป็นคนจ่าย/, 'a payer answer this user could never use is never requested');
+    assert.equal(h.ledger.length, 0, 'nothing is left waiting on a denied user');
+    assert.deepEqual(h.ledgerAcks, [], 'and the unrelated capture question is untouched');
+    assert.deepEqual(collectUris(h.sentMessages), [], 'denied links nowhere');
+    assertNoDomainWrites(h);
+    assert.ok(eventLogReached(h, 'forbidden'));
+  });
+
+  it('off mode never offers the router the capability and keeps the legacy turn path', async () => {
+    const h = reimbursementHarness({
+      permissions: HANDOFF_PERMISSIONS,
+      scopes: { branchIds: ['branch-1'] },
+      entitlementRows: HANDOFF_ENTITLEMENTS,
+      lineAiReimbursementSemanticMode: 'off',
+      routePlan: STRONG_CLAIM_PLAN,
+    });
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: STRONG_CLAIM_TEXT });
+
+    const capability = h.routeRequests[0].capabilities.reimbursementSemantic;
+    assert.ok(capability === undefined || capability === false, 'capability is omitted or false, never true');
+    assert.match(h.replies[0] ?? '', /turn-answer/, 'the legacy permission-checked AI turn answers');
+    assert.doesNotMatch(h.replies[0] ?? '', /ใครเป็นคนจ่าย|ยังไม่ได้สร้างรายการเบิกคืน|ยังไม่สามารถส่งต่อการเบิกคืน/);
+    assert.deepEqual(collectUris(h.sentMessages).filter((uri) => uri.includes('/reimbursements/new')), []);
+    assert.equal(
+      h.ledger.some((entry) => entry.items?.some((item: any) => item.clarifyForIntent === 'REIMBURSEMENT_REQUEST_START')),
+      false,
+      'no reimbursement clarification is ledgered',
+    );
+    assertNoDomainWrites(h);
+  });
+});
+
+describe('isExactStandaloneGreeting (versioned allowlist, uat-correctness-latency §11.2)', () => {
+  it('matches only a whole message that IS one of the three allowlisted greetings', () => {
+    for (const text of ['สวัสดี', 'สวัสดีค่ะ', 'สวัสดีครับ']) {
+      assert.equal(isExactStandaloneGreeting(text), true, text);
+    }
+  });
+
+  it('never matches a substring, a greeting carrying business text, or an unlisted variant', () => {
+    for (const text of [
+      'สวัสดีเบิกค่าโดยสารหน่อย',
+      'สวัสดี เบิกค่าโดยสารหน่อย',
+      'เบิกค่าโดยสารหน่อย สวัสดี',
+      'สวัสดีค่ะ ขอเบิกค่าวิน 60 บาท',
+      'สวัสดีตอนเช้า',
+      'สวัสดีจ้า',
+      '',
+    ]) {
+      assert.equal(isExactStandaloneGreeting(text), false, text);
+    }
+  });
+});
+
+describe('LINE intake dispatch – exact standalone greeting lane (uat-correctness-latency §11.2, plan Phase 6B)', () => {
+  const GREETING_REPLY = 'สวัสดีค่ะ 😊 วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ?';
+  const GREETING_PERMISSIONS = ['expense.receipt.line_upload', 'line.ai.query'];
+
+  /** Own prisma so the persisted turn (aiTurn.create) and the event-log statuses are both observable. */
+  function greetingHarness(opts: Omit<Parameters<typeof makeHarness>[0], 'prisma'>) {
+    const { prisma, updates, turnCreates } = makePrisma();
+    return { ...makeHarness({ ...opts, prisma }), updates, turnCreates };
+  }
+
+  it('answers every allowlisted greeting deterministically with zero router, gateway or model calls', async () => {
+    for (const text of ['สวัสดี', 'สวัสดีค่ะ', 'สวัสดีครับ', '  สวัสดี  ']) {
+      const h = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
+
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: text });
+
+      assert.equal(h.routeRequests.length, 0, `"${text}" never reaches the intake router`);
+      assert.equal(h.sentMessages.length, 1);
+      assert.equal(h.sentMessages[0].length, 1);
+      const [message] = h.sentMessages[0] as any[];
+      assert.equal(message.type, 'flex', 'the terminal answer is the trusted Flex card, not plain text');
+      assert.match(replyAssertionText(message), /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+      assert.equal(h.turnCreates.length, 1);
+      assert.equal(h.turnCreates[0].data.replyPreview, GREETING_REPLY, 'the canonical copy is what gets persisted');
+      assert.ok(h.updates.some((update: any) => update.data?.status === 'completed'));
+    }
+  });
+
+  // Ordering only. `persistIntakeTurn` is best-effort memory and nothing re-sends what it recorded, so
+  // this proves the outcome is WRITTEN before delivery — not that a failed turn is replayed (§8.3 gap).
+  it('records the canonical outcome before delivery and leaves the event delivery_pending when the token fails', async () => {
+    const h = greetingHarness({
+      permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true, lineReplyResult: 'failed_other',
+    });
+
+    await assert.rejects(() => h.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' }), /LINE_DELIVERY_FAILED_OTHER/);
+
+    assert.equal(h.turnCreates.length, 1, 'the outcome is already recorded when delivery fails');
+    assert.equal(h.turnCreates[0].data.replyPreview, GREETING_REPLY);
+    assert.ok(h.updates.some((update: any) => update.data?.status === 'delivery_pending'));
+    assert.equal(h.updates.some((update: any) => update.data?.status === 'completed'), false);
+    assert.equal(h.routeRequests.length, 0);
+  });
+
+  it('routes a greeting that carries business text — including one split by a newline — through the normal route', async () => {
+    for (const text of ['สวัสดีเบิกค่าโดยสารหน่อย', 'สวัสดี\nเบิกค่าโดยสารหน่อย']) {
+      const h = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
+
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: text });
+
+      assert.equal(h.routeRequests.length, 1, `${JSON.stringify(text)} is business text, not a standalone greeting`);
+      assert.doesNotMatch(h.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+    }
+  });
+
+  it('stands down when the chat has an open clarification or an expense draft in flight', async () => {
+    const openClarification = greetingHarness({
+      permissions: GREETING_PERMISSIONS,
+      lineAiExactGreetingEnabled: true,
+      openWaiting: [{
+        id: 'clarify-1', question: 'ยอดเท่าไรคะ?', text: 'ค่าวินมอไซต์', askedAt: new Date().toISOString(),
+        clarifyForIntent: 'EXPENSE_DOCUMENT_CAPTURE',
+        entry: { id: 'clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+      }],
+    });
+
+    await openClarification.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+
+    assert.equal(openClarification.routeRequests.length, 1, 'the open question owns the turn, not the greeting lane');
+    assert.equal(openClarification.routeRequests[0].openClarifications.length, 1);
+
+    const activeDraft = greetingHarness({
+      permissions: GREETING_PERMISSIONS,
+      lineAiExactGreetingEnabled: true,
+      expenseDraftConversation: {
+        routeContexts: async () => [{
+          expenseId: 'expense-1', label: 'ร่าง 1', status: 'OPEN',
+          questions: [{ id: 'I01-QTY', itemRef: 'I01', prompt: 'จำนวน?' }],
+        }],
+        execute: async () => ({ handled: false }),
+        interruptOpen: async () => undefined,
+      },
+    });
+
+    await activeDraft.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+
+    assert.equal(activeDraft.routeRequests.length, 1, 'a draft in flight keeps the greeting on the full route');
+    assert.equal(activeDraft.routeRequests[0].activeExpenseDrafts.length, 1);
+  });
+
+  it('is inert while the flag is off — only the flag turns the 0-call lane on', async () => {
+    const off = greetingHarness({ permissions: GREETING_PERMISSIONS });
+
+    await off.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+
+    assert.equal(off.routeRequests.length, 1, 'default-off keeps the exact legacy path through the router');
+    assert.doesNotMatch(off.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+
+    const on = greetingHarness({ permissions: GREETING_PERMISSIONS, lineAiExactGreetingEnabled: true });
+
+    await on.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+
+    assert.equal(on.routeRequests.length, 0);
+    assert.match(on.replies[0] ?? '', /วันนี้มีอะไรให้น้องมั่งมีช่วยไหมคะ/);
+  });
+});
+
+describe('LINE intake dispatch – Phase-0 capture/render stage timing (uat-correctness-latency §11.1, plan Phase 0)', () => {
+  /** Collects the `line.ai.stage` events this turn emits, in the order they were emitted. */
+  function stageEventsOf(useCase: ProcessLineWebhookUseCase): any[] {
+    const stages: any[] = [];
+    (useCase as any).logger = {
+      log: (entry: any) => { if (entry?.msg === 'line.ai.stage') stages.push(entry); },
+      warn: () => undefined,
+      error: () => undefined,
+    };
+    return stages;
+  }
+
+  function assertStageOnce(stages: any[], stage: string): void {
+    const emitted = stages.filter((entry) => entry.stage === stage);
+    assert.equal(emitted.length, 1, `${stage} is timed exactly once for this turn`);
+    assert.equal(emitted[0].webhookEventId, TEXT_EVENT.webhookEventId, `${stage} is correlated by webhookEventId`);
+    assert.ok(
+      Number.isInteger(emitted[0].durationMs) && emitted[0].durationMs >= 0,
+      `${stage} carries a non-negative integer duration`,
+    );
+    const keys = Object.keys(emitted[0]);
+    assert.ok(!keys.includes('lineUserId') && !keys.includes('messageText') && !keys.includes('text'),
+      `${stage} carries no raw message text or LINE user id`);
+  }
+
+  it('times the capture execute, the card render and the LINE send once each on a text capture', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+        captureHints: { sourceDocumentType: 'EXPENSE_NOTE_TEXT', amount: '65' },
+      },
+    });
+    const stages = stageEventsOf(h.useCase);
+
+    await h.useCase.execute(TEXT_EVENT);
+
+    // The stages measure work that actually ran: one capture execute, one delivered reply.
+    assert.equal(h.captured.length, 1);
+    assert.equal(h.sentMessages.length, 1);
+    for (const stage of ['capture_execute', 'render', 'line_delivery']) assertStageOnce(stages, stage);
+    // Render is construction only and delivery is the network send only, so render precedes it.
+    assert.ok(stages.findIndex((entry) => entry.stage === 'render')
+      < stages.findIndex((entry) => entry.stage === 'line_delivery'));
+    // No reimbursement use case or mutation exists in this release, so nothing may claim its duration.
+    assert.equal(stages.some((entry) => entry.stage === 'reimbursement_execute'), false);
+  });
+
+  it('times only render and delivery on the 0-model greeting lane — no router, no gateway turn', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      lineAiExactGreetingEnabled: true,
+    });
+    const stages = stageEventsOf(h.useCase);
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'สวัสดี' });
+
+    assert.equal(h.routeRequests.length, 0, 'the greeting lane answers without the intake router');
+    // The canonical outcome is persisted BEFORE delivery, so `persistence` leads — and it is emitted at
+    // all only because persistIntakeTurn is inside the stage now; before that every intake turn reported
+    // zero database time it had in fact spent.
+    assert.deepEqual(
+      stages.map((entry) => entry.stage),
+      ['persistence', 'render', 'line_delivery'],
+      'a deterministic greeting times its persist, its card build and its send — and nothing that never ran',
+    );
+    for (const stage of ['persistence', 'render', 'line_delivery']) assertStageOnce(stages, stage);
+  });
+
+  it('times the intake persistence of a clarify turn that never reaches the AI-turn path', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      routePlan: {
+        status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.97,
+        captureHints: { amount: '590' },
+      },
+      captureError: new LineTextExpenseCaptureIncompleteError(),
+    });
+    const stages = stageEventsOf(h.useCase);
+
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'รีบทำให้หน่อย' });
+
+    assertStageOnce(stages, 'persistence');
+  });
+});
+
+describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-latency §10.1, default-off)', () => {
+  /** Longer than the 1200 code points a Flex bubble body keeps, so a card can never carry it whole. */
+  const LONG_TERMINAL = `สรุปรายการค่าใช้จ่าย ${'ก'.repeat(1300)}`;
+  /** Past the 4,800 the expense splitter emits and still inside LINE's 5,000-character text cap — the
+   *  §14.3 `long-reply-over-4800-lossless` row. All-BMP, so length IS the code-point count. */
+  const OVER_4800_TERMINAL = 'สรุปค่าใช้จ่ายฉบับเต็ม '.padEnd(4_900, 'ก');
+
+  /** Routes a controllable list of reply parts through deliverCompletedReplies (draft-continuation lane). */
+  function multipartHarness(replyTexts: string[], lineAiMultipartTerminalFlexEnabled = false) {
+    return makeHarness({
+      permissions: ['expense.receipt.line_upload'],
+      lineAiMultipartTerminalFlexEnabled,
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+      expenseDraftConversation: {
+        routeContexts: async () => [],
+        execute: async () => ({ handled: true, status: 'UPDATED', replyTexts, acceptedFields: [] }),
+      },
+    });
+  }
+
+  const sent = (h: ReturnType<typeof makeHarness>) => (h.sentMessages[0] ?? []) as any[];
+  const ANSWER = { ...TEXT_EVENT, messageText: 'ตอบคำถามในร่าง' };
+
+  it('OFF is the exact legacy shape: every part is text, quick reply only on the terminal one', async () => {
+    const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', LONG_TERMINAL];
+    const h = multipartHarness(texts);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.equal(messages.length, 3);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text']);
+    assert.deepEqual(messages.map((m) => m.text), texts, 'no part is reshaped, reordered or truncated');
+    assert.deepEqual(messages.map((m) => m.quickReply !== undefined), [false, false, true]);
+  });
+
+  it('ON with a short terminal keeps earlier parts lossless and turns the terminal into the Flex card', async () => {
+    const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', '🧾 สรุปร่างเรียบร้อยค่ะ'];
+    const h = multipartHarness(texts, true);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.equal(messages.length, 3);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'flex']);
+    assert.deepEqual(messages.slice(0, 2).map((m) => m.text), ['ส่วนที่ 1', 'ส่วนที่ 2']);
+    assert.match(replyAssertionText(messages[2]), /สรุปร่างเรียบร้อยค่ะ/);
+    assert.equal(messages[2].quickReply !== undefined, true);
+  });
+
+  it('ON with a single over-long terminal ships the FULL text and appends a concise card after it', async () => {
+    const h = multipartHarness([LONG_TERMINAL], true);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'flex']);
+    assert.equal(messages[0].text, LONG_TERMINAL, 'not one character of the canonical reply is dropped');
+    // The card is server-owned closing copy, never a 1200-character slice of the answer.
+    const card = replyAssertionText(messages[1]);
+    assert.doesNotMatch(card, /กกกก/, 'the long canonical text is never fed to the 1200-char Flex body');
+    assert.match(card, /ข้อความเต็มอยู่ด้านบน/);
+    assert.equal(messages[1].quickReply !== undefined, true);
+  });
+
+  it('ON with an over-long terminal in a multi-part reply preserves every part exactly', async () => {
+    const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', LONG_TERMINAL];
+    const h = multipartHarness(texts, true);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.equal(messages.length, 4);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'flex']);
+    assert.deepEqual(messages.slice(0, 3).map((m) => m.text), texts);
+    assert.match(replyAssertionText(messages[3]), /ข้อความเต็มอยู่ด้านบน/);
+  });
+
+  it('ON preserves a 4,900-code-point terminal exactly and still appends the concise card', async () => {
+    assert.equal(Array.from(OVER_4800_TERMINAL).length, 4_900, 'the fixture is genuinely past 4,800');
+    const h = multipartHarness(['ส่วนที่ 1', OVER_4800_TERMINAL], true);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'flex'], 'a slot was free, so the card is appended');
+    assert.equal(messages[1].text, OVER_4800_TERMINAL, 'every one of the 4,900 code points is delivered');
+    assert.equal(Array.from(messages[1].text).length, 4_900, 'nothing is sliced at 1,200 or anywhere else');
+    const card = replyAssertionText(messages[2]);
+    assert.doesNotMatch(card, /กกกก/, 'the card is closing copy, never a second shorter version of the answer');
+    assert.match(card, /ข้อความเต็มอยู่ด้านบน/);
+    assert.equal(messages[2].quickReply !== undefined, true);
+  });
+
+  it('ON at the five-part cap prefers five lossless text messages over a card', async () => {
+    const texts = ['1', '2', '3', '4', LONG_TERMINAL];
+    const h = multipartHarness(texts, true);
+
+    await h.useCase.execute(ANSWER);
+
+    const messages = sent(h);
+    assert.equal(messages.length, 5, 'LINE accepts at most five messages in one reply');
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'text', 'text']);
+    assert.deepEqual(messages.map((m) => m.text), texts, 'no truncation and no dropped part to make room for a card');
+    assert.equal(messages[4].quickReply !== undefined, true, 'the completion menu still rides the terminal message');
+  });
+
+  it('refuses to deliver a part LINE would silently slice, on either lane', async () => {
+    for (const enabled of [false, true]) {
+      const h = multipartHarness(['ok', 'x'.repeat(5001)], enabled);
+      await assert.rejects(() => h.useCase.execute(ANSWER), /LINE_REPLY_TEXT_PART_TOO_LONG/, `flag=${enabled}`);
+      assert.equal(h.sentMessages.length, 0, 'nothing half-truncated is sent');
+    }
   });
 });

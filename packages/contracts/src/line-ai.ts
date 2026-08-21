@@ -379,6 +379,10 @@ export type LineIntakeRouteIntent =
   /** Correcting a field of a record this assistant already captured — never a new capture. */
   | 'EXPENSE_CAPTURE_CORRECTION'
   | 'SUBSTITUTE_RECEIPT_CONTINUATION'
+  /** The user asks to be paid back for money they advanced (ขอเบิก/เบิกคืน/สำรองจ่าย). Handoff or
+   *  clarify room ONLY — it must never fall through to expense capture and never creates a record by
+   *  itself (uat-correctness-latency spec §7/§9). */
+  | 'REIMBURSEMENT_REQUEST_START'
   | 'BUSINESS_DOCUMENT_REFERENCE'
   | 'SIGNATURE_UPLOAD_TICKET'
   | 'BUSINESS_READ_QUESTION'
@@ -393,6 +397,7 @@ export const LINE_INTAKE_ROUTE_INTENTS = [
   'EXPENSE_DRAFT_CONTINUATION',
   'EXPENSE_CAPTURE_CORRECTION',
   'SUBSTITUTE_RECEIPT_CONTINUATION',
+  'REIMBURSEMENT_REQUEST_START',
   'BUSINESS_DOCUMENT_REFERENCE',
   'SIGNATURE_UPLOAD_TICKET',
   'BUSINESS_READ_QUESTION',
@@ -411,6 +416,67 @@ export function asIntakeRouteIntent(value: unknown): LineIntakeRouteIntent | und
     ? (value as LineIntakeRouteIntent)
     : undefined;
 }
+
+// ─── Semantic expense-vs-reimbursement contract (uat-correctness-latency spec §7) ─────────────
+// Bounded, explicitly encoded on the route plan — never inferred later from the intent name. Both
+// are untrusted model advice: `AMBIGUOUS` and `UNKNOWN` are deterministic mutation vetoes, and only a
+// server-verified BUSINESS_EXPENSE + COMPANY_PAID may ever reach expense capture in a primary mode.
+
+export const LINE_INTAKE_SEMANTIC_OUTCOMES = ['BUSINESS_EXPENSE', 'REIMBURSEMENT_CLAIM', 'AMBIGUOUS'] as const;
+export type LineIntakeSemanticOutcome = (typeof LINE_INTAKE_SEMANTIC_OUTCOMES)[number];
+const LINE_INTAKE_SEMANTIC_OUTCOME_SET: ReadonlySet<string> = new Set(LINE_INTAKE_SEMANTIC_OUTCOMES);
+
+export const LINE_INTAKE_FUNDING_SOURCES = ['COMPANY_PAID', 'EMPLOYEE_PAID', 'UNKNOWN'] as const;
+export type LineIntakeFundingSource = (typeof LINE_INTAKE_FUNDING_SOURCES)[number];
+const LINE_INTAKE_FUNDING_SOURCE_SET: ReadonlySet<string> = new Set(LINE_INTAKE_FUNDING_SOURCES);
+
+/** Explicit membership (no cast) for an untrusted semantic outcome; `undefined` when not a member. */
+export function asIntakeSemanticOutcome(value: unknown): LineIntakeSemanticOutcome | undefined {
+  return typeof value === 'string' && LINE_INTAKE_SEMANTIC_OUTCOME_SET.has(value)
+    ? (value as LineIntakeSemanticOutcome)
+    : undefined;
+}
+
+/** Explicit membership (no cast) for an untrusted funding source; `undefined` when not a member. */
+export function asIntakeFundingSource(value: unknown): LineIntakeFundingSource | undefined {
+  return typeof value === 'string' && LINE_INTAKE_FUNDING_SOURCE_SET.has(value)
+    ? (value as LineIntakeFundingSource)
+    : undefined;
+}
+
+/** The ONLY field names a typed clarification (expense or reimbursement) may report as missing,
+ *  accepted, or conflicting — enum-only so logs and errors never carry raw conversation or PII. */
+export const LINE_INTAKE_CLARIFICATION_FIELDS = [
+  'fundingSource', 'amount', 'description', 'purpose', 'incurredDate', 'categoryKey', 'reason',
+] as const;
+export type LineIntakeClarificationField = (typeof LINE_INTAKE_CLARIFICATION_FIELDS)[number];
+const LINE_INTAKE_CLARIFICATION_FIELD_SET: ReadonlySet<string> = new Set(LINE_INTAKE_CLARIFICATION_FIELDS);
+
+/** Keep only known clarification fields (deduplicated, bounded); anything else is dropped. */
+export function asIntakeClarificationFields(value: unknown): LineIntakeClarificationField[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((item): item is LineIntakeClarificationField =>
+    typeof item === 'string' && LINE_INTAKE_CLARIFICATION_FIELD_SET.has(item)))].slice(0, LINE_INTAKE_CLARIFICATION_FIELDS.length);
+}
+
+/** Bounded semantic hints for REIMBURSEMENT_REQUEST_START. Deliberately a DIFFERENT type from
+ *  {@link LineIntakeCaptureHints}: an expense category id and a reimbursement category key are different
+ *  authorities. Every value is model advice the API re-grounds; the first release displays them on a
+ *  handoff card only and writes nothing. */
+export type LineIntakeReimbursementHints = {
+  description?: string;
+  businessPurpose?: string;
+  /** Must be selected from valueCandidates.amounts (membership-guarded at parse). */
+  amount?: string;
+  /** Must be selected from valueCandidates.dates (membership-guarded at parse). */
+  incurredDate?: string;
+  /** Reserved for the DRAFT amendment: accepted ONLY from a server allowlist, which this release never sends. */
+  categoryKey?: string;
+  /** Grounded claim reason for the header; never model-invented. */
+  reason?: string;
+  confidence?: number;
+  missingFields?: LineIntakeClarificationField[];
+};
 
 /** Prisma `AiTurnIntent` mirror (parity-tested). Distinct from apps/api's
  *  `AI_TURN_INTENTS`, which is the narrower normalization subset. */
@@ -525,15 +591,18 @@ export type LineIntakeRouteRequest = {
   capabilities?: LineIntakeRouterCapabilities;
 };
 
-/** The two trusted, server-set intake-router capability flags. */
-export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean };
+/** The trusted, server-set intake-router capability flags. `reimbursementSemantic` is on for the two
+ *  PRIMARY modes of LINE_AI_REIMBURSEMENT_SEMANTIC_MODE ('clarify_only' and 'handoff') — never for the
+ *  inert 'shadow', which stays byte-identical to 'off' — and it adds the three-way semantic outcome,
+ *  funding source and the REIMBURSEMENT_REQUEST_START route to the prompt and parser. */
+export type LineIntakeRouterCapabilities = { fusedPlan?: boolean; substituteSemantic?: boolean; reimbursementSemantic?: boolean };
 
 /** Receiver-boundary validator for the TRUSTED capability flags (same role as {@link asIntakeRouteIntent}).
- *  Accepts ONLY a literal boolean `true` for each of the two known keys; EVERY other shape — a truthy
+ *  Accepts ONLY a literal boolean `true` for each known key; EVERY other shape — a truthy
  *  non-boolean (`1`, `"true"`, `{}`, `[]`), a `false`, `null`, a non-object, or any unknown/nested key — is
- *  discarded. So a malformed or hostile `line-intake-route` body can NEVER activate the fused-plan or
- *  substitute prompt sections (and their ~21KB catalog / larger token budget): activation requires the API
- *  to have set an actual boolean `true`. Returns a bounded object carrying at most the two known keys. */
+ *  discarded. So a malformed or hostile `line-intake-route` body can NEVER activate the fused-plan,
+ *  substitute or reimbursement prompt sections (and their ~21KB catalog / larger token budget): activation
+ *  requires the API to have set an actual boolean `true`. Returns a bounded object carrying at most the known keys. */
 export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapabilities {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   const raw = value as Record<string, unknown>;
@@ -542,6 +611,7 @@ export function asIntakeRouterCapabilities(value: unknown): LineIntakeRouterCapa
   // key, a polluted Object.prototype), so only a real own boolean `true` the API set can activate a section.
   if (Object.hasOwn(raw, 'fusedPlan') && raw.fusedPlan === true) caps.fusedPlan = true;
   if (Object.hasOwn(raw, 'substituteSemantic') && raw.substituteSemantic === true) caps.substituteSemantic = true;
+  if (Object.hasOwn(raw, 'reimbursementSemantic') && raw.reimbursementSemantic === true) caps.reimbursementSemantic = true;
   return caps;
 }
 
@@ -601,6 +671,13 @@ export type LineIntakeRoutePlan = {
   captureHints?: LineIntakeCaptureHints;
   /** EXPENSE_CAPTURE_CORRECTION only (phase 2). */
   correctionHints?: LineIntakeCorrectionHints;
+  /** Present ONLY under the trusted `reimbursementSemantic` capability (always both, defaulting to the
+   *  fail-closed AMBIGUOUS/UNKNOWN when the model omits them). Veto-only advice: AMBIGUOUS or UNKNOWN
+   *  blocks every mutation; expense capture additionally requires BUSINESS_EXPENSE + COMPANY_PAID. */
+  semanticOutcome?: LineIntakeSemanticOutcome;
+  fundingSource?: LineIntakeFundingSource;
+  /** REIMBURSEMENT_REQUEST_START only; bounded and membership-guarded at parse. */
+  reimbursementHints?: LineIntakeReimbursementHints;
   /** Advisory image/document classification; source modules decide the final route. */
   documentClassification?: BusinessDocumentClassification;
   errorCode?: string;

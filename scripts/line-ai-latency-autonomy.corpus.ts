@@ -3,7 +3,16 @@
  *
  * No provider, database, LINE, permission, or runtime imports belong here. The existing
  * operator replay/provider runners will consume these expectations during implementation.
+ *
+ * It also carries the two frozen gold manifests of docs/specs/line-ai-uat-correctness-latency-spec.md:
+ * §14.2 completeness/merge (`LINE_AI_COMPLETENESS_MERGE_MANIFEST`) and §14.3 presentation/permission
+ * (`LINE_AI_PRESENTATION_PERMISSION_MANIFEST`). Both are EXPECTATION data only — this file calls
+ * nothing. The integrity spec next to it now REPLAYS every §14.2 expense row through the real
+ * `assessLineTextExpenseCapture`, so those rows are runtime-checked; the reimbursement rows have no
+ * deterministic assessor (`lane` says which) and the §14.3 rows are checked by the webhook/card specs
+ * they name, which is why each one carries its own `evidenceStatus`.
  */
+import type { LineIntakeClarificationField } from '@watchdog-bms/contracts';
 import { LINE_AI_SUBSTITUTE_ROUTING_CORPUS } from './line-ai-substitute-routing.corpus';
 
 export const LINE_AI_IMPLEMENTED_DEBOUNCE_MS = 2_500;
@@ -136,6 +145,10 @@ const zeroModelCases: LatencyAutonomyEvalCase[] = [
   { id: 'security-unlinked-en', category: 'security', language: 'en', message: 'Show today sales', precondition: 'unlinked', expectedLane: 'zero_model', expectedTools: [], forbiddenTools: ['sales.get_sales_summary'], expectedToolCallCount: 0, maxModelCalls: 0, expectsComposer: false, expectsCritic: false },
   { id: 'security-legal-th', category: 'security', language: 'th', message: 'ดูค่าใช้จ่ายเดือนนี้', precondition: 'legal_pending', expectedLane: 'zero_model', expectedTools: [], forbiddenTools: ['expense.list_recent'], expectedToolCallCount: 0, maxModelCalls: 0, expectsComposer: false, expectsCritic: false },
   { id: 'security-permission-denied-en', category: 'security', language: 'en', message: 'Show this month expenses', precondition: 'permission_denied', expectedLane: 'zero_model', expectedTools: [], forbiddenTools: ['expense.list_recent'], expectedToolCallCount: 0, maxModelCalls: 0, expectsComposer: false, expectsCritic: false },
+  // Exact standalone greeting (uat-correctness-latency spec §11.2, plan Phase 6B): a WHOLE-message
+  // allowlist match answers with deterministic persona copy — zero model calls. Only the exact message
+  // qualifies; a greeting carrying business text stays on its full semantic route (see the mixed rows).
+  { id: 'casual-hello-th', category: 'casual', language: 'th', message: 'สวัสดี', precondition: 'linked_allowed', expectedLane: 'zero_model', expectedTools: [], forbiddenTools: [], expectedToolCallCount: 0, maxModelCalls: 0, expectsComposer: false, expectsCritic: false, requiredPolicies: ['same_language', 'persona', 'brief', 'no_tool_invention'] },
 ];
 
 function conversationalCases(
@@ -154,8 +167,8 @@ function conversationalCases(
   }));
 }
 
+// The exact standalone greeting 'สวัสดี' is NOT here: it is the zero-model lane above.
 const casualCases = conversationalCases('casual', 'casual', 2, [
-  ['casual-hello-th', 'th', 'สวัสดี'],
   ['casual-how-are-you-th', 'th', 'วันนี้เป็นยังไงบ้าง'],
   ['casual-tired-th', 'th', 'วันนี้เหนื่อยจัง'],
   ['casual-thanks-th', 'th', 'ขอบคุณมากนะ'],
@@ -470,9 +483,430 @@ export const LINE_AI_DEBOUNCE_EVAL_CASES: DebounceEvalCase[] = [
   { id: 'debounce-company-separates-content', chat: 'one_to_one', debounceMs: 1_000, maxWaitMs: LINE_AI_BUFFER_MAX_WAIT_MS, events: [{ atMs: 0, kind: 'text', text: 'ยอดขายวันนี้' }, { atMs: 300, kind: 'command', text: '/company 2' }, { atMs: 500, kind: 'text', text: 'ยอดขายวันนี้' }], expectedBatchCount: 2, expectedFirstFlushAtMs: 300, expectedSegmentTexts: ['ยอดขายวันนี้', '/company 2', 'ยอดขายวันนี้'], expectsLoading: true, note: 'Company command closes preceding content; later content starts the next batch.' },
 ];
 
+/**
+ * uat-correctness-latency spec §14.2 — the frozen completeness/merge gold set.
+ *
+ * One row = one deterministic verdict over one turn. `message` is the CURRENT message;
+ * `groundingSegments` are the exact texts an earlier clarification resolved (§8.3), which is the only
+ * history that counts as evidence — ordinary conversation never does. No LINE id, user id, chat key or
+ * display name appears in a row: the identity of the speaker changes nothing about the verdict.
+ */
+export type CompletenessMergeCase = {
+  id: string;
+  /** Expense = `assessLineTextExpenseCapture` semantics. Reimbursement rows are §8.2/§9.1 gold for a lane
+   *  that has NO deterministic assessor yet, so every one of them is zero-write in this release. */
+  lane: 'expense' | 'reimbursement';
+  message: string;
+  groundingSegments?: string[];
+  /** The bounded model advice shape only (mirrors `CaptureHintsInput`); every value is re-grounded. */
+  hints: {
+    amount?: string;
+    description?: string;
+    businessPurpose?: string;
+    /** An ACTIVE category id. §8.1: a classification is never a purpose, so it cannot complete a row. */
+    expenseCategoryId?: string;
+    incurredDate?: string;
+  };
+  /** EXPENSE lane only: true when the server verified `BUSINESS_EXPENSE` + `COMPANY_PAID` (§8.1 guard),
+   *  which is the sole condition under which the TYPED rules run at all. False is the default-off lane:
+   *  the assessor delegates to the legacy boolean gate and reports NO field, so every field array below
+   *  is empty on those rows — reporting one would describe a verdict the current release never produces. */
+  semanticBusinessExpenseConfirmed: boolean;
+  expectedAcceptedFields: LineIntakeClarificationField[];
+  expectedMissingFields: LineIntakeClarificationField[];
+  expectedConflictingFields: LineIntakeClarificationField[];
+  /** `assessLineTextExpenseCapture(...).eligible` — the completeness verdict alone. Behind the guard that
+   *  means "nothing missing and nothing conflicting"; default-off it is the legacy boolean. Authority,
+   *  entitlement and the handoff-only product boundary are separate gates and can still refuse `true`. */
+  expectedWriteAllowed: boolean;
+  note: string;
+};
+
+/** The ACTIVE expense categories these rows are assessed against. Data only (id → display name), the
+ *  same shape `listCategories` produces; §8.1 means no row can complete through a category anyway. */
+export const LINE_AI_COMPLETENESS_ACTIVE_CATEGORIES: ReadonlyMap<string, string> = new Map([
+  ['active-category-travel', 'ค่าเดินทาง'],
+]);
+
+const UAT_60 = 'เบิกค่ารถวินมอไซต์ 60 บาท ไปพบลูกค้า';
+const UAT_50 = 'เบิกค่าวินมอไซด์ไปพบลูกค้าหน่อย 50 บาท';
+const ORIGINAL_60 = 'ค่าวิน 60 บาท ไปพบลูกค้า';
+
+export const LINE_AI_COMPLETENESS_MERGE_MANIFEST: readonly CompletenessMergeCase[] = Object.freeze([
+  // The two exact UAT messages, frozen as the DEFECT they produced. Both are "เบิก…" claims: the semantic
+  // guard can never confirm BUSINESS_EXPENSE + COMPANY_PAID for them, so they are route-veto rows and the
+  // assessor runs its LEGACY branch — zero write, and no typed field at all, which is precisely why the
+  // default-off dispatcher still falls back to the generic "ยอดเงินและวัตถุประสงค์" re-ask that produced the
+  // defect. Nothing in this release fixes the re-ask for these two texts; the fix lives behind the guard,
+  // on the company-paid rows below.
+  {
+    id: 'uat-60-purpose-only-guard-off', lane: 'expense', message: UAT_60,
+    hints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' }, semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: [], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'Exact UAT 60: a bare claim pins AMBIGUOUS/UNKNOWN, so businessPurpose stays inert, the legacy gate '
+      + 'refuses, and the fieldless result is what still makes the clarification re-ask for the accepted amount.',
+  },
+  {
+    id: 'uat-50-purpose-only-guard-off', lane: 'expense', message: UAT_50,
+    hints: { amount: '50', businessPurpose: 'ไปพบลูกค้า' }, semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: [], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'Exact UAT 50, same shape and same fieldless legacy verdict: zero write, generic re-ask still unfixed.',
+  },
+  // The fix, on text that actually states the company paid (§8.1 expansion behind the guard).
+  {
+    id: 'purpose-only-in-business-purpose-company-paid', lane: 'expense',
+    message: 'ค่ารถวิน 60 บาท ไปพบลูกค้า บริษัทจ่าย',
+    hints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount', 'purpose'], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'Purpose grounded ONLY in businessPurpose passes once the server confirmed BUSINESS_EXPENSE + COMPANY_PAID.',
+  },
+  {
+    id: 'purpose-only-in-business-purpose-50-company-paid', lane: 'expense',
+    message: 'ค่าวินมอไซด์ไปพบลูกค้า 50 บาท บริษัทจ่าย',
+    hints: { amount: '50', businessPurpose: 'ไปพบลูกค้า' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount', 'purpose'], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'The 50-baht UAT wording with an explicit company payer: complete, one deterministic amount candidate.',
+  },
+  {
+    id: 'expense-note-grounded-description', lane: 'expense', message: ORIGINAL_60,
+    hints: { amount: '60', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: [], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'Acceptance criterion, on the DEFAULT-OFF lane: an ordinary spend note with a grounded description '
+      + 'still completes and still writes. The legacy gate reports the boolean only, hence no typed field.',
+  },
+  {
+    id: 'amount-only-missing', lane: 'expense', message: 'ค่ากระดาษ a4 ใช้ในออฟฟิศ',
+    hints: { description: 'ค่ากระดาษ a4' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['description'], expectedMissingFields: ['amount'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'Only the amount is missing, so the question asks for the amount only (§8.2).',
+  },
+  {
+    id: 'purpose-only-missing', lane: 'expense', message: 'จ่ายไป 120 บาท',
+    hints: { amount: '120' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount'], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'Amount accepted, nothing says what it was for — ask the item/purpose only.',
+  },
+  {
+    id: 'incidental-quantity-is-not-an-amount', lane: 'expense', message: 'ค่ากาแฟ 2 แก้ว 65 บาท',
+    hints: { amount: '65', description: 'ค่ากาแฟ' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount', 'description'], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'A currency-marked candidate beats an incidental quantity inside the SAME segment: 65 is the only amount.',
+  },
+  {
+    id: 'two-amounts-conflict', lane: 'expense', message: 'ค่าอาหาร 200 บาท ค่าเดินทาง 60 บาท',
+    hints: { amount: '200', description: 'ค่าอาหาร' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['description'], expectedMissingFields: [],
+    expectedConflictingFields: ['amount'], expectedWriteAllowed: false,
+    note: 'Two currency-marked amounts in one turn are a conflict the user resolves, never a silent pick.',
+  },
+  // The four follow-up rows below share one policy: in semantic mode a resolved clarification is VETO
+  // evidence only. It can create a conflict, and it can never supply the amount or the purpose a write is
+  // made from, because no durable neutral state backs that Redis text yet (§8.3). So a follow-up carrying
+  // only the purpose still has to ask for the amount, and a correction still has to restate what it is for.
+  {
+    id: 'followup-purpose-keeps-original-amount', lane: 'expense', message: 'ไปพบลูกค้า',
+    groundingSegments: ['ค่าวิน 60 บาท'],
+    hints: { amount: '60', businessPurpose: 'ไปพบลูกค้า' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['purpose'], expectedMissingFields: ['amount'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: '§8.3 rule 1/2 + the Redis-authority rule: the purpose typed this turn is accepted and never asked '
+      + 'again, but the 60 that exists only in the earlier clarification is not write authority — so the '
+      + 'amount is re-asked and nothing is created.',
+  },
+  {
+    id: 'followup-new-amount-without-correction-conflicts', lane: 'expense', message: '200 บาท',
+    groundingSegments: [ORIGINAL_60],
+    hints: { amount: '200', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: [], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: ['amount'], expectedWriteAllowed: false,
+    note: '§8.3 rule 3: 60 then 200 with no correction word must ask which one, and create nothing. The '
+      + 'description lives in the earlier turn, not this message, so it is not accepted here either.',
+  },
+  {
+    id: 'explicit-closed-correction-replaces-amount', lane: 'expense', message: 'แก้ยอดเป็น 200 บาท',
+    groundingSegments: [ORIGINAL_60],
+    hints: { amount: '200', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount'], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: '§8.3 rule 4: the whole message IS the closed correction command, so 200 settles the conflict and is '
+      + 'accepted. It still writes nothing in this release — the item it would be written under exists only in '
+      + 'the earlier clarification, so the turn asks instead of reviving Redis text as authority.',
+  },
+  {
+    id: 'correction-question-is-not-a-correction', lane: 'expense', message: 'ถ้าแก้ยอดเป็น 200 บาทได้ไหม',
+    groundingSegments: [ORIGINAL_60],
+    hints: { amount: '200', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: [], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: ['amount'], expectedWriteAllowed: false,
+    note: 'A question that CONTAINS the correction phrase is not an order to replace the amount (§8.3 rule 6).',
+  },
+  {
+    id: 'correction-negation-is-not-a-correction', lane: 'expense', message: 'ไม่แก้ยอดเป็น 200 บาท',
+    groundingSegments: [ORIGINAL_60],
+    hints: { amount: '200', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: [], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: ['amount'], expectedWriteAllowed: false,
+    note: 'The refusal shape is the other half of the same guard: still a conflict, still zero write.',
+  },
+  {
+    id: 'model-amount-mismatch', lane: 'expense', message: ORIGINAL_60,
+    hints: { amount: '600', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['description'], expectedMissingFields: ['amount'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: '§8.1: the model-selected amount must EQUAL the one deterministic candidate; 600 vs 60 fails closed.',
+  },
+  {
+    id: 'invented-purpose-not-grounded', lane: 'expense', message: 'ค่าวิน 60 บาท',
+    hints: { amount: '60', businessPurpose: 'ไปประชุมกับซัพพลายเออร์' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount'], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'A purpose absent from the source text is rejected even behind the guard.',
+  },
+  {
+    id: 'invented-category-is-not-a-purpose', lane: 'expense', message: 'ค่าวิน 60 บาท',
+    hints: { amount: '60', expenseCategoryId: 'active-category-travel' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount'], expectedMissingFields: ['description', 'purpose'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: '§8.1: an ACTIVE category is a classification, not a statement of what the money was for.',
+  },
+  {
+    id: 'unrelated-answer-does-not-complete', lane: 'expense', message: 'ยอดขายวันนี้เท่าไหร่',
+    hints: {}, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: [], expectedMissingFields: ['amount', 'description', 'purpose'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: '§8.3 rule 6: an unrelated question consumes no clarification, so it contributes no grounding.',
+  },
+  {
+    id: 'thai-digit-amount-accepted', lane: 'expense', message: 'ค่าวิน ๖๐ บาท ไปพบลูกค้า',
+    hints: { amount: '60', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: true,
+    expectedAcceptedFields: ['amount', 'description'], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'Thai digits normalize to the same 60, so the candidate still equals the model-selected amount.',
+  },
+  {
+    id: 'redelivery-repeats-the-same-verdict', lane: 'expense', message: ORIGINAL_60,
+    hints: { amount: '60', description: 'ค่าวิน' }, semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: [], expectedMissingFields: [],
+    expectedConflictingFields: [], expectedWriteAllowed: true,
+    note: 'Identical input → identical verdict (the assessment is pure). Suppressing the SECOND write is the '
+      + 'event-log/idempotency job, not this verdict — see the duplicate-webhook row in the §14.3 manifest.',
+  },
+  // Reimbursement lane: §8.2 field enums for a claim. `lane: 'reimbursement'` is the bounded marker that
+  // these two rows are NOT assessor rows — no deterministic assessor exists for the claim lane, so the
+  // integrity spec replays neither through `assessLineTextExpenseCapture` rather than faking a verdict.
+  // Release one is handoff-only, so both are incomplete and zero-write by construction.
+  {
+    id: 'reimbursement-date-only-missing', lane: 'reimbursement',
+    message: 'สำรองจ่ายค่าวิน 60 บาท ไปพบลูกค้า ขอเบิกคืน',
+    hints: { amount: '60', description: 'ค่าวิน', businessPurpose: 'ไปพบลูกค้า' },
+    semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: ['amount', 'description', 'purpose'], expectedMissingFields: ['incurredDate'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'Acceptance criterion: only the date is asked, and amount/description/purpose are remembered.',
+  },
+  {
+    id: 'reimbursement-bare-claim-funding-unknown', lane: 'reimbursement', message: 'เบิกค่าวิน 60 บาท ไปพบลูกค้า',
+    hints: { amount: '60', description: 'ค่าวิน', businessPurpose: 'ไปพบลูกค้า' },
+    semanticBusinessExpenseConfirmed: false,
+    expectedAcceptedFields: ['amount', 'description', 'purpose'],
+    expectedMissingFields: ['fundingSource', 'incurredDate'],
+    expectedConflictingFields: [], expectedWriteAllowed: false,
+    note: 'A bare claim never says who paid: fundingSource is missing, which is a mutation veto on BOTH lanes.',
+  },
+]);
+
+/**
+ * uat-correctness-latency spec §14.3 — the frozen presentation/permission gold set.
+ *
+ * `evidenceStatus` is the honest part: `implemented_fixture` means the branch exists in the current
+ * webhook/card code and a deterministic fixture can assert it today; `required_gap` means the spec
+ * REQUIRES the outcome and the code does not do it yet. The manifest freezes the expectation either
+ * way — it is not a claim that the behavior ships.
+ */
+export type PresentationPermissionCase = {
+  id: string;
+  journey:
+    | 'expense_capture_terminal' | 'reimbursement_clarify' | 'reimbursement_handoff'
+    | 'reimbursement_draft' | 'legal_gate' | 'clarification_state' | 'delivery_replay'
+    | 'long_reply' | 'renderer_fallback';
+  expectedPresentationKind: 'flex' | 'text' | 'text_parts_then_flex' | 'text_fallback';
+  authority:
+    | 'allowed' | 'no_permission' | 'feature_off' | 'empty_branch_scope' | 'legal_pending'
+    | 'state_unavailable' | 'state_stale_or_expired' | 'cross_user' | 'cross_chat_or_company'
+    | 'owner_go_pending';
+  expectedCtaPolicy: 'tenant_path_no_financial_params' | 'no_cta';
+  /** Company-scoped path the CTA may open. `{companyId}` is a placeholder — no tenant, no query, no hash. */
+  expectedWebPath?: string;
+  /** Domain records this turn may create. Only an expense capture terminal may be 1; every reimbursement,
+   *  denial, state and replay row is 0 in this release. */
+  expectedDomainWriteCount: 0 | 1;
+  /** §10.2: once the intent is known, a deterministic terminal spends no further model call. */
+  maxAdditionalModelCalls: 0 | 1;
+  /** Present on the two length rows only: the renderer limit the reply must survive losslessly. */
+  expectedLongReplyThreshold?: 1_200 | 4_800;
+  evidenceStatus: 'implemented_fixture' | 'required_gap';
+  note: string;
+};
+
+export const LINE_AI_PRESENTATION_PERMISSION_MANIFEST: readonly PresentationPermissionCase[] = Object.freeze([
+  {
+    id: 'expense-terminal-single-flex', journey: 'expense_capture_terminal', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'tenant_path_no_financial_params',
+    expectedWebPath: '/companies/{companyId}/expenses/{expenseId}',
+    expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'A single completed reply renders through the trusted card renderer, not the plain-text helper.',
+  },
+  {
+    id: 'expense-terminal-multipart-flex', journey: 'expense_capture_terminal',
+    expectedPresentationKind: 'text_parts_then_flex', authority: 'allowed',
+    expectedCtaPolicy: 'tenant_path_no_financial_params',
+    expectedWebPath: '/companies/{companyId}/expenses/{expenseId}',
+    expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Earlier parts stay lossless text; the TERMINAL part is the Flex card (§10.1), bounded by the LINE limit.',
+  },
+  {
+    id: 'expense-draft-structured-card', journey: 'expense_capture_terminal', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'tenant_path_no_financial_params',
+    expectedWebPath: '/companies/{companyId}/expenses/{expenseId}',
+    expectedDomainWriteCount: 1, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: §10.1 asks for a dedicated "ร่างค่าใช้จ่าย" card with amount/item/category/status rows. Today the '
+      + 'generic assistant card wraps the canonical reply text instead (Phase 1B/4).',
+  },
+  {
+    id: 'reimbursement-payer-clarify-card', journey: 'reimbursement_clarify', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Server-owned payer question: no link, no amounts, no model text, zero write.',
+  },
+  {
+    id: 'reimbursement-clarify-only-no-cta', journey: 'reimbursement_clarify', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'clarify_only canary: the claim is acknowledged, the handoff CTA is NOT active, and expense capture is not reached.',
+  },
+  {
+    id: 'reimbursement-handoff-tenant-path', journey: 'reimbursement_handoff', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'tenant_path_no_financial_params',
+    expectedWebPath: '/companies/{companyId}/reimbursements/new',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: '§9.1: one company-scoped button to the create form — no amount/purpose query, no hash, no prefill, zero record.',
+  },
+  {
+    id: 'reimbursement-handoff-no-permission', journey: 'reimbursement_handoff', expectedPresentationKind: 'text',
+    authority: 'no_permission', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Missing `reimbursement.create`: deterministic copy, no CTA — a route the user cannot open is never offered.',
+  },
+  {
+    id: 'reimbursement-handoff-feature-off', journey: 'reimbursement_handoff', expectedPresentationKind: 'text',
+    authority: 'feature_off', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Entitlement `reimbursement` absent: same deterministic terminal, still zero write.',
+  },
+  {
+    id: 'reimbursement-handoff-empty-branch-scope', journey: 'reimbursement_handoff', expectedPresentationKind: 'text',
+    authority: 'empty_branch_scope', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'An explicitly empty branch scope reaches no branch, so the create form is unreachable — deny before linking.',
+  },
+  {
+    id: 'legal-pending-zero-write', journey: 'legal_gate', expectedPresentationKind: 'text',
+    authority: 'legal_pending', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Legal acceptance pending is answered before any routing: deterministic text, no card, no record.',
+  },
+  {
+    id: 'reimbursement-draft-card-owner-go', journey: 'reimbursement_draft', expectedPresentationKind: 'flex',
+    authority: 'owner_go_pending', expectedCtaPolicy: 'tenant_path_no_financial_params',
+    expectedWebPath: '/companies/{companyId}/reimbursements/{requestId}',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP by product decision: the optional "ร่างคำขอเบิก" card (§9.2/§10.1) waits for owner GO. Write count '
+      + 'stays 0 here because no DRAFT may be created until that amendment lands.',
+  },
+  {
+    id: 'state-store-outage-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
+    authority: 'state_unavailable', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: §8.3 requires a DB-backed neutral intake state whose outage is zero-write. It does not exist yet (Phase 1A).',
+  },
+  {
+    id: 'state-stale-or-expired-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
+    authority: 'state_stale_or_expired', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: an expired/superseded state version must be refused, not merged. Depends on the same missing state store.',
+  },
+  {
+    id: 'state-cross-user-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
+    authority: 'cross_user', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: another member answering in the same chat must not consume the first member state.',
+  },
+  {
+    id: 'state-cross-chat-or-company-zero-write', journey: 'clarification_state', expectedPresentationKind: 'text',
+    authority: 'cross_chat_or_company', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: owner binding is company + user + chat hash; a different chat or company can never resolve the state.',
+  },
+  {
+    id: 'duplicate-webhook-single-outcome', journey: 'delivery_replay', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'A redelivered webhook event id fails the durable status claim, so it neither answers twice nor writes again.',
+  },
+  {
+    id: 'expired-reply-token-push-same-messages', journey: 'delivery_replay', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'implemented_fixture',
+    note: 'Within the turn, an expired reply token falls back to push with the SAME messages — no re-route, no second answer.',
+  },
+  {
+    id: 'persisted-terminal-outcome-replay', journey: 'delivery_replay', expectedPresentationKind: 'flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: §8.3 wants the canonical terminal outcome persisted BEFORE delivery and replayed on a later '
+      + 'retry without re-routing. Today an in-turn delivery failure only marks the event delivery_pending.',
+  },
+  {
+    id: 'long-reply-over-1200-lossless', journey: 'long_reply', expectedPresentationKind: 'text_parts_then_flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, expectedLongReplyThreshold: 1_200,
+    evidenceStatus: 'implemented_fixture',
+    note: 'Behind LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED a terminal longer than the 1,200 a Flex body keeps '
+      + 'ships INTACT as text and a short server-owned card closes the turn after it — never a 1,200-character '
+      + 'slice of the answer. At the five-message cap the card is dropped instead, so no part is ever lost to '
+      + 'make room for it. Fixtures: line-intake-dispatch.use-case.spec.ts "multi-part terminal Flex".',
+  },
+  {
+    id: 'long-reply-over-4800-lossless', journey: 'long_reply', expectedPresentationKind: 'text_parts_then_flex',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, expectedLongReplyThreshold: 4_800,
+    evidenceStatus: 'implemented_fixture',
+    note: 'Same lane, proven at a 4,900-code-point terminal: every code point past 4,800 survives and the concise '
+      + 'card is appended while a message slot remains. A part over LINE’s 5,000-character text cap is REFUSED '
+      + '(LINE_REPLY_TEXT_PART_TOO_LONG) rather than silently sliced — this release does not split one over-long '
+      + 'part across several, so a producer emitting more than 5,000 is still a producer bug.',
+  },
+  {
+    id: 'flex-failure-text-fallback', journey: 'renderer_fallback', expectedPresentationKind: 'text_fallback',
+    authority: 'allowed', expectedCtaPolicy: 'no_cta',
+    expectedDomainWriteCount: 0, maxAdditionalModelCalls: 0, evidenceStatus: 'required_gap',
+    note: 'GAP: a rejected Flex payload must fall back to the canonical text so the answer still arrives. The reply '
+      + 'adapter currently reports the failure and stops.',
+  },
+]);
+
 /** Frozen exact rollout set: no post-result selection of favorable route, security, or timing rows.
- *  The 47 substitute-routing rows are bound in here so the SAME operator-language provider runner scores
- *  them (routeIntake/substitute cases), not a parallel framework. */
+ *  The 92 substitute-routing rows — which now also carry the uat-correctness-latency §14.1 semantic
+ *  dataset — are bound in here so the SAME operator-language provider runner scores them
+ *  (routeIntake/substitute cases), not a parallel framework. */
 export const LINE_AI_PROTECTED_EVAL_CASE_IDS = [
   ...LINE_AI_LATENCY_AUTONOMY_EVAL_CASES.map(({ id }) => id),
   ...LINE_AI_PREPARED_PLAN_SECURITY_EVAL_CASES.map(({ id }) => id),
