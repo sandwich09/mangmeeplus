@@ -19,3 +19,9 @@ coverage
 *.tsbuildinfo
 docs/.obsidian/workspace*.json
 docs/_attachments
+
+# Test sources are never part of a runtime image, and no Dockerfile runs them. Keeping them out of
+# the build context stops a spec that reaches outside its package (e.g. into scripts/) from breaking
+# `turbo run build` inside a deliberately minimal image context, and keeps compiled specs out of dist.
+**/*.spec.ts
+**/*.test.ts
