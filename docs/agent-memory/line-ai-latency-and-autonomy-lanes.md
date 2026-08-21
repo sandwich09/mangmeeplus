@@ -159,7 +159,6 @@ Artifacts:
 - `packages/contracts/src/line-ai-prepared-plan.ts` (+ `.spec.ts`)
 - `apps/ai-gateway/src/modules/line-ai/domain/logic/prepared-simple-read.logic.ts` (+ `.spec.ts`) — Phase 4 eligibility
 - `apps/ai-gateway/src/modules/line-ai/agents/prepared-simple-read-formatter.ts` (+ `.spec.ts`) — Phase 5 compiled formatter registry
-- `apps/ai-gateway/src/modules/line-ai/agents/prepared-simple-read-execution.spec.ts` — Phase 4 real-boundary execution of all 23 security cases
 - `apps/ai-gateway/src/modules/line-ai/agents/intent-router.agent.ts` — Phase 3 fused producer (cacheableContext + optional prepared plan)
 - `apps/ai-gateway/src/modules/line-ai/agents/orchestrator.agent.ts` — Phase 4 execution lane
 - `apps/ai-gateway/src/modules/line-ai/domain/logic/session-affinity.logic.ts` (+ `.spec.ts`) — Phase 6 privacy-safe derivation
@@ -335,7 +334,13 @@ Fable-PASS residuals + Phase 3–6 locally-implementable scope (2026-08-20, Opus
 - API forwarding independence (bugfix): forwarding OR-gated `(shadow || preparedSimpleRead)` so the two
   lanes are independent; the trusted `intakeIntent` is bound SEPARATELY (from the outer route) in the same
   gated block, never taken from the wrapper.
-- Phase 4 SECURITY EXECUTION: `agents/prepared-simple-read-execution.spec.ts` drives ALL 23 `LINE_AI_
+- Phase 4 SECURITY EXECUTION — **REMOVED 2026-08-21, never executed.** The spec below was never listed
+  in `apps/ai-gateway`'s `test` script and root `scripts/*.spec.ts` is wired into no runner either, so
+  none of the assertions described here ever ran. It also broke the release: it imported the corpus from
+  the repo-root `scripts/` directory, which no app image copies, so `turbo run build` failed inside the
+  ai-gateway image (UAT run 32436479992). The file was deleted on owner instruction. **The 23 security
+  cases have no executing test today.** What it CLAIMED to prove, kept for whoever re-establishes it:
+  it drove ALL 23 `LINE_AI_
   PREPARED_PLAN_SECURITY_EVAL_CASES` through the REAL OrchestratorAgent lane with a call-counting ERP
   double and a failing model wire (so any fallback routes to UNROUTABLE and calls zero tools). 19 reject/
   fallback cases reach the ERP ZERO times; 4 source-honesty cases run exactly one call and return an
