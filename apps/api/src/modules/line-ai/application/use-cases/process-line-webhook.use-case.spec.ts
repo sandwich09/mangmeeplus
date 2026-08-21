@@ -75,7 +75,7 @@ function makePrisma(opts: {
 	  /** Channel the stored identity was linked on; the lookup is channel-scoped first. */
 	  identityChannelId?: string;
 	  aiAssistantOptOutAt?: Date | null;
-	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string } }> }>;
+	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string; name?: string } }> }>;
 	  lineCompanyContext?: { companyId: string } | null;
 	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
 	  recentTurns?: any[];
@@ -204,6 +204,7 @@ function makeUseCase(
 	) {
   const replies: string[] = [];
   const sentMessages: any[] = [];
+  const sentMessageBatches: any[][] = [];
   const pushes: Array<{ to: string; text: string; message: any }> = [];
   const auditEvents: any[] = [];
 	  const legalChecks: Array<{ userId: string; companyId: string; membershipId: string }> = [];
@@ -243,6 +244,7 @@ function makeUseCase(
       buildTextMessage: (text: string) => ({ type: 'text', text }),
       sendReply: async (token: string, messages: any[]) => {
         if (sendReplyFn) return sendReplyFn(token, messages);
+        sentMessageBatches.push(messages);
         sentMessages.push(messages[0]);
         replies.push(messages[0]?.text ?? messages[0]?.altText ?? '');
         return 'ok';
@@ -282,7 +284,7 @@ function makeUseCase(
     opts.approvalQueues?.purchaseOrders,
   );
 
-	  return { useCase, replies, sentMessages, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
+	  return { useCase, replies, sentMessages, sentMessageBatches, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
 	}
 
 const BASE_EVENT = {
@@ -347,6 +349,34 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(identityQueries.length, 2);
     assert.match(replies[0] ?? '', /กรุณาเชื่อมต่อบัญชี/);
     assert.equal((updates.at(-1) as any).data.status, 'unlinked');
+  });
+
+  it('returns the public contact card before identity, opt-out, legal, entitlement, or model reads', async () => {
+    const { prisma, identityQueries, updates } = makePrisma({ identityUserId: null });
+    const { useCase, sentMessages, legalChecks, getAiGatewayCalled } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-public-contact', messageText: 'ติดต่อเรา' });
+
+    assert.equal(identityQueries.length, 0);
+    assert.equal(legalChecks.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.match(JSON.stringify(sentMessages[0]), /contact@mangmeeplus.com/);
+    assert.match(JSON.stringify(sentMessages[0]), /098-256-5628/);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_contact');
+  });
+
+  it('greets immediately on the rich-menu talk postback without identity or model reads', async () => {
+    const { prisma, identityQueries, updates } = makePrisma({ identityUserId: null });
+    const { useCase, replies, legalChecks, getAiGatewayCalled } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-public-talk', messageText: 'คุยกับน้องมั่งมี' });
+
+    assert.equal(identityQueries.length, 0);
+    assert.equal(legalChecks.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(replies[0], 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚');
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_talk');
   });
 
   // Identities linked before providerChannelId was recorded must keep working without relinking.
@@ -426,6 +456,17 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
     assert.equal((updates.at(-1) as any).data.status, 'ai_opt_out');
+  });
+
+  it('keeps public contact available when the linked user opted out of AI', async () => {
+    const { prisma, identityQueries } = makePrisma({ aiAssistantOptOutAt: new Date('2026-07-28T00:00:00Z') });
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-optout-contact', messageText: 'ติดต่อเรา' });
+
+    assert.equal(identityQueries.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.match(JSON.stringify(sentMessages[0]), /เว็บไซต์อย่างเป็นทางการ/);
   });
 
   it('refuses media turns for an opted-out user before any intake routing', async () => {
@@ -1072,21 +1113,43 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('lists owner companies through explicit LINE control command without AI Gateway', async () => {
     const { prisma } = makePrisma({
+      displayName: 'พิมพ์ชนก',
       memberships: [
-        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' } },
-        { companyId: 'co-2', company: { name: 'บริษัทสอง' } },
+        { companyId: 'co-1', company: { name: 'บริษัทหนึ่ง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
+        { companyId: 'co-2', company: { name: 'บริษัทสอง' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] },
       ],
       lineCompanyContext: { companyId: 'co-2' },
     });
-    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+    const { useCase, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-companies', messageText: '/companies' });
 
     assert.equal(getAiGatewayCalled(), false);
-    assert.equal(sentMessages[0]?.type, 'flex');
-    assert.match(JSON.stringify(sentMessages[0]), /บริษัทหนึ่ง/);
-    assert.match(JSON.stringify(sentMessages[0]), /บริษัทสอง/);
-    assert.match(JSON.stringify(sentMessages[0]), /ใช้งานอยู่/);
+    assert.equal(sentMessageBatches[0]?.length, 2);
+    const [contextCard, ownerPicker] = sentMessageBatches[0]!;
+    assert.match(JSON.stringify(contextCard), /บริษัทสอง/);
+    assert.match(JSON.stringify(contextCard), /คุณพิมพ์ชนก/);
+    assert.match(JSON.stringify(contextCard), /เจ้าของกิจการ/);
+    assert.equal(JSON.stringify(contextCard).includes('co-2'), false);
+    assert.match(JSON.stringify(ownerPicker), /บริษัทหนึ่ง/);
+    assert.match(JSON.stringify(ownerPicker), /บริษัทสอง/);
+    assert.match(JSON.stringify((ownerPicker as any).contents.contents[0]), /ใช้งานอยู่/);
+  });
+
+  it('returns only the current-company card to a non-owner', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'สมชาย',
+      memberships: [{ companyId: 'co-staff', company: { name: 'บริษัทพนักงาน' }, roles: [{ role: { key: 'STAFF', name: 'พนักงาน' } }] }],
+    });
+    const { useCase, sentMessageBatches, getAiGatewayCalled } = makeUseCase(prisma);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-company-staff', messageText: '/companies' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(sentMessageBatches[0]?.length, 1);
+    assert.match(JSON.stringify(sentMessageBatches[0]?.[0]), /บริษัทพนักงาน/);
+    assert.match(JSON.stringify(sentMessageBatches[0]?.[0]), /คุณสมชาย/);
+    assert.equal(JSON.stringify(sentMessageBatches[0]?.[0]).includes('/company '), false);
   });
 
   it('wires the owner role into the บริษัทของฉัน Quick Reply', async () => {
@@ -1149,6 +1212,43 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-receipt-menu-flex', messageText: 'ถ่ายใบเสร็จ' });
 
     assert.equal(sentMessages[0]?.type, 'flex');
+  });
+
+  it('returns enabled services deterministically even when the AI feature is off', async () => {
+    const { prisma } = makePrisma({ entitlements: [
+      { featureKey: 'expenses', enabled: true },
+      { featureKey: 'ai_line_assistant', enabled: false },
+    ] });
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma);
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-services', messageText: 'บริการของเรา' });
+
+    assert.equal(getAiGatewayCalled(), false);
+    const rendered = JSON.stringify(sentMessages[0]);
+    assert.match(rendered, /ค่าใช้จ่าย\+ใบเสร็จ/);
+    assert.equal(rendered.includes('ผู้ช่วย AI ทาง LINE'), false);
+  });
+
+  it('gates the receipt prompt on both the upload feature and a capture permission', async () => {
+    const featureOff = makePrisma({ entitlements: [
+      { featureKey: 'expenses', enabled: true },
+      { featureKey: 'expenses.upload', enabled: false },
+    ] });
+    const deniedFeature = makeUseCase(featureOff.prisma, { permissions: ['expense.receipt.line_upload'] });
+    await deniedFeature.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-receipt-feature-off', messageText: 'ถ่ายใบเสร็จ' });
+    assert.match(deniedFeature.replies[0] ?? '', /ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่าย/);
+    assert.equal(deniedFeature.getAiGatewayCalled(), false);
+
+    const noPermission = makePrisma({ entitlements: [{ featureKey: 'expenses', enabled: true }] });
+    const deniedPermission = makeUseCase(noPermission.prisma, { permissions: ['line.ai.query'] });
+    await deniedPermission.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-receipt-permission-off', messageText: 'ถ่ายใบเสร็จ' });
+    assert.match(deniedPermission.replies[0] ?? '', /ไม่มีสิทธิ์อัปโหลด/);
+    assert.equal(deniedPermission.getAiGatewayCalled(), false);
+
+    const allowed = makeUseCase(noPermission.prisma, { permissions: ['expense.receipt.line_upload'] });
+    await allowed.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-receipt-allowed-ai-off', messageText: 'ถ่ายใบเสร็จ' });
+    assert.equal(allowed.sentMessages[0]?.type, 'flex');
+    assert.equal(allowed.getAiGatewayCalled(), false);
   });
 
   it('renders real tenant-scoped branch names and degrades to the resolved count', async () => {

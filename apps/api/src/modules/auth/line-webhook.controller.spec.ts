@@ -84,6 +84,30 @@ describe('LineWebhookController', () => {
     assert.equal(enqueued[0].lineUserId, 'line-user-1');
   });
 
+  it('maps only the rich-menu talk postback to the deterministic greeting command', async () => {
+    const { controller, enqueued } = makeController();
+    await controller.lineWebhook(requestFor({
+      events: [
+        {
+          type: 'postback', webhookEventId: 'evt-talk', replyToken: 'reply-talk', timestamp: 1751700000000,
+          source: { type: 'user', userId: 'line-user-1' },
+          postback: { data: 'action=line-rich-talk' },
+        },
+        {
+          type: 'postback', webhookEventId: 'evt-other', replyToken: 'reply-other',
+          source: { type: 'user', userId: 'line-user-1' },
+          postback: { data: 'action=unrelated' },
+        },
+      ],
+    }));
+
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].item.kind, 'text');
+    assert.equal(enqueued[0].item.text, 'คุยกับน้องมั่งมี');
+    assert.equal(enqueued[0].item.webhookEventId, 'evt-talk');
+    assert.equal(enqueued[0].item.timestamp, 1751700000000);
+  });
+
   it('enqueues image and file messages as media items', async () => {
     const { controller, enqueued } = makeController();
     await controller.lineWebhook(requestFor({

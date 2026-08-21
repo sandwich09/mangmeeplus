@@ -25,6 +25,7 @@ import {
 } from './use-cases/process-line-webhook.use-case';
 import type { LineTextEvent, LineReceiptUploadEvent } from './use-cases/process-line-webhook.use-case';
 import { hashMessagePreview, parseLineCompanyCommand } from '../domain/logic/line-ai-classifier.logic';
+import { staffMenuCommand } from '../domain/logic/line-staff-menu.logic';
 import {
   buildLineAiApiTrace,
   bufferAtCapacity,
@@ -149,10 +150,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
     // employee message never crosses the durable-payload boundary.
     const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
-    const legal = await this.processWebhook.preflightLegalAcceptance({
-      lineUserId: envelope.lineUserId,
-      messagingChannelId: envelope.messagingChannelId,
-    });
+    const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
+    const legal = publicCommand === 'contact' || publicCommand === 'talk'
+      ? { status: 'continue' as const, companyId: undefined }
+      : await this.processWebhook.preflightLegalAcceptance({
+          lineUserId: envelope.lineUserId,
+          messagingChannelId: envelope.messagingChannelId,
+        });
     if (legal.status === 'required' && !companyCommand) {
       const shouldReply = await this.claimPendingLegalAcceptance(envelope, legal.companyId);
       if (shouldReply) {
@@ -362,7 +366,9 @@ export class LineMessageBufferService implements OnModuleDestroy {
     state.messagingChannelId = envelope.messagingChannelId;
 
     const incoming = envelope.item;
-    const kind = incoming.kind === 'text' && parseLineCompanyCommand(incoming.text) ? 'command' : incoming.kind;
+    const lineCommand = incoming.kind === 'text'
+      && (parseLineCompanyCommand(incoming.text) || staffMenuCommand(incoming.text));
+    const kind = lineCommand ? 'command' : incoming.kind;
     const item = { ...incoming, kind, seq: this.seq++, acceptedAt } as LineBufferItem;
 
     // Deterministic boundary (spec §10): if the open buffer's scheduled flush already lies strictly

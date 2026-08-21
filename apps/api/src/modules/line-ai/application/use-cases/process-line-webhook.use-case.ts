@@ -76,7 +76,7 @@ import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, Line
 import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
-import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
+import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage } from '../../domain/logic/line-business-card.logic';
 import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
@@ -144,6 +144,7 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
@@ -375,7 +376,7 @@ function formatSignatureTicketReply(
 type LineCompanyMembership = {
   companyId: string;
   company?: { name: string; brandName?: string | null } | null;
-  roles?: Array<{ role?: { key: string } | null }>;
+  roles?: Array<{ role?: { key: string; name?: string } | null }>;
 };
 
 export async function putLineMediaUpload(
@@ -551,7 +552,15 @@ function isOwnerMembership(membership: LineCompanyMembership): boolean {
 }
 
 function companyLabel(membership: LineCompanyMembership): string {
-  return membership.company?.brandName ?? membership.company?.name ?? membership.companyId;
+  return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
+}
+
+function companyRoleLabels(membership: LineCompanyMembership): string[] {
+  return [...new Set((membership.roles ?? [])
+    .filter((item): item is { role: { key: string; name?: string } } => !!item.role)
+    .sort((a, b) => a.role.key.localeCompare(b.role.key))
+    .map(({ role }) => role.name?.trim())
+    .filter((name): name is string => !!name))];
 }
 
 function findCompanySelection(memberships: LineCompanyMembership[], value: string): LineCompanyMembership | undefined {
@@ -1376,6 +1385,20 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    // Public deterministic command: the verified controller and event claim already ran, but no
+    // identity, company, acceptance, permission, entitlement, or model read is needed.
+    const publicCommand = staffMenuCommand(event.messageText);
+    if (publicCommand === 'contact') {
+      await this.deliverRequiredMessages(event, [buildContactCard()]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
+      return;
+    }
+    if (publicCommand === 'talk') {
+      await this.deliverReply(event, ASSISTANT_TALK_GREETING);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
+      return;
+    }
+
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
     const identity = await this.resolveLineIdentity(event);
 
@@ -1397,7 +1420,7 @@ export class ProcessLineWebhookUseCase {
     const companyCommand = parseLineCompanyCommand(event.messageText)
       ?? await this.pendingCompanySelectionCommand(event);
     if (companyCommand) {
-      await this.handleCompanyCommand(event, requestId, identity.userId, companyCommand);
+      await this.handleCompanyCommand(event, requestId, identity.userId, identity.user.displayName, companyCommand);
       return;
     }
 
@@ -1439,10 +1462,57 @@ export class ProcessLineWebhookUseCase {
       event, identity.userId, companyId, resolvedAccess.membershipId,
     )) return;
 
-    await this.recordShadowTurn(companyId);
     // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
     // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    const menuCommand = staffMenuCommand(event.messageText);
+    const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
+      .some((permission) => resolvedAccess.permissions.includes(permission));
+
+    // These two cards are deterministic product entry points, not AI turns. They keep their own
+    // feature/permission gates and remain available when the model provider or AI feature is off.
+    if (menuCommand === 'services') {
+      await this.deliverRequiredMessages(event, [buildServiceEntitlementMessage(entitledFeatureKeys)]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_services', undefined, companyId);
+      return;
+    }
+    if (menuCommand === 'receipt') {
+      const receiptFeatureEnabled = entitledFeatureKeys === null || entitledFeatureKeys.has('expenses.upload');
+      if (!receiptFeatureEnabled || !canCaptureExpense) {
+        const featureDisabled = !receiptFeatureEnabled;
+        await this.deliverReply(event, featureDisabled ? EXPENSE_FEATURE_DISABLED_REPLY : RECEIPT_FORBIDDEN_REPLY);
+        await this.audit.log({
+          companyId,
+          actorUserId: identity.userId,
+          action: 'expense.line_upload.reject',
+          targetType: 'LineWebhookEvent',
+          targetId: event.webhookEventId,
+          requestId,
+          result: 'DENIED',
+          riskLevel: 'MEDIUM',
+          metadataJson: { reason: featureDisabled ? 'feature_disabled' : 'missing_expense_receipt_line_upload', route: 'rich_menu' },
+        });
+        await this.updateEventLog(event.webhookEventId,
+          featureDisabled ? 'feature_disabled' : 'forbidden',
+          featureDisabled ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+          companyId);
+        return;
+      }
+      await this.deliverRequiredMessages(event, [buildReceiptCapturePrompt({
+        displayName: identity.user.displayName,
+        roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
+        branchScopeLabel: branchScopeFallbackLabel(resolvedAccess.scopes.branchIds),
+        permissions: resolvedAccess.permissions,
+        entitledFeatureKeys,
+        webBaseUrl: this.config.webBaseUrl,
+        companyId,
+        isOwner: resolvedAccess.roles.includes('OWNER'),
+      })]);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_receipt', undefined, companyId);
+      return;
+    }
+
+    await this.recordShadowTurn(companyId);
     if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({
@@ -1461,8 +1531,6 @@ export class ProcessLineWebhookUseCase {
     }
 
     const canQuery = resolvedAccess.permissions.includes('line.ai.query');
-    const canCaptureExpense = ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create']
-      .some((perm) => resolvedAccess.permissions.includes(perm));
     const canSubmitSignature = maySubmitSignature(resolvedAccess.permissions);
     // Phase 1 is personal-chat only. Group/room capture retains the proven single-turn path.
     const expenseDraftConversationEnabled = this.config.lineExpenseDraftConversationEnabled === true
@@ -1485,8 +1553,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const menuCommand = staffMenuCommand(event.messageText);
-    if (menuCommand) {
+    if (menuCommand === 'main' || menuCommand === 'query' || menuCommand === 'approval') {
       const menuContext: StaffMenuContext = {
         displayName: identity.user.displayName,
         roleLabel: resolvedAccess.roles.join(' · ') || 'พนักงาน',
@@ -1503,8 +1570,7 @@ export class ProcessLineWebhookUseCase {
         ? buildStaffMainMenu(menuContext)
         : menuCommand === 'query'
           ? buildStaffQueryMenu(menuContext)
-          : menuCommand === 'approval'
-            ? buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
+          : buildPendingApprovalCard(menuContext, await this.loadPendingApprovals({
               requestId,
               authSubject: identity.userId,
               userId: identity.userId,
@@ -1514,8 +1580,7 @@ export class ProcessLineWebhookUseCase {
               permissions: resolvedAccess.permissions,
               scopes: resolvedAccess.scopes,
               authProvider: 'line',
-            }, availableApprovalSurfaceKeys(menuContext)))
-            : buildReceiptCapturePrompt(menuContext);
+            }, availableApprovalSurfaceKeys(menuContext)));
       await this.deliverRequiredMessages(event, [message]);
       await this.updateEventLog(event.webhookEventId, `staff_menu_${menuCommand}`, undefined, companyId);
       return;
@@ -2606,7 +2671,7 @@ export class ProcessLineWebhookUseCase {
       select: {
         companyId: true,
         company: { select: { name: true, brandName: true } },
-        roles: { select: { role: { select: { key: true } } } },
+        roles: { select: { role: { select: { key: true, name: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     }) as Promise<LineCompanyMembership[]>;
@@ -2627,7 +2692,7 @@ export class ProcessLineWebhookUseCase {
     return previous && COMPANY_SELECTION_PENDING_STATUSES.has(previous.status) ? candidate : null;
   }
 
-  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, command: LineCompanyCommand): Promise<void> {
+  private async handleCompanyCommand(event: LineTextEvent, requestId: string, userId: string, displayName: string, command: LineCompanyCommand): Promise<void> {
     const memberships = await this.listLineCompanies(userId);
     if (memberships.length === 0) {
       await this.deliverReply(event, UNLINKED_REPLY);
@@ -2646,18 +2711,39 @@ export class ProcessLineWebhookUseCase {
     });
 
     if (command.kind === 'list') {
-      await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
-        current?.companyId,
-      )]);
-      await this.updateEventLog(event.webhookEventId, 'company_context_listed', undefined, current?.companyId);
+      const currentCompanyId = memberships.length === 1 ? memberships[0]!.companyId : current?.companyId;
+      const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
+      if (!currentMembership) {
+        await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
+          memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          undefined,
+          command.page,
+        )]);
+        await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
+        return;
+      }
+      const messages: LineReplyMessage[] = [buildCompanyContextMessage({
+        companyName: companyLabel(currentMembership),
+        displayName,
+        roleLabels: companyRoleLabels(currentMembership),
+      })];
+      const ownerCompanies = memberships.filter(isOwnerMembership);
+      if (isOwnerMembership(currentMembership) && ownerCompanies.length > 1) {
+        messages.push(buildCompanyPickerMessage(
+          ownerCompanies.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+          currentMembership.companyId,
+          command.page,
+        ));
+      }
+      await this.deliverRequiredMessages(event, messages);
+      await this.updateEventLog(event.webhookEventId, 'company_context_listed', undefined, currentMembership.companyId);
       return;
     }
 
     const selected = findCompanySelection(memberships, command.value);
-    if (!selected) {
+    if (!selected || !isOwnerMembership(selected)) {
       await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
-        memberships.map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
+        memberships.filter(isOwnerMembership).map((membership) => ({ companyId: membership.companyId, companyName: companyLabel(membership) })),
         current?.companyId,
       )]);
       await this.updateEventLog(event.webhookEventId, 'company_context_selection_invalid', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY, current?.companyId);
