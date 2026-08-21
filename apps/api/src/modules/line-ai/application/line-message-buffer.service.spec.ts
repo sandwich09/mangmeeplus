@@ -30,12 +30,13 @@ function makeHarness(opts: {
   debounceExperimentEnabled?: boolean;
   debounceExperimentSecret?: string;
   executeImpl?: (event: any) => Promise<void>;
+  receiptImpl?: (event: any, caption?: string) => Promise<{ outcome: 'done' | 'defer_text' }>;
   receiptOutcomes?: Array<'done' | 'defer_text'>;
   replyResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
   eventStoreUnavailable?: boolean;
   legalAcceptanceRequired?: boolean;
-  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
+  preflightImpl?: (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => Promise<{ status: 'continue'; companyId?: string } | { status: 'required'; companyId: string }>;
 } = {}) {
   const rows = new Map<string, Row>();
   const executed: any[] = [];
@@ -46,7 +47,7 @@ function makeHarness(opts: {
   const loadingCalls: string[] = [];
   const auditLogs: any[] = [];
   const serviceLogs: any[] = [];
-  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string }> = [];
+  const preflightCalls: Array<{ lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }> = [];
   let receiptCall = 0;
 
   const prisma = {
@@ -123,7 +124,7 @@ function makeHarness(opts: {
   } as any;
 
   const useCase = {
-    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string }) => {
+    preflightLegalAcceptance: async (event: { lineUserId: string; messagingChannelId?: string; companyIdAtAcceptance?: string }) => {
       preflightCalls.push(event);
       if (opts.preflightImpl) return opts.preflightImpl(event);
       return opts.legalAcceptanceRequired
@@ -136,6 +137,7 @@ function makeHarness(opts: {
     },
     executeReceiptUpload: async (event: any, caption?: string) => {
       receipts.push({ event, caption });
+      if (opts.receiptImpl) return opts.receiptImpl(event, caption);
       const outcome = opts.receiptOutcomes?.[receiptCall] ?? 'done';
       receiptCall += 1;
       return { outcome };
@@ -450,6 +452,89 @@ describe('LineMessageBufferService – commands', () => {
 });
 
 describe('LineMessageBufferService – media and captions', () => {
+  it('keeps normal chat responsive while an uncaptioned receipt is still in OCR', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 0,
+      loadingEnabled: false,
+      preflightImpl: async () => ({ status: 'continue', companyId: 'company-at-acceptance' }),
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('slow-receipt'));
+    await sleep(20);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.receipts[0]?.event.companyIdAtAcceptance, 'company-at-acceptance');
+    assert.equal(
+      (h.rows.get('slow-receipt')?.payloadJson as any)?.item?.companyIdAtAcceptance,
+      'company-at-acceptance',
+      'orphan replay preserves the accepted tenant snapshot',
+    );
+    assert.match(h.pushes[0]?.text ?? '', /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
+
+    await h.service.enqueue(textEnv('while-ocr', 'ติดต่อเรา'));
+    await sleep(20);
+    assert.equal(h.executed.length, 1, 'later command must not wait for OCR');
+    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
+
+    releaseReceipt();
+    await sleep(20);
+  });
+
+  it('keeps uncaptioned receipts serial with each other', async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let call = 0;
+    const h = makeHarness({
+      debounceMs: 0,
+      receiptImpl: async () => {
+        call += 1;
+        if (call === 1) await firstGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('receipt-1'));
+    await sleep(20);
+    await h.service.enqueue(mediaEnv('receipt-2'));
+    await sleep(20);
+    assert.equal(h.receipts.length, 1, 'second OCR waits behind the first media job');
+
+    releaseFirst();
+    await sleep(30);
+    assert.deepEqual(h.receipts.map(({ event }) => event.webhookEventId), ['receipt-1', 'receipt-2']);
+  });
+
+  it('keeps captioned media on the ordered main lane', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 10,
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+
+    await h.service.enqueue(mediaEnv('captioned-receipt'));
+    await h.service.enqueue(textEnv('receipt-caption', 'ค่าอาหารลูกค้า'));
+    await sleep(30);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(h.receipts[0]?.caption, 'ค่าอาหารลูกค้า');
+
+    await h.service.enqueue(textEnv('after-captioned', 'ติดต่อเรา'));
+    await sleep(20);
+    assert.equal(h.executed.length, 0, 'caption context keeps strict ordering');
+
+    releaseReceipt();
+    await sleep(40);
+    assert.equal(h.executed[0]?.messageText, 'ติดต่อเรา');
+  });
+
   it('text buffered with media rides along as caption and gets no standalone turn', async () => {
     const h = makeHarness({ debounceMs: 20 });
     await h.service.enqueue(mediaEnv('img1'));
@@ -608,6 +693,29 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     await h.service.onModuleDestroy();
     assert.equal(h.executed.length, 1);
     assert.equal(h.executed[0].messageText, 'ขอ\nรายชื่อลูกค้า');
+  });
+
+  it('onModuleDestroy also drains media handed off after shutdown begins', async () => {
+    let releaseReceipt!: () => void;
+    const receiptGate = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const h = makeHarness({
+      debounceMs: 60_000,
+      receiptImpl: async () => {
+        await receiptGate;
+        return { outcome: 'done' };
+      },
+    });
+    await h.service.enqueue(mediaEnv('shutdown-receipt'));
+
+    let destroyed = false;
+    const destroying = h.service.onModuleDestroy().then(() => { destroyed = true; });
+    await sleep(20);
+    assert.equal(h.receipts.length, 1);
+    assert.equal(destroyed, false, 'shutdown waits for the detached media lane');
+
+    releaseReceipt();
+    await destroying;
+    assert.equal(destroyed, true);
   });
 
   it('starts the loading animation for 1:1 chats only', async () => {

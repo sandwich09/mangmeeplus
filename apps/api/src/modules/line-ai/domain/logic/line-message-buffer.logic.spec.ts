@@ -124,6 +124,7 @@ describe('capacity rules', () => {
 
 describe('lineWaitStatusText', () => {
   it('selects one waiting line from the request situation', () => {
+    assert.match(lineWaitStatusText('', 'media'), /ได้รับรูปแล้ว.*คุยกับน้องต่อได้เลย/);
     assert.match(lineWaitStatusText('ช่วยทำรายงานยอดขาย'), /จัดเตรียมรายงาน/);
     assert.match(lineWaitStatusText('สรุปค่าใช้จ่ายเดือนนี้'), /สรุปข้อมูล/);
     assert.match(lineWaitStatusText('เปรียบเทียบยอดขายสองสาขา'), /เปรียบเทียบข้อมูล/);
@@ -132,7 +133,6 @@ describe('lineWaitStatusText', () => {
     assert.match(lineWaitStatusText('ค้นข้อมูลเอกสารเลขที่ 123'), /ค้นข้อมูล/);
     assert.match(lineWaitStatusText('ขอดูสถานะใบแจ้งหนี้'), /ตรวจสอบข้อมูลในระบบ/);
     assert.match(lineWaitStatusText('เล่าเรื่องสนุกให้ฟังหน่อย'), /ขอคิดสักครู่/);
-    assert.match(lineWaitStatusText('', 'media'), /ตรวจสอบเอกสาร/);
   });
 });
 

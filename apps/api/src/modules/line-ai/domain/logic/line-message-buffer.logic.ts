@@ -31,6 +31,8 @@ export type LineBufferMediaItem = {
   timestamp: number;
   acceptedAt: number;
   seq: number;
+  /** Company selected when durable acceptance completed. A later company switch must not move this media. */
+  companyIdAtAcceptance?: string;
 };
 
 export type LineBufferItem = LineBufferTextItem | LineBufferMediaItem;
@@ -67,7 +69,7 @@ const LINE_WAIT_STATUS_RULES: Array<[RegExp, string]> = [
 
 /** One truthful waiting line selected from the request; no model call needed. */
 export function lineWaitStatusText(messageText: string, kind: 'text' | 'media' = 'text'): string {
-  if (kind === 'media') return 'กำลังตรวจสอบเอกสารที่ส่งมาให้นะคะ...';
+  if (kind === 'media') return 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
   const normalized = messageText.trim().toLowerCase();
   return LINE_WAIT_STATUS_RULES.find(([pattern]) => pattern.test(normalized))?.[1]
     ?? 'ขอคิดสักครู่นะคะ 😊';

@@ -132,8 +132,11 @@ Rules:
 
 - The rich-menu tile sends `ถ่ายใบเสร็จ`.
 - The server checks `expenses.upload` and any existing receipt-intake permission accepted by the canonical LINE capture path.
-- Allowed users receive the existing capture card plus `เปิดกล้อง`, `แนบรูปใบเสร็จ`, and a safe way back to the menu.
+- Allowed users receive a short instruction card plus the native Quick Reply actions `เปิดกล้อง`, `แนบรูปใบเสร็จ`, and a safe way back to the menu.
+- The instruction card must not render a decorative drop-zone, paperclip, or other element that looks tappable but has no LINE action. The native Quick Reply actions are the only upload affordances.
 - A submitted image follows the existing receipt validation, storage, OCR, duplicate detection, draft creation, and web-review flow.
+- A media-only receipt starts its own serial background lane after durable acceptance. It immediately tells the sender that the image was received and that normal chat can continue; later text and rich-menu commands must not wait for OCR. Receipt jobs from the same chat remain serial, and captioned media stays on the ordered main lane so its text cannot be detached from the image it describes.
+- The final receipt result may therefore arrive after a later text answer. This is intentional and must be distinguishable as the result of the earlier image.
 - LINE capture never confirms, approves, pays, exports, voids, or posts the expense automatically.
 - Feature-disabled and permission-denied states remain distinct and do not expose internal keys.
 

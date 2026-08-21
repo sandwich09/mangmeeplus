@@ -2,7 +2,7 @@
 
 ## 1. Goal
 
-Make the LINE AI assistant answer one coherent user utterance per turn, even when the user splits that utterance across multiple LINE message bubbles (for example `ขอ` / `รายชื่อ` / `ลูกค้า` meaning `ขอรายชื่อลูกค้า`), and guarantee that replies come back in the order the user sent messages.
+Make the LINE AI assistant answer one coherent user utterance per turn, even when the user splits that utterance across multiple LINE message bubbles (for example `ขอ` / `รายชื่อ` / `ลูกค้า` meaning `ขอรายชื่อลูกค้า`), and guarantee that replies come back in the order the user sent messages except for the explicit media-only OCR lane in Section 8.
 
 Users must never be blocked from typing. LINE Messaging API has no mechanism to disable client input, so the server buffers and serializes instead.
 
@@ -32,8 +32,8 @@ Three in-process layers sit in front of the existing, unchanged permission/turn 
 LINE webhook POST
   └─ Intake (controller): verify signature → dedup + log 'received' → enqueue items → 200 immediately
        └─ Buffer (per chat key): debounce window, max-wait, size caps → flush to batch
-            └─ Serial queue (per chat key): ≤1 batch processing, ≤1 pending batch (absorbs later flushes)
-                 └─ Segments → existing execute() / executeReceiptUpload() per segment, replies in order
+            ├─ Main serial queue: text, commands, and captioned media; ≤1 processing + ≤1 pending
+            └─ Media-only lane: receipt jobs stay serial with each other but do not block the main queue
 ```
 
 The buffer and queue are orchestration only. All identity, company, permission, audit, intake-routing, and mutation-boundary logic stays inside the existing use case, called per segment.
@@ -63,6 +63,7 @@ Chat key: `(chatId, lineUserId)` where `chatId = source.groupId ?? source.roomId
 Per chat key:
 
 - At most ONE batch is processing at a time. Replies therefore return in batch order.
+- Exception: an uncaptioned media-only segment is handed to the per-chat media lane. The main queue may then answer later text/commands while OCR is still running. Media jobs remain serial with each other, and the selected company is snapshotted at durable acceptance so a later company switch cannot move an earlier receipt into another tenant.
 - At most ONE pending batch waits behind it. A flush that occurs while a batch is processing does not enqueue a new entry if a pending batch exists — it merges into it. New items keep appending to the open buffer as usual.
 - Consequence: queue depth is structurally bounded at `processing (1) + pending (1) + open buffer`. There is no unbounded queue growth.
 - **Overflow guard**: if the pending batch is already at its size caps, further items are dropped with an immediate rate-limit reply (using the dropped item's reply token): `⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วส่งอีกครั้ง`, plus an audit log entry. Reaching this guard means ~40+ rapid messages during one AI turn — treated as flood/abuse, not normal use.
@@ -78,6 +79,8 @@ A flushed batch is split into ordered segments; each segment produces exactly on
    - `webhookEventId` / `replyToken` / `lineMessageId` = those of the LAST member item (freshest reply token),
    - dispatched through `execute()` unchanged.
 3. **Media segments**: each media item is its own segment through `executeReceiptUpload()`, with one addition: a new optional `captionText` parameter is passed to the intake route call as `messageText` (today hardcoded `''`).
+
+An uncaptioned media-only group is queued onto a separate per-chat media lane and the main worker continues immediately. A media group containing text remains on the main serial queue because intake may classify that text as a caption, clarification answer, or standalone question; detaching it would break company/context ordering.
 
 Mixed text + media batch rules (caption scope is the CONTENT GROUP between
 commands, not the whole batch — a `/company` switch between bubbles changes
@@ -105,11 +108,11 @@ Notes: this rule only fires when LINE actually redelivers, which it does not onc
 - Each segment replies with its own reply token as today. Unused member tokens are simply discarded.
 - `LineReplyAdapter.sendReply` starts reporting success/failure instead of swallowing it. On failure with an expired/used token (HTTP 400 from `/v2/bot/message/reply`), a new `sendPush(lineUserId, messages)` (`POST /v2/bot/message/push`) delivers the same messages. Rationale: with queueing, a reply can exceed the ~1-minute token life; silence after "บันทึกค่าใช้จ่าย" is the worst outcome for an accounting bot. Push consumes the OA monthly message quota (replies are free) — fallback use is logged (`line_push_fallback_used`) for quota monitoring.
 - Loading animation: best-effort `POST /v2/bot/chat/loading/start` with `loadingSeconds: 60` after signature/legal/durable acceptance and before debounce. Only for 1:1 chats (`chatId === lineUserId` — the API does not support groups). It auto-dismisses when the reply arrives. Master toggle: `LINE_AI_LOADING_ANIMATION_ENABLED` (default true). Failures are ignored. **Default behavior:** loading starts when a batch begins processing. Accept-time loading (the spinner right after durable acceptance, before the debounce wait) is a **NON-DEFAULT, flag-gated opt-in** behind `LINE_AI_LOADING_ON_ACCEPT_ENABLED` (**default OFF**), a SUB-feature SUBORDINATE to the master switch — both must be on; with the master off there is no spinner anywhere (accept or processing-start), and with the accept flag off (the default) loading still starts at processing start (the legacy behavior).
-- Waiting feedback (1:1 chats only): **by default the 2-second wait-status timer is anchored to PROCESSING START.** Anchoring it to durable acceptance instead is a **NON-DEFAULT, flag-gated** behavior (see the timer rule at the end of this bullet). If no reply is ready, push exactly one short Thai status selected deterministically from the request (document check, report, summary, comparison, calculation, analysis, search, business-system lookup, or generic thinking), then restart loading because a push clears it. Final delivery atomically cancels a status that has not started; an already-started bounded delivery is ordered before final but may not hold a ready answer indefinitely. A waiting message must never arrive after the answer. Commands and group chats keep the existing no-status behavior. The 2-second timer counts from durable acceptance ONLY when accept-time loading actually showed its spinner (`LINE_AI_LOADING_ON_ACCEPT_ENABLED` on AND LINE accepted the request); otherwise — accept flag off (the default), the accept request rejected, or a later content turn — it uses the legacy fixed 2 seconds from processing start, so a large debounce (e.g. 2,500 ms) never collapses the status to immediate.
+- Waiting feedback (1:1 chats only): **media-only OCR sends its truthful received/processing status immediately** and says normal chat may continue. Other turns keep the existing rule: by default the 2-second wait-status timer is anchored to PROCESSING START. Anchoring it to durable acceptance instead is a **NON-DEFAULT, flag-gated** behavior (see the timer rule at the end of this bullet). If no reply is ready, push exactly one short Thai status selected deterministically from the request (document check, report, summary, comparison, calculation, analysis, search, business-system lookup, or generic thinking), then restart loading because a push clears it. Final delivery atomically cancels a status that has not started; an already-started bounded delivery is ordered before final but may not hold a ready answer indefinitely. A waiting message must never arrive after the answer. Commands and group chats keep the existing no-status behavior. The 2-second timer counts from durable acceptance ONLY when accept-time loading actually showed its spinner (`LINE_AI_LOADING_ON_ACCEPT_ENABLED` on AND LINE accepted the request); otherwise — accept flag off (the default), the accept request rejected, or a later content turn — it uses the legacy fixed 2 seconds from processing start, so a large debounce (e.g. 2,500 ms) never collapses the status to immediate.
 
 ## 11. Shutdown Flush
 
-`main.ts` gains `app.enableShutdownHooks()`. On SIGTERM (every ECS deploy), the buffer service's shutdown hook flushes all open buffers immediately and awaits in-flight batches, bounded by the AI Gateway 15 s timeout within the ECS stop grace period. Hard crashes still lose open buffers from memory — recovered from the DB by Section 11.1.
+`main.ts` gains `app.enableShutdownHooks()`. On SIGTERM (every ECS deploy), the buffer service's shutdown hook flushes all open buffers immediately and awaits both the main worker and media lane, bounded by the shutdown timeout within the ECS stop grace period. Hard crashes still lose open buffers from memory — recovered from the DB by Section 11.1.
 
 ## 11.1 Durable Replay of Orphaned Events
 
@@ -148,7 +151,8 @@ Constants in module code (not env): max 20 items / 4000 chars per batch, pending
 | 2 | 3 fragments across POSTs within window | 1 joined turn | buffer keyed by chat, debounce |
 | 3 | Fragment, 10 s pause, rest | 2 turns; second answered with context | semantic layer (CLARIFY + 16-turn memory), unchanged |
 | 4 | Single complete message | 1 turn, +selected debounce latency | accepted trade-off, loading animation |
-| 5 | Message while AI is processing | joins next batch, replies stay ordered | serial queue |
+| 5 | Message while a text/command turn is processing | joins next batch, replies stay ordered | main serial queue |
+| 5a | Message while an uncaptioned receipt is in OCR | main queue answers without waiting; receipt result may arrive later | serial media-only lane |
 | 6 | Continuous typing (never idle) | flush every ≤8 s | max-wait anchored at first item |
 | 7 | Flood (40+ msgs during one turn) | overflow items dropped + rate-limit reply + audit | pending-batch caps |
 | 8 | `/company` while idle | immediate, no added latency | command fast path |
@@ -175,6 +179,7 @@ Constants in module code (not env): max 20 items / 4000 chars per batch, pending
 
 - Three text fragments whose consecutive gaps are each below the selected debounce produce exactly one `AiTurn` and one LINE reply whose answer addresses the joined utterance.
 - Two batches from the same user never interleave: replies arrive in send order (single instance).
+- An uncaptioned receipt does not block a later text or rich-menu command; receipt jobs remain serial with each other and keep the company selected at acceptance.
 - Webhook responds 200 without awaiting AI processing.
 - `/company` from an idle chat has no added latency; `/company` sent after query fragments executes after that query.
 - Image + caption bubble within one window produce one media turn whose intake route received the caption text.
