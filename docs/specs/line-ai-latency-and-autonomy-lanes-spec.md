@@ -246,7 +246,8 @@ specialized when combining them would enlarge or weaken the common text path.
   be atomically cancelled if it has not started. An already-started status delivery is ordered before
   final delivery but may not hold a ready answer indefinitely; use a bounded attempt, then proceed.
   Because a pushed status clears LINE loading, restart loading 300 ms after a successful status when
-  the final answer is not ready.
+  the final answer is not ready, then send one best-effort keepalive at 1,300 ms to cover slow device
+  delivery. Both loading calls must remain cancellable before the final answer.
 - Group chats have no loading indicator and retain a separate measurement cohort.
 - Freeze `LINE_AI_LOADING_ON_ACCEPT_ENABLED` and every flag that can affect buffering, routing, model
   calls, provider reuse, or session affinity for the full 14-day debounce experiment. A flag/config

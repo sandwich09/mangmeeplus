@@ -38,6 +38,7 @@ import {
   sortBatchItems,
   LINE_BUFFER_ORPHAN_REPROCESS_MS,
   LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS,
+  LINE_LOADING_KEEPALIVE_DELAY_MS,
   LINE_LOADING_RESTART_DELAY_MS,
   LINE_MEDIA_RECEIVED_TEXT,
   LINE_WAIT_STATUS_DELAY_MS,
@@ -837,7 +838,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
   private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[], suppressLoading: boolean): Promise<void> {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
-    const statusDelayMs = Math.max(0, last.acceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
+    const latestAcceptedAt = Math.max(...textItems.map((item) => item.acceptedAt));
+    const statusDelayMs = Math.max(0, latestAcceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
     await this.withWaitFeedback(
       state,
       lineWaitStatusText(messageText, last.webhookEventId),
@@ -943,18 +945,19 @@ export class LineMessageBufferService implements OnModuleDestroy {
     if (!suppressLoading) await this.startLoading(state);
     let finished = false;
     let statusDelivery: Promise<void> | null = null;
-    let restartDelivery: Promise<void> | null = null;
-    let restartTimer: NodeJS.Timeout | null = null;
+    const restartDeliveries: Promise<void>[] = [];
+    const restartTimers: NodeJS.Timeout[] = [];
 
     const deliverStatus = async () => {
       const delivered = await this.sendWaitStatus(state, statusText);
       if (!delivered || finished) return;
-      // LINE dismisses loading when an OA bubble arrives. Restart after a short delivery cushion instead
-      // of racing the push response; `settle` cancels this if the real answer becomes ready first.
-      restartTimer = setTimeout(() => {
-        restartTimer = null;
-        if (!finished) restartDelivery = this.startLoading(state);
-      }, LINE_LOADING_RESTART_DELAY_MS);
+      // LINE dismisses loading when an OA bubble arrives. Restart after a short delivery cushion and
+      // once more as a keepalive for slow devices; `settle` cancels both when the answer is ready.
+      for (const delayMs of [LINE_LOADING_RESTART_DELAY_MS, LINE_LOADING_KEEPALIVE_DELAY_MS]) {
+        restartTimers.push(setTimeout(() => {
+          if (!finished) restartDeliveries.push(this.startLoading(state));
+        }, delayMs));
+      }
     };
 
     let statusTimer: NodeJS.Timeout | null = null;
@@ -971,12 +974,11 @@ export class LineMessageBufferService implements OnModuleDestroy {
       if (!finished) {
         finished = true;
         if (statusTimer) clearTimeout(statusTimer);
-        if (restartTimer) clearTimeout(restartTimer);
+        for (const timer of restartTimers) clearTimeout(timer);
         statusTimer = null;
-        restartTimer = null;
       }
       await statusDelivery;
-      await restartDelivery;
+      await Promise.all(restartDeliveries);
     };
   }
 

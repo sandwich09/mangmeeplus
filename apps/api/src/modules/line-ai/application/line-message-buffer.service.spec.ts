@@ -774,6 +774,10 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'loading returns while slow work continues');
 
+      t.mock.timers.tick(1_000);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1', 'user-1'], 'one keepalive covers delayed device delivery');
+
       releaseTurn();
       await completed;
       assert.equal(h.pushes.length, 1);
@@ -802,6 +806,86 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       await settle();
       assert.equal(h.pushes.length, 0);
       assert.deepEqual(h.loadingCalls, ['user-1']);
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('cancels the delayed loading keepalive when the answer is ready after the first restart', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      let releaseTurn!: () => void;
+      let completeTurn!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
+      const h = makeHarness({
+        debounceMs: 0,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          await gate;
+          await event.beforeReply?.();
+          completeTurn();
+        },
+      });
+
+      await h.service.enqueue(textEnv('wait-restart-cancel', 'ช่วยตรวจข้อมูลให้หน่อย'));
+      await settle();
+      t.mock.timers.tick(5_000);
+      await settle();
+      t.mock.timers.tick(300);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1']);
+
+      releaseTurn();
+      await completed;
+      t.mock.timers.tick(1_000);
+      await settle();
+      assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'final answer cancels the keepalive');
+    } finally {
+      t.mock.timers.reset();
+    }
+  });
+
+  it('anchors the 5-second status to the latest durable acceptance when LINE timestamps reorder', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    try {
+      t.mock.timers.setTime(0);
+      let releaseTurn!: () => void;
+      let markStarted!: () => void;
+      const gate = new Promise<void>((resolve) => { releaseTurn = resolve; });
+      const started = new Promise<void>((resolve) => { markStarted = resolve; });
+      const h = makeHarness({
+        debounceMs: 2_000,
+        maxWaitMs: 8_000,
+        loadingEnabled: true,
+        executeImpl: async (event) => {
+          markStarted();
+          await gate;
+          await event.beforeReply?.();
+        },
+      });
+
+      // The later-accepted bubble carries an older LINE timestamp, so sorting moves it before wait-old.
+      await h.service.enqueue(textEnv('wait-old', 'ข้อความแรก', { timestamp: 200 }));
+      t.mock.timers.tick(1_000);
+      await settle();
+      await h.service.enqueue(textEnv('wait-new', 'ข้อความล่าสุด', { timestamp: 100 }));
+
+      t.mock.timers.tick(2_001);
+      await settle();
+      await started;
+      assert.equal(h.executed[0]?.messageText, 'ข้อความล่าสุด\nข้อความแรก');
+
+      t.mock.timers.tick(1_999);
+      await settle();
+      assert.equal(h.pushes.length, 0, 'an older sorted-last acceptance cannot trigger status early');
+
+      t.mock.timers.tick(1_000);
+      await settle();
+      assert.equal(h.pushes.length, 1, 'status starts 5 seconds after the latest durable acceptance');
+
+      releaseTurn();
+      await settle();
     } finally {
       t.mock.timers.reset();
     }
@@ -901,13 +985,13 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
 
   it('freezes the batch cohort at open; a later bubble resolving a DIFFERENT company does not re-assign it', async () => {
     // Precondition: the two authoritative companies map to different cohorts for this chat.
-    const co1 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-1:chat-frz', configuredMs: 2_500 });
-    const co2 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-2:chat-frz', configuredMs: 2_500 });
+    const co1 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-1:chat-frz', configuredMs: 2_000 });
+    const co2 = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: 'co-2:chat-frz', configuredMs: 2_000 });
     assert.notEqual(co1, co2, 'test precondition: co-1 and co-2 resolve to different cohorts for this chat');
 
     let call = 0;
     const h = makeHarness({
-      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceMs: 2_000, maxWaitMs: 60_000,
       debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
       preflightImpl: async () => ({ status: 'continue' as const, companyId: call++ === 0 ? 'co-1' : 'co-2' }),
     });
@@ -934,7 +1018,7 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
 
   it('assigns the SAME cohort to two users in one group (cluster is company+chat, not per user), buffers stay isolated', async () => {
     const h = makeHarness({
-      debounceMs: 2_500, maxWaitMs: 60_000,
+      debounceMs: 2_000, maxWaitMs: 60_000,
       debounceExperimentEnabled: true, debounceExperimentSecret: 'experiment-secret',
       preflightImpl: async () => ({ status: 'continue', companyId: 'co-1' }),
     });
@@ -945,7 +1029,7 @@ describe('LineMessageBufferService – debounce experiment cohort (latency/auton
       const stateB = (h.service as any).chats.get('group-9:user-B');
       assert.ok(stateA && stateB && stateA !== stateB, 'buffers are isolated per (chat,user)');
       assert.equal(stateA.debounceMs, stateB.debounceMs, 'cohort shared across users of the same (company,chat)');
-      assert.ok([1_000, 1_500, 2_500].includes(stateA.debounceMs), 'cohort is one of the declared values');
+      assert.ok([1_000, 1_500, 2_000].includes(stateA.debounceMs), 'cohort is one of the declared values');
     } finally {
       await h.service.onModuleDestroy();
     }

@@ -172,12 +172,12 @@ describe('buildLineAiApiTrace', () => {
 });
 
 describe('debounceCohortMs', () => {
-  const base = { secret: 'experiment-secret', assignmentKey: 'co-1:chat-1', configuredMs: 2_500 };
+  const base = { secret: 'experiment-secret', assignmentKey: 'co-1:chat-1', configuredMs: 2_000 };
 
   it('returns the configured debounce when the experiment is off, has no secret, or has no key', () => {
-    assert.equal(debounceCohortMs({ ...base, enabled: false }), 2_500);
-    assert.equal(debounceCohortMs({ ...base, enabled: true, secret: undefined }), 2_500);
-    assert.equal(debounceCohortMs({ ...base, enabled: true, assignmentKey: '' }), 2_500);
+    assert.equal(debounceCohortMs({ ...base, enabled: false }), 2_000);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, secret: undefined }), 2_000);
+    assert.equal(debounceCohortMs({ ...base, enabled: true, assignmentKey: '' }), 2_000);
     assert.equal(debounceCohortMs({ enabled: false, secret: undefined, assignmentKey: '', configuredMs: 0 }), 0);
   });
 
@@ -194,8 +194,8 @@ describe('debounceCohortMs', () => {
   });
 
   it('depends on the secret, so a rotated secret reshuffles assignment', () => {
-    const withA = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-a', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
-    const withB = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-b', assignmentKey: `co:${i}`, configuredMs: 2_500 })));
+    const withA = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-a', assignmentKey: `co:${i}`, configuredMs: 2_000 })));
+    const withB = new Set(Array.from({ length: 200 }, (_, i) => debounceCohortMs({ enabled: true, secret: 'secret-b', assignmentKey: `co:${i}`, configuredMs: 2_000 })));
     // Both secrets exercise every cohort; the point is the mapping is keyed on the secret, not fixed.
     assert.equal(withA.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
     assert.equal(withB.size, LINE_AI_DEBOUNCE_COHORTS_MS.length);
@@ -204,7 +204,7 @@ describe('debounceCohortMs', () => {
   it('spreads a population of keys across all three concurrent cohorts', () => {
     const counts = new Map<number, number>();
     for (let i = 0; i < 3_000; i += 1) {
-      const ms = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: `co-1:chat-${i}`, configuredMs: 2_500 });
+      const ms = debounceCohortMs({ enabled: true, secret: 'experiment-secret', assignmentKey: `co-1:chat-${i}`, configuredMs: 2_000 });
       counts.set(ms, (counts.get(ms) ?? 0) + 1);
     }
     for (const cohort of LINE_AI_DEBOUNCE_COHORTS_MS) {

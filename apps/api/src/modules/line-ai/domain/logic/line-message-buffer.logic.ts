@@ -59,6 +59,8 @@ export const LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 export const LINE_WAIT_STATUS_DELAY_MS = 5_000;
 /** Let the status bubble reach the device before restoring loading; final delivery can cancel this. */
 export const LINE_LOADING_RESTART_DELAY_MS = 300;
+/** A second best-effort keepalive covers slow device delivery clearing the first restart. */
+export const LINE_LOADING_KEEPALIVE_DELAY_MS = 1_300;
 export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
 
 const LINE_WAIT_STATUS_RULES: Array<[RegExp, string[]]> = [
