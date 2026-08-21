@@ -42,7 +42,7 @@ Ship the smallest backend and asset change needed for the six-action `line-rich-
 - Handle `บริการของเรา` after linked identity, selected company, legal acceptance, permissions, and entitlement resolution but before the AI feature/provider path.
 - Handle `ถ่ายใบเสร็จ` before the AI feature/provider path, but send the capture prompt only when both `expenses.upload` and a canonical receipt-capture permission pass.
 - Leave `ดูค่าใช้จ่ายเดือนนี้` on the existing scoped semantic read path.
-- Leave `คุยกับน้องมั่งมี` as LINE's client-side `openKeyboard` postback; no server turn occurs on the tap.
+- Route only the `action=line-rich-talk` postback to the exact static welcome while LINE opens the keyboard; no model turn occurs on the tap.
 - Leave `เริ่มต้นใช้งานฟรี` as a public HTTPS URI action with no tenant/user query data.
 
 ### 4. Company context
@@ -55,7 +55,7 @@ Ship the smallest backend and asset change needed for the six-action `line-rich-
 ### 5. Verification
 
 - Pure logic tests: command mapping, exact contact values/actions, service entitlement combinations, current-company card fields, owner picker ordering/pagination, and receipt permission/feature combinations.
-- Webhook tests: public contact before identity/opt-out/model, service and receipt before AI provider, linked/non-owner/owner company card behavior, stale/forbidden switch, and deterministic delivery failures.
+- Webhook tests: public contact and talk welcome before identity/opt-out/model, service and receipt before AI provider, linked/non-owner/owner company card behavior, stale/forbidden switch, and deterministic delivery failures.
 - Regression: existing LINE staff-menu, webhook, adapter, classifier, entitlement, and type checks.
 - Asset test: exact dimensions, opaque PNG, `< 1 MB`, checksum, six non-overlapping areas covering the canvas, exact actions.
 

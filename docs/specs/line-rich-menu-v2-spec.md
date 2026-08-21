@@ -41,7 +41,7 @@ The current profile ID is `line-rich-menu-v2-ver1`. Its visual order follows the
 |---|---|---|---|---|---|
 | Top hero, two-thirds width | `company-context` | `หน้าหลัก` + `บริษัทของฉัน` | Message | `/companies` | Current company/user/role card; owner also receives the company switcher |
 | Top-right | `receipt-capture` | `ถ่ายใบเสร็จ` | Message | `ถ่ายใบเสร็จ` | Permission-checked capture prompt with camera and camera-roll Quick Replies |
-| Bottom 1 | `assistant-chat` | `คุยกับน้องมั่งมี` | Postback | `action=line-rich-talk`, `inputOption=openKeyboard` | Open the keyboard without generating an AI turn |
+| Bottom 1 | `assistant-chat` | `คุยกับน้องมั่งมี` | Postback | `action=line-rich-talk`, `inputOption=openKeyboard` | Open the keyboard and send the deterministic welcome; do not generate an AI turn |
 | Bottom 2 | `expense-summary-current-month` | `สรุปค่าใช้จ่าย` | Message | `ดูค่าใช้จ่ายเดือนนี้` | Permission- and scope-checked current-month expense summary |
 | Bottom 3 | `free-start` | `เริ่มต้นใช้งานฟรี` | URI | `https://official.mangmeeplus.com/` | Open the public official-site onboarding entry point |
 | Bottom 4 | `contact` | `ติดต่อเรา` | Message | `ติดต่อเรา` | Public contact card |
@@ -66,7 +66,7 @@ The image is static for each deployed version. Visibility of a tile is not autho
 1. Verify the LINE webhook signature and event idempotency before all command handling.
 2. `เริ่มต้นใช้งานฟรี` is a public URI action handled by LINE and opens only the approved HTTPS destination. It sends no company or user data in the URL.
 3. `ติดต่อเรา` is public and may render without a linked account. It contains no company or user data.
-4. `คุยกับน้องมั่งมี` only opens the keyboard. The normal account-link gate applies when the user sends a message.
+4. `คุยกับน้องมั่งมี` opens the keyboard and returns the public static welcome in §6.4. The normal account-link and AI gates apply only when the user sends a message.
 5. `บริษัทของฉัน`, `ถ่ายใบเสร็จ`, `สรุปค่าใช้จ่าย`, and the secondary `บริการของเรา` command require a linked active user.
 6. Resolve the selected company from active membership. If company context is ambiguous, return the existing company-selection flow before the requested card.
 7. Re-resolve company entitlements, membership roles, permissions, and scopes on every tap. Never trust rich-menu payloads as authority.
@@ -139,7 +139,8 @@ Rules:
 
 ### 6.4 คุยกับน้องมั่งมี
 
-- Use a postback action with `inputOption=openKeyboard`; tapping the tile itself does not invoke a model, read ERP data, or send a greeting on the user's behalf.
+- Use a postback action with `inputOption=openKeyboard`; tapping the tile sends the static welcome below but does not invoke a model or read ERP data.
+- Exact welcome: `สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚`
 - Once the user sends text, the normal LINE assistant pipeline handles casual conversation, capability help, and business questions.
 - An unlinked user's first sent message receives the existing account-link prompt.
 - Unsupported LINE clients still leave the normal chat input available; no business state changes on the tile tap.
@@ -215,7 +216,7 @@ Actions:
 - Receipt upload feature is on but the user lacks capture permission, and vice versa.
 - Expense feature is on but the user lacks read permission.
 - Clipboard action is unsupported by the recipient's LINE version.
-- AI/provider is unavailable; deterministic company, service, receipt prompt, and contact cards must not depend on model generation.
+- AI/provider is unavailable; deterministic company, service, receipt prompt, talk welcome, and contact cards must not depend on model generation.
 - A trend refresh changes artwork but accidentally maps an area to the wrong stable behavior or stale URI.
 - The active profile fails UAT and must roll back to the last accepted rich-menu resource.
 
@@ -232,7 +233,7 @@ Actions:
 - [ ] AC-9 Every company switch re-checks active owner membership, uses immutable `companyId`, changes context once, and writes an audit event.
 - [ ] AC-10 `ถ่ายใบเสร็จ` returns native camera/camera-roll Quick Replies only after the feature and permission gates pass.
 - [ ] AC-11 Receipt intake creates/reuses a draft and never performs a final approval, payment, export, void, or posting.
-- [ ] AC-12 `คุยกับน้องมั่งมี` opens the keyboard without creating an AI turn until the user sends text.
+- [ ] AC-12 `คุยกับน้องมั่งมี` opens the keyboard, immediately returns the exact welcome in §6.4, and creates no AI turn until the user sends text.
 - [ ] AC-13 `สรุปค่าใช้จ่าย` returns a scoped current-month summary or the correct empty/disabled/forbidden/unavailable state.
 - [ ] AC-14 An unlinked user can receive the contact card; the other data-bearing actions use the existing link/context flow.
 - [ ] AC-15 The contact card shows the exact approved email, phone, and official website; phone and website actions open the correct destinations.
@@ -253,7 +254,7 @@ At minimum, implementation must leave focused automated checks for:
 - exact contact values and URI schemes;
 - exact free-start HTTPS destination and absence of tenant/user query data;
 - manifest coordinate validation, image checksum, and rollback profile metadata;
-- model provider not called for deterministic cards or the keyboard-opening tap.
+- model provider not called for deterministic cards or the keyboard-opening welcome.
 
 Real LINE UAT must capture the six rich-menu taps on current iOS and Android clients. A repository-only Flex snapshot is not sufficient release evidence.
 

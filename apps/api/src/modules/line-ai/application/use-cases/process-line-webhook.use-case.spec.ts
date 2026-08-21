@@ -366,6 +366,19 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_contact');
   });
 
+  it('greets immediately on the rich-menu talk postback without identity or model reads', async () => {
+    const { prisma, identityQueries, updates } = makePrisma({ identityUserId: null });
+    const { useCase, replies, legalChecks, getAiGatewayCalled } = makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-public-talk', messageText: 'คุยกับน้องมั่งมี' });
+
+    assert.equal(identityQueries.length, 0);
+    assert.equal(legalChecks.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal(replies[0], 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚');
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_talk');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });

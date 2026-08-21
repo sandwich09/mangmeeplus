@@ -55,7 +55,7 @@ Test on current LINE iOS and Android clients using both linked and unlinked acco
 
 1. บริษัทของฉัน: current company, display name, and human role labels only; an owner also sees every owner company and can switch safely.
 2. ถ่ายใบเสร็จ: enabled + allowed gets the camera/camera-roll prompt; disabled and forbidden states remain distinct.
-3. คุยกับน้องมั่งมี: opens the keyboard and sends no model turn until the user submits text.
+3. คุยกับน้องมั่งมี: opens the keyboard and immediately replies `สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ` followed by `วันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚`; no model turn occurs until the user submits text.
 4. สรุปค่าใช้จ่าย: returns the scoped current-month result or its honest empty/forbidden state.
 5. เริ่มต้นใช้งานฟรี: opens only `https://official.mangmeeplus.com/`.
 6. ติดต่อเรา: works while unlinked and shows the approved email, phone, telephone action, and official website.

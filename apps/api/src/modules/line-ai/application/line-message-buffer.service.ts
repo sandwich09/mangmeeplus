@@ -150,8 +150,8 @@ export class LineMessageBufferService implements OnModuleDestroy {
     // text/reply tokens/media ids. Preflight receives identity coordinates only, so a pending
     // employee message never crosses the durable-payload boundary.
     const companyCommand = envelope.item.kind === 'text' && !!parseLineCompanyCommand(envelope.item.text);
-    const publicContact = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text) === 'contact';
-    const legal = publicContact
+    const publicCommand = envelope.item.kind === 'text' && staffMenuCommand(envelope.item.text);
+    const legal = publicCommand === 'contact' || publicCommand === 'talk'
       ? { status: 'continue' as const, companyId: undefined }
       : await this.processWebhook.preflightLegalAcceptance({
           lineUserId: envelope.lineUserId,

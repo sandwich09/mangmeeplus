@@ -374,7 +374,7 @@ export function buildPendingApprovalCard(context: StaffMenuContext, pending: Pen
   };
 }
 
-export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | null {
+export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 'receipt' | 'services' | 'contact' | 'talk' | null {
   const normalized = text.trim().replace(/[📊✅📷]/gu, '').trim();
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
@@ -382,5 +382,6 @@ export function staffMenuCommand(text: string): 'main' | 'query' | 'approval' | 
   if (normalized === 'ถ่ายใบเสร็จ') return 'receipt';
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
+  if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
   return null;
 }

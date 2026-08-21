@@ -144,6 +144,7 @@ const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผ�
 const RECEIPT_LINK_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนส่งบิลหรือใบเสร็จนะคะ';
 const RECEIPT_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์อัปโหลดบิลหรือใบเสร็จผ่าน LINE ค่ะ';
 const EXPENSE_FEATURE_DISABLED_REPLY = '📋 บริษัทนี้ยังไม่ได้เปิดใช้งานระบบค่าใช้จ่ายและเอกสารค่ะ\nหากต้องการใช้ ให้เจ้าของหรือผู้ดูแลเปิดฟีเจอร์ในเว็บแอปก่อนนะคะ';
+const ASSISTANT_TALK_GREETING = 'สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚';
 const COMPANY_CONTEXT_FORBIDDEN_REPLY = '🔒 ผู้ใช้หลายบริษัทต้องเป็น OWNER ของทุกบริษัทก่อนเลือกบริบทใน LINE ค่ะ';
 const SIGNATURE_FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เก็บลายเซ็นประจำตัวผ่าน LINE ค่ะ';
 const SIGNATURE_NEED_IMAGE_REPLY = '✍️ ต้องการอัปโหลดลายเซ็นใช่ไหมคะ กรุณาส่ง "รูปลายเซ็น" เข้ามาในแชทนี้ได้เลยนะคะ\nระบบจะเก็บเป็นลายเซ็นประจำตัวของคุณ ใช้ลงนามได้ทันทีค่ะ';
@@ -1386,9 +1387,15 @@ export class ProcessLineWebhookUseCase {
 
     // Public deterministic command: the verified controller and event claim already ran, but no
     // identity, company, acceptance, permission, entitlement, or model read is needed.
-    if (staffMenuCommand(event.messageText) === 'contact') {
+    const publicCommand = staffMenuCommand(event.messageText);
+    if (publicCommand === 'contact') {
       await this.deliverRequiredMessages(event, [buildContactCard()]);
       await this.updateEventLog(event.webhookEventId, 'staff_menu_contact');
+      return;
+    }
+    if (publicCommand === 'talk') {
+      await this.deliverReply(event, ASSISTANT_TALK_GREETING);
+      await this.updateEventLog(event.webhookEventId, 'staff_menu_talk');
       return;
     }
 

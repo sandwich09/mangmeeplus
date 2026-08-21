@@ -274,6 +274,7 @@ describe('LINE staff menu', () => {
     assert.equal(staffMenuCommand('📊 ถามข้อมูล'), 'query');
     assert.equal(staffMenuCommand('บริการของเรา'), 'services');
     assert.equal(staffMenuCommand('ติดต่อเรา'), 'contact');
+    assert.equal(staffMenuCommand('คุยกับน้องมั่งมี'), 'talk');
     assert.equal(staffMenuCommand('ยอดขายวันนี้'), null);
   });
 

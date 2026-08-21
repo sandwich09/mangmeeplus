@@ -295,15 +295,17 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(h.replies.length, 0);
   });
 
-  it('dispatches public contact without identity/legal preflight while other staff commands stay gated', async () => {
-    const contact = makeHarness({
+  it('dispatches public contact and talk without identity/legal preflight while other staff commands stay gated', async () => {
+    const publicCommands = makeHarness({
       debounceMs: 5_000,
-      preflightImpl: async () => { throw new Error('contact must not call legal preflight'); },
+      preflightImpl: async () => { throw new Error('public commands must not call legal preflight'); },
     });
-    await contact.service.enqueue(textEnv('public-contact', 'ติดต่อเรา'));
+    await publicCommands.service.enqueue(textEnv('public-contact', 'ติดต่อเรา'));
     await sleep(20);
-    assert.equal(contact.preflightCalls.length, 0);
-    assert.equal(contact.executed[0]?.messageText, 'ติดต่อเรา');
+    await publicCommands.service.enqueue(textEnv('public-talk', 'คุยกับน้องมั่งมี'));
+    await sleep(20);
+    assert.equal(publicCommands.preflightCalls.length, 0);
+    assert.deepEqual(publicCommands.executed.map((event) => event.messageText), ['ติดต่อเรา', 'คุยกับน้องมั่งมี']);
 
     const services = makeHarness({ legalAcceptanceRequired: true });
     await services.service.enqueue(textEnv('legal-services', 'บริการของเรา'));
@@ -438,7 +440,7 @@ describe('LineMessageBufferService – commands', () => {
   });
 
   it('dispatches deterministic rich-menu message commands without debounce or fragment merging', async () => {
-    for (const [index, command] of ['ติดต่อเรา', 'บริการของเรา', 'ถ่ายใบเสร็จ', 'เมนูหลัก'].entries()) {
+    for (const [index, command] of ['ติดต่อเรา', 'คุยกับน้องมั่งมี', 'บริการของเรา', 'ถ่ายใบเสร็จ', 'เมนูหลัก'].entries()) {
       const h = makeHarness({ debounceMs: 5_000 });
       await h.service.enqueue(textEnv(`rich-command-${index}`, command));
       await sleep(20);

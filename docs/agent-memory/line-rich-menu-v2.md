@@ -12,7 +12,7 @@ Decisions:
 - `บริการของเรา` remains a supported secondary message command but is not a direct tile in Ver1.
 - `บริษัทของฉัน` shows only current company name, user display name, and resolved role labels to every linked user. Owners additionally receive every active owner-company name and safe switch controls.
 - Receipt capture uses a message action because LINE camera/camera-roll actions are Quick Reply-only.
-- Talk uses native `openKeyboard` and does not spend an AI turn before the user sends text.
+- Talk uses native `openKeyboard` and immediately sends the static cheerful welcome `สวัสดีค่ะ 😊 น้องมั่งมีมาแล้วนะคะ\nวันนี้มีอะไรให้น้องช่วยแบ่งเบาบ้าง บอกได้เลยค่ะ 💚`; it does not spend an AI turn before the user sends text.
 - Contact is public and deterministic: contact@mangmeeplus.com, 098-256-5628, and https://official.mangmeeplus.com/.
 - `เริ่มต้นใช้งานฟรี` is a public URI action to https://official.mangmeeplus.com/ and may not append tenant or user data.
 - `หน้าหลัก` is a visual heading inside the company hero, not a seventh action.
@@ -45,6 +45,7 @@ Verification:
 - Company context never falls back to an internal company or role key in visible output.
 - Focused automated checks passed: image/manifest 2, staff-menu logic 29, classifier 22, message buffer 62, webhook use case 131; total 246 passing tests.
 - `pnpm --filter @watchdog-bms/api typecheck` passed.
+- Follow-up on 2026-08-21 routes only `action=line-rich-talk` postbacks to the exact static welcome while `inputOption=openKeyboard` opens the keyboard; controller, staff-menu, buffer, and webhook focused tests plus API typecheck passed without a model call.
 - Repository bitmap visually inspected after export; retained Ver1 artwork was not stretched and the removed strip is an exact deep-green field.
 
 Next:
