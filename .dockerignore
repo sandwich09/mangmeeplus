@@ -25,3 +25,7 @@ docs/_attachments
 # `turbo run build` inside a deliberately minimal image context, and keeps compiled specs out of dist.
 **/*.spec.ts
 **/*.test.ts
+# ...except the one spec the migration-tool image ships on purpose: that image copies raw
+# apps/api/src and runs .ts through tsx, and infra/security/verify-production-a5-migration-tool.sh
+# fails the release if this path is absent. Service images stay spec-free.
+!apps/api/src/scripts/production-a5-reimbursement-compatibility.pg.spec.ts
