@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
+import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
+import { availableApprovalSurfaceKeys, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand } from './line-staff-menu.logic';
 
 // entitledFeatureKeys null is the legacy fail-open company, so these cases keep asserting the
 // permission dimension on its own. Feature gating has its own cases at the end of the suite.
@@ -77,6 +78,18 @@ describe('LINE staff menu', () => {
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
   });
 
+  it('shows only current company, user, and human role labels in the context card', () => {
+    const message = buildCompanyContextMessage({
+      companyName: 'บริษัทมั่งมี จำกัด', displayName: 'พิมพ์ชนก', roleLabels: ['เจ้าของกิจการ', 'ฝ่ายบัญชี'],
+    });
+    assert.equal(message.type, 'flex');
+    const rendered = JSON.stringify(message);
+    assert.match(rendered, /บริษัทมั่งมี จำกัด/);
+    assert.match(rendered, /คุณพิมพ์ชนก/);
+    assert.match(rendered, /เจ้าของกิจการ · ฝ่ายบัญชี/);
+    assert.equal(/companyId|membership|permission|branch/u.test(rendered), false);
+  });
+
   it('builds tappable company cards using immutable company ids', () => {
     const message = buildCompanyPickerMessage([
       { companyId: 'co-1', companyName: 'บริษัทหนึ่ง' },
@@ -91,17 +104,25 @@ describe('LINE staff menu', () => {
     assert.equal(JSON.stringify(message).includes('/company co-1'), false);
   });
 
-  it('bounds labels and uses the twelfth bubble for an honest overflow notice', () => {
+  it('puts the current company first and paginates every owner company without dropping names', () => {
     const companies = Array.from({ length: 14 }, (_, index) => ({
       companyId: `co-${index + 1}`,
       companyName: index === 0 ? 'ก'.repeat(200) : `บริษัท ${index + 1}`,
     }));
-    const message = buildCompanyPickerMessage(companies, 'co-14');
-    const contents = (message as any).contents.contents;
-    assert.equal(contents.length, 12);
-    assert.equal(JSON.stringify(message).includes('ก'.repeat(81)), false);
-    assert.match(JSON.stringify(message), /ใช้งานอยู่/);
-    assert.match(JSON.stringify(contents[11]), /มีอีก 3 บริษัท/);
+    const first = buildCompanyPickerMessage(companies, 'co-14');
+    const firstContents = (first as any).contents.contents;
+    assert.equal(firstContents.length, 12);
+    assert.match(JSON.stringify(firstContents[0]), /บริษัท 14/);
+    assert.match(JSON.stringify(firstContents[0]), /ใช้งานอยู่/);
+    assert.match(JSON.stringify(firstContents[11]), /หน้า 1\/2/);
+    assert.match(JSON.stringify(firstContents[11]), /\/companies page 2/);
+    assert.equal(JSON.stringify(first).includes('ก'.repeat(81)), false);
+
+    const second = buildCompanyPickerMessage(companies, 'co-14', 2);
+    const rendered = JSON.stringify(second);
+    assert.match(rendered, /หน้า 2\/2/);
+    assert.match(rendered, /\/companies page 1/);
+    assert.match(rendered, /บริษัท 13/);
   });
 
   it('returns a safe text result for an empty company list', () => {
@@ -130,6 +151,37 @@ describe('LINE staff menu', () => {
     const withoutImageContents = ((withoutImage as { contents: any }).contents.body.contents as any[]);
     assert.equal(withoutImageContents.some((item) => item.type === 'image'), false);
     assert.equal(withoutImageContents.some((item) => item.text === caption.text), true);
+  });
+
+  it('builds the exact public contact card and safe actions', () => {
+    const card = buildContactCard();
+    assert.equal(card.type, 'flex');
+    assert.equal(card.altText, 'ติดต่อมั่งมี Plus: contact@mangmeeplus.com โทร 098-256-5628');
+    const rendered = JSON.stringify(card);
+    assert.match(rendered, /contact@mangmeeplus.com/);
+    assert.match(rendered, /098-256-5628/);
+    assert.match(rendered, /tel:0982565628/);
+    assert.match(rendered, /https:\/\/official\.mangmeeplus\.com\//);
+    assert.match(rendered, /clipboardText/);
+    assert.equal(rendered.includes('mailto:'), false);
+  });
+
+  it('lists every and only enabled sellable top-level service in catalog order', () => {
+    const enabled = new Set(['expenses', 'expenses.upload', 'ai_line_assistant', 'employee_access']);
+    const card = buildServiceEntitlementMessage(enabled);
+    const rendered = JSON.stringify(card);
+    assert.match(rendered, /ค่าใช้จ่าย\+ใบเสร็จ/);
+    assert.match(rendered, /ผู้ช่วย AI ทาง LINE/);
+    assert.equal(rendered.includes('พนักงานและสิทธิ์'), false);
+    assert.equal(rendered.includes('อัปโหลดใบเสร็จ'), false);
+
+    const legacy = JSON.stringify(buildServiceEntitlementMessage(null));
+    for (const feature of FEATURE_CATALOG.filter((item) => item.sellable)) assert.match(legacy, new RegExp(feature.labelTh.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+
+    const empty = buildServiceEntitlementMessage(new Set());
+    assert.equal(empty.type, 'flex');
+    assert.equal((empty as Extract<typeof empty, { type: 'flex' }>).altText, 'บริษัทนี้ยังไม่มีบริการที่เปิดใช้งานผ่าน LINE');
+    assert.equal(JSON.stringify(empty).includes('✓ บริษัทนี้'), false);
   });
 
   const approvalButtons = (permissions: string[]) => {
@@ -220,6 +272,8 @@ describe('LINE staff menu', () => {
 
   it('parses only explicit menu commands', () => {
     assert.equal(staffMenuCommand('📊 ถามข้อมูล'), 'query');
+    assert.equal(staffMenuCommand('บริการของเรา'), 'services');
+    assert.equal(staffMenuCommand('ติดต่อเรา'), 'contact');
     assert.equal(staffMenuCommand('ยอดขายวันนี้'), null);
   });
 

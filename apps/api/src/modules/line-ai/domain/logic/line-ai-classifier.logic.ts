@@ -40,7 +40,7 @@ export function hashMessagePreview(text: string): string {
 }
 
 export type LineCompanyCommand =
-  | { kind: 'list' }
+  | { kind: 'list'; page?: number }
   | { kind: 'select'; value: string };
 
 /** Parse explicit company-context commands. Shared by the webhook use case and
@@ -50,6 +50,8 @@ export function parseLineCompanyCommand(text: string): LineCompanyCommand | null
   const trimmed = text.trim();
   const normalized = trimmed.replace(/\s+/g, ' ').toLowerCase();
   if (normalized === '/companies' || normalized === '/company' || normalized === 'เปลี่ยนบริษัท') return { kind: 'list' };
+  const page = normalized.match(/^\/companies\s+page\s+(\d+)$/);
+  if (page?.[1]) return { kind: 'list', page: Number(page[1]) };
   const match = trimmed.match(/^\/company\s+(.+)$/i);
   return match?.[1] ? { kind: 'select', value: match[1].trim() } : null;
 }

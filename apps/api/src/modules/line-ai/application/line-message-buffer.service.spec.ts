@@ -295,6 +295,22 @@ describe('LineMessageBufferService – legal acceptance pre-storage gate', () =>
     assert.equal(h.replies.length, 0);
   });
 
+  it('dispatches public contact without identity/legal preflight while other staff commands stay gated', async () => {
+    const contact = makeHarness({
+      debounceMs: 5_000,
+      preflightImpl: async () => { throw new Error('contact must not call legal preflight'); },
+    });
+    await contact.service.enqueue(textEnv('public-contact', 'ติดต่อเรา'));
+    await sleep(20);
+    assert.equal(contact.preflightCalls.length, 0);
+    assert.equal(contact.executed[0]?.messageText, 'ติดต่อเรา');
+
+    const services = makeHarness({ legalAcceptanceRequired: true });
+    await services.service.enqueue(textEnv('legal-services', 'บริการของเรา'));
+    assert.equal(services.executed.length, 0);
+    assert.equal(services.rows.get('legal-services')?.status, 'legal_acceptance_required');
+  });
+
   it('preserves the existing unlinked/unresolved path when preflight says continue', async () => {
     const h = makeHarness({ debounceMs: 0 });
     const envelope = textEnv('preflight-continue', 'ขอเชื่อมบัญชี');
@@ -419,6 +435,15 @@ describe('LineMessageBufferService – commands', () => {
     await h.service.enqueue(textEnv('cmd2', '/company 2'));
     await sleep(30);
     assert.deepEqual(h.executed.map((e) => e.messageText), ['ขอรายชื่อลูกค้า', '/company 2']);
+  });
+
+  it('dispatches deterministic rich-menu message commands without debounce or fragment merging', async () => {
+    for (const [index, command] of ['ติดต่อเรา', 'บริการของเรา', 'ถ่ายใบเสร็จ', 'เมนูหลัก'].entries()) {
+      const h = makeHarness({ debounceMs: 5_000 });
+      await h.service.enqueue(textEnv(`rich-command-${index}`, command));
+      await sleep(20);
+      assert.equal(h.executed[0]?.messageText, command);
+    }
   });
 });
 
