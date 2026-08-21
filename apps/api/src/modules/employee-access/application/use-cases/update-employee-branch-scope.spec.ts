@@ -132,6 +132,22 @@ describe('UpdateEmployeeUseCase role assignment guards', () => {
     assert.deepEqual(writes.assignedRoleIds, ['r-sales']);
   });
 
+  it('persists the complete role union instead of replacing it with only the newest role', async () => {
+    const reviewerRole: FakeRole = {
+      id: 'r-reviewer', key: 'REIMBURSEMENT_REVIEWER', isSystem: false,
+      permissions: [{ permission: { key: 'reimbursement.finance_review' } }],
+    };
+    const { prisma, writes } = makePrisma({ candidateRoles: [SALES_ROLE, reviewerRole] });
+
+    await new UpdateEmployeeUseCase(prisma, CONFIG).execute({
+      ...baseCmd,
+      requesterPermissions: [...baseCmd.requesterPermissions, 'crm.customer.read', 'reimbursement.finance_review'],
+      roleIds: ['r-sales', 'r-reviewer'],
+    });
+
+    assert.deepEqual(writes.assignedRoleIds.sort(), ['r-reviewer', 'r-sales']);
+  });
+
   it('allows an update when the resolver proves the disabled-feature role permission belongs to the requester', async () => {
     const { prisma, writes } = makePrisma({
       candidateRoles: [ENTITLEMENT_FILTERED_ROLE],

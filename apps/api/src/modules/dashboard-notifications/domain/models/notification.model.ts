@@ -121,6 +121,7 @@ export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
   'workflow.reimbursement_pending_approval',
   'workflow.approval_sla_breach',
   'workflow.reimbursement_decision_requester',
+  'workflow.reimbursement_correction_requester',
   'workflow.reimbursement_finance_review',
   'workflow.reimbursement_ready_for_payment',
   'workflow.reimbursement_payment_recorded',

@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { RequirePermissions } from '../../../../common/security/permissions.decorator';
+import { RequireAnyPermission } from '../../../../common/security/permissions.decorator';
 import { ListPermissionsUseCase } from '../../application/use-cases/list-permissions.use-case';
 
 @ApiTags('settings-permissions')
@@ -9,7 +9,7 @@ export class PermissionController {
   constructor(private readonly listPermissions: ListPermissionsUseCase) {}
 
   @Get()
-  @RequirePermissions('access.permission.read')
+  @RequireAnyPermission('access.permission.read', 'access.role.manage')
   @ApiOperation({ summary: 'List the registered permission catalog grouped by module' })
   list() {
     return this.listPermissions.execute();

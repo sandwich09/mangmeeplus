@@ -97,7 +97,7 @@ export class ReimbursementController {
   // ---- Static routes (declared before :requestId) ----
 
   @Get('approval-queue')
-  @RequirePermissions('reimbursement.approve')
+  @RequireAnyPermission('reimbursement.approve', 'reimbursement.reject')
   @ApiOperation({ summary: 'List reimbursement approval queue' })
   listApprovalQueue(@ReqCtx() ctx: RequestContext) {
     return this.approvalQueue.execute(ctx);
@@ -184,7 +184,7 @@ export class ReimbursementController {
   }
 
   @Post(':requestId/cancel')
-  @RequirePermissions('reimbursement.cancel_own')
+  @RequireAnyPermission('reimbursement.cancel_own', 'reimbursement.finance_review')
   @HttpCode(200)
   @ApiOperation({ summary: 'Cancel reimbursement request' })
   cancelRequest(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: { reason?: string }) {

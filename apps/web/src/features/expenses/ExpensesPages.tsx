@@ -1943,7 +1943,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   );
 }
 
-function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: string; branchId?: string; onSuccess: (expenseId: string) => void }) {
+function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }: { companyId: string; branchId?: string; canAttachReceipt: boolean; onSuccess: (expenseId: string) => void }) {
   const locale = useWorkspaceLocale();
   const [expenseDate, setExpenseDate] = useState(todayCivilDate());
   const [items, setItems] = useState<ManualExpenseItem[]>([{ description: '', quantity: '1', unitPrice: '', discountAmount: '0' }]);
@@ -2050,9 +2050,11 @@ function ManualExpensePanel({ companyId, branchId, onSuccess }: { companyId: str
             <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)}{req}</span><ThemedDate className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
             <div className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_receipt', locale)}</span>
-              <ThemedFile file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} onChange={(file) => void selectReceiptFile(file)} />
-              {preparingReceipt ? <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_preparing', locale)}</p>
-                : !receiptFile && <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
+              {canAttachReceipt ? <>
+                <ThemedFile file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} onChange={(file) => void selectReceiptFile(file)} />
+                {preparingReceipt ? <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_preparing', locale)}</p>
+                  : !receiptFile && <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
+              </> : <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">{t('expenses.manual_receipt_forbidden', locale)}</p>}
             </div>
           </div>
         </MangmeeCard>
@@ -2216,7 +2218,7 @@ export function ExpensesHubPage({ companyId, userId, permissions, tab = 'list' }
         <>
           {tab === 'list' && <ExpenseListPage companyId={companyId} caps={caps} userId={userId} onSelect={openListExpense} />}
           {tab === 'upload' && <UploadPanel companyId={companyId} {...(branchId ? { branchId } : {})} {...(caps.canCreate ? { onNoDocument: () => router.push(`/companies/${companyId}/expenses/substitute-receipts/new`) } : {})} onSuccess={(expenseId, notice) => { storeExtractionNotice(expenseId, notice); openListExpense(expenseId); }} />}
-          {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} onSuccess={openListExpense} />}
+          {tab === 'manual' && <ManualExpensePanel companyId={companyId} {...(branchId ? { branchId } : {})} canAttachReceipt={caps.canUploadReceipts && permissions.includes('attachment.create')} onSuccess={openListExpense} />}
           {tab === 'categories' && <CategoryManagePanel companyId={companyId} />}
           {tab === 'signatures' && <SignaturePanel companyId={companyId} {...(focusSignatureId ? { focusSignatureId } : {})} />}
           {tab === 'evidence' && <EvidencePanel companyId={companyId} canExport={caps.canExportPackage} canReadLedger={caps.canReadLedger} canPostLedger={caps.canPostLedger} onOpenExpense={openListExpense} />}

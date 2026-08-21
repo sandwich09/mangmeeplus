@@ -1,6 +1,7 @@
 import { AddEmployeePrototypePage } from '@/features/employee-access/AddEmployeePrototypePage';
 import { fetchServerSession } from '@/common/auth/server-session';
 import { requireRoutePermission } from '@/features/web-core-workspace/route-permission-guard';
+import { redirect } from 'next/navigation';
 
 export default async function SettingsEmployeesPage({
   params,
@@ -14,7 +15,11 @@ export default async function SettingsEmployeesPage({
   const session = await fetchServerSession(companyId);
   const forbidden = requireRoutePermission(session, '/settings/employees');
   if (forbidden) return forbidden;
+  const permissions = session?.permissions ?? [];
+  if (edit ? !permissions.includes('access.employee.update') : !permissions.includes('access.employee.create')) {
+    redirect(`/companies/${companyId}/settings/access-overview`);
+  }
   return (
-    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} viewerPermissions={session?.permissions ?? []} />
+    <AddEmployeePrototypePage companyId={companyId} editEmployeeId={edit} viewerUserId={session?.userId} viewerPermissions={permissions} />
   );
 }

@@ -76,12 +76,12 @@ test.describe('harness: access matrix', () => {
   });
 
   test('a denied route redirects to the dashboard @smoke', async ({ pageAs, companyId }) => {
-    // STAFF has no ledger.journal.read, so /journal must bounce.
+    // STAFF has no booking permission, so /bookings must bounce.
     const staff = await pageAs('STAFF');
-    await expectRouteAccess(staff, companyId, 'journal', 'STAFF');
+    await expectRouteAccess(staff, companyId, 'booking', 'STAFF');
 
-    // ...and the same route is reachable for ACCOUNTANT, proving the assertion discriminates.
-    const accountant = await pageAs('ACCOUNTANT');
-    await expectRouteAccess(accountant, companyId, 'journal', 'ACCOUNTANT');
+    // ...and the same route is reachable for SALES, proving the assertion discriminates.
+    const sales = await pageAs('SALES');
+    await expectRouteAccess(sales, companyId, 'booking', 'SALES');
   });
 });

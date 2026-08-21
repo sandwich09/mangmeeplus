@@ -334,6 +334,15 @@ describe('CancelReimbursementUseCase', () => {
     assert.deepEqual(state.calls.voided, ['exp-1', 'exp-2']);
   });
 
+  it('allows an authorized finance reviewer to cancel a non-owned request', async () => {
+    const state = fakeRepo();
+    await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
+    const cancel = new CancelReimbursementUseCase(state.repo, noopAudit, state.voidExpense);
+    const result = await cancel.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.finance_review'] }), 'rb-1', 'ยกเลิกหลังกลับรายการจ่าย');
+    assert.equal(result.status, 'CANCELLED');
+    assert.equal(state.request.rejectionReason, 'ยกเลิกหลังกลับรายการจ่าย');
+  });
+
   it('refuses to close the claim when a projection survives the void', async () => {
     const state = fakeRepo({ claimProjections: [{ id: 'exp-1', sourceReimbursementLineId: 'rbl-1' }] });
     await useCases(state).create.execute(ctx(), { reason: 'r', lines: [inputLine()] } as any);
@@ -398,6 +407,26 @@ describe('SubmitReimbursementUseCase (multi-line)', () => {
     assert.equal(detail.amount, '200.0000');
     assert.equal(state.request.outstandingAmount, '200.0000');
     assert.equal(detail.lines.length, 2);
+  });
+
+  it('clears the prior finance correction decision when the corrected draft is resubmitted', async () => {
+    const state = fakeRepo({ policy: noReceiptNeeded });
+    await draftWith(state, [inputLine()], withReason);
+    Object.assign(state.request, {
+      financeReviewStatus: 'NEEDS_INFO',
+      financeReviewedByUserId: 'finance-1',
+      financeReviewedAt: new Date('2026-01-02T00:00:00.000Z'),
+      financeReviewNote: 'แก้ยอด',
+      approvedAt: new Date('2026-01-02T00:00:00.000Z'),
+    });
+
+    await useCases(state).submit.execute(ctx(), 'rb-1');
+
+    assert.equal(state.request.financeReviewStatus, 'NOT_REQUIRED');
+    assert.equal(state.request.financeReviewedByUserId, null);
+    assert.equal(state.request.financeReviewedAt, null);
+    assert.equal(state.request.financeReviewNote, null);
+    assert.equal(state.request.approvedAt, null);
   });
 
   it('emits document-number audits only after the atomic submit succeeds', async () => {

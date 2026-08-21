@@ -42,6 +42,13 @@ const PAYER_JOURNEY = [
   'certifySubstitute',
 ] as const;
 
+const APPROVER_JOURNEY = [
+  'getExpense',
+  'listSubstituteHistory',
+  'downloadSubstitutePdf',
+  'approveSubstitute',
+] as const;
+
 // Typed against the controller so renaming a handler fails to compile here rather than quietly
 // leaving that endpoint uncovered.
 function acceptedPermissions(handler: keyof ExpenseController): string[] {
@@ -77,6 +84,16 @@ describe('substitute-receipt payer access (audit H-4)', () => {
       assert.ok(accepted.length > 0, `${handler} has no permission metadata at all`);
       assert.notDeepEqual(accepted, ['expense.review'], `${handler} is reviewer-only again`);
     }
+  });
+
+  it('accepts expense.confirm throughout the approver journey', () => {
+    for (const handler of APPROVER_JOURNEY) {
+      assert.ok(acceptedPermissions(handler).includes('expense.confirm'), `${handler} rejects expense.confirm`);
+    }
+  });
+
+  it('lets an expense reviewer complete an evidence upload', () => {
+    assert.ok(acceptedPermissions('completeReceiptUpload').includes('expense.review'));
   });
 
   // The finding in one assertion: a payer is picked from the whole company, so a role that cannot
@@ -147,6 +164,16 @@ describe('substitute-receipt payer access (audit H-4)', () => {
     const readOwnOnly = { ...staffPayer, permissions: ['expense.read_own'] };
 
     assert.deepEqual(await new ListSubstituteReceiptHistoryUseCase(repo).execute(readOwnOnly, 'exp-1'), history);
+  });
+
+  it('lets an expense confirmer load the history required by the approval screen', async () => {
+    const repo = {
+      findById: async () => expense,
+      isUserRelatedToExpense: async () => assert.fail('expense.confirm must not depend on payer relation'),
+      listSubstituteEvidenceHistory: async () => history,
+    } as any;
+    const confirmer = { ...staffPayer, userId: 'approver-1', permissions: ['expense.confirm'] };
+    assert.deepEqual(await new ListSubstituteReceiptHistoryUseCase(repo).execute(confirmer, 'exp-1'), history);
   });
 
   // Any version counts, matching the relation predicate: superseding a certificate does not erase

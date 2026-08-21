@@ -455,6 +455,36 @@ describe('UpdateRoleUseCase', () => {
     assert.deepEqual(state.rolePermissions.filter((row) => row.roleId === systemRole.id), sourcePermissions);
   });
 
+  it('forks STAFF with reimbursement review while keeping payment authority out', async () => {
+    const systemRole = {
+      id: 'role-system-staff', companyId: null, scopeKey: 'system', key: 'STAFF', name: 'Staff',
+      description: null, isSystem: true, status: 'ACTIVE',
+    };
+    const { prisma, state } = makePrisma({
+      role: systemRole,
+      membershipRoles: [{ membershipId: 'membership-1', roleId: systemRole.id, companyId: COMPANY_ID }],
+    });
+
+    const result = await new UpdateRoleUseCase(prisma).execute({
+      companyId: COMPANY_ID,
+      roleId: systemRole.id,
+      name: 'Staff ตรวจเบิก',
+      capabilityPackKeys: ['pack.reimbursement.review'],
+      requestingUserId: 'owner-1',
+      requestId: 'req-staff-review',
+      isOwner: true,
+    });
+
+    assert.equal(result.key, 'STAFF');
+    assert.ok(result.permissionKeys.includes('reimbursement.finance_review'));
+    for (const key of ['reimbursement.payment.record', 'reimbursement.payment.void', 'reimbursement.duplicate.resolve']) {
+      assert.ok(!result.permissionKeys.includes(key), `STAFF review fork must not hold ${key}`);
+    }
+    assert.deepEqual(state.membershipRoles.filter((row) => row.membershipId === 'membership-1'), [
+      { membershipId: 'membership-1', roleId: result.id },
+    ]);
+  });
+
   it('blocks every platform-managed system role', async () => {
     for (const key of NON_EDITABLE_ROLE_KEYS) {
       const roleId = `role-${key.toLowerCase()}`;

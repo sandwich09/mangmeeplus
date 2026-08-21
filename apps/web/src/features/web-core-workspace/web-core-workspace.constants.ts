@@ -320,7 +320,11 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
     buildHref: (companyId) => `/companies/${companyId}/settings/permissions`,
     iconKey: 'ShieldIcon',
     navGroup: 'admin',
-    requiredAnyPermissions: ['access.role.read', 'access.employee.read', 'access.effective.read'],
+    requiredAnyPermissions: [
+      'access.role.read', 'access.role.manage',
+      'access.employee.read', 'access.employee.create', 'access.employee.update',
+      'access.effective.read',
+    ],
     status: 'ready',
     deepLinkTargets: ['settingsUser'],
   },

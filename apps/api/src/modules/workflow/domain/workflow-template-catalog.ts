@@ -30,6 +30,7 @@ export type WorkflowTemplateSeed = {
 export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<string, unknown>> = {
   reimbursement_pending_approval: { eventType: 'reimbursement.request_submitted' },
   reimbursement_decision_requester: { eventTypes: ['reimbursement.approved', 'reimbursement.rejected'] },
+  reimbursement_correction_requester: { eventType: 'reimbursement.correction_requested' },
   reimbursement_finance_review: { eventType: 'reimbursement.finance_review_updated' },
   reimbursement_ready_for_payment: { eventType: 'reimbursement.ready_for_payment' },
   reimbursement_payment_recorded: { eventType: 'reimbursement.payment_recorded' },
@@ -48,6 +49,7 @@ export const WORKFLOW_TEMPLATE_DEFAULT_TRIGGER_CONFIG: Record<string, Record<str
 export const WORKFLOW_TEMPLATE_DEFAULT_COOLDOWN_SECONDS: Record<string, number> = {
   reimbursement_pending_approval: 0,
   reimbursement_decision_requester: 0,
+  reimbursement_correction_requester: 0,
   reimbursement_finance_review: 0,
   reimbursement_ready_for_payment: 0,
   reimbursement_payment_recorded: 0,
@@ -205,22 +207,43 @@ export const WORKFLOW_TEMPLATE_CATALOG: WorkflowTemplateSeed[] = [
     status: 'AVAILABLE',
   },
   {
-    key: 'reimbursement_finance_review',
-    name: 'Reimbursement finance review',
-    description: 'Notify everyone who can run finance review when a claim needs finance attention (returned for info or blocked).',
+    key: 'reimbursement_correction_requester',
+    name: 'Reimbursement correction requester alert',
+    description: 'Notify the requester when finance returns a reimbursement draft for correction.',
     category: 'finance',
     sourceModule: 'reimbursements',
     triggerType: 'EVENT',
-    // APPROVED_FOR_PAYMENT is excluded on purpose: that decision also emits
-    // reimbursement.ready_for_payment, whose template already alerts the same finance desk — without
-    // this the approve path would push the same claim to the same people twice.
-    defaultConditionJson: {
-      type: 'ALL',
-      conditions: [
-        { field: 'requestId', op: 'EXISTS' },
-        { field: 'decision', op: 'NEQ', value: 'APPROVED_FOR_PAYMENT' },
-      ],
-    },
+    defaultConditionJson: { field: 'requesterUserId', op: 'EXISTS' },
+    defaultActionJson: [
+      {
+        actionKey: 'notify_requester_correction',
+        actionType: 'SEND_NOTIFICATION',
+        configJson: {
+          triggerKey: 'workflow.reimbursement_correction_requester',
+          recipientPayloadKeys: ['requesterUserId'],
+          severity: 'action',
+          titleTemplate: 'ใบเบิกต้องแก้ไข: {{requestNo}}',
+          bodyTemplate: '{{note}} · ยอด {{amount}} {{currency}}',
+          deepLinkPathTemplate: reimbursementHubLink('mine'),
+        },
+      },
+    ],
+    requiredPermissions: ['reimbursement.read_own'],
+    requiredSourceModules: ['reimbursements'],
+    defaultEnabled: false,
+    autoEnable: true,
+    status: 'AVAILABLE',
+  },
+  {
+    key: 'reimbursement_finance_review',
+    name: 'Reimbursement finance review',
+    description: 'Notify everyone who can run finance review when a claim is blocked.',
+    category: 'finance',
+    sourceModule: 'reimbursements',
+    triggerType: 'EVENT',
+    // NEEDS_INFO now returns to the requester as a DRAFT and has its own requester template.
+    // APPROVED_FOR_PAYMENT has the ready-for-payment template; only BLOCKED stays on this desk.
+    defaultConditionJson: { field: 'decision', op: 'EQ', value: 'BLOCKED' },
     defaultActionJson: [
       {
         actionKey: 'notify_finance_reviewer',

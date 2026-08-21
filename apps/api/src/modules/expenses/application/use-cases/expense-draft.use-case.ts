@@ -139,10 +139,11 @@ export class GetExpenseUseCase {
   constructor(private readonly repo: PrismaExpenseRepository) {}
 
   async execute(ctx: RequestContext, expenseId: string): Promise<ExpenseRecordWithRelations> {
-    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review');
+    const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review') || hasPerm(ctx, 'expense.confirm');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
     const canReadRelated = hasPerm(ctx, 'expense.read_related');
-    if (!canRead && !canReadOwn && !canReadRelated) throw new ForbiddenException('Missing permission to read expenses');
+    const canReadCreated = hasPerm(ctx, 'expense.create');
+    if (!canRead && !canReadOwn && !canReadRelated && !canReadCreated) throw new ForbiddenException('Missing permission to read expenses');
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
@@ -150,7 +151,8 @@ export class GetExpenseUseCase {
       && await this.repo.isUserRelatedToExpense(ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {});
     const canReadThisOwn = canReadOwn
       && (r.createdByUserId === ctx.userId || r.substituteReceiptEvidence?.payerUserId === ctx.userId);
-    if (!canRead && !canReadThisOwn && !canReadThisRelated) {
+    const canReadThisCreated = canReadCreated && r.createdByUserId === ctx.userId;
+    if (!canRead && !canReadThisOwn && !canReadThisRelated && !canReadThisCreated) {
       throw new ForbiddenException('Access denied');
     }
     return r;

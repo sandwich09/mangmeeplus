@@ -37,7 +37,7 @@ const RAW_TEMPLATES: RawTemplate[] = [
     key: 'tpl.x.accounting', industryTag: 'crosscutting',
     nameTh: 'บัญชี/ผู้ทำบัญชี', nameEn: 'Bookkeeper / Accountant',
     description: 'ทำบัญชีแยกประเภท ภาษี กระทบยอดธนาคาร และตรวจค่าใช้จ่าย',
-    capabilityPackKeys: ['pack.billing.view', 'pack.payment.view', 'pack.ledger.view', 'pack.ledger.manage', 'pack.tax.view', 'pack.tax.manage', 'pack.bank.reconcile_manage', 'pack.bank.view', 'pack.expense.review', 'pack.procurement.view', 'pack.audit.read', 'pack.wht.certificate.manage', TASKS],
+    capabilityPackKeys: ['pack.billing.view', 'pack.payment.view', 'pack.ledger.view', 'pack.ledger.manage', 'pack.tax.view', 'pack.tax.manage', 'pack.bank.reconcile_manage', 'pack.bank.view', 'pack.expense.review', 'pack.reimbursement.review', 'pack.procurement.view', 'pack.audit.read', 'pack.wht.certificate.manage', TASKS],
   },
   {
     key: 'tpl.x.marketing', industryTag: 'crosscutting',

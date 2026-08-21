@@ -228,7 +228,7 @@ export class ExpenseController {
   }
 
   @Get(':expenseId')
-  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review', 'expense.confirm')
   getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.get.execute(ctx, expenseId);
   }
@@ -278,13 +278,13 @@ export class ExpenseController {
   }
 
   @Get(':expenseId/substitute-receipt/history')
-  @RequireAnyPermission('expense.review', 'expense.read_related', 'expense.read_own')
+  @RequireAnyPermission('expense.review', 'expense.confirm', 'expense.read_related', 'expense.read_own')
   listSubstituteHistory(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
     return this.substituteReceiptHistory.execute(ctx, expenseId);
   }
 
   @Get(':expenseId/substitute-receipt/:evidenceId/artifact.pdf')
-  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review', 'expense.confirm')
   async downloadSubstitutePdf(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,
@@ -436,7 +436,7 @@ export class ExpenseController {
   }
 
   @Post(':expenseId/receipt-uploads/:attachmentId/complete')
-  @RequirePermissions('expense.receipt.upload')
+  @RequireAnyPermission('expense.receipt.upload', 'expense.review')
   completeReceiptUpload(
     @ReqCtx() ctx: RequestContext,
     @Param('expenseId') expenseId: string,

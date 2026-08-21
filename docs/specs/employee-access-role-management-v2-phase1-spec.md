@@ -270,6 +270,11 @@ Curated bundles over the existing `permission-registry.ts` keys plus the explici
 | `pack.workflow.view` | ดูออโตเมชัน | View automation | MEDIUM | workflow | workflow.template.read, workflow.rule.read, workflow.run.read, workflow.dead_letter.read, workflow.audit.read |
 | `pack.workflow.manage` | จัดการออโตเมชัน | Manage automation | CRITICAL | workflow | workflow.rule.manage, workflow.rule.enable, workflow.run.replay, workflow.dead_letter.replay, workflow.webhook.manage |
 
+`pack.people.view` and `pack.people.manage` remain independently composable. An employee creator/editor
+or role manager may read the minimum role/address/catalog data required to complete that exact action via
+equivalent-authority OR guards. This does not imply `access.employee.read`: the role page does not load the
+company employee list without that key, and the employee overview/list routes remain read-gated.
+
 ### Products & inventory
 
 | Pack key | ไทย | English | Risk | Entitlement | Permission keys |
@@ -309,17 +314,18 @@ Curated bundles over the existing `permission-registry.ts` keys plus the explici
 
 | Pack key | ไทย | English | Risk | Entitlement | Permission keys |
 |---|---|---|---|---|---|
-| `pack.expense.self` | บันทึกค่าใช้จ่ายของฉัน | Capture own expenses | MEDIUM | expense | expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update, expense.ocr.request |
-| `pack.expense.review` | ตรวจค่าใช้จ่าย | Review expenses | HIGH | expense | expense.read, expense.review, expense.ai.verify, expense.category.manage, expense.duplicate.resolve |
-| `pack.expense.finance` | อนุมัติ/จ่ายค่าใช้จ่าย | Confirm & pay expenses | CRITICAL | expense | expense.confirm, expense.reject, expense.void, expense.payment.record, expense.export |
+| `pack.expense.self` | บันทึกค่าใช้จ่ายของฉัน | Capture own expenses | MEDIUM | expense | expense.read_own, expense.create, expense.receipt.upload, expense.receipt.line_upload, expense.update, expense.ocr.request, expense.signature.self_manage, attachment.create |
+| `pack.expense.review` | ตรวจค่าใช้จ่าย | Review expenses | HIGH | expense | expense.read, expense.evidence.read, expense.read_own, expense.review, expense.ai.verify, expense.category.manage, expense.duplicate.resolve, attachment.create |
+| `pack.expense.finance` | อนุมัติ/จ่ายค่าใช้จ่าย | Confirm & pay expenses | CRITICAL | expense | expense.confirm, expense.reject, expense.void, expense.delete, expense.payment.record, expense.export |
 
 ### Reimbursement
 
 | Pack key | ไทย | English | Risk | Entitlement | Permission keys |
 |---|---|---|---|---|---|
 | `pack.reimbursement.self` | ขอเบิกของฉัน | Request own reimbursement | MEDIUM | reimbursement | reimbursement.read_own, reimbursement.create, reimbursement.update_own_draft, reimbursement.submit, reimbursement.cancel_own |
-| `pack.reimbursement.approve` | อนุมัติการเบิก | Approve reimbursement | HIGH | reimbursement | reimbursement.read, reimbursement.approve, reimbursement.reject |
-| `pack.reimbursement.finance` | ตรวจ/จ่ายการเบิก | Finance review & pay | CRITICAL | reimbursement | reimbursement.finance_review, reimbursement.payment.record, reimbursement.payment.void, reimbursement.duplicate.resolve, reimbursement.export |
+| `pack.reimbursement.approve` | อนุมัติการเบิก | Approve reimbursement | HIGH | reimbursement | reimbursement.read, reimbursement.read_own, reimbursement.approve, reimbursement.reject |
+| `pack.reimbursement.review` | ตรวจสอบการเบิก | Review reimbursement | HIGH | reimbursement | reimbursement.read, reimbursement.read_own, reimbursement.read_related, reimbursement.finance_review, reimbursement.export |
+| `pack.reimbursement.finance` | ตรวจ/จ่ายการเบิก | Finance review & pay | CRITICAL | reimbursement | reimbursement.read, reimbursement.read_own, reimbursement.finance_review, reimbursement.payment.record, reimbursement.payment.void, reimbursement.duplicate.resolve, reimbursement.export |
 | `pack.reimbursement.policy` | ตั้งนโยบายการเบิก | Manage reimbursement policy | HIGH | reimbursement | reimbursement.policy.read, reimbursement.policy.manage |
 
 ### Procurement & accounts payable
@@ -378,7 +384,7 @@ It is an explicit exception to the core pack's always-on label: the runtime pref
 | Preset key | ไทย | English | Packs (beyond core) |
 |---|---|---|---|
 | `tpl.x.readonly` | อ่านอย่างเดียว/ผู้ตรวจสอบ | Read-only / Auditor | pack.people.view, pack.audit.read, pack.inventory.view, pack.crm.view, pack.billing.view, pack.payment.view, pack.expense.review(read subset via view)*, pack.procurement.view, pack.bank.view, pack.ledger.view, pack.tax.view |
-| `tpl.x.accounting` | บัญชี/ผู้ทำบัญชี | Bookkeeper / Accountant | pack.company.settings.view, pack.company.vat_registration.manage, pack.billing.view, pack.payment.view, pack.ledger.manage, pack.tax.manage, pack.finance.vat.review, pack.wht.certificate.manage, pack.vat.credit_outcome.correct, pack.bank.reconcile_manage, pack.expense.review, pack.procurement.view, pack.audit.read |
+| `tpl.x.accounting` | บัญชี/ผู้ทำบัญชี | Bookkeeper / Accountant | pack.company.settings.view, pack.company.vat_registration.manage, pack.billing.view, pack.payment.view, pack.ledger.manage, pack.tax.manage, pack.finance.vat.review, pack.wht.certificate.manage, pack.vat.credit_outcome.correct, pack.bank.reconcile_manage, pack.expense.review, pack.reimbursement.review, pack.procurement.view, pack.audit.read |
 | `tpl.x.marketing` | การตลาด | Marketing | pack.crm.view, pack.dashboard.manage |
 | `tpl.x.manager` | ผู้จัดการ | Manager | pack.crm.manage, pack.quotation.approve, pack.billing.view, pack.payment.view, pack.inventory.view, pack.expense.review, pack.reimbursement.approve, pack.procurement.approve, pack.cash.view, pack.dashboard.manage, pack.people.view, pack.tax.view, pack.ledger.view |
 | `tpl.x.finance` | การเงิน (AR/AP) | Finance | pack.company.settings.view, pack.billing.operate, pack.billing.issue, pack.payment.record, pack.payment.void, pack.bank.operate, pack.procurement.ap_manage, pack.tax.prepare, pack.finance.vat.review, pack.wht.certificate.manage, pack.ledger.operate, pack.expense.finance, pack.reimbursement.finance |
