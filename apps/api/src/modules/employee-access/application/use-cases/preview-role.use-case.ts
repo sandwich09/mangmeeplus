@@ -16,21 +16,27 @@ export class PreviewRoleUseCase {
 
   async execute(cmd: PreviewRoleCommand): Promise<RolePreviewResult> {
     const entitled = await loadEntitledFeatureKeys(this.prisma, cmd.companyId);
+    const role = cmd.roleId ? await this.prisma.client.role.findFirst({
+      where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
+      include: { permissions: { select: { permission: { select: { key: true } } } } },
+    }) : null;
+    const granterScope = cmd.isOwner ? null : new Set(cmd.granterPermissionKeys);
+    // Match update-role: an existing company-role grant may be retained even when the editor could
+    // not grant it anew. Otherwise preview would claim a revoke that save does not perform.
+    if (granterScope && role && !role.isSystem) {
+      for (const row of role.permissions) granterScope.add(row.permission.key);
+    }
     const { permissionKeys, dropped } = compileRole({
       capabilityPackKeys: cmd.capabilityPackKeys,
       permissionKeys: cmd.permissionKeys,
       roleTemplateKey: cmd.roleTemplateKey,
       entitledFeatureKeys: entitled,
-      granterPermissionKeys: cmd.isOwner ? null : new Set(cmd.granterPermissionKeys),
+      granterPermissionKeys: granterScope,
     });
 
     let addedVsCurrent: string[] | undefined;
     let removedVsCurrent: string[] | undefined;
     if (cmd.roleId) {
-      const role = await this.prisma.client.role.findFirst({
-        where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
-        include: { permissions: { select: { permission: { select: { key: true } } } } },
-      });
       const current = new Set((role?.permissions ?? []).map((p) => p.permission.key));
       const next = new Set(permissionKeys);
       addedVsCurrent = permissionKeys.filter((k) => !current.has(k));

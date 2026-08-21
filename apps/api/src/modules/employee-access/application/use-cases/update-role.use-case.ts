@@ -23,6 +23,7 @@ export class UpdateRoleUseCase {
   async execute(cmd: UpdateRoleCommand): Promise<RoleDetail> {
     const existing = await this.prisma.client.role.findFirst({
       where: { id: cmd.roleId, OR: [{ scopeKey: 'system' }, { scopeKey: cmd.companyId }] },
+      include: { permissions: { select: { permission: { select: { key: true } } } } },
     });
     if (!existing) throw new NotFoundException('Role not found');
     if (existing.isSystem && NON_EDITABLE_ROLE_KEYS.some((key) => key === existing.key)) {
@@ -37,6 +38,11 @@ export class UpdateRoleUseCase {
       const unknown = rawKeys.filter((k) => !knownKeys.has(k));
       if (unknown.length) throw new ForbiddenException(`Unknown permission keys: ${unknown.join(', ')}`);
       const granterScope = cmd.isOwner ? null : cmd.granterPermissionKeys ? new Set(cmd.granterPermissionKeys) : null;
+      const existingKeys = new Set(existing.permissions.map((row) => row.permission.key));
+      // Keeping a grant already held by this company role is not privilege escalation. The company UI
+      // deliberately hides raw keys, so a harmless rename must not silently revoke an unmatched grant.
+      // System roles are excluded: retaining their wider global grant while forking would be elevation.
+      if (granterScope && !existing.isSystem) for (const key of existingKeys) granterScope.add(key);
       finalKeys = compileRole({
         capabilityPackKeys: cmd.capabilityPackKeys,
         permissionKeys: rawKeys,
@@ -44,7 +50,10 @@ export class UpdateRoleUseCase {
         granterPermissionKeys: granterScope,
       }).permissionKeys;
       if (!hasNonCoreCapability(finalKeys)) throw new ForbiddenException('At least one permission is required.');
-      const ownerGated = ownerGatedGrantViolation(finalKeys, granterScope);
+      const ownerGated = ownerGatedGrantViolation(
+        existing.isSystem ? finalKeys : finalKeys.filter((key) => !existingKeys.has(key)),
+        granterScope,
+      );
       if (ownerGated) throw new ForbiddenException(ownerGated);
       permissions = await this.prisma.client.permission.findMany({
         where: { key: { in: finalKeys } },

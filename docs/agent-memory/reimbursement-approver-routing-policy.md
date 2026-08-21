@@ -118,6 +118,10 @@ Verification:
 - Final focused API tests passed 179/179; the complete registered web suite passed 1,040/1,040 after a
   stale role-name assertion in the user-guide contract was corrected to `reimbursement.policy.manage`.
   API, web, and contracts typechecks passed; `git diff --check` passed.
+- Multi-role display follow-up closed the remaining list/detail mismatch: employee rows no longer read
+  only `roles[0]`; all held roles are stacked on the same right-aligned axis. Web typecheck and SET-08B
+  passed, and a local 390 px browser check showed Finance + Accountant consistently in the row and
+  detail with `scrollWidth === innerWidth === 390`.
 
 Next:
 - Review the final scoped diff, commit only task files, and update PR 216 on

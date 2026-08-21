@@ -456,6 +456,7 @@ Make reimbursement actions follow effective permissions rather than literal role
 - [x] Gate approve, reject, finance review, duplicate resolution, payment record, and drawer actions by their exact permissions.
 - [x] Keep finance correction available to a review-only role while disabling duplicate clearance without `reimbursement.duplicate.resolve`.
 - [x] Change add/edit employee and individual-permissions screens from one `roleId` to `roleIds[]`; preserve all current roles and prevent removing the final role.
+- [x] Render every held role in employee list rows so the list matches the selected detail; stack badges on one right-aligned axis without mobile overflow.
 - [x] Apply protected-role and all-branch rules across every selected role.
 - [x] Add narrow `pack.reimbursement.review` to `tpl.x.accounting`; do not grant payment, void, or duplicate resolution.
 - [x] Gate employee create/edit routes by their exact permissions and make update-only DRAFT editing stop before create-only activation.
@@ -478,6 +479,8 @@ Make reimbursement actions follow effective permissions rather than literal role
   stays absent. Run the seeded ten-persona sidebar/route matrix and the expense, reimbursement, role,
   and employee suites together. Evidence: targeted permission journeys passed 46/46; the full Chromium
   workspace run passed 158 tests with 80 project/feature-contract skips and zero failures.
+- Follow-up evidence: SET-08B asserts both roles in the employee row plus no row overflow; local 390 px
+  browser check showed Finance and Accountant in both the row and selected detail with document width 390/390.
 
 ### Exit
 

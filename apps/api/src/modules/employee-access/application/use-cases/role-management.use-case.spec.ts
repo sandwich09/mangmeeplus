@@ -105,7 +105,12 @@ function makePrisma(opts: {
           const role = state.roles.find((row) => row.id === where.id);
           if (!role || role.id !== where.id) return null;
           const allowedScopes = (where.OR ?? [{ scopeKey: where.scopeKey }]).map((c: any) => c.scopeKey);
-          return allowedScopes.includes(role.scopeKey) ? role : null;
+          return allowedScopes.includes(role.scopeKey) ? {
+            ...role,
+            permissions: state.rolePermissions
+              .filter((rp) => rp.roleId === role.id)
+              .map((rp) => ({ permission: { key: rp.permissionId.replace('perm-', '') } })),
+          } : null;
         },
         findUniqueOrThrow: async ({ where }: any) => {
           const row = state.roles.find((r) => r.id === where.id);
@@ -511,6 +516,30 @@ describe('UpdateRoleUseCase', () => {
     const useCase = new UpdateRoleUseCase(prisma);
     await useCase.execute({ companyId: COMPANY_ID, roleId: 'role-1', permissionKeys: [REAL_PERMISSION], requestingUserId: 'admin-1', requestId: 'req-1' });
     assert.equal(state.auditLogs[0].action, 'access.role.update');
+  });
+
+  it('preserves an existing hidden grant when a non-owner edits a custom role', async () => {
+    const hiddenExistingKey = 'crm.customer.export';
+    const { prisma } = makePrisma({
+      role: { id: 'role-1', isSystem: false, scopeKey: COMPANY_ID },
+      rolePermissions: [
+        { roleId: 'role-1', permissionId: `perm-${REAL_PERMISSION}` },
+        { roleId: 'role-1', permissionId: `perm-${hiddenExistingKey}` },
+      ],
+    });
+
+    const result = await new UpdateRoleUseCase(prisma).execute({
+      companyId: COMPANY_ID,
+      roleId: 'role-1',
+      name: 'Customer support',
+      permissionKeys: [REAL_PERMISSION, hiddenExistingKey],
+      granterPermissionKeys: [REAL_PERMISSION, 'access.role.manage'],
+      requestingUserId: 'admin-1',
+      requestId: 'req-preserve-hidden',
+      isOwner: false,
+    });
+
+    assert.ok(result.permissionKeys.includes(hiddenExistingKey));
   });
 
   it('blocks a non-owner from sneaking reimbursement.read into an existing role', async () => {

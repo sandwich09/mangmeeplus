@@ -203,6 +203,7 @@ Named user, DIRECT_MANAGER, contradictory mode/role, unknown role, unavailable r
 - Sidebar, route guards, employee summaries, and user-guide shortcuts reuse the same effective-permission
   facts as their destination; help/navigation must not reintroduce a role-name restriction.
 - A member may hold multiple roles. Effective permissions are the union of those roles; removing one role removes only its contribution.
+- Employee list rows show every held role and match the selected employee detail; badges stay right-aligned without horizontal overflow at 390 px.
 - The same capability works whether granted through OWNER, ACCOUNTANT, STAFF, a forked system role, a custom role, or multiple roles.
 - Tenant, active membership, branch scope, selected approval route, self-approval, state, snapshot/hash, and CAS checks remain mandatory.
 - Sensitive capabilities stay separable: finance review does not imply payment record/void or duplicate resolution.
