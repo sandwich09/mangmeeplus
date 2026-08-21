@@ -685,15 +685,15 @@ describe('apiConfigSchema LINE AI latency/autonomy Phase-1 flags', () => {
     assert.equal(parsed.LINE_AI_PREPARED_SIMPLE_READ_ENABLED, false);
     // Substitute semantic routing defaults to the exact legacy regex-first behavior.
     assert.equal(parsed.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE, 'off');
-    // Old debounce path preserved: the implemented 2,500 ms default is unchanged.
-    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2500);
+    // Default debounce keeps multi-bubble joining while starting work after 2 seconds of quiet.
+    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2000);
   });
 
   it('enabling the experiment without a secret still parses (the buffer then keeps the configured debounce)', () => {
     const parsed = apiConfigSchema.parse({ ...base, LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED: 'true' });
     assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED, true);
     assert.equal(parsed.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET, undefined);
-    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2500);
+    assert.equal(parsed.LINE_AI_BUFFER_DEBOUNCE_MS, 2000);
   });
 
   it('accepts explicit opt-in values', () => {

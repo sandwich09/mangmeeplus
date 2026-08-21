@@ -823,6 +823,7 @@ export class LineMessageBufferService implements OnModuleDestroy {
         // Only the very first media turn can reuse the batch's accept-loading; later turns re-show it.
         suppressLoading && index === 0,
         0,
+        true,
       );
       if (index === 0 && result.outcome === 'defer_text') deferText = true;
     }
@@ -836,12 +837,13 @@ export class LineMessageBufferService implements OnModuleDestroy {
   private async dispatchTextTurn(state: ChatState, textItems: LineBufferTextItem[], suppressLoading: boolean): Promise<void> {
     const last = textItems[textItems.length - 1];
     const messageText = joinGroupText(textItems);
+    const statusDelayMs = Math.max(0, last.acceptedAt + LINE_WAIT_STATUS_DELAY_MS - Date.now());
     await this.withWaitFeedback(
       state,
       lineWaitStatusText(messageText, last.webhookEventId),
       (beforeReply) => this.processWebhook.execute({ ...this.toTextEvent(state, textItems), beforeReply }),
       suppressLoading,
-      LINE_WAIT_STATUS_DELAY_MS,
+      statusDelayMs,
     );
     await this.markBatched(textItems.filter((item) => item !== last).map((item) => item.webhookEventId));
   }
@@ -907,8 +909,15 @@ export class LineMessageBufferService implements OnModuleDestroy {
     turn: (beforeReply: () => Promise<void>) => Promise<T>,
     suppressLoading: boolean,
     statusDelayMs: number,
+    statusWithoutLoading = false,
   ): Promise<T> {
-    const finish = await this.startWaitFeedback(state, statusText, suppressLoading, statusDelayMs);
+    const finish = await this.startWaitFeedback(
+      state,
+      statusText,
+      suppressLoading,
+      statusDelayMs,
+      statusWithoutLoading,
+    );
     try {
       return await turn(finish);
     } finally {
@@ -916,10 +925,16 @@ export class LineMessageBufferService implements OnModuleDestroy {
     }
   }
 
-  private async startWaitFeedback(state: ChatState, statusText: string, suppressLoading: boolean, statusDelayMs: number): Promise<() => Promise<void>> {
+  private async startWaitFeedback(
+    state: ChatState,
+    statusText: string,
+    suppressLoading: boolean,
+    statusDelayMs: number,
+    statusWithoutLoading: boolean,
+  ): Promise<() => Promise<void>> {
     // Loading and waiting feedback are 1:1 only; a group chat never shows either.
     if (state.chatId !== state.lineUserId) return async () => {};
-    if (!this.config.lineAiLoadingAnimationEnabled && statusDelayMs > 0) return async () => {};
+    if (!this.config.lineAiLoadingAnimationEnabled && !statusWithoutLoading) return async () => {};
 
     // `suppressLoading` means this batch's accept-loading was actually SHOWN (LINE accepted it) and awaited
     // (in dispatchBatch) for this first content turn, and its spinner is still up — so skip the duplicate

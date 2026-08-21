@@ -726,9 +726,10 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     assert.deepEqual(h.loadingCalls, ['user-1']);
   });
 
-  it('shows one varied status only after 4 seconds, then restores loading after the bubble', async (t) => {
+  it('shows one varied status only after 5 seconds, then restores loading after the bubble', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
+      t.mock.timers.setTime(0);
       let releaseTurn!: () => void;
       let completeTurn!: () => void;
       let markStarted!: () => void;
@@ -736,7 +737,8 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       const completed = new Promise<void>((resolve) => { completeTurn = resolve; });
       const started = new Promise<void>((resolve) => { markStarted = resolve; });
       const h = makeHarness({
-        debounceMs: 0,
+        debounceMs: 2_000,
+        maxWaitMs: 8_000,
         loadingEnabled: true,
         executeImpl: async (event) => {
           markStarted();
@@ -747,12 +749,20 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       });
 
       await h.service.enqueue(textEnv('wait-1', 'ขอดูบัญชีเดือนนี้หน่อย'));
+      assert.deepEqual(h.loadingCalls, []);
+
+      t.mock.timers.tick(1_999);
+      await settle();
+      assert.deepEqual(h.loadingCalls, [], 'debounce keeps collecting bubbles for 2 seconds');
+
+      t.mock.timers.tick(2);
+      await settle();
       await started;
       assert.deepEqual(h.loadingCalls, ['user-1']);
 
-      t.mock.timers.tick(3_999);
+      t.mock.timers.tick(2_998);
       await settle();
-      assert.equal(h.pushes.length, 0, 'quick answers stay on native loading only');
+      assert.equal(h.pushes.length, 0, 'no status before 5 seconds from the user bubble');
 
       t.mock.timers.tick(1);
       await settle();
@@ -760,7 +770,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
       assert.match(h.pushes[0]?.text ?? '', /ตรวจสอบ|เช็กข้อมูล/);
       assert.deepEqual(h.loadingCalls, ['user-1'], 'restart does not race the status bubble');
 
-      t.mock.timers.tick(750);
+      t.mock.timers.tick(300);
       await settle();
       assert.deepEqual(h.loadingCalls, ['user-1', 'user-1'], 'loading returns while slow work continues');
 
@@ -772,7 +782,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
     }
   });
 
-  it('cancels waiting feedback when the real answer is ready within 4 seconds', async (t) => {
+  it('cancels waiting feedback when the real answer is ready within 5 seconds', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     try {
       let completeTurn!: () => void;
@@ -788,7 +798,7 @@ describe('LineMessageBufferService – shutdown and loading animation', () => {
 
       await h.service.enqueue(textEnv('wait-fast', 'ขอบคุณนะ'));
       await completed;
-      t.mock.timers.tick(4_750);
+      t.mock.timers.tick(5_750);
       await settle();
       assert.equal(h.pushes.length, 0);
       assert.deepEqual(h.loadingCalls, ['user-1']);

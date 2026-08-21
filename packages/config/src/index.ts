@@ -196,11 +196,11 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_MESSAGING_CHANNEL_SECRET: z.string().optional(),
   LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: z.string().optional(),
   // LINE AI message buffering (docs/specs/line-ai-message-buffering-spec.md §13)
-  LINE_AI_BUFFER_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2500),
+  LINE_AI_BUFFER_DEBOUNCE_MS: z.coerce.number().int().nonnegative().default(2000),
   LINE_AI_BUFFER_MAX_WAIT_MS: z.coerce.number().int().positive().default(8000),
   LINE_AI_LOADING_ANIMATION_ENABLED: envBoolean.default(true),
   // LINE AI latency/autonomy Phase 1 (docs/specs/line-ai-latency-and-autonomy-lanes-spec.md §10/§15).
-  // Both default OFF so the effective 2,500 ms path and processing-start loading are unchanged.
+  // Both default OFF so the effective 2,000 ms path and processing-start loading are unchanged.
   // On, loading is requested once per 1:1 chat right after durable acceptance (before the debounce
   // wait). The debounce experiment assigns a stable per-(company,chat) cohort by HMAC; the secret is
   // required for any assignment to happen, and neither identifiers nor the HMAC bytes are logged.

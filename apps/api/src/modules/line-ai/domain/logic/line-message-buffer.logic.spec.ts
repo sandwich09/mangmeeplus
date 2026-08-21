@@ -80,9 +80,9 @@ describe('sortBatchItems', () => {
 });
 
 describe('nextFlushDelayMs', () => {
-  const timing = { debounceMs: 2500, maxWaitMs: 8000 };
+  const timing = { debounceMs: 2000, maxWaitMs: 8000 };
   it('uses the debounce window while max wait is far away', () => {
-    assert.equal(nextFlushDelayMs(10_000, 10_000, timing), 2500);
+    assert.equal(nextFlushDelayMs(10_000, 10_000, timing), 2000);
   });
   it('caps at the remaining max wait anchored to the FIRST item', () => {
     assert.equal(nextFlushDelayMs(10_000, 17_000, timing), 1000);

@@ -56,9 +56,9 @@ export const LINE_BUFFER_ORPHAN_REPROCESS_MS = 2 * 60 * 1000;
 /** Shutdown drain bound — must finish inside the ECS stop grace period. */
 export const LINE_BUFFER_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
 /** Keep quick turns to native loading only; one status appears only for genuinely slow work. */
-export const LINE_WAIT_STATUS_DELAY_MS = 4_000;
+export const LINE_WAIT_STATUS_DELAY_MS = 5_000;
 /** Let the status bubble reach the device before restoring loading; final delivery can cancel this. */
-export const LINE_LOADING_RESTART_DELAY_MS = 750;
+export const LINE_LOADING_RESTART_DELAY_MS = 300;
 export const LINE_MEDIA_RECEIVED_TEXT = 'ได้รับรูปแล้วค่ะ 🧾 กำลังอ่านเอกสารอยู่ ระหว่างนี้คุยกับน้องต่อได้เลยนะคะ';
 
 const LINE_WAIT_STATUS_RULES: Array<[RegExp, string[]]> = [
@@ -203,10 +203,10 @@ export function buildLineAiApiTrace(input: {
 
 /**
  * Concurrent debounce cohorts for the latency/autonomy experiment: 1,000 ms primary candidate,
- * 1,500 ms conservative candidate, and the implemented 2,500 ms control (spec §10). The control is
+ * 1,500 ms conservative candidate, and the implemented 2,000 ms control (spec §10). The control is
  * present so ~1/3 of assigned traffic stays on the current behaviour for a matched comparison.
  */
-export const LINE_AI_DEBOUNCE_COHORTS_MS = [1_000, 1_500, 2_500] as const;
+export const LINE_AI_DEBOUNCE_COHORTS_MS = [1_000, 1_500, 2_000] as const;
 
 /**
  * Stable, privacy-safe debounce-cohort assignment (spec §10). When the experiment is off, has no
