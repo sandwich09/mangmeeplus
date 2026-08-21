@@ -72,8 +72,8 @@ import { loadEntitledFeatureKeys } from '../../../employee-access/application/en
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, asIntakeRouteIntent, extractValueCandidates, hasToolPermissions, todayCivilDate } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCompanyPickerMessage, buildPendingApprovalCard, buildReceiptCapturePrompt, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, staffMenuCommand, PENDING_APPROVAL_ITEM_LIMIT, type ApprovalSurfaceKey, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -128,7 +128,9 @@ export type LineMediaTurnOutcome = { outcome: 'done' | 'defer_text' };
  * whose company cannot yet be resolved (unlinked / selection / policy flows),
  * so this preflight never invents a default company. */
 export type LineLegalAcceptancePreflight =
-  | { status: 'continue' }
+  // `companyId` on continue is present only when a single company resolved; the buffer uses it as the
+  // stable debounce-cohort key. Unlinked/unresolved/multi-company continues omit it (no assignment).
+  | { status: 'continue'; companyId?: string }
   | { status: 'required'; companyId: string };
 
 const UNLINKED_REPLY = '🔗 กรุณาเชื่อมต่อบัญชี มั่งมีพลัส กับ LINE ก่อนใช้งานนะคะ\nเปิดเว็บแอปเพื่อเชื่อมต่อได้เลยค่ะ';
@@ -374,6 +376,36 @@ export async function putLineMediaUpload(
 /** Bounded hash of the chat a capture happened in (group id when present, else the user).
  *  Corrections may only target records captured in the SAME chat, and the raw LINE/group id
  *  must never reach the expense row — only this hash. */
+/**
+ * NARROW substitute matcher for the PRIMARY-mode fallback ONLY (never the broad legacy matcher): a
+ * canonical substitute-receipt document NAME, or an exact stateful control when real open state permits.
+ * A question or negation can never match, so it can only continue/control an intent that is already
+ * canonical — it can never START from a paraphrase.
+ */
+export function isCanonicalSubstituteCommand(text: string, hasOpenState: boolean): boolean {
+  // NFC (not NFKC) so precomposed Thai action verbs (ทำ etc.) still match the precomposed regex literals.
+  const t = text.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+  const isQuestionOrNegation = /(อะไร|คือ|ยังไง|ไหม|มั้ย|ไม่ทำ|ไม่เอา|ยังไม่|ไม่อยาก)/u.test(t);
+  if (isQuestionOrNegation) return false;
+  // The narrow UNAVAILABLE fallback matches ONLY an EXACT command shape — an optional action verb plus the
+  // EXACT legal document name plus an optional polite suffix, ANCHORED to the whole message. An arbitrary
+  // sentence that merely MENTIONS the name (or a loose form ใบทดแทน/ใบแทน/ใบรับรองแทนเงินสด) never matches
+  // and must go through semantic confirmation instead. Plus exact stateful controls when open state permits.
+  const exactCommand = /^(ทำ|ขอ|ออก|สร้าง|เริ่ม|จัดทำ|ขอทำ|ขอออก)?\s*ใบรับรองแทนใบเสร็จ(?:รับเงิน)?\s*(ต่อ|ให้|ให้หน่อย|หน่อย|ค่ะ|ครับ)?$/u.test(t);
+  const stateControl = hasOpenState && /^(พัก|พักไว้ก่อน|ยกเลิก|ยกเลิกงานนี้|ทำต่อ|ทำใบรับรองต่อ)$/u.test(t);
+  return exactCommand || stateControl;
+}
+
+/** Bounded affirmative confirmation to a pending substitute-start question (never a negation). */
+export function isAffirmativeText(text: string): boolean {
+  const t = text.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('th-TH');
+  // Negative guard FIRST: any negation/cancel token vetoes, so "ไม่ใช่", "ยังไม่เอา", "ไม่ทำ" never affirm.
+  if (/(ไม่|ยกเลิก|ยังไม่)/u.test(t)) return false;
+  // Bounded set of natural Thai/English affirmatives (polite particles allowed). Anchored — a longer
+  // sentence that merely contains "ใช่" is NOT a bare confirmation.
+  return /^(ใช่|ใช่ค่ะ|ใช่ครับ|ใช่จ้า|ใช่เลย|ทำเลย|เริ่มเลย|เริ่ม|ได้เลย|ได้|ทำ|เอา|เอาเลย|ตกลง|ยืนยัน|โอเค|โอเคค่ะ|โอเคครับ|ok|okay|yes|y)$/u.test(t);
+}
+
 export function chatKeyHashOf(event: { lineUserId: string; pushTargetId?: string }): string {
   return hashMessagePreview(event.pushTargetId ?? event.lineUserId);
 }
@@ -965,6 +997,34 @@ export class ProcessLineWebhookUseCase {
   }
 
   /**
+   * Bounded substitute-routing telemetry (substitute-semantic-routing spec §7): message hash, route +
+   * status, confidence bucket, regex-match, open-state bucket, agreement (regex-vs-semantic on "is
+   * substitute"; null when unavailable/no semantic route), and decision source. NO raw text or PII.
+   */
+  private logSubstituteRoute(
+    event: { webhookEventId: string; messageText: string },
+    messageText: string,
+    d: { source: string; routePlan?: LineIntakeRoutePlan; regexMatch: boolean; workflowState: LineIntakeSubstituteContext['workflowState']; pendingQuestion: boolean },
+  ): void {
+    const rp = d.routePlan;
+    const semantic = rp?.status === 'ROUTED' && rp.intent === 'SUBSTITUTE_RECEIPT_CONTINUATION';
+    const confidence = rp?.confidence;
+    this.logger.log({
+      msg: 'line.substitute.route',
+      webhookEventId: event.webhookEventId,
+      messageHash: hashMessagePreview(messageText),
+      routeIntent: rp?.intent ?? null,
+      routeStatus: rp?.status ?? null,
+      confidenceBucket: typeof confidence === 'number' ? (confidence < 0.6 ? 'low' : confidence < 0.85 ? 'mid' : 'high') : null,
+      regexMatch: d.regexMatch,
+      openStateBucket: d.workflowState,
+      agreement: !rp || rp.status === 'UNAVAILABLE' ? null : d.regexMatch === semantic,
+      decisionSource: d.source,
+      pendingQuestion: d.pendingQuestion,
+    });
+  }
+
+  /**
    * LINE Intake Router call (item 10B front stage). Returns a typed
    * UNAVAILABLE plan when the gateway/provider is unreachable so callers
    * fall back to safe legacy behavior — never keyword routing.
@@ -981,6 +1041,7 @@ export class ProcessLineWebhookUseCase {
     openClarifications?: LineAiOpenClarification[];
     recentCapturedExpenses?: LineIntakeCorrectionCandidate[];
     activeExpenseDrafts?: LineExpenseDraftRouteContext[];
+    substituteContext?: LineIntakeSubstituteContext;
   }): Promise<LineIntakeRoutePlan> {
     try {
       const activeCategories = this.expenseRepo
@@ -997,6 +1058,16 @@ export class ProcessLineWebhookUseCase {
         ...(input.openClarifications && { openClarifications: input.openClarifications }),
         ...(input.recentCapturedExpenses?.length ? { recentCapturedExpenses: input.recentCapturedExpenses } : {}),
         ...(input.activeExpenseDrafts?.length ? { activeExpenseDrafts: input.activeExpenseDrafts } : {}),
+        ...(input.substituteContext ? { substituteContext: input.substituteContext } : {}),
+        // TRUSTED capability flags from server config. All off ⇒ the gateway uses the exact legacy
+        // intake prompt/catalog/cost. fusedPlan gates the fused-plan section + ~21KB catalog; substitute
+        // gates the substitute semantic instructions.
+        capabilities: {
+          fusedPlan: this.config.lineAiFusedPlanShadowEnabled || this.config.lineAiPreparedSimpleReadEnabled,
+          // PRIMARY only — 'shadow' is an inert NO-GO that must stay byte-identical to 'off' (no substitute
+          // capability, so the router is never even offered the semantic route it could not safely act on).
+          substituteSemantic: this.config.lineAiSubstituteSemanticRoutingMode === 'primary',
+        },
         permissions: input.permissions,
         activeCategories,
         ...(input.attachment
@@ -1184,7 +1255,7 @@ export class ProcessLineWebhookUseCase {
     });
     return required
       ? { status: 'required', companyId: resolved.companyId }
-      : { status: 'continue' };
+      : { status: 'continue', companyId: resolved.companyId };
   }
 
   async execute(event: LineTextEvent): Promise<void> {
@@ -1549,6 +1620,31 @@ export class ProcessLineWebhookUseCase {
     }
 
     const hasSubstituteClarification = openWaiting.some((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    const substituteMode = this.config.lineAiSubstituteSemanticRoutingMode;
+    const continuationCtx: RequestContext = {
+      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+    };
+    // Bounded substitute context for the semantic router (DATA only, never authority). In PRIMARY the
+    // AUTHORITATIVE workflowState (none/open/paused/multiple) is read from the continuation rows (execute
+    // re-reads them before any action); OFF/SHADOW keep the cheap signal so the legacy path adds NO query.
+    // `workflowState` is NEVER rewritten from a ledger clarification — a pending paraphrase-start
+    // confirmation (which has no workflow row yet) is encoded ONLY via hasPendingQuestion, so the next
+    // affirmative still inherits the substitute route without faking an OPEN workflow.
+    const substituteContextBase: LineIntakeSubstituteContext = substituteMode === 'primary' && this.substituteReceiptContinuation
+      ? await this.substituteReceiptContinuation.substituteContext(continuationCtx, { chatKeyHash: chatKeyHashOf(event), recentCandidateCount: recentCapturedExpenses.length })
+      : {
+          workflowState: 'none', hasPendingQuestion: false, preparedState: 'none',
+          recentCandidateCount: Math.min(recentCapturedExpenses.length, 5),
+        };
+    const substituteContext: LineIntakeSubstituteContext = {
+      ...substituteContextBase,
+      hasPendingQuestion: substituteContextBase.hasPendingQuestion || hasSubstituteClarification,
+    };
+    // OFF (default) and SHADOW keep develop's EXACT legacy regex-first interception before the router
+    // (R1/R2 capture-first, GAP-C next-step). PRIMARY skips it and dispatches the semantic route AFTER
+    // routePlan (below), so the two paths never both run.
     // R2: the request phrase arrived a turn ago with nothing to point it at, so it was parked as a
     // clarification. THIS message is the expense fact it was waiting for — the sender must not have
     // to type “ใบทดแทน” again to get what they already asked for. Only this marker means “no target
@@ -1561,18 +1657,14 @@ export class ProcessLineWebhookUseCase {
     // GAP C tier 1: a “what do I do next?” with substitute work in flight is a question ABOUT that
     // work, so the continuation's own status card answers it. The lookup is paid for only by that
     // message. The AI owns this intent whenever the gateway is reachable; this is the floor under it.
-    const nextStepSubstituteTarget = nextStepQuestion && !hasSubstituteClarification
+    const nextStepSubstituteTarget = substituteMode !== 'primary' && nextStepQuestion && !hasSubstituteClarification
       && this.substituteReceiptContinuation && resolvedAccess.permissions.includes('expense.review')
       ? await this.substituteWorkInFlight(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : undefined;
     let substituteInterruption: LineSubstituteReceiptContinuationResult | undefined;
-    if (this.substituteReceiptContinuation
+    if (substituteMode !== 'primary'
+      && this.substituteReceiptContinuation
       && (isSubstituteReceiptConversationText(normalizedText) || hasSubstituteClarification || nextStepSubstituteTarget)) {
-      const continuationCtx: RequestContext = {
-        requestId, authSubject: identity.userId, userId: identity.userId, companyId,
-        membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
-        permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
-      };
       // R1: one message can be both a capture and a substitute request. Capture-first exists for the
       // dead-end it removes — a requester with NO candidate to target — so it stays off whenever the
       // existing target-selection flow can still do its job: a recent capture to point at, a
@@ -1613,6 +1705,9 @@ export class ProcessLineWebhookUseCase {
               ? [{ id: nextStepSubstituteTarget, label: 'งานใบรับรองแทนใบเสร็จรับเงินล่าสุดในแชทนี้' }]
               : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label })),
           webBaseUrl: this.config.webBaseUrl,
+          // OFF/SHADOW legacy: a legacy-positive (the broad matcher fired) is itself the authoritative
+          // start command, so it opens directly with NO confirmation step — preserving default-OFF behavior.
+          confirmedStart: isSubstituteReceiptConversationText(normalizedText),
         });
       } catch (error) {
         // The draft is already committed; a continuation failure degrades, it never sinks the capture.
@@ -1717,7 +1812,7 @@ export class ProcessLineWebhookUseCase {
 
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.
-    const routePlan = await this.tryRouteIntake({
+    const routePlan = await this.timeStage(event.webhookEventId, 'intake_route', () => this.tryRouteIntake({
       requestId,
       companyId,
       userId: identity.userId,
@@ -1728,7 +1823,129 @@ export class ProcessLineWebhookUseCase {
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       ...(recentCapturedExpenses.length > 0 && { recentCapturedExpenses }),
       ...(activeExpenseDrafts.length > 0 && { activeExpenseDrafts }),
-    });
+      // PRIMARY only — off AND the inert 'shadow' NO-GO never send substituteContext, so their intake DATA
+      // payload stays byte-equivalent to legacy (shadow must not diverge from off in any observable way).
+      ...(substituteMode === 'primary' ? { substituteContext } : {}),
+    }));
+
+    // PRIMARY substitute semantic dispatch — a TYPED branch AFTER routePlan (OFF/SHADOW ran the legacy
+    // regex path above; the two never both execute). It reuses the existing continuation use case
+    // verbatim (feature/permission/scope/preflight/ledger/audit unchanged), consumes ONLY the substitute
+    // clarifications, and only falls back to the narrow regex when the semantic route was UNAVAILABLE.
+    if (substituteMode === 'primary' && this.substituteReceiptContinuation) {
+      const semanticSubstitute = routePlan.status === 'ROUTED' && routePlan.intent === 'SUBSTITUTE_RECEIPT_CONTINUATION';
+      // NARROW primary fallback — canonical document names + exact state controls ONLY, and only when the
+      // semantic route is UNAVAILABLE. Never the broad legacy matcher, so a question/negation cannot
+      // start; pause/cancel controls only when the AUTHORITATIVE workflowState proves real open state.
+      const narrowMatch = isCanonicalSubstituteCommand(normalizedText, substituteContext.workflowState !== 'none');
+      const fallbackSubstitute = routePlan.status === 'UNAVAILABLE' && narrowMatch;
+      if (semanticSubstitute || fallbackSubstitute) {
+        const substituteClarifications = openWaiting.filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION');
+        const substituteClarificationIds = substituteClarifications.map((item) => item.id);
+        // Compute the resolved-intersection BEFORE execute so the confirmation binds to a REAL, currently
+        // active clarification — never a stale/historical substitute clarification. The model may only
+        // resolve an id we actually surfaced this turn (openClarifications carries the ids + shortlist).
+        const modelResolved = (routePlan.resolvedClarificationIds ?? []).filter((id) => substituteClarificationIds.includes(id));
+        const resolvedClar = substituteClarifications.find((item) => modelResolved.includes(item.id));
+        // A START-CONFIRM clarification carries EXACTLY ONE candidate id (the single expense a paraphrase
+        // pinned to confirm). A target-selection carries the offered shortlist (>= 2); a field-continuation
+        // carries none.
+        const startConfirmClars = substituteClarifications.filter((item) => item.candidateExpenseIds?.length === 1);
+        const affirmative = isAffirmativeText(normalizedText);
+        // REPETITIVE-CONFIRMATION GUARD: when the provider ROUTES substitute but OMITS the resolved
+        // clarification id (resolvedClar undefined), an affirmative would otherwise never confirm and the
+        // user is re-asked forever. Recover DETERMINISTICALLY — but ONLY when there is EXACTLY ONE active
+        // start-confirm clarification with EXACTLY ONE candidate id, so no ambiguous (>= 2 pending confirms)
+        // or missing (0) state can ever auto-bind; those stay zero-write and re-clarify/fall back. Gated on
+        // an affirmative, so a non-confirming message never changes the candidate universe.
+        const deterministicStartConfirmClar = !resolvedClar && affirmative && startConfirmClars.length === 1
+          ? startConfirmClars[0]
+          : undefined;
+        // Provenance FIRST (current-active ∩ model-resolved); the deterministic single-target recovery only
+        // fills in when the model omitted the id. Either way the target rides the RESOLVED clarification's
+        // typed shortlist, so the ordinal/affirmative binds to the SAME id the previous turn offered — never
+        // the shifting recency window. A start-confirm carries exactly ONE id; a target-selection the shortlist.
+        const effectiveClar = resolvedClar ?? deterministicStartConfirmClar;
+        const boundCandidateIds = effectiveClar?.candidateExpenseIds ?? [];
+        const startConfirmId = boundCandidateIds.length === 1 ? boundCandidateIds[0] : undefined;
+        // confirmedStart requires an affirmative AND a currently active, single-target start-confirm
+        // clarification — resolved by the model OR recovered by the deterministic single-target guard. A
+        // stale/unresolved multi-target or absent clarification can never confirm a start (no write).
+        const confirmedStart = affirmative && startConfirmId !== undefined;
+        // The bound target(s) are the FROZEN candidate universe (labels re-hydrated from the recency window
+        // when still present); otherwise the recent captures. execute re-checks every id authoritatively.
+        const executeCandidates = boundCandidateIds.length > 0
+          ? boundCandidateIds.map((id) => ({ id, label: recentCapturedExpenses.find((candidate) => candidate.id === id)?.label ?? id }))
+          : recentCapturedExpenses.map((candidate) => ({ id: candidate.id, label: candidate.label }));
+        // The continuation use case re-reads authoritative state and rejects on permission/feature/
+        // eligibility BEFORE any save; a question/negation/denied result writes nothing. An affirmative
+        // to a pending start clarification confirms the paraphrase start for that ONE bound expense.
+        const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
+          messageText: normalizedText,
+          chatKeyHash: chatKeyHashOf(event),
+          recentCandidates: executeCandidates,
+          // PRIMARY is the model-only route: a FRESH start that matches no deterministic entry phrase must
+          // CONFIRM before it writes (no auto-create on the router's confidence alone).
+          requireStartConfirmation: true,
+          confirmedStart,
+        });
+        // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
+        // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)
+        // wins THIS turn, and any OPEN expense draft is INTERRUPTED — paused with a note appended to the
+        // reply, never silently dropped. So even with the router unreachable, a canonical substitute
+        // command deterministically handles the substitute and preserves the draft to resume later.
+        const interruption = await interruptExpenseDraft();
+        const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
+        await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText, intent: 'CLARIFY',
+        });
+        // Consume ONLY the substitute clarifications actually acted on: the model-resolved intersection,
+        // plus a deterministically-recovered single start-confirm (so a confirmed start is never re-asked
+        // next turn). NEVER fall back to consuming all substitute-owned ids (no clarification hijack).
+        const consumedClarIds = deterministicStartConfirmClar ? [...modelResolved, deterministicStartConfirmClar.id] : modelResolved;
+        if (consumedClarIds.length > 0) {
+          await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, consumedClarIds, 'business_answer');
+        }
+        // A pending question (start-confirm / field ask) OR an unresolved target-selection shortlist both
+        // keep the turn waiting: open ONE substitute clarification pinned to the exact target(s), so the
+        // next ordinal ("1") or affirmative ("ใช่") binds to the SAME id — not the shifting recency window.
+        const awaitingUser = !!result.pendingQuestion || !!result.candidateExpenseIds?.length;
+        if (awaitingUser) {
+          await this.ledger?.appendSubRequests({
+            companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
+            userId: identity.userId,
+            items: [{
+              text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
+              clarifyQuestion: result.pendingQuestion ?? result.replyText, intent: 'CLARIFY',
+              clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+              // Pin the exact target(s) so the next ordinal/affirmative binds to the SAME id (P1-2).
+              ...(result.candidateExpenseIds?.length ? { candidateExpenseIds: result.candidateExpenseIds } : {}),
+            }],
+          });
+        }
+        this.logSubstituteRoute(event, normalizedText, {
+          source: semanticSubstitute ? 'semantic' : 'narrow_fallback', routePlan,
+          regexMatch: narrowMatch, workflowState: substituteContext.workflowState, pendingQuestion: awaitingUser,
+        });
+        await this.updateEventLog(event.webhookEventId,
+          awaitingUser ? 'clarification_required' : 'completed', undefined, companyId);
+        return;
+      }
+      // Not substitute-routed: a side question / new unrelated expense keeps any open substitute
+      // clarification OPEN (no consumption here) and routes normally below.
+      this.logSubstituteRoute(event, normalizedText, {
+        source: 'semantic_nonsubstitute', routePlan, regexMatch: narrowMatch,
+        workflowState: substituteContext.workflowState, pendingQuestion: false,
+      });
+    }
+
+    // SHADOW is a truthful NO-GO: this short-circuit architecture cannot compute a real semantic-vs-legacy
+    // comparison for a turn the legacy path already handled without either adding user latency or firing a
+    // background route. Rather than emit FAKE agreement, `shadow` behaves EXACTLY like `off` (legacy) and
+    // logs nothing new — it is intentionally impossible to activate a meaningful shadow until a bounded
+    // nonblocking compare exists. Offline provider replay measures agreement instead.
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DRAFT_CONTINUATION') {
       if (!expenseDraftConversationEnabled) {
@@ -1995,6 +2212,19 @@ export class ProcessLineWebhookUseCase {
       ...(aiOpenClarifications?.length && { openClarifications: aiOpenClarifications }),
       messagePreviewHash: hashMessagePreview(event.messageText),
       ...(entitledFeatureKeys && { entitledFeatureKeys: [...entitledFeatureKeys] }),
+      // Phase 3/4 (default OFF): forward ONLY the intake route's already-parsed prepared plan when a
+      // downstream gateway lane wants it — shadow comparison (Phase 3) or one-call simple read
+      // (Phase 4). OR-gated so the lanes stay independent. The wrapper carries no authority; the
+      // TRUSTED intake provenance is bound SEPARATELY here from the already-parsed OUTER route intent
+      // (validated by explicit membership, never from the wrapper), so the gateway lane gates on real
+      // provenance. The gateway re-parses the wrapper and re-validates intakeIntent; nothing executes
+      // unless its own prepared-simple-read flag is on.
+      ...((this.config.lineAiFusedPlanShadowEnabled || this.config.lineAiPreparedSimpleReadEnabled) && routePlan.preparedPlan
+        ? {
+            preparedPlan: routePlan.preparedPlan,
+            ...(asIntakeRouteIntent(routePlan.intent) ? { intakeIntent: asIntakeRouteIntent(routePlan.intent) } : {}),
+          }
+        : {}),
     };
 
     // 7.5 Item 10F: durable `turn` entry BEFORE the gateway call — a crash mid-turn leaves it
@@ -2010,7 +2240,7 @@ export class ProcessLineWebhookUseCase {
     // 8. Call AI Gateway
     let turnResponse: LineAiTurnResponse;
     try {
-      turnResponse = await this.aiGateway.requestLineTurn(turnRequest);
+      turnResponse = await this.timeStage(event.webhookEventId, 'gateway_turn', () => this.aiGateway.requestLineTurn(turnRequest));
     } catch (err) {
       this.logger.error({ msg: 'AI Gateway error', requestId, error: (err as Error).message });
       const failure = classifyLineAiGatewayFailure(err);
@@ -2052,23 +2282,25 @@ export class ProcessLineWebhookUseCase {
         presentation: undefined,
       };
     }
-    const turnId = await this.persistTurn(
+    const turnId = await this.timeStage(event.webhookEventId, 'persistence', () => this.persistTurn(
       identity.userId,
       companyId,
       event.webhookEventId,
       turnRequest.messagePreviewHash,
       turnRequest.messageText.slice(0, PREVIEW_MAX_CHARS),
       turnResponse,
-    );
+    ));
     await this.updateEventLog(event.webhookEventId, 'response_ready', undefined, companyId);
 
     // 10. Customer-visible completion requires a confirmed LINE reply/push.
     const fallbackText = formatLineReply(turnResponse, this.config.webBaseUrl);
-    const delivery = await this.deliverMessages(event, [await this.withCompletionMenu(
+    const completionMessage = await this.withCompletionMenu(
       buildLineBusinessAnswerMessage(turnResponse, fallbackText, this.config.webBaseUrl, companyId),
       companyId,
       resolvedAccess,
-    )]);
+    );
+    const delivery = await this.timeStage(event.webhookEventId, 'line_delivery', () => this.deliverMessages(event, [completionMessage]));
+    this.emitTurnSummary({ webhookEventId: event.webhookEventId, requestId, request: turnRequest, response: turnResponse, delivery });
     if (delivery !== 'ok') {
       await this.prisma.client.aiTurn.update({
         where: { id: turnId },
@@ -2332,6 +2564,79 @@ export class ProcessLineWebhookUseCase {
       });
     }
     return turn.id;
+  }
+
+  /**
+   * Phase-0 end-to-end trace: emit ONE distinct `line.ai.stage` duration for a seam this API process
+   * actually observes (intake route, gateway turn, persistence, LINE delivery). These are the precise
+   * downstream durations; the buffer's `line.ai.api_trace` carries only ingress/buffer/queue and no
+   * lumped dispatch. Correlated by webhookEventId, no raw message text or LINE user id; guarded so
+   * telemetry can never change the turn. Runtime-owned `stageDurationsMs` stay separate on the response.
+   */
+  private async timeStage<T>(webhookEventId: string, stage: 'intake_route' | 'gateway_turn' | 'persistence' | 'line_delivery', fn: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await fn();
+    } finally {
+      try {
+        this.logger.log({ msg: 'line.ai.stage', surface: 'employee_oa', webhookEventId, stage, durationMs: Date.now() - startedAt });
+      } catch { /* telemetry cannot change the outcome it observes */ }
+    }
+  }
+
+  /**
+   * Phase-0 correlated turn summary after response/delivery. Every field is the ACTUAL observed value
+   * or an explicit `null` — nothing invented: prepared-plan version is the forwarded request's (Phase 2,
+   * usually null); `lane` is null NOT because lanes are unimplemented (the prepared simple-read lane is
+   * live behind LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES) but because the gateway RESPONSE does not carry
+   * which internal lane (prepared simple-read vs full agentic) served the turn — that is observable only
+   * in the gateway's own `line.ai.prepared_simple_read.*` logs, so the API summary cannot truthfully
+   * populate it here; model provider and ids are derived from the response's `modelLineage` and usage
+   * entries; usage token totals appear only when the gateway reported them; cost is null (metered
+   * elsewhere in recordCompanyAiUsage, not on the response). `fallbackReason` is a DISTINCT field and is
+   * always null here for the SAME reason — a prepared-plan → full-agentic downgrade is not exposed on the
+   * response, and it is deliberately NOT conflated with `refused`/`refusalReason`/`errorCode`.
+   */
+  private emitTurnSummary(input: {
+    webhookEventId: string;
+    requestId: string;
+    request: LineAiTurnRequest;
+    response: LineAiTurnResponse;
+    delivery: LineDeliveryResult;
+  }): void {
+    try {
+      const { response } = input;
+      const usage = Array.isArray(response.usage) ? response.usage : undefined;
+      const usageSum = (key: 'inputTokens' | 'outputTokens'): number | null =>
+        usage ? usage.reduce((total, entry) => total + (typeof entry[key] === 'number' ? entry[key] : 0), 0) : null;
+      const lineage = Array.isArray(response.modelLineage) ? response.modelLineage : undefined;
+      const modelIdSet = new Set<string>();
+      for (const entry of lineage ?? []) if (entry?.modelId) modelIdSet.add(entry.modelId);
+      for (const entry of usage ?? []) if (entry?.modelId) modelIdSet.add(entry.modelId);
+      const modelIds = modelIdSet.size > 0 ? [...modelIdSet] : null;
+      const modelProvider = lineage?.[0]?.provider ?? null;
+      this.logger.log({
+        msg: 'line.ai.turn_summary',
+        surface: 'employee_oa',
+        webhookEventId: input.webhookEventId,
+        requestId: input.requestId,
+        preparedPlanVersion: input.request.preparedPlan?.version ?? null,
+        lane: null,
+        intent: response.intent,
+        refused: response.refused,
+        refusalReason: response.refusalReason ?? null,
+        errorCode: response.errorCode ?? null,
+        fallbackReason: null,
+        modelProvider,
+        modelIds,
+        modelCallCount: response.modelCallCount ?? null,
+        toolCallCount: response.toolCalls?.length ?? response.toolsInvoked?.length ?? null,
+        deliveryResult: input.delivery,
+        usageInputTokens: usageSum('inputTokens'),
+        usageOutputTokens: usageSum('outputTokens'),
+        costSatang: null,
+      });
+    } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
   private async loadConversationContext(companyId: string, userId: string, permissions: string[]): Promise<LineAiConversationContext | undefined> {

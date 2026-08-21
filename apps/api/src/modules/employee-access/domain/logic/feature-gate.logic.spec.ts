@@ -241,6 +241,7 @@ describe('filterPermissionsByEntitlement', () => {
           permissionKeys: [
             'access.role.read',
             'access.role.manage',
+            'access.role.operational.assign',
             'access.role.financial.assign',
             'access.permission.read',
             'access.capability_pack.read',

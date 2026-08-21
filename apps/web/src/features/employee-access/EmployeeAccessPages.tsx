@@ -73,8 +73,8 @@ export function coveredPacks(keys: string[], packs: CapabilityPackView[]): Capab
   return packs.filter((p) => !p.isCore && p.permissionKeys.length > 0 && p.permissionKeys.every((k) => set.has(k)));
 }
 
-// OWNER is the protected last-owner role; SYSTEM_ADMIN is a platform-only role. Neither is assignable to company staff.
-const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN'];
+// Protected owner/platform roles are never assignable to company staff.
+const NON_ASSIGNABLE_ROLE_KEYS = ['OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW'];
 function assignableRoles(roles: any[]) {
   return roles.filter((r) => r.status === 'ACTIVE' && !NON_ASSIGNABLE_ROLE_KEYS.includes(r.key));
 }
@@ -84,6 +84,7 @@ const ROLE_LABEL_KEYS: Record<string, DictionaryKey> = {
   SYSTEM_ADMIN: 'role.SYSTEM_ADMIN',
   ADMIN: 'role.ADMIN',
   MANAGER: 'role.MANAGER',
+  HR: 'role.HR',
   SALES: 'role.SALES',
   INVENTORY: 'role.INVENTORY',
   FINANCE: 'role.FINANCE',
@@ -99,6 +100,7 @@ const ROLE_NAME_TO_KEY: Record<string, string> = {
   sysadmin: 'SYSTEM_ADMIN',
   admin: 'ADMIN',
   manager: 'MANAGER',
+  hr: 'HR',
   sales: 'SALES',
   inventory: 'INVENTORY',
   finance: 'FINANCE',
@@ -215,7 +217,7 @@ type Tab = 'employees' | 'roles' | 'matrix';
 export function EmployeeAccessWorkspacePage({ companyId, initialTab = 'employees' }: { companyId: string; initialTab?: Tab }) {
   const tabs: { key: Tab; label: string; href: string; icon: ReactNode; desc: string }[] = [
     { key: 'employees', label: 'พนักงาน', href: `/companies/${companyId}/settings/employees`, icon: <UserIcon className="h-4 w-4" />, desc: 'สร้างบัญชีและจัดการสถานะพนักงาน' },
-    { key: 'roles', label: 'บทบาทและสิทธิ์', href: `/companies/${companyId}/settings/roles`, icon: <LockIcon className="h-4 w-4" />, desc: 'กำหนดความสามารถตามตำแหน่ง' },
+    { key: 'roles', label: 'บทบาทและสิทธิ์', href: `/companies/${companyId}/settings/roles`, icon: <LockIcon className="h-4 w-4" />, desc: 'กำหนดความสามารถตามบทบาท' },
     { key: 'matrix', label: 'ภาพรวมสิทธิ์', href: `/companies/${companyId}/settings/access-overview`, icon: <TableIcon className="h-4 w-4" />, desc: 'ดู effective access ของทุกคน' },
   ];
   return (
@@ -990,7 +992,7 @@ export function RoleBuilder({ companyId, grouped, packModules, allPacks, templat
           {/* Step 1 — Job preset */}
           {smartRolesReady && templates.length > 0 && (
             <div>
-              <div className="mb-2 text-xs font-bold text-gray-600">1. เริ่มจากตำแหน่งงาน</div>
+              <div className="mb-2 text-xs font-bold text-gray-600">1. เริ่มจากชุดบทบาทตามงาน</div>
               <div className={`${mutedPanelClass} space-y-3 p-3`}>
                 {byIndustry.map(([industry, tpls]) => (
                   <div key={industry}>

@@ -17,6 +17,8 @@ const MAX_IMAGE_EDGE_PX = 3200;
 const MIN_IMAGE_QUALITY = 0.72;
 export const RECEIPT_UPLOAD_ACCEPT =
   '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/gif';
+export const SIGNATURE_UPLOAD_ACCEPT =
+  '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/heic,image/heif,image/gif';
 
 export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
 
@@ -60,6 +62,17 @@ export function classifyUploadFile(name: string, type: string): UploadFileKind {
   return 'unsupported';
 }
 
+export function classifySignatureUploadFile(name: string, type: string): Exclude<UploadFileKind, 'pdf'> {
+  const standard = classifyUploadFile(name, type);
+  if (standard !== 'unsupported') return standard === 'pdf' ? 'unsupported' : standard;
+  const mime = type.toLowerCase();
+  const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  if (mime === 'image/jpg' && (extension === 'jpg' || extension === 'jpeg')) return 'image';
+  if ((!mime || mime === 'image/jpeg' || mime === 'image/jpg') && extension === 'jpe') return 'image';
+  if ((!mime || mime === 'image/gif') && extension === 'gif') return 'image';
+  return 'unsupported';
+}
+
 async function decodeImage(file: File): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === 'function') {
     try { return await createImageBitmap(file); } catch { /* fall through */ }
@@ -91,8 +104,7 @@ async function heicToJpegFile(file: File): Promise<File> {
   return new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified });
 }
 
-export async function prepareReceiptFile(file: File): Promise<{ file: File; resized: boolean }> {
-  const kind = classifyUploadFile(file.name, file.type);
+async function prepareUploadFile(file: File, kind: UploadFileKind): Promise<{ file: File; resized: boolean }> {
   if (kind === 'unsupported') throw new Error('UNSUPPORTED_UPLOAD_FILE');
   const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
   const inferredMimeType = attachmentMimeTypeForFileName(file.name)
@@ -156,4 +168,12 @@ export async function prepareReceiptFile(file: File): Promise<{ file: File; resi
   if ('close' in image && typeof image.close === 'function') image.close();
   const baseName = sourceFile.name.replace(/\.[^.]+$/, '') || 'receipt';
   return { file: new File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: sourceFile.lastModified }), resized: true };
+}
+
+export function prepareReceiptFile(file: File): Promise<{ file: File; resized: boolean }> {
+  return prepareUploadFile(file, classifyUploadFile(file.name, file.type));
+}
+
+export function prepareSignatureFile(file: File): Promise<{ file: File; resized: boolean }> {
+  return prepareUploadFile(file, classifySignatureUploadFile(file.name, file.type));
 }

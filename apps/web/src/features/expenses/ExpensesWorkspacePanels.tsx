@@ -19,7 +19,7 @@ import type { ExpenseBackfillBlocker, ExpenseBackfillPreview } from '@watchdog-b
 import { MangmeeBadge, MangmeeCard, MangmeeStatCard, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
 import { findForbiddenChars, stripDisallowed } from '@/common/forms/sanitize';
-import { IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
+import { assertAllowedUploadFile, uploadErrorMessage } from '@/common/files/upload-file.logic';
 import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { SignaturePad } from './SignaturePad';
 import { err, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, ICON, ErrorBanner, InfoBanner, StateBanner, HowItWorks } from './ExpensesUi';
@@ -39,6 +39,7 @@ import { availableTaxDefinitions } from '../tax/transaction-tax.model';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
+import { classifySignatureUploadFile, HeicDecodeError, prepareSignatureFile, SIGNATURE_UPLOAD_ACCEPT } from './expense-upload.logic';
 
 /** Mirrors `@MaxLength(255)` on the signature-asset label the API accepts. */
 const SIGNATURE_LABEL_MAX_LENGTH = 255;
@@ -313,6 +314,9 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [label, setLabel] = useState('');
   const [fileName, setFileName] = useState('');
+  const [preparedFile, setPreparedFile] = useState<File | null>(null);
+  const [preparingFile, setPreparingFile] = useState(false);
+  const prepareRequestRef = useRef(0);
   const [preview, setPreview] = useState<{ original: string; derived: string } | null>(null);
   const [derivedBlob, setDerivedBlob] = useState<Blob | null>(null);
   const [method, setMethod] = useState<'upload' | 'draw'>('upload');
@@ -336,11 +340,33 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
     if (focusSignatureId && !loading) focusRef.current?.scrollIntoView({ block: 'center' });
   }, [focusSignatureId, loading, assets]);
 
+  const selectSignatureFile = async (file: File | null) => {
+    const requestId = ++prepareRequestRef.current;
+    setPreparedFile(null); setPreparingFile(false); setPreview(null); setDerivedBlob(null); setFileName(file?.name ?? ''); setActionError(null);
+    if (!file) return;
+    if (classifySignatureUploadFile(file.name, file.type) === 'unsupported') {
+      setActionError('รองรับไฟล์ PNG, JPG/JPEG/JPE, HEIC/HEIF และ GIF');
+      return;
+    }
+    setPreparingFile(true);
+    try {
+      const prepared = (await prepareSignatureFile(file)).file;
+      assertAllowedUploadFile(prepared, 'image');
+      if (requestId === prepareRequestRef.current) setPreparedFile(prepared);
+    } catch (cause) {
+      if (requestId === prepareRequestRef.current) {
+        setActionError(cause instanceof HeicDecodeError
+          ? 'ไม่สามารถอ่านไฟล์ HEIC/HEIF ได้ กรุณาลองถ่ายใหม่หรือใช้ไฟล์ JPG'
+          : uploadErrorMessage(cause));
+      }
+    } finally {
+      if (requestId === prepareRequestRef.current) setPreparingFile(false);
+    }
+  };
+
   const buildPreview = async () => {
-    const file = fileRef.current?.files?.[0];
-    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น (PNG/JPEG)'); return; }
-    try { assertAllowedUploadFile(file, 'image'); }
-    catch (cause) { setActionError(err(cause)); return; }
+    const file = preparedFile;
+    if (!file) { setActionError('กรุณาเลือกรูปลายเซ็นหรือถ่ายรูปก่อน'); return; }
     setActionError(null);
     try {
       const url = URL.createObjectURL(file);
@@ -364,14 +390,15 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   };
 
   const resetDraft = () => {
-    setLabel(''); setFileName(''); setPreview(null); setDerivedBlob(null);
+    prepareRequestRef.current += 1;
+    setLabel(''); setFileName(''); setPreparedFile(null); setPreparingFile(false); setPreview(null); setDerivedBlob(null);
     if (fileRef.current) fileRef.current.value = '';
   };
 
   // `source` is the drawn PNG when the pad produced one — already transparent and cropped, so it
   // needs no derived pass — and the chosen file otherwise.
   const submit = async (withDerived: boolean, source?: File) => {
-    const file = source ?? fileRef.current?.files?.[0];
+    const file = source ?? preparedFile;
     if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
     const forbidden = findForbiddenChars(label);
     if (forbidden.length > 0) { setActionError(`ห้ามใช้อักขระพิเศษ: ${forbidden.join(' ')}`); return; }
@@ -524,13 +551,18 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
             ) : (
               <>
                 <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 hover:border-brand-300 hover:bg-brand-25">
-                  <span className="text-2xl">✍️</span>
-                  {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : 'เลือกรูปลายเซ็น (PNG/JPEG)'}
-                  <input ref={fileRef} type="file" accept={IMAGE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => { setPreview(null); setDerivedBlob(null); setFileName(e.target.files?.[0]?.name ?? ''); }} />
+                  <span className="text-gray-400 [&>svg]:h-8 [&>svg]:w-8">{ICON.upload}</span>
+                  {fileName ? <span className="font-semibold text-brand-700">✓ {fileName}</span> : (
+                    <>
+                      <span>เลือกรูปลายเซ็นหรือถ่ายรูป</span>
+                      <span className="text-xs text-gray-400">PNG, JPG/JPEG/JPE, HEIC/HEIF หรือ GIF</span>
+                    </>
+                  )}
+                  <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
                 </label>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className={ghostClass} onClick={buildPreview} disabled={saving}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
-                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving}>{saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
+                  <button className={ghostClass} onClick={buildPreview} disabled={saving || preparingFile || !preparedFile}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
+                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving || preparingFile || !preparedFile}>{preparingFile ? 'กำลังเตรียมรูป...' : saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
                 </div>
                 {preview && (
                   <div className="mt-3 grid grid-cols-2 gap-3">

@@ -50,6 +50,8 @@ export type EmployeeSummary = {
   /** The name WITHOUT คำนำหน้า. Use `employeeFullName` to render it with the title. */
   displayName: string;
   titlePrefix?: EmployeeTitlePrefix;
+  /** Company-visible job title only; it never grants system permissions. */
+  jobTitle?: string;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -82,6 +84,7 @@ export type CreateEmployeeInput = {
   /** The name WITHOUT คำนำหน้า; send the title in `titlePrefix`. */
   displayName: string;
   titlePrefix?: EmployeeTitlePrefix;
+  jobTitle?: string;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -106,6 +109,7 @@ export type UpdateEmployeeInput = {
   /** The name WITHOUT คำนำหน้า; send the title in `titlePrefix`. */
   displayName?: string;
   titlePrefix?: EmployeeTitlePrefix;
+  jobTitle?: string | null;
   legalName?: string;
   email?: string;
   firstName?: string;
@@ -192,6 +196,9 @@ export function isRoleEditableByCompany(role: Pick<RoleSummary, 'key'>): boolean
 /** Finance-grade roles; assigning one is owner-gated on `access.role.financial.assign`. */
 export const FINANCIAL_ROLE_KEYS = ['FINANCE', 'ACCOUNTANT'];
 
+/** Built-in roles delegated by the HR operational-assignment permission. */
+export const HR_ASSIGNABLE_ROLE_KEYS = ['MANAGER', 'SALES', 'INVENTORY', 'MARKETING', 'STAFF'] as const;
+
 /**
  * Roles whose job is oversight of the whole business — governance, finance, audit — so a membership
  * holding one must stay `ALL_BRANCHES` (spec branch-scope-visibility R8). Enforced at the employee
@@ -204,7 +211,7 @@ export const FINANCIAL_ROLE_KEYS = ['FINANCE', 'ACCOUNTANT'];
  * "which branches". MARKETING is deliberately absent here and present in one of those.
  */
 export const ALL_BRANCH_ROLE_KEYS = [
-  'OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW', 'ADMIN', 'AUDITOR_READONLY',
+  'OWNER', 'SYSTEM_ADMIN', 'COMPANY_VIEW', 'ADMIN', 'HR', 'AUDITOR_READONLY',
   ...FINANCIAL_ROLE_KEYS,
 ];
 

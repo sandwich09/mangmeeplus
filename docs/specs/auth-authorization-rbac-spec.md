@@ -335,6 +335,11 @@ These are standing product rules, not implementation accidents. When someone ask
    `access.role.financial.assign` (`ownerGatedGrantViolation`). Assigning an
    existing system role that already carries the key (e.g. MANAGER) is normal
    employee management and is deliberately not gated.
+5. **HR delegation is operational, not administrative.** The system `HR` role carries
+   `access.role.operational.assign`, which bypasses permission-subset comparison only for
+   `MANAGER`, `SALES`, `INVENTORY`, `MARKETING`, and `STAFF`. The same key is owner-gated
+   when composing custom roles. HR cannot assign HR, owner/platform, admin, finance,
+   accounting, audit, or company-custom roles and does not hold `access.role.manage`.
 
 ### 8.2 Reimbursement approval and visibility (team decision 2026-07-28)
 

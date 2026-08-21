@@ -66,6 +66,17 @@ export class AppConfigService {
   get lineAiBufferDebounceMs(): number { return this.config.LINE_AI_BUFFER_DEBOUNCE_MS; }
   get lineAiBufferMaxWaitMs(): number { return this.config.LINE_AI_BUFFER_MAX_WAIT_MS; }
   get lineAiLoadingAnimationEnabled(): boolean { return this.config.LINE_AI_LOADING_ANIMATION_ENABLED; }
+  // LINE AI latency/autonomy Phase 1 (default off; keep the current 2,500 ms / processing-start path).
+  get lineAiLoadingOnAcceptEnabled(): boolean { return this.config.LINE_AI_LOADING_ON_ACCEPT_ENABLED; }
+  get lineAiDebounceExperimentEnabled(): boolean { return this.config.LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED; }
+  get lineAiDebounceExperimentSecret(): string | undefined { return this.config.LINE_AI_DEBOUNCE_EXPERIMENT_SECRET; }
+  get lineAiFusedPlanShadowEnabled(): boolean { return this.config.LINE_AI_FUSED_PLAN_SHADOW_ENABLED; }
+  // Phase 4 (default off): the API only carries the prepared plan into the turn when a downstream
+  // gateway lane wants it — shadow (Phase 3) or prepared simple-read (Phase 4). Consumption is the
+  // gateway's decision; this flag just decides forwarding, so the two lanes stay independent.
+  get lineAiPreparedSimpleReadEnabled(): boolean { return this.config.LINE_AI_PREPARED_SIMPLE_READ_ENABLED; }
+  // Substitute-receipt semantic routing mode (default 'off' = exact legacy regex-first behavior).
+  get lineAiSubstituteSemanticRoutingMode(): 'off' | 'shadow' | 'primary' { return this.config.LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE; }
   get lineExpenseDraftConversationEnabled(): boolean { return this.config.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED; }
   // Item 10F: LINE AI turn ledger (Redis Streams; ADR 0010)
   get redisUrl(): string { return this.config.REDIS_URL; }

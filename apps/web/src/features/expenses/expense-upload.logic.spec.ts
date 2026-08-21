@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyUploadFile, detectReceiptImageByteKind, RECEIPT_UPLOAD_ACCEPT } from './expense-upload.logic';
+import {
+  classifySignatureUploadFile,
+  classifyUploadFile,
+  detectReceiptImageByteKind,
+  RECEIPT_UPLOAD_ACCEPT,
+  SIGNATURE_UPLOAD_ACCEPT,
+} from './expense-upload.logic';
 
 describe('classifyUploadFile', () => {
   const cases = [
@@ -31,6 +37,31 @@ describe('classifyUploadFile', () => {
   it('offers every supported reimbursement receipt source to the file picker', () => {
     for (const value of ['.pdf', '.png', '.jpg', '.jpeg', '.jpe', '.heic', '.heif', '.gif', 'image/gif']) {
       assert.ok(RECEIPT_UPLOAD_ACCEPT.split(',').includes(value));
+    }
+  });
+});
+
+describe('signature image uploads', () => {
+  for (const [name, type] of [
+    ['signature.png', 'image/png'],
+    ['signature.jpg', 'image/jpeg'],
+    ['signature.jpg', 'image/jpg'],
+    ['signature.jpeg', 'image/jpeg'],
+    ['signature.jpe', 'image/jpeg'],
+    ['signature.jpe', ''],
+    ['signature.heic', 'image/heic'],
+    ['signature.heif', 'image/heif'],
+    ['signature.gif', 'image/gif'],
+    ['signature.gif', ''],
+  ] as const) {
+    it(`accepts ${name} (${type || 'no MIME'})`, () => {
+      assert.notEqual(classifySignatureUploadFile(name, type), 'unsupported');
+    });
+  }
+
+  it('offers every supported type to the file picker', () => {
+    for (const value of ['.png', '.jpg', '.jpeg', '.jpe', '.heic', '.heif', '.gif', 'image/gif']) {
+      assert.ok(SIGNATURE_UPLOAD_ACCEPT.split(',').includes(value));
     }
   });
 });

@@ -136,4 +136,17 @@ describe('employee-access.logic', () => {
       { 'crm.customer.read': 'crm' },
     ) ?? '', /does not hold/);
   });
+
+  it('lets HR assign only the explicit operational role allowlist', () => {
+    const hrPermissions = ['access.role.operational.assign'];
+    for (const key of ['MANAGER', 'SALES', 'INVENTORY', 'MARKETING', 'STAFF']) {
+      assert.equal(roleGrantViolation([{ key, isSystem: true, permissionKeys: ['permission.hr.does.not.hold'] }], hrPermissions, undefined), undefined);
+    }
+    for (const key of ['ADMIN', 'HR', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY', 'CUSTOM']) {
+      assert.match(roleGrantViolation([{ key, isSystem: true, permissionKeys: [] }], hrPermissions, undefined) ?? '', /HR may assign only operational roles/);
+    }
+    assert.match(roleGrantViolation([{ key: 'OWNER', permissionKeys: [] }], hrPermissions, undefined) ?? '', /cannot be granted/);
+    assert.match(roleGrantViolation([{ key: 'COMPANY_VIEW', permissionKeys: [] }], hrPermissions, undefined) ?? '', /cannot be granted/);
+    assert.match(roleGrantViolation([{ key: 'STAFF', isSystem: false, permissionKeys: [] }], hrPermissions, undefined) ?? '', /HR may assign only operational roles/);
+  });
 });

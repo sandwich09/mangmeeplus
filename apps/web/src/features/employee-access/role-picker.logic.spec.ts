@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RoleSummary } from '@watchdog-bms/contracts';
-import { assignableRoleOptions, isAssignableRoleCatalog, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
+import { assignableRoleOptions, isAssignableRoleCatalog, isOperationalRoleTargetReadOnly, isRoleFieldReadOnly, isSelfEmployee } from './role-picker.logic';
 
 function role(id: string, assignableByCurrentUser?: boolean): RoleSummary {
   return { id, key: id.toUpperCase(), name: id, isSystem: true, status: 'ACTIVE', permissionKeys: [], assignableByCurrentUser };
@@ -71,5 +71,26 @@ describe('isRoleFieldReadOnly', () => {
     assert.equal(isRoleFieldReadOnly({ ...editable, optionCount: 1 }), true);
     assert.equal(isRoleFieldReadOnly({ ...editable, optionCount: 0 }), true);
     assert.equal(isRoleFieldReadOnly({ ...editable, optionCount: 2 }), false);
+  });
+});
+
+describe('isOperationalRoleTargetReadOnly', () => {
+  const hrPermissions = ['access.employee.update', 'access.role.operational.assign'];
+
+  it('lets HR change operational roles', () => {
+    for (const role of ['MANAGER', 'SALES', 'INVENTORY', 'MARKETING', 'STAFF']) {
+      assert.equal(isOperationalRoleTargetReadOnly(hrPermissions, { key: role, isSystem: true }), false);
+    }
+  });
+
+  it('keeps privileged, financial, audit, HR, and custom targets read-only for HR', () => {
+    for (const role of ['ADMIN', 'HR', 'FINANCE', 'ACCOUNTANT', 'AUDITOR_READONLY', 'CUSTOM']) {
+      assert.equal(isOperationalRoleTargetReadOnly(hrPermissions, { key: role, isSystem: true }), true);
+    }
+    assert.equal(isOperationalRoleTargetReadOnly(hrPermissions, { key: 'STAFF', isSystem: false }), true);
+  });
+
+  it('does not restrict a delegated role manager', () => {
+    assert.equal(isOperationalRoleTargetReadOnly([...hrPermissions, 'access.role.manage'], { key: 'ADMIN', isSystem: true }), false);
   });
 });

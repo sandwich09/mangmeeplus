@@ -23,6 +23,8 @@ Verification:
 - Web reimbursement/expense model tests: 68 passed; reimbursement logic regression: 44 passed.
 - `apps/api`: `pnpm typecheck` passed.
 - `apps/web`: `pnpm typecheck` passed.
+- Post-PR #207 integration: focused web upload/reimbursement tests passed 100/100; focused API
+  reimbursement/signature tests passed 34/34; API, web, and contracts typechecks passed.
 - Launch error-code coverage recognizes `claim_saved_signature_required`; the broader coverage test remains red only for
   pre-existing unrelated working-tree code `expense_review_forbidden`.
 Next: Ready for UAT; no deployment was requested or performed.

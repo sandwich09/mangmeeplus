@@ -81,6 +81,7 @@ access.employee.line_link.issue
 access.employee.line_link.revoke
 access.role.read
 access.role.manage
+access.role.operational.assign
 access.role.financial.assign
 access.permission.read
 ```
@@ -90,6 +91,7 @@ Pre-v5 Tax-only baseline grants (the v5 expansion below is authoritative for new
 ```text
 OWNER: all employee access and role permissions, including access.role.financial.assign
 ADMIN: access.employee.read, access.employee.create, access.employee.update, access.employee.disable, access.employee.credential.issue, access.employee.line_link.issue, access.employee.line_link.revoke, access.role.read, access.permission.read, except protected OWNER/system-role changes — NOT access.role.manage by default (team decision 2026-07-28: role management is owner-delegated via a custom role; see auth-authorization-rbac-spec.md §8.1)
+HR: STAFF baseline plus access.employee.read/create/update/disable, access.role.read, and access.role.operational.assign; no credential reissue, role management, finance/accounting/audit, or permission-catalog access
 MANAGER: access.employee.read where ABAC allows team scope
 AUDITOR_READONLY: access.employee.read, access.role.read, access.permission.read for audit-safe masked data
 SALES, INVENTORY, FINANCE, ACCOUNTANT, MARKETING, STAFF: no employee/role mutation permissions by default
@@ -99,6 +101,7 @@ Rules:
 
 - Role/permission mutation is web/API only and always audited.
 - Employee role assignment is limited to roles whose permissions are a subset of the granter's effective permissions; self-role mutation is denied.
+- `access.role.operational.assign` is owner-gated and lets HR assign only `MANAGER`, `SALES`, `INVENTORY`, `MARKETING`, and `STAFF`; it does not bypass the denylist for owner/platform roles and cannot assign HR, privileged, finance/accounting/audit, or custom roles.
 - `FINANCE` and `ACCOUNTANT` role assignment requires the OWNER-only `access.role.financial.assign` step-up permission.
 - LINE/AI must refuse user, password, employee-status, role, permission, and account-link-token mutation requests.
 - Protected system roles cannot be deleted, renamed by key, or weakened through customer UI.

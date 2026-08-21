@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { IntentRouterAgent, isCrisisMessage, isSubjectCompatible, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
+import { IntentRouterAgent, intakeRouterSystemPrompt, isCrisisMessage, isSubjectCompatible, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { CACHE_MIN_CHARS } from '../infrastructure/provider/bedrock.provider';
@@ -553,10 +553,347 @@ describe('IntentRouterAgent – cacheable feature catalog', () => {
 
     const planPayload = JSON.parse(inputs.find((input) => input.usageTag === 'line.plan-route')!.messages[0]!.text);
     const catalog = JSON.parse(inputs.find((input) => input.usageTag === 'line.plan-route')!.cacheableContext!);
-    const intakePayload = JSON.parse(inputs.find((input) => input.usageTag === 'line.intake-route')!.messages[0]!.text);
+    const intakeInput = inputs.find((input) => input.usageTag === 'line.intake-route')!;
+    const intakePayload = JSON.parse(intakeInput.messages[0]!.text);
     assert.equal(planPayload.messageText, messageText);
     assert.equal(intakePayload.messageText, messageText);
     assert.deepEqual(catalog.businessGlossary.map((entry: { forms: string[] }) => entry.forms), [['ผปก', 'ผปก.'], ['คชจ', 'คชจ.'], ['ลค', 'ลค.']]);
+    // DEFAULT (no capabilities): the intake router keeps the LEGACY shape — the glossary rides in the DATA
+    // payload and there is NO cacheable catalog (that ~21KB block is a fused-only cost).
     assert.deepEqual(intakePayload.businessGlossary, catalog.businessGlossary);
+    assert.equal(intakeInput.cacheableContext, undefined);
+  });
+});
+
+// ── Phase 3 fused producer: routeIntake may return an optional bounded prepared plan ──────────────
+
+describe('IntentRouterAgent – fused prepared plan producer (Phase 3)', () => {
+  const READ_PLAN = {
+    version: 1, complexity: 'simple', confidence: 0.95, responseMode: 'simple_grounded', answerShape: 'single_metric',
+    intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents: [{ intent: 'read_summary', subject: 'sale', agent: 'sales', priority: 1, requiredTools: ['sales.get_sales_summary'], missingContext: [] }] },
+    proposedCalls: [{ toolName: 'sales.get_sales_summary', input: { fromDate: '2026-08-20', toDate: '2026-08-20' } }],
+  };
+  const CASUAL_PLAN = {
+    version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'casual_composer',
+    intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [], intents: [{ intent: 'casual_conversation', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }] },
+    proposedCalls: [],
+  };
+  // The exact bounded zero-tool refusal shape the prompt instructs (one 'unknown'/'general' intent + one refusal).
+  const REFUSAL_PLAN = {
+    version: 1, complexity: 'simple', confidence: 0.9, responseMode: 'deterministic',
+    intentPlan: { status: 'ROUTABLE', language: 'th', requiresHumanReview: false, refusals: [{ request: 'อนุมัติบิลนี้ให้หน่อย', reason: 'mutation_blocked' }], intents: [{ intent: 'unknown', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }] },
+    proposedCalls: [],
+  };
+  const routerReturning = (body: Record<string, unknown>) => new IntentRouterAgent({
+    generateText: async () => ({ ok: true as const, text: JSON.stringify(body) }),
+  } as any);
+  const intake = (extra: Record<string, unknown> = {}) => ({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: ['crm.report.read'], capabilities: { fusedPlan: true }, ...extra } as any);
+
+  it('attaches ONLY the bounded prepared plan for a business read (no provenance in the wrapper)', async () => {
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'อ่านยอดขาย', preparedPlan: READ_PLAN });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.intent, 'BUSINESS_READ_QUESTION');
+    assert.ok(plan.preparedPlan, 'prepared plan attached');
+    assert.equal(plan.preparedPlan!.proposedCalls[0]?.toolName, 'sales.get_sales_summary');
+    // Intake provenance is bound LATER by the API onto LineAiTurnRequest, never carried in the wrapper.
+    assert.equal((plan.preparedPlan as Record<string, unknown>)['intakeIntent'], undefined);
+  });
+
+  it('never lets the wrapper carry a model-claimed intakeIntent (it is dropped at parse)', async () => {
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'x', preparedPlan: { ...READ_PLAN, intakeIntent: 'BUSINESS_DOCUMENT_REFERENCE' } });
+    const plan = await router.routeIntake(intake());
+    assert.ok(plan.preparedPlan, 'the rest of the wrapper still parses');
+    assert.equal((plan.preparedPlan as Record<string, unknown>)['intakeIntent'], undefined);
+  });
+
+  it('discards an invalid prepared plan (forged version) and preserves the outer route', async () => {
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'x', preparedPlan: { ...READ_PLAN, version: 2 } });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.intent, 'BUSINESS_READ_QUESTION', 'route preserved');
+    assert.equal(plan.preparedPlan, undefined, 'invalid wrapper discarded');
+  });
+
+  it('discards a prepared plan carrying a scope-injection input key, route preserved', async () => {
+    const forged = { ...READ_PLAN, proposedCalls: [{ toolName: 'sales.get_sales_summary', input: { companyId: 'other' } }] };
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'x', preparedPlan: forged });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.preparedPlan, undefined);
+  });
+
+  it('discards a model plan that ignores the one-call gate (two proposed calls), route preserved', async () => {
+    // Even if the model disobeys the prompt's "exactly one call" instruction, the parser rebuild drops it.
+    const twoCalls = { ...READ_PLAN, proposedCalls: [{ toolName: 'sales.get_sales_summary', input: {} }, { toolName: 'expense.list_recent', input: {} }] };
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'x', preparedPlan: twoCalls });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.intent, 'BUSINESS_READ_QUESTION', 'route preserved');
+    assert.equal(plan.preparedPlan, undefined, 'a plan violating the one-call gate is discarded');
+  });
+
+  it('casual/capability: outer intake stays UNSUPPORTED while the inner plan carries the zero-tool intent', async () => {
+    const router = routerReturning({ intent: 'UNSUPPORTED', language: 'th', confidence: 0.9, reason: 'คุยเล่น', preparedPlan: CASUAL_PLAN });
+    const plan = await router.routeIntake(intake({ messageText: 'สวัสดีจ้า' }));
+    assert.equal(plan.intent, 'UNSUPPORTED', 'outer intake remains UNSUPPORTED');
+    assert.equal(plan.preparedPlan!.intentPlan.intents[0]?.intent, 'casual_conversation');
+    assert.equal(plan.preparedPlan!.proposedCalls.length, 0);
+  });
+
+  it('attaches the exact bounded zero-tool refusal plan (one intent + one refusal parses)', async () => {
+    const router = routerReturning({ intent: 'MUTATION_REQUEST_REFUSAL', language: 'th', confidence: 0.95, reason: 'ขอทำรายการเงิน', preparedPlan: REFUSAL_PLAN });
+    const plan = await router.routeIntake(intake({ messageText: 'อนุมัติบิลนี้ให้หน่อย' }));
+    assert.ok(plan.preparedPlan, 'the bounded refusal plan parses and attaches');
+    assert.equal(plan.preparedPlan!.intentPlan.intents.length, 1);
+    assert.equal(plan.preparedPlan!.intentPlan.intents[0]?.intent, 'unknown');
+    assert.equal(plan.preparedPlan!.intentPlan.refusals[0]?.reason, 'mutation_blocked');
+    assert.equal(plan.preparedPlan!.proposedCalls.length, 0);
+  });
+
+  it('does not attach a prepared plan to a low-confidence capture rewritten to CLARIFY', async () => {
+    // The capture branch rewrites to CLARIFY before the fused attach, so no prepared plan rides along.
+    const router = routerReturning({ intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.2, reason: 'บิล', preparedPlan: READ_PLAN });
+    const plan = await router.routeIntake(intake({ messageText: 'บิลนี้' }));
+    assert.equal(plan.intent, 'CLARIFY');
+    assert.equal(plan.preparedPlan, undefined);
+  });
+
+  it('returns no prepared plan when the model omits one (route unchanged)', async () => {
+    const router = routerReturning({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.98, reason: 'x' });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.intent, 'BUSINESS_READ_QUESTION');
+    assert.equal(plan.preparedPlan, undefined);
+  });
+});
+
+// ── Phase 3 producer PROMPT CONTRACT: the live provider is actually instructed to emit the bounded
+// prepared plan and its omission gates (not merely parsed from invented output) ──────────────────
+
+describe('LINE intake router prompt contract – instructs the bounded preparedPlan', () => {
+  const P = intakeRouterSystemPrompt({ fusedPlan: true });
+
+  it('lists preparedPlan in the output schema and names the exact bounded fields', () => {
+    assert.match(P, /"preparedPlan"/);
+    assert.match(P, /Fused prepared plan/);
+    for (const field of ['"version": 1', '"complexity": "simple"', '"responseMode"', '"answerShape"', '"intentPlan"', '"proposedCalls"', '"requiredTools"']) {
+      assert.ok(P.includes(field), `prompt must specify ${field}`);
+    }
+    assert.match(P, /"single_metric" \| "list"/);
+    assert.match(P, /"simple_grounded" \| "casual_composer" \| "deterministic"/);
+  });
+
+  it('instructs exact tool==requiredTools equality and one intent/one call for a business read', () => {
+    assert.match(P, /EXACTLY one intent .* and one proposedCall/);
+    assert.match(P, /requiredTools equal to \[that one tool\]/);
+    assert.match(P, /proposedCalls\[0\]\.toolName equal to that same tool/);
+    assert.match(P, /category read_summary, read_detail, or report/);
+  });
+
+  it('makes the cacheable catalog the naming AND input-field authority, and forbids invention/scope keys', () => {
+    assert.match(P, /copied VERBATIM from the enabledFeatures catalog/);
+    assert.match(P, /never invent a tool, subject, agent, date, id, scope, or permission/);
+    assert.match(P, /field NAMES listed in that tool's catalog requiredInputFields\/optionalInputFields/);
+    assert.match(P, /NEVER include a branch, company, tenant, location, scope, or permission field/);
+    assert.match(P, /a date ONLY as a candidate isoDate/);
+    assert.match(P, /use input \{\} so the tool applies its default period/);
+  });
+
+  it('keeps casual/capability outer UNSUPPORTED with a zero-tool inner plan, and gives an exact parser-valid refusal intent', () => {
+    assert.match(P, /keep the outer "intent" UNSUPPORTED/);
+    assert.match(P, /"casual_conversation" or "capability_help"/);
+    assert.match(P, /requiredTools \[\] and proposedCalls \[\]/);
+    // The refusal plan names EXACTLY one bounded zero-tool intent so the simple parser (one intent) accepts it.
+    assert.match(P, /EXACTLY one intent \{"intent":"unknown","subject":"unknown","agent":"general","priority":1,"requiredTools":\[\],"missingContext":\[\]\}/);
+    assert.match(P, /ONE refusals entry \{"request","reason"\}/);
+  });
+
+  it('spells out every omission gate so an uncertain turn carries no preparedPlan', () => {
+    for (const gate of ['missing or ambiguous context', 'an attachment', 'an open clarification', 'low confidence', 'more than one intent or tool', 'comparison/analysis/summary-across-many/mixed', 'a mutation to perform', 'document/capture/correction/signature route', 'human review needed', 'When in doubt, omit it']) {
+      assert.ok(P.includes(gate), `prompt must gate on: ${gate}`);
+    }
+  });
+
+  it('states the wrapper grants no authority and is server re-validated', () => {
+    assert.match(P, /grants NO authority/);
+    assert.match(P, /server RE-VALIDATES/);
+  });
+
+  it('ships the catalog authority the prompt references in the STABLE cacheable prefix (names the model must copy)', async () => {
+    let cacheable = '';
+    const router = new IntentRouterAgent({
+      generateText: async (input: ProviderInput) => { cacheable = input.cacheableContext ?? ''; return { ok: true as const, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, reason: 'x' }) }; },
+    } as any);
+    await router.routeIntake({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [], capabilities: { fusedPlan: true } } as any);
+    const catalog = JSON.parse(cacheable);
+    const sales = catalog.enabledFeatures.find((f: any) => f.toolName === 'sales.get_sales_summary');
+    assert.ok(sales, 'the catalog names the read tool the model must copy verbatim');
+    assert.ok(Array.isArray(sales.businessSubjects) && sales.businessSubjects.includes('sale'));
+    assert.ok(Array.isArray(sales.agentHints) && sales.agentHints.length > 0);
+    assert.equal(sales.category, 'report');
+    // The declared input field names must be in the catalog too, or "fields that tool declares" is
+    // ungrounded and the model would have to invent input keys.
+    assert.deepEqual(sales.requiredInputFields, []);
+    assert.ok(sales.optionalInputFields.includes('fromDate') && sales.optionalInputFields.includes('toDate'),
+      'sales input fields (fromDate/toDate) are exposed for the model to copy');
+  });
+});
+
+// ── Default-off cost/prompt guard (P1-1): capabilities gate every added byte ──────────────────────
+
+describe('LINE intake router – default-off is byte- and cost-equivalent to legacy', () => {
+  const FUSED_MARKERS = ['Fused prepared plan', 'preparedPlan'];
+  const SUBSTITUTE_MARKERS = ['SUBSTITUTE_RECEIPT_CONTINUATION', 'substituteContext'];
+
+  it('the exported constant IS the default-off build (no capabilities)', () => {
+    assert.equal(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt());
+    assert.equal(LINE_INTAKE_ROUTER_SYSTEM_PROMPT, intakeRouterSystemPrompt({}));
+  });
+
+  it('default-off carries NONE of the fused or substitute sections', () => {
+    const base = intakeRouterSystemPrompt();
+    for (const m of [...FUSED_MARKERS, ...SUBSTITUTE_MARKERS]) {
+      assert.equal(base.includes(m), false, `default-off must not contain ${m}`);
+    }
+  });
+
+  it('each capability appends ONLY its own section — no cross-bleed, base is a strict prefix budget', () => {
+    const base = intakeRouterSystemPrompt();
+    const fused = intakeRouterSystemPrompt({ fusedPlan: true });
+    const substitute = intakeRouterSystemPrompt({ substituteSemantic: true });
+    // fused adds fused markers, never substitute markers.
+    for (const m of FUSED_MARKERS) assert.ok(fused.includes(m), `fused must contain ${m}`);
+    for (const m of SUBSTITUTE_MARKERS) assert.equal(fused.includes(m), false, `fused must not contain ${m}`);
+    // substitute adds substitute markers, never fused markers.
+    for (const m of SUBSTITUTE_MARKERS) assert.ok(substitute.includes(m), `substitute must contain ${m}`);
+    for (const m of FUSED_MARKERS) assert.equal(substitute.includes(m), false, `substitute must not contain ${m}`);
+    // Every capability is strictly additive: the default-off prompt is the shortest build.
+    assert.ok(fused.length > base.length, 'fused only adds bytes');
+    assert.ok(substitute.length > base.length, 'substitute only adds bytes');
+  });
+
+  it('routeIntake with no capabilities keeps the LEGACY runtime seam (no catalog prefix, glossary in DATA, maxTokens 1000)', async () => {
+    let seen: ProviderInput | undefined;
+    const router = new IntentRouterAgent({
+      generateText: async (input: ProviderInput) => { seen = input; return { ok: true as const, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, reason: 'x' }) }; },
+    } as any);
+    await router.routeIntake({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [] } as any);
+    assert.ok(seen, 'model was called');
+    assert.equal(seen!.usageTag, 'line.intake-route');
+    assert.equal(seen!.cacheableContext, undefined, 'no ~21KB catalog prefix by default');
+    assert.equal(seen!.maxTokens, 1000, 'legacy token budget unchanged');
+    assert.equal(seen!.systemPrompt, intakeRouterSystemPrompt(), 'default-off system prompt is the legacy build');
+    const payload = JSON.parse(seen!.messages[0]!.text);
+    assert.ok(Array.isArray(payload.businessGlossary), 'glossary rides in the DATA payload, as before');
+  });
+
+  it('routeIntake with fusedPlan on adds the catalog prefix and a larger bounded budget ONLY then', async () => {
+    let seen: ProviderInput | undefined;
+    const router = new IntentRouterAgent({
+      generateText: async (input: ProviderInput) => { seen = input; return { ok: true as const, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, reason: 'x' }) }; },
+    } as any);
+    await router.routeIntake({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [], capabilities: { fusedPlan: true } } as any);
+    assert.ok(seen!.cacheableContext && seen!.cacheableContext.length > 0, 'catalog prefix present when fused');
+    assert.equal(seen!.maxTokens, 1500, 'larger budget only when fused output is enabled');
+    const payload = JSON.parse(seen!.messages[0]!.text);
+    assert.equal(payload.businessGlossary, undefined, 'glossary moves to the stable cacheable prefix when fused');
+  });
+});
+
+// The intake receiver boundary bounds the TRUSTED capability flags at runtime (not only the TS shape): a
+// malformed/hostile `capabilities` object can NEVER coerce a section on. routeIntake self-defends via
+// asIntakeRouterCapabilities, so these hold no matter how the request was built.
+describe('LINE intake router – receiver-boundary capability hardening (malformed input cannot activate)', () => {
+  const capture = () => {
+    let seen: ProviderInput | undefined;
+    const router = new IntentRouterAgent({
+      generateText: async (input: ProviderInput) => { seen = input; return { ok: true as const, text: JSON.stringify({ intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9, reason: 'x' }) }; },
+    } as any);
+    return { router, get: () => seen! };
+  };
+  const base = { requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ยอดขายวันนี้', permissions: [] };
+  const assertLegacyOff = (seen: ProviderInput) => {
+    assert.equal(seen.cacheableContext, undefined, 'no fused catalog');
+    assert.equal(seen.maxTokens, 1000, 'legacy token budget (no cost bump)');
+    assert.equal(seen.systemPrompt, intakeRouterSystemPrompt(), 'default-off prompt (no fused/substitute sections)');
+    const payload = JSON.parse(seen.messages[0]!.text);
+    assert.ok(Array.isArray(payload.businessGlossary), 'glossary in DATA (legacy)');
+    assert.equal(payload.substituteContext, undefined, 'no substitute context in the payload');
+  };
+
+  it('a truthy NON-boolean fusedPlan/substituteSemantic does NOT activate fused or substitute (no coercion)', async () => {
+    for (const truthy of [1, '1', 'true', {}, [], [true]] as unknown[]) {
+      const c = capture();
+      await c.router.routeIntake({ ...base, capabilities: { fusedPlan: truthy, substituteSemantic: truthy }, substituteContext: { workflowState: 'open', hasPendingQuestion: true, preparedState: 'none', recentCandidateCount: 1 } } as any);
+      assertLegacyOff(c.get());
+    }
+  });
+
+  it('unknown / nested-extra capability keys are ignored — the request stays default-off', async () => {
+    const c = capture();
+    await c.router.routeIntake({ ...base, capabilities: { evil: true, nested: { fusedPlan: true }, FUSEDPLAN: true } as any } as any);
+    assertLegacyOff(c.get());
+  });
+
+  it('capabilities as a non-object (array / string / null) cannot activate a section', async () => {
+    for (const bad of [[{ fusedPlan: true }], 'fusedPlan', null, 42] as unknown[]) {
+      const c = capture();
+      await c.router.routeIntake({ ...base, capabilities: bad } as any);
+      assertLegacyOff(c.get());
+    }
+  });
+
+  it('a substituteContext injected WITHOUT a literal-true substituteSemantic never rides the payload', async () => {
+    const c = capture();
+    await c.router.routeIntake({ ...base, capabilities: { substituteSemantic: 1 } as any, substituteContext: { workflowState: 'open', hasPendingQuestion: true, preparedState: 'none', recentCandidateCount: 2 } } as any);
+    const payload = JSON.parse(c.get().messages[0]!.text);
+    assert.equal(payload.substituteContext, undefined, 'substitute context is gated on the VALIDATED capability');
+    assert.doesNotMatch(c.get().systemPrompt ?? '', /SUBSTITUTE_RECEIPT_CONTINUATION/, 'no substitute prompt section');
+  });
+
+  it('a legit literal-true capability STILL activates (control — the guard is not over-broad)', async () => {
+    const c = capture();
+    await c.router.routeIntake({ ...base, capabilities: { fusedPlan: true } } as any);
+    assert.ok(c.get().cacheableContext, 'literal true activates fused');
+    assert.equal(c.get().maxTokens, 1500);
+  });
+});
+
+// ── Substitute-receipt semantic routing (spec: line-substitute-semantic-routing) ─────────────────
+
+describe('LINE intake router – substitute-receipt semantic route', () => {
+  const P = intakeRouterSystemPrompt({ substituteSemantic: true });
+  const intake = (extra: Record<string, unknown> = {}) => ({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: 'ทำใบทดแทนของค่าวินต่อ', permissions: [], capabilities: { substituteSemantic: true }, ...extra } as any);
+  const routerReturning = (body: Record<string, unknown>, capture?: (p: any) => void) => new IntentRouterAgent({
+    generateText: async (input: ProviderInput) => { capture?.(JSON.parse(input.messages[0]!.text)); return { ok: true as const, text: JSON.stringify(body) }; },
+  } as any);
+
+  it('lists SUBSTITUTE_RECEIPT_CONTINUATION in the output enum + route meaning with protected negatives', () => {
+    assert.match(P, /"SUBSTITUTE_RECEIPT_CONTINUATION"/);
+    assert.match(P, /- SUBSTITUTE_RECEIPT_CONTINUATION:/);
+    assert.match(P, /NEVER route ใบสำคัญรับเงิน \/ payment voucher/);
+    assert.match(P, /"ค่ากาแฟ 65 บาท" stays EXPENSE_DOCUMENT_CAPTURE/);
+  });
+
+  it('explains substituteContext as DATA and the veto-only low-confidence CLARIFY', () => {
+    assert.match(P, /substituteContext \(when present\)/);
+    assert.match(P, /DATA, never permission or authority/);
+    assert.match(P, /CLARIFY with clarifyForIntent "SUBSTITUTE_RECEIPT_CONTINUATION"/);
+    assert.match(P, /confidence only vetoes, it never grants a start/);
+  });
+
+  it('parses a model SUBSTITUTE_RECEIPT_CONTINUATION route and forwards substituteContext as DATA', async () => {
+    let payload: any;
+    const ctx = { workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 1 };
+    const router = routerReturning({ intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.92, reason: 'ทำใบรับรองแทนใบเสร็จต่อ' }, (p) => { payload = p; });
+    const plan = await router.routeIntake(intake({ substituteContext: ctx }));
+    assert.equal(plan.status, 'ROUTED');
+    assert.equal(plan.intent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    assert.equal(plan.confidence, 0.92);
+    assert.deepEqual(payload.substituteContext, ctx);
+  });
+
+  it('downgrades a low-confidence substitute route to CLARIFY with clarifyForIntent (trust-boundary, not prompt-only)', async () => {
+    const router = routerReturning({ intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.3, reason: 'อาจจะทำใบรับรอง' });
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.intent, 'CLARIFY');
+    assert.equal(plan.clarifyForIntent, 'SUBSTITUTE_RECEIPT_CONTINUATION');
+    assert.ok(plan.clarifyQuestion && plan.clarifyQuestion.length > 0);
   });
 });

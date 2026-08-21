@@ -6012,6 +6012,8 @@ model EmployeeAccessProfile {
   // they are not backfilled (no real users yet, owner decision) so `titlePrefix` is null for them.
   displayName          String
   titlePrefix          String?
+  // Descriptive company job title only. RBAC remains sourced from MembershipRole.
+  jobTitle             String?
   legalName            String?
   // มั่งมี Flow A wizard fields (additive; email lives on User, not here, since login already keys off User.email)
   firstName            String?
